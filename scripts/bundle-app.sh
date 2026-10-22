@@ -16,6 +16,10 @@ CONTENTS="$APP/Contents"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources/Shaders" "$CONTENTS/Frameworks"
 cp "$BIN/Kite" "$CONTENTS/MacOS/Kite"
+# The `kite` CLI / MCP server (claude mcp add kite -- …/Kite.app/Contents/Helpers/kite mcp).
+swift build -c "$CONFIG" --product kite-cli
+mkdir -p "$CONTENTS/Helpers"
+cp "$BIN/kite-cli" "$CONTENTS/Helpers/kite"
 cp Resources/Info.plist "$CONTENTS/Info.plist"
 cp Sources/KiteMac/Shaders/*.metal "$CONTENTS/Resources/Shaders/"
 
@@ -46,6 +50,7 @@ else
 fi
 
 # Ad-hoc signature, inside out, so the helpers and framework load.
+codesign --force --sign - "$CONTENTS/Helpers/kite"
 for helper in "$CONTENTS/Frameworks/"*.app; do
     [[ -e "$helper" ]] && codesign --force --sign - "$helper"
 done

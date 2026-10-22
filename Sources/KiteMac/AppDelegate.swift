@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: BrowserStore!
     private var windowController: BrowserWindowController!
     private var archiveTimer: Timer?
+    private var automation: AutomationController!
 
     /// Unpinned tabs idle this long get archived, like Arc's default.
     private static let archiveAfter: TimeInterval = 12 * 60 * 60
@@ -28,6 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController = BrowserWindowController(store: store, engine: engine)
         NSApp.mainMenu = MainMenu.build(target: windowController)
         windowController.showWindow(nil)
+
+        automation = AutomationController(store: store, supportDirectory: Self.supportDirectory)
+        automation.host = windowController
+        windowController.installAutomationBanner(automation)
+        automation.start()
         NSApp.activate(ignoringOtherApps: true)
 
         archiveTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
@@ -39,9 +45,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         saveSession()
+        automation?.shutdown()
     }
 
     func saveSession() {
         store?.saveNow()
+    }
+
+    // MARK: Claude
+
+    @objc func toggleClaudeControl(_ sender: Any?) {
+        let enable = !automation.isEnabled
+        automation.setEnabled(enable)
+        guard enable, automation.isEnabled else { return }
+        let alert = NSAlert()
+        alert.messageText = "Claude can now control Kite"
+        alert.informativeText = """
+            To connect Claude Code, run:
+
+            \(automation.claudeCodeCommand)
+
+            Kite asks you before Claude submits a form, sends, posts, pays, buys or deletes anything, and shows \
+            when Claude is controlling a tab. Turn this off in the Kite menu at any time.
+            """
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Copy Command")
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(automation.claudeCodeCommand, forType: .string)
+        }
+    }
+}
+
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleClaudeControl(_:)) {
+            item.state = automation?.isEnabled == true ? .on : .off
+            return automation != nil
+        }
+        return true
     }
 }
