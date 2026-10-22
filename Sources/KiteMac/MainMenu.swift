@@ -75,6 +75,10 @@ enum MainMenu {
             item("Copy", #selector(NSText.copy(_:)), "c", toTarget: false),
             item("Paste", #selector(NSText.paste(_:)), "v", toTarget: false),
             item("Select All", #selector(NSText.selectAll(_:)), "a", toTarget: false),
+            .separator(),
+            item("Copy URL", #selector(BrowserWindowController.copyURL(_:)), "c", [.command, .shift]),
+            item("Copy URL as Markdown", #selector(BrowserWindowController.copyURLAsMarkdown(_:)), "c", [.command, .shift, .option]),
+            item("Copy URL as Quote", #selector(BrowserWindowController.copyURLAsQuote(_:)), "c", [.command, .shift, .control]),
         ])
 
         submenu("View", [
