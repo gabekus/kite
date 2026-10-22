@@ -46,6 +46,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     /// When to collect the classes and ids a page queued after it loads: right
     /// away, then a few more times to catch ads that arrive late.
     private static let cosmeticPolls: [TimeInterval] = [0, 1, 3, 8]
+    private var findCompletion: ((FindResult) -> Void)?
 
     /// Media elements that are currently playing; used to keep music tabs alive.
     private static let playingMediaScript =
@@ -70,10 +71,40 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func goBack() { browser.goBack() }
     func goForward() { browser.goForward() }
     func reload() { browser.reload() }
+    func reloadIgnoringCache() { browser.reloadIgnoringCache() }
     func stopLoading() { browser.stopLoading() }
     func focus() { browser.focus() }
     func setVisible(_ visible: Bool) { browser.setHidden(!visible) }
     func showDevTools() { browser.showDevTools() }
+
+    func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
+        findCompletion = completion
+        browser.find(text, forward: forward, findNext: findNext)
+        // A new search only highlights; stepping once makes the first match active (1/N), like Chrome.
+        if !findNext { browser.find(text, forward: forward, findNext: true) }
+    }
+
+    func stopFinding() {
+        findCompletion = nil
+        browser.stopFinding()
+    }
+
+    func printPage() { browser.print() }
+
+    func archive(completion: @escaping (Data?, String) -> Void) {
+        browser.executeDevToolsMethod("Page.captureSnapshot", params: ["format": "mhtml"]) { result in
+            completion((result?["data"] as? String)?.data(using: .utf8), "mhtml")
+        }
+    }
+
+    func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void) {
+        guard let scheme = url.scheme, let host = url.host() else { return completion() }
+        let origin = "\(scheme)://\(host)" + (url.port.map { ":\($0)" } ?? "")
+        let types = kind == .cookies ? "cookies" : "cache_storage,service_workers"
+        browser.executeDevToolsMethod("Storage.clearDataForOrigin", params: ["origin": origin, "storageTypes": types]) { _ in
+            completion()
+        }
+    }
     func setForceDark(_ enabled: Bool) { browser.setForceDark(enabled) }
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
@@ -144,6 +175,9 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         adblocker?.documentStartScript(for: url)
     }
 
+    func browser(_ browser: KCBrowser, findResultCount count: Int32, activeMatch: Int32, final: Bool) {
+        findCompletion?(FindResult(found: count > 0, matches: Int(count), activeMatch: Int(activeMatch)))
+    }
 }
 
 /// KCBrowser wants a delegate at init; ChromiumPage replaces it right away.

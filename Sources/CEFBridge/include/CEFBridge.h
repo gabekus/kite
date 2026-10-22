@@ -18,6 +18,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// 0 disables the Chrome DevTools Protocol port. When set, any local process can
 /// drive the browser, so keep it off unless you're using it.
 @property (nonatomic) int remoteDebuggingPort;
+/// Chromium's --use-mock-keychain: cookies and saved passwords are encrypted with
+/// a fixed key instead of one from the login keychain, so there's no keychain
+/// prompt. Only for throwaway test profiles, never for real browsing data.
+@property (nonatomic) BOOL useMockKeychain;
 @end
 
 @interface KCRuntime : NSObject
@@ -25,6 +29,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, nonatomic, readonly) BOOL isAvailable;
 @property (class, nonatomic, readonly) BOOL isInitialized;
 + (BOOL)initializeWithSettings:(KCRuntimeSettings *)settings;
+/// Chromium's Energy Saver, which drops pages to 30fps on battery below 20%.
+/// Off by default so pages run at the display's full rate. Can be set before
+/// or after initializing.
+@property (class, nonatomic) BOOL energySaverEnabled;
 /// Runs the Cocoa event loop with CEF integrated. Returns after quit.
 + (void)runMessageLoop;
 /// Closes every browser, then ends the message loop.
@@ -66,6 +74,8 @@ NS_SWIFT_UI_ACTOR
 /// Asked before each main-frame navigation; the script runs at document start
 /// in every new document until the next navigation.
 - (nullable NSString *)browser:(KCBrowser *)browser documentStartScriptForURL:(NSURL *)url;
+/// Find-in-page results; `activeMatch` is 1-based. Arrives several times per search.
+- (void)browser:(KCBrowser *)browser findResultCount:(int)count activeMatch:(int)activeMatch final:(BOOL)final;
 @end
 
 /// One Chromium browser (one tab), hosted in `view`.
@@ -88,12 +98,18 @@ NS_SWIFT_UI_ACTOR
 - (void)goBack;
 - (void)goForward;
 - (void)reload;
+- (void)reloadIgnoringCache;
 - (void)stopLoading;
 - (void)focus;
 /// Tells Chromium the tab is offscreen so it throttles rendering and timers.
 - (void)setHidden:(BOOL)hidden;
 /// Opens Chrome DevTools in its own window.
 - (void)showDevTools;
+/// `findNext` continues through the same search; results arrive on the delegate.
+- (void)find:(NSString *)text forward:(BOOL)forward findNext:(BOOL)findNext;
+- (void)stopFinding;
+/// Chromium's print dialog for the page.
+- (void)print;
 /// Chromium's auto dark mode for this tab's pages.
 - (void)setForceDark:(BOOL)enabled;
 /// Runs JavaScript in the main frame via the DevTools protocol. `result` is the
@@ -103,6 +119,11 @@ NS_SWIFT_UI_ACTOR
 - (void)executeDevToolsMethod:(NSString *)method
                        params:(nullable NSDictionary<NSString *, id> *)params
                    completion:(nullable void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result))completion;
+/// Like executeDevToolsMethod, but a failure comes back as the protocol's error
+/// message. `error` is "not-ready" until the browser exists.
+- (void)callDevToolsMethod:(NSString *)method
+                    params:(nullable NSDictionary<NSString *, id> *)params
+                completion:(void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result, NSString * _Nullable error))completion;
 - (void)close;
 @end
 

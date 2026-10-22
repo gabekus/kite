@@ -17,12 +17,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     let store: BrowserStore
-    private let pool: PagePool
+    let pool: PagePool
     private let adblocker: Adblocker
     private let rootView = RootView()
     private let themeView = ThemeView()
     private let glowView = GlowView(margin: Layout.glowMargin)
-    private let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
+    let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
     private let contentClip = NSView()
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
@@ -35,7 +35,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     private var shownTabID: UUID?
     private var shownSpaceID: UUID?
-    private weak var shownPage: WebPage?
+    private(set) weak var shownPage: WebPage?
     /// Last dark-pages setting sent to each page, so it's only re-sent on change.
     private var appliedDark: [UUID: Bool] = [:]
     private var commandBarVisible = false
@@ -212,6 +212,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         glowView.setTheme(space.theme)
         sidebarHost.appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
         shownSpaceID = space.id
+        // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
+        let title = state.selectedTab?.title ?? ""
+        window?.title = title.isEmpty ? space.name : title
 
         let selected = state.selectedTab
         if selected?.id != shownTabID {
@@ -228,6 +231,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     private func show(_ tab: BrowserTab?) {
+        hideFindBar()
         shownPage?.view.removeFromSuperview()
         shownPage = nil
         shownTabID = tab?.id
@@ -405,6 +409,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let tab = store.state.selectedTab
             item.state = store.state.blocksAds(on: tab?.url) ? .on : .off
             return Adblocker.isAvailable && tab?.url?.host() != nil
+        case #selector(togglePin(_:)):
+            let pinned = store.state.selectedTab.flatMap { store.state.location(of: $0.id) }?.section == .pinned
+            item.title = pinned ? "Unpin Tab" : "Pin Tab"
+            return store.state.selectedTab != nil
+        case #selector(selectSpaceNumber(_:)):
+            // Arc lists only the spaces that exist, by name.
+            let spaces = store.state.spaces
+            let exists = spaces.indices.contains(item.tag - 1)
+            item.isHidden = !exists
+            guard exists else { return false }
+            item.title = "\(spaces[item.tag - 1].icon) \(spaces[item.tag - 1].name)"
+        case #selector(toggleStayOnTop(_:)):
+            item.state = window?.level == .floating ? .on : .off
+        case #selector(setAsDefaultBrowser(_:)):
+            item.state = Self.isDefaultBrowser ? .on : .off
+        case #selector(share(_:)), #selector(savePageAs(_:)),
+             #selector(clearCookiesAndRefresh(_:)), #selector(clearCacheAndRefresh(_:)):
+            return store.state.selectedTab?.url != nil
+        case #selector(stopLoading(_:)):
+            return shownPage?.isLoading ?? false
+        case #selector(toggleFullScreenMode(_:)):
+            item.title = window?.styleMask.contains(.fullScreen) == true ? "Exit Full Screen" : "Enter Full Screen"
         default:
             break
         }

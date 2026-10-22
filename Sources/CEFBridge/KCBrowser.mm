@@ -84,6 +84,7 @@ class KCClient : public CefClient,
                  public CefLoadHandler,
                  public CefRequestHandler,
                  public CefDownloadHandler,
+                 public CefFindHandler,
                  public CefDevToolsMessageObserver {
  public:
     explicit KCClient(KCBrowser* owner) : owner_(owner), adblock_(KCAdblockRequestHandler(owner)) {}
@@ -93,6 +94,7 @@ class KCClient : public CefClient,
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
     CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+    CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
 
     // CefLifeSpanHandler
 
@@ -231,6 +233,16 @@ class KCClient : public CefClient,
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
     }
 
+    // CefFindHandler
+
+    void OnFindResult(CefRefPtr<CefBrowser> browser, int identifier, int count, const CefRect& selectionRect,
+                      int activeMatchOrdinal, bool finalUpdate) override {
+        id<KCBrowserDelegate> delegate = owner_.delegate;
+        if ([delegate respondsToSelector:@selector(browser:findResultCount:activeMatch:final:)]) {
+            [delegate browser:owner_ findResultCount:count activeMatch:activeMatchOrdinal final:finalUpdate];
+        }
+    }
+
     // CefDevToolsMessageObserver
 
     void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser, int message_id, bool success,
@@ -258,7 +270,7 @@ class KCClient : public CefClient,
     double _zoomFactor;
     BOOL _closed;
     int _nextMessageID;
-    std::map<int, void (^)(NSDictionary*)>* _pendingDevTools;
+    std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
     NSInteger _blockedCount;
     BOOL _blockedCountPending;
     /// Page.addScriptToEvaluateOnNewDocument identifiers to remove at the next navigation.
@@ -289,7 +301,7 @@ class KCClient : public CefClient,
         _delegate = delegate;
         _zoomFactor = 1;
         _nextMessageID = 1000;
-        _pendingDevTools = new std::map<int, void (^)(NSDictionary*)>();
+        _pendingDevTools = new std::map<int, void (^)(NSDictionary*, NSString*)>();
         _documentScripts = [NSMutableArray array];
     }
     return self;
@@ -349,6 +361,7 @@ class KCClient : public CefClient,
 - (void)goBack { if (_browser) _browser->GoBack(); }
 - (void)goForward { if (_browser) _browser->GoForward(); }
 - (void)reload { if (_browser) _browser->Reload(); }
+- (void)reloadIgnoringCache { if (_browser) _browser->ReloadIgnoreCache(); }
 - (void)stopLoading { if (_browser) _browser->StopLoad(); }
 
 - (void)focus {
@@ -378,6 +391,18 @@ class KCClient : public CefClient,
     _browser->GetHost()->ShowDevTools(windowInfo, nullptr, settings, CefPoint());
 }
 
+- (void)find:(NSString*)text forward:(BOOL)forward findNext:(BOOL)findNext {
+    if (_browser) _browser->GetHost()->Find(text.UTF8String, forward, false, findNext);
+}
+
+- (void)stopFinding {
+    if (_browser) _browser->GetHost()->StopFinding(true);
+}
+
+- (void)print {
+    if (_browser) _browser->GetHost()->Print();
+}
+
 - (void)setForceDark:(BOOL)enabled {
     [self executeDevToolsMethod:@"Emulation.setAutoDarkModeOverride"
                          params:enabled ? @{@"enabled": @YES} : @{}
@@ -399,26 +424,41 @@ class KCClient : public CefClient,
 - (void)executeDevToolsMethod:(NSString*)method
                        params:(NSDictionary<NSString*, id>*)params
                    completion:(void (^)(NSDictionary*))completion {
+    [self callDevToolsMethod:method params:params completion:^(NSDictionary* result, NSString*) {
+        if (completion) completion(result);
+    }];
+}
+
+- (void)callDevToolsMethod:(NSString*)method
+                    params:(NSDictionary<NSString*, id>*)params
+                completion:(void (^)(NSDictionary*, NSString*))completion {
     if (!_browser) {
-        if (completion) completion(nil);
+        completion(nil, @"not-ready");
         return;
     }
     int messageID = _nextMessageID++;
-    if (completion) (*_pendingDevTools)[messageID] = [completion copy];
+    (*_pendingDevTools)[messageID] = [completion copy];
     CefRefPtr<CefDictionaryValue> cefParams = params.count ? ToCefValue(params)->GetDictionary() : nullptr;
     if (_browser->GetHost()->ExecuteDevToolsMethod(messageID, method.UTF8String, cefParams) == 0) {
         _pendingDevTools->erase(messageID);
-        if (completion) completion(nil);
+        completion(nil, @"Chromium couldn't send the DevTools message.");
     }
 }
 
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData*)data {
     auto it = _pendingDevTools->find(messageID);
     if (it == _pendingDevTools->end()) return;
-    void (^completion)(NSDictionary*) = it->second;
+    void (^completion)(NSDictionary*, NSString*) = it->second;
     _pendingDevTools->erase(it);
-    id json = success ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-    completion([json isKindOfClass:NSDictionary.class] ? json : nil);
+    id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    NSDictionary* object = [json isKindOfClass:NSDictionary.class] ? json : nil;
+    if (success) {
+        completion(object, object ? nil : @"Unreadable DevTools result.");
+    } else {
+        // Failures carry the protocol's {code, message}.
+        NSString* message = [object[@"message"] isKindOfClass:NSString.class] ? object[@"message"] : @"DevTools method failed.";
+        completion(nil, message);
+    }
 }
 
 - (NSInteger)blockedCount {

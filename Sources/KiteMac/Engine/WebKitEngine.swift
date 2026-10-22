@@ -21,12 +21,31 @@ final class WebKitEngine: WebEngine {
         configuration.preferences.isElementFullscreenEnabled = true
         configuration.preferences.isFraudulentWebsiteWarningEnabled = true
         configuration.allowsAirPlayForMediaPlayback = true
+        Self.allowFullRefreshRate(configuration.preferences)
         self.configuration = configuration
     }
 
     func attach(_ adblocker: Adblocker) {
         guard Adblocker.isAvailable else { return }
         contentRules = WebKitContentRules(adblocker: adblocker)
+    }
+
+    /// WebKit holds pages near 60fps unless its internal "Prefer Page Rendering
+    /// Updates near 60fps" feature is off. It's private API, so look it up
+    /// defensively and leave WebKit alone if it's missing.
+    private static func allowFullRefreshRate(_ preferences: WKPreferences) {
+        let features = NSSelectorFromString("_features")
+        let setEnabled = NSSelectorFromString("_setEnabled:forFeature:")
+        guard WKPreferences.responds(to: features), preferences.responds(to: setEnabled),
+              let list = WKPreferences.perform(features)?.takeUnretainedValue() as? [NSObject],
+              let feature = list.first(where: {
+                  $0.responds(to: NSSelectorFromString("key"))
+                      && $0.value(forKey: "key") as? String == "PreferPageRenderingUpdatesNear60FPSEnabled"
+              })
+        else { return }
+        typealias SetEnabled = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+        let set = unsafeBitCast(preferences.method(for: setEnabled), to: SetEnabled.self)
+        set(preferences, setEnabled, false, feature)
     }
 
     func makePage(url: URL?, restoring state: Any?) -> WebPage {
@@ -86,6 +105,7 @@ final class WebKitPage: NSObject, WebPage {
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
     func reload() { webView.reload() }
+    func reloadIgnoringCache() { webView.reloadFromOrigin() }
     func stopLoading() { webView.stopLoading() }
     func focus() { webView.window?.makeFirstResponder(webView) }
     // WebKit throttles views that aren't in a window on its own.
@@ -94,6 +114,42 @@ final class WebKitPage: NSObject, WebPage {
     func showDevTools() {}
     // No public force-dark API in WebKit.
     func setForceDark(_ enabled: Bool) {}
+
+    func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
+        let configuration = WKFindConfiguration()
+        configuration.backwards = !forward
+        configuration.caseSensitive = false
+        configuration.wraps = true
+        webView.find(text, configuration: configuration) { completion(FindResult(found: $0.matchFound)) }
+    }
+
+    func stopFinding() {
+        webView.evaluateJavaScript("getSelection().removeAllRanges()")
+    }
+
+    func archive(completion: @escaping (Data?, String) -> Void) {
+        webView.createWebArchiveData { completion(try? $0.get(), "webarchive") }
+    }
+
+    func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void) {
+        guard let host = url.host() else { return completion() }
+        let store = webView.configuration.websiteDataStore
+        let types: Set<String> = kind == .cookies
+            ? [WKWebsiteDataTypeCookies]
+            : [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache]
+        store.fetchDataRecords(ofTypes: types) { records in
+            // Records are grouped by registrable domain ("example.com" covers "www.example.com").
+            let matching = records.filter { host == $0.displayName || host.hasSuffix("." + $0.displayName) }
+            store.removeData(ofTypes: types, for: matching, completionHandler: completion)
+        }
+    }
+
+    func printPage() {
+        guard let window = webView.window else { return }
+        let operation = webView.printOperation(with: .shared)
+        operation.view?.frame = webView.bounds
+        operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+    }
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
         webView.evaluateJavaScript(script) { result, _ in completion(result) }

@@ -59,6 +59,11 @@ if hasCEF {
     macDependencies.append("CEFBridge")
 }
 
+// The `kite` CLI and MCP server. Built as kite-cli: a "kite" binary would collide
+// with "Kite" on a case-insensitive disk. bundle-app.sh installs it as Contents/Helpers/kite.
+targets.append(.executableTarget(name: "KiteCLI", dependencies: ["KiteCore"]))
+products.append(.executable(name: "kite-cli", targets: ["KiteCLI"]))
+
 targets.append(
     .executableTarget(
         name: "KiteMac",
