@@ -40,7 +40,32 @@ Fallback if the off-screen path is too costly: windowed CEF (child HWND), with
 any overlays in separate layered top-level windows. That's simpler but less
 flexible.
 
-## Order of work
+## Refresh rate
+
+Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to
+500Hz gaming panels), with no 60fps caps, and draws nothing while idle. On
+Windows that means:
+
+- **Chromium off-screen is capped by default.** CEF's `windowless_frame_rate`
+  defaults to 30fps. Rather than raising it to a fixed number, set
+  `external_begin_frame_enabled` and call
+  `CefBrowserHost::SendExternalBeginFrame` from our own vsync clock instead, so
+  the page renders at the panel's rate and stops when nothing changes (only send
+  begin frames while the page has damage or animations).
+- **Our vsync clock** comes from DirectComposition: `DCompositionWaitForCompositorClock`
+  (Windows 11) or `IDXGIOutput::WaitForVBlank` on the output the window is on,
+  on a dedicated thread. It must follow the window to another monitor
+  (`WM_DISPLAYCHANGE`, `WM_DPICHANGED`, `MonitorFromWindow`), the same way the
+  macOS `FrameClock` follows `NSScreen`.
+- **Swap chains** are flip-model (`DXGI_SWAP_EFFECT_FLIP_DISCARD`) composition
+  swap chains with a frame-latency waitable object, so frames present on the
+  next vblank of a high-refresh or variable-refresh (G-Sync/FreeSync) display
+  without tearing. Present with sync interval 1; never block a 500Hz display on
+  a 60Hz timer.
+- **Windows.UI.Composition animations** already run at the compositor's rate.
+- The windowed CEF fallback (child HWND) renders at the monitor's rate on its own.
+
+
 
 1. CI: KiteCore builds and tests on `windows-latest` (done; see `.github/workflows/ci.yml`).
 2. Spike: Swift + CEF off-screen + D3D11 shared texture in a bare window,

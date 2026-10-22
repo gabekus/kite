@@ -73,6 +73,8 @@ enum MainMenu {
             item("Open Claude’s Tabs in a Claude Space", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),
             item("Connect Claude Code…", #selector(AppDelegate.connectClaudeCode(_:)), toTarget: false),
             item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:))),
+            // Until there's a Settings window.
+            item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
             .separator(),
             item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false),
