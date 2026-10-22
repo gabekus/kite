@@ -21,7 +21,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let rootView = RootView()
     private let themeView = ThemeView()
     private let glowView = GlowView(margin: Layout.glowMargin)
-    private let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
+    let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
     private let contentClip = NSView()
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()

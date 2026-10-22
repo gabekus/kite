@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: BrowserStore!
     private var windowController: BrowserWindowController!
     private var archiveTimer: Timer?
+    private var automation: AutomationController!
     /// Links opened before launch finished (Kite as the default browser).
     private var pendingURLs: [URL] = []
 
@@ -33,6 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
         NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
         windowController.showWindow(nil)
+
+        automation = AutomationController(store: store, supportDirectory: Self.supportDirectory)
+        automation.host = windowController
+        windowController.installAutomationBanner(automation)
+        automation.start()
         NSApp.activate(ignoringOtherApps: true)
         open(pendingURLs)
         pendingURLs = []
@@ -62,9 +68,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         saveSession()
+        automation?.shutdown()
     }
 
     func saveSession() {
         store?.saveNow()
+    }
+
+    // MARK: Claude
+
+    @objc func toggleClaudeControl(_ sender: Any?) {
+        let enable = !automation.isEnabled
+        automation.setEnabled(enable)
+        guard enable, automation.isEnabled else { return }
+        let alert = NSAlert()
+        alert.messageText = "Claude can now control Kite"
+        alert.informativeText = """
+            To connect Claude Code, run:
+
+            \(automation.claudeCodeCommand)
+
+            Kite asks you before Claude submits a form, sends, posts, pays, buys or deletes anything, and shows \
+            when Claude is controlling a tab. Turn this off in the Kite menu at any time.
+            """
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Copy Command")
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(automation.claudeCodeCommand, forType: .string)
+        }
+    }
+}
+
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleClaudeControl(_:)) {
+            item.state = automation?.isEnabled == true ? .on : .off
+            return automation != nil
+        }
+        return true
     }
 }

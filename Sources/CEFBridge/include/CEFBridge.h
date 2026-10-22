@@ -97,6 +97,11 @@ NS_SWIFT_UI_ACTOR
 - (void)executeDevToolsMethod:(NSString *)method
                        params:(nullable NSDictionary<NSString *, id> *)params
                    completion:(nullable void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result))completion;
+/// Like executeDevToolsMethod, but a failure comes back as the protocol's error
+/// message. `error` is "not-ready" until the browser exists.
+- (void)callDevToolsMethod:(NSString *)method
+                    params:(nullable NSDictionary<NSString *, id> *)params
+                completion:(void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result, NSString * _Nullable error))completion;
 - (void)close;
 @end
 

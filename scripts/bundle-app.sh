@@ -16,6 +16,10 @@ CONTENTS="$APP/Contents"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources/Shaders" "$CONTENTS/Frameworks"
 cp "$BIN/Kite" "$CONTENTS/MacOS/Kite"
+# The `kite` CLI / MCP server (claude mcp add kite -- …/Kite.app/Contents/Helpers/kite mcp).
+swift build -c "$CONFIG" --product kite-cli
+mkdir -p "$CONTENTS/Helpers"
+cp "$BIN/kite-cli" "$CONTENTS/Helpers/kite"
 cp Resources/Info.plist "$CONTENTS/Info.plist"
 cp Sources/KiteMac/Shaders/*.metal "$CONTENTS/Resources/Shaders/"
 
@@ -62,6 +66,7 @@ if [[ -z "$SIGN_ID" ]]; then
     SIGN_ID="-"
     echo "note: ad-hoc signing, so the keychain will ask again after each rebuild (run scripts/make-signing-cert.sh once to fix)"
 fi
+codesign --force --sign "$SIGN_ID" "$CONTENTS/Helpers/kite"
 for helper in "$CONTENTS/Frameworks/"*.app; do
     [[ -e "$helper" ]] && codesign --force --sign "$SIGN_ID" "$helper"
 done
