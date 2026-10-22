@@ -114,9 +114,7 @@ bool KCRuntimeIsQuitting() {
     CefMainArgs mainArgs((int)argv.size(), argv.data());
 
     CefSettings cefSettings;
-    // TODO(security): enable the Chromium sandbox before Kite is a daily driver.
-    // The minimal CEF distribution doesn't ship the sandbox library.
-    cefSettings.no_sandbox = true;
+    // The Chromium sandbox is on: each helper enters it in KiteHelper/main.mm.
     cefSettings.remote_debugging_port = settings.remoteDebuggingPort;
     cefSettings.log_severity = LOGSEVERITY_WARNING;
     cefSettings.persist_session_cookies = true;

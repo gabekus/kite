@@ -73,8 +73,10 @@ Also done and checked in the running app with a scratch profile:
 Still open: what "⌘L should be split view by default" means.
 
 Known gaps and risks:
-- **Chromium sandbox is OFF** (`cefSettings.no_sandbox = true` in `KCRuntime.mm`). The minimal CEF
-  distribution lacks the sandbox library. **Top priority before daily use.**
+- The Chromium sandbox is on: each helper enters it with `CefScopedSandboxContext` in `KiteHelper/main.mm`,
+  which loads `libcef_sandbox.dylib` from the framework's `Libraries/` (the minimal distribution ships it;
+  CEF 156 has no `libcef_sandbox.a`). `chrome://sandbox` doesn't exist in CEF; check helpers with
+  `sandbox_check(pid, NULL, 0)` instead.
 - No Chrome extensions (Alloy style).
 - CEF tab hibernation loses back/forward history (WebKit restores `interactionState`).
 - Media "busy" detection on Chromium uses a JS check of `<video>/<audio>` plus `OnMediaAccessChange` (camera/mic); CEF has no "audible" API.
@@ -249,7 +251,7 @@ swaps the shown page, theme, command bar and sidebar. Page events flow from the 
 ## 8. Roadmap (priority order; see docs/roadmap.md)
 
 1. **First commit** (pending Gabe's OK). The Arc import UI, favorites, folders, resizable sidebar and dark-pages toggle are done.
-2. **Chromium sandbox** on: the standard CEF distribution's sandbox library plus `CefScopedSandboxContext` in the helper.
+2. ~~**Chromium sandbox**~~ done: `CefScopedSandboxContext` in the helper.
 3. Re-import support up to Dec 22 (already idempotent by Arc UUIDs). The remaining Arc data: history and bookmarks from Arc's Chromium profile, and Arc's installed PWAs.
 4. **Claude in the browser**:
    - A local MCP server plus a `kite` CLI, so Claude Code or Desktop drives real tabs on Gabe's own plan. Tools: list tabs, read page (`Runtime.evaluate` / DOM / accessibility tree via CDP), click, type, navigate, screenshot.

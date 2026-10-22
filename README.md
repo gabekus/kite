@@ -21,7 +21,7 @@ and drops the account wall.
 | Favorites grid, pinned folders, resizable sidebar | ✅ |
 | Import spaces, pinned tabs, folders, favorites and themes from Arc (File menu) | ✅ |
 | Dark pages: moon in the address bar per site, plus Off / Match System / Always | ✅ (Chromium) |
-| Chromium sandbox | ❌ **not yet, so don't use Kite as your main browser** |
+| Chromium sandbox (renderer, GPU and utility processes) | ✅ |
 | Everything else | see [docs/roadmap.md](docs/roadmap.md) |
 
 ## Build
