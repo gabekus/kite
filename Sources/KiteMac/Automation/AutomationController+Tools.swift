@@ -223,6 +223,14 @@ extension AutomationController {
         // Coordinates come from screenshots, which may be scaled down; the page wants CSS pixels.
         let scale = try await actions.screenshotScale()
 
+        /// How a location reads back to Claude: the screenshot coordinates it sent, or the element.
+        func describe(_ location: ComputerAction.Location) -> String {
+            switch location {
+            case .point(let shown): "(\(Self.format(shown.x)), \(Self.format(shown.y)))"
+            case .target(let target): Self.name(target)
+            }
+        }
+
         /// A location's point, plus the element there for the policy.
         func resolve(_ location: ComputerAction.Location) async throws -> (ViewportPoint, LocatedElement?) {
             switch location {
@@ -250,11 +258,11 @@ extension AutomationController {
                 }
             }
             await settle(tab.id)
-            return report("\(button == .left ? "" : button.rawValue.capitalized + "-")\(["", "C", "Double-c", "Triple-c"][count])licked at (\(Int(point.x)), \(Int(point.y))).", tab.id)
+            return report("\(button == .left ? "" : button.rawValue.capitalized + "-")\(["", "C", "Double-c", "Triple-c"][count])licked \(location.isPoint ? "at " : "")\(describe(location)).", tab.id)
         case .hover(let location):
             let (point, _) = try await resolve(location)
             try await actions.hover(point)
-            return report("Moved the pointer to (\(Int(point.x)), \(Int(point.y))).", tab.id)
+            return report("Moved the pointer to \(describe(location)).", tab.id)
         case let .scroll(location, direction, amount):
             var point: ViewportPoint?
             if let location { point = try await resolve(location).0 }
@@ -263,7 +271,7 @@ extension AutomationController {
             return report("Scrolled \(direction.rawValue) \(amount).", tab.id)
         case let .drag(from, to):
             try await actions.drag(from: scale.toPage(from), to: scale.toPage(to))
-            return report("Dragged from (\(Int(from.x)), \(Int(from.y))) to (\(Int(to.x)), \(Int(to.y))).", tab.id)
+            return report("Dragged from \(describe(.point(from))) to \(describe(.point(to))).", tab.id)
         case let .key(chords, times):
             let focused = try await actions.focusedElement()
             try await authorize(.keys(chords, focused: focused?.description), tab: tab)
@@ -545,6 +553,11 @@ extension AutomationController {
         }
     }
 
+    /// A coordinate as Claude sent it: whole numbers without a decimal point.
+    static func format(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
     static func keyName(_ chord: KeyChord) -> String {
         var parts: [String] = []
         if chord.modifiers.contains(.control) { parts.append("ctrl") }
@@ -552,5 +565,12 @@ extension AutomationController {
         if chord.modifiers.contains(.shift) { parts.append("shift") }
         if chord.modifiers.contains(.meta) { parts.append("cmd") }
         return (parts + [chord.key == " " ? "Space" : chord.key]).joined(separator: "+")
+    }
+}
+
+private extension ComputerAction.Location {
+    var isPoint: Bool {
+        if case .point = self { return true }
+        return false
     }
 }
