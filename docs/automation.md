@@ -1,68 +1,153 @@
 # Claude in the browser: MCP server and `kite` CLI
 
-Claude Code (or any MCP client) can drive real Kite tabs on the user's own Claude plan.
+Claude Code (or any MCP client) can drive real Kite tabs on the user's own Claude plan, the way Claude in Chrome
+drives Chrome.
+
+**Connect:** Kite menu → **Connect Claude Code…** turns control on and asks once. It then:
+- links `kite` into `~/.local/bin`;
+- runs `claude mcp add -s user kite -- …/Kite.app/Contents/Helpers/kite mcp`.
+
+The same sheet can copy a `claude_desktop_config.json` snippet for Claude Desktop. By hand:
 
 ```bash
-# Kite menu → Allow Claude to Control the Browser (off by default), then:
-claude mcp add kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
+claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 ```
 
-The app shows the exact command, including `-e KITE_SUPPORT_PATH=…` when it runs on a test profile, when you turn the setting on.
+**Transport.** MCP over stdio (`kite mcp`), then the app's Unix socket, then in-process DevTools calls
+(`ExecuteDevToolsMethod`). Kite never opens a remote-debugging port for this.
 
-## Tools
+## Tools, and their Claude in Chrome equivalents
 
-| MCP tool | CLI | What it does |
-|---|---|---|
-| `list_tabs` | `kite tabs` | Tab ids, titles, URLs, which is in front |
-| `read_page` | `kite read [--tab ID] [--max N]` | URL, title, accessibility outline with refs (`e42`), page text |
-| `click` | `kite click REF \| --selector CSS` | Real mouse events at the element's center (DOM click if it's covered) |
-| `type` | `kite type TEXT [--ref R \| --selector S] [--submit]` | Focus, select, `Input.insertText`, optional Return |
-| `navigate` | `kite open URL [--here \| --tab ID]` | New background tab by default in the CLI; waits for the load |
-| `screenshot` | `kite screenshot [-o FILE]` | PNG of the tab's viewport (works for background tabs) |
+| Claude in Chrome | Kite tool | CLI | Notes |
+|---|---|---|---|
+| `tabs_context_mcp` | `tabs_context` | `kite tabs` | Every tab in every space, with ids, URLs, space, front. |
+| `tabs_create_mcp` | `tabs_create` | `kite open URL` | Background by default. `space: "claude"` opens it in a Claude space. |
+| `tabs_close_mcp` | `tabs_close` | `kite call tabs_close` | Asks first if Claude didn't open the tab. |
+| (switch tab) | `switch_tab` | | |
+| `navigate` | `navigate` | `kite open URL --here` | Also `"back"` / `"forward"`. Waits for the load. |
+| `resize_window` | `resize_window` | | Points. |
+| `read_page` | `read_page` | `kite read [--interactive]` | Outline with refs, same-site iframes included, then page text. |
+| `find` | `find` | `kite find QUERY` | Word and role matching, not a model. Returns refs. |
+| `get_page_text` | `get_page_text` | `kite text` | `<article>` or `<main>` when present. |
+| `computer` | `computer` | `kite key KEYS` | See below. |
+| `form_input` | `form_input` | | Text, checkbox/radio (true/false), `<select>` by option text or value. |
+| `javascript_tool` | `javascript` | `kite js CODE` | Asks every time unless "Allow Claude to Run JavaScript Without Asking" is on. |
+| `read_console_messages` | `read_console_messages` | `kite console [--errors]` | Regex `pattern`, `only_errors`, `clear`. |
+| `read_network_requests` | `read_network_requests` | `kite network` | Regex `url_pattern`, `clear`. |
+| `upload_image` / `file_upload` | `upload_file` | | Paths on this Mac. The sheet lists them first. |
+| (none) | `click`, `type`, `screenshot` | `kite click/type/screenshot` | Kept from the first version. |
+| (none) | `wait_for` | | load, navigation, selector, text, network_idle. Event-driven. |
+| (none) | `handle_dialog` | | alert / confirm / prompt / beforeunload. |
+| (none) | `list_downloads` | | Downloads since control was turned on. |
+| (none) | `list_spaces`, `switch_space`, `create_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces` | Kite's own organization. |
+| `gif_creator`, `shortcuts_*`, `switch_browser` | not yet | | |
 
-Without a tab id, tools act on the tab in front. Background tabs are driven without switching to them.
+`kite call TOOL '{json}'` reaches any tool. `kite tools` lists them all. The old names `list_tabs`,
+`tabs_*_mcp` and `javascript_tool` still work.
+
+### `computer`
+
+Actions:
+- `screenshot`;
+- `left_click`, `right_click`, `middle_click`, `double_click`, `triple_click` (at `coordinate` or a `ref`, with `modifiers`);
+- `hover`;
+- `scroll` (`scroll_direction`, `scroll_amount`);
+- `left_click_drag`;
+- `key` (`"Enter"`, `"cmd+a Backspace"`, `repeat`);
+- `type`;
+- `wait` (up to 30 s);
+- `zoom` (`region` `[x0, y0, x1, y1]`, returned at full resolution).
+
+Screenshots have one pixel per CSS pixel of the viewport, so a pixel in the screenshot is the coordinate to click.
+
+How the actions run:
+- **Pointer and keys:** mouse and key events go through `Input.dispatchMouseEvent` / `dispatchKeyEvent`. ⌘
+  shortcuts carry their macOS editing command (`selectAll`, `copy` and so on), which Chromium needs to act on them.
+- **Scrolling:** done in the page (the scrollable element under the point), because a background tab never
+  acknowledges wheel events.
+- **Background tabs:** everything works on background tabs without switching to them. Only a confirmation sheet
+  brings a tab forward.
+
+## Safety
+
+- **Off by default.** The setting is stored per profile in `<profile>/automation.json` (`allowClaudeControl`,
+  `allowJavaScript`, `useClaudeSpace`). While it's off there's no socket, and no DevTools events are collected.
+- **Local only.** A Unix socket at `<profile>/Automation/kite.sock`. Its folder is 0700 and the socket 0600, and the
+  peer uid is checked.
+- **Confirmation sheet.** Kite selects the tab and asks. Deny is the default button; after 2 minutes the answer is
+  Deny. A denial comes back to Claude as a tool error. Kite asks before:
+  - submitting a form;
+  - clicking a control whose text, id or name says send / post / pay / buy / order / checkout / delete / confirm and
+    similar. This includes `computer` clicks at a coordinate: the point is hit-tested and the control there is
+    classified the same way. Clicks into another site's iframe always ask.
+  - Return (or Space) on such a button;
+  - Return in a text field, except search boxes. ⌘/Ctrl-Return counts too.
+  - typing or `form_input` into password, card, one-time-code and similar fields;
+  - running JavaScript, unless the user allowed it in the menu;
+  - uploading files;
+  - answering OK to a `confirm`, `prompt` or leave-page dialog;
+  - closing a tab Claude didn't open;
+  - opening `file:` URLs.
+
+  Other non-web schemes are refused.
+- **Untrusted content.** Everything a page controls comes back inside `<untrusted-page-content>` blocks that pages
+  can't close early:
+  - titles, URLs and page text;
+  - the outline and `find` results;
+  - console and network logs;
+  - JavaScript results;
+  - dialog messages;
+  - form values.
+- **Indicator.** A "Claude is controlling this tab" pill floats over the page, with Show and **Stop**. Stop revokes
+  the tab: it ends its event collection and fails pending confirmations and waits.
+
+## Events, waits and dialogs
+
+When Claude first touches a tab, Kite enables the Page, Runtime, Log and Network domains for that tab. `TabActivity`
+(in KiteCore) keeps up to 1,000 console messages and 1,000 requests per tab, plus any open dialog and the in-flight
+count. All of it is dropped when the tab closes, the user presses Stop, or control is turned off.
+
+How `wait_for` waits, without polling:
+- **load and navigation:** `Page.loadEventFired` and `Page.frameNavigated` events;
+- **network_idle:** nothing in flight for 0.5 s;
+- **selector and text:** a `MutationObserver` inside the page.
+
+How dialogs work:
+- A page with a JavaScript dialog open is frozen. Tools other than `handle_dialog`, `screenshot` and the logs report
+  the dialog instead of hanging.
+- An action that opens a dialog returns as soon as it opens.
+- CEF also shows its own native dialog. If the user answers that one, the tab unfreezes for Claude too.
 
 ## Pieces
 
 - `Sources/KiteCore/Automation/` (Foundation only, unit tested):
-  - `AutomationCommand`: the tools, their argument parsing and JSON Schemas.
-  - `MCPServer`: the JSON-RPC/MCP handling (initialize, tools/list, tools/call, ping).
-  - `AutomationWire`: the socket's line protocol and `LineBuffer`.
-  - `AutomationPolicy`: which actions need the user's OK.
-  - `UntrustedContent`: wraps page-derived text.
-  - `AccessibilityOutline`: CDP AX tree → outline with refs.
-  - `AutomationReport`: formats tool results; also holds `AutomationSettings`.
-- `Sources/KiteCLI/main.swift`: the `kite` CLI and `kite mcp` (stdio ↔ app socket). Built as `kite-cli`, installed as
-  `Kite.app/Contents/Helpers/kite` (a `kite` binary would collide with `Kite` on a case-insensitive disk).
+  - `AutomationCommand` and `AutomationTools`: the tools, their arguments and schemas.
+  - `KeyChord`: key names to DevTools key events.
+  - `AutomationPolicy`: what needs confirmation.
+  - `ElementFinder`: `find`.
+  - `TabActivity`: console, network, dialogs and idleness.
+  - `AccessibilityOutline`, `UntrustedContent`, `MCPServer`, `AutomationWire`, `AutomationReport`.
+- `Sources/KiteCore/BrowserState+Automation.swift` holds the additions behind the Kite tools: background spaces, the
+  Claude space, folders and moving tabs into them. Nothing in it changes existing mutations.
+- `Sources/KiteCLI/main.swift`: the `kite` CLI and `kite mcp`. It's built as `kite-cli` and installed as
+  `Kite.app/Contents/Helpers/kite`.
 - `Sources/KiteMac/Automation/`:
+  - `AutomationController` (+`Tools`): runs the tools, confirmations, Stop, events and waits.
+  - `ChromiumAutomation`: the DevTools calls.
+  - `WebKitAutomation`: read and screenshot only.
   - `AutomationServer`: the socket.
-  - `AutomationController`: runs tools, confirmations, Stop, the setting.
-  - `ChromiumAutomation`: CDP through `ExecuteDevToolsMethod`.
-  - `WebKitAutomation`: read and screenshot only; click and type return "unsupported".
-  - `ClaudeControlBanner`: the "Claude is controlling this tab" pill with Stop.
-- `KCBrowser callDevToolsMethod:params:completion:` returns CDP's error message, not just nil.
-
-## Safety
-
-- **Local only.** The server is a Unix socket at `<profile>/Automation/kite.sock`:
-  - its folder is 0700 and the socket 0600;
-  - each connection's peer uid must match the user (`getpeereid`);
-  - there is no TCP listener.
-- **Off by default.** The setting is stored per profile in `<profile>/automation.json`. While it's off, no socket exists.
-- **Confirmation.** Kite asks before an action that could commit something on the user's behalf. Kite selects the tab and shows a sheet. Deny is the default button, and no answer within 2 minutes counts as Deny. A denial comes back to Claude as a tool error. Kite asks before:
-  - form submits;
-  - clicks on controls whose text, id or name says send / post / pay / buy / order / checkout / delete / confirm / …;
-  - typing into password, card, OTP and similar fields (the text is hidden in the sheet);
-  - typing with `submit`;
-  - opening `file:` URLs.
-
-  Non-web URL schemes (`javascript:`, `data:`, …) are refused.
-- **Untrusted content.** Page titles, URLs, text and the outline arrive inside `<untrusted-page-content>` blocks. Pages can't close a block early. The MCP `instructions` tell the model that this content is data.
-- **Indicator.** A banner shows while Claude drives a tab. It clears 2 minutes after the last command, or 15 seconds after the client disconnects. Stop revokes that tab until the setting is turned off and on.
+  - `ClaudeControlBanner`: the pill.
+  - `ClaudeConnect`: the Connect sheet.
+- `KCBrowser`:
+  - `callDevToolsMethod:params:completion:` returns DevTools errors;
+  - `devToolsEventHandler` delivers DevTools events;
+  - `KCDownloadDidUpdateNotification` reports downloads.
 
 ## Not done yet
 
-- Iframes: the outline and refs cover the main frame only.
-- WebKit click and type.
-- `<select>` choice by option text.
-- An in-app "Install `kite` command" option that symlinks the CLI onto PATH.
+- Cross-site (out-of-process) iframes can't be read; clicks into them ask first.
+- `find` matches words, not meaning.
+- No GIF recording, shortcuts, or browser switching.
+- Downloads are listed but can't be started, cancelled or redirected.
+- No split view or Peek tools: those features don't exist in Kite yet.
+- WebKit tabs can only be read and captured.

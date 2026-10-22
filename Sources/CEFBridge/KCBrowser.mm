@@ -13,10 +13,13 @@
 - (void)attachBrowser:(CefRefPtr<CefBrowser>)browser;
 - (void)browserDidClose;
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData *)data;
+- (void)deliverDevToolsEvent:(NSString *)method data:(NSData *)data;
 @property (nonatomic, readwrite) BOOL isLoading;
 @property (nonatomic, readwrite) BOOL canGoBack;
 @property (nonatomic, readwrite) BOOL canGoForward;
 @end
+
+NSString* const KCDownloadDidUpdateNotification = @"KCDownloadDidUpdateNotification";
 
 namespace {
 
@@ -204,6 +207,17 @@ class KCClient : public CefClient,
                            CefRefPtr<CefDownloadItem> download_item,
                            CefRefPtr<CefDownloadItemCallback> callback) override {
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
+        NSString* state = download_item->IsComplete() ? @"complete"
+            : download_item->IsCanceled() ? @"canceled"
+            : download_item->IsInterrupted() ? @"interrupted" : @"in-progress";
+        [NSNotificationCenter.defaultCenter postNotificationName:KCDownloadDidUpdateNotification object:owner_ userInfo:@{
+            @"id": @(download_item->GetId()),
+            @"url": ToNSString(download_item->GetOriginalUrl()),
+            @"path": ToNSString(download_item->GetFullPath()),
+            @"state": state,
+            @"receivedBytes": @(download_item->GetReceivedBytes()),
+            @"totalBytes": @(download_item->GetTotalBytes()),
+        }];
     }
 
     // CefFindHandler
@@ -222,6 +236,13 @@ class KCClient : public CefClient,
                                 const void* result, size_t result_size) override {
         NSData* data = [NSData dataWithBytes:result length:result_size];
         [owner_ deliverDevToolsResult:message_id success:success data:data];
+    }
+
+    void OnDevToolsEvent(CefRefPtr<CefBrowser> browser, const CefString& method,
+                         const void* params, size_t params_size) override {
+        KCBrowser* owner = owner_;
+        if (!owner.devToolsEventHandler) return;
+        [owner deliverDevToolsEvent:ToNSString(method) data:[NSData dataWithBytes:params length:params_size]];
     }
 
  private:
@@ -406,6 +427,11 @@ class KCClient : public CefClient,
         NSString* message = [object[@"message"] isKindOfClass:NSString.class] ? object[@"message"] : @"DevTools method failed.";
         completion(nil, message);
     }
+}
+
+- (void)deliverDevToolsEvent:(NSString*)method data:(NSData*)data {
+    id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (self.devToolsEventHandler) self.devToolsEventHandler(method, [json isKindOfClass:NSDictionary.class] ? json : @{});
 }
 
 - (void)close {

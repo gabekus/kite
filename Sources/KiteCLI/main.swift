@@ -15,12 +15,21 @@ let usage = """
 
     Usage:
       kite tabs                                      List open tabs
-      kite read [--tab ID] [--max N]                 Read a page: outline with refs, then its text
+      kite read [--tab ID] [--max N] [--interactive] Read a page: outline with refs, then its text
+      kite text [--tab ID] [--max N]                 The page's main text
+      kite find QUERY [--tab ID]                     Find elements ("search box") and their refs
       kite click (REF | --selector CSS) [--tab ID]   Click an element
       kite type TEXT [--ref REF | --selector CSS] [--submit] [--tab ID]
                                                      Type into an element (or the focused one)
+      kite key KEYS [--tab ID]                       Press keys, e.g. "cmd+a Backspace" or Enter
       kite open URL [--here | --tab ID]              Open URL in a new background tab (or navigate one)
       kite screenshot [--tab ID] [-o FILE]           Save a PNG of a tab
+      kite js CODE [--tab ID]                        Run JavaScript in the page (Kite asks first)
+      kite console [--tab ID] [--errors]             Console messages since Claude started driving the tab
+      kite network [--tab ID]                        Network requests since then
+      kite spaces                                    List spaces
+      kite call TOOL [JSON]                          Call any MCP tool, e.g. kite call computer '{"action":"scroll"}'
+      kite tools                                     List every tool
       kite mcp                                       Run as an MCP server on stdin/stdout
 
     Without --tab, commands act on the tab in front.
@@ -193,42 +202,76 @@ func socketPath(_ arguments: Arguments) -> String {
     return AutomationWire.socketURL(supportDirectory: support).path
 }
 
-func command(for name: String, _ args: Arguments) throws -> AutomationCommand {
+/// Turns a subcommand into a tool call: (tool name, arguments).
+func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.Tool, JSONValue) {
     var json: [String: JSONValue] = [:]
     if let tab = args.options["--tab"] { json["tab"] = .string(tab) }
     if let selector = args.options["--selector"] { json["selector"] = .string(selector) }
     if let ref = args.options["--ref"] { json["ref"] = .string(ref) }
+    if let max = args.options["--max"] {
+        guard let n = Int(max) else { throw CLIError("--max needs a number.") }
+        json["max_text_length"] = .number(Double(n))
+    }
+    func first(_ what: String) throws -> String {
+        guard let value = args.positional.first else { throw CLIError("kite \(name) needs \(what).") }
+        return value
+    }
     let tool: String
     switch name {
     case "tabs", "list":
-        tool = "list_tabs"
-        json = [:]
+        tool = "tabs_context"
     case "read":
         tool = "read_page"
-        if let max = args.options["--max"] {
-            guard let n = Int(max) else { throw CLIError("--max needs a number.") }
-            json["max_text_length"] = .number(Double(n))
-        }
+        if args.flags.contains("--interactive") { json["filter"] = "interactive" }
+    case "text":
+        tool = "get_page_text"
+    case "find":
+        tool = "find"
+        json["query"] = .string(try first("what to find"))
     case "click":
         tool = "click"
         if let ref = args.positional.first { json["ref"] = .string(ref) }
     case "type":
         tool = "type"
-        guard let text = args.positional.first else { throw CLIError("kite type needs the text to type.") }
-        json["text"] = .string(text)
+        json["text"] = .string(try first("the text to type"))
         if args.flags.contains("--submit") { json["submit"] = true }
+    case "key", "keys", "press":
+        tool = "computer"
+        json["action"] = "key"
+        json["text"] = .string(try first("the keys to press"))
     case "open", "navigate", "go":
         tool = "navigate"
-        guard let url = args.positional.first else { throw CLIError("kite open needs a URL.") }
-        json["url"] = .string(url)
+        json["url"] = .string(try first("a URL"))
         if args.options["--tab"] == nil && !args.flags.contains("--here") { json["new_tab"] = true }
     case "screenshot", "shot":
         tool = "screenshot"
+    case "js", "eval":
+        tool = "javascript"
+        json["code"] = .string(try first("the code to run"))
+    case "console":
+        tool = "read_console_messages"
+        if args.flags.contains("--errors") { json["only_errors"] = true }
+    case "network":
+        tool = "read_network_requests"
+    case "spaces":
+        tool = "list_spaces"
+    case "call":
+        tool = try first("a tool name")
+        if args.positional.count > 1 {
+            guard case .object(let given)? = try? JSONValue.decode(Data(args.positional[1].utf8)) else {
+                throw CLIError("The arguments must be a JSON object.")
+            }
+            json.merge(given) { _, new in new }
+        }
     default:
         throw CLIError("Unknown command \"\(name)\".\n\n\(usage)")
     }
+    json.removeValue(forKey: "max_text_length").map { value in
+        if ["read_page", "get_page_text"].contains(tool) { json["max_text_length"] = value }
+    }
     do {
-        return try AutomationCommand(tool: tool, arguments: .object(json))
+        let command = try AutomationCommand(tool: tool, arguments: .object(json))
+        return (command.tool, .object(json))
     } catch {
         throw CLIError("\(error)")
     }
@@ -251,8 +294,8 @@ func runMCP(_ connection: KiteConnection) async {
             }
             // Concurrently, so a call waiting on the user's confirmation doesn't block pings.
             group.addTask {
-                let response = await server.handle(message) { command in
-                    await connection.call(command.tool.rawValue, command.arguments)
+                let response = await server.handle(message) { tool, arguments in
+                    await connection.call(tool.rawValue, arguments)
                 }
                 if let response { out.write(response) }
             }
@@ -277,15 +320,19 @@ func main() async -> Int32 {
             await runMCP(connection)
             return 0
         }
-        let command = try command(for: name, args)
-        let output = await connection.call(command.tool.rawValue, command.arguments)
+        if name == "tools" {
+            for tool in AutomationCommand.Tool.allCases { print("\(tool.rawValue): \(tool.summary)") }
+            return 0
+        }
+        let (tool, arguments) = try toolCall(for: name, args)
+        let output = await connection.call(tool.rawValue, arguments)
         if output.isError {
             FileHandle.standardError.write(Data("kite: \(output.text)\n".utf8))
             return 1
         }
         for content in output.content {
             switch content {
-            case .text(let text) where command.tool != .screenshot:
+            case .text(let text) where !output.content.contains(where: { if case .image = $0 { true } else { false } }):
                 print(text)
             case .text:
                 break
