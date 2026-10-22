@@ -8,6 +8,7 @@ struct MenuCommand: Hashable {
     let path: String
 
     var title: String { item.title }
+    @MainActor
     var shortcut: String? {
         item.keyEquivalent.isEmpty ? nil : ShortcutsWindow.describe(item.keyEquivalent, item.keyEquivalentModifierMask)
     }
