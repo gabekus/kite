@@ -22,9 +22,9 @@ import Testing
     @Test func parsesTheOriginalTools() throws {
         #expect(try AutomationCommand(tool: "list_tabs", arguments: nil) == .tabsContext)
         #expect(try AutomationCommand(tool: "read_page", arguments: ["tab": "T"])
-            == .readPage(tab: "T", maxTextLength: AutomationCommand.defaultMaxTextLength, interactiveOnly: false))
+            == .readPage(tab: "T", maxTextLength: AutomationCommand.defaultMaxTextLength, interactiveOnly: false, changesOnly: false))
         #expect(try AutomationCommand(tool: "read_page", arguments: ["max_text_length": 999_999_999, "filter": "interactive"])
-            == .readPage(tab: nil, maxTextLength: AutomationCommand.maxTextLengthLimit, interactiveOnly: true))
+            == .readPage(tab: nil, maxTextLength: AutomationCommand.maxTextLengthLimit, interactiveOnly: true, changesOnly: false))
         #expect(try AutomationCommand(tool: "click", arguments: ["ref": "e12"]) == .click(tab: nil, target: .ref("e12")))
         #expect(try AutomationCommand(tool: "click", arguments: ["selector": "#go", "tab": "T"])
             == .click(tab: "T", target: .selector("#go")))
@@ -32,7 +32,8 @@ import Testing
             == .type(tab: nil, target: nil, text: "hi", submit: true))
         #expect(try AutomationCommand(tool: "navigate", arguments: ["url": "example.com", "new_tab": true])
             == .navigate(tab: nil, url: "example.com", newTab: true))
-        #expect(try AutomationCommand(tool: "screenshot", arguments: [:]) == .screenshot(tab: nil))
+        #expect(try AutomationCommand(tool: "screenshot", arguments: [:]) == .screenshot(tab: nil, format: .jpeg))
+        #expect(try AutomationCommand(tool: "screenshot", arguments: ["format": "PNG"]) == .screenshot(tab: nil, format: .png))
     }
 
     @Test func parsesTabAndKiteTools() throws {
@@ -75,7 +76,7 @@ import Testing
             }
             return action
         }
-        #expect(try action(["action": "screenshot"]) == .screenshot)
+        #expect(try action(["action": "screenshot"]) == .screenshot(.jpeg))
         #expect(try action(["action": "double_click", "coordinate": [10, 20.5]])
             == .click(.point(ViewportPoint(x: 10, y: 20.5)), button: .left, count: 2, modifiers: []))
         #expect(try action(["action": "right_click", "ref": "e4", "modifiers": "cmd+shift"])

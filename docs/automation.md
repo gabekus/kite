@@ -42,6 +42,8 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | (none) | `list_spaces`, `switch_space`, `create_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces` | Kite's own organization. |
 | `gif_creator`, `shortcuts_*`, `switch_browser` | not yet | | |
 
+| (none) | `batch` | `kite call batch` | Several tool calls in one round trip. See below. |
+
 `kite call TOOL '{json}'` reaches any tool. `kite tools` lists them all. The old names `list_tabs`,
 `tabs_*_mcp` and `javascript_tool` still work.
 
@@ -67,6 +69,28 @@ How the actions run:
   acknowledges wheel events.
 - **Background tabs:** everything works on background tabs without switching to them. Only a confirmation sheet
   brings a tab forward.
+
+## Fewer round trips, fewer tokens
+
+Most of an agent's time goes to model round trips and context, not to the browser. Three things cut both.
+
+- **`batch`.** Up to 25 tool calls run in one round trip, in order. For example: `form_input`, `type` with submit,
+  `wait_for` text, then `read_page` with `changes_only`. A batch-wide `tab` applies to every step that doesn't name
+  one. It stops at the first error.
+
+  It also stops before any step that would need the user's OK, without asking. That step has to be called on its
+  own, so the user sees it on its own and a batch can never chain past a confirmation. Every step goes through the
+  same policy as a single call.
+- **Change-only reads.** Kite keeps each tab's last `read_page` as a baseline. After a click, type, `form_input`,
+  key press, dialog answer or navigation, the result adds what changed since that read: outline and text lines,
+  marked + and −. It's capped at 60 lines; past that, or on a new page, it says to call `read_page`.
+  `read_page` with `changes_only` returns only the diff. A tab that was never read costs nothing extra.
+- **Cheaper screenshots.**
+  - JPEG (quality 70) is the default; `format: "png"` gives lossless. On a Wikipedia article that was 65 KB instead
+    of 165 KB.
+  - Screenshots are at most 1280 pixels wide, because Claude's image cost grows with pixels. Coordinates Claude
+    reads off a scaled screenshot are mapped back to the page for every `computer` action.
+  - `zoom` still returns full resolution.
 
 ## Safety
 

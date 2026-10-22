@@ -312,10 +312,16 @@ struct ChromiumAutomation: PageActions {
     // MARK: Screenshots
 
     /// The visible viewport at one image pixel per CSS pixel, so screenshot pixels are click coordinates.
-    func screenshot() async throws -> Screenshot {
+    func screenshot(format: ImageFormat) async throws -> Screenshot {
         let viewport = try await self.viewport()
-        let png = try await capture(x: 0, y: 0, width: viewport.width, height: viewport.height, scale: 1 / viewport.scale)
-        return Screenshot(png: png, width: Int(viewport.width.rounded()), height: Int(viewport.height.rounded()))
+        let scale = ScreenshotScale(viewportWidth: viewport.width).factor
+        let data = try await capture(x: 0, y: 0, width: viewport.width, height: viewport.height, scale: scale / viewport.scale, format: format)
+        return Screenshot(data: data, format: format, width: Int((viewport.width * scale).rounded()),
+                          height: Int((viewport.height * scale).rounded()), scale: scale)
+    }
+
+    func screenshotScale() async throws -> ScreenshotScale {
+        ScreenshotScale(viewportWidth: try await viewport().width)
     }
 
     /// A region at full device resolution.
@@ -323,18 +329,21 @@ struct ChromiumAutomation: PageActions {
         let viewport = try await self.viewport()
         let width = min(x1, viewport.width) - x0, height = min(y1, viewport.height) - y0
         guard width > 0, height > 0 else { throw AutomationError(.invalidArguments, "That region is outside the viewport.") }
-        let png = try await capture(x: x0, y: y0, width: width, height: height, scale: 1)
-        return Screenshot(png: png, width: Int((width * viewport.scale).rounded()), height: Int((height * viewport.scale).rounded()))
+        let png = try await capture(x: x0, y: y0, width: width, height: height, scale: 1, format: .png)
+        return Screenshot(data: png, format: .png, width: Int((width * viewport.scale).rounded()), height: Int((height * viewport.scale).rounded()))
     }
 
-    private func capture(x: Double, y: Double, width: Double, height: Double, scale: Double) async throws -> Data {
+    private func capture(x: Double, y: Double, width: Double, height: Double, scale: Double, format: ImageFormat) async throws -> Data {
         let metrics = try await call("Page.getLayoutMetrics")
         let visual = metrics["cssVisualViewport"] as? [String: Any] ?? [:]
         let pageX = visual["pageX"] as? Double ?? 0, pageY = visual["pageY"] as? Double ?? 0
-        let result = try await call("Page.captureScreenshot", [
-            "format": "png",
+        var params: [String: Any] = [
+            "format": format.rawValue,
             "clip": ["x": pageX + x, "y": pageY + y, "width": width, "height": height, "scale": scale],
-        ], timeout: 10)
+        ]
+        // Quality 70 keeps text readable at a fraction of PNG's size.
+        if format == .jpeg { params["quality"] = 70 }
+        let result = try await call("Page.captureScreenshot", params, timeout: 10)
         guard let base64 = result["data"] as? String, let data = Data(base64Encoded: base64) else {
             throw AutomationError(.failed, "Chromium returned no image.")
         }
