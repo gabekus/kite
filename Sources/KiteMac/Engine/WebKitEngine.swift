@@ -94,6 +94,23 @@ final class WebKitPage: NSObject, WebPage {
         webView.evaluateJavaScript("getSelection().removeAllRanges()")
     }
 
+    func archive(completion: @escaping (Data?, String) -> Void) {
+        webView.createWebArchiveData { completion(try? $0.get(), "webarchive") }
+    }
+
+    func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void) {
+        guard let host = url.host() else { return completion() }
+        let store = webView.configuration.websiteDataStore
+        let types: Set<String> = kind == .cookies
+            ? [WKWebsiteDataTypeCookies]
+            : [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache]
+        store.fetchDataRecords(ofTypes: types) { records in
+            // Records are grouped by registrable domain ("example.com" covers "www.example.com").
+            let matching = records.filter { host == $0.displayName || host.hasSuffix("." + $0.displayName) }
+            store.removeData(ofTypes: types, for: matching, completionHandler: completion)
+        }
+    }
+
     func printPage() {
         guard let window = webView.window else { return }
         let operation = webView.printOperation(with: .shared)

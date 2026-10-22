@@ -20,6 +20,11 @@ struct FindResult {
     var activeMatch: Int?
 }
 
+enum SiteDataKind {
+    case cookies
+    case cache
+}
+
 /// One tab's web content, independent of the engine behind it.
 @MainActor
 protocol WebPage: AnyObject {
@@ -45,6 +50,10 @@ protocol WebPage: AnyObject {
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void)
     func stopFinding()
     func printPage()
+    /// The page as one file for Save Page As: MHTML on Chromium, a web archive on WebKit.
+    func archive(completion: @escaping (_ data: Data?, _ fileExtension: String) -> Void)
+    /// Clears one site's cookies or cache (Arc's "Clear … and Refresh"). Reloading is up to the caller.
+    func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void)
     func setForceDark(_ enabled: Bool)
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void)
     /// Engine-specific state for restoring history after hibernation, if supported.
