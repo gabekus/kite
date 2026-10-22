@@ -27,11 +27,12 @@ extension BrowserWindowController {
             return NSSound.beep()
         }
         page.evaluateJavaScript("String(window.getSelection())") { [weak self] result in
-            let text = LinkFormat.quote(selection: result as? String ?? "", title: tab.title, url: url)
+            let selection = (result as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = LinkFormat.quote(selection: selection, title: tab.title, url: url)
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
-            self?.showToast("Copied as Quote")
+            self?.showToast(selection.isEmpty ? "Nothing selected, copied link" : "Copied as Quote")
         }
     }
 

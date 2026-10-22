@@ -15,6 +15,14 @@ final class ToastView: NSVisualEffectView {
         wantsLayer = true
         layer?.cornerRadius = 15
         layer?.cornerCurve = .continuous
+        // A rim and shadow so it reads on white pages too.
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 12
+        shadow.shadowOffset = NSSize(width: 0, height: -2)
+        shadow.shadowColor = .black.withAlphaComponent(0.25)
+        self.shadow = shadow
         alphaValue = 0
         isHidden = true
 
