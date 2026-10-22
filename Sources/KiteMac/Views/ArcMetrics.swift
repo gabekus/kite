@@ -57,8 +57,8 @@ enum ArcMetrics {
         static let iconTextGap: CGFloat = 8
         static let tabFontSize: CGFloat = 14
         static let tabTextOpacity: Double = 0.865
-        static let selectedFill: Double = 0.10
-        static let hoverFill: Double = 0.06
+        static let selectedFill: Double = 0.20
+        static let hoverFill: Double = 0.10
         /// Pinned tabs and folders start 3pt below the header.
         static let listTopSpacer: CGFloat = 3
 
@@ -85,6 +85,12 @@ enum ArcMetrics {
         static let topFraction: CGFloat = 0.369
         static let cornerRadius: CGFloat = 12
         static let borderOpacity: Double = 0.22
+        /// A large soft drop shadow: it darkens the page 35% under the bottom edge, 25% at the
+        /// sides and 16% at the top, fading out about 100pt away.
+        static let shadowOpacity: Double = 0.9
+        static let shadowRadius: CGFloat = 45
+        static let shadowY: CGFloat = 16
+        static let placeholderOpacity: Double = 0.25
         static let fieldHeight: CGFloat = 63.5
         static let iconX: CGFloat = 22.5
         static let iconSize: CGFloat = 18

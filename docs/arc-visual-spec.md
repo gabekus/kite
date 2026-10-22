@@ -36,7 +36,7 @@ bottom bar. The back/forward/reload buttons end at 359, which is 6pt from the ed
 | URL field | 8, 46, 349×36 | Corner about 11 (a circle fit gives 12.5; Kite's 11 continuous fits 12.75). Fill is white at 10% over the tint. Text starts at x 20 (12pt in), 13pt regular, white at 60% |
 | Favourites grid | 8, 90, 349×102 | 4 columns of 81.25×47 tiles, 8pt apart both ways (x 8, 97.5, 186.5, 276; y 90, 145). 18pt favicon. Same corner and fill as the URL field. 8pt above and below the grid |
 | Space header | row y 200 to 239 | 26pt icon at 13, 205. Name at x 41, 13pt semibold, white at 45%, centred at y 218. Rows start 3pt below the header (y 239) |
-| Tab row | 41pt apart | 36pt pill from x 8 to 357, centred in its row. 18pt favicon at x 17 (9pt inside the pill). Title at x 43 (8pt gap), 14pt regular, 86.5% grey. Selected and hover pills are white at about 10% |
+| Tab row | 41pt apart | 36pt pill from x 8 to 357, centred in its row. 18pt favicon at x 17 (9pt inside the pill). Title at x 43 (8pt gap), 14pt regular, 86.5% grey. The selected pill is white at 20% (19 to 20.5% in Gabe's screenshot, and the same in an incognito window); a hover pill is about 10% |
 | Folder row | as a tab row | Title 14pt semibold |
 | Divider row | 25pt tall | 0.5pt line from x 18 to 347 (10pt inside the pills), white at about 8%, centred |
 | New Tab row | as a tab row | `plus` glyph in the 18pt icon slot |
@@ -76,9 +76,9 @@ bottom bar. The back/forward/reload buttons end at 359, which is 6pt from the ed
 
 | Element | Arc | Notes |
 |---|---|---|
-| Panel | 765 wide, x 645.5 to 1410.5 | Centred on the **window**, not the card. Top at y 474 in a 1285pt window (0.369 of the height) |
-| Panel style | fill `#1B1B1B`, 1pt border white at about 22% | No dimming behind it (the page pixels are unchanged) and no shadow I could detect. Corner about 12 to 13.5 (the fit is unreliable because of the border) |
-| Field | 63.5 tall | 18pt magnifier frame at x +22.5 (glyph about 11pt wide). Text field at x +52.5 (698 in the window), 23 tall. The placeholder font couldn't be read; Kite uses 18pt |
+| Panel | 765 wide, x 645.5 to 1410.5 (764 measured between the inner edges of the border) | Centred on the **window**, not the card: an incognito capture with the same 365pt sidebar puts it at the same x, 646 to 1410. Its centre, 1028, is the window's; the card's centre would be 1205.5. Top at y 474 in a 1285pt window (0.369 of the height) |
+| Panel style | fill `#1B1B1B` (`#181818` in an incognito window), 1pt border white at about 22% | No dimming behind it. A wide soft black shadow, measured over a `#28282A` page: it darkens the page by 35/29/23/18/10/6/2.5% at 1/20/30/40/60/80/100pt below the panel, by 26/17/13/10/5% at 1/20/30/40/60pt to the sides, and by 16% just above. A dark page hides it. Corner about 12 to 13.5 (the fit is unreliable because of the border) |
+| Field | 63.5 tall | 18pt magnifier frame at x +22.5 (glyph about 11pt wide). Text field at x +52.5 (698 in the window), 23 tall. The placeholder "Search or Enter URL..." has a 10pt x-height, which is 18pt SF regular. It is white at about 25% (level 81 over the `#181818` fill) and 179.5pt wide |
 | Divider | y +63.5, 0.5pt | White at about 10%, 11pt in from the panel's edges |
 | Rows | 50pt apart, starting 4.5pt under the divider | Rows are 750 wide, 7.5 in from the panel. The fill is 746×44.5, 2pt in from the row, with a corner of about 8 |
 | Selected row | fill is the space's accent | White 24×24 icon tile with the favicon in the accent colour; white text; white 24×24 arrow box |
@@ -126,7 +126,5 @@ accessibility dumper and pixel scripts.
   to the pointer.
 - The grain texture and its strength. Only its effect could be measured: about 0.5 levels of standard deviation.
 - The number of gradient layers and where they sit.
-- The ⌘T panel's exact shadow (none was visible) and its corner, which the border hides.
-- The ⌘T placeholder's font size: the field's 23pt height suggests about 18pt.
-- The selected tab pill's opacity. Only a hover pill could be isolated, at about 10% white.
+- The ⌘T panel's exact shadow parameters (only its effect was measured) and its corner, which the border hides.
 - Arc's default sidebar width, light-theme fill opacities and every animation timing.

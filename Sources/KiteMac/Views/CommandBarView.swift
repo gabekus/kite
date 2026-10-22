@@ -87,7 +87,7 @@ private struct CommandBarView: View {
                     .frame(width: C.iconSize, height: C.iconSize)
                     .padding(.leading, C.iconX)
                     .padding(.trailing, C.textX - C.iconX - C.iconSize)
-                TextField("Search or Enter URL...", text: $query)
+                TextField("", text: $query, prompt: Text("Search or Enter URL...").foregroundStyle(.primary.opacity(C.placeholderOpacity)))
                     .textFieldStyle(.plain)
                     .font(.system(size: C.fieldFontSize))
                     .focused($focused)
@@ -135,7 +135,7 @@ private struct CommandBarView: View {
     }
 }
 
-/// Arc's panel: near-black in dark mode, a hairline border, almost no shadow.
+/// Arc's panel: near-black in dark mode, a hairline border, a wide soft shadow.
 private struct CommandBarPanel: ViewModifier {
     @Environment(\.colorScheme) private var scheme
 
@@ -144,7 +144,7 @@ private struct CommandBarPanel: ViewModifier {
         content
             .background(scheme == .dark ? Color(white: 0.106) : Color(white: 0.98), in: shape)
             .overlay(shape.strokeBorder(scheme == .dark ? Color.white.opacity(C.borderOpacity) : Color.black.opacity(0.12), lineWidth: 1))
-            .shadow(color: .black.opacity(0.18), radius: 16, y: 6)
+            .shadow(color: .black.opacity(C.shadowOpacity), radius: C.shadowRadius, y: C.shadowY)
     }
 }
 
