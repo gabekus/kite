@@ -117,6 +117,7 @@ importer doesn't keep yet.
 | Selected row | fill is the space's accent | White 24×24 icon tile with the favicon in the accent colour; white text; white 24×24 arrow box |
 | Row content | | 16pt favicon at row x +16 (in a 24pt tile at +12). Title at row x +43 (696), 13pt medium, white at 80% (100% when selected). Right label ("Switch to Tab") 13pt medium at 33% and ends 7pt before a 24×24 `→` box, which ends 13pt inside the fill |
 | Bottom | 9.5pt after the last row | |
+| Open and close | No animation | A 60fps screen recording of ⌘T in an incognito window: the panel is complete in the first frame it appears and gone in the next frame after Esc. Kite also shows and hides it with no transition |
 
 ## Arc vs Kite
 
@@ -160,4 +161,4 @@ accessibility dumper and pixel scripts.
 - The pointer light's fade timing and whether it eases toward the pointer. Kite fades it over 0.15s and sticks it
   to the pointer.
 - The ⌘T panel's exact shadow parameters (only its effect was measured) and its corner, which the border hides.
-- Arc's default sidebar width, light-theme fill opacities and every animation timing.
+- Arc's default sidebar width, light-theme fill opacities, and the space-switch and sidebar animation timings.
