@@ -34,6 +34,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class KCBrowser;
 
+/// A Chromium profile for a set of browsers. `incognitoContext` keeps cookies,
+/// cache and storage in memory only; they vanish when the last browser using it closes.
+NS_SWIFT_UI_ACTOR
+@interface KCRequestContext : NSObject
++ (instancetype)incognitoContext NS_SWIFT_NAME(incognito());
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
 // CEF's UI thread is the main thread, so Swift can treat these as main-actor types.
 NS_SWIFT_UI_ACTOR
 @protocol KCBrowserDelegate <NSObject>
@@ -58,6 +66,10 @@ NS_SWIFT_UI_ACTOR
 NS_SWIFT_UI_ACTOR
 @interface KCBrowser : NSObject
 - (instancetype)initWithURL:(nullable NSURL *)url delegate:(id<KCBrowserDelegate>)delegate;
+/// `context` nil means the app's persistent profile.
+- (instancetype)initWithURL:(nullable NSURL *)url
+                   delegate:(id<KCBrowserDelegate>)delegate
+                    context:(nullable KCRequestContext *)context;
 - (instancetype)init NS_UNAVAILABLE;
 
 @property (nonatomic, readonly) NSView *view;

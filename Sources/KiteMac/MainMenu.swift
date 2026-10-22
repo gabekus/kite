@@ -4,7 +4,8 @@ import KiteCore
 /// Keyboard shortcuts follow Arc where they don't collide with macOS conventions.
 @MainActor
 enum MainMenu {
-    static func build(target: BrowserWindowController) -> NSMenu {
+    /// `target` is the MenuRouter, which hands each command to the browser window in front.
+    static func build(target: AnyObject) -> NSMenu {
         // We provide Enter Full Screen (⌃⌘F) ourselves; stop AppKit adding its fn-F copy.
         UserDefaults.standard.set(false, forKey: "NSFullScreenMenuItemEverywhere")
         let main = NSMenu()
@@ -79,6 +80,7 @@ enum MainMenu {
 
         submenu("File", [
             item("New Tab", #selector(BrowserWindowController.newTab(_:)), "t"),
+            item("New Incognito Window", #selector(MenuRouter.newIncognitoWindow(_:)), "n", [.command, .shift]),
             item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), "l"),
             item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift]),
             .separator(),
@@ -190,7 +192,7 @@ enum MainMenu {
         })
 
         submenu("Spaces", [
-            item("New Space", #selector(BrowserWindowController.newSpace(_:)), "n", [.command, .shift]),
+            item("New Space", #selector(BrowserWindowController.newSpace(_:))),
             item("Rename Space…", #selector(BrowserWindowController.renameSpace(_:))),
             .separator(),
             // ⇧⌘S is Gabe's Arc binding; ⌥⌘→ is Arc's default.

@@ -8,10 +8,20 @@ final class ChromiumEngine: WebEngine {
     let name = "Chromium"
     let supportsDevTools = true
     let supportsDarkPages = true
+    /// nil is the persistent profile.
+    private let context: KCRequestContext?
+
+    init(context: KCRequestContext? = nil) {
+        self.context = context
+    }
 
     func makePage(url: URL?, restoring state: Any?) -> WebPage {
         // CEF has no equivalent of WebKit's interactionState, so a revived tab reloads its URL.
-        ChromiumPage(browser: KCBrowser(url: url, delegate: ChromiumDelegateProxy.placeholder))
+        ChromiumPage(browser: KCBrowser(url: url, delegate: ChromiumDelegateProxy.placeholder, context: context))
+    }
+
+    func makeEphemeral() -> WebEngine {
+        ChromiumEngine(context: .incognito())
     }
 }
 

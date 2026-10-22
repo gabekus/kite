@@ -11,15 +11,19 @@ final class WebKitEngine: WebEngine {
     private let configuration: WKWebViewConfiguration
     private let downloads = DownloadCoordinator()
 
-    init() {
+    init(dataStore: WKWebsiteDataStore = .default()) {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = dataStore
         // Without a Safari token some sites serve a degraded page to WKWebView.
         configuration.applicationNameForUserAgent = "Version/18.6 Safari/605.1.15"
         configuration.preferences.isElementFullscreenEnabled = true
         configuration.preferences.isFraudulentWebsiteWarningEnabled = true
         configuration.allowsAirPlayForMediaPlayback = true
         self.configuration = configuration
+    }
+
+    func makeEphemeral() -> WebEngine {
+        WebKitEngine(dataStore: .nonPersistent())
     }
 
     func makePage(url: URL?, restoring state: Any?) -> WebPage {

@@ -40,8 +40,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var commandBarVisible = false
     private var sidebarVisible = true
 
-    init(store: BrowserStore, engine: WebEngine) {
+    /// Incognito windows keep nothing: no saved frame, and every page closes with the window.
+    let isIncognito: Bool
+
+    init(store: BrowserStore, engine: WebEngine, incognito: Bool = false) {
         self.store = store
+        self.isIncognito = incognito
         self.pool = PagePool(engine: engine, store: store)
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
@@ -57,7 +61,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.tabbingMode = .disallowed
         window.minSize = NSSize(width: 640, height: 420)
         window.center()
-        window.setFrameAutosaveName("KiteMainWindow")
+        if !incognito { window.setFrameAutosaveName("KiteMainWindow") }
         super.init(window: window)
         window.delegate = self
 
@@ -78,6 +82,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func windowWillClose(_ notification: Notification) {
         store.saveNow()
+        if isIncognito { pool.retain(live: [], restorable: []) }
     }
 
     // MARK: Views
