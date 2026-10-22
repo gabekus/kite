@@ -331,6 +331,11 @@ public struct BrowserState: Hashable, Codable, Sendable {
     }
 
     @discardableResult
+    public mutating func setTheme(_ theme: Theme, forSpace id: UUID) {
+        guard let index = spaceIndex(id) else { return }
+        spaces[index].theme = theme
+    }
+
     public mutating func addSpace(name: String, icon: String, theme: Theme) -> UUID {
         let space = Space(name: name, icon: icon, theme: theme)
         spaces.append(space)

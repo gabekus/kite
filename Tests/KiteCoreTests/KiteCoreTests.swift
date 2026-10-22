@@ -400,3 +400,29 @@ import Testing
         #expect(CommandSearch.score("  ", title: "Copy URL") == nil)
     }
 }
+
+@Suite struct ThemeTintTests {
+    @Test func sessionsWithoutTintGetTheDefault() throws {
+        let json = #"{"colors":[{"r":1,"g":0.5,"b":0.25}],"grain":0.3}"#
+        let theme = try JSONDecoder().decode(Theme.self, from: Data(json.utf8))
+        #expect(theme.tint == Theme.defaultTint)
+        #expect(theme.grain == 0.3)
+    }
+
+    @Test func tintRoundTripsAndClamps() throws {
+        let theme = Theme(colors: [ThemeColor(hex: 0x3A4BC0)], tint: 1.4)
+        #expect(theme.tint == 1)
+        let decoded = try JSONDecoder().decode(Theme.self, from: JSONEncoder().encode(theme))
+        #expect(decoded == theme)
+    }
+
+    @Test func setThemeChangesOnlyThatSpace() {
+        var state = BrowserState.makeDefault(seedURL: nil)
+        let other = state.spaces[1].theme
+        var theme = Theme.presets[3]
+        theme.tint = 0.2
+        state.setTheme(theme, forSpace: state.spaces[0].id)
+        #expect(state.spaces[0].theme == theme)
+        #expect(state.spaces[1].theme == other)
+    }
+}

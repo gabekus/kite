@@ -61,6 +61,8 @@ struct ThemeUniforms {
     uint fromCount;
     uint toCount;
     float cutoutRadius;  // px
+    float fromTint;      // opacity over the window's material, 0...1
+    float toTint;
 };
 
 // Where each color sits, by palette size.
@@ -108,7 +110,8 @@ fragment float4 kite_theme_fragment(VertexOut in [[stage_in]], constant ThemeUni
     float grain = mix(u.fromGrain, u.toGrain, u.progress);
     rgb += (hash12(px) - 0.5) * grain * 0.07;      // film grain
     rgb += (hash12(px + 91.7) - 0.5) / 255.0;      // dither so 8-bit gradients don't band
-    return float4(rgb, 1.0);
+    float alpha = mix(u.fromTint, u.toTint, u.progress);
+    return float4(saturate(rgb) * alpha, alpha);   // premultiplied, over the sidebar material
 }
 
 // MARK: Loading glow

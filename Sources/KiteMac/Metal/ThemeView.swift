@@ -2,7 +2,7 @@ import KiteCore
 import MetalKit
 import QuartzCore
 
-/// Must match `ThemeUniforms` in Kite.metal (176 bytes).
+/// Must match `ThemeUniforms` in Kite.metal (192 bytes).
 private struct ThemeUniforms {
     typealias Palette = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
     var fromLab: Palette
@@ -15,6 +15,8 @@ private struct ThemeUniforms {
     var fromCount: UInt32
     var toCount: UInt32
     var cutoutRadius: Float
+    var fromTint: Float
+    var toTint: Float
 }
 
 private func palette(_ theme: Theme) -> ThemeUniforms.Palette {
@@ -47,8 +49,11 @@ final class ThemeView: MTKView, MTKViewDelegate {
         from = theme
         to = theme
         super.init(frame: .zero, device: ShaderLibrary.shared.device)
-        assert(MemoryLayout<ThemeUniforms>.stride == 176)
+        assert(MemoryLayout<ThemeUniforms>.stride == 192)
         colorPixelFormat = .bgra8Unorm
+        // The tint is translucent: the window's material shows through it.
+        layer?.isOpaque = false
+        clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         framebufferOnly = true
         autoResizeDrawable = true
         delegate = self
@@ -116,7 +121,9 @@ final class ThemeView: MTKView, MTKViewDelegate {
             progress: progress,
             fromCount: UInt32(from.colors.count),
             toCount: UInt32(to.colors.count),
-            cutoutRadius: Float(cutoutCornerRadius) * scale
+            cutoutRadius: Float(cutoutCornerRadius) * scale,
+            fromTint: from.tint,
+            toTint: to.tint
         )
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<ThemeUniforms>.stride, index: 0)

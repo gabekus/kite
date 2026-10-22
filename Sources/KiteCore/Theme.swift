@@ -21,18 +21,36 @@ public struct ThemeColor: Hashable, Codable, Sendable {
     public var lab: SIMD3<Float> { OKLab.fromSRGB(self) }
 }
 
-/// A space's backdrop: up to four colors blended in OKLab, plus film grain.
+/// A space's backdrop: up to four colors blended in OKLab, plus film grain,
+/// laid as a translucent tint over the system's sidebar material, like Arc.
 /// Shells hand `labColors` straight to the GPU so the shader never converts colors per pixel.
 public struct Theme: Hashable, Codable, Sendable {
     public static let maxColors = 4
+    /// Arc's themes read as a muted wash rather than solid paint.
+    public static let defaultTint: Float = 0.55
 
     public var colors: [ThemeColor]
     public var grain: Float
+    /// How much of the colors covers the material underneath, 0 (none) to 1 (opaque).
+    public var tint: Float
 
-    public init(colors: [ThemeColor], grain: Float = 0.35) {
+    public init(colors: [ThemeColor], grain: Float = 0.35, tint: Float = Theme.defaultTint) {
         precondition(!colors.isEmpty, "A theme needs at least one color")
         self.colors = Array(colors.prefix(Self.maxColors))
         self.grain = min(max(grain, 0), 1)
+        self.tint = min(max(tint, 0), 1)
+    }
+
+    private enum CodingKeys: String, CodingKey { case colors, grain, tint }
+
+    // Sessions saved before `tint` existed decode with the default.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            colors: try c.decode([ThemeColor].self, forKey: .colors),
+            grain: try c.decode(Float.self, forKey: .grain),
+            tint: try c.decodeIfPresent(Float.self, forKey: .tint) ?? Theme.defaultTint
+        )
     }
 
     public var labColors: [SIMD3<Float>] { colors.map(\.lab) }
@@ -56,6 +74,14 @@ public struct Theme: Hashable, Codable, Sendable {
         let first = colors[0]
         let last = colors.count > 1 ? colors[colors.count - 1] : first
         return (vivid(first, lift: 0), vivid(last, lift: colors.count > 1 ? 0 : 0.12))
+    }
+
+    /// The vivid end of the palette, for selections that should carry the space's color
+    /// (Arc fills the command bar's highlighted row with it).
+    public var accent: ThemeColor {
+        var lab = colors.map(\.lab).max { hypot($0.y, $0.z) < hypot($1.y, $1.z) } ?? colors[0].lab
+        lab.x = min(max(lab.x, 0.5), 0.62)
+        return OKLab.toSRGB(lab)
     }
 
     public static let presets: [Theme] = [
