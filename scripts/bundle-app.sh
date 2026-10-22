@@ -45,12 +45,24 @@ else
     echo "note: no CEF in ThirdParty/cef, building a WebKit-only app (run scripts/fetch-cef.sh for Chromium)"
 fi
 
-# Ad-hoc signature, inside out, so the helpers and framework load.
+# Sign inside out (helpers, framework, app) so everything loads. A stable
+# identity keeps the code identity the same across rebuilds, so the keychain
+# remembers "Always Allow" for Kite. Ad-hoc signing changes it on every build,
+# and macOS asks for your password again. Pick the identity with
+# KITE_SIGN_IDENTITY, or create "Kite Local Signing" with make-signing-cert.sh.
+SIGN_ID="${KITE_SIGN_IDENTITY:-}"
+if [[ -z "$SIGN_ID" ]] && security find-certificate -c "Kite Local Signing" >/dev/null 2>&1; then
+    SIGN_ID="Kite Local Signing"
+fi
+if [[ -z "$SIGN_ID" ]]; then
+    SIGN_ID="-"
+    echo "note: ad-hoc signing, so the keychain will ask again after each rebuild (run scripts/make-signing-cert.sh once to fix)"
+fi
 for helper in "$CONTENTS/Frameworks/"*.app; do
-    [[ -e "$helper" ]] && codesign --force --sign - "$helper"
+    [[ -e "$helper" ]] && codesign --force --sign "$SIGN_ID" "$helper"
 done
 if [[ -d "$CONTENTS/Frameworks/Chromium Embedded Framework.framework" ]]; then
-    codesign --force --sign - "$CONTENTS/Frameworks/Chromium Embedded Framework.framework"
+    codesign --force --sign "$SIGN_ID" "$CONTENTS/Frameworks/Chromium Embedded Framework.framework"
 fi
-codesign --force --sign - "$APP"
+codesign --force --sign "$SIGN_ID" "$APP"
 echo "Built $APP"
