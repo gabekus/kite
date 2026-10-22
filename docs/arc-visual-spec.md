@@ -1,9 +1,10 @@
 # Arc's window, measured
 
-Arc 1.169 on macOS 15, measured on 2026-10-22 from the outside only: the accessibility tree (exact frames and
-fonts), and pixel sampling of screenshots of a 2056×1285pt window on a 2× display. Nothing was decompiled, and no
-Arc code, image or shader is in this repo. Everything is in points at 1×. Window coordinates start at the window's
-top-left; sidebar coordinates assume the sidebar starts at x 0.
+Arc 1.169 on macOS 15, measured on 2026-10-22. Most of it is from the outside: the accessibility tree (exact frames
+and fonts), and pixel sampling of screenshots of a 2056×1285pt window on a 2× display. The theme shader section
+comes from disassembling Arc's metallib and reading its asset catalog, with Gabe's approval. Only numbers are
+recorded here: no Arc code, image, shader or texture is in this repo. Everything is in points at 1×. Window
+coordinates start at the window's top-left; sidebar coordinates assume the sidebar starts at x 0.
 
 The window measured had a 365pt sidebar, which is a user-chosen width. Arc's default width wasn't measured.
 
@@ -72,6 +73,38 @@ bottom bar. The back/forward/reload buttons end at 359, which is 6pt from the ed
     the key window, and only redraws when the pointer moves or the light is fading. On a light preset in Kite it
     added 30 levels at its centre.
 
+## Arc's theme shader, from its metallib (decompiled)
+
+What follows came from disassembling Arc's `ARC_WindowThemeUI` metallib (the AIR bitcode, read with LLVM) and
+reading its asset catalog. It records numbers and structure only. No shader code or texture is in Kite.
+
+- **Gradient layers:** a theme is one layer of up to **two linear gradients**, each with **two colours**, blended in
+  **OKLab**.
+  - Each gradient has its own start and end point in UV, and its factor is the projection onto that axis, clamped
+    to 0...1.
+  - The first gradient's factor is scaled by **4/3** before clamping, so it reaches its end colour at 75% of its
+    axis.
+  - The second gradient is composited *over* the first with source-over alpha.
+  - A second layer slot exists only for crossfading between themes (a `progress` mix), not for stacking.
+- **Tint over the material:** OKLab is converted to linear sRGB and then sRGB-encoded (the standard 0.0031308 /
+  12.92 / 1.055 / 0.055 curve). The output is premultiplied with alpha = colour alpha × the layer's opacity. Arc
+  draws no underlay of its own here, so the window's vibrancy shows through wherever alpha < 1.
+  - The opacity is the theme editor's **intensity** (`intensityFactor`); the colours keep their own alpha too.
+  - There's a separate `translucencyStyle` setting (`vibrant`, `opaque`, `clear`).
+  - No blur happens in the shader. The blur is the system material's.
+- **Grain:** the `grain_metal` texture is 200×200 at 1× and 100×100 at 2×, so one grain is one device pixel.
+  - Uniform alpha **0.259**; grey with mean **0.73** and standard deviation **0.21**.
+  - It is tiled with `fract(uv × repetitions)`, scaled by the theme's `noiseFactor`, and **multiply**-blended over
+    the gradient: `o·g + o·(1 − g.a) + g·(1 − o.a)`, in premultiplied form.
+  - Other overlay textures are `denim`, `sand` and `tweed`, crossfaded with the same `fromOverlayAlpha` and
+    `toOverlayAlpha`.
+- **Cutout:** Arc discards the pixels inside an axis-aligned rect (no rounded corners) where the web content sits.
+
+Kite now does the grain the same way: per-pixel hash noise with the same mean and spread, multiply-blended at
+0.259 × the theme's grain, where `Theme.grain` is Arc's `noiseFactor`. Kite keeps its own OKLab anchor blend for
+its presets. Importing Arc's two-gradient geometry would need the gradients' start and end points, which the
+importer doesn't keep yet.
+
 ## Command bar (⌘T) → `ArcMetrics.CommandBar`
 
 | Element | Arc | Notes |
@@ -121,13 +154,10 @@ accessibility dumper and pixel scripts.
 | ⌘T shadow, darkening at 1 / 20 / 30 / 60pt below | 35 / 29 / 23 / 10% | 38 / 32 / 26 / 12% (SwiftUI black at 0.9, radius 45, y 16) |
 | ⌘T placeholder | 18pt, level 81 | 18pt, level 83 |
 
-## Not measurable without decompiling
+## Still unknown
 
-- How strongly Arc mixes the tint over the material, and whether it is a mix at all or a blend mode. The vibrancy
-  blur radius.
+- The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
 - The pointer light's fade timing and whether it eases toward the pointer. Kite fades it over 0.15s and sticks it
   to the pointer.
-- The grain texture and its strength. Only its effect could be measured: about 0.5 levels of standard deviation.
-- The number of gradient layers and where they sit.
 - The ⌘T panel's exact shadow parameters (only its effect was measured) and its corner, which the border hides.
 - Arc's default sidebar width, light-theme fill opacities and every animation timing.

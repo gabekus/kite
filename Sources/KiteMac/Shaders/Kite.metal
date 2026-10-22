@@ -109,11 +109,16 @@ fragment float4 kite_theme_fragment(VertexOut in [[stage_in]], constant ThemeUni
                      u.progress);
     float3 rgb = linearToSRGB(oklabToLinearSRGB(lab));
 
-    float grain = mix(u.fromGrain, u.toGrain, u.progress);
-    rgb += (hash12(px) - 0.5) * grain * 0.07;      // film grain
     rgb += (hash12(px + 91.7) - 0.5) / 255.0;      // dither so 8-bit gradients don't band
     float alpha = mix(u.fromTint, u.toTint, u.progress);
     float4 color = float4(saturate(rgb) * alpha, alpha); // premultiplied, over the sidebar material
+
+    // Film grain, multiplied in the way Arc does it: a grey grain (mean 0.73, sd 0.21)
+    // at 26% opacity per unit of the theme's noise factor, one grain per device pixel.
+    float grain = mix(u.fromGrain, u.toGrain, u.progress) * 0.259;
+    float grey = saturate(0.73 + (hash12(px) - 0.5) * 0.735);
+    float4 grainColor = float4(grey, grey, grey, 1.0) * grain;  // premultiplied
+    color = grainColor * color + grainColor * (1.0 - color.a) + color * (1.0 - grainColor.a);
 
     // A soft white light that follows the pointer over the sidebar, wider than tall.
     float2 g = (px - u.glow.xy) / max(u.glow.zw, 1.0);
