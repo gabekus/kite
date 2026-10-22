@@ -7,7 +7,6 @@ struct SidebarActions {
     var goForward: () -> Void
     var reload: () -> Void
     var closeTab: (UUID) -> Void
-    var toggleAdblock: () -> Void
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -17,10 +16,6 @@ struct SidebarView: View {
     let actions: SidebarActions
     /// False on WebKit, which can't force pages dark.
     let supportsDarkPages: Bool
-    /// False when Kite was built without the ad blocker.
-    let supportsAdblock: Bool
-    /// False on WebKit, which blocks without saying how much.
-    let countsBlockedRequests: Bool
 
     var body: some View {
         let state = store.state
@@ -42,9 +37,7 @@ struct SidebarView: View {
             AddressPill(
                 text: selectedTab?.url?.host() ?? "Search or enter URL",
                 isDark: darkPageState(for: selectedTab),
-                shield: shieldState(for: selectedTab, page: page),
                 action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
-                toggleShield: actions.toggleAdblock,
                 toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } }
             )
 
@@ -100,13 +93,6 @@ struct SidebarView: View {
     private func darkPageState(for tab: BrowserTab?) -> Bool? {
         guard supportsDarkPages, let url = tab?.url, url.host() != nil else { return nil }
         return store.state.wantsDarkPage(for: url, systemIsDark: store.systemIsDark)
-    }
-
-    /// Nil hides the shield: no ad blocker built in, or nothing to block (about:blank).
-    private func shieldState(for tab: BrowserTab?, page: PageStatus) -> ShieldState? {
-        guard supportsAdblock, let url = tab?.url, url.host() != nil, url.scheme?.hasPrefix("http") == true else { return nil }
-        let on = store.state.blocksAds(on: url)
-        return ShieldState(isOn: on, blockedCount: on && countsBlockedRequests ? page.blockedCount : nil)
     }
 
     /// Folders nest, so this recursion has to erase its type.
@@ -191,9 +177,7 @@ private struct AddressPill: View {
     let text: String
     /// Whether the page is shown dark; nil hides the toggle.
     let isDark: Bool?
-    let shield: ShieldState?
     let action: () -> Void
-    let toggleShield: () -> Void
     let toggleDark: () -> Void
 
     var body: some View {
@@ -208,52 +192,12 @@ private struct AddressPill: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if let shield {
-                ShieldToggle(state: shield, action: toggleShield)
-                    .padding(.trailing, isDark == nil ? 4 : 0)
-            }
             if let isDark {
                 DarkPageToggle(isDark: isDark, action: toggleDark)
                     .padding(.trailing, 4)
             }
         }
         .modifier(ChromeFill(strength: 0.3))
-    }
-}
-
-struct ShieldState: Equatable {
-    var isOn: Bool
-    /// Requests blocked on this page; nil when the engine can't count them.
-    var blockedCount: Int?
-}
-
-/// The ad blocker's per-site switch, with how many requests it blocked on this page.
-private struct ShieldToggle: View {
-    let state: ShieldState
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 2) {
-                Image(systemName: state.isOn ? "shield.lefthalf.filled" : "shield.slash")
-                    .font(.system(size: 11, weight: .semibold))
-                if let count = state.blockedCount, count > 0 {
-                    Text(count > 999 ? "999+" : "\(count)")
-                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                }
-            }
-            .padding(.horizontal, 5)
-            .frame(minWidth: 24, minHeight: 24)
-            .modifier(ChromeFill(strength: hovering ? 0.25 : 0))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .opacity(state.isOn || hovering ? 0.9 : 0.5)
-        .onHover { hovering = $0 }
-        .help(state.isOn ? "Stop Blocking Ads on This Site" : "Block Ads on This Site")
-        .accessibilityLabel("Ad blocker")
-        .accessibilityValue(state.isOn ? "On, \(state.blockedCount ?? 0) blocked" : "Off")
     }
 }
 

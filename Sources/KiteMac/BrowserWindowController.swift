@@ -103,12 +103,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 goBack: { [weak self] in self?.goBack(nil) },
                 goForward: { [weak self] in self?.goForward(nil) },
                 reload: { [weak self] in self?.reload(nil) },
-                closeTab: { [weak self] id in self?.close(tab: id) },
-                toggleAdblock: { [weak self] in self?.toggleAdblockForSite(nil) }
+                closeTab: { [weak self] id in self?.close(tab: id) }
             ),
-            supportsDarkPages: pool.engine.supportsDarkPages,
-            supportsAdblock: Adblocker.isAvailable,
-            countsBlockedRequests: pool.engine.countsBlockedRequests
+            supportsDarkPages: pool.engine.supportsDarkPages
         ))
         commandBarHost = NSHostingView(rootView: CommandBarOverlay(store: store) { [weak self] suggestion, mode in
             self?.commit(suggestion, mode: mode)
@@ -373,8 +370,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         store.mutate { $0.toggleDarkPage(for: tab.url) }
     }
 
-    /// The shield: blocking on or off for the current site. Reloads so the page
-    /// shows the change right away, as Arc and Brave do.
+    /// Blocking on or off for the current site. Reloads so the page shows the
+    /// change right away. Arc has no ad-block control in its sidebar, so this
+    /// lives in the View menu until Kite has Arc's site controls.
     @objc func toggleAdblockForSite(_ sender: Any?) {
         guard let tab = store.state.selectedTab, tab.url?.host() != nil else { return NSSound.beep() }
         store.mutate { $0.toggleAdblock(for: tab.url) }
@@ -407,7 +405,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return Adblocker.isAvailable
         case #selector(toggleAdblockForSite(_:)):
             let tab = store.state.selectedTab
-            item.state = store.state.blocksAds(on: tab?.url) ? .on : .off
+            let on = store.state.blocksAds(on: tab?.url)
+            item.state = on ? .on : .off
+            let blocked = tab.flatMap { store.pages[$0.id]?.blockedCount } ?? 0
+            item.title = on && pool.engine.countsBlockedRequests && blocked > 0
+                ? "Block Ads on This Site (\(blocked) blocked)"
+                : "Block Ads on This Site"
             return Adblocker.isAvailable && tab?.url?.host() != nil
         case #selector(togglePin(_:)):
             let pinned = store.state.selectedTab.flatMap { store.state.location(of: $0.id) }?.section == .pinned
