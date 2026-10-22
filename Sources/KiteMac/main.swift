@@ -18,6 +18,7 @@ MainActor.assumeIsolated {
         let settings = KCRuntimeSettings()
         settings.profilePath = AppDelegate.supportDirectory.appendingPathComponent("Chromium").path
         settings.remoteDebuggingPort = Int32(environment["KITE_REMOTE_DEBUGGING_PORT"] ?? "") ?? 0
+        KCRuntime.energySaverEnabled = UserDefaults.standard.bool(forKey: AppDelegate.energySaverKey)
         if KCRuntime.initialize(with: settings) {
             delegate.engine = ChromiumEngine()
             KCRuntime.runMessageLoop()

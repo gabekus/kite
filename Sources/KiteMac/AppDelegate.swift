@@ -1,8 +1,11 @@
 import AppKit
 import KiteCore
+#if canImport(CEFBridge)
+import CEFBridge
+#endif
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Chosen in main.swift before the app finishes launching.
     var engine: WebEngine!
 
@@ -43,5 +46,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func saveSession() {
         store?.saveNow()
+    }
+
+    // MARK: Settings
+
+    /// Chromium's Energy Saver (30fps on low battery). Off unless the user turns it on.
+    static let energySaverKey = "chromiumEnergySaver"
+
+    @objc func toggleEnergySaver(_ sender: Any?) {
+        #if canImport(CEFBridge)
+        KCRuntime.energySaverEnabled.toggle()
+        UserDefaults.standard.set(KCRuntime.energySaverEnabled, forKey: Self.energySaverKey)
+        #endif
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard item.action == #selector(toggleEnergySaver(_:)) else { return true }
+        #if canImport(CEFBridge)
+        item.state = KCRuntime.energySaverEnabled ? .on : .off
+        return KCRuntime.isInitialized
+        #else
+        return false
+        #endif
     }
 }

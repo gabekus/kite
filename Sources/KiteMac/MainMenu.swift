@@ -48,6 +48,9 @@ enum MainMenu {
         submenu("Kite", [
             item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false),
             .separator(),
+            // Until there's a Settings window.
+            item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
+            .separator(),
             item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false),
             item("Show All", #selector(NSApplication.unhideAllApplications(_:)), toTarget: false),
