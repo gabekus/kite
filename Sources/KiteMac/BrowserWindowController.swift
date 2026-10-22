@@ -210,6 +210,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let frame = contentFrame.frame
         themeView.cutoutRect = CGRect(x: frame.minX, y: rootView.bounds.height - frame.maxY, width: frame.width, height: frame.height)
         themeView.cutoutCornerRadius = Layout.cornerRadius
+        let sidebar = sidebarHost.frame
+        themeView.glowRegion = sidebarVisible
+            ? CGRect(x: sidebar.minX, y: rootView.bounds.height - sidebar.maxY, width: sidebar.width, height: sidebar.height)
+            : .zero
     }
 
     // MARK: Sync with the store

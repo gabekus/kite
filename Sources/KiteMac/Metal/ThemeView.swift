@@ -2,12 +2,13 @@ import KiteCore
 import MetalKit
 import QuartzCore
 
-/// Must match `ThemeUniforms` in Kite.metal (192 bytes).
+/// Must match `ThemeUniforms` in Kite.metal (208 bytes).
 private struct ThemeUniforms {
     typealias Palette = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
     var fromLab: Palette
     var toLab: Palette
     var cutout: SIMD4<Float>
+    var glow: SIMD4<Float>
     var size: SIMD2<Float>
     var fromGrain: Float
     var toGrain: Float
@@ -17,6 +18,7 @@ private struct ThemeUniforms {
     var cutoutRadius: Float
     var fromTint: Float
     var toTint: Float
+    var glowStrength: Float
 }
 
 private func palette(_ theme: Theme) -> ThemeUniforms.Palette {
@@ -27,15 +29,29 @@ private func palette(_ theme: Theme) -> ThemeUniforms.Palette {
 
 /// The space's gradient backdrop behind the sidebar and web content.
 ///
-/// It only draws when something changes (theme, size, cutout). The frame clock
-/// runs only during the space-switch crossfade, at the screen's full refresh
-/// rate, then stops again.
+/// It only draws when something changes (theme, size, cutout, pointer). The frame
+/// clock runs only during the space-switch crossfade and the pointer light's fade,
+/// at the screen's full refresh rate, then stops again.
 @MainActor
 final class ThemeView: MTKView, MTKViewDelegate {
     var cutoutRect: CGRect = .zero {
         didSet { if cutoutRect != oldValue { needsDisplay = true } }
     }
     var cutoutCornerRadius: CGFloat = 10
+    /// Where the pointer light shows (the sidebar), top-left origin like `cutoutRect`.
+    var glowRegion: CGRect = .zero
+
+    /// Arc's sidebar light, fitted from its pixels: a Gaussian 110×34pt (sigma),
+    /// adding 14% white at its centre, fading in and out over about 0.15s.
+    private enum Glow {
+        static let sigma = SIMD2<Float>(110, 34)
+        static let strength: Float = 0.14
+        static let fadeTime: Double = 0.15
+    }
+    private var glowPoint: CGPoint = .zero
+    private var glowTarget: Float = 0
+    private var glowLevel: Float = 0
+    private var lastTick: CFTimeInterval?
 
     private var from: Theme
     private var to: Theme
@@ -49,7 +65,7 @@ final class ThemeView: MTKView, MTKViewDelegate {
         from = theme
         to = theme
         super.init(frame: .zero, device: ShaderLibrary.shared.device)
-        assert(MemoryLayout<ThemeUniforms>.stride == 192)
+        assert(MemoryLayout<ThemeUniforms>.stride == 208)
         colorPixelFormat = .bgra8Unorm
         // The tint is translucent: the window's material shows through it.
         layer?.isOpaque = false
@@ -85,6 +101,31 @@ final class ThemeView: MTKView, MTKViewDelegate {
         }
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        // Tracking areas fire by geometry, so the light follows the pointer under the sidebar's own views.
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
+
+    override func mouseMoved(with event: NSEvent) { pointerMoved(event) }
+    override func mouseEntered(with event: NSEvent) { pointerMoved(event) }
+    override func mouseExited(with event: NSEvent) { setGlowTarget(0) }
+
+    private func pointerMoved(_ event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        glowPoint = CGPoint(x: p.x, y: bounds.height - p.y)
+        setGlowTarget(glowRegion.contains(glowPoint) ? 1 : 0)
+        if glowLevel > 0 { needsDisplay = true }
+    }
+
+    private func setGlowTarget(_ target: Float) {
+        guard target != glowTarget else { return }
+        glowTarget = target
+        lastTick = nil
+        clock.start()
+    }
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         needsDisplay = true
     }
@@ -97,11 +138,19 @@ final class ThemeView: MTKView, MTKViewDelegate {
             if t >= 1 {
                 transitionStart = nil
                 from = to
-                clock.stop()
             } else {
                 progress = Float(t * t * (3 - 2 * t))
             }
         }
+
+        if glowLevel != glowTarget {
+            let now = clock.targetTimestamp ?? CACurrentMediaTime()
+            let dt = lastTick.map { now - $0 } ?? 1 / 120
+            lastTick = now
+            glowLevel += (glowTarget - glowLevel) * Float(1 - exp(-dt / (Glow.fadeTime / 3)))
+            if abs(glowTarget - glowLevel) < 0.01 { glowLevel = glowTarget }
+        }
+        if transitionStart == nil, glowLevel == glowTarget { clock.stop() }
 
         guard let pipeline,
               let pass = currentRenderPassDescriptor,
@@ -115,6 +164,7 @@ final class ThemeView: MTKView, MTKViewDelegate {
             fromLab: palette(from),
             toLab: palette(to),
             cutout: SIMD4(Float(cutoutRect.minX), Float(cutoutRect.minY), Float(cutoutRect.width), Float(cutoutRect.height)) * scale,
+            glow: SIMD4(Float(glowPoint.x), Float(glowPoint.y), Glow.sigma.x, Glow.sigma.y) * scale,
             size: SIMD2(Float(drawableSize.width), Float(drawableSize.height)),
             fromGrain: from.grain,
             toGrain: to.grain,
@@ -123,7 +173,8 @@ final class ThemeView: MTKView, MTKViewDelegate {
             toCount: UInt32(to.colors.count),
             cutoutRadius: Float(cutoutCornerRadius) * scale,
             fromTint: from.tint,
-            toTint: to.tint
+            toTint: to.tint,
+            glowStrength: Glow.strength * glowLevel
         )
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<ThemeUniforms>.stride, index: 0)
