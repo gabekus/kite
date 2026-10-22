@@ -393,6 +393,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 return false
             }
             item.title = "\(spaces[item.tag - 1].icon) \(spaces[item.tag - 1].name)"
+        case #selector(toggleStayOnTop(_:)):
+            item.state = window?.level == .floating ? .on : .off
+        case #selector(setAsDefaultBrowser(_:)):
+            item.state = Self.isDefaultBrowser ? .on : .off
+        case #selector(share(_:)), #selector(savePageAs(_:)),
+             #selector(clearCookiesAndRefresh(_:)), #selector(clearCacheAndRefresh(_:)):
+            return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):
             return shownPage?.isLoading ?? false
         case #selector(toggleFullScreenMode(_:)):

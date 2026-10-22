@@ -30,7 +30,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 |---|---|---|---|
 | About | | ✅ | |
 | Settings… | ⌘, | ❌ | Thread: Settings window |
-| Set as Default Browser | | ❌ | B5 |
+| Set as Default Browser | | ✅ (opens links from other apps in a new tab) | |
 | Import from Another Browser… | | 🟡 Arc only | Thread: import (Chrome/Safari later) |
 | Check for Updates… | | ❌ | Roadmap: Sparkle |
 | Hide / Hide Others / Show All | ⌘H / ⌥⌘H | ✅ | |
@@ -52,9 +52,9 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | New Easel | ⌃⇧E | ❌ | Thread: Easels (Skip?) |
 | Close Window | ⇧⌘W | ✅ | |
 | Archive Tab | ⌘W | 🟡 closes; Arc archives (findable in Library) | B3 |
-| Share… | | ❌ | B5 (NSSharingServicePicker) |
+| Share… | | ✅ | |
 | Capture… / Full Page / Portrait | | ❌ | Thread: Capture |
-| Save Page As | | ❌ | B5 |
+| Save Page As | | ✅ MHTML (Chromium) / web archive (WebKit) | |
 | Print | ⌘P | 🟡 Chromium's print opens its own window, no preview | Later: AppKit print sheet with preview |
 
 ### Edit
@@ -83,7 +83,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Collapse Pinned Tabs | | ❌ | B3 |
 | Stop Loading | ⌘. | ✅ | |
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
-| Clear Cookies and Refresh / Clear Cache and Refresh | | ❌ | B5 (CDP `Storage.clearDataForOrigin`, `WKWebsiteDataStore`) |
+| Clear Cookies and Refresh / Clear Cache and Refresh | | ✅ per site | |
 | Add Split View | ⌘L (Gabe) / ⌃⇧= (default) | ❌ | Thread: Split view |
 | Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | ❌ | Thread: Split view |
 | Zoom Actual / In / Out | ⌘0 / ⌘+ / ⌘- | ✅ | |
@@ -146,7 +146,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | Minimize / Zoom | ⌘M | ✅ | macOS adds Fill, Center, tiling for free |
-| Stay On Top | | ❌ | B5 |
+| Stay On Top | | ✅ | |
 | Open Library… | ⇧⌘L | ❌ | Thread: Library |
 | View Downloads… | ⇧⌘J | ❌ | Thread: Library (downloads) |
 | View Easels… / Media… / Boosts… | | ❌ | Their threads |
@@ -155,8 +155,8 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Arc item | Kite | Plan |
 |---|---|---|
-| Essential Keyboard Shortcuts (cheat sheet) | ❌ | B5 |
-| Restore Data, Reveal Data folder, Copy Info, Task Manager, Record Trace | ❌ | B5 (Reveal data folder, Copy info); Task Manager later |
+| Essential Keyboard Shortcuts (cheat sheet) | ✅ Help → Keyboard Shortcuts, built from the menus | |
+| Restore Data, Reveal Data folder, Copy Info, Task Manager, Record Trace | 🟡 Reveal Kite Data, Copy Kite Info | Task Manager later |
 | Getting Started, Contact, Help Center, Export Arc Notes | ❌ | Skip |
 
 ## Features without a menu item
@@ -203,7 +203,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Remappable shortcuts | Settings → Shortcuts | ❌ | B6 |
 | AppleScript dictionary | windows, tabs (URL, title, execute JS), spaces | ❌ | With MCP/CLI thread; worth matching |
 | Sync | Sidebar via CloudKit/Firebase | ❌ | Roadmap: sync |
-| Default browser, handle links | | ❌ | B5 |
+| Default browser, handle links | | ✅ | |
 | PWAs / installed apps | `app_mode_loader` shims | ❌ | Roadmap: PWAs |
 | Sad tab | Crashed-tab page with reload | ❌ | B5 |
 | Download from links, downloads list | | 🟡 WebKit saves files, no UI | Thread: Library |

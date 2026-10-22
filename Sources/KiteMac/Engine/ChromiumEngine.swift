@@ -63,6 +63,21 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     func printPage() { browser.print() }
+
+    func archive(completion: @escaping (Data?, String) -> Void) {
+        browser.executeDevToolsMethod("Page.captureSnapshot", params: ["format": "mhtml"]) { result in
+            completion((result?["data"] as? String)?.data(using: .utf8), "mhtml")
+        }
+    }
+
+    func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void) {
+        guard let scheme = url.scheme, let host = url.host() else { return completion() }
+        let origin = "\(scheme)://\(host)" + (url.port.map { ":\($0)" } ?? "")
+        let types = kind == .cookies ? "cookies" : "cache_storage,service_workers"
+        browser.executeDevToolsMethod("Storage.clearDataForOrigin", params: ["origin": origin, "storageTypes": types]) { _ in
+            completion()
+        }
+    }
     func setForceDark(_ enabled: Bool) { browser.setForceDark(enabled) }
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
