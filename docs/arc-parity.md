@@ -54,8 +54,8 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Archive Tab | ⌘W | 🟡 closes; Arc archives (findable in Library) | B3 |
 | Share… | | ❌ | B5 (NSSharingServicePicker) |
 | Capture… / Full Page / Portrait | | ❌ | Thread: Capture |
-| Save Page As | | ❌ | B2 |
-| Print | ⌘P | ❌ | B2 |
+| Save Page As | | ❌ | B5 |
+| Print | ⌘P | ✅ | |
 
 ### Edit
 
@@ -66,12 +66,12 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | **Copy URL** (toast) | ⇧⌘C | ✅ this PR | |
 | **Copy URL as Markdown** | ⌥⇧⌘C | ✅ this PR | |
 | **Copy URL as Quote** | ⌃⇧⌘C | ✅ this PR (selection as a quote + link; Arc's exact format unverified) | |
-| Paste and Match Style | ⇧⌘V | ❌ | B2 |
-| Delete | | ❌ | B2 |
-| Find… / Find Next / Find Previous | ⌘F / ⌘G / ⇧⌘G | ❌ | B2 (CEF `Find`, WebKit `find`) |
+| Paste and Match Style | ⇧⌘V | ✅ | |
+| Delete | | ✅ | |
+| Find… / Find Next / Find Previous | ⌘F / ⌘G / ⇧⌘G | ✅ find bar (match count on Chromium) | |
 | Find and Replace | ⌥⌘F | ❌ | Skip? (text fields only) |
-| Use Selection to Find / Jump to Selection | ⌘E / ⌘J | ❌ | B2 |
-| Spelling, Substitutions, Transformations, Speech, Format, AutoFill, Dictation, Emoji | system | ❌ | B2 (standard AppKit items, mostly free) |
+| Use Selection to Find / Jump to Selection | ⌘E / ⌘J | 🟡 ⌘E only | ⌘J later |
+| Spelling, Substitutions, Transformations, Speech, Format, AutoFill, Dictation, Emoji | system | 🟡 all but Format and AutoFill | Later |
 
 ### View
 
@@ -81,21 +81,21 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Show Sidebar | ⌘S | ✅ | |
 | Show Toolbar (URL bar on top) | ⇧⌘D | ❌ | B5 (`topBarURLEnabled`) |
 | Collapse Pinned Tabs | | ❌ | B3 |
-| Stop Loading | ⌘. | 🟡 reload button only | B2 |
-| Refresh / Force Refresh | ⌘R / ⇧⌘R | 🟡 no force | B2 |
-| Clear Cookies and Refresh / Clear Cache and Refresh | | ❌ | B2 (CDP `Network.clear*`) |
+| Stop Loading | ⌘. | ✅ | |
+| Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
+| Clear Cookies and Refresh / Clear Cache and Refresh | | ❌ | B5 (CDP `Storage.clearDataForOrigin`, `WKWebsiteDataStore`) |
 | Add Split View | ⌘L (Gabe) / ⌃⇧= (default) | ❌ | Thread: Split view |
 | Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | ❌ | Thread: Split view |
 | Zoom Actual / In / Out | ⌘0 / ⌘+ / ⌘- | ✅ | |
 | Cast | | ❌ | Skip? |
-| Developer → View Source | ⌥⌘U | ❌ | B2 |
+| Developer → View Source | ⌥⌘U | ✅ Chromium (new `view-source:` tab) | |
 | Developer → Developer Tools | ⌥⌘I | ✅ | |
-| Developer → Inspect Elements | ⌥⌘C | ❌ | B2 |
-| Developer → JavaScript Console | ⌥⌘J | ❌ | B2 |
-| Developer → Network Inspector | | ❌ | B2 |
+| Developer → Inspect Elements | ⌥⌘C | 🟡 opens DevTools, no picker yet | Later |
+| Developer → JavaScript Console | ⌥⌘J | 🟡 opens DevTools, not on Console | Later |
+| Developer → Network Inspector | | ❌ | Later, with the two above |
 | Developer → Allow JavaScript from Apple Events | | ❌ | With AppleScript |
 | Turn on Developer Mode for this site | ⌃D | ❌ | Thread: Developer Mode |
-| Enter Full Screen | ⌃⌘F | ❌ | B2 |
+| Enter Full Screen | ⌃⌘F | ✅ | |
 | Dark Page for This Site (Kite only) | ⌥⌘D | ✅ | |
 
 ### Spaces
@@ -131,7 +131,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| Go Back / Go Forward | ⌘[ / ⌘] (also ⌘← / ⌘→) | 🟡 no ⌘←/⌘→ | B2 |
+| Go Back / Go Forward | ⌘[ / ⌘] (also ⌘← / ⌘→) | 🟡 no ⌘←/⌘→ | B3: only when no text field has focus, or they'd steal line-start/end |
 | View History | ⌘Y | ❌ | Thread: Library (history page) |
 | View Archive… / Clear Archive | | 🟡 archived tabs stored, no UI | Thread: Library |
 
@@ -216,10 +216,10 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 Small and shortcut-level, one PR each, in this order:
 
 - **B1. Copy commands** (this PR): Copy URL ⇧⌘C, as Markdown ⌥⇧⌘C, as Quote ⌃⇧⌘C, with a toast.
-- **B2. Page commands:** Find (⌘F/⌘G/⇧⌘G/⌘E/⌘J), Print ⌘P, Save Page As, Stop ⌘., Force Refresh ⇧⌘R,
-  Clear Cookies/Cache and Refresh, View Source ⌥⌘U, Inspect ⌥⌘C, Console ⌥⌘J, ⌘←/⌘→ back/forward,
-  Full Screen ⌃⌘F, Paste and Match Style ⇧⌘V and the standard Edit submenus.
-- **B3. Tabs and spaces:** ⌥⌘↓/⌥⌘↑ next/previous tab, ⌃Tab as MRU, Clear Today ⇧⌘K, ⌘W archives with
+- **B2. Page commands:** Find (⌘F/⌘G/⇧⌘G/⌘E), Print ⌘P, Stop ⌘., Force Refresh ⇧⌘R,
+  View Source ⌥⌘U, Inspect ⌥⌘C and Console ⌥⌘J (open DevTools for now), Full Screen ⌃⌘F,
+  Paste and Match Style ⇧⌘V and the standard Edit submenus.
+- **B3. Tabs and spaces:** ⌥⌘↓/⌥⌘↑ next/previous tab, ⌘←/⌘→ back/forward, ⌃Tab as MRU, Clear Today ⇧⌘K, ⌘W archives with
   ⌘Z undo, Reset tabs in space, back to pinned URL, New Folder, Rename tab/space, Reveal in sidebar,
   Collapse Pinned, ⇧⌘S next space, Manage Spaces, swipe between spaces. Avoids the sidebar files the
   other session is editing where possible.
@@ -227,7 +227,7 @@ Small and shortcut-level, one PR each, in this order:
   Needs the store to support more than one window.
 - **B5. Small UX:** Show Toolbar ⇧⌘D, Stay On Top, sidebar hover reveal, auto-archive setting,
   warn before quit, Share…, Set as Default Browser, keyboard-shortcut cheat sheet, Reveal data folder,
-  sad tab, swipe gestures.
+  sad tab, swipe gestures, Save Page As, Clear Cookies/Cache and Refresh.
 - **B6. Command bar and remapping:** command bar actions (every menu command searchable), history,
   site search; user-remappable shortcuts.
 

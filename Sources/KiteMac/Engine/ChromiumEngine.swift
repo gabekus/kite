@@ -20,6 +20,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     let browser: KCBrowser
     var onEvent: ((PageEvent) -> Void)?
     private var mediaInUse = false
+    private var findCompletion: ((FindResult) -> Void)?
 
     /// Media elements that are currently playing; used to keep music tabs alive.
     private static let playingMediaScript =
@@ -43,10 +44,23 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func goBack() { browser.goBack() }
     func goForward() { browser.goForward() }
     func reload() { browser.reload() }
+    func reloadIgnoringCache() { browser.reloadIgnoringCache() }
     func stopLoading() { browser.stopLoading() }
     func focus() { browser.focus() }
     func setVisible(_ visible: Bool) { browser.setHidden(!visible) }
     func showDevTools() { browser.showDevTools() }
+
+    func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
+        findCompletion = completion
+        browser.find(text, forward: forward, findNext: findNext)
+    }
+
+    func stopFinding() {
+        findCompletion = nil
+        browser.stopFinding()
+    }
+
+    func printPage() { browser.print() }
     func setForceDark(_ enabled: Bool) { browser.setForceDark(enabled) }
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
@@ -87,6 +101,10 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     func browserDidRequestClose(_ browser: KCBrowser) { onEvent?(.closeRequested) }
+
+    func browser(_ browser: KCBrowser, findResultCount count: Int32, activeMatch: Int32, final: Bool) {
+        findCompletion?(FindResult(found: count > 0, matches: Int(count), activeMatch: Int(activeMatch)))
+    }
 }
 
 /// KCBrowser wants a delegate at init; ChromiumPage replaces it right away.

@@ -72,6 +72,7 @@ final class WebKitPage: NSObject, WebPage {
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
     func reload() { webView.reload() }
+    func reloadIgnoringCache() { webView.reloadFromOrigin() }
     func stopLoading() { webView.stopLoading() }
     func focus() { webView.window?.makeFirstResponder(webView) }
     // WebKit throttles views that aren't in a window on its own.
@@ -80,6 +81,25 @@ final class WebKitPage: NSObject, WebPage {
     func showDevTools() {}
     // No public force-dark API in WebKit.
     func setForceDark(_ enabled: Bool) {}
+
+    func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
+        let configuration = WKFindConfiguration()
+        configuration.backwards = !forward
+        configuration.caseSensitive = false
+        configuration.wraps = true
+        webView.find(text, configuration: configuration) { completion(FindResult(found: $0.matchFound)) }
+    }
+
+    func stopFinding() {
+        webView.evaluateJavaScript("getSelection().removeAllRanges()")
+    }
+
+    func printPage() {
+        guard let window = webView.window else { return }
+        let operation = webView.printOperation(with: .shared)
+        operation.view?.frame = webView.bounds
+        operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+    }
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
         webView.evaluateJavaScript(script) { result, _ in completion(result) }
