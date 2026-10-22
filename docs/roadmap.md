@@ -5,10 +5,6 @@ depends on Arc's data has to land before then.
 
 ## Before daily use
 
-- **Chromium sandbox.** Renderers currently run unsandboxed (`no_sandbox` in
-  `KCRuntime.mm`), so a renderer exploit has your user's full access. This
-  needs the sandbox library from CEF's standard distribution, plus a
-  `CefScopedSandboxContext` in the helper. It's the top priority.
 - **Signing and notarization**, with Sparkle for updates.
 - **Back/forward history across hibernation on Chromium.** WebKit restores
   `interactionState`; CEF currently reloads the URL only.
