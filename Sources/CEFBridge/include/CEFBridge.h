@@ -18,6 +18,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// 0 disables the Chrome DevTools Protocol port. When set, any local process can
 /// drive the browser, so keep it off unless you're using it.
 @property (nonatomic) int remoteDebuggingPort;
+/// Chromium's --use-mock-keychain: cookies and saved passwords are encrypted with
+/// a fixed key instead of one from the login keychain, so there's no keychain
+/// prompt. Only for throwaway test profiles, never for real browsing data.
+@property (nonatomic) BOOL useMockKeychain;
 @end
 
 @interface KCRuntime : NSObject
