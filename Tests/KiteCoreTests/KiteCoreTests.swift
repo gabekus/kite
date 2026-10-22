@@ -308,3 +308,32 @@ import Testing
         #expect(leftovers.contains { $0.contains("corrupt") })
     }
 }
+
+@Suite struct LinkFormatTests {
+    @Test func usesTitleAsLinkText() {
+        let url = URL(string: "https://example.com/a")!
+        #expect(LinkFormat.markdown(title: "Example", url: url) == "[Example](https://example.com/a)")
+    }
+
+    @Test func fallsBackToURLWithoutTitle() {
+        let url = URL(string: "https://example.com/")!
+        #expect(LinkFormat.markdown(title: "  ", url: url) == "[https://example.com/](https://example.com/)")
+    }
+
+    @Test func escapesBracketsAndParentheses() {
+        let url = URL(string: "https://en.wikipedia.org/wiki/Arc_(web_browser)")!
+        #expect(
+            LinkFormat.markdown(title: "Arc [browser]\nwiki", url: url)
+                == "[Arc \\[browser\\] wiki](https://en.wikipedia.org/wiki/Arc_%28web_browser%29)"
+        )
+    }
+
+    @Test func quotesSelectionWithSource() {
+        let url = URL(string: "https://example.com/")!
+        #expect(
+            LinkFormat.quote(selection: " First line\n\nSecond ", title: "Example", url: url)
+                == "> First line\n>\n> Second\n>\n> — [Example](https://example.com/)"
+        )
+        #expect(LinkFormat.quote(selection: "  ", title: "Example", url: url) == "[Example](https://example.com/)")
+    }
+}

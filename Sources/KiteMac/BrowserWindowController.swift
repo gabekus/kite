@@ -34,7 +34,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     private var shownTabID: UUID?
     private var shownSpaceID: UUID?
-    private weak var shownPage: WebPage?
+    private(set) weak var shownPage: WebPage?
     /// Last dark-pages setting sent to each page, so it's only re-sent on change.
     private var appliedDark: [UUID: Bool] = [:]
     private var commandBarVisible = false

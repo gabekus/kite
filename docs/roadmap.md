@@ -36,6 +36,9 @@ depends on Arc's data has to land before then.
 
 ## Arc features to keep
 
+The full list of Arc's features and shortcuts, with Kite's status and the plan
+for each, is in [arc-parity.md](arc-parity.md).
+
 - **Peek:** ⇧-click opens a link in an overlay on top of the current page.
 - **Mini player:** when a background tab plays media, show controls (play/pause,
   next, picture-in-picture) at the bottom of the sidebar. Drive it through CDP
