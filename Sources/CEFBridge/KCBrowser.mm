@@ -8,6 +8,7 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context.h"
+#include "include/cef_request_context_handler.h"
 
 @interface KCRequestContext ()
 - (instancetype)initPrivate;
