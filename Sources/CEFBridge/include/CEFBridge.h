@@ -18,6 +18,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// 0 disables the Chrome DevTools Protocol port. When set, any local process can
 /// drive the browser, so keep it off unless you're using it.
 @property (nonatomic) int remoteDebuggingPort;
+/// Chromium's --use-mock-keychain: cookies and saved passwords are encrypted with
+/// a fixed key instead of one from the login keychain, so there's no keychain
+/// prompt. Only for throwaway test profiles, never for real browsing data.
+@property (nonatomic) BOOL useMockKeychain;
 @end
 
 @interface KCRuntime : NSObject
@@ -25,6 +29,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, nonatomic, readonly) BOOL isAvailable;
 @property (class, nonatomic, readonly) BOOL isInitialized;
 + (BOOL)initializeWithSettings:(KCRuntimeSettings *)settings;
+/// Chromium's Energy Saver, which drops pages to 30fps on battery below 20%.
+/// Off by default so pages run at the display's full rate. Can be set before
+/// or after initializing.
+@property (class, nonatomic) BOOL energySaverEnabled;
 /// Runs the Cocoa event loop with CEF integrated. Returns after quit.
 + (void)runMessageLoop;
 /// Closes every browser, then ends the message loop.
@@ -93,6 +101,11 @@ NS_SWIFT_UI_ACTOR
 - (void)executeDevToolsMethod:(NSString *)method
                        params:(nullable NSDictionary<NSString *, id> *)params
                    completion:(nullable void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result))completion;
+/// Like executeDevToolsMethod, but a failure comes back as the protocol's error
+/// message. `error` is "not-ready" until the browser exists.
+- (void)callDevToolsMethod:(NSString *)method
+                    params:(nullable NSDictionary<NSString *, id> *)params
+                completion:(void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result, NSString * _Nullable error))completion;
 - (void)close;
 @end
 
