@@ -385,13 +385,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             item.title = pinned ? "Unpin Tab" : "Pin Tab"
             return store.state.selectedTab != nil
         case #selector(selectSpaceNumber(_:)):
-            // Arc lists spaces by name. Numbers past the last space stay as disabled placeholders
-            // (hiding them could skip validation, so ⌃N wouldn't come back for a new space).
+            // Arc lists only the spaces that exist, by name.
             let spaces = store.state.spaces
-            guard spaces.indices.contains(item.tag - 1) else {
-                item.title = "Space \(item.tag)"
-                return false
-            }
+            let exists = spaces.indices.contains(item.tag - 1)
+            item.isHidden = !exists
+            guard exists else { return false }
             item.title = "\(spaces[item.tag - 1].icon) \(spaces[item.tag - 1].name)"
         case #selector(toggleStayOnTop(_:)):
             item.state = window?.level == .floating ? .on : .off

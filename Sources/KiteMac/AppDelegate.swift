@@ -29,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         windowController = BrowserWindowController(store: store, engine: engine)
         NSApp.mainMenu = MainMenu.build(target: windowController)
+        // Registered after the menu bar is set so AppKit adds Help search and the window list.
+        NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
+        NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
         windowController.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         open(pendingURLs)

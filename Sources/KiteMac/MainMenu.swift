@@ -199,7 +199,10 @@ enum MainMenu {
             item("Previous Space", #selector(BrowserWindowController.previousSpace(_:)), left, [.command, .option]),
             .separator(),
         ] + (1...9).map { n in
-            item("Space \(n)", #selector(BrowserWindowController.selectSpaceNumber(_:)), "\(n)", .control, tag: n)
+            let space = item("Space \(n)", #selector(BrowserWindowController.selectSpaceNumber(_:)), "\(n)", .control, tag: n)
+            // Hidden while there's no such space, but ⌃n still reaches validation once there is.
+            space.allowsKeyEquivalentWhenHidden = true
+            return space
         })
 
         submenu("Window", [
@@ -207,6 +210,8 @@ enum MainMenu {
             .separator(),
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m", toTarget: false),
             item("Zoom", #selector(NSWindow.performZoom(_:)), toTarget: false),
+            .separator(),
+            item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), toTarget: false),
         ])
 
         submenu("Help", [
@@ -217,7 +222,6 @@ enum MainMenu {
                 item("Copy Kite Info", #selector(BrowserWindowController.copyKiteInfo(_:))),
             ]),
         ])
-        NSApp.helpMenu = main.items.last?.submenu
 
         return main
     }

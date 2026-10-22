@@ -17,18 +17,20 @@ enum ShortcutsWindow {
 
     private static func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 600),
             styleMask: [.titled, .closable, .resizable, .utilityWindow],
             backing: .buffered,
             defer: true
         )
         panel.title = "Keyboard Shortcuts"
         panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
         let scroll = NSTextView.scrollableTextView()
         if let textView = scroll.documentView as? NSTextView {
             textView.isEditable = false
             textView.textContainerInset = NSSize(width: 16, height: 14)
             textView.drawsBackground = false
+            textView.textContainer?.widthTracksTextView = true
         }
         panel.contentView = scroll
         panel.center()
@@ -38,7 +40,9 @@ enum ShortcutsWindow {
     private static func listing(_ menu: NSMenu?) -> NSAttributedString {
         let output = NSMutableAttributedString()
         let paragraph = NSMutableParagraphStyle()
+        // Command on the left, shortcut right-aligned on the same row.
         paragraph.tabStops = [NSTextTab(textAlignment: .right, location: 400)]
+        paragraph.lineBreakMode = .byTruncatingMiddle
         let body: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph,
         ]
