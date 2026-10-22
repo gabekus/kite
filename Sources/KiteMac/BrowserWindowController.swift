@@ -207,6 +207,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         glowView.setTheme(space.theme)
         sidebarHost.appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
         shownSpaceID = space.id
+        // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
+        let title = state.selectedTab?.title ?? ""
+        window?.title = title.isEmpty ? space.name : title
 
         let selected = state.selectedTab
         if selected?.id != shownTabID {

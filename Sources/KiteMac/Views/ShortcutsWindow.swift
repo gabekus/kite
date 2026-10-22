@@ -11,6 +11,7 @@ enum ShortcutsWindow {
         self.panel = panel
         if let textView = (panel.contentView as? NSScrollView)?.documentView as? NSTextView {
             textView.textStorage?.setAttributedString(listing(menu))
+            textView.scroll(.zero)
         }
         panel.makeKeyAndOrderFront(nil)
     }
@@ -70,7 +71,7 @@ enum ShortcutsWindow {
     }
 
     static func describe(_ key: String, _ modifiers: NSEvent.ModifierFlags) -> String {
-        var text = ""
+        var text = modifiers.contains(.function) ? "fn " : ""
         if modifiers.contains(.control) { text += "⌃" }
         if modifiers.contains(.option) { text += "⌥" }
         if modifiers.contains(.shift) || key != key.lowercased() { text += "⇧" }
