@@ -50,9 +50,10 @@ Useful environment variables:
 
 Chromium keeps its cookie and password encryption key in the login keychain. An ad-hoc
 signed build gets a new code identity on every rebuild, so macOS asks for your password
-each launch. Run `scripts/make-signing-cert.sh` once: it creates a self-signed
-"Kite Local Signing" identity, `bundle-app.sh` signs with it, and "Always Allow" then
-sticks across rebuilds.
+each launch. `bundle-app.sh` signs with your Apple Development cert when you have a
+valid one, so the identity stays the same and "Always Allow" sticks across rebuilds.
+Without one, run `scripts/make-signing-cert.sh` once to create a self-signed
+"Kite Local Signing" identity instead.
 
 ## Layout
 
