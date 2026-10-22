@@ -214,7 +214,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         shownSpaceID = space.id
         // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
         let title = state.selectedTab?.title ?? ""
-        window?.title = title.isEmpty ? space.name : title
+        window?.title = (title.isEmpty ? space.name : title) + (isIncognito ? " (Incognito)" : "")
 
         let selected = state.selectedTab
         if selected?.id != shownTabID {

@@ -66,15 +66,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func openIncognitoWindow() {
         let controller = BrowserWindowController(store: .incognito(), engine: engine.makeEphemeral(), incognito: true)
         incognitoControllers.append(controller)
-        if let frame = windowController.window?.frame {
-            controller.window?.setFrameOrigin(NSPoint(x: frame.minX + 24, y: frame.minY - 24))
-        }
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: controller.window, queue: .main
         ) { [weak self, weak controller] _ in
             MainActor.assumeIsolated { self?.incognitoControllers.removeAll { $0 === controller } }
         }
         controller.showWindow(nil)
+        // Offset from the window in front so the two don't stack exactly (after showWindow, which centers).
+        if let front = NSApp.mainWindow ?? windowController.window, front !== controller.window {
+            controller.window?.setFrameTopLeftPoint(NSPoint(x: front.frame.minX + 28, y: front.frame.maxY - 28))
+        }
         controller.newTab(nil)
     }
 
