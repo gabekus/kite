@@ -10,13 +10,14 @@ import AppKit
 /// centered at the wanted height, then set each button's x.
 @MainActor
 final class TrafficLights {
-    /// Centre of the buttons, measured from the window's top-left. Matches the
-    /// sidebar's back/forward/reload row (6pt top padding, 28pt tall).
-    static let center = CGPoint(x: 14, y: 20)
+    /// Centre of the close button, from the window's top-left, and the distance
+    /// between button centres. Measured from Arc 1.169 (docs/arc-visual-spec.md):
+    /// 16pt buttons at x 12/32/52, y 16, in line with its back/forward/reload row.
+    static let center = CGPoint(x: 20, y: 24)
+    static let pitch: CGFloat = 20
 
     private weak var window: NSWindow?
     private let hoverZone = HoverZone()
-    private var spacing: CGFloat?
     private var sidebarVisible = true
     private var hovering = false
 
@@ -47,10 +48,6 @@ final class TrafficLights {
         // In full screen the buttons live in the menu-bar reveal; leave them to AppKit.
         guard let window, !isFullScreen, let first = buttons.first,
               let container = first.superview?.superview else { return }
-        let buttons = buttons
-        if spacing == nil, buttons.count > 1 {
-            spacing = buttons[1].frame.minX - buttons[0].frame.maxX
-        }
         let size = first.frame.size
         let margin = (Self.center.y - size.height / 2).rounded()
 
@@ -63,7 +60,7 @@ final class TrafficLights {
         for button in buttons {
             let origin = CGPoint(x: x, y: margin)
             if button.frame.origin != origin { button.setFrameOrigin(origin) }
-            x += size.width + (spacing ?? 6)
+            x += Self.pitch
         }
     }
 
