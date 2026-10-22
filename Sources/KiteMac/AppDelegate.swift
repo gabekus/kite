@@ -1,5 +1,8 @@
 import AppKit
 import KiteCore
+#if canImport(CEFBridge)
+import CEFBridge
+#endif
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -75,6 +78,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store?.saveNow()
     }
 
+    // MARK: Settings
+
+    /// Chromium's Energy Saver (30fps on low battery). Off unless the user turns it on.
+    static let energySaverKey = "chromiumEnergySaver"
+
+    @objc func toggleEnergySaver(_ sender: Any?) {
+        #if canImport(CEFBridge)
+        KCRuntime.energySaverEnabled.toggle()
+        UserDefaults.standard.set(KCRuntime.energySaverEnabled, forKey: Self.energySaverKey)
+        #endif
+    }
+
     // MARK: Claude
 
     @objc func toggleClaudeControl(_ sender: Any?) {
@@ -105,6 +120,14 @@ extension AppDelegate: NSMenuItemValidation {
         if item.action == #selector(toggleClaudeControl(_:)) {
             item.state = automation?.isEnabled == true ? .on : .off
             return automation != nil
+        }
+        if item.action == #selector(toggleEnergySaver(_:)) {
+            #if canImport(CEFBridge)
+            item.state = KCRuntime.energySaverEnabled ? .on : .off
+            return KCRuntime.isInitialized
+            #else
+            return false
+            #endif
         }
         return true
     }
