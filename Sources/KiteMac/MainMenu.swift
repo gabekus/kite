@@ -5,6 +5,8 @@ import KiteCore
 @MainActor
 enum MainMenu {
     static func build(target: BrowserWindowController) -> NSMenu {
+        // We provide Enter Full Screen (⌃⌘F) ourselves; stop AppKit adding its fn-F copy.
+        UserDefaults.standard.set(false, forKey: "NSFullScreenMenuItemEverywhere")
         let main = NSMenu()
 
         func submenu(_ title: String, _ items: [NSMenuItem]) {
@@ -29,6 +31,14 @@ enum MainMenu {
             item.tag = tag
             item.target = toTarget ? target : nil
             return item
+        }
+
+        func submenuItem(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
+            let menu = NSMenu(title: title)
+            items.forEach(menu.addItem)
+            let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            parent.submenu = menu
+            return parent
         }
 
         let left = String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!))
@@ -65,6 +75,8 @@ enum MainMenu {
             .separator(),
             item("Close Tab", #selector(BrowserWindowController.closeTab(_:)), "w"),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift], toTarget: false),
+            .separator(),
+            item("Print…", #selector(BrowserWindowController.printPage(_:)), "p"),
         ])
 
         submenu("Edit", [
@@ -74,17 +86,54 @@ enum MainMenu {
             item("Cut", #selector(NSText.cut(_:)), "x", toTarget: false),
             item("Copy", #selector(NSText.copy(_:)), "c", toTarget: false),
             item("Paste", #selector(NSText.paste(_:)), "v", toTarget: false),
+            item("Paste and Match Style", #selector(BrowserWindowController.pasteMatchingStyle(_:)), "v", [.command, .shift]),
+            item("Delete", #selector(NSText.delete(_:)), toTarget: false),
             item("Select All", #selector(NSText.selectAll(_:)), "a", toTarget: false),
             .separator(),
             item("Copy URL", #selector(BrowserWindowController.copyURL(_:)), "c", [.command, .shift]),
             item("Copy URL as Markdown", #selector(BrowserWindowController.copyURLAsMarkdown(_:)), "c", [.command, .shift, .option]),
             item("Copy URL as Quote", #selector(BrowserWindowController.copyURLAsQuote(_:)), "c", [.command, .shift, .control]),
+            .separator(),
+            submenuItem("Find", [
+                item("Find…", #selector(BrowserWindowController.showFind(_:)), "f"),
+                item("Find Next", #selector(BrowserWindowController.findNext(_:)), "g"),
+                item("Find Previous", #selector(BrowserWindowController.findPrevious(_:)), "g", [.command, .shift]),
+                item("Use Selection to Find", #selector(BrowserWindowController.useSelectionForFind(_:)), "e"),
+            ]),
+            submenuItem("Spelling and Grammar", [
+                item("Show Spelling and Grammar", #selector(NSText.showGuessPanel(_:)), ":", toTarget: false),
+                item("Check Document Now", #selector(NSText.checkSpelling(_:)), ";", toTarget: false),
+                .separator(),
+                item("Check Spelling While Typing", #selector(NSTextView.toggleContinuousSpellChecking(_:)), toTarget: false),
+                item("Check Grammar With Spelling", #selector(NSTextView.toggleGrammarChecking(_:)), toTarget: false),
+                item("Correct Spelling Automatically", #selector(NSTextView.toggleAutomaticSpellingCorrection(_:)), toTarget: false),
+            ]),
+            submenuItem("Substitutions", [
+                item("Show Substitutions", #selector(NSTextView.orderFrontSubstitutionsPanel(_:)), toTarget: false),
+                .separator(),
+                item("Smart Copy/Paste", #selector(NSTextView.toggleSmartInsertDelete(_:)), toTarget: false),
+                item("Smart Quotes", #selector(NSTextView.toggleAutomaticQuoteSubstitution(_:)), toTarget: false),
+                item("Smart Dashes", #selector(NSTextView.toggleAutomaticDashSubstitution(_:)), toTarget: false),
+                item("Smart Links", #selector(NSTextView.toggleAutomaticLinkDetection(_:)), toTarget: false),
+                item("Text Replacement", #selector(NSTextView.toggleAutomaticTextReplacement(_:)), toTarget: false),
+            ]),
+            submenuItem("Transformations", [
+                item("Make Upper Case", #selector(NSResponder.uppercaseWord(_:)), toTarget: false),
+                item("Make Lower Case", #selector(NSResponder.lowercaseWord(_:)), toTarget: false),
+                item("Capitalize", #selector(NSResponder.capitalizeWord(_:)), toTarget: false),
+            ]),
+            submenuItem("Speech", [
+                item("Start Speaking", #selector(NSTextView.startSpeaking(_:)), toTarget: false),
+                item("Stop Speaking", #selector(NSTextView.stopSpeaking(_:)), toTarget: false),
+            ]),
         ])
 
         submenu("View", [
             item("Toggle Sidebar", #selector(BrowserWindowController.toggleSidebar(_:)), "s"),
             .separator(),
+            item("Stop Loading", #selector(BrowserWindowController.stopLoading(_:)), "."),
             item("Reload Page", #selector(BrowserWindowController.reload(_:)), "r"),
+            item("Force Reload Page", #selector(BrowserWindowController.forceReload(_:)), "r", [.command, .shift]),
             .separator(),
             item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0"),
             item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "="),
@@ -93,7 +142,15 @@ enum MainMenu {
             item("Dark Page for This Site", #selector(BrowserWindowController.toggleDarkPage(_:)), "d", [.command, .option]),
             darkPagesMenu(),
             .separator(),
-            item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option]),
+            submenuItem("Developer", [
+                item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option]),
+                item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option]),
+                // Both open DevTools for now; picking the element or panel needs the DevTools frontend.
+                item("Inspect Elements", #selector(BrowserWindowController.showDevTools(_:)), "c", [.command, .option]),
+                item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option]),
+            ]),
+            .separator(),
+            item("Enter Full Screen", #selector(BrowserWindowController.toggleFullScreenMode(_:)), "f", [.command, .control]),
         ])
 
         submenu("History", [

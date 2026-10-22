@@ -17,7 +17,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     let store: BrowserStore
-    private let pool: PagePool
+    let pool: PagePool
     private let rootView = RootView()
     private let themeView = ThemeView()
     private let glowView = GlowView(margin: Layout.glowMargin)
@@ -222,6 +222,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     private func show(_ tab: BrowserTab?) {
+        hideFindBar()
         shownPage?.view.removeFromSuperview()
         shownPage = nil
         shownTabID = tab?.id
@@ -379,6 +380,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let tab = store.state.selectedTab
             item.state = store.state.wantsDarkPage(for: tab?.url, systemIsDark: store.systemIsDark) ? .on : .off
             return pool.engine.supportsDarkPages && tab?.url?.host() != nil
+        case #selector(stopLoading(_:)):
+            return shownPage?.isLoading ?? false
+        case #selector(toggleFullScreenMode(_:)):
+            item.title = window?.styleMask.contains(.fullScreen) == true ? "Exit Full Screen" : "Enter Full Screen"
         default:
             break
         }
