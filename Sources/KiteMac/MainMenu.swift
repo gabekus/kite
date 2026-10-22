@@ -33,6 +33,14 @@ enum MainMenu {
             return item
         }
 
+        /// A second shortcut for a command: hidden, but its key equivalent still works.
+        func alternate(_ action: Selector, _ key: String, _ modifiers: NSEvent.ModifierFlags) -> NSMenuItem {
+            let hidden = item("", action, key, modifiers)
+            hidden.isHidden = true
+            hidden.allowsKeyEquivalentWhenHidden = true
+            return hidden
+        }
+
         func submenuItem(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
             let menu = NSMenu(title: title)
             items.forEach(menu.addItem)
@@ -43,6 +51,8 @@ enum MainMenu {
 
         let left = String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!))
         let right = String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
+        let up = String(Character(UnicodeScalar(NSUpArrowFunctionKey)!))
+        let down = String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
 
         func darkPagesMenu() -> NSMenuItem {
             let menu = NSMenu(title: "Dark Pages")
@@ -159,9 +169,15 @@ enum MainMenu {
         ])
 
         submenu("Tabs", [
-            item("Next Tab", #selector(BrowserWindowController.nextTab(_:)), "\t", .control),
-            item("Previous Tab", #selector(BrowserWindowController.previousTab(_:)), "\t", [.control, .shift]),
             item("Pin / Unpin Tab", #selector(BrowserWindowController.togglePin(_:)), "d"),
+            item("Duplicate Tab", #selector(BrowserWindowController.duplicateTab(_:))),
+            .separator(),
+            item("Next Tab", #selector(BrowserWindowController.nextTab(_:)), down, [.command, .option]),
+            item("Previous Tab", #selector(BrowserWindowController.previousTab(_:)), up, [.command, .option]),
+            item("Switch to Recent Tab", #selector(BrowserWindowController.selectRecentTab(_:)), "\t", .control),
+            alternate(#selector(BrowserWindowController.previousTab(_:)), "\t", [.control, .shift]),
+            .separator(),
+            item("Clear Today", #selector(BrowserWindowController.clearToday(_:)), "k", [.command, .shift]),
             .separator(),
         ] + (1...9).map { n in
             item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n)
@@ -169,7 +185,11 @@ enum MainMenu {
 
         submenu("Spaces", [
             item("New Space", #selector(BrowserWindowController.newSpace(_:)), "n", [.command, .shift]),
-            item("Next Space", #selector(BrowserWindowController.nextSpace(_:)), right, [.command, .option]),
+            item("Rename Space…", #selector(BrowserWindowController.renameSpace(_:))),
+            .separator(),
+            // ⇧⌘S is Gabe's Arc binding; ⌥⌘→ is Arc's default.
+            item("Next Space", #selector(BrowserWindowController.nextSpace(_:)), "s", [.command, .shift]),
+            alternate(#selector(BrowserWindowController.nextSpace(_:)), right, [.command, .option]),
             item("Previous Space", #selector(BrowserWindowController.previousSpace(_:)), left, [.command, .option]),
             .separator(),
         ] + (1...9).map { n in

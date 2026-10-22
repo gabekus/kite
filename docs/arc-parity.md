@@ -104,9 +104,9 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 |---|---|---|---|
 | New Space… | | ✅ (⇧⌘N, moving in B4) | |
 | Edit Theme… | | ❌ | Thread: space theme editor |
-| Rename Space | | ❌ | B3 |
+| Rename Space | | ✅ | |
 | Change Profile | | ❌ | Thread: profiles |
-| Next / Previous Space | ⇧⌘S (Gabe) or ⌥⌘→ / ⌥⌘← | 🟡 ⌥⌘←/→ only | B3: add ⇧⌘S |
+| Next / Previous Space | ⇧⌘S (Gabe) or ⌥⌘→ / ⌥⌘← | ✅ all three | |
 | Space 1…9 | ⌃1…⌃9 | ✅ | |
 | Manage Spaces… | | ❌ | B3 (reorder, delete) |
 | Swipe between spaces (two fingers) | gesture | ❌ | B3 |
@@ -117,14 +117,14 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 |---|---|---|---|
 | Pin / Unpin Tab | ⌘D | ✅ | |
 | New Folder… | | 🟡 imported folders only | B3 |
-| Next / Previous Tab | ⌥⌘↓ / ⌥⌘↑ | ❌ (Kite has ⌃Tab / ⌃⇧Tab) | B3 |
-| Toggle recent tabs (MRU) | ⌃Tab | 🟡 cycles in order, not MRU | B3 |
+| Next / Previous Tab | ⌥⌘↓ / ⌥⌘↑ | ✅ (⌃⇧Tab also goes to the previous tab) | |
+| Toggle recent tabs (MRU) | ⌃Tab | ✅ toggles the two most recent | Hold-⌃ cycling deeper later |
 | Tab 1…8, last tab | ⌘1…⌘9 | ✅ | |
 | Reveal Tab in Sidebar | | ❌ | B3 |
-| Clear Today (unpinned tabs) | ⇧⌘K | ❌ | B3 |
+| Clear Today (unpinned tabs) | ⇧⌘K | ✅ archives them, with a toast | |
 | Reset all tabs in this Space (pinned back to their saved URL) | | ❌ | B3 |
 | Pinned tab: "back to pinned URL" / reset | | ❌ | B3 |
-| Duplicate tab, move tab to space | context menu | ❌ | B3 |
+| Duplicate tab, move tab to space | context menu | 🟡 Duplicate Tab in the Tabs menu | Move to space with the sidebar work |
 | Drag tabs between spaces / into folders | gesture | ❌ | Roadmap (other session owns sidebar) |
 
 ### Archive (history)

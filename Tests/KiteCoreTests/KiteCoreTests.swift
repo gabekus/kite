@@ -337,3 +337,52 @@ import Testing
         #expect(LinkFormat.quote(selection: "  ", title: "Example", url: url) == "[Example](https://example.com/)")
     }
 }
+
+@Suite struct ArcCommandTests {
+    private func makeState(tabs: Int) -> (BrowserState, [UUID]) {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        var ids: [UUID] = []
+        for i in 0..<tabs {
+            ids.append(state.openTab(url: URL(string: "https://site\(i).com"), now: Date(timeIntervalSince1970: Double(i))))
+        }
+        return (state, ids.reversed())
+    }
+
+    @Test func controlTabTogglesBetweenTheTwoMostRecentTabs() {
+        var (state, ids) = makeState(tabs: 3)
+        state.select(tab: ids[2], now: Date(timeIntervalSince1970: 10))
+        state.select(tab: ids[0], now: Date(timeIntervalSince1970: 11))
+        state.selectRecentTab(now: Date(timeIntervalSince1970: 12))
+        #expect(state.selectedTab?.id == ids[2])
+        state.selectRecentTab(now: Date(timeIntervalSince1970: 13))
+        #expect(state.selectedTab?.id == ids[0])
+    }
+
+    @Test func clearTodayArchivesUnpinnedTabsAndKeepsPinned() {
+        var (state, ids) = makeState(tabs: 3)
+        state.togglePin(tab: ids[2])
+        state.select(tab: ids[0])
+        let cleared = state.clearToday()
+        #expect(cleared.map(\.id) == [ids[0], ids[1]])
+        #expect(state.selectedSpace.tabs.isEmpty)
+        #expect(state.archived.map(\.tab.id) == [ids[0], ids[1]])
+        #expect(state.selectedTab?.id == ids[2])
+    }
+
+    @Test func duplicateGoesBelowTheOriginal() {
+        var (state, ids) = makeState(tabs: 2)
+        let copy = state.duplicate(tab: ids[0])
+        #expect(state.selectedSpace.tabs.map(\.id) == [ids[0], copy!, ids[1]])
+        #expect(state.tab(copy!)?.url == state.tab(ids[0])?.url)
+        #expect(state.selectedTab?.id == copy)
+    }
+
+    @Test func renameIgnoresBlankNames() {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let id = state.spaces[0].id
+        state.renameSpace(id, to: "  Work ")
+        #expect(state.spaces[0].name == "Work")
+        state.renameSpace(id, to: "   ")
+        #expect(state.spaces[0].name == "Work")
+    }
+}
