@@ -5,10 +5,6 @@ depends on Arc's data has to land before then.
 
 ## Before daily use
 
-- **Chromium sandbox.** Renderers currently run unsandboxed (`no_sandbox` in
-  `KCRuntime.mm`), so a renderer exploit has your user's full access. This
-  needs the sandbox library from CEF's standard distribution, plus a
-  `CefScopedSandboxContext` in the helper. It's the top priority.
 - **Signing and notarization**, with Sparkle for updates.
 - **Back/forward history across hibernation on Chromium.** WebKit restores
   `interactionState`; CEF currently reloads the URL only.
@@ -35,6 +31,9 @@ depends on Arc's data has to land before then.
    Use a visible "Claude is controlling this tab" state.
 
 ## Arc features to keep
+
+The full list of Arc's features and shortcuts, with Kite's status and the plan
+for each, is in [arc-parity.md](arc-parity.md).
 
 - **Peek:** ⇧-click opens a link in an overlay on top of the current page.
 - **Mini player:** when a background tab plays media, show controls (play/pause,

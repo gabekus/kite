@@ -21,7 +21,7 @@ and drops the account wall.
 | Favorites grid, pinned folders, resizable sidebar | ✅ |
 | Import spaces, pinned tabs, folders, favorites and themes from Arc (File menu) | ✅ |
 | Dark pages: moon in the address bar per site, plus Off / Match System / Always | ✅ (Chromium) |
-| Chromium sandbox | ❌ **not yet, so don't use Kite as your main browser** |
+| Chromium sandbox (renderer, GPU and utility processes) | ✅ |
 | Everything else | see [docs/roadmap.md](docs/roadmap.md) |
 
 ## Build
@@ -41,7 +41,19 @@ Useful environment variables:
 
 - `KITE_ENGINE=webkit` forces WebKit even inside Kite.app.
 - `KITE_REMOTE_DEBUGGING_PORT=9222` exposes the Chrome DevTools Protocol for Playwright, Puppeteer or agents. Anything on your machine can then drive the browser, so leave it off otherwise.
-- `KITE_SUPPORT_PATH=/tmp/kite` uses a throwaway profile and session.
+- `KITE_SUPPORT_PATH=/tmp/kite` uses a throwaway profile and session. It also turns on
+  Chromium's mock keychain, so test runs never ask for keychain access.
+- `KITE_MOCK_KEYCHAIN=1` or `0` forces the mock keychain on or off.
+- `KITE_SIGN_IDENTITY="Apple Development: …"` picks the code-signing identity for `bundle-app.sh`.
+
+### Keychain prompt
+
+Chromium keeps its cookie and password encryption key in the login keychain. An ad-hoc
+signed build gets a new code identity on every rebuild, so macOS asks for your password
+each launch. `bundle-app.sh` signs with your Apple Development cert when you have a
+valid one, so the identity stays the same and "Always Allow" sticks across rebuilds.
+Without one, run `scripts/make-signing-cert.sh` once to create a self-signed
+"Kite Local Signing" identity instead.
 
 ## Layout
 

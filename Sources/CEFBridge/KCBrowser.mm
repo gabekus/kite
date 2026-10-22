@@ -80,6 +80,7 @@ class KCClient : public CefClient,
                  public CefLoadHandler,
                  public CefRequestHandler,
                  public CefDownloadHandler,
+                 public CefFindHandler,
                  public CefDevToolsMessageObserver {
  public:
     explicit KCClient(KCBrowser* owner) : owner_(owner) {}
@@ -89,6 +90,7 @@ class KCClient : public CefClient,
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
     CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+    CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
 
     // CefLifeSpanHandler
 
@@ -204,6 +206,16 @@ class KCClient : public CefClient,
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
     }
 
+    // CefFindHandler
+
+    void OnFindResult(CefRefPtr<CefBrowser> browser, int identifier, int count, const CefRect& selectionRect,
+                      int activeMatchOrdinal, bool finalUpdate) override {
+        id<KCBrowserDelegate> delegate = owner_.delegate;
+        if ([delegate respondsToSelector:@selector(browser:findResultCount:activeMatch:final:)]) {
+            [delegate browser:owner_ findResultCount:count activeMatch:activeMatchOrdinal final:finalUpdate];
+        }
+    }
+
     // CefDevToolsMessageObserver
 
     void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser, int message_id, bool success,
@@ -296,6 +308,7 @@ class KCClient : public CefClient,
 - (void)goBack { if (_browser) _browser->GoBack(); }
 - (void)goForward { if (_browser) _browser->GoForward(); }
 - (void)reload { if (_browser) _browser->Reload(); }
+- (void)reloadIgnoringCache { if (_browser) _browser->ReloadIgnoreCache(); }
 - (void)stopLoading { if (_browser) _browser->StopLoad(); }
 
 - (void)focus {
@@ -323,6 +336,18 @@ class KCClient : public CefClient,
     CefWindowInfo windowInfo;
     CefBrowserSettings settings;
     _browser->GetHost()->ShowDevTools(windowInfo, nullptr, settings, CefPoint());
+}
+
+- (void)find:(NSString*)text forward:(BOOL)forward findNext:(BOOL)findNext {
+    if (_browser) _browser->GetHost()->Find(text.UTF8String, forward, false, findNext);
+}
+
+- (void)stopFinding {
+    if (_browser) _browser->GetHost()->StopFinding(true);
+}
+
+- (void)print {
+    if (_browser) _browser->GetHost()->Print();
 }
 
 - (void)setForceDark:(BOOL)enabled {

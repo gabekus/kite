@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var store: BrowserStore!
     private var windowController: BrowserWindowController!
     private var archiveTimer: Timer?
+    /// Links opened before launch finished (Kite as the default browser).
+    private var pendingURLs: [URL] = []
 
     /// Unpinned tabs idle this long get archived, like Arc's default.
     private static let archiveAfter: TimeInterval = 12 * 60 * 60
@@ -30,12 +32,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         windowController = BrowserWindowController(store: store, engine: engine)
         NSApp.mainMenu = MainMenu.build(target: windowController)
+        // Registered after the menu bar is set so AppKit adds Help search and the window list.
+        NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
+        NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
         windowController.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+        open(pendingURLs)
+        pendingURLs = []
 
         archiveTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.store.archiveStaleTabs(olderThan: Self.archiveAfter) }
         }
+    }
+
+    /// Links from other apps and opened HTML files, each in a new tab.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        if store == nil {
+            pendingURLs += urls
+        } else {
+            open(urls)
+        }
+    }
+
+    private func open(_ urls: [URL]) {
+        for url in urls {
+            store.mutate { _ = $0.openTab(url: url) }
+        }
+        if !urls.isEmpty { windowController.window?.makeKeyAndOrderFront(nil) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

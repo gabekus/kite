@@ -18,6 +18,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// 0 disables the Chrome DevTools Protocol port. When set, any local process can
 /// drive the browser, so keep it off unless you're using it.
 @property (nonatomic) int remoteDebuggingPort;
+/// Chromium's --use-mock-keychain: cookies and saved passwords are encrypted with
+/// a fixed key instead of one from the login keychain, so there's no keychain
+/// prompt. Only for throwaway test profiles, never for real browsing data.
+@property (nonatomic) BOOL useMockKeychain;
 @end
 
 @interface KCRuntime : NSObject
@@ -53,6 +57,9 @@ NS_SWIFT_UI_ACTOR
 - (void)browser:(KCBrowser *)browser didCreatePopup:(KCBrowser *)popup url:(nullable NSURL *)url;
 /// The page called window.close().
 - (void)browserDidRequestClose:(KCBrowser *)browser;
+@optional
+/// Find-in-page results; `activeMatch` is 1-based. Arrives several times per search.
+- (void)browser:(KCBrowser *)browser findResultCount:(int)count activeMatch:(int)activeMatch final:(BOOL)final;
 @end
 
 /// One Chromium browser (one tab), hosted in `view`.
@@ -73,12 +80,18 @@ NS_SWIFT_UI_ACTOR
 - (void)goBack;
 - (void)goForward;
 - (void)reload;
+- (void)reloadIgnoringCache;
 - (void)stopLoading;
 - (void)focus;
 /// Tells Chromium the tab is offscreen so it throttles rendering and timers.
 - (void)setHidden:(BOOL)hidden;
 /// Opens Chrome DevTools in its own window.
 - (void)showDevTools;
+/// `findNext` continues through the same search; results arrive on the delegate.
+- (void)find:(NSString *)text forward:(BOOL)forward findNext:(BOOL)findNext;
+- (void)stopFinding;
+/// Chromium's print dialog for the page.
+- (void)print;
 /// Chromium's auto dark mode for this tab's pages.
 - (void)setForceDark:(BOOL)enabled;
 /// Runs JavaScript in the main frame via the DevTools protocol. `result` is the
