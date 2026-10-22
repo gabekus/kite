@@ -380,6 +380,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let tab = store.state.selectedTab
             item.state = store.state.wantsDarkPage(for: tab?.url, systemIsDark: store.systemIsDark) ? .on : .off
             return pool.engine.supportsDarkPages && tab?.url?.host() != nil
+        case #selector(togglePin(_:)):
+            let pinned = store.state.selectedTab.flatMap { store.state.location(of: $0.id) }?.section == .pinned
+            item.title = pinned ? "Unpin Tab" : "Pin Tab"
+            return store.state.selectedTab != nil
+        case #selector(selectSpaceNumber(_:)):
+            // Arc lists spaces by name. Numbers past the last space stay as disabled placeholders
+            // (hiding them could skip validation, so ⌃N wouldn't come back for a new space).
+            let spaces = store.state.spaces
+            guard spaces.indices.contains(item.tag - 1) else {
+                item.title = "Space \(item.tag)"
+                return false
+            }
+            item.title = "\(spaces[item.tag - 1].icon) \(spaces[item.tag - 1].name)"
         case #selector(stopLoading(_:)):
             return shownPage?.isLoading ?? false
         case #selector(toggleFullScreenMode(_:)):
