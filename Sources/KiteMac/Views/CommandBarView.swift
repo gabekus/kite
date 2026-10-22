@@ -140,7 +140,7 @@ private struct CommandBarPanel: ViewModifier {
     @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: C.cornerRadius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: C.cornerRadius, style: .circular)
         content
             .background(scheme == .dark ? Color(white: 0.106) : Color(white: 0.98), in: shape)
             .overlay(shape.strokeBorder(scheme == .dark ? Color.white.opacity(C.borderOpacity) : Color.black.opacity(0.12), lineWidth: 1))

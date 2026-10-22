@@ -83,7 +83,9 @@ enum ArcMetrics {
         static let width: CGFloat = 765
         /// Top edge as a share of the window's height, centred horizontally on the window.
         static let topFraction: CGFloat = 0.369
-        static let cornerRadius: CGFloat = 12
+        /// A plain circular corner. Fitted the same way as Arc's (a circle through the border's bright
+        /// pixels, which gave 9.4 for Arc), Kite's 11.5 gives the same fit.
+        static let cornerRadius: CGFloat = 11.5
         static let borderOpacity: Double = 0.22
         /// A large soft drop shadow: it darkens the page 35% under the bottom edge, 25% at the
         /// sides and 16% at the top, fading out about 100pt away.

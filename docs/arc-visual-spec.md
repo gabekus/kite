@@ -110,7 +110,7 @@ importer doesn't keep yet.
 | Element | Arc | Notes |
 |---|---|---|
 | Panel | 765 wide, x 645.5 to 1410.5 (764 measured between the inner edges of the border) | Centred on the **window**, not the card: an incognito capture with the same 365pt sidebar puts it at the same x, 646 to 1410. Its centre, 1028, is the window's; the card's centre would be 1205.5. Top at y 474 in a 1285pt window (0.369 of the height) |
-| Panel style | fill `#1B1B1B` (`#181818` in an incognito window), 1pt border white at about 22% | No dimming behind it. A wide soft black shadow, measured over a `#28282A` page: it darkens the page by 35/29/23/18/10/6/2.5% at 1/20/30/40/60/80/100pt below the panel, by 26/17/13/10/5% at 1/20/30/40/60pt to the sides, and by 16% just above. A dark page hides it. Corner about 12 to 13.5 (the fit is unreliable because of the border) |
+| Panel style | fill `#1B1B1B` (`#181818` in an incognito window), 1pt border white at about 22% | No dimming behind it. A wide soft black shadow, measured over a `#28282A` page: it darkens the page by 35/29/23/18/10/6/2.5% at 1/20/30/40/60/80/100pt below the panel, by 26/17/13/10/5% at 1/20/30/40/60pt to the sides, and by 16% just above. A dark page hides it. Corner **10**, circular: over a light page, a circle fitted to the border's arc has radius 9.4 to 9.5 at the 1pt border's centre line (top-right and bottom-right corners), so the outer edge is 10 |
 | Field | 63.5 tall | 18pt magnifier frame at x +22.5 (glyph about 11pt wide). Text field at x +52.5 (698 in the window), 23 tall. The placeholder "Search or Enter URL..." has a 10pt x-height, which is 18pt SF regular. It is white at about 25% (level 81 over the `#181818` fill) and 179.5pt wide |
 | Divider | y +63.5, 0.5pt | White at about 10%, 11pt in from the panel's edges |
 | Rows | 50pt apart, starting 4.5pt under the divider | Rows are 750 wide, 7.5 in from the panel. The fill is 746×44.5, 2pt in from the row, with a corner of about 8 |
@@ -154,11 +154,12 @@ accessibility dumper and pixel scripts.
 | Selected tab pill | white at about 20% | white at 20% |
 | ⌘T shadow, darkening at 1 / 20 / 30 / 60pt below | 35 / 29 / 23 / 10% | 38 / 32 / 26 / 12% (SwiftUI black at 0.9, radius 45, y 16) |
 | ⌘T placeholder | 18pt, level 81 | 18pt, level 83 |
+| ⌘T corner (circle fitted to the border's bright pixels) | 9.4 to 9.5 | 9.0 (Kite's value is 11.5, circular: SwiftUI's inner stroke sits differently, so the value was tuned until the fits matched) |
 
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
 - The pointer light's fade timing and whether it eases toward the pointer. Kite fades it over 0.15s and sticks it
   to the pointer.
-- The ⌘T panel's exact shadow parameters (only its effect was measured) and its corner, which the border hides.
+- The ⌘T panel's exact shadow parameters (only its effect was measured).
 - Arc's default sidebar width, light-theme fill opacities, and the space-switch and sidebar animation timings.
