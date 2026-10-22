@@ -117,6 +117,9 @@ accessibility dumper and pixel scripts.
 | ⌘T selected fill y | 544 to 588.5 | 544.5 to 589 |
 | ⌘T right label end / arrow box | 1357 / 1364 to 1388 | 1357 / 1364 to 1388 |
 | ⌘T bottom padding | 9.5 | 9.5 |
+| Selected tab pill | white at about 20% | white at 20% |
+| ⌘T shadow, darkening at 1 / 20 / 30 / 60pt below | 35 / 29 / 23 / 10% | 38 / 32 / 26 / 12% (SwiftUI black at 0.9, radius 45, y 16) |
+| ⌘T placeholder | 18pt, level 81 | 18pt, level 83 |
 
 ## Not measurable without decompiling
 
