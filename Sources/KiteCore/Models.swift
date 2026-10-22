@@ -1,0 +1,219 @@
+import Foundation
+
+public struct BrowserTab: Identifiable, Hashable, Codable, Sendable {
+    public var id: UUID
+    public var url: URL?
+    public var title: String
+    public var faviconURL: URL?
+    public var lastActiveAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        url: URL?,
+        title: String = "",
+        faviconURL: URL? = nil,
+        lastActiveAt: Date = Date()
+    ) {
+        self.id = id
+        self.url = url
+        self.title = title
+        self.faviconURL = faviconURL
+        self.lastActiveAt = lastActiveAt
+    }
+
+    public var displayTitle: String {
+        if !title.isEmpty { return title }
+        if let host = url?.host(), !host.isEmpty { return host }
+        return url?.absoluteString ?? "New Tab"
+    }
+}
+
+public struct TabFolder: Identifiable, Hashable, Codable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var isExpanded: Bool
+    public var items: [PinnedItem]
+
+    public init(id: UUID = UUID(), name: String, isExpanded: Bool = true, items: [PinnedItem] = []) {
+        self.id = id
+        self.name = name
+        self.isExpanded = isExpanded
+        self.items = items
+    }
+}
+
+/// The pinned section is a tree: tabs and (nestable) folders.
+public indirect enum PinnedItem: Identifiable, Hashable, Codable, Sendable {
+    case tab(BrowserTab)
+    case folder(TabFolder)
+
+    public var id: UUID {
+        switch self {
+        case .tab(let tab): tab.id
+        case .folder(let folder): folder.id
+        }
+    }
+}
+
+extension [PinnedItem] {
+    /// Every tab in sidebar order, depth first.
+    public var tabs: [BrowserTab] {
+        flatMap { item -> [BrowserTab] in
+            switch item {
+            case .tab(let tab): [tab]
+            case .folder(let folder): folder.items.tabs
+            }
+        }
+    }
+
+    @discardableResult
+    mutating func updateTab(_ id: UUID, _ body: (inout BrowserTab) -> Void) -> Bool {
+        for i in indices {
+            switch self[i] {
+            case .tab(var tab) where tab.id == id:
+                body(&tab)
+                self[i] = .tab(tab)
+                return true
+            case .folder(var folder):
+                if folder.items.updateTab(id, body) {
+                    self[i] = .folder(folder)
+                    return true
+                }
+            default:
+                continue
+            }
+        }
+        return false
+    }
+
+    mutating func removeTab(_ id: UUID) -> BrowserTab? {
+        for i in indices {
+            switch self[i] {
+            case .tab(let tab) where tab.id == id:
+                remove(at: i)
+                return tab
+            case .folder(var folder):
+                if let tab = folder.items.removeTab(id) {
+                    self[i] = .folder(folder)
+                    return tab
+                }
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+
+    @discardableResult
+    mutating func updateFolder(_ id: UUID, _ body: (inout TabFolder) -> Void) -> Bool {
+        for i in indices {
+            guard case .folder(var folder) = self[i] else { continue }
+            if folder.id == id {
+                body(&folder)
+                self[i] = .folder(folder)
+                return true
+            }
+            if folder.items.updateFolder(id, body) {
+                self[i] = .folder(folder)
+                return true
+            }
+        }
+        return false
+    }
+}
+
+/// A space is a named set of tabs with its own theme, like a lightweight profile.
+public struct Space: Identifiable, Hashable, Codable, Sendable {
+    public var id: UUID
+    public var name: String
+    /// An emoji, so every platform can render it without an icon set.
+    public var icon: String
+    public var theme: Theme
+    public var pinnedItems: [PinnedItem]
+    /// Unpinned tabs, newest first.
+    public var tabs: [BrowserTab]
+    public var selectedTabID: UUID?
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        icon: String,
+        theme: Theme,
+        pinnedItems: [PinnedItem] = [],
+        tabs: [BrowserTab] = [],
+        selectedTabID: UUID? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.icon = icon
+        self.theme = theme
+        self.pinnedItems = pinnedItems
+        self.tabs = tabs
+        self.selectedTabID = selectedTabID
+    }
+
+    /// Pinned tabs in sidebar order, including those inside folders.
+    public var pinned: [BrowserTab] { pinnedItems.tabs }
+
+    /// Sidebar order: pinned first, then unpinned.
+    public var allTabs: [BrowserTab] { pinned + tabs }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, icon, theme, pinnedItems, pinned, tabs, selectedTabID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        icon = try c.decode(String.self, forKey: .icon)
+        theme = try c.decode(Theme.self, forKey: .theme)
+        // Sessions from before folders stored a flat `pinned` array.
+        if let items = try c.decodeIfPresent([PinnedItem].self, forKey: .pinnedItems) {
+            pinnedItems = items
+        } else {
+            pinnedItems = (try c.decodeIfPresent([BrowserTab].self, forKey: .pinned) ?? []).map(PinnedItem.tab)
+        }
+        tabs = try c.decode([BrowserTab].self, forKey: .tabs)
+        selectedTabID = try c.decodeIfPresent(UUID.self, forKey: .selectedTabID)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(icon, forKey: .icon)
+        try c.encode(theme, forKey: .theme)
+        try c.encode(pinnedItems, forKey: .pinnedItems)
+        try c.encode(tabs, forKey: .tabs)
+        try c.encodeIfPresent(selectedTabID, forKey: .selectedTabID)
+    }
+}
+
+public struct ClosedTab: Hashable, Codable, Sendable {
+    public var tab: BrowserTab
+    public var spaceID: UUID
+    public var index: Int
+}
+
+public enum TabSection: Hashable, Sendable {
+    case favorite
+    case pinned
+    case unpinned
+}
+
+public struct TabLocation: Hashable, Sendable {
+    /// Nil for favorites, which belong to no space.
+    public var space: Int?
+    public var section: TabSection
+    /// Position within its section (pinned tabs are counted depth first).
+    public var index: Int
+}
+
+public enum CloseOutcome: Equatable, Sendable {
+    /// The tab is gone (it can still be reopened from `recentlyClosed`).
+    case removed
+    /// Pinned tabs stay in the sidebar; the shell should drop their page.
+    case unloaded
+    case notFound
+}

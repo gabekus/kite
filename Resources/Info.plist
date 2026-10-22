@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>Kite</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.gabek.Kite</string>
+	<key>CFBundleName</key>
+	<string>Kite</string>
+	<key>CFBundleDisplayName</key>
+	<string>Kite</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>KCApplication</string>
+	<!-- Lets dual-GPU Macs stay on the integrated GPU. -->
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Websites you allow can use your camera.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Websites you allow can use your microphone.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Websites you allow can use your location.</string>
+</dict>
+</plist>

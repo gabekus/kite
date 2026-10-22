@@ -1,0 +1,68 @@
+# Kite
+
+An open-source, Arc-style browser for macOS (Windows next), built in Swift on Chromium.
+
+Arc shuts down on December 22, 2026. Kite keeps the parts that made it good,
+including spaces, pinned tabs, the ⌘T command bar, themed windows and auto-archiving,
+and drops the account wall.
+
+> Kite is a working name and early. Expect breaking changes.
+
+## Status
+
+| | |
+|---|---|
+| Engine | Chromium 156 via [CEF](https://github.com/chromiumembedded/cef), with WebKit as a lightweight fallback |
+| Chrome DevTools | ⌥⌘I, or the CDP port (`KITE_REMOTE_DEBUGGING_PORT`) |
+| Spaces, pinned and unpinned tabs, auto-archive after 12h | ✅ |
+| Command bar (⌘T new tab, ⌘L edit URL, switch to open tabs) | ✅ |
+| Metal theme gradients and loading glow | ✅ |
+| Tab hibernation and memory-pressure handling | ✅ |
+| Favorites grid, pinned folders, resizable sidebar | ✅ |
+| Import spaces, pinned tabs, folders, favorites and themes from Arc (File menu) | ✅ |
+| Dark pages: moon in the address bar per site, plus Off / Match System / Always | ✅ (Chromium) |
+| Chromium sandbox | ❌ **not yet, so don't use Kite as your main browser** |
+| Everything else | see [docs/roadmap.md](docs/roadmap.md) |
+
+## Build
+
+Requires macOS 14+, Xcode 26, CMake and Ninja (`brew install cmake ninja`).
+
+```bash
+scripts/fetch-cef.sh          # downloads CEF (~135 MB, SHA-1 checked) and builds its C++ wrapper
+scripts/bundle-app.sh debug   # builds build/Kite.app
+open build/Kite.app
+```
+
+For quick UI work without Chromium, `swift run Kite` runs on WebKit.
+`swift test` runs the core tests.
+
+Useful environment variables:
+
+- `KITE_ENGINE=webkit` forces WebKit even inside Kite.app.
+- `KITE_REMOTE_DEBUGGING_PORT=9222` exposes the Chrome DevTools Protocol for Playwright, Puppeteer or agents. Anything on your machine can then drive the browser, so leave it off otherwise.
+- `KITE_SUPPORT_PATH=/tmp/kite` uses a throwaway profile and session.
+
+## Layout
+
+```
+Sources/KiteCore     Platform-neutral model: spaces, tabs, URL parsing, tab search,
+                     hibernation policy, OKLab theme math, session file. Foundation only.
+Sources/KiteMac      macOS shell: AppKit window, SwiftUI sidebar and command bar,
+                     Metal views, engine adapters (Engine/).
+Sources/CEFBridge    Objective-C++ wrapper over CEF's C++ API, exposed to Swift.
+Sources/KiteHelper   Chromium helper process (renderer, GPU, ...).
+Sources/KiteMac/Shaders/Kite.metal   Theme backdrop and loading glow.
+```
+
+## Performance notes
+
+- **Startup:** only the selected tab loads. Other tabs come alive when you open them.
+- **Background tabs:** Chromium is told when a tab is hidden, so it throttles rendering and timers. Beyond six live tabs the least recent are hibernated, unless they're playing media or using the camera or mic. Everything hibernates under memory pressure.
+- **Shaders:** they draw only when something changes. The theme shader skips pixels under the page, gets its colors already converted to OKLab by the CPU, and uses no vertex buffers or textures. The glow runs only while a page loads.
+- **Shadow:** the content card's shadow uses an explicit path, so there's no offscreen pass.
+- **Graphics switching:** `NSSupportsAutomaticGraphicsSwitching` keeps dual-GPU Macs on the integrated GPU.
+
+## License
+
+MIT. Chromium and CEF are BSD-licensed; see `ThirdParty/cef/LICENSE.txt` after fetching.

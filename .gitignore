@@ -1,0 +1,15 @@
+.DS_Store
+.build/
+.swiftpm/
+build/
+ThirdParty/
+*.xcodeproj/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.env
+.env.*
+*.pem
+*.p12
+*.key
+secrets/
