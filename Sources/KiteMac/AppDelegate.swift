@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var engine: WebEngine!
 
     private var store: BrowserStore!
+    private var adblocker: Adblocker!
     private var windowController: BrowserWindowController!
     private var archiveTimer: Timer?
 
@@ -25,7 +26,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
         store.archiveStaleTabs(olderThan: Self.archiveAfter)
 
-        windowController = BrowserWindowController(store: store, engine: engine)
+        adblocker = Adblocker(directory: Self.supportDirectory.appendingPathComponent("Adblock", isDirectory: true))
+        adblocker.setPolicy(enabled: store.state.blocksAds, allowedHosts: store.state.adblockAllowedHosts)
+        engine.attach(adblocker)
+        adblocker.start()
+
+        windowController = BrowserWindowController(store: store, engine: engine, adblocker: adblocker)
         NSApp.mainMenu = MainMenu.build(target: windowController)
         windowController.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)

@@ -18,6 +18,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     let store: BrowserStore
     private let pool: PagePool
+    private let adblocker: Adblocker
     private let rootView = RootView()
     private let themeView = ThemeView()
     private let glowView = GlowView(margin: Layout.glowMargin)
@@ -40,8 +41,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var commandBarVisible = false
     private var sidebarVisible = true
 
-    init(store: BrowserStore, engine: WebEngine) {
+    init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker) {
         self.store = store
+        self.adblocker = adblocker
         self.pool = PagePool(engine: engine, store: store)
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
@@ -101,9 +103,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 goBack: { [weak self] in self?.goBack(nil) },
                 goForward: { [weak self] in self?.goForward(nil) },
                 reload: { [weak self] in self?.reload(nil) },
-                closeTab: { [weak self] id in self?.close(tab: id) }
+                closeTab: { [weak self] id in self?.close(tab: id) },
+                toggleAdblock: { [weak self] in self?.toggleAdblockForSite(nil) }
             ),
-            supportsDarkPages: pool.engine.supportsDarkPages
+            supportsDarkPages: pool.engine.supportsDarkPages,
+            supportsAdblock: Adblocker.isAvailable,
+            countsBlockedRequests: pool.engine.countsBlockedRequests
         ))
         commandBarHost = NSHostingView(rootView: CommandBarOverlay(store: store) { [weak self] suggestion, mode in
             self?.commit(suggestion, mode: mode)
@@ -216,6 +221,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
         appliedDark = appliedDark.filter { live.contains($0.key) }
         applyDarkPage()
+        adblocker.setPolicy(enabled: state.blocksAds, allowedHosts: state.adblockAllowedHosts)
 
         updateCommandBar()
         updateSidebar()
@@ -363,6 +369,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         store.mutate { $0.toggleDarkPage(for: tab.url) }
     }
 
+    /// The shield: blocking on or off for the current site. Reloads so the page
+    /// shows the change right away, as Arc and Brave do.
+    @objc func toggleAdblockForSite(_ sender: Any?) {
+        guard let tab = store.state.selectedTab, tab.url?.host() != nil else { return NSSound.beep() }
+        store.mutate { $0.toggleAdblock(for: tab.url) }
+        shownPage?.reload()
+    }
+
+    @objc func toggleAdblock(_ sender: Any?) {
+        store.mutate { $0.blocksAds.toggle() }
+        shownPage?.reload()
+    }
+
     /// The Dark Pages menu: tags index `DarkPagesMode.allCases`.
     @objc func setDarkPagesMode(_ sender: NSMenuItem) {
         let modes = DarkPagesMode.allCases
@@ -379,6 +398,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let tab = store.state.selectedTab
             item.state = store.state.wantsDarkPage(for: tab?.url, systemIsDark: store.systemIsDark) ? .on : .off
             return pool.engine.supportsDarkPages && tab?.url?.host() != nil
+        case #selector(toggleAdblock(_:)):
+            item.state = store.state.blocksAds ? .on : .off
+            return Adblocker.isAvailable
+        case #selector(toggleAdblockForSite(_:)):
+            let tab = store.state.selectedTab
+            item.state = store.state.blocksAds(on: tab?.url) ? .on : .off
+            return Adblocker.isAvailable && tab?.url?.host() != nil
         default:
             break
         }

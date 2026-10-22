@@ -11,6 +11,8 @@ enum PageEvent {
     /// A popup the page opened (window.open, target=_blank). It becomes a new tab.
     case popup(WebPage)
     case closeRequested
+    /// Requests the ad blocker stopped since the page started loading.
+    case blockedCount(Int)
 }
 
 /// One tab's web content, independent of the engine behind it.
@@ -45,5 +47,9 @@ protocol WebEngine: AnyObject {
     var name: String { get }
     var supportsDevTools: Bool { get }
     var supportsDarkPages: Bool { get }
+    /// Whether the engine reports how many requests it blocked (WebKit can't).
+    var countsBlockedRequests: Bool { get }
+    /// Hooks the engine up to the ad blocker; called once at launch.
+    func attach(_ adblocker: Adblocker)
     func makePage(url: URL?, restoring state: Any?) -> WebPage
 }

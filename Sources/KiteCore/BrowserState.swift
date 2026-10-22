@@ -20,6 +20,10 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public var darkPages: DarkPagesMode
     /// Sites flipped from the mode's default (darkened when the default is light, and vice versa).
     public var darkPageHosts: Set<String>
+    /// The built-in ad and tracker blocker, on by default.
+    public var blocksAds: Bool
+    /// Sites the blocker leaves alone (the shield's per-site off switch).
+    public var adblockAllowedHosts: Set<String>
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -34,11 +38,14 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.searchEngine = searchEngine
         self.darkPages = .matchSystem
         self.darkPageHosts = []
+        self.blocksAds = true
+        self.adblockAllowedHosts = []
     }
 
     // Decode field by field so sessions saved by older versions still load.
     private enum CodingKeys: String, CodingKey {
         case spaces, favorites, selectedSpaceID, recentlyClosed, archived, searchEngine, darkPages, darkPageHosts
+        case blocksAds, adblockAllowedHosts
     }
 
     public init(from decoder: Decoder) throws {
@@ -53,6 +60,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
         archived = try c.decodeIfPresent([ClosedTab].self, forKey: .archived) ?? []
         darkPages = try c.decodeIfPresent(DarkPagesMode.self, forKey: .darkPages) ?? .matchSystem
         darkPageHosts = try c.decodeIfPresent(Set<String>.self, forKey: .darkPageHosts) ?? []
+        blocksAds = try c.decodeIfPresent(Bool.self, forKey: .blocksAds) ?? true
+        adblockAllowedHosts = try c.decodeIfPresent(Set<String>.self, forKey: .adblockAllowedHosts) ?? []
     }
 
     // MARK: Dark pages
@@ -74,6 +83,29 @@ public struct BrowserState: Hashable, Codable, Sendable {
             darkPageHosts.remove(host)
         } else {
             darkPageHosts.insert(host)
+        }
+    }
+
+    // MARK: Ad blocking
+
+    /// Whether ads and trackers are blocked on this page. Pages without a host
+    /// (about:blank, files) report false so the shield stays hidden.
+    public func blocksAds(on url: URL?) -> Bool {
+        guard blocksAds, let host = url?.host()?.lowercased() else { return false }
+        return !adblockAllowedHosts.contains(host)
+    }
+
+    /// The shield's per-site switch. Turning a site back on while blocking is off
+    /// globally turns blocking on, so the click always does what it shows.
+    public mutating func toggleAdblock(for url: URL?) {
+        guard let host = url?.host()?.lowercased() else { return }
+        if !blocksAds {
+            blocksAds = true
+            adblockAllowedHosts.remove(host)
+        } else if adblockAllowedHosts.contains(host) {
+            adblockAllowedHosts.remove(host)
+        } else {
+            adblockAllowedHosts.insert(host)
         }
     }
 
