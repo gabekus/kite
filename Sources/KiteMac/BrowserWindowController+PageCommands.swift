@@ -14,8 +14,7 @@ extension BrowserWindowController {
         guard shownPage != nil else { return NSSound.beep() }
         let bar = findBar ?? makeFindBar()
         bar.isHidden = false
-        window?.makeFirstResponder(bar.field)
-        bar.field.selectText(nil)
+        bar.focus()
     }
 
     @objc func findNext(_ sender: Any?) { stepFind(forward: true) }
@@ -54,11 +53,12 @@ extension BrowserWindowController {
         }
         bar.onClose = { [weak self] in self?.hideFindBar() }
         if let root = window?.contentView {
+            // Above the page, pinned to the content card's top-right corner like Arc's.
             bar.translatesAutoresizingMaskIntoConstraints = false
-            root.addSubview(bar)
+            root.addSubview(bar, positioned: .above, relativeTo: contentFrame)
             NSLayoutConstraint.activate([
-                bar.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
-                bar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -18),
+                bar.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: FindBar.Metrics.inset),
+                bar.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor, constant: -FindBar.Metrics.inset),
             ])
         }
         return bar
