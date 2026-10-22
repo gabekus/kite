@@ -5,6 +5,8 @@ import KiteCore
 @MainActor
 enum MainMenu {
     static func build(target: BrowserWindowController) -> NSMenu {
+        // We provide Enter Full Screen (⌃⌘F) ourselves; stop AppKit adding its fn-F copy.
+        UserDefaults.standard.set(false, forKey: "NSFullScreenMenuItemEverywhere")
         let main = NSMenu()
 
         func submenu(_ title: String, _ items: [NSMenuItem]) {
@@ -148,7 +150,7 @@ enum MainMenu {
                 item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option]),
             ]),
             .separator(),
-            item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control], toTarget: false),
+            item("Enter Full Screen", #selector(BrowserWindowController.toggleFullScreenMode(_:)), "f", [.command, .control]),
         ])
 
         submenu("History", [

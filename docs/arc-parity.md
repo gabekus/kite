@@ -55,7 +55,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Share… | | ❌ | B5 (NSSharingServicePicker) |
 | Capture… / Full Page / Portrait | | ❌ | Thread: Capture |
 | Save Page As | | ❌ | B5 |
-| Print | ⌘P | ✅ | |
+| Print | ⌘P | 🟡 Chromium's print opens its own window, no preview | Later: AppKit print sheet with preview |
 
 ### Edit
 

@@ -53,6 +53,8 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
         findCompletion = completion
         browser.find(text, forward: forward, findNext: findNext)
+        // A new search only highlights; stepping once makes the first match active (1/N), like Chrome.
+        if !findNext { browser.find(text, forward: forward, findNext: true) }
     }
 
     func stopFinding() {

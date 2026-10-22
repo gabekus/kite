@@ -75,6 +75,11 @@ extension BrowserWindowController {
         shownPage?.stopLoading()
     }
 
+    /// Our own action rather than `toggleFullScreen:`, which macOS rebinds to fn-F.
+    @objc func toggleFullScreenMode(_ sender: Any?) {
+        window?.toggleFullScreen(sender)
+    }
+
     @objc func forceReload(_ sender: Any?) {
         shownPage?.reloadIgnoringCache()
     }
