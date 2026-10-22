@@ -56,11 +56,21 @@ bottom bar. The back/forward/reload buttons end at 359, which is 6pt from the ed
   - **Gradient:** very soft. The red channel rises from 37 to 44 between the top and bottom of the sidebar, and to
     51 next to the card's right edge.
   - **Grain:** a standard deviation of about 0.5 levels per channel, so it's barely visible.
+  - **Glow:** a soft white light under the pointer, not a fixed part of the gradient. With the pointer off the
+    sidebar there is none. A 2D Gaussian fitted to Gabe's screenshot (RMS error 1.5 levels):
+    - **Size:** σ 110pt wide by 34pt tall, so its half-maximum ellipse is about 260×80pt.
+    - **Strength:** it adds about 29 levels of neutral white at its centre, about 14% over a grey-green theme of
+      `#30342D`.
+    - **Position:** centred on the pointer.
 - **Kite:** the theme shader now draws translucently (premultiplied, alpha `Theme.tint`, default 0.55) over the
   system `.sidebar` behind-window material, which also darkens inactive windows.
   - Each space keeps its own `Theme`. The space button's context menu gets **Theme Color** (presets) and **Theme
     Intensity** (the tint).
   - `Theme.accent` gives the colour of the command bar's selected row.
+  - **Pointer light:** `ThemeView` follows the pointer over the sidebar with a tracking area. It draws the same
+    Gaussian (σ 110×34pt, 14% white) in the theme shader and fades in and out over about 0.15s. It only shows in
+    the key window, and only redraws when the pointer moves or the light is fading. On a light preset in Kite it
+    added 30 levels at its centre.
 
 ## Command bar (⌘T) → `ArcMetrics.CommandBar`
 
@@ -112,6 +122,8 @@ accessibility dumper and pixel scripts.
 
 - How strongly Arc mixes the tint over the material, and whether it is a mix at all or a blend mode. The vibrancy
   blur radius.
+- The pointer light's fade timing and whether it eases toward the pointer. Kite fades it over 0.15s and sticks it
+  to the pointer.
 - The grain texture and its strength. Only its effect could be measured: about 0.5 levels of standard deviation.
 - The number of gradient layers and where they sit.
 - The ⌘T panel's exact shadow (none was visible) and its corner, which the border hides.
