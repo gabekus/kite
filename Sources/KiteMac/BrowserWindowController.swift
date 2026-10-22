@@ -26,6 +26,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
     private var sidebarHost: NSHostingView<SidebarView>!
+    private var trafficLights: TrafficLights!
     private var commandBarHost: NSHostingView<CommandBarOverlay>!
     private var contentLeading: NSLayoutConstraint!
     private var sidebarWidthConstraint: NSLayoutConstraint!
@@ -79,6 +80,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     func windowWillClose(_ notification: Notification) {
         store.saveNow()
     }
+
+    func windowDidResize(_ notification: Notification) { trafficLights?.place() }
+    func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
+    func windowDidExitFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
 
     // MARK: Views
 
@@ -172,6 +177,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             commandBarHost.topAnchor.constraint(equalTo: rootView.topAnchor),
             commandBarHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
         ])
+        trafficLights = TrafficLights(window: window, hoverHost: rootView)
     }
 
     private static let sidebarWidthKey = "SidebarWidth"
@@ -195,6 +201,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let frame = contentFrame.frame
         themeView.cutoutRect = CGRect(x: frame.minX, y: rootView.bounds.height - frame.maxY, width: frame.width, height: frame.height)
         themeView.cutoutCornerRadius = Layout.cornerRadius
+        trafficLights?.place()
     }
 
     // MARK: Sync with the store
@@ -277,6 +284,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         guard visible != sidebarVisible else { return }
         sidebarVisible = visible
         resizeHandle.isHidden = !visible
+        trafficLights.setSidebarVisible(visible)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.22
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
