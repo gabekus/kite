@@ -300,6 +300,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             }
         case .switchTab(let tab):
             store.mutate { $0.select(tab: tab.id) }
+        case .command(let command):
+            // After the bar closes, so the command sees the page as first responder, not the bar's field.
+            DispatchQueue.main.async { command.perform() }
         }
     }
 
