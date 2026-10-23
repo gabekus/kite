@@ -116,6 +116,9 @@ public enum AutomationCommand: Hashable, Sendable {
     case createFolder(name: String, space: String?)
     case moveToFolder(tab: String?, folder: String)
 
+    /// Kite's own native UI, for debugging Kite itself (Diagnostics for Claude).
+    case ui(UIInspection)
+
     /// Several tool calls in one round trip, run in order. It stops at the first error, and before any
     /// step that needs the user's OK (that step is then called on its own).
     indirect case batch(steps: [AutomationCommand])
@@ -154,6 +157,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case pinTab = "pin_tab"
         case createFolder = "create_folder"
         case moveToFolder = "move_to_folder"
+        case ui
         case batch
 
         /// Older or Claude-in-Chrome names that still work but aren't listed.
@@ -202,6 +206,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case .pinTab: .pinTab
         case .createFolder: .createFolder
         case .moveToFolder: .moveToFolder
+        case .ui: .ui
         case .batch: .batch
         }
     }
@@ -323,6 +328,8 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .createFolder(name: try a.required("name"), space: try a.string("space"))
         case .moveToFolder:
             self = .moveToFolder(tab: tab, folder: try a.required("folder"))
+        case .ui:
+            self = .ui(try UIInspection(arguments: a.values))
         case .batch:
             guard let list = a.values["steps"]?.arrayValue, !list.isEmpty else {
                 throw InvalidArguments("\"steps\" must be a list of {\"tool\": …, \"arguments\": {…}}.")

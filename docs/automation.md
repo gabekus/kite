@@ -94,6 +94,37 @@ Most of an agent's time goes to model round trips and context, not to the browse
     reads off a scaled screenshot are mapped back to the page for every `computer` action.
   - `zoom` still returns full resolution.
 
+## Kite's own interface: the `ui` tool
+
+The tools above read web pages. `ui` reads Kite itself (window, sidebar, card, command bar, menus) from inside the
+app, so checking Kite's behaviour never needs a screen recording, an app switch or the user's pointer. It's off
+unless Kite menu → **Diagnostics for Claude** is on (it needs Claude's control on too), or a test build runs with
+`KITE_DIAGNOSTICS=1` on a `KITE_SUPPORT_PATH` profile, which also turns control on for that profile.
+
+Points are window points from the window's top-left corner (the content runs under the titlebar).
+
+| Action | What it returns |
+|---|---|
+| `windows` | Each window's number, kind (browser, incognito), size, scale, key/main, full screen, covered, refresh rate. |
+| `tree` | Views with frames, `NSVisualEffectView` material and blending, layer fill, corner radius and curve, border, shadow, text colour and font, hidden and alpha; SwiftUI's accessibility elements (role, id, label, frame, selected) inside hosting views; with `layers`, Core Animation sublayers. `root` starts at a node path, `match` lists matching nodes flat, `depth` and `max_nodes` bound it. |
+| `capture` | The window's pixels through ScreenCaptureKit, as on screen, even when covered or in the background, in sRGB. `region` crops at full resolution, `pixels` reads colours as hex, `save` writes a PNG. Without Screen Recording permission it falls back to a view render and says what that misses. |
+| `pointer` | Synthetic mouse moves (`points`, or `from`/`to`/`steps`) sent to the window only. At each point: the view hit, cursor rects, tracking areas (flagged when inactive because Kite is in the background), and the cursor Kite sets. Identical points fold into runs. |
+| `input` | One synthetic event for the window: `keys`, `text`, `click` (with `button`, `count`, `modifiers`), a drag (`from`/`to`) or `scroll` (`dx`, `dy`). With Kite in front keys take AppKit's exact path; in the background they take the same steps by hand (view key equivalents, menu bar, first responder). Says where each key went. |
+| `menu` | Every menu item: path, shortcut, action and target, id, enabled, hidden. Flags shortcuts with no ⌘/⌃/⌥/fn ("FIRES WHILE TYPING", the emoji-on-e bug) and two enabled items on one shortcut. |
+| `key_log` | The last keys pressed in Kite: window, first responder chain, input source, and any menu item each one fired. Plain typing shows only its kind (letter, digit), unless it fired a menu item. |
+| `trace` | Records for `seconds` (default 1.5), after pressing optional `keys`: each Core Animation animation (key path, duration, curve control points or spring, from/to), every layer whose on-screen frame or opacity changed with progress samples, SwiftUI elements matching `match`, and frame intervals with late frames. |
+
+CLI: `kite ui ACTION '{json}' [-o FILE]`.
+
+`kite probe APP` does the same reading for another app (Arc), from outside it: `kite probe Arc tree` (accessibility
+roles and frames in window points; text hidden unless `--text`) and `kite probe Arc capture -o arc.png` (one window
+in the background, sRGB). It needs Accessibility and Screen Recording permission for whatever runs `kite`. Another
+app's cursors can't be read from outside it.
+
+Pieces: `UIInspection` and `UIReport` in KiteCore (arguments and formatting, unit tested), `Sources/KiteMac/Diagnostics/`
+(the Mac side; `CursorRectRecorder` swaps in a recording copy of `NSView.addCursorRect(_:cursor:)` the first time a
+pointer probe runs, since AppKit can't list cursor rects otherwise), and `Sources/KiteCLI/Probe.swift`.
+
 ## Safety
 
 - **Off by default.** The setting is stored per profile in `<profile>/automation.json` (`allowClaudeControl`,
