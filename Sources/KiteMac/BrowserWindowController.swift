@@ -9,8 +9,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private enum Layout {
         static let defaultSidebarWidth: CGFloat = 240
         static let sidebarWidths: ClosedRange<CGFloat> = 180...400
-        /// Grab area along the sidebar's trailing edge, inside its padding.
-        static let resizeHandleWidth: CGFloat = 8
         static let inset = ArcMetrics.Content.inset
         static let cornerRadius = ArcMetrics.Content.cornerRadius
         static let glowMargin: CGFloat = 28
@@ -147,7 +145,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         materialView.blendingMode = .behindWindow
         materialView.state = .followsWindowActiveState
 
-        for view in [materialView, themeView, sidebarHost!, resizeHandle, contentFrame, glowView, commandBarHost!] as [NSView] {
+        for view in [materialView, themeView, sidebarHost!, contentFrame, glowView, resizeHandle, commandBarHost!] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -176,10 +174,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             sidebarHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             sidebarWidthConstraint,
 
-            resizeHandle.trailingAnchor.constraint(equalTo: sidebarHost.trailingAnchor),
-            resizeHandle.topAnchor.constraint(equalTo: rootView.topAnchor),
-            resizeHandle.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-            resizeHandle.widthAnchor.constraint(equalToConstant: Layout.resizeHandleWidth),
+            // Like Arc: straddles the card's edge and spans the card's height, above the page and glow.
+            resizeHandle.centerXAnchor.constraint(equalTo: contentFrame.leadingAnchor),
+            resizeHandle.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: ArcMetrics.Content.resizeZoneVerticalInset),
+            resizeHandle.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor, constant: -ArcMetrics.Content.resizeZoneVerticalInset),
+            resizeHandle.widthAnchor.constraint(equalToConstant: 2 * ArcMetrics.Content.resizeZoneHalfWidth),
 
             contentLeading,
             contentFrame.topAnchor.constraint(equalTo: rootView.topAnchor, constant: Layout.inset),
@@ -556,6 +555,17 @@ final class SidebarResizeHandle: NSView {
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .resizeLeftRight)
+    }
+
+    // The window keeps cursor rects where they were set, so move them with the sidebar's edge.
+    override func setFrameOrigin(_ newOrigin: NSPoint) {
+        super.setFrameOrigin(newOrigin)
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        window?.invalidateCursorRects(for: self)
     }
 
     override func mouseDown(with event: NSEvent) {
