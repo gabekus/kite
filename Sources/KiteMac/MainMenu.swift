@@ -25,9 +25,12 @@ enum MainMenu {
             _ key: String = "",
             _ modifiers: NSEvent.ModifierFlags = .command,
             tag: Int = 0,
-            toTarget: Bool = true
+            toTarget: Bool = true,
+            id: String? = nil
         ) -> NSMenuItem {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            // The command's stable name for shortcut overrides (KeyBindings), Arc's where Arc has one.
+            item.identifier = id.map(NSUserInterfaceItemIdentifier.init)
             item.keyEquivalentModifierMask = modifiers
             item.tag = tag
             item.target = toTarget ? target : nil
@@ -67,60 +70,60 @@ enum MainMenu {
         }
 
         submenu("Kite", [
-            item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false),
+            item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false, id: "aboutKite"),
             .separator(),
             item("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)), toTarget: false),
             item("Allow Claude to Run JavaScript Without Asking", #selector(AppDelegate.toggleClaudeJavaScript(_:)), toTarget: false),
             item("Open Claude’s Tabs in a Claude Space", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),
             item("Connect Claude Code…", #selector(AppDelegate.connectClaudeCode(_:)), toTarget: false),
-            item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:))),
+            item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:)), id: "defaultBrowser"),
             // Until there's a Settings window.
             item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
             .separator(),
-            item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false),
-            item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false),
-            item("Show All", #selector(NSApplication.unhideAllApplications(_:)), toTarget: false),
+            item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false, id: "hideKite"),
+            item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false, id: "hideOthers"),
+            item("Show All", #selector(NSApplication.unhideAllApplications(_:)), toTarget: false, id: "showAll"),
             .separator(),
-            item("Quit Kite", #selector(NSApplication.terminate(_:)), "q", toTarget: false),
+            item("Quit Kite", #selector(NSApplication.terminate(_:)), "q", toTarget: false, id: "quitKite"),
         ])
 
         submenu("File", [
-            item("New Tab", #selector(BrowserWindowController.newTab(_:)), "t"),
-            item("New Incognito Window", #selector(MenuRouter.newIncognitoWindow(_:)), "n", [.command, .shift]),
-            item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), "l"),
-            item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift]),
+            item("New Tab", #selector(BrowserWindowController.newTab(_:)), "t", id: "newTab"),
+            item("New Incognito Window", #selector(MenuRouter.newIncognitoWindow(_:)), "n", [.command, .shift], id: "newIncognitoWindow"),
+            item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), "l", id: "openLocation"),
+            item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift], id: "reopenClosedTab"),
             .separator(),
             // Temporary: remove with ArcImportController.swift after Arc shuts down (2026-12-22).
-            item("Import from Arc…", #selector(BrowserWindowController.importFromArc(_:))),
+            item("Import from Arc…", #selector(BrowserWindowController.importFromArc(_:)), id: "importFromAnotherBrowser"),
             .separator(),
-            item("Close Tab", #selector(BrowserWindowController.closeTab(_:)), "w"),
-            item("Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift], toTarget: false),
+            item("Close Tab", #selector(BrowserWindowController.closeTab(_:)), "w", id: "closeTab"),
+            item("Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift], toTarget: false, id: "closeWindow"),
             .separator(),
-            item("Share…", #selector(BrowserWindowController.share(_:))),
-            item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:))),
-            item("Print…", #selector(BrowserWindowController.printPage(_:)), "p"),
+            item("Share…", #selector(BrowserWindowController.share(_:)), id: "share"),
+            item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"),
+            item("Print…", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
         ])
 
         submenu("Edit", [
-            item("Undo", Selector(("undo:")), "z", toTarget: false),
-            item("Redo", Selector(("redo:")), "z", [.command, .shift], toTarget: false),
+            item("Undo", Selector(("undo:")), "z", toTarget: false, id: "undo"),
+            item("Redo", Selector(("redo:")), "z", [.command, .shift], toTarget: false, id: "redo"),
             .separator(),
-            item("Cut", #selector(NSText.cut(_:)), "x", toTarget: false),
-            item("Copy", #selector(NSText.copy(_:)), "c", toTarget: false),
-            item("Paste", #selector(NSText.paste(_:)), "v", toTarget: false),
-            item("Paste and Match Style", #selector(BrowserWindowController.pasteMatchingStyle(_:)), "v", [.command, .shift]),
-            item("Delete", #selector(NSText.delete(_:)), toTarget: false),
-            item("Select All", #selector(NSText.selectAll(_:)), "a", toTarget: false),
+            item("Cut", #selector(NSText.cut(_:)), "x", toTarget: false, id: "cut"),
+            item("Copy", #selector(NSText.copy(_:)), "c", toTarget: false, id: "copy"),
+            item("Paste", #selector(NSText.paste(_:)), "v", toTarget: false, id: "paste"),
+            item("Paste and Match Style", #selector(BrowserWindowController.pasteMatchingStyle(_:)), "v", [.command, .shift], id: "pasteAndMatchStyle"),
+            item("Delete", #selector(NSText.delete(_:)), toTarget: false, id: "delete"),
+            item("Select All", #selector(NSText.selectAll(_:)), "a", toTarget: false, id: "selectAll"),
             .separator(),
-            item("Copy URL", #selector(BrowserWindowController.copyURL(_:)), "c", [.command, .shift]),
-            item("Copy URL as Markdown", #selector(BrowserWindowController.copyURLAsMarkdown(_:)), "c", [.command, .shift, .option]),
-            item("Copy URL as Quote", #selector(BrowserWindowController.copyURLAsQuote(_:)), "c", [.command, .shift, .control]),
+            item("Copy URL", #selector(BrowserWindowController.copyURL(_:)), "c", [.command, .shift], id: "copyCurrentURL"),
+            item("Copy URL as Markdown", #selector(BrowserWindowController.copyURLAsMarkdown(_:)), "c", [.command, .shift, .option], id: "copyCurrentURLAsMarkdown"),
+            item("Copy URL as Quote", #selector(BrowserWindowController.copyURLAsQuote(_:)), "c", [.command, .shift, .control], id: "copyCurrentURLAsQuote"),
             .separator(),
             submenuItem("Find", [
-                item("Find…", #selector(BrowserWindowController.showFind(_:)), "f"),
-                item("Find Next", #selector(BrowserWindowController.findNext(_:)), "g"),
-                item("Find Previous", #selector(BrowserWindowController.findPrevious(_:)), "g", [.command, .shift]),
-                item("Use Selection to Find", #selector(BrowserWindowController.useSelectionForFind(_:)), "e"),
+                item("Find…", #selector(BrowserWindowController.showFind(_:)), "f", id: "find"),
+                item("Find Next", #selector(BrowserWindowController.findNext(_:)), "g", id: "findNext"),
+                item("Find Previous", #selector(BrowserWindowController.findPrevious(_:)), "g", [.command, .shift], id: "findPrevious"),
+                item("Use Selection to Find", #selector(BrowserWindowController.useSelectionForFind(_:)), "e", id: "useSelectionForFind"),
             ]),
             submenuItem("Spelling and Grammar", [
                 item("Show Spelling and Grammar", #selector(NSText.showGuessPanel(_:)), ":", toTarget: false),
@@ -151,86 +154,86 @@ enum MainMenu {
         ])
 
         submenu("View", [
-            item("Toggle Sidebar", #selector(BrowserWindowController.toggleSidebar(_:)), "s"),
+            item("Toggle Sidebar", #selector(BrowserWindowController.toggleSidebar(_:)), "s", id: "toggleSidebar"),
             .separator(),
-            item("Stop Loading", #selector(BrowserWindowController.stopLoading(_:)), "."),
-            item("Reload Page", #selector(BrowserWindowController.reload(_:)), "r"),
-            item("Force Reload Page", #selector(BrowserWindowController.forceReload(_:)), "r", [.command, .shift]),
-            item("Clear Cookies and Refresh", #selector(BrowserWindowController.clearCookiesAndRefresh(_:))),
-            item("Clear Cache and Refresh", #selector(BrowserWindowController.clearCacheAndRefresh(_:))),
+            item("Stop Loading", #selector(BrowserWindowController.stopLoading(_:)), ".", id: "stopLoading"),
+            item("Reload Page", #selector(BrowserWindowController.reload(_:)), "r", id: "reloadPage"),
+            item("Force Reload Page", #selector(BrowserWindowController.forceReload(_:)), "r", [.command, .shift], id: "forceReloadPage"),
+            item("Clear Cookies and Refresh", #selector(BrowserWindowController.clearCookiesAndRefresh(_:)), id: "clearCookiesAndRefresh"),
+            item("Clear Cache and Refresh", #selector(BrowserWindowController.clearCacheAndRefresh(_:)), id: "clearCacheAndRefresh"),
             .separator(),
-            item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0"),
-            item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "="),
-            item("Zoom Out", #selector(BrowserWindowController.zoomOut(_:)), "-"),
+            item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0", id: "actualSize"),
+            item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "=", id: "zoomIn"),
+            item("Zoom Out", #selector(BrowserWindowController.zoomOut(_:)), "-", id: "zoomOut"),
             .separator(),
-            item("Dark Page for This Site", #selector(BrowserWindowController.toggleDarkPage(_:)), "d", [.command, .option]),
+            item("Dark Page for This Site", #selector(BrowserWindowController.toggleDarkPage(_:)), "d", [.command, .option], id: "darkPageForSite"),
             darkPagesMenu(),
             .separator(),
-            item("Block Ads on This Site", #selector(BrowserWindowController.toggleAdblockForSite(_:)), "b", [.command, .option]),
-            item("Block Ads and Trackers", #selector(BrowserWindowController.toggleAdblock(_:))),
+            item("Block Ads on This Site", #selector(BrowserWindowController.toggleAdblockForSite(_:)), "b", [.command, .option], id: "blockAdsForSite"),
+            item("Block Ads and Trackers", #selector(BrowserWindowController.toggleAdblock(_:)), id: "blockAds"),
             .separator(),
             submenuItem("Developer", [
-                item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option]),
-                item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option]),
+                item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option], id: "viewSource"),
+                item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option], id: "developerTools"),
                 // Both open DevTools for now; picking the element or panel needs the DevTools frontend.
-                item("Inspect Elements", #selector(BrowserWindowController.showDevTools(_:)), "c", [.command, .option]),
-                item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option]),
+                item("Inspect Elements", #selector(BrowserWindowController.showDevTools(_:)), "c", [.command, .option], id: "inspectElements"),
+                item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option], id: "javaScriptConsole"),
             ]),
             .separator(),
-            item("Enter Full Screen", #selector(BrowserWindowController.toggleFullScreenMode(_:)), "f", [.command, .control]),
+            item("Enter Full Screen", #selector(BrowserWindowController.toggleFullScreenMode(_:)), "f", [.command, .control], id: "fullscreen"),
         ])
 
         submenu("History", [
-            item("Back", #selector(BrowserWindowController.goBack(_:)), "["),
-            item("Forward", #selector(BrowserWindowController.goForward(_:)), "]"),
+            item("Back", #selector(BrowserWindowController.goBack(_:)), "[", id: "goBack"),
+            item("Forward", #selector(BrowserWindowController.goForward(_:)), "]", id: "goForward"),
         ])
 
         submenu("Tabs", [
-            item("Pin / Unpin Tab", #selector(BrowserWindowController.togglePin(_:)), "d"),
-            item("Duplicate Tab", #selector(BrowserWindowController.duplicateTab(_:))),
+            item("Pin / Unpin Tab", #selector(BrowserWindowController.togglePin(_:)), "d", id: "pinTab"),
+            item("Duplicate Tab", #selector(BrowserWindowController.duplicateTab(_:)), id: "duplicate"),
             .separator(),
-            item("Next Tab", #selector(BrowserWindowController.nextTab(_:)), down, [.command, .option]),
-            item("Previous Tab", #selector(BrowserWindowController.previousTab(_:)), up, [.command, .option]),
-            item("Switch to Recent Tab", #selector(BrowserWindowController.selectRecentTab(_:)), "\t", .control),
+            item("Next Tab", #selector(BrowserWindowController.nextTab(_:)), down, [.command, .option], id: "nextTab"),
+            item("Previous Tab", #selector(BrowserWindowController.previousTab(_:)), up, [.command, .option], id: "previousTab"),
+            item("Switch to Recent Tab", #selector(BrowserWindowController.selectRecentTab(_:)), "\t", .control, id: "nextRecentTabItem"),
             alternate(#selector(BrowserWindowController.previousTab(_:)), "\t", [.control, .shift]),
             .separator(),
-            item("Clear Today", #selector(BrowserWindowController.clearToday(_:)), "k", [.command, .shift]),
+            item("Clear Today", #selector(BrowserWindowController.clearToday(_:)), "k", [.command, .shift], id: "clearUnpinnedTabs"),
             .separator(),
         ] + (1...9).map { n in
-            item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n)
+            item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n, id: n == 9 ? "lastTab" : "tab\(n)")
         })
 
         submenu("Spaces", [
-            item("New Space", #selector(BrowserWindowController.newSpace(_:))),
-            item("Rename Space…", #selector(BrowserWindowController.renameSpace(_:))),
+            item("New Space", #selector(BrowserWindowController.newSpace(_:)), id: "newSpace"),
+            item("Rename Space…", #selector(BrowserWindowController.renameSpace(_:)), id: "renameSpace"),
             .separator(),
             // ⇧⌘S is Gabe's Arc binding; ⌥⌘→ is Arc's default.
-            item("Next Space", #selector(BrowserWindowController.nextSpace(_:)), "s", [.command, .shift]),
+            item("Next Space", #selector(BrowserWindowController.nextSpace(_:)), "s", [.command, .shift], id: "nextSpace"),
             alternate(#selector(BrowserWindowController.nextSpace(_:)), right, [.command, .option]),
-            item("Previous Space", #selector(BrowserWindowController.previousSpace(_:)), left, [.command, .option]),
+            item("Previous Space", #selector(BrowserWindowController.previousSpace(_:)), left, [.command, .option], id: "previousSpace"),
             .separator(),
         ] + (1...9).map { n in
-            let space = item("Space \(n)", #selector(BrowserWindowController.selectSpaceNumber(_:)), "\(n)", .control, tag: n)
+            let space = item("Space \(n)", #selector(BrowserWindowController.selectSpaceNumber(_:)), "\(n)", .control, tag: n, id: "space\(n)")
             // Hidden while there's no such space, but ⌃n still reaches validation once there is.
             space.allowsKeyEquivalentWhenHidden = true
             return space
         })
 
         submenu("Window", [
-            item("Stay On Top", #selector(BrowserWindowController.toggleStayOnTop(_:))),
+            item("Stay On Top", #selector(BrowserWindowController.toggleStayOnTop(_:)), id: "stayOnTop"),
             .separator(),
-            item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m", toTarget: false),
-            item("Zoom", #selector(NSWindow.performZoom(_:)), toTarget: false),
+            item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m", toTarget: false, id: "minimize"),
+            item("Zoom", #selector(NSWindow.performZoom(_:)), toTarget: false, id: "zoomWindow"),
             .separator(),
-            item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), toTarget: false),
+            item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), toTarget: false, id: "bringAllToFront"),
         ])
 
         submenu("Help", [
-            item("Keyboard Shortcuts", #selector(BrowserWindowController.showKeyboardShortcuts(_:))),
+            item("Keyboard Shortcuts", #selector(BrowserWindowController.showKeyboardShortcuts(_:)), id: "essentialKeyboardShortcuts"),
             .separator(),
             submenuItem("Troubleshooting", [
-                item("Reveal Kite Data", #selector(BrowserWindowController.revealDataFolder(_:))),
-                item("Copy Kite Info", #selector(BrowserWindowController.copyKiteInfo(_:))),
+                item("Reveal Kite Data", #selector(BrowserWindowController.revealDataFolder(_:)), id: "revealKiteData"),
+                item("Copy Kite Info", #selector(BrowserWindowController.copyKiteInfo(_:)), id: "copyKiteInfo"),
             ]),
         ])
 
