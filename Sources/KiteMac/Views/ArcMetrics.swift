@@ -79,13 +79,16 @@ enum ArcMetrics {
         static let cornerRadius: CGFloat = 6
     }
 
-    /// Arc's timings, fitted from 60fps recordings against the springs and eases in its binary.
+    /// Arc's timings: from its binary where it names them, else fitted from 60fps recordings.
     enum Motion {
         /// Space switch: the theme settles like `spring(response: 0.15, dampingFraction: 0.95)`.
         static let spaceSwitchResponse: Double = 0.15
         static let spaceSwitchDamping: Double = 0.95
-        /// Sidebar hide and show: `easeInOut(duration: 0.15)`.
-        static let sidebarToggleDuration: Double = 0.15
+        /// Sidebar hide and show: 0.08s on a cubic Bézier through these control points, for both
+        /// directions. Arc sets the sidebar's and the content's frames once in an implicit
+        /// animation group and lets Core Animation draw the frames between.
+        static let sidebarToggleDuration: Double = 0.08
+        static let sidebarToggleCurve: (x1: Float, y1: Float, x2: Float, y2: Float) = (0.25, 0.46, 0.45, 0.94)
     }
 
     enum CommandBar {

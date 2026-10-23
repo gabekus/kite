@@ -25,12 +25,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let themeView = ThemeView()
     private let glowView = GlowView(margin: Layout.glowMargin)
     let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
-    private let contentClip = NSView()
+    private let contentClip = ContentClipView()
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
     private var sidebarHost: NSHostingView<SidebarView>!
     private var commandBarHost: NSHostingView<CommandBarOverlay>!
     private var contentLeading: NSLayoutConstraint!
+    private var sidebarLeading: NSLayoutConstraint!
     private var sidebarWidthConstraint: NSLayoutConstraint!
     private var sidebarWidth: CGFloat
     private var appearanceObservation: NSKeyValueObservation?
@@ -42,6 +43,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var appliedDark: [UUID: Bool] = [:]
     private var commandBarVisible = false
     private var sidebarVisible = true
+    /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
+    private var cardCoverDuringToggle: CGRect?
+    private var sidebarToggles = 0
 
     /// Incognito windows keep nothing: no saved frame, and every page closes with the window.
     let isIncognito: Bool
@@ -150,6 +154,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         contentClip.addSubview(emptyLabel)
 
         contentLeading = contentFrame.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: sidebarWidth)
+        sidebarLeading = sidebarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor)
         sidebarWidthConstraint = sidebarHost.widthAnchor.constraint(equalToConstant: sidebarWidth)
         NSLayoutConstraint.activate([
             materialView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
@@ -162,7 +167,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             themeView.topAnchor.constraint(equalTo: rootView.topAnchor),
             themeView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
-            sidebarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            sidebarLeading,
             sidebarHost.topAnchor.constraint(equalTo: rootView.topAnchor),
             sidebarHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             sidebarWidthConstraint,
@@ -207,14 +212,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         guard width != sidebarWidth else { return }
         sidebarWidth = width
         sidebarWidthConstraint.constant = width
-        if sidebarVisible { contentLeading.constant = width }
+        if sidebarVisible { contentLeading.constant = width } else { sidebarLeading.constant = -width }
         // Lay out now so the theme's cutout moves in the same frame as the page.
         rootView.layoutSubtreeIfNeeded()
     }
 
     private func layoutChanged() {
         // Metal works top-left; AppKit's origin is bottom-left.
-        let frame = contentFrame.frame
+        let frame = cardCoverDuringToggle ?? contentFrame.frame
         themeView.cutoutRect = CGRect(x: frame.minX, y: rootView.bounds.height - frame.maxY, width: frame.width, height: frame.height)
         themeView.cutoutCornerRadius = Layout.cornerRadius
         let sidebar = sidebarHost.frame
@@ -269,9 +274,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
 
         let page = pool.page(for: tab)
-        page.view.frame = contentClip.bounds
-        page.view.autoresizingMask = [.width, .height]
+        page.view.autoresizingMask = []
         contentClip.addSubview(page.view)
+        contentClip.page = page.view
         shownPage = page
         pool.didShow(tab.id)
         if store.commandBar == nil {
@@ -310,13 +315,39 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         guard visible != sidebarVisible else { return }
         sidebarVisible = visible
         resizeHandle.isHidden = !visible
-        NSAnimationContext.runAnimationGroup { context in
+        sidebarHost.isHidden = false
+        sidebarToggles += 1
+        let toggle = sidebarToggles
+
+        // Like Arc: set the final frames once inside an implicit animation group and let Core
+        // Animation move the layers, so nothing lays out again until the slide ends.
+        rootView.layoutSubtreeIfNeeded()
+        let from = contentFrame.frame
+        contentLeading.constant = visible ? sidebarWidth : Layout.inset
+        sidebarLeading.constant = visible ? 0 : -sidebarWidth
+        let to = CGRect(x: contentLeading.constant, y: from.minY, width: from.maxX - contentLeading.constant, height: from.height)
+        // The page keeps the wider of its two widths until the slide ends, so it never stops short
+        // of the card's edge: a hide widens it now, a show narrows it at the end. And the theme
+        // skips drawing only where the card covers the window the whole way.
+        contentClip.minimumPageWidth = max(from.width, to.width)
+        cardCoverDuringToggle = from.intersection(to)
+        layoutChanged()
+
+        let curve = ArcMetrics.Motion.sidebarToggleCurve
+        NSAnimationContext.runAnimationGroup({ context in
             context.duration = ArcMetrics.Motion.sidebarToggleDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.timingFunction = CAMediaTimingFunction(controlPoints: curve.x1, curve.y1, curve.x2, curve.y2)
             context.allowsImplicitAnimation = true
-            contentLeading.animator().constant = visible ? sidebarWidth : Layout.inset
-            sidebarHost.animator().alphaValue = visible ? 1 : 0
-        }
+            rootView.layoutSubtreeIfNeeded()
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, toggle == self.sidebarToggles else { return }
+                self.contentClip.minimumPageWidth = 0
+                self.cardCoverDuringToggle = nil
+                self.sidebarHost.isHidden = !self.sidebarVisible
+                self.layoutChanged()
+            }
+        })
     }
 
     // MARK: Commands
@@ -540,6 +571,27 @@ final class SidebarResizeHandle: NSView {
     }
 }
 
+/// The card's clip. It sizes the shown page itself, so the page can stay wider than the card
+/// while the sidebar slides.
+final class ContentClipView: NSView {
+    weak var page: NSView? {
+        didSet { layoutPage() }
+    }
+    var minimumPageWidth: CGFloat = 0 {
+        didSet { if minimumPageWidth != oldValue { layoutPage() } }
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        layoutPage()
+    }
+
+    private func layoutPage() {
+        let frame = CGRect(x: 0, y: 0, width: max(bounds.width, minimumPageWidth), height: bounds.height)
+        if let page, page.frame != frame { page.frame = frame }
+    }
+}
+
 /// Reports layout passes so the theme can skip pixels under the web content.
 final class RootView: NSView {
     var onLayout: (() -> Void)?
@@ -570,6 +622,18 @@ final class ShadowView: NSView {
 
     override func layout() {
         super.layout()
-        layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+        guard let layer else { return }
+        let path = CGPath(roundedRect: bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+        // Inside an animation group (the sidebar's slide) the path follows the frame on its curve.
+        let context = NSAnimationContext.current
+        if context.allowsImplicitAnimation, context.duration > 0, let old = layer.shadowPath, old != path {
+            let animation = CABasicAnimation(keyPath: "shadowPath")
+            animation.fromValue = layer.presentation()?.shadowPath ?? old
+            animation.toValue = path
+            animation.duration = context.duration
+            animation.timingFunction = context.timingFunction
+            layer.add(animation, forKey: "shadowPath")
+        }
+        layer.shadowPath = path
     }
 }

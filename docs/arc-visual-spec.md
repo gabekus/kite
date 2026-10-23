@@ -202,8 +202,20 @@ most values can't be tied to a specific screen.
 
 - Arc's house spring is critically damped with a 0.5s response. Quick fades are easeInOut at 0.15 to 0.18s.
 - The ⌘T panel itself doesn't animate (see the recording above).
-- These aren't applied in Kite yet: the binary doesn't say which animation drives the space switch or the
-  sidebar, and applying them would mean guessing.
+- These aren't applied to the space switch yet: the binary doesn't say which of them drives it.
+
+**Sidebar hide and show (⌘S)** (AppKit, not SwiftUI, so it isn't in the table above)
+- Both directions run one `NSAnimationContext` group: `duration` 0.08, `allowsImplicitAnimation`, and a
+  `CAMediaTimingFunction` with control points (0.25, 0.46, 0.45, 0.94).
+- Inside the group Arc sets the sidebar's frame and the web content container's frame once, then calls
+  `layoutSubtreeIfNeeded` once. Core Animation draws the frames between; nothing lays out per frame.
+- The sidebar slides with the content's edge. It doesn't fade.
+- On show, the sidebar is first laid out at its starting place and committed, then animated in.
+- A hidden sidebar has a hover reveal: a floating sidebar container that slides in with the same 0.08s curve
+  and fades some of its parts.
+- Two other window-layout animations aren't part of the toggle:
+  - a 0.2s relayout on the same curve when the home view's width changes;
+  - a 0.12s linear, auto-reversing 1.015× scale "bump" of the window contents when a Bool state turns on.
 
 ## Animations, from 60fps recordings of Arc
 
@@ -214,8 +226,8 @@ the springs and eases in Arc's binary (see the vocabulary table above).
 | Motion | Arc, as recorded | Best fit | Kite now |
 |---|---|---|---|
 | Space switch (⌘⌥→), theme colour | 64 / 73 / 78 / 87 / 91 / 98% per frame, settled by about 0.12s | `spring(response: 0.15, dampingFraction: 0.95)` (RMS 0.078; CSS ease at 0.1 to 0.12s is equivalent). Arc uses this spring 8 times | Same spring (`ArcMetrics.Motion`), settling within 0.3s. Recorded: 20 / 51 / 61 / 83 / 93 / 98% per frame |
-| Sidebar hide (⌘S), card edge | 365 → 236 → 106 → 46 → 20 → 10pt, 1 frame apart (about 80ms) | `easeInOut(duration: 0.15)` (RMS 0.10) | 0.15s easeInEaseOut (was 0.22s) |
-| Sidebar show | 10 → 145 → 292 → 340 → 362 → 365pt | `easeInOut` 0.1 to 0.12 (RMS 0.085) | Same 0.15s |
+| Sidebar hide (⌘S), card edge | 365 → 236 → 106 → 46 → 20 → 10pt, 1 frame apart (about 80ms). Re-recorded: 365 → 289 → 115.5 → 42 → 10pt | Arc's own 0.08s on (0.25, 0.46, 0.45, 0.94), see above | Same group, 0.08s on that curve. Recorded at 120fps: 0.17 / 0.36 / 0.54 / 0.68 / 0.86 / 0.92 / 0.96 / 0.99 / 1, RMS 0.004 to Arc's curve |
+| Sidebar show | 10 → 145 → 292 → 340 → 362 → 365pt. Re-recorded: 10 → 113.5 → 275.5 → 331 → 362 → 365pt | Same | Same, RMS 0.004 |
 | ⌘T open and close | Instant | — | Instant |
 
 ## Still unknown
@@ -224,4 +236,4 @@ the springs and eases in Arc's binary (see the vocabulary table above).
 - The pointer light's fade timing and whether it eases toward the pointer. Kite fades it over 0.15s and sticks it
   to the pointer.
 - The ⌘T panel's exact shadow parameters (only its effect was measured).
-- Arc's default sidebar width, light-theme fill opacities, and the space-switch and sidebar animation timings.
+- Arc's default sidebar width, light-theme fill opacities, and the space-switch animation timing.
