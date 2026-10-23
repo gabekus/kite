@@ -23,8 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Links opened before launch finished (Kite as the default browser).
     private var pendingURLs: [URL] = []
 
-    /// Unpinned tabs idle this long get archived, like Arc's default.
-    private static let archiveAfter: TimeInterval = 12 * 60 * 60
 
     static var supportDirectory: URL {
         if let override = ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] {
@@ -36,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
-        store.archiveStaleTabs(olderThan: Self.archiveAfter)
+        store.archiveStaleTabs()
         history = HistoryStore(fileURL: Self.supportDirectory.appendingPathComponent("history.json"))
         store.history = history
 
@@ -67,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         diagnostics.start()
 
         archiveTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.store.archiveStaleTabs(olderThan: Self.archiveAfter) }
+            MainActor.assumeIsolated { self?.store.archiveStaleTabs() }
         }
     }
 
@@ -132,6 +130,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
     }
 
+    /// Kite menu → Archive Tabs After, until there's a Settings window. The tag is the ArchiveInterval's index.
+    @objc func setArchiveInterval(_ sender: NSMenuItem) {
+        let intervals = ArchiveInterval.allCases
+        guard intervals.indices.contains(sender.tag) else { return }
+        store.mutate { $0.archiveAfter = intervals[sender.tag] }
+        store.archiveStaleTabs()
+    }
+
     // MARK: Claude
 
     @objc func toggleClaudeJavaScript(_ sender: Any?) {
@@ -186,6 +192,9 @@ extension AppDelegate: NSMenuItemValidation {
             return automation.isEnabled
         default:
             break
+        }
+        if item.action == #selector(setArchiveInterval(_:)), let store {
+            item.state = ArchiveInterval.allCases.firstIndex(of: store.state.archiveAfter) == item.tag ? .on : .off
         }
         if item.action == #selector(toggleEnergySaver(_:)) {
             #if canImport(CEFBridge)

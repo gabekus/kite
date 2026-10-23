@@ -79,6 +79,9 @@ enum MainMenu {
             item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:)), id: "defaultBrowser"),
             // Until there's a Settings window.
             item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
+            submenuItem("Archive Tabs After", ArchiveInterval.allCases.enumerated().map { i, interval in
+                item(interval.title, #selector(AppDelegate.setArchiveInterval(_:)), tag: i, toTarget: false)
+            }),
             .separator(),
             item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false, id: "hideKite"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false, id: "hideOthers"),
@@ -186,6 +189,10 @@ enum MainMenu {
         submenu("History", [
             item("Back", #selector(BrowserWindowController.goBack(_:)), "[", id: "goBack"),
             item("Forward", #selector(BrowserWindowController.goForward(_:)), "]", id: "goForward"),
+            // Arc's ⌘← / ⌘→. A focused text field still gets them for line start/end:
+            // Chromium offers key equivalents to the page first.
+            alternate(#selector(BrowserWindowController.goBack(_:)), left, .command),
+            alternate(#selector(BrowserWindowController.goForward(_:)), right, .command),
         ])
 
         submenu("Tabs", [
