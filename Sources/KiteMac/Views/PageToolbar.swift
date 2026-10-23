@@ -22,11 +22,18 @@ struct PageToolbar: View {
         static let centerOffset: CGFloat = -11
         static let iconSize: CGFloat = 13
         static let fontSize: CGFloat = 13
-        static let background = Color(red: 0x2D / 255, green: 0x2D / 255, blue: 0x2D / 255)
-        static let divider = Color(red: 0x3B / 255, green: 0x3B / 255, blue: 0x3B / 255)
-        static let enabled = Color(red: 0xC3 / 255, green: 0xC3 / 255, blue: 0xC3 / 255)
-        static let disabled = Color(red: 0x6C / 255, green: 0x6C / 255, blue: 0x6C / 255)
-        static let text = Color(red: 0xD2 / 255, green: 0xD2 / 255, blue: 0xD2 / 255)
+        // Greys tuned so a capture of Kite reads like Arc's: bar #2D2D2D, divider #3B3B3B,
+        // icons #C3C3C3 (disabled #6C6C6C), host #D2D2D2.
+        static let background = grey(0x1A)
+        static let divider = grey(0x2C)
+        static let enabled = grey(0xB8)
+        static let disabled = grey(0x5E)
+        static let text = grey(0xC8)
+        static let siteControlsSize: CGFloat = 16
+
+        static func grey(_ level: Int) -> Color {
+            Color(red: Double(level) / 255, green: Double(level) / 255, blue: Double(level) / 255)
+        }
     }
 
     var body: some View {
@@ -38,9 +45,19 @@ struct PageToolbar: View {
                 button("arrow.right", "Forward", enabled: page.canGoForward, action: actions.goForward)
                 button(page.isLoading ? "xmark" : "arrow.clockwise", "Reload", enabled: selected != nil, action: actions.reload)
                 Spacer()
-                // Kite has neither yet; shown as in Arc, disabled.
-                button("slider.horizontal.3", "Site Controls", enabled: false) {}
-                button("rectangle.split.2x1", "Add Split View", enabled: false) {}
+                // Kite has neither yet: drawn as in Arc, but they do nothing.
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 8, weight: .semibold))
+                    .frame(width: Metrics.siteControlsSize, height: Metrics.siteControlsSize)
+                    .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(lineWidth: 1.25))
+                    .foregroundStyle(Metrics.enabled)
+                    .frame(width: Metrics.buttonPitch, height: Metrics.height)
+                    .help("Site Controls (not in Kite yet)")
+                Image(systemName: "rectangle.split.2x1")
+                    .font(.system(size: Metrics.iconSize, weight: .medium))
+                    .foregroundStyle(Metrics.enabled)
+                    .frame(width: Metrics.buttonPitch, height: Metrics.height)
+                    .help("Split View (not in Kite yet)")
             }
             .padding(.leading, Metrics.leading)
             .padding(.trailing, Metrics.trailing)
@@ -49,11 +66,12 @@ struct PageToolbar: View {
                 HStack(spacing: 5) {
                     Image(systemName: "link")
                         .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Metrics.enabled)
                     Text(selected?.url?.host() ?? "")
                         .font(.system(size: Metrics.fontSize))
+                        .foregroundStyle(Metrics.text)
                         .lineLimit(1)
                 }
-                .foregroundStyle(Metrics.text)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -78,7 +96,8 @@ struct PageToolbar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
+        // Not .disabled(), which dims the icon further than Arc's disabled grey.
+        .allowsHitTesting(enabled)
         .help(help)
     }
 }
