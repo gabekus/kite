@@ -63,9 +63,9 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 |---|---|---|---|
 | Undo / Redo (Undo includes "Undo Archive Tab") | ⌘Z / ⇧⌘Z | 🟡 text only | B3: undo close/archive |
 | Cut / Copy / Paste / Select All | ⌘X/C/V/A | ✅ | |
-| **Copy URL** (toast) | ⇧⌘C | ✅ this PR | |
-| **Copy URL as Markdown** | ⌥⇧⌘C | ✅ this PR | |
-| **Copy URL as Quote** | ⌃⇧⌘C | ✅ this PR (selection as a quote + link; Arc's exact format unverified) | |
+| **Copy URL** (toast) | ⇧⌘C | ✅ "Copied Current URL" toast | |
+| **Copy URL as Markdown** | ⌥⇧⌘C | ✅ `[title](url)`, same "Copied Current URL" toast as Arc | |
+| **Copy URL as Quote** | ⌃⇧⌘C | 🟡 Arc uploads the selection to arc.net and copies a share link (toast "Copied Link / With Quote"); Kite has no server, so it copies a local Markdown quote + link. Nothing happens with no selection, as in Arc | |
 | Paste and Match Style | ⇧⌘V | ✅ | |
 | Delete | | ✅ | |
 | Find… / Find Next / Find Previous | ⌘F / ⌘G / ⇧⌘G | ✅ find bar (match count on Chromium) | |
@@ -131,7 +131,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| Go Back / Go Forward | ⌘[ / ⌘] | ✅ Arc 1.169's binding table has no ⌘←/⌘→ (checked in the binary); whether pages handle them is pending the visual check | B3 |
+| Go Back / Go Forward | ⌘[ / ⌘] (also ⌘← / ⌘→ in a page) | ✅ ⌘←/⌘→ as hidden alternates; text fields keep them for caret moves (seen in Arc; not in its binding table) | B3 |
 | View History | ⌘Y | ❌ | Thread: Library (history page) |
 | View Archive… / Clear Archive | | 🟡 archived tabs stored, no UI | Thread: Library |
 
@@ -146,7 +146,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | Minimize / Zoom | ⌘M | ✅ | macOS adds Fill, Center, tiling for free |
-| Stay On Top | | ✅ | |
+| Stay On Top | | ✅ checkmark in the menu, window floats, no in-window indicator (as in Arc) | |
 | Open Library… | ⇧⌘L | ❌ | Thread: Library |
 | View Downloads… | ⇧⌘J | ❌ | Thread: Library (downloads) |
 | View Easels… / Media… / Boosts… | | ❌ | Their threads |
