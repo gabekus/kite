@@ -63,6 +63,9 @@ final class AutomationController {
     /// Each tab's last read, the baseline for change-only reads.
     @ObservationIgnored var snapshots: [UUID: PageDiff.Snapshot] = [:]
 
+    /// The tab the running batch last acted on, to say once where it ended up.
+    @ObservationIgnored var batchTab: UUID?
+
     /// True while a batch runs: a step that would need confirmation stops the batch instead of asking.
     @TaskLocal static var inBatch = false
 

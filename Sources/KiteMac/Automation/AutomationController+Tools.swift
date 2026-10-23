@@ -95,6 +95,13 @@ extension AutomationController {
                 }
                 // Too much changed for a diff to help: fall through to the whole page.
             }
+            // A first "changes only" read has nothing to compare with: it only records the baseline,
+            // since whoever asked for changes wanted little back. read_page or find show the page.
+            if changesOnly && !interactiveOnly {
+                return .text("No earlier read of this tab, so this one is now the baseline (\(snapshot.outline.count) outline lines, "
+                    + "\(snapshot.text.count) lines of text). Later changes_only reads and actions report differences from it. "
+                    + "Use find or read_page to see the page itself.")
+            }
             return .text(AutomationReport.page(tab: tab.id, url: current.url, title: current.displayTitle,
                                                outline: outline, text: text, textLimit: limit))
 
@@ -133,7 +140,9 @@ extension AutomationController {
             try await untilDialog(tab.id) { try await actions.type(text, into: element, submit: submit) }
             if submit { await settle(tab.id) }
             let into = target.map { " into \(Self.name($0))" } ?? ""
-            return report("Typed \(text.count) characters\(into)\(submit ? " and pressed Return" : "").", tab.id)
+            // Pages often keep a hidden copy of a field (a search box behind a button); typing there does nothing visible.
+            let hidden = element.isHittable ? "" : " That field isn't visible on screen (hidden, covered or zero-size), so the page may ignore it; click whatever reveals it first."
+            return report("Typed \(text.count) characters\(into)\(submit ? " and pressed Return" : "").\(hidden)", tab.id)
 
         case let .formInput(_, target, value):
             let element = try await act().locate(target)
@@ -332,6 +341,8 @@ extension AutomationController {
         var lines: [String] = []
         var images: [ToolOutput.Content] = []
         var failed = false
+        var paused = false
+        batchTab = nil
         for (index, step) in steps.enumerated() {
             let label = "Step \(index + 1) (\(step.tool.rawValue))"
             do {
@@ -342,7 +353,7 @@ extension AutomationController {
                 lines.append("\(label):\n\(output.text)")
             } catch let needs as NeedsConfirmation {
                 lines.append("\(label) not run: it needs the user's OK to \(needs.request.action). Call it on its own and Kite will ask them.")
-                failed = true
+                paused = true
             } catch let error as AutomationError {
                 lines.append("\(label) failed: \(error.message)")
                 failed = true
@@ -350,14 +361,20 @@ extension AutomationController {
                 lines.append("\(label) failed: \(error)")
                 failed = true
             }
-            if failed {
+            if failed || paused {
                 let rest = steps.count - index - 1
                 if rest == 1 { lines.append("Step \(steps.count) not run.") }
                 if rest > 1 { lines.append("Steps \(index + 2)–\(steps.count) not run.") }
                 break
             }
         }
-        let summary = failed ? "The batch stopped early." : "All \(steps.count) steps ran."
+        let summary = failed ? "The batch stopped at an error." : paused ? "The batch paused before a step that needs the user's OK."
+            : "All \(steps.count) steps ran."
+        // Steps report only what they did; where the tab ended up is said once, here.
+        if let id = batchTab, let tab = store.state.tab(id) {
+            lines.append(AutomationReport.afterAction("", tab: id, url: tab.url, title: tab.displayTitle)
+                .trimmingCharacters(in: .whitespaces))
+        }
         return ToolOutput(content: [.text(([summary] + lines).joined(separator: "\n\n"))] + images, isError: failed)
     }
 
@@ -498,7 +515,13 @@ extension AutomationController {
 
     func report(_ action: String, _ id: UUID) -> ToolOutput {
         let tab = store.state.tab(id)
-        var text = AutomationReport.afterAction(action, tab: id, url: tab?.url, title: tab?.displayTitle ?? "")
+        var text: String
+        if AutomationController.inBatch {
+            batchTab = id
+            text = action
+        } else {
+            text = AutomationReport.afterAction(action, tab: id, url: tab?.url, title: tab?.displayTitle ?? "")
+        }
         if let dialog = activities[id]?.dialog {
             text += "\nA \(dialog.kind) dialog is now open: " + UntrustedContent.wrap(dialog.message, source: "dialog")
                 + "\nAnswer it with handle_dialog."
