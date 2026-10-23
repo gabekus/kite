@@ -88,6 +88,14 @@ final class HoverStrip: NSView {
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, assume], owner: self))
     }
 
+    /// Starts over from where the pointer is now. AppKit holds enters and exits back during a drag
+    /// and sends them when it ends; this drops the ones it's holding.
+    func resync() {
+        guard isActive else { return }
+        inside = false
+        updateTrackingAreas()
+    }
+
     override func mouseEntered(with event: NSEvent) {
         guard isActive, !inside else { return }
         inside = true
