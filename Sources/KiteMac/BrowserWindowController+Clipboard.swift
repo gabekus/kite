@@ -41,8 +41,7 @@ extension BrowserWindowController {
         let toast = root.subviews.lazy.compactMap { $0 as? ToastView }.first ?? {
             let toast = ToastView()
             toast.translatesAutoresizingMaskIntoConstraints = false
-            // Above the page and the loading glow (whose translucent edge would wash it
-            // out), at the content card's top-right corner like Arc's.
+            // Above the page and the loading glow, at the content card's top-right corner like Arc's.
             let glow = root.subviews.first { $0 is GlowView }
             root.addSubview(toast, positioned: .above, relativeTo: glow ?? contentFrame)
             NSLayoutConstraint.activate([

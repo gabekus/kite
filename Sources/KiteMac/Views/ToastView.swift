@@ -19,9 +19,11 @@ final class ToastView: NSView {
         static let buttonSize = NSSize(width: 31, height: 27)
         static let buttonTrailing: CGFloat = 11.5
         static let textToButton: CGFloat = 8
-        static let topColor = NSColor(srgbRed: 0x55 / 255, green: 0x66 / 255, blue: 0x92 / 255, alpha: 1)
-        static let bottomColor = NSColor(srgbRed: 0x46 / 255, green: 0x53 / 255, blue: 0x76 / 255, alpha: 1)
-        static let buttonColor = NSColor(srgbRed: 0x7D / 255, green: 0x88 / 255, blue: 0xA4 / 255, alpha: 1)
+        // Tuned so a screen capture of Kite reads like one of Arc (#556692 → #465376,
+        // button ~#7D88A4): display-profile captures read lighter once converted to sRGB.
+        static let topColor = NSColor(srgbRed: 0x40 / 255, green: 0x52 / 255, blue: 0x83 / 255, alpha: 1)
+        static let bottomColor = NSColor(srgbRed: 0x30 / 255, green: 0x3C / 255, blue: 0x5F / 255, alpha: 1)
+        static let buttonColor = NSColor(srgbRed: 0x68 / 255, green: 0x75 / 255, blue: 0x96 / 255, alpha: 1)
         static let duration: Duration = .seconds(4.6)
     }
 
