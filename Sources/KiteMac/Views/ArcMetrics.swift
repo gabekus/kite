@@ -106,24 +106,35 @@ enum ArcMetrics {
         static let cornerRadius: CGFloat = 12
         static let borderOpacity: Double = 0.22
         /// A tint over the HUD material: Arc's dark panel shows the page under it blurred
-        /// (about a 25pt Gaussian) at roughly 11% strength over a near-black base, and
-        /// reads about rgb(43, 42, 41) over a white page. Measured from screen captures.
+        /// (about a 25pt Gaussian) at roughly 11% strength over a near-black base, about
+        /// 21 + 0.106 × page per channel: 48 over white, 48/21/20 over red. From screen captures.
         /// Light mode keeps the same mix over a light material; not checked against Arc.
-        static let darkTint: Double = 0.05
+        static let darkTint: Double = 0.06
         static let lightTint: Double = 0.98
-        static let tintOpacity: Double = 0.73
+        static let tintOpacity: Double = 0.765
         /// A large soft drop shadow: it darkens the page 35% under the bottom edge, 25% at the
         /// sides and 16% at the top, fading out about 100pt away.
         static let shadowOpacity: Double = 0.9
         static let shadowRadius: CGFloat = 45
         static let shadowY: CGFloat = 16
+        /// 0.5pt of black just outside the 1pt border (outside the 765).
+        static let outlineWidth: CGFloat = 0.5
         static let placeholderOpacity: Double = 0.25
         static let fieldHeight: CGFloat = 63.5
         static let iconX: CGFloat = 22.5
         static let iconSize: CGFloat = 18
-        static let textX: CGFloat = 52.5
+        /// The magnifier, drawn in the 18pt icon frame: its ring's centre is 30.6, 30.75 from the
+        /// panel's top-left; ring and handle are 1.4 wide, the handle runs at 45° and its round end reaches 8.6 from the centre.
+        static let magnifierCenter = CGPoint(x: 8.35, y: 8)
+        static let magnifierRadius: CGFloat = 4.65
+        static let magnifierStroke: CGFloat = 1.4
+        static let magnifierHandleEnd: CGFloat = 8.1
+        /// Placeholder ink starts at 52 (the caret at 51.5); 18pt medium, 179pt wide.
+        static let textX: CGFloat = 51.5
         static let fieldFontSize: CGFloat = 18
-        static let dividerInset: CGFloat = 11
+        /// Raises the field's text off the row's centre: its baseline sits at 38.5.
+        static let fieldTextLift: CGFloat = 0.5
+        static let dividerInset: CGFloat = 11.5
         static let dividerOpacity: Double = 0.10
         static let listTopGap: CGFloat = 4.5
         static let listBottomGap: CGFloat = 9.5
