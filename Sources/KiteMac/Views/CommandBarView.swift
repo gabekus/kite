@@ -52,17 +52,18 @@ private enum S {
     // Sizes are tuned so a capture of Kite measures like one of Arc: drawn edges
     // anti-alias about half a point inside their frames.
     static let faviconSize: CGFloat = 18
+    static let faviconOffset: CGFloat = 1.5
     /// From the text field's start; Arc's chip starts 1.5pt right of Kite's text.
     static let chipOffset: CGFloat = 1.5
     static let chipHeight: CGFloat = 24
     static let chipLeading: CGFloat = 10
-    static let chipTrailing: CGFloat = 10
+    static let chipTrailing: CGFloat = 9.5
     static let chipFontSize: CGFloat = 13
     /// A brand-colour glow around the chip, visible ~2pt above and ~10pt below it.
     static let glowOpacity: Double = 0.38
-    static let glowRadius: CGFloat = 5
+    static let glowRadius: CGFloat = 6
     static let glowY: CGFloat = 1.5
-    static let chipToText: CGFloat = 11.5
+    static let chipToText: CGFloat = 9.5
     /// "Search YouTube" (#727272 on the #212121 bar), then the Tab keycap.
     static let hintOpacity: Double = 0.36
     static let hintToKey: CGFloat = 10
@@ -211,6 +212,7 @@ private struct CommandBarView: View {
                     // Like Arc: the site's icon while Tab would enter its Site Search.
                     if let tabTarget {
                         FaviconView(page: tabTarget.url(for: ""), size: S.faviconSize)
+                            .offset(x: S.faviconOffset)
                     } else {
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 13, weight: .medium))
