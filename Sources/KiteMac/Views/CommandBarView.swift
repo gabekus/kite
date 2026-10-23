@@ -206,16 +206,39 @@ private struct CommandBarView: View {
     }
 }
 
-/// Arc's panel: near-black in dark mode, a hairline border, a wide soft shadow.
+/// Arc's panel: a dark tint over the blurred page, a hairline border, a wide soft shadow.
 private struct CommandBarPanel: ViewModifier {
     @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: C.cornerRadius, style: .circular)
         content
-            .background(scheme == .dark ? Color(white: 0.106) : Color(white: 0.98), in: shape)
+            .background {
+                ZStack {
+                    PanelMaterial(material: scheme == .dark ? .hudWindow : .popover)
+                    Color(white: scheme == .dark ? C.darkTint : C.lightTint).opacity(C.tintOpacity)
+                }
+                .clipShape(shape)
+            }
             .overlay(shape.strokeBorder(scheme == .dark ? Color.white.opacity(C.borderOpacity) : Color.black.opacity(0.12), lineWidth: 1))
             .shadow(color: .black.opacity(C.shadowOpacity), radius: C.shadowRadius, y: C.shadowY)
+    }
+}
+
+/// The blurred page under the panel. Within-window blending samples the web view too,
+/// since the window server composites Chromium's layers into the backdrop.
+private struct PanelMaterial: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .withinWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.material = material
     }
 }
 

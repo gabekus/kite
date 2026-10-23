@@ -105,6 +105,13 @@ enum ArcMetrics {
         /// Arc's command bar layer uses a 12pt circular corner (it sets no corner curve).
         static let cornerRadius: CGFloat = 12
         static let borderOpacity: Double = 0.22
+        /// A tint over the HUD material: Arc's dark panel shows the page under it blurred
+        /// (about a 25pt Gaussian) at roughly 11% strength over a near-black base, and
+        /// reads about rgb(43, 42, 41) over a white page. Measured from screen captures.
+        /// Light mode keeps the same mix over a light material; not checked against Arc.
+        static let darkTint: Double = 0.05
+        static let lightTint: Double = 0.98
+        static let tintOpacity: Double = 0.73
         /// A large soft drop shadow: it darkens the page 35% under the bottom edge, 25% at the
         /// sides and 16% at the top, fading out about 100pt away.
         static let shadowOpacity: Double = 0.9
