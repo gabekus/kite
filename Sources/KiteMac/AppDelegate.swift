@@ -71,9 +71,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self, weak controller] _ in
             MainActor.assumeIsolated { self?.incognitoControllers.removeAll { $0 === controller } }
         }
+        // Offset from the window in front so the two don't stack exactly. Read it
+        // before showWindow, which makes the new window main.
+        let front = NSApp.mainWindow ?? windowController.window
         controller.showWindow(nil)
-        // Offset from the window in front so the two don't stack exactly (after showWindow, which centers).
-        if let front = NSApp.mainWindow ?? windowController.window, front !== controller.window {
+        if let front, front !== controller.window {
             controller.window?.setFrameTopLeftPoint(NSPoint(x: front.frame.minX + 28, y: front.frame.maxY - 28))
         }
         controller.newTab(nil)
