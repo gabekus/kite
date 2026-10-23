@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // focus or covers their work (capture reads covered windows).
         if UIDiagnostics.enabledByEnvironment {
             windowController.window?.orderBack(nil)
+            NSApp.setActivationPolicy(.regular)
         } else {
             NSApp.activate(ignoringOtherApps: true)
         }

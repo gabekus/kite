@@ -86,25 +86,35 @@ struct UIInputSender {
             flags.insert(.function)
             if chord.code.hasPrefix("Arrow") { flags.insert(.numericPad) }
         }
-        // With ⌘ or ⌃ held a real key event carries the unshifted character ("w" for ⌘⇧W), and AppKit
-        // matches menu key equivalents on that plus the flags.
-        let isCommand = !chord.modifiers.isDisjoint(with: [.meta, .control])
-        let characters = Self.functionCharacters[chord.code] ?? (isCommand ? chord.key.lowercased() : chord.text ?? chord.key)
-        let ignoringModifiers = Self.functionCharacters[chord.code]
-            ?? (isCommand || !chord.modifiers.contains(.shift) ? chord.key.lowercased() : chord.key.uppercased())
+        let characters = Self.functionCharacters[chord.code] ?? chord.text ?? chord.key
+        let ignoringModifiers = Self.functionCharacters[chord.code] ?? (chord.modifiers.contains(.shift) ? chord.key.uppercased() : chord.key.lowercased())
         let timestamp = ProcessInfo.processInfo.systemUptime
-        guard let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: timestamp,
-                                          windowNumber: window.windowNumber, context: nil, characters: characters,
-                                          charactersIgnoringModifiers: ignoringModifiers, isARepeat: false, keyCode: keyCode),
-              let up = NSEvent.keyEvent(with: .keyUp, location: .zero, modifierFlags: flags, timestamp: timestamp + 0.01,
-                                        windowNumber: window.windowNumber, context: nil, characters: characters,
-                                        charactersIgnoringModifiers: ignoringModifiers, isARepeat: false, keyCode: keyCode) else {
+        // AppKit matches menu key equivalents against the keyboard layout through an event's CGEvent, which
+        // NSEvent.keyEvent doesn't have (⌘⇧W would miss Close Window), so keys with ⌘ or ⌃ are made from one.
+        let isCommand = !chord.modifiers.isDisjoint(with: [.meta, .control]) && !chord.code.isEmpty
+        guard let down = isCommand ? layoutKeyEvent(keyCode, down: true, flags: flags, timestamp: timestamp)
+                : NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: timestamp,
+                                   windowNumber: window.windowNumber, context: nil, characters: characters,
+                                   charactersIgnoringModifiers: ignoringModifiers, isARepeat: false, keyCode: keyCode),
+              let up = isCommand ? layoutKeyEvent(keyCode, down: false, flags: flags, timestamp: timestamp + 0.01)
+                : NSEvent.keyEvent(with: .keyUp, location: .zero, modifierFlags: flags, timestamp: timestamp + 0.01,
+                                   windowNumber: window.windowNumber, context: nil, characters: characters,
+                                   charactersIgnoringModifiers: ignoringModifiers, isARepeat: false, keyCode: keyCode) else {
             throw AutomationError(.failed, "Couldn't make a key event for \(chord.key).")
         }
-        let entry = keyLog.record(down, synthetic: true)
+        let entry = keyLog.record(down, synthetic: true, in: window)
         let route = keyLog.whileDelivering(entry) { deliver(down) }
         deliverUp(up)
         return (entry, route)
+    }
+
+    /// A key event with the characters the current keyboard layout gives, as a real key's. Never posted; it has
+    /// no window, which is fine since `deliver` hands it to this one.
+    private func layoutKeyEvent(_ keyCode: UInt16, down: Bool, flags: NSEvent.ModifierFlags, timestamp: TimeInterval) -> NSEvent? {
+        guard let event = CGEvent(keyboardEventSource: CGEventSource(stateID: .privateState), virtualKey: keyCode, keyDown: down) else { return nil }
+        event.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
+        event.timestamp = CGEventTimestamp(timestamp * 1_000_000_000)
+        return NSEvent(cgEvent: event)
     }
 
     /// Delivers a key down the way AppKit would for this window, and says where it went.
@@ -115,18 +125,51 @@ struct UIInputSender {
             NSApp.sendEvent(event)
             return "sent through the app (Kite in front) to \(responder)"
         }
+        let state = NSApp.isActive ? "window not key" : "Kite in background"
         // AppKit offers keys with ⌘ or ⌃ (and function keys) as key equivalents before typing them.
         let isEquivalentCandidate = !event.modifierFlags.isDisjoint(with: [.command, .control]) || event.modifierFlags.contains(.function)
         if isEquivalentCandidate {
-            // Menu commands that target the front browser window go to this one instead. Ones sent up the
-            // responder chain (Close Window) still go to Kite's key or main window.
+            // Menu commands that target the front browser window go to this one instead.
             MenuRouter.deliveringTo = window.windowController as? BrowserWindowController
             defer { MenuRouter.deliveringTo = nil }
-            if window.performKeyEquivalent(with: event) { return "claimed as a key equivalent by a view (Kite in background)" }
-            if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return "handled by the menu bar (Kite in background)" }
+            if window.performKeyEquivalent(with: event) { return "claimed as a key equivalent by a view (\(state))" }
+            if performOnResponderChain(event) { return "handled by the menu bar on this window's responder chain (\(state))" }
+            if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return "handled by the menu bar (\(state))" }
         }
         window.sendEvent(event)
-        return "sent to \(responder) (Kite in background)"
+        return "sent to \(responder) (\(state))"
+    }
+
+    /// Menu items without a target (Close Window, Copy) act on the key window's responder chain, which isn't
+    /// this window's (in the background there's none, and AppKit finds them disabled). Run the one this key
+    /// matches on this window's chain instead, as it would with the window key.
+    private func performOnResponderChain(_ event: NSEvent) -> Bool {
+        guard let item = NSApp.mainMenu.flatMap({ Self.menuItem(in: $0, matching: event) }), item.target == nil,
+              let action = item.action else { return false }
+        var responder = window.firstResponder
+        while let current = responder, !current.responds(to: action) { responder = current.nextResponder }
+        guard let target = responder else { return false }
+        if let validator = target as? NSMenuItemValidation, !validator.validateMenuItem(item) { return false }
+        if let validator = target as? NSUserInterfaceValidations, !validator.validateUserInterfaceItem(item) { return false }
+        NSApp.sendAction(action, to: target, from: item)
+        // The key log credits menu commands through this notification.
+        NotificationCenter.default.post(name: NSMenu.didSendActionNotification, object: item.menu, userInfo: ["MenuItem": item])
+        return true
+    }
+
+    /// The menu item whose key equivalent matches `event`: same key, same ⌘⌃⌥⇧ (an uppercase equivalent implies ⇧).
+    private static func menuItem(in menu: NSMenu, matching event: NSEvent) -> NSMenuItem? {
+        let modifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+        let flags = event.modifierFlags.intersection(modifiers)
+        let key = event.charactersIgnoringModifiers?.lowercased()
+        for item in menu.items {
+            if let submenu = item.submenu, let found = menuItem(in: submenu, matching: event) { return found }
+            guard !item.keyEquivalent.isEmpty, item.keyEquivalent.lowercased() == key else { continue }
+            var mask = item.keyEquivalentModifierMask.intersection(modifiers)
+            if item.keyEquivalent != item.keyEquivalent.lowercased() { mask.insert(.shift) }
+            if mask == flags { return item }
+        }
+        return nil
     }
 
     private func deliverUp(_ event: NSEvent) {

@@ -11,7 +11,9 @@ MainActor.assumeIsolated {
     // CEF requires its NSApplication subclass, so create it before anything touches NSApp.
     let app = KCApplication.shared as! KCApplication
     app.delegate = delegate
-    app.setActivationPolicy(.regular)
+    // Diagnostics runs start as an accessory app, which macOS doesn't bring forward at launch (AppDelegate
+    // makes it regular once launched).
+    app.setActivationPolicy(UIDiagnostics.enabledByEnvironment ? .accessory : .regular)
     app.willTerminate = { delegate.saveSession() }
 
     if KCRuntime.isAvailable && environment["KITE_ENGINE"] != "webkit" {
@@ -37,7 +39,7 @@ MainActor.assumeIsolated {
     #else
     let app = NSApplication.shared
     app.delegate = delegate
-    app.setActivationPolicy(.regular)
+    app.setActivationPolicy(UIDiagnostics.enabledByEnvironment ? .accessory : .regular)
     #endif
 
     delegate.engine = WebKitEngine()

@@ -61,7 +61,7 @@ final class KeyRoutingLog {
     }
 
     @discardableResult
-    func record(_ event: NSEvent, synthetic: Bool) -> Int {
+    func record(_ event: NSEvent, synthetic: Bool, in window: NSWindow? = nil) -> Int {
         // A view that claimed a synthetic key may send the same event through the app later; it's the same press.
         if !synthetic, let earlier = entries.last(where: { $0.synthetic && $0.timestamp == event.timestamp && $0.keyCode == event.keyCode }) {
             return earlier.id
@@ -70,7 +70,7 @@ final class KeyRoutingLog {
         let plain = flags.isDisjoint(with: [.command, .control, .option]) && Self.isPrintable(event)
         let id = nextID
         nextID += 1
-        let window = event.window ?? NSApp.window(withWindowNumber: event.windowNumber)
+        let window = window ?? event.window ?? NSApp.window(withWindowNumber: event.windowNumber)
         entries.append(Entry(
             id: id, time: Date(), timestamp: event.timestamp, keyCode: event.keyCode, key: Self.describe(event, flags: flags),
             isPlainTyping: plain, isRepeat: event.isARepeat, synthetic: synthetic,
@@ -145,7 +145,10 @@ final class KeyRoutingLog {
         if flags.contains(.shift) { prefix += "⇧" }
         if flags.contains(.command) { prefix += "⌘" }
         let key = UIMenuItem.keyName(event.charactersIgnoringModifiers ?? "?")
-        let typed = event.characters.flatMap { $0 != event.charactersIgnoringModifiers && !$0.isEmpty ? " types \"\($0)\"" : nil } ?? ""
+        // ⌘⇧C has characters "c" against "C": only the case differs, so it types nothing new.
+        let typed = event.characters.flatMap {
+            $0.lowercased() != event.charactersIgnoringModifiers?.lowercased() && !$0.isEmpty ? " types \"\($0)\"" : nil
+        } ?? ""
         return prefix + key + typed
     }
 
