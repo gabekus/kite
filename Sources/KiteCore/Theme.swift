@@ -84,7 +84,12 @@ public struct Theme: Hashable, Codable, Sendable {
         return OKLab.toSRGB(lab)
     }
 
+    /// Arc's default dark theme: near-black, no grain, at intensity 0.8, so the
+    /// sidebar is mostly the system material picking up the wallpaper.
+    public static let arcDefault = Theme(colors: [ThemeColor(r: 0.1, g: 0.1, b: 0.1)], grain: 0, tint: defaultTint * 0.8)
+
     public static let presets: [Theme] = [
+        arcDefault,
         Theme(colors: [ThemeColor(hex: 0xFF9A6C), ThemeColor(hex: 0xF0629B), ThemeColor(hex: 0x8A5CF5)]),
         Theme(colors: [ThemeColor(hex: 0x5FD3E6), ThemeColor(hex: 0x2BA39A), ThemeColor(hex: 0x2F6FE0)]),
         Theme(colors: [ThemeColor(hex: 0xD4F7E2), ThemeColor(hex: 0xA6E3C8)], grain: 0.25),
