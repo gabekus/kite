@@ -69,6 +69,21 @@ import Testing
         #expect(!relaunched.siteSearches.contains { $0.shortcut == "github.com" })
     }
 
+    @Test func defaultsSeededWithoutColoursGetThem() throws {
+        var state = BrowserState.makeDefault()
+        #expect(state.siteSearches.first { $0.shortcut == "youtube.com" }?.color == "FF0000")
+        // A version 1 session: defaults without colours, one of them changed by the user.
+        for i in state.siteSearches.indices { state.siteSearches[i].color = nil }
+        let reddit = try #require(state.siteSearches.firstIndex { $0.shortcut == "reddit.com" })
+        state.siteSearches[reddit].name = "My Reddit"
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as! [String: Any]
+        json["siteSearchDefaultsSeeded"] = 1
+        let old = try JSONDecoder().decode(BrowserState.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(old.siteSearches.count == SiteSearch.arcDefaults.count)
+        #expect(old.siteSearches.first { $0.shortcut == "youtube.com" }?.color == "FF0000")
+        #expect(old.siteSearches.first { $0.shortcut == "reddit.com" }?.color == nil)
+    }
+
     @Test func oldSessionsDecodeWithNoSiteSearches() throws {
         var state = BrowserState.makeDefault()
         state.siteSearches = [youtube]

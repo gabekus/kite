@@ -63,9 +63,9 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 |---|---|---|---|
 | Undo / Redo (Undo includes "Undo Archive Tab") | ⌘Z / ⇧⌘Z | 🟡 text only | B3: undo close/archive |
 | Cut / Copy / Paste / Select All | ⌘X/C/V/A | ✅ | |
-| **Copy URL** (toast) | ⇧⌘C | ✅ this PR | |
-| **Copy URL as Markdown** | ⌥⇧⌘C | ✅ this PR | |
-| **Copy URL as Quote** | ⌃⇧⌘C | ✅ this PR (selection as a quote + link; Arc's exact format unverified) | |
+| **Copy URL** (toast) | ⇧⌘C | ✅ "Copied Current URL" toast | |
+| **Copy URL as Markdown** | ⌥⇧⌘C | ✅ `[title](url)`, same "Copied Current URL" toast as Arc | |
+| **Copy URL as Quote** | ⌃⇧⌘C | 🟡 Arc uploads the selection to arc.net and copies a share link (toast "Copied Link / With Quote"); Kite has no server, so it copies a local Markdown quote + link. Nothing happens with no selection, as in Arc | |
 | Paste and Match Style | ⇧⌘V | ✅ | |
 | Delete | | ✅ | |
 | Find… / Find Next / Find Previous | ⌘F / ⌘G / ⇧⌘G | ✅ find bar (match count on Chromium) | |
@@ -131,7 +131,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| Go Back / Go Forward | ⌘[ / ⌘] | ✅ Arc 1.169's binding table has no ⌘←/⌘→ (checked in the binary); whether pages handle them is pending the visual check | B3 |
+| Go Back / Go Forward | ⌘[ / ⌘] (also ⌘← / ⌘→ in a page) | ✅ ⌘←/⌘→ as hidden alternates; text fields keep them for caret moves (seen in Arc; not in its binding table) | B3 |
 | View History | ⌘Y | ❌ | Thread: Library (history page) |
 | View Archive… / Clear Archive | | 🟡 archived tabs stored, no UI | Thread: Library |
 
@@ -146,7 +146,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | Minimize / Zoom | ⌘M | ✅ | macOS adds Fill, Center, tiling for free |
-| Stay On Top | | ✅ | |
+| Stay On Top | | ✅ checkmark in the menu, window floats, no in-window indicator (as in Arc) | |
 | Open Library… | ⇧⌘L | ❌ | Thread: Library |
 | View Downloads… | ⇧⌘J | ❌ | Thread: Library (downloads) |
 | View Easels… / Media… / Boosts… | | ❌ | Their threads |
@@ -163,7 +163,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Feature | What it does in Arc | Kite | Plan |
 |---|---|---|---|
-| Command bar | Search tabs, history, actions, site search (type a site, Tab) | ✅ URL/search, open tabs, history, every menu command, site search (Arc's 19 defaults plus anything imported from Arc) | Site Search editor: Settings thread; chip colour, hint wording and match order pending the visual pass |
+| Command bar | Search tabs, history, actions, site search (type a site, Tab) | ✅ URL/search, open tabs, history, every menu command, site search (Arc's 19 defaults plus anything imported from Arc) | Site Search editor: Settings thread. Site Search looks like Arc's (favicon, "Search YouTube" + Tab keycap, brand-colour chip, "Search...", inline completion of shortcuts); whether Arc also completes history URLs inline is unverified |
 | Sidebar | Favorites grid, pinned, unpinned "Today", folders, space switcher | 🟡 | Other session (favorites, folders, resize) |
 | Sidebar hover reveal | Hidden sidebar slides in at the left edge | ❌ | Thread: sidebar left-edge peek |
 | Auto-archive | "Archive tabs after": Never / 1 hour / 6 hours / 12 hours / 24 hours / 7 days / 30 days, per profile | ✅ Kite menu → Archive tabs after (moves to Settings; no profiles yet) | B5 |
@@ -205,7 +205,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Sync | Sidebar via CloudKit/Firebase | ❌ | Roadmap: sync |
 | Default browser, handle links | | ✅ | |
 | PWAs / installed apps | `app_mode_loader` shims | ❌ | Roadmap: PWAs |
-| Sad tab | Crashed-tab page with reload | ❌ | B5 |
+| Sad tab | Crashed-tab page: face, "Tab crashed. Maybe reload the page?", exit code bottom-right | ✅ Chromium; WebKit still reloads on its own | B5 |
 | Download from links, downloads list | | 🟡 WebKit saves files, no UI | Thread: Library |
 | Picture in Picture | Video PiP | ❌ | Thread: Mini player |
 | Gestures | Two-finger swipe back/forward | ❌ | B5 |

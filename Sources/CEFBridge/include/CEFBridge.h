@@ -88,6 +88,8 @@ NS_SWIFT_UI_ACTOR
 - (nullable NSString *)browser:(KCBrowser *)browser documentStartScriptForURL:(NSURL *)url;
 /// Find-in-page results; `activeMatch` is 1-based. Arrives several times per search.
 - (void)browser:(KCBrowser *)browser findResultCount:(int)count activeMatch:(int)activeMatch final:(BOOL)final;
+/// The page's renderer crashed or was killed; `code` is its exit code (11 for a segfault).
+- (void)browser:(KCBrowser *)browser renderProcessDidTerminateWithCode:(int)code;
 @end
 
 /// One Chromium browser (one tab), hosted in `view`.

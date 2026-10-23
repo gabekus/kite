@@ -2,7 +2,8 @@ import AppKit
 import KiteCore
 
 /// Arc's copy commands: ⇧⌘C copies the current tab's URL, ⌥⇧⌘C copies it as a Markdown link,
-/// and ⌃⇧⌘C copies the page's selection as a quote with the link underneath.
+/// and ⌃⇧⌘C copies the page's selection as a quote with the link underneath. Arc uploads the
+/// quote to arc.net and copies a share link instead; Kite has no server, so the quote stays local.
 extension BrowserWindowController {
     @objc func copyURL(_ sender: Any?) {
         guard let tab = store.state.selectedTab, let url = tab.url else { return NSSound.beep() }
@@ -19,7 +20,8 @@ extension BrowserWindowController {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(LinkFormat.markdown(title: tab.title, url: url), forType: .string)
-        showToast("Copied as Markdown", shareURL: url)
+        // Arc shows the same toast as Copy URL.
+        showToast("Copied Current URL", shareURL: url)
     }
 
     @objc func copyURLAsQuote(_ sender: Any?) {
@@ -28,11 +30,13 @@ extension BrowserWindowController {
         }
         page.evaluateJavaScript("String(window.getSelection())") { [weak self] result in
             let selection = (result as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            // Like Arc: with nothing selected, nothing happens.
+            guard !selection.isEmpty else { return }
             let text = LinkFormat.quote(selection: selection, title: tab.title, url: url)
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
-            self?.showToast(selection.isEmpty ? "Nothing selected, copied link" : "Copied as Quote", shareURL: url)
+            self?.showToast("Copied as Quote", shareURL: url)
         }
     }
 

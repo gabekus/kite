@@ -44,6 +44,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var shownPages: [UUID: WebPage] = [:]
     private let splitPanes = SplitPanesView()
     private var paneClickMonitor: Any?
+    /// The crashed-tab page over the shown tab, while its renderer is dead.
+    private var sadTab: NSHostingView<SadTabView>?
     /// Last dark-pages setting sent to each page, so it's only re-sent on change.
     private var appliedDark: [UUID: Bool] = [:]
     private var commandBarVisible = false
@@ -324,6 +326,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         emptyLabel.isHidden = !tabs.isEmpty
         guard let focused else {
             glowView.setLoading(false, progress: 0)
+            updateSadTab()
             return
         }
         pool.didShow(ids)
@@ -361,6 +364,29 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         guard id == shownTabID else { return }
         let page = store.pages[id] ?? PageStatus()
         glowView.setLoading(page.isLoading, progress: page.progress)
+        updateSadTab()
+    }
+
+    private func updateSadTab() {
+        guard let code = shownTabID.flatMap({ store.pages[$0]?.crashCode }) else {
+            sadTab?.removeFromSuperview()
+            sadTab = nil
+            return
+        }
+        let view = SadTabView(code: code) { [weak self] in self?.shownPage?.reload() }
+        let host = sadTab ?? NSHostingView(rootView: view)
+        host.rootView = view
+        // In a split it covers only the crashed pane.
+        if shownTabIDs.count > 1, let id = shownTabID, let pane = splitPanes.frame(of: id) {
+            host.frame = splitPanes.convert(pane, to: contentClip)
+            host.autoresizingMask = []
+        } else {
+            host.frame = contentClip.bounds
+            host.autoresizingMask = [.width, .height]
+        }
+        // Re-adding brings it above a page shown since.
+        contentClip.addSubview(host)
+        sadTab = host
     }
 
     private func updateCommandBar() {
@@ -557,6 +583,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             item.isHidden = !exists
             guard exists else { return false }
             item.title = "\(spaces[item.tag - 1].icon) \(spaces[item.tag - 1].name)"
+        case #selector(goBack(_:)), #selector(goForward(_:)) where item.isHidden:
+            // ⌘← / ⌘→ belong to a focused AppKit text field (the command bar) for line start/end.
+            // A disabled key equivalent passes the key on.
+            return !(window?.firstResponder is NSText)
         case #selector(toggleStayOnTop(_:)):
             item.state = window?.level == .floating ? .on : .off
         case #selector(setAsDefaultBrowser(_:)):

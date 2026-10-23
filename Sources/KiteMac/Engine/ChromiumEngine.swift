@@ -183,6 +183,9 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     func browserDidRequestClose(_ browser: KCBrowser) { onEvent?(.closeRequested) }
 
+    @objc(browser:renderProcessDidTerminateWithCode:)
+    func browser(_ browser: KCBrowser, renderProcessDidTerminateWithCode code: Int32) { onEvent?(.crashed(code: Int(code))) }
+
     @objc(browser:blockedCountDidChange:)
     func browser(_ browser: KCBrowser, blockedCountDidChange count: Int) { onEvent?(.blockedCount(count)) }
 
