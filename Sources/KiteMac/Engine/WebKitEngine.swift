@@ -19,7 +19,26 @@ final class WebKitEngine: WebEngine {
         configuration.preferences.isElementFullscreenEnabled = true
         configuration.preferences.isFraudulentWebsiteWarningEnabled = true
         configuration.allowsAirPlayForMediaPlayback = true
+        Self.allowFullRefreshRate(configuration.preferences)
         self.configuration = configuration
+    }
+
+    /// WebKit holds pages near 60fps unless its internal "Prefer Page Rendering
+    /// Updates near 60fps" feature is off. It's private API, so look it up
+    /// defensively and leave WebKit alone if it's missing.
+    private static func allowFullRefreshRate(_ preferences: WKPreferences) {
+        let features = NSSelectorFromString("_features")
+        let setEnabled = NSSelectorFromString("_setEnabled:forFeature:")
+        guard WKPreferences.responds(to: features), preferences.responds(to: setEnabled),
+              let list = WKPreferences.perform(features)?.takeUnretainedValue() as? [NSObject],
+              let feature = list.first(where: {
+                  $0.responds(to: NSSelectorFromString("key"))
+                      && $0.value(forKey: "key") as? String == "PreferPageRenderingUpdatesNear60FPSEnabled"
+              })
+        else { return }
+        typealias SetEnabled = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+        let set = unsafeBitCast(preferences.method(for: setEnabled), to: SetEnabled.self)
+        set(preferences, setEnabled, false, feature)
     }
 
     func makePage(url: URL?, restoring state: Any?) -> WebPage {

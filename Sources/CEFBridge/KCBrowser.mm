@@ -13,10 +13,13 @@
 - (void)attachBrowser:(CefRefPtr<CefBrowser>)browser;
 - (void)browserDidClose;
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData *)data;
+- (void)deliverDevToolsEvent:(NSString *)method data:(NSData *)data;
 @property (nonatomic, readwrite) BOOL isLoading;
 @property (nonatomic, readwrite) BOOL canGoBack;
 @property (nonatomic, readwrite) BOOL canGoForward;
 @end
+
+NSString* const KCDownloadDidUpdateNotification = @"KCDownloadDidUpdateNotification";
 
 namespace {
 
@@ -204,6 +207,17 @@ class KCClient : public CefClient,
                            CefRefPtr<CefDownloadItem> download_item,
                            CefRefPtr<CefDownloadItemCallback> callback) override {
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
+        NSString* state = download_item->IsComplete() ? @"complete"
+            : download_item->IsCanceled() ? @"canceled"
+            : download_item->IsInterrupted() ? @"interrupted" : @"in-progress";
+        [NSNotificationCenter.defaultCenter postNotificationName:KCDownloadDidUpdateNotification object:owner_ userInfo:@{
+            @"id": @(download_item->GetId()),
+            @"url": ToNSString(download_item->GetOriginalUrl()),
+            @"path": ToNSString(download_item->GetFullPath()),
+            @"state": state,
+            @"receivedBytes": @(download_item->GetReceivedBytes()),
+            @"totalBytes": @(download_item->GetTotalBytes()),
+        }];
     }
 
     // CefFindHandler
@@ -224,6 +238,13 @@ class KCClient : public CefClient,
         [owner_ deliverDevToolsResult:message_id success:success data:data];
     }
 
+    void OnDevToolsEvent(CefRefPtr<CefBrowser> browser, const CefString& method,
+                         const void* params, size_t params_size) override {
+        KCBrowser* owner = owner_;
+        if (!owner.devToolsEventHandler) return;
+        [owner deliverDevToolsEvent:ToNSString(method) data:[NSData dataWithBytes:params length:params_size]];
+    }
+
  private:
     __weak KCBrowser* owner_;
     CefRefPtr<CefRegistration> devtools_registration_;
@@ -242,7 +263,7 @@ class KCClient : public CefClient,
     double _zoomFactor;
     BOOL _closed;
     int _nextMessageID;
-    std::map<int, void (^)(NSDictionary*)>* _pendingDevTools;
+    std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
 }
 
 - (instancetype)initWithURL:(NSURL*)url delegate:(id<KCBrowserDelegate>)delegate {
@@ -263,7 +284,7 @@ class KCClient : public CefClient,
         _delegate = delegate;
         _zoomFactor = 1;
         _nextMessageID = 1000;
-        _pendingDevTools = new std::map<int, void (^)(NSDictionary*)>();
+        _pendingDevTools = new std::map<int, void (^)(NSDictionary*, NSString*)>();
     }
     return self;
 }
@@ -371,26 +392,46 @@ class KCClient : public CefClient,
 - (void)executeDevToolsMethod:(NSString*)method
                        params:(NSDictionary<NSString*, id>*)params
                    completion:(void (^)(NSDictionary*))completion {
+    [self callDevToolsMethod:method params:params completion:^(NSDictionary* result, NSString*) {
+        if (completion) completion(result);
+    }];
+}
+
+- (void)callDevToolsMethod:(NSString*)method
+                    params:(NSDictionary<NSString*, id>*)params
+                completion:(void (^)(NSDictionary*, NSString*))completion {
     if (!_browser) {
-        if (completion) completion(nil);
+        completion(nil, @"not-ready");
         return;
     }
     int messageID = _nextMessageID++;
-    if (completion) (*_pendingDevTools)[messageID] = [completion copy];
+    (*_pendingDevTools)[messageID] = [completion copy];
     CefRefPtr<CefDictionaryValue> cefParams = params.count ? ToCefValue(params)->GetDictionary() : nullptr;
     if (_browser->GetHost()->ExecuteDevToolsMethod(messageID, method.UTF8String, cefParams) == 0) {
         _pendingDevTools->erase(messageID);
-        if (completion) completion(nil);
+        completion(nil, @"Chromium couldn't send the DevTools message.");
     }
 }
 
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData*)data {
     auto it = _pendingDevTools->find(messageID);
     if (it == _pendingDevTools->end()) return;
-    void (^completion)(NSDictionary*) = it->second;
+    void (^completion)(NSDictionary*, NSString*) = it->second;
     _pendingDevTools->erase(it);
-    id json = success ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
-    completion([json isKindOfClass:NSDictionary.class] ? json : nil);
+    id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    NSDictionary* object = [json isKindOfClass:NSDictionary.class] ? json : nil;
+    if (success) {
+        completion(object, object ? nil : @"Unreadable DevTools result.");
+    } else {
+        // Failures carry the protocol's {code, message}.
+        NSString* message = [object[@"message"] isKindOfClass:NSString.class] ? object[@"message"] : @"DevTools method failed.";
+        completion(nil, message);
+    }
+}
+
+- (void)deliverDevToolsEvent:(NSString*)method data:(NSData*)data {
+    id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (self.devToolsEventHandler) self.devToolsEventHandler(method, [json isKindOfClass:NSDictionary.class] ? json : @{});
 }
 
 - (void)close {

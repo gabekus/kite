@@ -6,6 +6,7 @@
 
 #include "include/cef_app.h"
 #include "include/cef_application_mac.h"
+#include "include/cef_preference.h"
 #include "include/wrapper/cef_library_loader.h"
 
 // MARK: - KCApplication
@@ -51,10 +52,34 @@ std::unique_ptr<CefScopedLibraryLoader> gLibraryLoader;
 std::set<CefRefPtr<CefBrowser>>* gBrowsers;
 bool gInitialized = false;
 bool gQuitting = false;
+bool gEnergySaverEnabled = false;
+bool gEnergySaverApplied = false;
+
+// Chromium's BatterySaverModeState: 0 = disabled, 1 = on battery below 20% (Chrome's default).
+const char kEnergySaverPref[] = "performance_tuning.battery_saver_mode.state";
+
+// Needs the browser context, which may not exist yet right after CefInitialize,
+// so it's retried when the first browser is created.
+void ApplyEnergySaver() {
+    CefRefPtr<CefPreferenceManager> prefs = CefPreferenceManager::GetGlobalPreferenceManager();
+    if (!prefs) return;
+    gEnergySaverApplied = true;
+    if (!prefs->HasPreference(kEnergySaverPref)) {
+        NSLog(@"Kite: Chromium has no %s preference; Energy Saver left as is", kEnergySaverPref);
+        return;
+    }
+    CefRefPtr<CefValue> value = CefValue::Create();
+    value->SetInt(gEnergySaverEnabled ? 1 : 0);
+    CefString error;
+    if (!prefs->SetPreference(kEnergySaverPref, value, error)) {
+        NSLog(@"Kite: couldn't set Energy Saver: %s", error.ToString().c_str());
+    }
+}
 
 }  // namespace
 
 void KCRegisterBrowser(CefRefPtr<CefBrowser> browser) {
+    if (!gEnergySaverApplied) ApplyEnergySaver();
     if (!gBrowsers) gBrowsers = new std::set<CefRefPtr<CefBrowser>>();
     gBrowsers->insert(browser);
 }
@@ -111,6 +136,7 @@ bool KCRuntimeIsQuitting() {
     NSArray<NSString *> *arguments = NSProcessInfo.processInfo.arguments;
     std::vector<char *> argv;
     for (NSString *argument in arguments) argv.push_back(strdup(argument.UTF8String));
+    if (settings.useMockKeychain) argv.push_back(strdup("--use-mock-keychain"));
     CefMainArgs mainArgs((int)argv.size(), argv.data());
 
     CefSettings cefSettings;
@@ -124,7 +150,17 @@ bool KCRuntimeIsQuitting() {
 
     gInitialized = CefInitialize(mainArgs, cefSettings, nullptr, nullptr);
     if (!gInitialized) NSLog(@"Kite: CefInitialize failed (exit code %d)", CefGetExitCode());
+    else ApplyEnergySaver();
     return gInitialized;
+}
+
++ (BOOL)energySaverEnabled {
+    return gEnergySaverEnabled;
+}
+
++ (void)setEnergySaverEnabled:(BOOL)enabled {
+    gEnergySaverEnabled = enabled;
+    if (gInitialized) ApplyEnergySaver();
 }
 
 + (void)runMessageLoop {
