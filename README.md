@@ -34,6 +34,12 @@ scripts/bundle-app.sh debug   # builds build/Kite.app
 open build/Kite.app
 ```
 
+`scripts/install-app.sh` builds a release Kite.app and installs it to /Applications,
+so it opens from the Dock, Launchpad and Spotlight with its icon. `scripts/update-app.sh`
+does the same from the latest `origin/main`, in a separate `../kite-release` worktree.
+If Kite is running, either script quits it after the build and reopens it, so your tabs
+come back.
+
 For quick UI work without Chromium, `swift run Kite` runs on WebKit.
 `swift test` runs the core tests.
 
