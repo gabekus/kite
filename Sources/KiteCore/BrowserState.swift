@@ -69,6 +69,9 @@ public struct BrowserState: Hashable, Codable, Sendable {
     var siteSearchDefaultsSeeded: Int
     /// When unpinned tabs archive themselves; Arc's default is 12 hours.
     public var archiveAfter: ArchiveInterval
+    /// View → Show Toolbar: back/forward/reload and the URL in a bar over the page
+    /// instead of in the sidebar. Off by default, as in Arc.
+    public var showsToolbar: Bool
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -88,13 +91,14 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.siteSearches = []
         self.siteSearchDefaultsSeeded = 0
         self.archiveAfter = .twelveHours
+        self.showsToolbar = false
         seedDefaultSiteSearches()
     }
 
     // Decode field by field so sessions saved by older versions still load.
     private enum CodingKeys: String, CodingKey {
         case spaces, favorites, selectedSpaceID, recentlyClosed, archived, searchEngine, darkPages, darkPageHosts
-        case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter
+        case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter, showsToolbar
     }
 
     public init(from decoder: Decoder) throws {
@@ -116,6 +120,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         // Sessions saved before Kite had Arc's defaults get them now.
         seedDefaultSiteSearches()
         archiveAfter = try c.decodeIfPresent(ArchiveInterval.self, forKey: .archiveAfter) ?? .twelveHours
+        showsToolbar = try c.decodeIfPresent(Bool.self, forKey: .showsToolbar) ?? false
     }
 
     // MARK: Dark pages

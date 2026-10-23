@@ -158,6 +158,8 @@ enum MainMenu {
 
         submenu("View", [
             item("Toggle Sidebar", #selector(BrowserWindowController.toggleSidebar(_:)), "s", id: "toggleSidebar"),
+            // Retitled "Hide Toolbar" while shown.
+            item("Show Toolbar", #selector(BrowserWindowController.toggleToolbar(_:)), "d", [.command, .shift], id: "toggleToolbar"),
             .separator(),
             item("Stop Loading", #selector(BrowserWindowController.stopLoading(_:)), ".", id: "stopLoading"),
             item("Reload Page", #selector(BrowserWindowController.reload(_:)), "r", id: "reloadPage"),

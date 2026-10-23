@@ -79,7 +79,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 |---|---|---|---|
 | Appearance: Automatic / Light / Dark (websites) | | 🟡 Dark Pages Off/Match/Always | Have it; the other session owns this |
 | Show Sidebar | ⌘S | ✅ | |
-| Show Toolbar (URL bar on top) | ⇧⌘D | ❌ | B5 (`topBarURLEnabled`) |
+| Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host and (disabled until built) Site Controls and Split View; the sidebar drops its nav buttons and URL field. "Show full URL" setting not yet | B5 (`topBarURLEnabled`) |
 | Collapse Pinned Tabs | | ❌ | B3 |
 | Stop Loading | ⌘. | ✅ | |
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
