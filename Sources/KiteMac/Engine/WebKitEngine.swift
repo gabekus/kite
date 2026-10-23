@@ -109,9 +109,8 @@ final class WebKitPage: NSObject, WebPage {
         webView.find(text, configuration: configuration) { completion(FindResult(found: $0.matchFound)) }
     }
 
-    func stopFinding() {
-        webView.evaluateJavaScript("getSelection().removeAllRanges()")
-    }
+    /// WebKit's find only selects the match, and Arc leaves that selection on the page.
+    func stopFinding() {}
 
     func archive(completion: @escaping (Data?, String) -> Void) {
         webView.createWebArchiveData { completion(try? $0.get(), "webarchive") }

@@ -1,8 +1,8 @@
 import AppKit
 
 /// Find in page (⌘F), matching Arc 1.169: a 300×32 navy bar at the content
-/// card's top-right corner with a magnifier, the query, an n/N counter, and
-/// previous / next / close. Return / ⇧Return step through matches; Esc closes it.
+/// card's top-right corner with a magnifier, the query, an n/N counter,
+/// previous / next arrows, a divider and close. Return / ⇧Return step through matches; Esc closes it.
 @MainActor
 final class FindBar: NSView, NSTextFieldDelegate {
     /// Measured from Arc in points; x positions are from the bar's leading edge.
@@ -11,14 +11,20 @@ final class FindBar: NSView, NSTextFieldDelegate {
         static let cornerRadius: CGFloat = 6
         /// Gap to the content card's top and trailing edges.
         static let inset: CGFloat = 10
-        static let iconX: CGFloat = 10
+        /// The symbol image has ~2.5pt of side bearing, so the glyph lands at 10 like Arc's.
+        static let iconX: CGFloat = 7.5
         static let textX: CGFloat = 33
         static let counterTrailingX: CGFloat = 205
         static let previousCenterX: CGFloat = 225.5
-        static let nextCenterX: CGFloat = 251.5
+        static let nextCenterX: CGFloat = 247.5
+        static let dividerX: CGFloat = 270
         static let closeCenterX: CGFloat = 283.5
-        static let fill = NSColor(srgbRed: 0x1B / 255, green: 0x26 / 255, blue: 0x3F / 255, alpha: 1)
-        static let text = NSColor(srgbRed: 0xD9 / 255, green: 0xDB / 255, blue: 0xDE / 255, alpha: 1)
+        // Fill, text and icon are set a step darker than Arc's captured pixels
+        // because they render ~6–15 levels lighter here; compared on the Mac against Arc.
+        static let fill = NSColor(srgbRed: 0x10 / 255, green: 0x19 / 255, blue: 0x30 / 255, alpha: 1)
+        static let divider = NSColor(srgbRed: 0x0D / 255, green: 0x15 / 255, blue: 0x2A / 255, alpha: 1)
+        static let text = NSColor(srgbRed: 0xD2 / 255, green: 0xD4 / 255, blue: 0xD8 / 255, alpha: 1)
+        static let icon = NSColor(srgbRed: 0xA0 / 255, green: 0xA4 / 255, blue: 0xAB / 255, alpha: 1)
         static let counter = NSColor(srgbRed: 0xE8 / 255, green: 0xEA / 255, blue: 0xEF / 255, alpha: 1)
         static let caret = NSColor(srgbRed: 0x41 / 255, green: 0x8F / 255, blue: 0xF8 / 255, alpha: 1)
     }
@@ -36,7 +42,7 @@ final class FindBar: NSView, NSTextFieldDelegate {
         wantsLayer = true
         layer?.backgroundColor = Metrics.fill.cgColor
         layer?.cornerRadius = Metrics.cornerRadius
-        layer?.cornerCurve = .continuous
+        layer?.cornerCurve = .circular
         let shadow = NSShadow()
         shadow.shadowBlurRadius = 8
         shadow.shadowOffset = NSSize(width: 0, height: -2)
@@ -44,7 +50,7 @@ final class FindBar: NSView, NSTextFieldDelegate {
         self.shadow = shadow
 
         let icon = NSImageView(image: NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil) ?? NSImage())
-        icon.contentTintColor = Metrics.text
+        icon.contentTintColor = Metrics.icon
         icon.symbolConfiguration = .init(pointSize: 12, weight: .regular)
 
         field.delegate = self
@@ -58,15 +64,20 @@ final class FindBar: NSView, NSTextFieldDelegate {
         field.cell?.wraps = false
         field.setAccessibilityLabel("Find on page")
 
-        countLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        countLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
         countLabel.textColor = Metrics.counter
         countLabel.alignment = .right
 
-        let previous = Self.button("chevron.up", "Previous (⇧⌘G)") { [weak self] in self?.step(forward: false) }
-        let next = Self.button("chevron.down", "Next (⌘G)") { [weak self] in self?.step(forward: true) }
+        let previous = Self.button("arrow.up", "Previous (⇧⌘G)") { [weak self] in self?.step(forward: false) }
+        let next = Self.button("arrow.down", "Next (⌘G)") { [weak self] in self?.step(forward: true) }
         let done = Self.button("xmark", "Done (Esc)") { [weak self] in self?.onClose?() }
 
-        for view in [icon, field, countLabel, previous, next, done] {
+        let divider = NSBox()
+        divider.boxType = .custom
+        divider.borderWidth = 0
+        divider.fillColor = Metrics.divider
+
+        for view in [icon, field, countLabel, previous, next, divider, done] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
             view.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
@@ -82,6 +93,9 @@ final class FindBar: NSView, NSTextFieldDelegate {
             countLabel.trailingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.counterTrailingX),
             previous.centerXAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.previousCenterX),
             next.centerXAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.nextCenterX),
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.dividerX),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+            divider.heightAnchor.constraint(equalToConstant: 16),
             done.centerXAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.closeCenterX),
         ])
     }

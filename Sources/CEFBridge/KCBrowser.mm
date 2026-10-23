@@ -343,7 +343,8 @@ class KCClient : public CefClient,
 }
 
 - (void)stopFinding {
-    if (_browser) _browser->GetHost()->StopFinding(true);
+    // Keep the active match selected, like Chrome and Arc.
+    if (_browser) _browser->GetHost()->StopFinding(false);
 }
 
 - (void)print {
