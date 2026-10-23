@@ -42,9 +42,9 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | New Tab… (opens the command bar) | ⌘T | ✅ | |
-| New Window | ⌘N | ❌ | B4: multiple windows |
-| Blank Window | ⌃⌘N | ❌ | B4 |
-| New Incognito Window | ⇧⌘N | ❌ (⇧⌘N is New Space in Kite) | B4, move New Space off ⇧⌘N |
+| New Window | ⌘N | ❌ | Thread: multiple windows |
+| Blank Window | ⌃⌘N | ❌ | Thread: multiple windows |
+| New Incognito Window | ⇧⌘N | ✅ in-memory profile per window (New Space moved off ⇧⌘N) | |
 | New Little Arc Window | ⌥⌘N | ❌ | Thread: Little Arc |
 | Restore Last Closed Tab | ⇧⌘T | ✅ | |
 | Open Command Bar | (none) | ✅ via ⌘T/⌘L | |
@@ -102,7 +102,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| New Space… | | ✅ (⇧⌘N, moving in B4) | |
+| New Space… | | ✅ | |
 | Edit Theme… | | ❌ | Thread: space theme editor |
 | Rename Space | | ✅ | |
 | Change Profile | | ❌ | Thread: profiles |
@@ -185,7 +185,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Live calendars | Calendar favorite shows the next meeting | ❌ | Later |
 | Share spaces, folders, splits | Public link or collaborator | ❌ | Roadmap: sync + sharing |
 | Profiles | Separate cookies per space | ❌ | Thread: profiles |
-| Incognito | Private window | ❌ | B4 |
+| Incognito | Private window | ✅ | |
 | Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | ❌ | Thread: Site controls (ad blocker thread owns the toggle) |
 | Native ad blocker | uBlock-style lists | ❌ | Ad blocker thread |
 | Translation | Translate page, "never translate" sites | ❌ | Later (Chromium translate isn't in CEF) |
@@ -223,8 +223,9 @@ Small and shortcut-level, one PR each, in this order:
   ⌘Z undo, Reset tabs in space, back to pinned URL, New Folder, Rename tab/space, Reveal in sidebar,
   Collapse Pinned, ⇧⌘S next space, Manage Spaces, swipe between spaces. Avoids the sidebar files the
   other session is editing where possible.
-- **B4. Windows:** ⌘N new window, ⌃⌘N blank window, ⇧⌘N incognito (New Space moves to the Spaces menu).
-  Needs the store to support more than one window.
+- **B4. Windows:** ⇧⌘N incognito (done; New Space moved to the Spaces menu). ⌘N new window and ⌃⌘N
+  blank window need per-window selection in `BrowserState` and pages that can move between windows, so
+  they get their own thread.
 - **B5. Small UX:** Show Toolbar ⇧⌘D, Stay On Top, sidebar hover reveal, auto-archive setting,
   warn before quit, Share…, Set as Default Browser, keyboard-shortcut cheat sheet, Reveal data folder,
   sad tab, swipe gestures, Save Page As, Clear Cookies/Cache and Refresh.

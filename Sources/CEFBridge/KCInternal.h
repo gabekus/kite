@@ -2,6 +2,7 @@
 
 #include "include/cef_browser.h"
 #include "include/cef_request_context.h"
+#include "include/cef_request_context_handler.h"
 #include "include/cef_resource_request_handler.h"
 
 #import "CEFBridge.h"
@@ -16,6 +17,8 @@ bool KCRuntimeIsQuitting();
 CefRefPtr<CefResourceRequestHandler> KCAdblockRequestHandler(KCBrowser* owner);
 /// The context every tab uses, so requests no tab makes are checked too.
 CefRefPtr<CefRequestContext> KCAdblockRequestContext();
+/// The same checks for another context, such as an incognito window's.
+CefRefPtr<CefRequestContextHandler> KCAdblockContextHandler();
 
 @interface KCBrowser (Internal)
 /// Called on the main thread for each blocked request.

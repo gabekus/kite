@@ -13,9 +13,9 @@ final class WebKitEngine: WebEngine {
     private let downloads = DownloadCoordinator()
     private var contentRules: WebKitContentRules?
 
-    init() {
+    init(dataStore: WKWebsiteDataStore = .default()) {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = dataStore
         // Without a Safari token some sites serve a degraded page to WKWebView.
         configuration.applicationNameForUserAgent = "Version/18.6 Safari/605.1.15"
         configuration.preferences.isElementFullscreenEnabled = true
@@ -23,6 +23,13 @@ final class WebKitEngine: WebEngine {
         configuration.allowsAirPlayForMediaPlayback = true
         Self.allowFullRefreshRate(configuration.preferences)
         self.configuration = configuration
+    }
+
+    /// Shares the ad blocker's compiled rules; only the website data is kept in memory.
+    func makeEphemeral() -> WebEngine {
+        let engine = WebKitEngine(dataStore: .nonPersistent())
+        engine.contentRules = contentRules
+        return engine
     }
 
     func attach(_ adblocker: Adblocker) {

@@ -30,10 +30,21 @@ final class BrowserStore {
 
     @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored var onPageChange: ((UUID) -> Void)?
-    @ObservationIgnored private let session: SessionStore
+    /// nil for an incognito window: nothing is written to disk.
+    @ObservationIgnored private let session: SessionStore?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
 
     private static let spaceIcons = ["🌿", "🎨", "📚", "🎧", "🧪", "✈️", "🍳", "🎮"]
+
+    /// An incognito window's store: one dark space, never saved.
+    static func incognito() -> BrowserStore {
+        BrowserStore(state: BrowserState(spaces: [Space(name: "Incognito", icon: "🕶️", theme: Theme.presets[3])]))
+    }
+
+    private init(state: BrowserState) {
+        session = nil
+        self.state = state
+    }
 
     init(session: SessionStore) {
         self.session = session
@@ -125,6 +136,7 @@ final class BrowserStore {
 
     /// Saves are debounced; title and URL updates arrive in bursts while pages load.
     private func scheduleSave() {
+        guard session != nil else { return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
@@ -136,7 +148,7 @@ final class BrowserStore {
     func saveNow() {
         saveTask?.cancel()
         do {
-            try session.save(state)
+            try session?.save(state)
         } catch {
             NSLog("Kite: couldn't save session: \(error)")
         }

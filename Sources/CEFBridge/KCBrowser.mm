@@ -7,6 +7,13 @@
 #include "include/cef_client.h"
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_parser.h"
+#include "include/cef_request_context.h"
+#include "include/cef_request_context_handler.h"
+
+@interface KCRequestContext ()
+- (instancetype)initPrivate;
+- (CefRefPtr<CefRequestContext>)cefContext;
+@end
 
 @interface KCBrowser ()
 - (instancetype)initPopupWithDelegate:(id<KCBrowserDelegate>)delegate NS_DESIGNATED_INITIALIZER;
@@ -283,6 +290,30 @@ class KCClient : public CefClient,
 
 }  // namespace
 
+// MARK: - KCRequestContext
+
+@implementation KCRequestContext {
+    CefRefPtr<CefRequestContext> _context;
+}
+
++ (instancetype)incognitoContext {
+    KCRequestContext* context = [[self alloc] initPrivate];
+    // An empty cache_path makes Chromium keep this profile in memory only.
+    CefRequestContextSettings settings;
+    context->_context = CefRequestContext::CreateContext(settings, KCAdblockContextHandler());
+    return context;
+}
+
+- (instancetype)initPrivate {
+    return [super init];
+}
+
+- (CefRefPtr<CefRequestContext>)cefContext {
+    return _context;
+}
+
+@end
+
 // MARK: - KCBrowser
 
 @implementation KCBrowser {
@@ -305,6 +336,10 @@ class KCClient : public CefClient,
 }
 
 - (instancetype)initWithURL:(NSURL*)url delegate:(id<KCBrowserDelegate>)delegate {
+    return [self initWithURL:url delegate:delegate context:nil];
+}
+
+- (instancetype)initWithURL:(NSURL*)url delegate:(id<KCBrowserDelegate>)delegate context:(KCRequestContext*)context {
     if ((self = [self initPopupWithDelegate:delegate])) {
         CefWindowInfo windowInfo;
         windowInfo.SetAsChild((__bridge CefWindowHandle)_view, CefRect(0, 0, 800, 600));
@@ -312,7 +347,8 @@ class KCClient : public CefClient,
         // Start empty and load once attached: DevTools calls (dark pages, the ad
         // blocker's document-start script) need the browser before the first navigation.
         _pendingURL = url ?: [NSURL URLWithString:@"about:blank"];
-        CefBrowserHost::CreateBrowser(windowInfo, new KCClient(self), "", settings, nullptr, KCAdblockRequestContext());
+        CefBrowserHost::CreateBrowser(windowInfo, new KCClient(self), "", settings, nullptr,
+                                      context ? context.cefContext : KCAdblockRequestContext());
     }
     return self;
 }

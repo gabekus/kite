@@ -41,9 +41,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var commandBarVisible = false
     private var sidebarVisible = true
 
-    init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker) {
+    /// Incognito windows keep nothing: no saved frame, and every page closes with the window.
+    let isIncognito: Bool
+
+    init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker, incognito: Bool = false) {
         self.store = store
         self.adblocker = adblocker
+        self.isIncognito = incognito
         self.pool = PagePool(engine: engine, store: store)
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
@@ -59,7 +63,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.tabbingMode = .disallowed
         window.minSize = NSSize(width: 640, height: 420)
         window.center()
-        window.setFrameAutosaveName("KiteMainWindow")
+        if !incognito { window.setFrameAutosaveName("KiteMainWindow") }
         super.init(window: window)
         window.delegate = self
 
@@ -80,6 +84,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func windowWillClose(_ notification: Notification) {
         store.saveNow()
+        if isIncognito { pool.retain(live: [], restorable: []) }
     }
 
     // MARK: Views
@@ -211,7 +216,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         shownSpaceID = space.id
         // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
         let title = state.selectedTab?.title ?? ""
-        window?.title = title.isEmpty ? space.name : title
+        if isIncognito {
+            window?.title = title.isEmpty ? "Incognito" : title + " (Incognito)"
+        } else {
+            window?.title = title.isEmpty ? space.name : title
+        }
 
         let selected = state.selectedTab
         if selected?.id != shownTabID {

@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: BrowserStore!
     private var adblocker: Adblocker!
     private var windowController: BrowserWindowController!
+    private var incognitoControllers: [BrowserWindowController] = []
+    /// Routes menu commands to whichever browser window is in front.
+    private var menuRouter: MenuRouter!
     private var archiveTimer: Timer?
     private var automation: AutomationController!
     private var diagnostics: DiagnosticsRecorder!
@@ -39,7 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         adblocker.start()
 
         windowController = BrowserWindowController(store: store, engine: engine, adblocker: adblocker)
-        NSApp.mainMenu = MainMenu.build(target: windowController)
+        menuRouter = MenuRouter(fallback: windowController)
+        NSApp.mainMenu = MainMenu.build(target: menuRouter)
         // Registered after the menu bar is set so AppKit adds Help search and the window list.
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
         NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
@@ -75,6 +79,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store.mutate { _ = $0.openTab(url: url) }
         }
         if !urls.isEmpty { windowController.window?.makeKeyAndOrderFront(nil) }
+    }
+
+    /// ⇧⌘N. Each incognito window gets its own in-memory profile, gone when it closes.
+    func openIncognitoWindow() {
+        let controller = BrowserWindowController(
+            store: .incognito(), engine: engine.makeEphemeral(), adblocker: adblocker, incognito: true
+        )
+        incognitoControllers.append(controller)
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: controller.window, queue: .main
+        ) { [weak self, weak controller] _ in
+            MainActor.assumeIsolated { self?.incognitoControllers.removeAll { $0 === controller } }
+        }
+        // Offset from the window in front so the two don't stack exactly. Read it
+        // before showWindow, which makes the new window main.
+        let front = NSApp.mainWindow ?? windowController.window
+        controller.showWindow(nil)
+        if let front, front !== controller.window {
+            controller.window?.setFrameTopLeftPoint(NSPoint(x: front.frame.minX + 28, y: front.frame.maxY - 28))
+        }
+        controller.newTab(nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
