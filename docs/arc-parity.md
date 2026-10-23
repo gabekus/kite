@@ -200,7 +200,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Themes | Space colors, grain, light/dark, gradient editor | 🟡 presets + imported | Thread: space theme editor |
 | App icons | Alternate Dock icons | ❌ | Skip? (we draw our own) |
 | Sound effects | Subtle UI sounds | ❌ | Later, our own sounds |
-| Remappable shortcuts | Settings → Shortcuts | 🟡 overrides in keybindings.json, keyed by Arc-style action IDs on every menu item; Arc import and the Settings editor to come | B6 |
+| Remappable shortcuts | Settings → Shortcuts | 🟡 overrides in keybindings.json, keyed by Arc-style action IDs on every menu item; Import from Arc brings over Arc's StorableKeyBindings.json; the Settings editor is to come | B6 |
 | AppleScript dictionary | windows, tabs (URL, title, execute JS), spaces | ❌ | With MCP/CLI thread; worth matching |
 | Sync | Sidebar via CloudKit/Firebase | ❌ | Roadmap: sync |
 | Default browser, handle links | | ✅ | |
