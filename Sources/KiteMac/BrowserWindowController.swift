@@ -462,6 +462,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             item.isHidden = !exists
             guard exists else { return false }
             item.title = "\(spaces[item.tag - 1].icon) \(spaces[item.tag - 1].name)"
+        case #selector(goBack(_:)), #selector(goForward(_:)) where item.isHidden:
+            // ⌘← / ⌘→ belong to a focused AppKit text field (the command bar) for line start/end.
+            // A disabled key equivalent passes the key on. Page text fields get them from Chromium.
+            return !(window?.firstResponder is NSText)
         case #selector(toggleStayOnTop(_:)):
             item.state = window?.level == .floating ? .on : .off
         case #selector(setAsDefaultBrowser(_:)):
