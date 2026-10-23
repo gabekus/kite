@@ -10,6 +10,19 @@ The window measured had a 365pt sidebar, which is a user-chosen width. Arc's def
 
 Kite's tokens are in `Sources/KiteMac/Views/ArcMetrics.swift`, and each section below names the group it maps to.
 
+**How colours were matched.** Every level and hex here is a screen capture, Arc's and Kite's alike, and each
+went through the same capture pipeline on the same display. On this Mac a capture reads dark colours about 10 to
+15 levels lighter than the CSS value (CSS `#202122` captures as `#2B2C2D`), so a captured hex isn't the colour
+Arc asked for. Kite's colours were therefore tuned until **Kite's capture matched Arc's capture**, rather than by
+copying a captured hex into code.
+- **⌘T fill:** captures at 27 in both.
+- **⌘T placeholder:** 83 in Kite against Arc's 81.
+- **⌘T shadow:** compared as darkening fractions at the same distances.
+- **Translucent white fills:** the opacities (URL field 10%, selected pill 20%, hover 10%) are ratios between two
+  captured levels, so a profile shift that is close to linear over a small range moves them only a little.
+- **Arc's real theme values:** grey 0 to 0.1, intensity 0.8 to 1, noise 0, and the semantic palette. These come
+  from Arc's settings file, not captures, so they are exact.
+
 ## Window chrome (not applied here)
 
 These belong to the `sidebar-traffic-lights` branch. They are recorded here so that branch can use them.
