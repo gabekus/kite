@@ -158,6 +158,8 @@ enum MainMenu {
 
         submenu("View", [
             item("Toggle Sidebar", #selector(BrowserWindowController.toggleSidebar(_:)), "s", id: "toggleSidebar"),
+            // Retitled "Hide Toolbar" while shown.
+            item("Show Toolbar", #selector(BrowserWindowController.toggleToolbar(_:)), "d", [.command, .shift], id: "toggleToolbar"),
             .separator(),
             item("Stop Loading", #selector(BrowserWindowController.stopLoading(_:)), ".", id: "stopLoading"),
             item("Reload Page", #selector(BrowserWindowController.reload(_:)), "r", id: "reloadPage"),
@@ -189,6 +191,11 @@ enum MainMenu {
         submenu("History", [
             item("Back", #selector(BrowserWindowController.goBack(_:)), "[", id: "goBack"),
             item("Forward", #selector(BrowserWindowController.goForward(_:)), "]", id: "goForward"),
+            // Arc 1.169 goes back/forward on ⌘← / ⌘→ in a page (seen on the Mac; not in its binding table,
+            // so not remappable there). Chromium offers key equivalents to the page first, so a page
+            // text field still moves its caret.
+            alternate(#selector(BrowserWindowController.goBack(_:)), left, .command),
+            alternate(#selector(BrowserWindowController.goForward(_:)), right, .command),
         ])
 
         submenu("Tabs", [
@@ -232,7 +239,7 @@ enum MainMenu {
         ])
 
         submenu("Help", [
-            item("Keyboard Shortcuts", #selector(BrowserWindowController.showKeyboardShortcuts(_:)), id: "essentialKeyboardShortcuts"),
+            item("Essential Keyboard Shortcuts", #selector(BrowserWindowController.showKeyboardShortcuts(_:)), id: "essentialKeyboardShortcuts"),
             .separator(),
             submenuItem("Troubleshooting", [
                 item("Reveal Kite Data", #selector(BrowserWindowController.revealDataFolder(_:)), id: "revealKiteData"),

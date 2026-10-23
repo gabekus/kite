@@ -20,6 +20,11 @@ After building:
 - In the PR, say what the evidence was and flag anything that's still
   unverified.
 
+Recordings, screenshots and the accessibility tree don't show the pointer or
+cursor zones. Anything that depends on hover (cursors, resize zones, hover
+states, tooltips, hover reveals) needs a pointer sweep on both Arc and Kite:
+move the pointer in small steps and read the system cursor or state at each.
+
 Never commit Arc's code, shaders or assets. Kite is open source: record only
 measured numbers, and reimplement from them.
 

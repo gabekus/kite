@@ -1,6 +1,6 @@
 import AppKit
 
-/// Help → Keyboard Shortcuts: every menu command that has a shortcut, read from
+/// Essential Keyboard Shortcuts → View All: every menu command that has a shortcut, read from
 /// the menu bar itself so it can't drift from the real bindings.
 @MainActor
 enum ShortcutsWindow {

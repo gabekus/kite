@@ -62,6 +62,25 @@ bottom bar. The back/forward/reload buttons end at 359, which is 6pt from the ed
   is 1681×1265.
 - Its corner is about 6 (a circle fit gives 6.5; Kite's 6 continuous fits 6.25).
 
+## Sidebar resize zone → `ArcMetrics.Content.resizeZone*`
+
+Measured on 2026-10-23 by moving the pointer 0.5pt at a time across Arc 1.169's edge (an incognito window,
+1285pt tall, card from x 294) and reading the system cursor after each move. Arc's binary agrees on the mechanism.
+
+| | Arc |
+|---|---|
+| Across | `resizeLeftRight` from 4pt left of the card's edge to 4pt right of it, over the page (x 290 to 297.5 for a card at 294; x 295 to 302.5 for one at 299) |
+| Down | 1pt inside the card's top and bottom: y 11 to 1273.5 for a card from 10 to 1275. Same across at y 20, 640 and 1272 |
+| Sidebar hidden | none, anywhere (Arc hides the region with the sidebar) |
+| Hover reveal | none at the floating sidebar's edge |
+| Window inactive | none (tracking options 0x227: entered/exited, moved, cursor update, key window only, visible rect) |
+
+- In the binary, `Arc.SidebarResizeRegionView` is its own view, framed by the window layout controller and hidden
+  with the sidebar. Its `cursorUpdate:` sets `NSCursor.resizeLeftRight`. It carries a pan recognizer for the drag and
+  a two-click recognizer.
+- Kite's handle straddles the card's edge the same way and sits above the page and the glow. It keeps cursor rects
+  and invalidates them whenever the handle moves, so the zone follows a drag and the hide/show slide.
+
 ## Material → `Theme.tint`, `NSVisualEffectView` in `BrowserWindowController`
 
 - **Arc:**
@@ -123,9 +142,9 @@ importer doesn't keep yet.
 | Element | Arc | Notes |
 |---|---|---|
 | Panel | 765 wide, x 645.5 to 1410.5 (764 measured between the inner edges of the border) | Centred on the **window**, not the card: an incognito capture with the same 365pt sidebar puts it at the same x, 646 to 1410. Its centre, 1028, is the window's; the card's centre would be 1205.5. Top at y 474 in a 1285pt window (0.369 of the height) |
-| Panel style | fill `#1B1B1B` (`#181818` in an incognito window), 1pt border white at about 22% | No dimming behind it. A wide soft black shadow, measured over a `#28282A` page: it darkens the page by 35/29/23/18/10/6/2.5% at 1/20/30/40/60/80/100pt below the panel, by 26/17/13/10/5% at 1/20/30/40/60pt to the sides, and by 16% just above. A dark page hides it. Corner **12**, circular, from the decompiled `SuggestionsView`. Before the decompile: over a light page, a circle fitted to the border's arc has radius 9.4 to 9.5 at the 1pt border's centre line (top-right and bottom-right corners), so the outer edge is 10 |
-| Field | 63.5 tall | 18pt magnifier frame at x +22.5 (glyph about 11pt wide). Text field at x +52.5 (698 in the window), 23 tall. The placeholder "Search or Enter URL..." has a 10pt x-height, which is 18pt SF regular. It is white at about 25% (level 81 over the `#181818` fill) and 179.5pt wide |
-| Divider | y +63.5, 0.5pt | White at about 10%, 11pt in from the panel's edges |
+| Panel style | A translucent dark panel: the page under it shows through blurred (about 25pt) at about 11%, so it reads `21 + 0.106 × page` per channel (48 over white, 48/21/20 over red, `#181818` over a page Chromium draws as a bare solid colour). 1pt border white at about 22%, and 0.5pt of black just outside it | No dimming behind it. A wide soft black shadow, measured over a `#28282A` page: it darkens the page by 35/29/23/18/10/6/2.5% at 1/20/30/40/60/80/100pt below the panel, by 26/17/13/10/5% at 1/20/30/40/60pt to the sides, and by 16% just above. A dark page hides it. Corner **12**, circular, from the decompiled `SuggestionsView`. Before the decompile: over a light page, a circle fitted to the border's arc has radius 9.4 to 9.5 at the 1pt border's centre line (top-right and bottom-right corners), so the outer edge is 10 |
+| Field | 63.5 tall | Measured from 2x captures of an incognito window, from the border's outer edge. **Magnifier:** not SF Symbols' `magnifyingglass` (its handle is longer and heavier at every size and weight). A ring of mid-radius 4.65 with its centre at 30.6, 30.75, and a handle ending 8.6 from the centre at 45°, both 1.4 wide with round ends, white at 100%. Bounding box 25.5 to 37.5 each way. **Placeholder** "Search or Enter URL...": 18pt SF **medium** (179pt of ink, which is CoreText's width for medium; regular is 174.8). Ink from x 52, cap top 24.5, baseline 38.5; white at about 25% in captures (the asset `CommandBarPlaceholderPlaceholderText` says 30%). **Caret:** x 51.5, y 24 to 45, 1pt wide |
+| Divider | y +63.5, 0.5pt | White at 10% (asset `CommandBarHairlineDividerColor`, and +23 levels over `#181818` in a capture), 11.5pt in from the border's outer edge on both sides |
 | Rows | 50pt apart, starting 4.5pt under the divider | Rows are 750 wide, 7.5 in from the panel. The fill is 746×44.5, 2pt in from the row, with a corner of about 8 |
 | Selected row | fill is the space's accent | White 24×24 icon tile with the favicon in the accent colour; white text; white 24×24 arrow box |
 | Row content | | 16pt favicon at row x +16 (in a 24pt tile at +12). Title at row x +43 (696), 13pt medium, white at 80% (100% when selected). Right label ("Switch to Tab") 13pt medium at 33% and ends 7pt before a 24×24 `→` box, which ends 13pt inside the fill |

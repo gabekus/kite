@@ -13,6 +13,8 @@ enum PageEvent {
     case closeRequested
     /// Requests the ad blocker stopped since the page started loading.
     case blockedCount(Int)
+    /// The page's process died; the tab shows the crashed-tab page until it loads again.
+    case crashed(code: Int)
 }
 
 /// Find-in-page progress. Counts are nil when the engine can't report them (WebKit).

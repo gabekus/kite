@@ -9,8 +9,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private enum Layout {
         static let defaultSidebarWidth: CGFloat = 240
         static let sidebarWidths: ClosedRange<CGFloat> = 180...400
-        /// Grab area along the sidebar's trailing edge, inside its padding.
-        static let resizeHandleWidth: CGFloat = 8
         static let inset = ArcMetrics.Content.inset
         static let cornerRadius = ArcMetrics.Content.cornerRadius
         static let glowMargin: CGFloat = 28
@@ -26,6 +24,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let glowView = GlowView(margin: Layout.glowMargin)
     let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
     private let contentClip = ContentClipView()
+    /// View → Show Toolbar's bar across the top of the card.
+    private var toolbarHost: NSHostingView<PageToolbar>!
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
     private var sidebarHost: NSHostingView<SidebarView>!
@@ -47,6 +47,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var shownTabID: UUID?
     private var shownSpaceID: UUID?
     private(set) weak var shownPage: WebPage?
+    /// The crashed-tab page over the shown tab, while its renderer is dead.
+    private var sadTab: NSHostingView<SadTabView>?
     /// Last dark-pages setting sent to each page, so it's only re-sent on change.
     private var appliedDark: [UUID: Bool] = [:]
     private var commandBarVisible = false
@@ -122,17 +124,22 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.font = .systemFont(ofSize: 15, weight: .medium)
 
+        let actions = SidebarActions(
+            goBack: { [weak self] in self?.goBack(nil) },
+            goForward: { [weak self] in self?.goForward(nil) },
+            reload: { [weak self] in self?.reload(nil) },
+            toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
+            closeTab: { [weak self] id in self?.close(tab: id) }
+        )
         sidebarHost = NSHostingView(rootView: SidebarView(
             store: store,
-            actions: SidebarActions(
-                goBack: { [weak self] in self?.goBack(nil) },
-                goForward: { [weak self] in self?.goForward(nil) },
-                reload: { [weak self] in self?.reload(nil) },
-                toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
-                closeTab: { [weak self] id in self?.close(tab: id) }
-            ),
+            actions: actions,
             supportsDarkPages: pool.engine.supportsDarkPages
         ))
+        toolbarHost = NSHostingView(rootView: PageToolbar(store: store, actions: actions))
+        toolbarHost.sizingOptions = []
+        toolbarHost.isHidden = true
+        contentClip.toolbar = toolbarHost
         commandBarHost = NSHostingView(rootView: CommandBarOverlay(store: store) { [weak self] suggestion, mode in
             self?.commit(suggestion, mode: mode)
         })
@@ -154,7 +161,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         materialView.blendingMode = .behindWindow
         materialView.state = .followsWindowActiveState
 
-        for view in [materialView, themeView, peekCard, sidebarHost!, resizeHandle, contentFrame, glowView, commandBarHost!, peekEdge, peekZone] as [NSView] {
+        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, commandBarHost!, peekEdge, peekZone] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -201,10 +208,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             peekZone.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             peekZone.trailingAnchor.constraint(equalTo: sidebarHost.trailingAnchor),
 
-            resizeHandle.trailingAnchor.constraint(equalTo: sidebarHost.trailingAnchor),
-            resizeHandle.topAnchor.constraint(equalTo: rootView.topAnchor),
-            resizeHandle.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-            resizeHandle.widthAnchor.constraint(equalToConstant: Layout.resizeHandleWidth),
+            // Like Arc: straddles the card's edge and spans the card's height, above the page and glow.
+            resizeHandle.centerXAnchor.constraint(equalTo: contentFrame.leadingAnchor),
+            resizeHandle.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: ArcMetrics.Content.resizeZoneVerticalInset),
+            resizeHandle.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor, constant: -ArcMetrics.Content.resizeZoneVerticalInset),
+            resizeHandle.widthAnchor.constraint(equalToConstant: 2 * ArcMetrics.Content.resizeZoneHalfWidth),
 
             contentLeading,
             contentFrame.topAnchor.constraint(equalTo: rootView.topAnchor, constant: Layout.inset),
@@ -300,6 +308,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         updateCommandBar()
         updateSidebar()
+        updateToolbar()
     }
 
     private func show(_ tab: BrowserTab?) {
@@ -310,12 +319,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         emptyLabel.isHidden = tab != nil
         guard let tab else {
             glowView.setLoading(false, progress: 0)
+            updateSadTab()
             return
         }
 
         let page = pool.page(for: tab)
         page.view.autoresizingMask = []
-        contentClip.addSubview(page.view)
+        contentClip.addSubview(page.view, positioned: .below, relativeTo: toolbarHost)
         contentClip.page = page.view
         shownPage = page
         pool.didShow(tab.id)
@@ -338,6 +348,33 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         guard id == shownTabID else { return }
         let page = store.pages[id] ?? PageStatus()
         glowView.setLoading(page.isLoading, progress: page.progress)
+        updateSadTab()
+    }
+
+    private func updateSadTab() {
+        guard let code = shownTabID.flatMap({ store.pages[$0]?.crashCode }) else {
+            sadTab?.removeFromSuperview()
+            sadTab = nil
+            return
+        }
+        let view = SadTabView(code: code) { [weak self] in self?.shownPage?.reload() }
+        let host = sadTab ?? NSHostingView(rootView: view)
+        host.rootView = view
+        host.frame = contentClip.bounds
+        host.autoresizingMask = [.width, .height]
+        // Re-adding brings it above a page shown since.
+        contentClip.addSubview(host)
+        sadTab = host
+    }
+
+    private func updateToolbar() {
+        let visible = store.state.showsToolbar
+        toolbarHost.isHidden = !visible
+        contentClip.topInset = visible ? PageToolbar.Metrics.inset : 0
+    }
+
+    @objc func toggleToolbar(_ sender: Any?) {
+        store.mutate { $0.showsToolbar.toggle() }
     }
 
     private func updateCommandBar() {
@@ -607,6 +644,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             item.isHidden = !exists
             guard exists else { return false }
             item.title = "\(spaces[item.tag - 1].icon) \(spaces[item.tag - 1].name)"
+        case #selector(goBack(_:)), #selector(goForward(_:)) where item.isHidden:
+            // ⌘← / ⌘→ belong to a focused AppKit text field (the command bar) for line start/end.
+            // A disabled key equivalent passes the key on.
+            return !(window?.firstResponder is NSText)
+        case #selector(toggleToolbar(_:)):
+            item.title = store.state.showsToolbar ? "Hide Toolbar" : "Show Toolbar"
         case #selector(toggleStayOnTop(_:)):
             item.state = window?.level == .floating ? .on : .off
         case #selector(setAsDefaultBrowser(_:)):
@@ -667,6 +710,17 @@ final class SidebarResizeHandle: NSView {
         addCursorRect(bounds, cursor: .resizeLeftRight)
     }
 
+    // The window keeps cursor rects where they were set, so move them with the sidebar's edge.
+    override func setFrameOrigin(_ newOrigin: NSPoint) {
+        super.setFrameOrigin(newOrigin)
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        window?.invalidateCursorRects(for: self)
+    }
+
     override func mouseDown(with event: NSEvent) {
         startX = event.locationInWindow.x
         onBegin?()
@@ -690,6 +744,17 @@ final class ContentClipView: NSView {
     var minimumPageWidth: CGFloat = 0 {
         didSet { if minimumPageWidth != oldValue { layoutPage() } }
     }
+    /// The toolbar across the top, when shown; the page starts below `topInset`.
+    weak var toolbar: NSView? {
+        didSet {
+            guard let toolbar, toolbar.superview !== self else { return }
+            addSubview(toolbar)
+            layoutPage()
+        }
+    }
+    var topInset: CGFloat = 0 {
+        didSet { if topInset != oldValue { layoutPage() } }
+    }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
@@ -697,8 +762,9 @@ final class ContentClipView: NSView {
     }
 
     private func layoutPage() {
-        let frame = CGRect(x: 0, y: 0, width: max(bounds.width, minimumPageWidth), height: bounds.height)
+        let frame = CGRect(x: 0, y: 0, width: max(bounds.width, minimumPageWidth), height: bounds.height - topInset)
         if let page, page.frame != frame { page.frame = frame }
+        toolbar?.frame = CGRect(x: 0, y: bounds.height - PageToolbar.Metrics.inset, width: bounds.width, height: PageToolbar.Metrics.inset)
     }
 }
 

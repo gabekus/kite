@@ -81,6 +81,7 @@ final class PagePool {
             store.updatePage(id) { $0.progress = progress }
         case let .navigationState(isLoading, canGoBack, canGoForward):
             store.updatePage(id) {
+                if isLoading { $0.crashCode = nil }
                 $0.isLoading = isLoading
                 $0.canGoBack = canGoBack
                 $0.canGoForward = canGoForward
@@ -96,6 +97,11 @@ final class PagePool {
             store.mutate { $0.close(tab: id) }
         case .blockedCount(let count):
             store.updatePage(id) { $0.blockedCount = count }
+        case .crashed(let code):
+            store.updatePage(id) {
+                $0.crashCode = code
+                $0.isLoading = false
+            }
         }
     }
 

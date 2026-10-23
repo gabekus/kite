@@ -146,6 +146,14 @@ import Testing
         #expect(old == [.sevenDays, .twentyFourHours, .twelveHours])
     }
 
+    @Test func toolbarIsOffByDefaultAndPersists() throws {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        #expect(!state.showsToolbar)
+        state.showsToolbar = true
+        let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
+        #expect(decoded.showsToolbar)
+    }
+
     @Test func spacesCycleAndSelectionFollowsTab() {
         var state = BrowserState.makeDefault(seedURL: nil)
         let work = state.spaces[1].id
