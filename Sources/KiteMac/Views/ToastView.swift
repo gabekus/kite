@@ -12,21 +12,23 @@ final class ToastView: NSView {
         /// Gap to the content card's top and trailing edges.
         static let top: CGFloat = 9
         static let trailing: CGFloat = 8
-        static let leading: CGFloat = 12.5
+        // The label's text sits ~1pt inside its frame on each side, so these
+        // land the text at 12.5 from the leading edge and 14 before the button.
+        static let leading: CGFloat = 11.5
         static let trailingPadding: CGFloat = 13
         static let buttonSize = NSSize(width: 31, height: 27)
         static let buttonTrailing: CGFloat = 11.5
-        static let textToButton: CGFloat = 14
-        // Set darker than Arc's captured pixels (#556692 → #465376, button ~#7D88A4)
-        // because they render lighter here; compared on the Mac against Arc.
-        static let topColor = NSColor(srgbRed: 0x3F / 255, green: 0x52 / 255, blue: 0x84 / 255, alpha: 1)
-        static let bottomColor = NSColor(srgbRed: 0x2B / 255, green: 0x3A / 255, blue: 0x5F / 255, alpha: 1)
-        static let buttonColor = NSColor(srgbRed: 0x68 / 255, green: 0x75 / 255, blue: 0x96 / 255, alpha: 1)
+        static let textToButton: CGFloat = 8
+        static let topColor = NSColor(srgbRed: 0x55 / 255, green: 0x66 / 255, blue: 0x92 / 255, alpha: 1)
+        static let bottomColor = NSColor(srgbRed: 0x46 / 255, green: 0x53 / 255, blue: 0x76 / 255, alpha: 1)
+        static let buttonColor = NSColor(srgbRed: 0x7D / 255, green: 0x88 / 255, blue: 0xA4 / 255, alpha: 1)
         static let duration: Duration = .seconds(4.6)
     }
 
     private let gradient = CAGradientLayer()
     private let label = NSTextField(labelWithString: "")
+    /// The button's rounded square; a plain view so the button's intrinsic height can't stretch it.
+    private let shareBackground = NSView()
     private let shareButton = NSButton()
     private var labelTrailing: NSLayoutConstraint!
     private var shareURL: URL?
@@ -63,14 +65,17 @@ final class ToastView: NSView {
         shareButton.symbolConfiguration = .init(pointSize: 13, weight: .medium)
         shareButton.contentTintColor = .white
         shareButton.isBordered = false
-        shareButton.wantsLayer = true
-        shareButton.layer?.backgroundColor = Metrics.buttonColor.cgColor
-        shareButton.layer?.cornerRadius = 6
-        shareButton.layer?.cornerCurve = .continuous
         shareButton.target = self
         shareButton.action = #selector(share)
+        shareBackground.wantsLayer = true
+        shareBackground.layer?.backgroundColor = Metrics.buttonColor.cgColor
+        shareBackground.layer?.cornerRadius = 6
+        shareBackground.layer?.cornerCurve = .continuous
+        shareBackground.layer?.masksToBounds = true
+        shareButton.translatesAutoresizingMaskIntoConstraints = false
+        shareBackground.addSubview(shareButton)
 
-        for view in [label, shareButton] {
+        for view in [label, shareBackground] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
             view.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
@@ -79,9 +84,13 @@ final class ToastView: NSView {
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Metrics.height),
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.leading),
-            shareButton.widthAnchor.constraint(equalToConstant: Metrics.buttonSize.width),
-            shareButton.heightAnchor.constraint(equalToConstant: Metrics.buttonSize.height),
-            shareButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Metrics.buttonTrailing),
+            shareBackground.widthAnchor.constraint(equalToConstant: Metrics.buttonSize.width),
+            shareBackground.heightAnchor.constraint(equalToConstant: Metrics.buttonSize.height),
+            shareBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Metrics.buttonTrailing),
+            shareButton.centerXAnchor.constraint(equalTo: shareBackground.centerXAnchor),
+            shareButton.centerYAnchor.constraint(equalTo: shareBackground.centerYAnchor),
+            shareButton.widthAnchor.constraint(equalTo: shareBackground.widthAnchor),
+            shareButton.heightAnchor.constraint(equalTo: shareBackground.heightAnchor),
             labelTrailing,
         ])
     }
@@ -107,7 +116,7 @@ final class ToastView: NSView {
     func show(_ message: String, shareURL: URL? = nil, for duration: Duration = Metrics.duration) {
         label.stringValue = message
         self.shareURL = shareURL
-        shareButton.isHidden = shareURL == nil
+        shareBackground.isHidden = shareURL == nil
         labelTrailing.constant = shareURL == nil
             ? -Metrics.trailingPadding
             : -(Metrics.textToButton + Metrics.buttonSize.width + Metrics.buttonTrailing)
@@ -127,6 +136,6 @@ final class ToastView: NSView {
 
     @objc private func share() {
         guard let shareURL else { return }
-        NSSharingServicePicker(items: [shareURL]).show(relativeTo: shareButton.bounds, of: shareButton, preferredEdge: .minY)
+        NSSharingServicePicker(items: [shareURL]).show(relativeTo: shareBackground.bounds, of: shareBackground, preferredEdge: .minY)
     }
 }
