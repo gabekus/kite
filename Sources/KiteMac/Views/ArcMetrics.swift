@@ -79,6 +79,15 @@ enum ArcMetrics {
         static let cornerRadius: CGFloat = 6
     }
 
+    /// Arc's timings, fitted from 60fps recordings against the springs and eases in its binary.
+    enum Motion {
+        /// Space switch: the theme settles like `spring(response: 0.15, dampingFraction: 0.95)`.
+        static let spaceSwitchResponse: Double = 0.15
+        static let spaceSwitchDamping: Double = 0.95
+        /// Sidebar hide and show: `easeInOut(duration: 0.15)`.
+        static let sidebarToggleDuration: Double = 0.15
+    }
+
     enum CommandBar {
         static let width: CGFloat = 765
         /// Top edge as a share of the window's height, centred horizontally on the window.

@@ -311,7 +311,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sidebarVisible = visible
         resizeHandle.isHidden = !visible
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.22
+            context.duration = ArcMetrics.Motion.sidebarToggleDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             context.allowsImplicitAnimation = true
             contentLeading.animator().constant = visible ? sidebarWidth : Layout.inset

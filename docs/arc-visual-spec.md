@@ -205,6 +205,19 @@ most values can't be tied to a specific screen.
 - These aren't applied in Kite yet: the binary doesn't say which animation drives the space switch or the
   sidebar, and applying them would mean guessing.
 
+## Animations, from 60fps recordings of Arc
+
+Recorded on Gabe's main Arc window, capturing only thin strips with no titles (the space-header row, and a 6pt
+strip near the bottom of the sidebar). The videos were deleted after measuring. Each motion was fitted against
+the springs and eases in Arc's binary (see the vocabulary table above).
+
+| Motion | Arc, as recorded | Best fit | Kite now |
+|---|---|---|---|
+| Space switch (⌘⌥→), theme colour | 64 / 73 / 78 / 87 / 91 / 98% per frame, settled by about 0.12s | `spring(response: 0.15, dampingFraction: 0.95)` (RMS 0.078; CSS ease at 0.1 to 0.12s is equivalent). Arc uses this spring 8 times | Same spring (`ArcMetrics.Motion`), settling within 0.3s. Recorded: 20 / 51 / 61 / 83 / 93 / 98% per frame |
+| Sidebar hide (⌘S), card edge | 365 → 236 → 106 → 46 → 20 → 10pt, 1 frame apart (about 80ms) | `easeInOut(duration: 0.15)` (RMS 0.10) | 0.15s easeInEaseOut (was 0.22s) |
+| Sidebar show | 10 → 145 → 292 → 340 → 362 → 365pt | `easeInOut` 0.1 to 0.12 (RMS 0.085) | Same 0.15s |
+| ⌘T open and close | Instant | — | Instant |
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
