@@ -23,7 +23,8 @@ let usage = """
                                                      Type into an element (or the focused one)
       kite key KEYS [--tab ID]                       Press keys, e.g. "cmd+a Backspace" or Enter
       kite open URL [--here | --tab ID]              Open URL in a new background tab (or navigate one)
-      kite screenshot [--tab ID] [-o FILE]           Save a PNG of a tab
+      kite screenshot [--tab ID] [--format png] [-o FILE]
+                                                     Save a screenshot of a tab (JPEG unless --format png)
       kite js CODE [--tab ID]                        Run JavaScript in the page (Kite asks first)
       kite console [--tab ID] [--errors]             Console messages since Claude started driving the tab
       kite network [--tab ID]                        Network requests since then
@@ -166,7 +167,7 @@ struct Arguments {
     var options: [String: String] = [:]
     var flags: Set<String> = []
 
-    static let valued: Set<String> = ["--tab", "--max", "--selector", "--ref", "--socket", "-o", "--output"]
+    static let valued: Set<String> = ["--tab", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format"]
 
     init(_ raw: ArraySlice<String>) throws {
         var iterator = raw.makeIterator()
@@ -245,6 +246,7 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
         if args.options["--tab"] == nil && !args.flags.contains("--here") { json["new_tab"] = true }
     case "screenshot", "shot":
         tool = "screenshot"
+        if let format = args.options["--format"] { json["format"] = .string(format) }
     case "js", "eval":
         tool = "javascript"
         json["code"] = .string(try first("the code to run"))
@@ -336,8 +338,9 @@ func main() async -> Int32 {
                 print(text)
             case .text:
                 break
-            case let .image(base64, _):
-                let path = args.options["-o"] ?? "kite-screenshot-\(Int(Date().timeIntervalSince1970)).png"
+            case let .image(base64, mimeType):
+                let ext = mimeType == "image/jpeg" ? "jpg" : "png"
+                let path = args.options["-o"] ?? "kite-screenshot-\(Int(Date().timeIntervalSince1970)).\(ext)"
                 guard let data = Data(base64Encoded: base64) else { throw CLIError("Kite sent an unreadable image.") }
                 try data.write(to: URL(fileURLWithPath: path))
                 print(path)

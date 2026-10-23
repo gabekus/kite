@@ -27,7 +27,7 @@ public enum ComputerAction: Hashable, Sendable {
         case target(AutomationTarget)
     }
 
-    case screenshot
+    case screenshot(ImageFormat)
     case click(Location, button: Button, count: Int, modifiers: KeyChord.Modifiers)
     case hover(Location)
     case scroll(Location?, direction: Direction, amount: Int)
@@ -42,6 +42,13 @@ public enum ComputerAction: Hashable, Sendable {
         "screenshot", "left_click", "right_click", "middle_click", "double_click", "triple_click", "hover",
         "scroll", "left_click_drag", "key", "type", "wait", "zoom",
     ]
+}
+
+/// How screenshots are encoded. JPEG is several times smaller, so it's the default;
+/// PNG is lossless for reading small text.
+public enum ImageFormat: String, Hashable, Sendable {
+    case jpeg, png
+    public var mimeType: String { "image/\(rawValue)" }
 }
 
 /// What `wait_for` waits for.
@@ -79,10 +86,11 @@ public enum AutomationCommand: Hashable, Sendable {
     case resizeWindow(width: Int, height: Int)
 
     // Reading
-    case readPage(tab: String?, maxTextLength: Int, interactiveOnly: Bool)
+    /// `changesOnly` returns only what changed since the last read of this tab.
+    case readPage(tab: String?, maxTextLength: Int, interactiveOnly: Bool, changesOnly: Bool)
     case find(tab: String?, query: String)
     case getPageText(tab: String?, maxTextLength: Int)
-    case screenshot(tab: String?)
+    case screenshot(tab: String?, format: ImageFormat)
 
     // Acting
     case click(tab: String?, target: AutomationTarget)
@@ -108,6 +116,11 @@ public enum AutomationCommand: Hashable, Sendable {
     case createFolder(name: String, space: String?)
     case moveToFolder(tab: String?, folder: String)
 
+    /// Several tool calls in one round trip, run in order. It stops at the first error, and before any
+    /// step that needs the user's OK (that step is then called on its own).
+    indirect case batch(steps: [AutomationCommand])
+
+    public static let maxBatchSteps = 25
     public static let defaultMaxTextLength = 20_000
     public static let maxTextLengthLimit = 200_000
     public static let defaultLogLimit = 100
@@ -141,6 +154,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case pinTab = "pin_tab"
         case createFolder = "create_folder"
         case moveToFolder = "move_to_folder"
+        case batch
 
         /// Older or Claude-in-Chrome names that still work but aren't listed.
         static let aliases: [String: Tool] = [
@@ -188,6 +202,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case .pinTab: .pinTab
         case .createFolder: .createFolder
         case .moveToFolder: .moveToFolder
+        case .batch: .batch
         }
     }
 
@@ -229,13 +244,14 @@ public enum AutomationCommand: Hashable, Sendable {
         case .readPage:
             let filter = try a.string("filter") ?? "all"
             guard ["all", "interactive"].contains(filter) else { throw InvalidArguments("\"filter\" is \"all\" or \"interactive\".") }
-            self = .readPage(tab: tab, maxTextLength: try a.textLimit(), interactiveOnly: filter == "interactive")
+            self = .readPage(tab: tab, maxTextLength: try a.textLimit(), interactiveOnly: filter == "interactive",
+                             changesOnly: try a.bool("changes_only"))
         case .find:
             self = .find(tab: tab, query: try a.required("query"))
         case .getPageText:
             self = .getPageText(tab: tab, maxTextLength: try a.textLimit())
         case .screenshot:
-            self = .screenshot(tab: tab)
+            self = .screenshot(tab: tab, format: try a.imageFormat())
         case .click:
             self = .click(tab: tab, target: try a.target(required: true)!)
         case .type:
@@ -307,6 +323,26 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .createFolder(name: try a.required("name"), space: try a.string("space"))
         case .moveToFolder:
             self = .moveToFolder(tab: tab, folder: try a.required("folder"))
+        case .batch:
+            guard let list = a.values["steps"]?.arrayValue, !list.isEmpty else {
+                throw InvalidArguments("\"steps\" must be a list of {\"tool\": …, \"arguments\": {…}}.")
+            }
+            guard list.count <= Self.maxBatchSteps else { throw InvalidArguments("A batch has at most \(Self.maxBatchSteps) steps.") }
+            self = .batch(steps: try list.enumerated().map { index, step in
+                guard let name = step["tool"]?.stringValue else { throw InvalidArguments("Step \(index + 1) has no \"tool\".") }
+                guard Tool(name: name) != .batch else { throw InvalidArguments("Batches can't contain batches.") }
+                var arguments = step["arguments"]?.objectValue ?? [:]
+                if step["arguments"].map({ !$0.isNull && $0.objectValue == nil }) == true {
+                    throw InvalidArguments("Step \(index + 1)'s \"arguments\" must be an object.")
+                }
+                // A batch-wide tab applies to steps that don't name one.
+                if let tab, arguments["tab"] == nil, Tool(name: name)?.takesTab == true { arguments["tab"] = .string(tab) }
+                do {
+                    return try AutomationCommand(tool: name, arguments: .object(arguments))
+                } catch let error as InvalidArguments {
+                    throw InvalidArguments("Step \(index + 1) (\(name)): \(error.description)")
+                }
+            })
         }
     }
 }
@@ -349,6 +385,12 @@ private struct Arguments {
             throw Invalid("\"\(key)\" must be a whole number from \(range.lowerBound) to \(range.upperBound).")
         }
         return int
+    }
+
+    func imageFormat() throws -> ImageFormat {
+        guard let name = try string("format") else { return .jpeg }
+        guard let format = ImageFormat(rawValue: name.lowercased()) else { throw Invalid("\"format\" is jpeg or png.") }
+        return format
     }
 
     func textLimit() throws -> Int {
@@ -416,7 +458,7 @@ private struct Arguments {
         let action = try required("action")
         switch action {
         case "screenshot":
-            return .screenshot
+            return .screenshot(try imageFormat())
         case "left_click", "right_click", "middle_click", "double_click", "triple_click":
             let button: ComputerAction.Button = action == "right_click" ? .right : action == "middle_click" ? .middle : .left
             let count = action == "double_click" ? 2 : action == "triple_click" ? 3 : 1

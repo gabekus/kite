@@ -60,6 +60,15 @@ final class AutomationController {
     @ObservationIgnored var claudeOpened: Set<UUID> = []
     @ObservationIgnored private(set) var downloads: [Int: Download] = [:]
     @ObservationIgnored private var downloadObserver: NSObjectProtocol?
+    /// Each tab's last read, the baseline for change-only reads.
+    @ObservationIgnored var snapshots: [UUID: PageDiff.Snapshot] = [:]
+
+    /// True while a batch runs: a step that would need confirmation stops the batch instead of asking.
+    @TaskLocal static var inBatch = false
+
+    struct NeedsConfirmation: Error {
+        let request: ConfirmationRequest
+    }
 
     enum Timing {
         static let idleWhileConnected: TimeInterval = 120
@@ -97,6 +106,7 @@ final class AutomationController {
             stop(tabs: Set(controlledTabs.keys).union(pendingConfirmations.keys).union(trackedPages.keys))
             revoked.removeAll()
             activities.removeAll()
+            snapshots.removeAll()
             claudeOpened.removeAll()
             if let downloadObserver { NotificationCenter.default.removeObserver(downloadObserver) }
             downloadObserver = nil
@@ -204,6 +214,7 @@ final class AutomationController {
             if now.timeIntervalSince(entry.lastActive) > idle || !live.contains(id) { controlledTabs[id] = nil }
         }
         // Closed tabs take their logs with them.
+        for id in Array(snapshots.keys) where !live.contains(id) { snapshots[id] = nil }
         for id in Array(activities.keys) where !live.contains(id) {
             activities[id] = nil
             trackedPages[id] = nil
@@ -342,8 +353,9 @@ final class AutomationController {
         if revoked.contains(tab.id) { throw AutomationError.stopped }
     }
 
-    /// Asks the user; throws if they say no.
+    /// Asks the user; throws if they say no. Inside a batch it stops the batch instead.
     func require(_ request: ConfirmationRequest, tab id: UUID) async throws {
+        if Self.inBatch { throw NeedsConfirmation(request: request) }
         guard await confirm(request, tab: id) else {
             if revoked.contains(id) { throw AutomationError.stopped }
             throw AutomationError.denied(request.action)

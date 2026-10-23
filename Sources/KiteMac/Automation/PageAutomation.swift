@@ -10,7 +10,7 @@ protocol PageAutomation {
     /// The page's main text: its article or main element when it has one. `source` names which.
     func mainText() async throws -> (source: String, text: String)
     /// The visible viewport, one image pixel per CSS pixel (the coordinates clicks use).
-    func screenshot() async throws -> Screenshot
+    func screenshot(format: ImageFormat) async throws -> Screenshot
 }
 
 /// Acting on a page: everything beyond reading. Only Chromium tabs can do it.
@@ -45,12 +45,18 @@ protocol PageActions: PageAutomation {
     func waitFor(selector: String?, text: String?, timeout: TimeInterval) async throws -> Bool
     func readyStateIsComplete() async throws -> Bool
     func zoom(x0: Double, y0: Double, x1: Double, y1: Double) async throws -> Screenshot
+    /// How the tab's screenshots are scaled, to map their coordinates back to the page.
+    func screenshotScale() async throws -> ScreenshotScale
 }
 
 struct Screenshot {
-    var png: Data
+    /// Encoded image, `format` decides which kind.
+    var data: Data
+    var format: ImageFormat = .png
     var width: Int
     var height: Int
+    /// Image pixels per CSS pixel.
+    var scale: Double = 1
 }
 
 /// An element found on the page, plus what the engine needs to act on it.

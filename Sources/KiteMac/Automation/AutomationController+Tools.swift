@@ -26,6 +26,8 @@ extension AutomationController {
             return .text(downloadsReport())
         case .listSpaces, .switchSpace, .createSpace, .pinTab, .createFolder, .moveToFolder:
             return try kiteCommand(command)
+        case .batch(let steps):
+            return await runBatch(steps, connection: connection)
         default:
             return try await pageCommand(command, connection: connection)
         }
@@ -36,7 +38,7 @@ extension AutomationController {
     private func pageCommand(_ command: AutomationCommand, connection: Int) async throws -> ToolOutput {
         let tabArgument: String?
         switch command {
-        case .readPage(let tab, _, _), .find(let tab, _), .getPageText(let tab, _), .screenshot(let tab), .click(let tab, _),
+        case .readPage(let tab, _, _, _), .find(let tab, _), .getPageText(let tab, _), .screenshot(let tab, _), .click(let tab, _),
              .type(let tab, _, _, _), .formInput(let tab, _, _), .computer(let tab, _), .javascript(let tab, _),
              .waitFor(let tab, _, _), .handleDialog(let tab, _, _), .uploadFile(let tab, _, _), .readConsole(let tab, _, _, _, _),
              .readNetwork(let tab, _, _, _), .navigate(let tab, _, _):
@@ -51,10 +53,6 @@ extension AutomationController {
         guard let driver = page.automation else { throw AutomationError(.unsupported, "This tab's engine can't be automated.") }
         let actions = driver as? PageActions
         if let actions { try await track(tab.id, page: page, actions: actions) }
-        func act() throws -> PageActions {
-            guard let actions else { throw WebKitAutomation.unsupported }
-            return actions
-        }
 
         // A page with a dialog open is frozen until someone answers it.
         if let dialog = activities[tab.id]?.dialog {
@@ -66,10 +64,37 @@ extension AutomationController {
             }
         }
 
+        let output = try await pageAction(command, tab: tab, page: page, driver: driver, actions: actions)
+        // After something that can change the page, say what changed since Claude's last read
+        // (only when there is a last read, so a tab that's never been read costs nothing extra).
         switch command {
-        case let .readPage(_, limit, interactiveOnly):
+        case .click, .type, .formInput, .handleDialog, .navigate, .computer(_, .click), .computer(_, .key), .computer(_, .type):
+            return await withChanges(output, tab: tab.id, driver: driver)
+        default:
+            return output
+        }
+    }
+
+    private func pageAction(_ command: AutomationCommand, tab: BrowserTab, page: WebPage, driver: PageAutomation,
+                            actions: PageActions?) async throws -> ToolOutput {
+        func act() throws -> PageActions {
+            guard let actions else { throw WebKitAutomation.unsupported }
+            return actions
+        }
+
+        switch command {
+        case let .readPage(_, limit, interactiveOnly, changesOnly):
             let (outline, text) = try await driver.read(interactiveOnly: interactiveOnly)
             let current = store.state.tab(tab.id) ?? tab
+            let snapshot = PageDiff.Snapshot(url: current.url?.absoluteString ?? "", outline: outline ?? "", text: text)
+            defer { if !interactiveOnly { snapshots[tab.id] = snapshot } }
+            if changesOnly, !interactiveOnly, let previous = snapshots[tab.id] {
+                if let changes = PageDiff.report(from: previous, to: snapshot) {
+                    return .text("Changes since your last read of tab \(tab.id.uuidString):\n"
+                        + UntrustedContent.wrap(changes, source: current.url?.absoluteString ?? "page"))
+                }
+                // Too much changed for a diff to help: fall through to the whole page.
+            }
             return .text(AutomationReport.page(tab: tab.id, url: current.url, title: current.displayTitle,
                                                outline: outline, text: text, textLimit: limit))
 
@@ -83,8 +108,8 @@ extension AutomationController {
             return .text("Main text from <\(source)>.\n" + AutomationReport.page(
                 tab: tab.id, url: current.url, title: current.displayTitle, outline: nil, text: text, textLimit: limit))
 
-        case .screenshot:
-            return screenshotOutput(try await driver.screenshot(), tab: tab.id)
+        case .screenshot(_, let format):
+            return screenshotOutput(try await driver.screenshot(format: format), tab: tab.id)
 
         case .click(_, let target):
             let element = try await act().locate(target)
@@ -118,7 +143,9 @@ extension AutomationController {
             var result = ""
             try await untilDialog(tab.id) { result = try await actions.setValue(value, on: element) }
             let shown = AutomationPolicy.isSensitiveField(element.description) ? "(hidden)" : UntrustedContent.wrap(result, source: "form value")
-            return report("Set \(Self.name(target)). Its value is now \(shown)", tab.id)
+            var output = report("Set \(Self.name(target)).", tab.id)
+            output.content.append(.text("Its value is now \(shown)"))
+            return output
 
         case let .computer(_, action):
             return try await computer(action, tab: tab, driver: driver, actions: actions)
@@ -191,13 +218,25 @@ extension AutomationController {
     }
 
     private func computer(_ action: ComputerAction, tab: BrowserTab, driver: PageAutomation, actions: PageActions?) async throws -> ToolOutput {
-        if case .screenshot = action { return screenshotOutput(try await driver.screenshot(), tab: tab.id) }
+        if case .screenshot(let format) = action { return screenshotOutput(try await driver.screenshot(format: format), tab: tab.id) }
         guard let actions else { throw WebKitAutomation.unsupported }
+        // Coordinates come from screenshots, which may be scaled down; the page wants CSS pixels.
+        let scale = try await actions.screenshotScale()
+
+        /// How a location reads back to Claude: the screenshot coordinates it sent, or the element.
+        func describe(_ location: ComputerAction.Location) -> String {
+            switch location {
+            case .point(let shown): "(\(Self.format(shown.x)), \(Self.format(shown.y)))"
+            case .target(let target): Self.name(target)
+            }
+        }
 
         /// A location's point, plus the element there for the policy.
         func resolve(_ location: ComputerAction.Location) async throws -> (ViewportPoint, LocatedElement?) {
             switch location {
-            case .point(let point): return (point, try await actions.element(at: point))
+            case .point(let shown):
+                let point = scale.toPage(shown)
+                return (point, try await actions.element(at: point))
             case .target(let target):
                 let element = try await actions.locate(target)
                 return (ViewportPoint(x: element.point.x, y: element.point.y), element)
@@ -219,11 +258,11 @@ extension AutomationController {
                 }
             }
             await settle(tab.id)
-            return report("\(button == .left ? "" : button.rawValue.capitalized + "-")\(["", "C", "Double-c", "Triple-c"][count])licked at (\(Int(point.x)), \(Int(point.y))).", tab.id)
+            return report("\(button == .left ? "" : button.rawValue.capitalized + "-")\(["", "C", "Double-c", "Triple-c"][count])licked \(location.isPoint ? "at " : "")\(describe(location)).", tab.id)
         case .hover(let location):
             let (point, _) = try await resolve(location)
             try await actions.hover(point)
-            return report("Moved the pointer to (\(Int(point.x)), \(Int(point.y))).", tab.id)
+            return report("Moved the pointer to \(describe(location)).", tab.id)
         case let .scroll(location, direction, amount):
             var point: ViewportPoint?
             if let location { point = try await resolve(location).0 }
@@ -231,8 +270,8 @@ extension AutomationController {
             try? await Task.sleep(for: .milliseconds(150))
             return report("Scrolled \(direction.rawValue) \(amount).", tab.id)
         case let .drag(from, to):
-            try await actions.drag(from: from, to: to)
-            return report("Dragged from (\(Int(from.x)), \(Int(from.y))) to (\(Int(to.x)), \(Int(to.y))).", tab.id)
+            try await actions.drag(from: scale.toPage(from), to: scale.toPage(to))
+            return report("Dragged from \(describe(.point(from))) to \(describe(.point(to))).", tab.id)
         case let .key(chords, times):
             let focused = try await actions.focusedElement()
             try await authorize(.keys(chords, focused: focused?.description), tab: tab)
@@ -248,9 +287,10 @@ extension AutomationController {
             try await Task.sleep(for: .seconds(seconds))
             return report("Waited \(seconds) seconds.", tab.id)
         case let .zoom(x0, y0, x1, y1):
-            let image = try await actions.zoom(x0: x0, y0: y0, x1: x1, y1: y1)
+            let f = scale.factor
+            let image = try await actions.zoom(x0: x0 / f, y0: y0 / f, x1: x1 / f, y1: y1 / f)
             return ToolOutput(content: [
-                .image(base64: image.png.base64EncodedString(), mimeType: "image/png"),
+                .image(base64: image.data.base64EncodedString(), mimeType: image.format.mimeType),
                 .text("Region (\(Int(x0)), \(Int(y0)))–(\(Int(x1)), \(Int(y1))) at full resolution (\(image.width)×\(image.height)). Click with the screenshot's coordinates, not this image's."),
             ])
         }
@@ -282,6 +322,59 @@ extension AutomationController {
             throw AutomationError(.timeout, "Still waiting after \(Int(timeout * 1000)) ms. Take a screenshot or read_page to see why.")
         }
         return report("Done waiting.", id)
+    }
+
+    // MARK: Batches and changes
+
+    /// Runs steps in order, stopping at the first error, and before any step that would ask the user:
+    /// that step has to be its own call, so the user sees it on its own.
+    private func runBatch(_ steps: [AutomationCommand], connection: Int) async -> ToolOutput {
+        var lines: [String] = []
+        var images: [ToolOutput.Content] = []
+        var failed = false
+        for (index, step) in steps.enumerated() {
+            let label = "Step \(index + 1) (\(step.tool.rawValue))"
+            do {
+                let output = try await AutomationController.$inBatch.withValue(true) {
+                    try await run(step, connection: connection)
+                }
+                images += output.content.filter { if case .image = $0 { true } else { false } }
+                lines.append("\(label):\n\(output.text)")
+            } catch let needs as NeedsConfirmation {
+                lines.append("\(label) not run: it needs the user's OK to \(needs.request.action). Call it on its own and Kite will ask them.")
+                failed = true
+            } catch let error as AutomationError {
+                lines.append("\(label) failed: \(error.message)")
+                failed = true
+            } catch {
+                lines.append("\(label) failed: \(error)")
+                failed = true
+            }
+            if failed {
+                let rest = steps.count - index - 1
+                if rest == 1 { lines.append("Step \(steps.count) not run.") }
+                if rest > 1 { lines.append("Steps \(index + 2)–\(steps.count) not run.") }
+                break
+            }
+        }
+        let summary = failed ? "The batch stopped early." : "All \(steps.count) steps ran."
+        return ToolOutput(content: [.text(([summary] + lines).joined(separator: "\n\n"))] + images, isError: failed)
+    }
+
+    /// Appends what changed on the page since Claude's last read of it, and makes this the new baseline.
+    private func withChanges(_ output: ToolOutput, tab id: UUID, driver: PageAutomation) async -> ToolOutput {
+        guard let previous = snapshots[id], activities[id]?.dialog == nil,
+              let (outline, text) = try? await driver.read(interactiveOnly: false) else { return output }
+        let url = store.state.tab(id)?.url?.absoluteString ?? ""
+        let snapshot = PageDiff.Snapshot(url: url, outline: outline ?? "", text: text)
+        snapshots[id] = snapshot
+        var result = output
+        if let changes = PageDiff.report(from: previous, to: snapshot) {
+            result.content.append(.text("Changes since your last read:\n" + UntrustedContent.wrap(changes, source: url)))
+        } else {
+            result.content.append(.text("The page changed a lot (or is a new page). Call read_page to see it."))
+        }
+        return result
     }
 
     // MARK: Tabs and windows
@@ -415,8 +508,8 @@ extension AutomationController {
 
     private func screenshotOutput(_ image: Screenshot, tab id: UUID) -> ToolOutput {
         ToolOutput(content: [
-            .image(base64: image.png.base64EncodedString(), mimeType: "image/png"),
-            .text("Screenshot of tab \(id.uuidString), \(image.width)×\(image.height). Its pixels are the coordinates computer clicks use."),
+            .image(base64: image.data.base64EncodedString(), mimeType: image.format.mimeType),
+            .text("Screenshot of tab \(id.uuidString), \(image.width)×\(image.height)\(image.scale < 1 ? " (scaled to \(Int((image.scale * 100).rounded()))% of the page)" : ""). Its pixels are the coordinates computer clicks use."),
         ])
     }
 
@@ -460,6 +553,11 @@ extension AutomationController {
         }
     }
 
+    /// A coordinate as Claude sent it: whole numbers without a decimal point.
+    static func format(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
     static func keyName(_ chord: KeyChord) -> String {
         var parts: [String] = []
         if chord.modifiers.contains(.control) { parts.append("ctrl") }
@@ -467,5 +565,12 @@ extension AutomationController {
         if chord.modifiers.contains(.shift) { parts.append("shift") }
         if chord.modifiers.contains(.meta) { parts.append("cmd") }
         return (parts + [chord.key == " " ? "Space" : chord.key]).joined(separator: "+")
+    }
+}
+
+private extension ComputerAction.Location {
+    var isPoint: Bool {
+        if case .point = self { return true }
+        return false
     }
 }

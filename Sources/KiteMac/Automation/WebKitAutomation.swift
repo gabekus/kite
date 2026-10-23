@@ -20,7 +20,7 @@ struct WebKitAutomation: PageAutomation {
         return (value?["source"] as? String ?? "body", value?["text"] as? String ?? "")
     }
 
-    func screenshot() async throws -> Screenshot {
+    func screenshot(format: ImageFormat) async throws -> Screenshot {
         let image: NSImage = try await withTimeout(10, "WebKit") { done in
             let configuration = WKSnapshotConfiguration()
             // One image pixel per CSS pixel, matching Chromium.
@@ -30,11 +30,14 @@ struct WebKitAutomation: PageAutomation {
                 else { done(.failure(AutomationError(.failed, "WebKit couldn't capture the page: \(error?.localizedDescription ?? "no image")."))) }
             }
         }
-        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
-              let png = bitmap.representation(using: .png, properties: [:]) else {
-            throw AutomationError(.failed, "Couldn't encode the screenshot.")
+        let encoded: Data?
+        let bitmap = image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))
+        switch format {
+        case .png: encoded = bitmap?.representation(using: .png, properties: [:])
+        case .jpeg: encoded = bitmap?.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
         }
-        return Screenshot(png: png, width: bitmap.pixelsWide, height: bitmap.pixelsHigh)
+        guard let bitmap, let encoded else { throw AutomationError(.failed, "Couldn't encode the screenshot.") }
+        return Screenshot(data: encoded, format: format, width: bitmap.pixelsWide, height: bitmap.pixelsHigh)
     }
 
     private func evaluate(_ script: String) async throws -> Any? {
