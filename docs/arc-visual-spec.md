@@ -211,8 +211,27 @@ most values can't be tied to a specific screen.
   `layoutSubtreeIfNeeded` once. Core Animation draws the frames between; nothing lays out per frame.
 - The sidebar slides with the content's edge. It doesn't fade.
 - On show, the sidebar is first laid out at its starting place and committed, then animated in.
-- A hidden sidebar has a hover reveal: a floating sidebar container that slides in with the same 0.08s curve
-  and fades some of its parts.
+- A hidden sidebar has a hover reveal: a floating sidebar container (`floatingSidebarContainer`). The binary
+  suggested it slides in on the same 0.08s curve, but recordings show a spring on the way in (see *Sidebar peek*).
+
+**Sidebar peek** (two 60fps recordings of an Arc incognito window, 23 Oct 2026, 1.75px per pt)
+- With the sidebar hidden there are no traffic lights anywhere, even with the pointer in the top-left corner.
+  They exist only inside the sidebar.
+- Resting the pointer on the window's left edge brings the sidebar in as a floating card over the page.
+  - The card is inset 5pt from the window's left, top and bottom. It is as wide as the docked sidebar, and its
+    contents sit exactly where they do docked, shifted with the card.
+  - It has rounded corners and a 1pt border at about 20% white.
+- **Delay:** 0.17 to 0.22s from the pointer reaching the edge to the first moved frame (three peeks). That
+  includes a frame or two of display latency.
+- **In:** right edge 17 → 67 → 225 → 377 → 494 → 572 → 619 → 646 → 652 → 657 → 653 → 650 → 648 → 646 → 645 → 644px,
+  one frame apart. It overshoots about 1.5% and settles by about 0.25s. The best fit among the springs in the
+  binary is `spring(response: 0.18, dampingFraction: 0.8)`, at RMS 0.009. The 0.08s curve fits worse, at 0.043,
+  and can't overshoot.
+- **Out:** starts about 2 frames after the pointer leaves the card. It takes 0.07 to 0.08s with no overshoot,
+  which is the toggle's 0.08s curve.
+- **Docking:** a peeking card docks with ⌘S or the View menu. It grows out to the window's edges in about 0.08s.
+- **Not observed:** how wide the edge trigger is (the pointer was pinned against the screen edge each time), and
+  the card's shadow and exact corner radius.
 - Two other window-layout animations aren't part of the toggle:
   - a 0.2s relayout on the same curve when the home view's width changes;
   - a 0.12s linear, auto-reversing 1.015× scale "bump" of the window contents when a Bool state turns on.
