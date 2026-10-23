@@ -26,6 +26,15 @@ public struct KeyChord: Hashable, Sendable {
     /// ⌘ shortcuts sent through the protocol when they name the command.
     public var commands: [String]
 
+    public init(key: String, code: String, keyCode: Int, text: String?, modifiers: Modifiers, commands: [String]) {
+        self.key = key
+        self.code = code
+        self.keyCode = keyCode
+        self.text = text
+        self.modifiers = modifiers
+        self.commands = commands
+    }
+
     public var isEnter: Bool { key == "Enter" }
 
     public struct ParseError: Error, Equatable, CustomStringConvertible {

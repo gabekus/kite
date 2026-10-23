@@ -18,15 +18,18 @@ struct UIPointerProbe {
         let areas = trackingAreas(paths: paths)
         let samples = points.map { point -> UIPointerSample in
             let base = window.basePoint(point)
+            let areasHere = areas.filter { $0.rect.contains(base) }
+            crossTrackingAreas(to: areasHere, at: base)
             move(to: base)
             let hit = hitView(at: base)
             let rectsHere = cursorRects.filter { $0.rect.contains(base) }
-            let areasHere = areas.filter { $0.rect.contains(base) }
             let cursor: String
             if let top = rectsHere.last {
                 cursor = top.cursorName
             } else if let area = areasHere.last(where: { $0.area.options.contains(.cursorUpdate) }), area.isActive(in: window) {
-                cursor = Self.cursorSet(by: area.area, at: base, in: window) + " (cursorUpdate)"
+                // WebKit sets the page's cursor later, from the web content process.
+                cursor = area.isWebContent ? "the page's (WebKit sets it asynchronously)"
+                    : Self.cursorSet(by: area.area, at: base, in: window) + " (cursorUpdate)"
             } else {
                 cursor = "arrow (default)"
             }
@@ -39,6 +42,29 @@ struct UIPointerProbe {
             )
         }
         return samples
+    }
+
+    /// Tracking areas the synthetic pointer is inside, per window, across calls.
+    private static var inside: [Int: [ObjectIdentifier: NSTrackingArea]] = [:]
+
+    /// The window server sends entered and exited only for the real pointer, so the probe sends them
+    /// itself as its point crosses an area (else hover set by a synthetic move would never clear).
+    private func crossTrackingAreas(to areasHere: [Area], at base: NSPoint) {
+        let now = Dictionary(areasHere.filter { $0.area.options.contains(.mouseEnteredAndExited) && $0.isActive(in: window) }
+            .map { (ObjectIdentifier($0.area), $0.area) }, uniquingKeysWith: { first, _ in first })
+        let before = Self.inside[window.windowNumber] ?? [:]
+        for (id, area) in before where now[id] == nil { send(.mouseExited, area, at: base) }
+        for (id, area) in now where before[id] == nil { send(.mouseEntered, area, at: base) }
+        Self.inside[window.windowNumber] = now
+    }
+
+    private func send(_ type: NSEvent.EventType, _ area: NSTrackingArea, at base: NSPoint) {
+        guard let owner = area.owner as? NSResponder,
+              let event = NSEvent.enterExitEvent(
+                with: type, location: base, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                trackingNumber: Int(bitPattern: Unmanaged.passUnretained(area).toOpaque()), userData: nil) else { return }
+        if type == .mouseEntered { owner.mouseEntered(with: event) } else { owner.mouseExited(with: event) }
     }
 
     private func hitView(at base: NSPoint) -> NSView? {
@@ -62,6 +88,7 @@ struct UIPointerProbe {
         let area: NSTrackingArea
         let rect: NSRect
         let summary: String
+        var isWebContent = false
 
         /// Areas limited to the key window or the active app don't fire while Kite is in the background.
         func isActive(in window: NSWindow) -> Bool {
@@ -84,7 +111,8 @@ struct UIPointerProbe {
                 let active = Area(area: area, rect: rect, summary: "").isActive(in: window)
                 if !active { options += ",INACTIVE NOW" }
                 result.append(Area(area: area, rect: rect,
-                                   summary: "\(path) \(UIFormat.className(view)) owner \(owner) \(options) [\(window.uiRect(rect).description)]"))
+                                   summary: "\(path) \(UIFormat.className(view)) owner \(owner) \(options) [\(window.uiRect(rect).description)]",
+                                   isWebContent: UIFormat.isWebContent(view)))
             }
             if !UIFormat.isWebContent(view) { view.subviews.forEach(visit) }
         }

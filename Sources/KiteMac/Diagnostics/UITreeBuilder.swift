@@ -68,7 +68,7 @@ struct UITreeBuilder {
         } else {
             children = view.subviews.map { node(for: $0) }
             if UIFormat.className(view).contains("HostingView") {
-                children += accessibilityChildren(of: view).compactMap { element(for: $0, depth: 0) }
+                children += AXRead(view).children.compactMap { element(for: $0, depth: 0) }
             }
             if layers, let layer = view.layer {
                 children += (layer.sublayers ?? []).filter { !($0.delegate is NSView) }.map { node(for: $0, in: view) }
@@ -80,37 +80,17 @@ struct UITreeBuilder {
 
     // MARK: SwiftUI (accessibility elements)
 
-    // The attribute API works on every element, whether it implements the old informal
-    // protocol or NSAccessibilityProtocol, so SwiftUI's private element classes need no casts.
-    private func ax(_ object: NSObject, _ attribute: NSAccessibility.Attribute) -> Any? {
-        object.accessibilityAttributeValue(attribute)
-    }
-
-    private func accessibilityChildren(of object: NSObject) -> [Any] {
-        ax(object, .children) as? [Any] ?? []
-    }
-
     private func element(for object: Any, depth: Int) -> UINode? {
         // Views among the children are already in the tree.
         guard !(object is NSView), depth < 40, let element = object as? NSObject else { return nil }
-        let role = ax(element, .role) as? String ?? "AXUnknown"
+        let ax = AXRead(element)
         var attributes: [UINode.Attribute] = []
-        if let subrole = ax(element, .subrole) as? String { attributes.append(.init("subrole", subrole)) }
-        if (ax(element, .selected) as? NSNumber)?.boolValue == true { attributes.append(.init("selected", "true")) }
-        if (ax(element, .enabled) as? NSNumber)?.boolValue == false { attributes.append(.init("enabled", "false")) }
-        if let value = ax(element, .value), let text = (value as? String) ?? (value as? NSNumber)?.stringValue, !text.isEmpty {
-            attributes.append(.init("value", AccessibilityOutline.quote(String(text.prefix(80)))))
-        }
-        var frame: UIRect?
-        if let position = (ax(element, .position) as? NSValue)?.pointValue, let size = (ax(element, .size) as? NSValue)?.sizeValue {
-            // Accessibility positions are top-left, in screen points from the primary screen's top.
-            let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-            let screenRect = NSRect(x: position.x, y: primaryHeight - position.y - size.height, width: size.width, height: size.height)
-            frame = window.uiRect(fromScreen: screenRect)
-        }
-        let label = (ax(element, .description) as? String)?.nilIfEmpty ?? (ax(element, .title) as? String)?.nilIfEmpty
-        let children = accessibilityChildren(of: element).compactMap { self.element(for: $0, depth: depth + 1) }
-        return UINode(kind: role, identifier: (ax(element, .identifier) as? String)?.nilIfEmpty, label: label, frame: frame,
+        if let subrole = ax.subrole { attributes.append(.init("subrole", subrole)) }
+        if ax.isSelected { attributes.append(.init("selected", "true")) }
+        if !ax.isEnabled { attributes.append(.init("enabled", "false")) }
+        if let value = ax.value { attributes.append(.init("value", AccessibilityOutline.quote(String(value.prefix(80))))) }
+        let children = ax.children.compactMap { self.element(for: $0, depth: depth + 1) }
+        return UINode(kind: ax.role ?? "AXUnknown", identifier: ax.identifier, label: ax.label, frame: ax.screenFrame.map { window.uiRect(fromScreen: $0) },
                       attributes: attributes, children: children)
     }
 
@@ -172,6 +152,38 @@ struct UITreeBuilder {
         case .underPageBackground: "underPageBackground"
         default: "raw\(material.rawValue)"
         }
+    }
+}
+
+/// One accessibility element, read through the NSAccessibility methods by name: SwiftUI's elements
+/// (AccessibilityNode) implement them without declaring the protocol and don't answer the old
+/// attribute API, and a hosting view lists its SwiftUI elements only through `accessibilityChildren`.
+@MainActor
+struct AXRead {
+    let object: NSObject
+
+    init(_ object: NSObject) { self.object = object }
+
+    private func read(_ key: String, getter: String? = nil) -> Any? {
+        guard object.responds(to: Selector(getter ?? key)) else { return nil }
+        return object.value(forKey: key)
+    }
+
+    var role: String? { read("accessibilityRole") as? String }
+    var subrole: String? { read("accessibilitySubrole") as? String }
+    var identifier: String? { (read("accessibilityIdentifier") as? String)?.nilIfEmpty }
+    var label: String? { (read("accessibilityLabel") as? String)?.nilIfEmpty ?? (read("accessibilityTitle") as? String)?.nilIfEmpty }
+    var isSelected: Bool { (read("accessibilitySelected", getter: "isAccessibilitySelected") as? NSNumber)?.boolValue == true }
+    var isEnabled: Bool { (read("accessibilityEnabled", getter: "isAccessibilityEnabled") as? NSNumber)?.boolValue != false }
+    var value: String? {
+        let value = read("accessibilityValue")
+        return ((value as? String) ?? (value as? NSNumber)?.stringValue)?.nilIfEmpty
+    }
+    var children: [NSObject] { read("accessibilityChildren") as? [NSObject] ?? [] }
+    /// In AppKit screen coordinates (bottom-left); only clients outside the app see them flipped.
+    var screenFrame: NSRect? {
+        guard let frame = (read("accessibilityFrame") as? NSValue)?.rectValue, frame != .zero else { return nil }
+        return frame
     }
 }
 

@@ -101,7 +101,8 @@ app, so checking Kite's behaviour never needs a screen recording, an app switch 
 unless Kite menu → **Diagnostics for Claude** is on (it needs Claude's control on too), or a test build runs with
 `KITE_DIAGNOSTICS=1` on a `KITE_SUPPORT_PATH` profile, which also turns control on for that profile.
 
-Points are window points from the window's top-left corner (the content runs under the titlebar).
+Points are window points from the window's top-left corner (the content runs under the titlebar). A point
+names the device pixel whose top-left it is, so a point on a rect's top or left edge is inside it.
 
 | Action | What it returns |
 |---|---|
@@ -114,7 +115,33 @@ Points are window points from the window's top-left corner (the content runs und
 | `key_log` | The last keys pressed in Kite: window, first responder chain, input source, and any menu item each one fired. Plain typing shows only its kind (letter, digit), unless it fired a menu item. |
 | `trace` | Records for `seconds` (default 1.5), after pressing optional `keys`: each Core Animation animation (key path, duration, curve control points or spring, from/to), every layer whose on-screen frame or opacity changed with progress samples, SwiftUI elements matching `match`, and frame intervals with late frames. |
 
-CLI: `kite ui ACTION '{json}' [-o FILE]`.
+CLI: `kite ui ACTION '{json}' [-o FILE]`. `capture -o` saves at full resolution.
+
+What works with Kite in the background (checked on a test build behind other windows):
+
+- Nothing activates Kite or takes focus, including clicks and keys. A `KITE_DIAGNOSTICS=1` run opens its
+  window behind the user's windows; capture, tree, pointer and trace all work on a covered window.
+- `tree` gets SwiftUI's elements by asking Kite's own accessibility tree once (SwiftUI builds it only for an
+  accessibility client). That needs Accessibility permission for Kite; a test build launched from a terminal or
+  Claude inherits the launching app's. Without it the tree says SwiftUI's elements are missing.
+- `capture` needs Screen Recording permission, inherited the same way for a test build.
+- `pointer` hover: a synthetic move drives tracking areas and SwiftUI's `.onHover` in the background. The
+  window server only sends entered and exited for the real pointer, so the probe sends them itself as its point
+  crosses an area; hover stays where the last point left it (so a capture can see it), and a point outside the
+  window, like `[-1,-1]`, ends it. Areas limited to the key window or the active app are listed as INACTIVE NOW
+  and get nothing, as with a real pointer over a background window. Over a web page the cursor is WebKit's,
+  set later from the web process, so it isn't named.
+- `input` clicks and drags follow AppKit's first-mouse rule: with the window not key, a view that doesn't
+  accept first mouse (the sidebar resize handle, for one) never gets the click, and a synthetic click can't
+  activate Kite the way a real first click would. `input` says when that happened. SwiftUI buttons and rows
+  accept first mouse, so they work.
+- Keys: a web view claims ⌘ shortcuts as key equivalents and hands them back to the menu bar a moment later;
+  `input` and `key_log` follow the key through and name the menu item it fired.
+- `trace`: animation `from`/`to` values are the layer's own (position in its superlayer, bottom-left), while
+  the sampled frames are window points. SwiftUI's accessibility frames follow the model, not the animation, so
+  `match` shows only start and end; the layers show the curve.
+- `menu`: AppKit ignores fn when matching a key against the menu bar, so a system item on fn E (Emoji &
+  Symbols) or fn F (Enter Full Screen) fires on a plain "e" or "f" that reaches the menu bar, and is flagged.
 
 `kite probe APP` does the same reading for another app (Arc), from outside it: `kite probe Arc tree` (accessibility
 roles and frames in window points; text hidden unless `--text`) and `kite probe Arc capture -o arc.png` (one window

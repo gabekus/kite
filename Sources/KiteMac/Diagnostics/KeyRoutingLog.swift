@@ -62,6 +62,10 @@ final class KeyRoutingLog {
 
     @discardableResult
     func record(_ event: NSEvent, synthetic: Bool) -> Int {
+        // A view that claimed a synthetic key may send the same event through the app later; it's the same press.
+        if !synthetic, let earlier = entries.last(where: { $0.synthetic && $0.timestamp == event.timestamp && $0.keyCode == event.keyCode }) {
+            return earlier.id
+        }
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift, .function])
         let plain = flags.isDisjoint(with: [.command, .control, .option]) && Self.isPrintable(event)
         let id = nextID

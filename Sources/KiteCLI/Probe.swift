@@ -49,7 +49,8 @@ enum Probe {
             }
             let depth = Int(args.options["--depth"] ?? "") ?? 30
             let root = node(windows[index], origin: origin, depth: depth, text: args.flags.contains("--text"))
-            print(UIReport.tree(root, depth: depth, match: args.options["--match"], maxNodes: Int(args.options["--max"] ?? "") ?? 2000))
+            print(UIReport.tree(root, depth: depth, match: args.options["--match"], maxNodes: Int(args.options["--max"] ?? "") ?? 2000,
+                                source: "\(app.localizedName ?? target) window"))
         case "capture":
             guard windows.indices.contains(index), let frame = frame(of: windows[index]) else {
                 throw ProbeError("\(app.localizedName ?? target) has no window \(index).")

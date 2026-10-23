@@ -60,8 +60,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A test build on a throwaway profile with KITE_DIAGNOSTICS=1 comes up ready for Claude.
         if UIDiagnostics.enabledByEnvironment && !automation.isEnabled { automation.setEnabled(true) }
         UIDiagnostics.shared.applySetting()
-        // A diagnostics run stays in the background, so testing never takes the user's focus.
-        if !UIDiagnostics.enabledByEnvironment { NSApp.activate(ignoringOtherApps: true) }
+        // A diagnostics run stays in the background and behind the user's windows, so testing never takes their
+        // focus or covers their work (capture reads covered windows).
+        if UIDiagnostics.enabledByEnvironment {
+            windowController.window?.orderBack(nil)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         open(pendingURLs)
         pendingURLs = []
 

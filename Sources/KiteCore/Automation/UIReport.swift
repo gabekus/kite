@@ -43,6 +43,9 @@ public struct UINode: Hashable, Sendable {
         return node
     }
 
+    /// This node and everything under it.
+    var count: Int { children.reduce(1) { $0 + $1.count } }
+
     func matches(_ query: String) -> Bool {
         [kind, identifier, label].compactMap { $0 }.contains { $0.range(of: query, options: .caseInsensitive) != nil }
     }
@@ -91,16 +94,18 @@ public struct UIMenuItem: Hashable, Sendable {
         return symbols.filter { modifiers.contains($0.0) }.map(\.1).joined() + Self.keyName(key)
     }
 
-    /// A shortcut that fires while typing: a printable key with no ⌘, ⌃, ⌥ or fn.
-    /// (Pages send unhandled keys to the menu bar, so these steal plain typing.)
+    /// A shortcut that fires while typing: a printable key with no ⌘, ⌃ or ⌥. AppKit ignores fn when it
+    /// matches a key against the menu bar, so fn E fires on a plain "e" too. (Pages send unhandled keys to
+    /// the menu bar, so these steal plain typing.) Keys no keyboard types, like the dictation key's 🎤, don't count.
     public var firesWhileTyping: Bool {
         guard let scalar = key.unicodeScalars.first, key.unicodeScalars.count == 1 else { return false }
         let isFunctionKey = (0xF700...0xF8FF).contains(scalar.value)
         let isControl = scalar.value < 0x20 || scalar.value == 0x7F
-        return modifiers.isDisjoint(with: ["cmd", "ctrl", "alt", "fn"]) && !isFunctionKey && !isControl
+        let isTyped = scalar.value <= 0xFFFF
+        return modifiers.isDisjoint(with: ["cmd", "ctrl", "alt"]) && !isFunctionKey && !isControl && isTyped
     }
 
-    static func keyName(_ key: String) -> String {
+    public static func keyName(_ key: String) -> String {
         let names: [UInt32: String] = [
             0xF700: "↑", 0xF701: "↓", 0xF702: "←", 0xF703: "→", 0x0D: "↩", 0x03: "⌤", 0x09: "⇥", 0x1B: "⎋", 0x08: "⌫",
             0x7F: "⌫", 0xF728: "⌦", 0x20: "Space", 0xF729: "↖", 0xF72B: "↘", 0xF72C: "⇞", 0xF72D: "⇟",
@@ -152,7 +157,8 @@ public enum UIReport {
 
     /// The tree under `root` (whose path is `rootPath`), indented, at most `depth` levels and `maxNodes` lines.
     /// With `match`, only matching nodes, flat, each with its path.
-    public static func tree(_ root: UINode, rootPath: String = "0", depth: Int, match: String?, maxNodes: Int) -> String {
+    public static func tree(_ root: UINode, rootPath: String = "0", depth: Int, match: String?, maxNodes: Int,
+                            source: String = "Kite window") -> String {
         var lines: [String] = []
         var omitted = 0
 
@@ -163,7 +169,7 @@ public enum UIReport {
                 }
             } else {
                 guard lines.count < maxNodes else {
-                    omitted += 1
+                    omitted += node.count
                     return
                 }
                 lines.append(String(repeating: "  ", count: level) + "\(path) \(node.line)")
@@ -177,7 +183,7 @@ public enum UIReport {
         visit(root, path: rootPath, level: 0)
         if lines.isEmpty { return match.map { "Nothing matches \"\($0)\"." } ?? "Empty." }
         if omitted > 0 { lines.append("… \(omitted) more nodes (raise max_nodes, or use root or match)") }
-        return UntrustedContent.wrap(lines.joined(separator: "\n"), source: "Kite window")
+        return UntrustedContent.wrap(lines.joined(separator: "\n"), source: source)
     }
 
     public static func menu(_ items: [UIMenuItem], match: String?) -> String {

@@ -16,29 +16,37 @@ struct UIInputSender {
     func send(_ event: UIInputEvent) async throws -> String {
         switch event {
         case .keys(let chords):
-            var lines: [String] = []
-            for chord in chords { lines.append(try press(chord)) }
+            var pressed: [(chord: KeyChord, entry: Int, route: String)] = []
+            for chord in chords {
+                let (entry, route) = try press(chord)
+                pressed.append((chord, entry, route))
+            }
+            // A web view can claim a key and hand it back to the menu bar a moment later.
             try? await Task.sleep(for: .milliseconds(50))
-            return lines.joined(separator: "\n")
+            return pressed.map { chord, entry, route in
+                let menu = keyLog.routes(of: entry)
+                return "\(AutomationController.keyName(chord)): \(route)" + (menu.isEmpty ? "" : "; " + menu.joined(separator: "; "))
+            }.joined(separator: "\n")
         case .text(let text):
             for character in text {
                 let chord = (try? KeyChord.parse(String(character))) ?? KeyChord(
                     key: String(character), code: "", keyCode: 0, text: String(character), modifiers: [], commands: [])
-                _ = try press(chord, quiet: true)
+                _ = try press(chord)
             }
             return "Typed \(text.count) characters into window \(window.windowNumber) (\(responderName))."
         case let .click(point, button, count, modifiers):
             guard button != .middle else { throw AutomationError(.unsupported, "ui input can't send middle clicks.") }
             let flags = Self.flags(modifiers)
             let (down, up): (NSEvent.EventType, NSEvent.EventType) = button == .right ? (.rightMouseDown, .rightMouseUp) : (.leftMouseDown, .leftMouseUp)
-            let hit = hitName(point)
+            let hit = hitName(point), note = firstMouseNote(at: point)
             for click in 1...count {
                 post(down, at: point, flags: flags, clickCount: click)
                 post(up, at: point, flags: flags, clickCount: click)
             }
             try? await Task.sleep(for: .milliseconds(50))
-            return "\(count == 1 ? "Clicked" : "\(count)× clicked") \(button.rawValue) at (\(UIReport.number(point.x)), \(UIReport.number(point.y))) on \(hit)."
+            return "\(count == 1 ? "Clicked" : "\(count)× clicked") \(button.rawValue) at (\(UIReport.number(point.x)), \(UIReport.number(point.y))) on \(hit)." + note
         case let .drag(from, to, steps):
+            let hit = hitName(from), note = firstMouseNote(at: from)
             post(.leftMouseDown, at: from, flags: [], clickCount: 1)
             for step in 1...steps {
                 let t = Double(step) / Double(steps)
@@ -47,7 +55,7 @@ struct UIInputSender {
                 try? await Task.sleep(for: .milliseconds(8))
             }
             post(.leftMouseUp, at: to, flags: [], clickCount: 1)
-            return "Dragged from (\(UIReport.number(from.x)), \(UIReport.number(from.y))) to (\(UIReport.number(to.x)), \(UIReport.number(to.y))) in \(steps) steps, starting on \(hitName(from))."
+            return "Dragged from (\(UIReport.number(from.x)), \(UIReport.number(from.y))) to (\(UIReport.number(to.x)), \(UIReport.number(to.y))) in \(steps) steps, starting on \(hit)." + note
         case let .scroll(point, dx, dy):
             guard let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
                                         wheel1: Int32(dy.rounded()), wheel2: Int32(dx.rounded()), wheel3: 0) else {
@@ -70,7 +78,8 @@ struct UIInputSender {
         window.firstResponder.map { UIFormat.className($0) } ?? "no first responder"
     }
 
-    private func press(_ chord: KeyChord, quiet: Bool = false) throws -> String {
+    /// Presses a key; returns its key log entry and where it went.
+    private func press(_ chord: KeyChord) throws -> (entry: Int, route: String) {
         guard let keyCode = Self.macKeyCodes[chord.code] ?? (chord.code.isEmpty ? 0 : nil) else {
             throw AutomationError(.unsupported, "ui input doesn't know the Mac key for \(chord.code).")
         }
@@ -95,25 +104,25 @@ struct UIInputSender {
         let entry = keyLog.record(down, synthetic: true)
         let route = keyLog.whileDelivering(entry) { deliver(down) }
         deliverUp(up)
-        if quiet { return "" }
-        let menu = keyLog.routes(of: entry)
-        return "\(AutomationController.keyName(chord)): \(route)" + (menu.isEmpty ? "" : "; " + menu.joined(separator: "; "))
+        return (entry, route)
     }
 
     /// Delivers a key down the way AppKit would for this window, and says where it went.
     private func deliver(_ event: NSEvent) -> String {
+        // Named before delivery, which can move focus (Escape closing the command bar).
+        let responder = responderName
         if window.isKeyWindow && NSApp.isActive {
             NSApp.sendEvent(event)
-            return "sent through the app (Kite in front) to \(responderName)"
+            return "sent through the app (Kite in front) to \(responder)"
         }
         // AppKit offers keys with ⌘ or ⌃ (and function keys) as key equivalents before typing them.
         let isEquivalentCandidate = !event.modifierFlags.isDisjoint(with: [.command, .control]) || event.modifierFlags.contains(.function)
         if isEquivalentCandidate {
-            if window.performKeyEquivalent(with: event) { return "handled as a key equivalent by a view (Kite in background)" }
+            if window.performKeyEquivalent(with: event) { return "claimed as a key equivalent by a view (Kite in background)" }
             if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return "handled by the menu bar (Kite in background)" }
         }
         window.sendEvent(event)
-        return "sent to \(responderName) (Kite in background)"
+        return "sent to \(responder) (Kite in background)"
     }
 
     private func deliverUp(_ event: NSEvent) {
@@ -137,6 +146,19 @@ struct UIInputSender {
             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: type == .leftMouseUp || type == .rightMouseUp ? 0 : 1
         ) else { return }
         window.sendEvent(event)
+    }
+
+    /// With the window not key, AppKit gives a click only to views that accept first mouse; a real first
+    /// click would activate Kite instead, and synthetic ones never do, so they keep being dropped.
+    private func firstMouseNote(at point: UIPoint) -> String {
+        guard !window.isKeyWindow, let frameView = window.contentView?.superview ?? window.contentView,
+              let view = frameView.hitTest(frameView.convert(window.basePoint(point), from: nil)),
+              let event = NSEvent.mouseEvent(
+                with: .leftMouseDown, location: window.basePoint(point), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1),
+              !view.acceptsFirstMouse(for: event) else { return "" }
+        return " \(UIFormat.className(view)) doesn't accept first mouse and the window isn't key, so AppKit didn't deliver it "
+            + "(a real click would activate Kite first). Test this with Kite in front."
     }
 
     private func hitName(_ point: UIPoint) -> String {

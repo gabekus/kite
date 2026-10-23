@@ -270,6 +270,11 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
             }
             json.merge(given) { _, new in new }
         }
+        // Kite writes a capture at full resolution itself; the image sent back is scaled for Claude.
+        if json["action"] == .string("capture"), let output = args.options["-o"], json["save"] == nil {
+            json["save"] = .string(URL(fileURLWithPath: output).path)
+            json["image"] = .bool(false)
+        }
     case "call":
         tool = try first("a tool name")
         if args.positional.count > 1 {

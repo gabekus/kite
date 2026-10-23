@@ -114,7 +114,9 @@ import Testing
         let shallow = UIReport.tree(tree, depth: 1, match: nil, maxNodes: 100)
         #expect(shallow.contains("… 2 children (root 0 to see them)"))
         let few = UIReport.tree(tree, depth: 10, match: nil, maxNodes: 2)
+        // The hosting view's own child counts too.
         #expect(few.contains("… 2 more nodes"))
+        #expect(UIReport.tree(tree, depth: 1, match: nil, maxNodes: 10, source: "Arc window").hasPrefix("<untrusted-page-content source=\"Arc window\""))
     }
 
     @Test func numbersStayShort() {
@@ -138,10 +140,15 @@ import Testing
                        identifier: nil, isEnabled: true, isHidden: false, isOn: false),
             UIMenuItem(path: ["History", "Back"], key: "\u{F702}", modifiers: ["cmd"], action: "goBack:", target: nil,
                        identifier: nil, isEnabled: false, isHidden: false, isOn: false),
+            UIMenuItem(path: ["Edit", "Start Dictation"], key: "🎤", modifiers: [], action: "startDictation:", target: nil,
+                       identifier: nil, isEnabled: true, isHidden: false, isOn: false),
         ]
         #expect(items[0].firesWhileTyping)
-        #expect(!items[1].firesWhileTyping)
+        // AppKit matches fn E on a plain "e".
+        #expect(items[1].firesWhileTyping)
+        #expect(!items[2].firesWhileTyping)
         #expect(!items[5].firesWhileTyping)
+        #expect(!items[6].firesWhileTyping)
         #expect(items[5].shortcut == "⌘←")
         let text = UIReport.menu(items, match: nil)
         #expect(text.contains("Edit > Emoji & Symbols  E  orderFrontCharacterPalette: → responder chain  (FIRES WHILE TYPING)"))

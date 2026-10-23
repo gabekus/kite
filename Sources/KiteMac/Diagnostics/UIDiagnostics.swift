@@ -37,11 +37,14 @@ final class UIDiagnostics {
             return .text(windowsReport())
         case let .tree(number, root, depth, match, layers, maxNodes):
             let window = try self.window(number)
+            let awake = await wakeAccessibility()
             let tree = UITreeBuilder(window: window, layers: layers).build()
             guard let start = tree.node(at: root ?? "0") else {
                 throw AutomationError(.notFound, "There's no node \(root ?? "0"). Call tree without root for the paths.")
             }
-            return .text(header(window) + UIReport.tree(start, rootPath: root ?? "0", depth: depth, match: match, maxNodes: maxNodes))
+            let note = awake ? "" : "SwiftUI's elements are missing: they need Accessibility permission for Kite "
+                + "(System Settings → Privacy & Security → Accessibility).\n"
+            return .text(header(window) + note + UIReport.tree(start, rootPath: root ?? "0", depth: depth, match: match, maxNodes: maxNodes))
         case let .capture(number, region, format, pixels, image, save):
             return try await UICapture.run(window: try window(number), region: region, format: format, pixels: pixels,
                                            image: image, save: save)
@@ -58,8 +61,27 @@ final class UIDiagnostics {
             return .text(keyLog.report(limit: limit, clear: clear))
         case let .trace(number, seconds, keys, match):
             let window = try self.window(number)
+            if match != nil { _ = await wakeAccessibility() }
             return .text(header(window) + (await UITracer(window: window, keyLog: keyLog).run(seconds: seconds, keys: keys, match: match)))
         }
+    }
+
+    private var accessibilityAwake = false
+
+    /// SwiftUI builds its accessibility elements only once an assistive app has asked for them through
+    /// the accessibility API, so Kite asks itself, off the main thread (which answers). That needs Kite to
+    /// have Accessibility permission; without it, only AppKit's elements are there.
+    private func wakeAccessibility() async -> Bool {
+        if accessibilityAwake { return true }
+        let pid = getpid()
+        accessibilityAwake = await Task.detached {
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, 2)
+            var windows: CFTypeRef?
+            return AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windows) == .success
+        }.value
+        if accessibilityAwake { try? await Task.sleep(for: .milliseconds(100)) }
+        return accessibilityAwake
     }
 
     // MARK: Windows
@@ -112,8 +134,11 @@ final class UIDiagnostics {
 
 /// Window coordinates: AppKit's window base (bottom-left) ⇄ the ui tool's top-left points.
 extension NSWindow {
+    /// The centre of the device pixel whose top-left is `point`, as capture reads it. A bare flip would put
+    /// a point on a rect's top edge at that rect's maxY, which AppKit counts as outside.
     func basePoint(_ point: UIPoint) -> NSPoint {
-        NSPoint(x: point.x, y: frame.height - point.y)
+        let half = 0.5 / backingScaleFactor
+        return NSPoint(x: point.x + half, y: frame.height - point.y - half)
     }
 
     func uiPoint(_ point: NSPoint) -> UIPoint {

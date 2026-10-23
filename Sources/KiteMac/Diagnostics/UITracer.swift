@@ -137,6 +137,11 @@ final class UITracer: NSObject {
             if let from = basic.fromValue { parts.append("from \(Self.value(from))") }
             if let to = basic.toValue { parts.append("to \(Self.value(to))") }
             if let by = basic.byValue { parts.append("by \(Self.value(by))") }
+            // Values are the layer's own, not window points: position is in the superlayer, bottom-left unless flipped.
+            if ["position", "bounds", "frame", "anchorPoint"].contains(where: { basic.keyPath?.hasPrefix($0) == true }),
+               basic.fromValue != nil || basic.toValue != nil {
+                parts.append("(layer space)")
+            }
         }
         if let keyframes = animation as? CAKeyframeAnimation, let values = keyframes.values {
             parts.append("\(values.count) keyframes \(Self.value(values.first as Any)) … \(Self.value(values.last as Any))")
@@ -151,11 +156,12 @@ final class UITracer: NSObject {
         switch value {
         case let number as NSNumber: return UIReport.number(number.doubleValue)
         case let value as NSValue:
+            // A rect's type encoding names CGPoint and CGSize too, so it goes first.
             switch String(cString: value.objCType) {
-            case let type where type.contains("CGPoint"): let p = value.pointValue; return "(\(UIReport.number(p.x)),\(UIReport.number(p.y)))"
             case let type where type.contains("CGRect"):
                 let r = value.rectValue
                 return "[\(UIReport.number(r.minX)),\(UIReport.number(r.minY)) \(UIReport.number(r.width))×\(UIReport.number(r.height))]"
+            case let type where type.contains("CGPoint"): let p = value.pointValue; return "(\(UIReport.number(p.x)),\(UIReport.number(p.y)))"
             case let type where type.contains("CGSize"): let s = value.sizeValue; return "\(UIReport.number(s.width))×\(UIReport.number(s.height))"
             default: return "\(value)"
             }
@@ -174,21 +180,18 @@ final class UITracer: NSObject {
         var found = 0
         func visit(_ object: NSObject, depth: Int) {
             guard depth < 40, found < 20 else { return }
-            let role = object.accessibilityAttributeValue(.role) as? String ?? ""
-            let label = (object.accessibilityAttributeValue(.description) as? String) ?? (object.accessibilityAttributeValue(.title) as? String) ?? ""
-            let identifier = object.accessibilityAttributeValue(.identifier) as? String ?? ""
+            let ax = AXRead(object)
+            let role = ax.role ?? "", label = ax.label ?? "", identifier = ax.identifier ?? ""
             if !(object is NSView), [role, label, identifier].contains(where: { $0.range(of: query, options: .caseInsensitive) != nil }),
-               let position = (object.accessibilityAttributeValue(.position) as? NSValue)?.pointValue,
-               let size = (object.accessibilityAttributeValue(.size) as? NSValue)?.sizeValue {
+               let screenFrame = ax.screenFrame {
                 found += 1
-                let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-                let rect = window.convertFromScreen(NSRect(x: position.x, y: primaryHeight - position.y - size.height,
-                                                           width: size.width, height: size.height))
+                // Window base coordinates, flipped in the report like the layers'.
+                let rect = window.convertFromScreen(screenFrame)
                 let key = "\(role)\(identifier.isEmpty ? "" : " #" + identifier) \(AccessibilityOutline.quote(String(label.prefix(40))))"
                 let samples = elementSeries[key] ?? []
                 if samples.last?.frame != rect { elementSeries[key] = samples + [Sample(time: t, frame: rect, opacity: 1)] }
             }
-            for child in object.accessibilityAttributeValue(.children) as? [NSObject] ?? [] { visit(child, depth: depth + 1) }
+            for child in ax.children { visit(child, depth: depth + 1) }
         }
         visit(content, depth: 0)
     }
@@ -226,7 +229,7 @@ final class UITracer: NSObject {
                 lines.append("No SwiftUI element matching \"\(match)\" moved (\(elementSeries.count) found).")
             } else {
                 lines.append("SwiftUI elements matching \"\(match)\":")
-                for (name, samples) in changed { lines += describe(name, samples, flipFrom: nil) }
+                for (name, samples) in changed { lines += describe(name, samples, flipFrom: height) }
             }
         }
         return UntrustedContent.wrap(lines.joined(separator: "\n"), source: "Kite trace")
@@ -235,7 +238,7 @@ final class UITracer: NSObject {
     /// One line for start → end, then progress samples (at most 40) for the property that changed most.
     private func describe(_ name: String, _ samples: [Sample], flipFrom height: Double?) -> [String] {
         func rect(_ frame: CGRect) -> UIRect {
-            // Layer frames are bottom-left in the window; accessibility frames were already converted.
+            // Frames are window base coordinates (bottom-left).
             guard let height else { return UIRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height) }
             return UIRect(x: frame.minX, y: height - frame.maxY, width: frame.width, height: frame.height)
         }
