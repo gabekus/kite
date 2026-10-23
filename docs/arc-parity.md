@@ -163,7 +163,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Feature | What it does in Arc | Kite | Plan |
 |---|---|---|---|
-| Command bar | Search tabs, history, actions, site search (type a site, Tab) | 🟡 URL/search + open tabs | B6: actions, history, site search |
+| Command bar | Search tabs, history, actions, site search (type a site, Tab) | 🟡 URL/search, open tabs, every menu command | B6: history (needs a history store), site search |
 | Sidebar | Favorites grid, pinned, unpinned "Today", folders, space switcher | 🟡 | Other session (favorites, folders, resize) |
 | Sidebar hover reveal | Hidden sidebar slides in at the left edge | ❌ | B5 |
 | Auto-archive | Unpinned tabs archive after 12h / 24h / 7d / 30d, per profile | 🟡 fixed 12h | B5: setting |
