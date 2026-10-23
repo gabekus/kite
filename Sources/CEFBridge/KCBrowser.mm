@@ -206,6 +206,16 @@ class KCClient : public CefClient,
         return false;
     }
 
+    void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                   TerminationStatus status,
+                                   int error_code,
+                                   const CefString& error_string) override {
+        KCBrowser* owner = owner_;
+        if ([owner.delegate respondsToSelector:@selector(browser:renderProcessDidTerminateWithCode:)]) {
+            [owner.delegate browser:owner renderProcessDidTerminateWithCode:error_code];
+        }
+    }
+
     CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(CefRefPtr<CefBrowser> browser,
                                                                    CefRefPtr<CefFrame> frame,
                                                                    CefRefPtr<CefRequest> request,

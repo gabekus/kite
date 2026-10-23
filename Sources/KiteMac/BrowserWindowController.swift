@@ -38,6 +38,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var shownTabID: UUID?
     private var shownSpaceID: UUID?
     private(set) weak var shownPage: WebPage?
+    /// The crashed-tab page over the shown tab, while its renderer is dead.
+    private var sadTab: NSHostingView<SadTabView>?
     /// Last dark-pages setting sent to each page, so it's only re-sent on change.
     private var appliedDark: [UUID: Bool] = [:]
     private var commandBarVisible = false
@@ -274,6 +276,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         emptyLabel.isHidden = tab != nil
         guard let tab else {
             glowView.setLoading(false, progress: 0)
+            updateSadTab()
             return
         }
 
@@ -302,6 +305,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         guard id == shownTabID else { return }
         let page = store.pages[id] ?? PageStatus()
         glowView.setLoading(page.isLoading, progress: page.progress)
+        updateSadTab()
+    }
+
+    private func updateSadTab() {
+        guard let code = shownTabID.flatMap({ store.pages[$0]?.crashCode }) else {
+            sadTab?.removeFromSuperview()
+            sadTab = nil
+            return
+        }
+        let view = SadTabView(code: code) { [weak self] in self?.shownPage?.reload() }
+        let host = sadTab ?? NSHostingView(rootView: view)
+        host.rootView = view
+        host.frame = contentClip.bounds
+        host.autoresizingMask = [.width, .height]
+        // Re-adding brings it above a page shown since.
+        contentClip.addSubview(host)
+        sadTab = host
     }
 
     private func updateCommandBar() {
