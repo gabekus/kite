@@ -29,6 +29,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
     private var sidebarHost: NSHostingView<SidebarView>!
+    private var trafficLights: TrafficLights!
     private var commandBarHost: NSHostingView<CommandBarOverlay>!
     private var contentLeading: NSLayoutConstraint!
     private var sidebarLeading: NSLayoutConstraint!
@@ -95,6 +96,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         store.saveNow()
         if isIncognito { pool.retain(live: [], restorable: []) }
     }
+
+    func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
+    func windowDidExitFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
 
     // MARK: Views
 
@@ -199,6 +203,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             commandBarHost.topAnchor.constraint(equalTo: rootView.topAnchor),
             commandBarHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
         ])
+        trafficLights = TrafficLights(window: window, host: sidebarHost)
     }
 
     private static let sidebarWidthKey = "SidebarWidth"

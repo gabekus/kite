@@ -4,6 +4,13 @@ import CoreGraphics
 /// screenshots (see docs/arc-visual-spec.md). Points at 1x, from the window's
 /// top-left or the named container's edge.
 enum ArcMetrics {
+    enum Window {
+        /// Close button's centre: Arc's 16pt buttons sit at x 12/32/52, y 16.
+        static let trafficLightCenter = CGPoint(x: 20, y: 24)
+        /// Centre to centre, close to minimize to zoom.
+        static let trafficLightPitch: CGFloat = 20
+    }
+
     enum Sidebar {
         /// Leading and trailing padding of the URL field, favorites, tab pills and bottom bar.
         static let padding: CGFloat = 8
