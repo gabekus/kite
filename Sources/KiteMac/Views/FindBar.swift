@@ -71,6 +71,8 @@ final class FindBar: NSView, NSTextFieldDelegate {
         let previous = Self.button("arrow.up", "Previous (⇧⌘G)") { [weak self] in self?.step(forward: false) }
         let next = Self.button("arrow.down", "Next (⌘G)") { [weak self] in self?.step(forward: true) }
         let done = Self.button("xmark", "Done (Esc)") { [weak self] in self?.onClose?() }
+        // The close glyph already matched Arc at the old size; only the arrows grew.
+        done.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
 
         let divider = NSBox()
         divider.boxType = .custom
