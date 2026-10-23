@@ -79,7 +79,7 @@ enum MainMenu {
             item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:)), id: "defaultBrowser"),
             // Until there's a Settings window.
             item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
-            submenuItem("Archive Tabs After", ArchiveInterval.allCases.enumerated().map { i, interval in
+            submenuItem("Archive tabs after", ArchiveInterval.allCases.enumerated().map { i, interval in
                 item(interval.title, #selector(AppDelegate.setArchiveInterval(_:)), tag: i, toTarget: false)
             }),
             .separator(),
@@ -99,7 +99,7 @@ enum MainMenu {
             // Temporary: remove with ArcImportController.swift after Arc shuts down (2026-12-22).
             item("Import from Arc…", #selector(BrowserWindowController.importFromArc(_:)), id: "importFromAnotherBrowser"),
             .separator(),
-            item("Close Tab", #selector(BrowserWindowController.closeTab(_:)), "w", id: "closeTab"),
+            item("Archive Tab", #selector(BrowserWindowController.closeTab(_:)), "w", id: "archiveTab"),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift], toTarget: false, id: "closeWindow"),
             .separator(),
             item("Share…", #selector(BrowserWindowController.share(_:)), id: "share"),
@@ -189,10 +189,6 @@ enum MainMenu {
         submenu("History", [
             item("Back", #selector(BrowserWindowController.goBack(_:)), "[", id: "goBack"),
             item("Forward", #selector(BrowserWindowController.goForward(_:)), "]", id: "goForward"),
-            // Arc's ⌘← / ⌘→. A focused text field still gets them for line start/end:
-            // Chromium offers key equivalents to the page first.
-            alternate(#selector(BrowserWindowController.goBack(_:)), left, .command),
-            alternate(#selector(BrowserWindowController.goForward(_:)), right, .command),
         ])
 
         submenu("Tabs", [

@@ -51,7 +51,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | New Profile | | ❌ | Thread: profiles |
 | New Easel | ⌃⇧E | ❌ | Thread: Easels (Skip?) |
 | Close Window | ⇧⌘W | ✅ | |
-| Archive Tab | ⌘W | ✅ closed unpinned tabs go to the archive (Library UI in its thread) | B3 |
+| Archive Tab | ⌘W | ✅ "Archive Tab" (`archiveTab`); closed unpinned tabs go to the archive. "Undo Archive Tab" (⌘Z) still to do | B3 |
 | Share… | | ✅ | |
 | Capture… / Full Page / Portrait | | ❌ | Thread: Capture |
 | Save Page As | | ✅ MHTML (Chromium) / web archive (WebKit) | |
@@ -131,7 +131,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| Go Back / Go Forward | ⌘[ / ⌘] (also ⌘← / ⌘→) | ✅ ⌘←/⌘→ as hidden alternates; text fields keep them | B3 |
+| Go Back / Go Forward | ⌘[ / ⌘] | ✅ Arc 1.169's binding table has no ⌘←/⌘→ (checked in the binary); whether pages handle them is pending the visual check | B3 |
 | View History | ⌘Y | ❌ | Thread: Library (history page) |
 | View Archive… / Clear Archive | | 🟡 archived tabs stored, no UI | Thread: Library |
 
@@ -166,7 +166,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Command bar | Search tabs, history, actions, site search (type a site, Tab) | ✅ URL/search, open tabs, history, every menu command, site search (imported from Arc) | Site Search editor: Settings thread |
 | Sidebar | Favorites grid, pinned, unpinned "Today", folders, space switcher | 🟡 | Other session (favorites, folders, resize) |
 | Sidebar hover reveal | Hidden sidebar slides in at the left edge | ❌ | B5 |
-| Auto-archive | Unpinned tabs archive after 12h / 24h / 7d / 30d, per profile | ✅ Kite menu → Archive Tabs After (moves to Settings) | B5 |
+| Auto-archive | "Archive tabs after": Never / 1 hour / 6 hours / 12 hours / 24 hours / 7 days / 30 days, per profile | ✅ Kite menu → Archive tabs after (moves to Settings; no profiles yet) | B5 |
 | Peek | Links from pinned tabs/favorites open in an overlay | ❌ | Thread: Peek |
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | ❌ | Thread: Peek |
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
