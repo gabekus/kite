@@ -161,7 +161,7 @@ public enum AccessibilityOutline {
         return flat.count > limit ? flat.prefix(limit - 1) + "…" : flat
     }
 
-    static func quote(_ text: String) -> String {
+    public static func quote(_ text: String) -> String {
         "\"" + text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 }

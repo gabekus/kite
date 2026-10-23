@@ -11,7 +11,9 @@ MainActor.assumeIsolated {
     // CEF requires its NSApplication subclass, so create it before anything touches NSApp.
     let app = KCApplication.shared as! KCApplication
     app.delegate = delegate
-    app.setActivationPolicy(.regular)
+    // Diagnostics runs start as an accessory app, which macOS doesn't bring forward at launch (AppDelegate
+    // makes it regular once launched).
+    app.setActivationPolicy(UIDiagnostics.enabledByEnvironment ? .accessory : .regular)
     app.willTerminate = { delegate.saveSession() }
 
     if KCRuntime.isAvailable && environment["KITE_ENGINE"] != "webkit" {
@@ -23,6 +25,10 @@ MainActor.assumeIsolated {
         // for "Chromium Safe Storage". KITE_MOCK_KEYCHAIN=0 or 1 overrides.
         settings.useMockKeychain = environment["KITE_MOCK_KEYCHAIN"].map { $0 == "1" }
             ?? (environment["KITE_SUPPORT_PATH"] != nil)
+        // Diagnostics runs sit behind the user's windows; keep pages painting so ui capture sees them.
+        if UIDiagnostics.enabledByEnvironment {
+            settings.extraSwitches = ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"]
+        }
         if KCRuntime.initialize(with: settings) {
             delegate.engine = ChromiumEngine()
             KCRuntime.runMessageLoop()
@@ -33,7 +39,7 @@ MainActor.assumeIsolated {
     #else
     let app = NSApplication.shared
     app.delegate = delegate
-    app.setActivationPolicy(.regular)
+    app.setActivationPolicy(UIDiagnostics.enabledByEnvironment ? .accessory : .regular)
     #endif
 
     delegate.engine = WebKitEngine()

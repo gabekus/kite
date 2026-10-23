@@ -30,6 +30,9 @@ let usage = """
       kite network [--tab ID]                        Network requests since then
       kite spaces                                    List spaces
       kite call TOOL [JSON]                          Call any MCP tool, e.g. kite call computer '{"action":"scroll"}'
+      kite ui ACTION [JSON] [-o FILE]                Kite's own UI (Diagnostics for Claude): windows, tree, capture,
+                                                     pointer, input, menu, key_log, trace. kite ui tree '{"match":"Sidebar"}'
+      kite probe APP [tree | capture] [...]          The same for another app, e.g. Arc (kite probe --help)
       kite tools                                     List every tool
       kite mcp                                       Run as an MCP server on stdin/stdout
 
@@ -167,7 +170,8 @@ struct Arguments {
     var options: [String: String] = [:]
     var flags: Set<String> = []
 
-    static let valued: Set<String> = ["--tab", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format"]
+    static let valued: Set<String> = ["--tab", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
+                                      "--window", "--depth", "--match", "--region", "--pixels"]
 
     init(_ raw: ArraySlice<String>) throws {
         var iterator = raw.makeIterator()
@@ -257,6 +261,20 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
         tool = "read_network_requests"
     case "spaces":
         tool = "list_spaces"
+    case "ui":
+        tool = "ui"
+        json["action"] = .string(try first("an action (windows, tree, capture, pointer, input, menu, key_log, trace)"))
+        if args.positional.count > 1 {
+            guard case .object(let given)? = try? JSONValue.decode(Data(args.positional[1].utf8)) else {
+                throw CLIError("The arguments must be a JSON object.")
+            }
+            json.merge(given) { _, new in new }
+        }
+        // Kite writes a capture at full resolution itself; the image sent back is scaled for Claude.
+        if json["action"] == .string("capture"), let output = args.options["-o"], json["save"] == nil {
+            json["save"] = .string(URL(fileURLWithPath: output).path)
+            json["image"] = .bool(false)
+        }
     case "call":
         tool = try first("a tool name")
         if args.positional.count > 1 {
@@ -328,6 +346,13 @@ func main() async -> Int32 {
             await runMCP(connection)
             return 0
         }
+        if name == "probe" {
+            if args.flags.contains("--help") || args.positional.isEmpty {
+                print(probeUsage)
+                return 0
+            }
+            return try await Probe.run(args)
+        }
         if name == "tools" {
             for tool in AutomationCommand.Tool.allCases { print("\(tool.rawValue): \(tool.summary)") }
             return 0
@@ -340,7 +365,7 @@ func main() async -> Int32 {
         }
         for content in output.content {
             switch content {
-            case .text(let text) where !output.content.contains(where: { if case .image = $0 { true } else { false } }):
+            case .text(let text) where tool == .ui || !output.content.contains(where: { if case .image = $0 { true } else { false } }):
                 print(text)
             case .text:
                 break
