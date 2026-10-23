@@ -39,7 +39,7 @@ Status: ✅ Kite already does this · 🟡 partial · ❌ gap.
 
 | Arc | Kite | Notes |
 |---|---|---|
-| Real titlebar hidden behind a custom view; traffic lights moved into the sidebar with their own hover zone; controls dim when the window isn't key. | 🟡 | We use `.fullSizeContentView` + transparent titlebar, so the lights already sit over the sidebar, but at the system position. Missing: repositioning them to line up with the sidebar's first row, following the sidebar when it's hidden or resized, and dimming sidebar controls when the window isn't key. |
+| The window's own titlebar buttons are hidden (`setHidden:` on each `standardWindowButton:`), and standalone ones made with `+standardWindowButton:forStyleMask:` live in the sidebar view, so they hide with it. Separate hover region and dimmed state (`windowTrafficLightRegionHoverState`, `DimmedWindowControls`). Confirmed in Arc 1.169's binary. | 🟡 | `TrafficLights.swift` does the same. Not yet observed: what Arc shows on hover or peek while the sidebar is hidden, and in full screen. |
 | Pinned favourites are a collection view with SwiftUI rows. | — | Owned by the sidebar session. |
 | Sidebar saved as one versioned JSON file (`StorableSidebar.json`), items plus separate ordered-ID lists. | 🟡 | Relevant to the Arc importer (`KiteCore/ArcImport.swift`). For our own `SessionStore`: keep a `version` field and order as an ID list so a reorder is one small write and old saves still load. |
 | Synced through CloudKit and Firestore side by side. | ❌ | Sync is on the roadmap; Arc shipping both suggests CloudKit alone wasn't enough for them (likely Windows). |
@@ -63,10 +63,9 @@ Status: ✅ Kite already does this · 🟡 partial · ❌ gap.
    sidebar static until drop. That lets a tab leave the sidebar (to a new
    window, a split, or another space) without re-laying out SwiftUI on every
    mouse move. Overlaps the sidebar session's area, so coordinate first.
-2. **Traffic lights aligned with the sidebar.** Move the standard window
-   buttons to sit in the sidebar's top row, re-place them on resize,
-   full-screen exit and sidebar toggle, and dim sidebar chrome when the window
-   resigns key.
+2. **Traffic lights in the sidebar.** Done like Arc: standalone window buttons
+   in the sidebar's top row, the titlebar's own hidden. Hover-reveal while the
+   sidebar is hidden waits on a recording of Arc.
 3. **Named springs + one Reduce Motion helper**, so every motion matches.
 4. **MetricKit** diagnostics (hangs, crashes, CPU exceptions) saved to the
    support folder. Not energy data: macOS doesn't deliver metric payloads.

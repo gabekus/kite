@@ -97,7 +97,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if isIncognito { pool.retain(live: [], restorable: []) }
     }
 
-    func windowDidResize(_ notification: Notification) { trafficLights?.place() }
     func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
     func windowDidExitFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
 
@@ -204,7 +203,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             commandBarHost.topAnchor.constraint(equalTo: rootView.topAnchor),
             commandBarHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
         ])
-        trafficLights = TrafficLights(window: window, hoverHost: rootView)
+        trafficLights = TrafficLights(window: window, host: sidebarHost)
     }
 
     private static let sidebarWidthKey = "SidebarWidth"
@@ -232,7 +231,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         themeView.glowRegion = sidebarVisible
             ? CGRect(x: sidebar.minX, y: rootView.bounds.height - sidebar.maxY, width: sidebar.width, height: sidebar.height)
             : .zero
-        trafficLights?.place()
     }
 
     // MARK: Sync with the store
@@ -322,7 +320,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         guard visible != sidebarVisible else { return }
         sidebarVisible = visible
         resizeHandle.isHidden = !visible
-        trafficLights.setSidebarVisible(visible)
         sidebarHost.isHidden = false
         sidebarToggles += 1
         let toggle = sidebarToggles
