@@ -12,21 +12,21 @@ final class FindBar: NSView, NSTextFieldDelegate {
         /// Gap to the content card's top and trailing edges.
         static let inset: CGFloat = 10
         /// The symbol image has ~2.5pt of side bearing, so the glyph lands at 10 like Arc's.
-        static let iconX: CGFloat = 7.5
-        static let textX: CGFloat = 33
-        static let counterTrailingX: CGFloat = 205
+        static let iconX: CGFloat = 8.5
+        static let textX: CGFloat = 32
+        static let counterTrailingX: CGFloat = 207
         static let previousCenterX: CGFloat = 225.5
-        static let nextCenterX: CGFloat = 247.5
+        static let nextCenterX: CGFloat = 252
         static let dividerX: CGFloat = 270
         static let closeCenterX: CGFloat = 283.5
-        // Fill, text and icon are set a step darker than Arc's captured pixels
+        // Fill, text, icon and caret are set a step darker than Arc's captured pixels
         // because they render ~6–15 levels lighter here; compared on the Mac against Arc.
-        static let fill = NSColor(srgbRed: 0x10 / 255, green: 0x19 / 255, blue: 0x30 / 255, alpha: 1)
+        static let fill = NSColor(srgbRed: 0x14 / 255, green: 0x1D / 255, blue: 0x32 / 255, alpha: 1)
         static let divider = NSColor(srgbRed: 0x0D / 255, green: 0x15 / 255, blue: 0x2A / 255, alpha: 1)
         static let text = NSColor(srgbRed: 0xD2 / 255, green: 0xD4 / 255, blue: 0xD8 / 255, alpha: 1)
-        static let icon = NSColor(srgbRed: 0xA0 / 255, green: 0xA4 / 255, blue: 0xAB / 255, alpha: 1)
+        static let icon = NSColor(srgbRed: 0x96 / 255, green: 0x9B / 255, blue: 0xA4 / 255, alpha: 1)
         static let counter = NSColor(srgbRed: 0xE8 / 255, green: 0xEA / 255, blue: 0xEF / 255, alpha: 1)
-        static let caret = NSColor(srgbRed: 0x41 / 255, green: 0x8F / 255, blue: 0xF8 / 255, alpha: 1)
+        static let caret = NSColor(srgbRed: 0x1B / 255, green: 0x7D / 255, blue: 0xFC / 255, alpha: 1)
     }
 
     var onSearch: ((_ text: String, _ forward: Bool, _ findNext: Bool) -> Void)?
@@ -51,7 +51,7 @@ final class FindBar: NSView, NSTextFieldDelegate {
 
         let icon = NSImageView(image: NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = Metrics.icon
-        icon.symbolConfiguration = .init(pointSize: 12, weight: .regular)
+        icon.symbolConfiguration = .init(pointSize: 13, weight: .regular)
 
         field.delegate = self
         field.isBordered = false
@@ -64,7 +64,7 @@ final class FindBar: NSView, NSTextFieldDelegate {
         field.cell?.wraps = false
         field.setAccessibilityLabel("Find on page")
 
-        countLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        countLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
         countLabel.textColor = Metrics.counter
         countLabel.alignment = .right
 
@@ -161,7 +161,7 @@ final class FindBar: NSView, NSTextFieldDelegate {
     private static func button(_ symbol: String, _ help: String, action: @escaping () -> Void) -> NSButton {
         let button = ClosureButton(action: action)
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)
-        button.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
+        button.symbolConfiguration = .init(pointSize: 13, weight: .medium)
         button.contentTintColor = Metrics.counter
         button.isBordered = false
         button.toolTip = help
