@@ -148,6 +148,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         automation.setUseClaudeSpace(!automation.settings.useClaudeSpace)
     }
 
+    @objc func toggleRecordNetwork(_ sender: Any?) {
+        automation.setRecordNetwork(!automation.settings.recordNetwork)
+    }
+
     @objc func connectClaudeCode(_ sender: Any?) {
         if !automation.isEnabled { automation.setEnabled(true) }
         guard automation.isEnabled else { return }
@@ -189,6 +193,9 @@ extension AppDelegate: NSMenuItemValidation {
             return automation.isEnabled
         case #selector(toggleClaudeSpace(_:)):
             item.state = automation.settings.useClaudeSpace ? .on : .off
+            return automation.isEnabled
+        case #selector(toggleRecordNetwork(_:)):
+            item.state = automation.settings.recordNetwork ? .on : .off
             return automation.isEnabled
         default:
             break

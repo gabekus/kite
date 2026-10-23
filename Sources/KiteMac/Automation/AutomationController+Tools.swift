@@ -24,6 +24,12 @@ extension AutomationController {
             return try resizeWindow(width: width, height: height)
         case .listDownloads:
             return .text(downloadsReport())
+        case .networkLog(let query):
+            return .text(network.report(try networkQuery(query), recording: isRecordingNetwork))
+        case let .networkRequest(id, body, maxBodyLength):
+            return try await networkRequest(id, body: body, maxBodyLength: maxBodyLength)
+        case let .exportHAR(query, bodies):
+            return try await exportHAR(try networkQuery(query), bodies: bodies)
         case .listSpaces, .switchSpace, .createSpace, .pinTab, .createFolder, .moveToFolder:
             return try kiteCommand(command)
         case .batch(let steps):

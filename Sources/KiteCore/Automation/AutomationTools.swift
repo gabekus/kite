@@ -14,6 +14,7 @@ extension AutomationCommand.Tool {
         "description": "[x, y] in screenshot pixels (CSS pixels of the viewport).",
     ]
     private static let format: JSONValue = ["type": "string", "enum": ["jpeg", "png"], "description": "jpeg (default, smaller) or png."]
+    private static let networkLimit: JSONValue = ["type": "integer", "minimum": 1, "maximum": 1000, "description": "Most requests to return, newest (default 50)."]
     private static let limit: JSONValue = ["type": "integer", "minimum": 1, "maximum": 1000, "description": "Most entries to return (default 100)."]
 
     public var title: String {
@@ -64,6 +65,12 @@ extension AutomationCommand.Tool {
             "Console messages and uncaught errors logged since Claude started driving the tab. pattern filters by regex; clear empties the log after reading."
         case .readNetwork:
             "Network requests since Claude started driving the tab: method, URL, status, type. url_pattern filters by regex."
+        case .networkLog:
+            "Kite's network log (HAR-style), one short line per finished request: #id, method, status, type, time, size, URL. Covers every tab while the user has Record Network for Claude on, otherwise the tabs Claude drives. Omit tab for every tab. Pass the returned cursor as since to get only newer requests (a cheap tail). Successful images, fonts, stylesheets and media are hidden unless type is \"all\". Filter by status (4xx, 5xx, errors), host, type (\"fetch,xhr\") or url_pattern. Secrets in URLs and headers are redacted."
+        case .networkRequest:
+            "One request from network_log in full, by its #id: URL, status, timing phases, redacted request and response headers, and (body, default true) the request and response bodies while the tab still holds them, redacted and cut to max_body_length (default 4000)."
+        case .exportHAR:
+            "Writes the network log as a HAR 1.2 file on this Mac (in Kite's profile, deleted after 7 days) and returns its path. Takes network_log's filters; bodies true adds text response bodies the tabs still hold."
         case .listDownloads:
             "Lists downloads Kite started this session and their state."
         case .listSpaces:
@@ -184,6 +191,24 @@ extension AutomationCommand.Tool {
         case .readNetwork:
             properties = ["tab": tab, "url_pattern": ["type": "string", "description": "Regular expression to match URLs."],
                           "limit": Self.limit, "clear": ["type": "boolean"]]
+        case .networkLog, .exportHAR:
+            properties = [
+                "tab": ["type": "string", "description": "Only this tab's requests. Omit for every tab."],
+                "since": ["type": "integer", "minimum": 0, "description": "The cursor from the last call: only newer requests."],
+                "status": ["type": "string", "enum": .array(NetworkLog.statusFilters.map { .string($0) })],
+                "host": ["type": "string", "description": "A host, including its subdomains (\"example.com\")."],
+                "type": ["type": "string", "description": "Comma-separated resource types (document, fetch, xhr, script, stylesheet, image, font, media, websocket, other), or \"all\"."],
+                "url_pattern": ["type": "string", "description": "Regular expression to match URLs."],
+                "limit": self == .networkLog ? Self.networkLimit : ["type": "integer", "minimum": 1, "maximum": .number(Double(NetworkLog.capacity))],
+            ]
+            if self == .exportHAR { properties["bodies"] = ["type": "boolean", "description": "Include text response bodies."] }
+        case .networkRequest:
+            properties = [
+                "id": ["type": "integer", "minimum": 1, "description": "The number after # in network_log."],
+                "body": ["type": "boolean", "description": "Include the bodies (default true)."],
+                "max_body_length": ["type": "integer", "minimum": 0, "description": "Most characters of each body (default 4000)."],
+            ]
+            required = ["id"]
         case .switchSpace:
             properties = ["space": ["type": "string", "description": "Space id or name."]]
             required = ["space"]
@@ -206,7 +231,7 @@ extension AutomationCommand.Tool {
 
     public var isReadOnly: Bool {
         switch self {
-        case .tabsContext, .readPage, .find, .getPageText, .screenshot, .readConsole, .readNetwork, .listDownloads, .listSpaces,
+        case .tabsContext, .readPage, .find, .getPageText, .screenshot, .readConsole, .readNetwork, .networkLog, .networkRequest, .listDownloads, .listSpaces,
              .waitFor:
             true
         default:
