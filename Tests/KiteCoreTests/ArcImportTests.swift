@@ -34,7 +34,7 @@ import Testing
                     ["red": 0.0, "green": 0.25, "blue": 1.2, "alpha": 1, "colorSpace": "extendedSRGB"],
                 ],
                 "modifiers": ["noiseFactor": 0.2, "overlay": "grain"],
-            ]]]]]]]]]],
+            ]]]]]]]], "intensityFactor": 0.8, "translucencyStyle": ["light": [:]]]],
             "profile": ["custom": ["_0": ["directoryBasename": "Profile 3", "machineID": "m"]]],
             "containerIDs": ["pinned", id(20), "unpinned", id(21)],
         ]
@@ -109,6 +109,7 @@ import Testing
         #expect(work.pinnedItems.isEmpty)
         #expect(work.theme.colors == [ThemeColor(r: 1, g: 0.5, b: 0), ThemeColor(r: 0, g: 0.25, b: 1)])
         #expect(abs(work.theme.grain - 0.2) < 0.001)
+        #expect(abs(work.theme.tint - Theme.defaultTint * 0.8) < 0.001)
 
         // Imported tabs count as fresh so auto-archive doesn't sweep them.
         #expect((result.spaces.flatMap(\.allTabs) + result.favorites).allSatisfy { $0.lastActiveAt == now })
