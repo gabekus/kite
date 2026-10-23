@@ -42,8 +42,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private(set) weak var shownPage: WebPage?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
-    /// Last dark-pages setting sent to each page, so it's only re-sent on change.
-    private var appliedDark: [UUID: Bool] = [:]
     private var commandBarVisible = false
     private var sidebarVisible = true
     /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
@@ -267,7 +265,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         let live = state.allTabIDs
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
-        appliedDark = appliedDark.filter { live.contains($0.key) }
         applyDarkPage()
         adblocker.setPolicy(enabled: state.blocksAds, allowedHosts: state.adblockAllowedHosts)
 
@@ -301,12 +298,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     /// Dark pages follow the site, so this re-checks whenever the shown tab's URL changes.
+    /// The page remembers what it was last told and skips repeats, so a page made
+    /// again for the same tab (discarded, restored) still gets it.
     private func applyDarkPage() {
         guard let id = shownTabID, let page = shownPage else { return }
-        let dark = store.state.wantsDarkPage(for: store.state.tab(id)?.url, systemIsDark: store.systemIsDark)
-        guard appliedDark[id] != dark else { return }
-        appliedDark[id] = dark
-        page.setForceDark(dark)
+        page.setForceDark(store.state.wantsDarkPage(for: store.state.tab(id)?.url, systemIsDark: store.systemIsDark))
     }
 
     private func pageChanged(_ id: UUID) {
