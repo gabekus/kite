@@ -27,6 +27,13 @@ final class KeyBindingsStore {
         apply(to: menu)
     }
 
+    /// Adds several overrides at once, replacing any for the same actions.
+    func merge(_ overrides: [KeyBindingOverride], menu: NSMenu?) {
+        overrides.forEach { bindings.set($0) }
+        save()
+        apply(to: menu)
+    }
+
     func reset(_ action: String, menu: NSMenu?) {
         bindings.reset(action)
         save()
