@@ -122,6 +122,24 @@ import Testing
         #expect(state.archived.map(\.tab.id) == [stale])
     }
 
+    @Test func closingArchivesUntilReopened() {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let tab = state.openTab(url: URL(string: "https://example.com"))
+        state.close(tab: tab)
+        #expect(state.archived.map(\.tab.id) == [tab])
+        state.reopenLastClosed()
+        #expect(state.archived.isEmpty)
+    }
+
+    @Test func archiveIntervalDefaultsToTwelveHoursAndPersists() throws {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        #expect(state.archiveAfter == .twelveHours)
+        state.archiveAfter = .week
+        let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
+        #expect(decoded.archiveAfter == .week)
+        #expect(ArchiveInterval.month.seconds == 30 * 24 * 3600)
+    }
+
     @Test func spacesCycleAndSelectionFollowsTab() {
         var state = BrowserState.makeDefault(seedURL: nil)
         let work = state.spaces[1].id
