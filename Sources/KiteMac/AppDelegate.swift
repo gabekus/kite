@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: BrowserWindowController!
     private var archiveTimer: Timer?
     private var automation: AutomationController!
+    private var diagnostics: DiagnosticsRecorder!
     /// Links opened before launch finished (Kite as the default browser).
     private var pendingURLs: [URL] = []
 
@@ -51,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         open(pendingURLs)
         pendingURLs = []
+
+        diagnostics = DiagnosticsRecorder(directory: Self.supportDirectory.appendingPathComponent("Diagnostics", isDirectory: true))
+        diagnostics.start()
 
         archiveTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.store.archiveStaleTabs(olderThan: Self.archiveAfter) }
