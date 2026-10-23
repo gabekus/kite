@@ -139,11 +139,70 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         browser.view.removeFromSuperview()
     }
 
+    // MARK: Kite's isolated world (SPIKE)
+
+    private var kiteWorldReady = false
+    /// Execution contexts of Kite's isolated world, by id, with their frame ids.
+    private var kiteContexts: [Int: String] = [:]
+
+    /// Google's "Add to Kite" buttons run in an isolated world whose binding only
+    /// Kite's script can call; the page's own scripts can't see either.
+    private func setUpKiteWorld() {
+        kiteWorldReady = true
+        browser.kiteEventHandler = { [weak self] method, params in self?.handleKiteEvent(method, params) }
+        browser.executeDevToolsMethod("Runtime.enable", params: nil, completion: nil)
+        browser.executeDevToolsMethod(
+            "Runtime.addBinding",
+            params: ["name": GoogleResultsScript.bindingName, "executionContextName": GoogleResultsScript.worldName],
+            completion: nil
+        )
+        browser.executeDevToolsMethod(
+            "Page.addScriptToEvaluateOnNewDocument",
+            params: ["source": GoogleResultsScript.source, "worldName": GoogleResultsScript.worldName, "runImmediately": true],
+            completion: nil
+        )
+    }
+
+    private func handleKiteEvent(_ method: String, _ params: [AnyHashable: Any]) {
+        switch method {
+        case "Runtime.executionContextCreated":
+            guard let context = params["context"] as? [String: Any], context["name"] as? String == GoogleResultsScript.worldName,
+                  let id = context["id"] as? Int, let frame = (context["auxData"] as? [String: Any])?["frameId"] as? String else { return }
+            kiteContexts[id] = frame
+        case "Runtime.executionContextDestroyed":
+            if let id = params["executionContextId"] as? Int { kiteContexts[id] = nil }
+        case "Runtime.executionContextsCleared":
+            kiteContexts.removeAll()
+        case "Runtime.bindingCalled":
+            guard params["name"] as? String == GoogleResultsScript.bindingName else { return }
+            let payload = params["payload"] as? String ?? ""
+            guard let context = params["executionContextId"] as? Int, let frame = kiteContexts[context],
+                  GoogleResultsScript.isSearchPage(address), let id = GoogleResultsScript.extensionID(fromPayload: payload) else {
+                NSLog("KiteSpike: rejected Add to Kite call %@ (context %@, page %@)", payload,
+                      String(describing: params["executionContextId"]), address?.absoluteString ?? "-")
+                return
+            }
+            browser.executeDevToolsMethod("Page.getFrameTree", params: nil) { [weak self] result in
+                guard let self else { return }
+                let main = ((result?["frameTree"] as? [String: Any])?["frame"] as? [String: Any])?["id"] as? String
+                guard main == frame, GoogleResultsScript.isSearchPage(self.address) else {
+                    NSLog("KiteSpike: rejected Add to Kite from frame %@ (main %@)", frame, main ?? "-")
+                    return
+                }
+                NSLog("KiteSpike: Add to Kite %@ from %@", id, self.address?.absoluteString ?? "-")
+                self.onEvent?(.addExtension(id: id))
+            }
+        default:
+            break
+        }
+    }
+
     // MARK: KCBrowserDelegate
 
     func browser(_ browser: KCBrowser, titleDidChange title: String) { onEvent?(.title(title)) }
     func browser(_ browser: KCBrowser, addressDidChange url: URL) {
         address = url
+        if !kiteWorldReady { setUpKiteWorld() }
         onEvent?(.url(url))
     }
     func browser(_ browser: KCBrowser, faviconDidChange url: URL?) { onEvent?(.favicon(url)) }
@@ -191,7 +250,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     @objc(browser:documentStartScriptForURL:)
     func browser(_ browser: KCBrowser, documentStartScriptFor url: URL) -> String? {
-        let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url), GoogleResultsScript.script(for: url)].compactMap { $0 }
+        let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url)].compactMap { $0 }
         return scripts.isEmpty ? nil : scripts.joined(separator: "\n")
     }
 

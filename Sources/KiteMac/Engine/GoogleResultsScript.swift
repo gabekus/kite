@@ -1,20 +1,37 @@
 import Foundation
 
 /// SPIKE: an "Add to Kite" button next to Chrome Web Store results on Google.
-/// It only opens the extension's store page with #kite-add, where WebStoreScript
-/// starts the store's own Add flow; installing still needs the user to confirm.
+///
+/// The script runs in Kite's isolated world ("kite"), where Google's own scripts
+/// can't reach its listeners or the `__kiteAddToKite` binding. A real (trusted)
+/// click calls the binding; ChromiumPage checks it came from that world in the main
+/// frame of a google.*/search page and only then asks Kite to open the store tab.
 enum GoogleResultsScript {
-    static func script(for url: URL) -> String? {
-        guard let host = url.host, url.path == "/search" else { return nil }
+    static let worldName = "kite"
+    static let bindingName = "__kiteAddToKite"
+
+    static func isSearchPage(_ url: URL?) -> Bool {
+        guard let url, url.scheme == "https", url.path == "/search", let host = url.host else { return false }
         let labels = host.split(separator: ".")
-        // google.com, www.google.co.uk, …
-        let isGoogle = labels.contains("google") && (labels.first == "google" || labels.first == "www")
-        return isGoogle ? source : nil
+        guard let google = labels.firstIndex(of: "google") else { return false }
+        // google.com, www.google.co.uk: nothing but "www" before it, a TLD after it.
+        return labels[..<google].allSatisfy { $0 == "www" } && google < labels.count - 1 && google <= 1
     }
 
-    private static let source = #"""
+    /// The extension id from the binding's payload, when it's well formed.
+    static func extensionID(fromPayload payload: String) -> String? {
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = object["id"] as? String,
+              id.count == 32, id.allSatisfy({ ("a"..."p").contains($0) }) else { return nil }
+        return id
+    }
+
+    static let source = #"""
     (() => {
-      if (!/(^|\.)google\.[a-z.]+$/.test(location.hostname) || location.pathname !== '/search' || window.__kiteAddButtons) return;
+      if (window !== window.top || window.__kiteAddButtons) return;
+      if (!/(^|\.)google\.[a-z.]+$/.test(location.hostname) || location.pathname !== '/search') return;
+      if (typeof __kiteAddToKite !== 'function') return;
       window.__kiteAddButtons = true;
       const ID = /^[a-p]{32}$/;
       // The extension id when `href` is a store detail page, directly or through Google's /url redirect.
@@ -34,37 +51,40 @@ enum GoogleResultsScript {
       style.textContent = `
         .kite-add { display: inline-flex; align-items: center; margin: 6px 0 2px; padding: 0 12px; height: 28px;
           border-radius: 14px; border: 1px solid #dadce0; background: #fff; color: #1a0dab; font: 500 13px/1 arial, sans-serif;
-          text-decoration: none; cursor: pointer; }
+          cursor: pointer; }
         .kite-add:hover { background: #f1f3f4; }
         @media (prefers-color-scheme: dark) {
           .kite-add { border-color: #5f6368; background: #303134; color: #99c3ff; }
           .kite-add:hover { background: #3c4043; }
         }`;
+      const seen = new WeakSet();
       const addButton = (link, id) => {
-        if (link.dataset.kiteAdd) return;
-        link.dataset.kiteAdd = '1';
+        seen.add(link);
         // The title link holds the result's h3; put the button on its own line under it.
-        const anchorBlock = link.closest('div') || link;
-        if (anchorBlock.parentElement?.querySelector(`:scope > .kite-add[data-id="${id}"]`)) return;
-        const button = document.createElement('a');
+        const block = link.closest('div') || link;
+        const button = document.createElement('button');
+        button.type = 'button';
         button.className = 'kite-add';
-        button.dataset.id = id;
         button.textContent = 'Add to Kite';
-        button.href = `https://chromewebstore.google.com/detail/${id}#kite-add`;
-        button.target = '_blank';
-        button.rel = 'noopener';
-        anchorBlock.insertAdjacentElement('afterend', button);
+        // Listeners added here live in Kite's world; the page can only send untrusted clicks.
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.isTrusted) __kiteAddToKite(JSON.stringify({ id }));
+        });
+        block.insertAdjacentElement('afterend', button);
       };
       const scan = () => {
         if (!style.isConnected && document.head) document.head.append(style);
         for (const link of document.querySelectorAll('a[href]')) {
-          if (!link.querySelector('h3') || link.dataset.kiteAdd) continue;
+          if (seen.has(link) || !link.querySelector('h3')) continue;
           const id = extensionID(link.getAttribute('href'));
           if (id) addButton(link, id);
+          else seen.add(link);
         }
       };
       new MutationObserver(scan).observe(document, { childList: true, subtree: true });
-      document.addEventListener('DOMContentLoaded', scan);
+      scan();
     })();
     """#
 }

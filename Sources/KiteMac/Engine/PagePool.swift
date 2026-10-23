@@ -18,6 +18,9 @@ final class PagePool {
     private var savedState: [UUID: Any] = [:]
     private var visibleID: UUID?
     private var memoryPressure: DispatchSourceMemoryPressure?
+    /// SPIKE: store tabs Kite opened from its own "Add to Kite" button, with the
+    /// extension id whose Add flow to start once the page has loaded.
+    private var pendingExtensionAdds: [UUID: String] = [:]
 
     init(engine: WebEngine, store: BrowserStore) {
         self.engine = engine
@@ -86,6 +89,11 @@ final class PagePool {
                 $0.canGoBack = canGoBack
                 $0.canGoForward = canGoForward
             }
+            if !isLoading { startPendingExtensionAdd(in: id) }
+        case .addExtension(let extensionID):
+            guard let url = URL(string: "https://chromewebstore.google.com/detail/\(extensionID)") else { return }
+            let tabID = store.mutate { $0.openTab(url: url, select: true) }
+            pendingExtensionAdds[tabID] = extensionID
         case let .openInNewTab(url, foreground):
             store.mutate { $0.openTab(url: url, select: foreground) }
         case .popup(let page):
@@ -103,6 +111,20 @@ final class PagePool {
                 $0.isLoading = false
             }
         }
+    }
+
+    /// Starts the store's Add flow, once, in a tab Kite opened for that extension and
+    /// only while it shows that extension's store page.
+    private func startPendingExtensionAdd(in id: UUID) {
+        guard let extensionID = pendingExtensionAdds[id], let page = pages[id] else { return }
+        guard let url = store.state.tab(id)?.url, url.host == "chromewebstore.google.com",
+              url.pathComponents.count >= 3, url.pathComponents[1] == "detail", url.lastPathComponent == extensionID else {
+            if store.state.tab(id) == nil { pendingExtensionAdds[id] = nil }
+            return
+        }
+        pendingExtensionAdds[id] = nil
+        NSLog("KiteSpike: starting the store's Add flow for %@", extensionID)
+        page.evaluateJavaScript(WebStoreScript.startAddScript) { _ in }
     }
 
     /// Hibernates tabs unless they're playing media or using the camera or mic.
