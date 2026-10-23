@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var engine: WebEngine!
 
     private var store: BrowserStore!
+    private var adblocker: Adblocker!
     private var windowController: BrowserWindowController!
     private var incognitoControllers: [BrowserWindowController] = []
     /// Routes menu commands to whichever browser window is in front.
@@ -34,7 +35,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
         store.archiveStaleTabs(olderThan: Self.archiveAfter)
 
-        windowController = BrowserWindowController(store: store, engine: engine)
+        adblocker = Adblocker(directory: Self.supportDirectory.appendingPathComponent("Adblock", isDirectory: true))
+        adblocker.setPolicy(enabled: store.state.blocksAds, allowedHosts: store.state.adblockAllowedHosts)
+        engine.attach(adblocker)
+        adblocker.start()
+
+        windowController = BrowserWindowController(store: store, engine: engine, adblocker: adblocker)
         menuRouter = MenuRouter(fallback: windowController)
         NSApp.mainMenu = MainMenu.build(target: menuRouter)
         // Registered after the menu bar is set so AppKit adds Help search and the window list.
@@ -73,7 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// ⇧⌘N. Each incognito window gets its own in-memory profile, gone when it closes.
     func openIncognitoWindow() {
-        let controller = BrowserWindowController(store: .incognito(), engine: engine.makeEphemeral(), incognito: true)
+        let controller = BrowserWindowController(
+            store: .incognito(), engine: engine.makeEphemeral(), adblocker: adblocker, incognito: true
+        )
         incognitoControllers.append(controller)
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: controller.window, queue: .main

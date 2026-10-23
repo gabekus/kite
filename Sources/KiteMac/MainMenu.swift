@@ -166,6 +166,9 @@ enum MainMenu {
             item("Dark Page for This Site", #selector(BrowserWindowController.toggleDarkPage(_:)), "d", [.command, .option]),
             darkPagesMenu(),
             .separator(),
+            item("Block Ads on This Site", #selector(BrowserWindowController.toggleAdblockForSite(_:)), "b", [.command, .option]),
+            item("Block Ads and Trackers", #selector(BrowserWindowController.toggleAdblock(_:))),
+            .separator(),
             submenuItem("Developer", [
                 item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option]),
                 item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option]),

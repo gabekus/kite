@@ -8,6 +8,7 @@ struct PageStatus: Equatable {
     var progress: Double = 0
     var canGoBack = false
     var canGoForward = false
+    var blockedCount = 0
 }
 
 enum CommandBarMode: Equatable {
