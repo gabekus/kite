@@ -4,8 +4,8 @@ import AppKit
 /// the way Arc does, and hides them while the sidebar is hidden (they come
 /// back while the pointer is over their spot).
 ///
-/// AppKit lays the titlebar out again on resize and full-screen changes, so
-/// `place()` has to run after each of those. Like Electron's
+/// AppKit lays the titlebar out again whenever it likes (resize, full screen,
+/// becoming key), so `place()` runs again after any of its frames move. Like Electron's
 /// `trafficLightPosition`, it reframes the titlebar container so the buttons sit
 /// centered at the wanted height, then sets each button's x.
 @MainActor
@@ -17,6 +17,11 @@ final class TrafficLights {
     private let hoverZone = HoverZone()
     private var sidebarVisible = true
     private var hovering = false
+    private var isPlacing = false
+    private var placeQueued = false
+    private var burstStart: TimeInterval = 0
+    private var burstCount = 0
+    private var observers: [NSObjectProtocol] = []
 
     init(window: NSWindow, hoverHost: NSView) {
         self.window = window
@@ -32,6 +37,42 @@ final class TrafficLights {
             self?.hovering = inside
             self?.updateVisibility(animated: true)
         }
+        observeTitlebar(window)
+    }
+
+    /// Puts the buttons back after AppKit's own titlebar layout moves them.
+    private func observeTitlebar(_ window: NSWindow) {
+        let center = NotificationCenter.default
+        var views: [NSView] = buttons
+        if let container = buttons.first?.superview?.superview { views.append(container) }
+        for view in views {
+            view.postsFrameChangedNotifications = true
+            observers.append(center.addObserver(forName: NSView.frameDidChangeNotification, object: view, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.queuePlace() }
+            })
+        }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.didBecomeMainNotification] {
+            observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.queuePlace() }
+            })
+        }
+    }
+
+    /// After AppKit's layout pass finishes, so the two don't fight inside it. Gives up
+    /// for a moment if AppKit keeps undoing it, rather than looping.
+    private func queuePlace() {
+        guard !isPlacing, !placeQueued else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - burstStart > 1 { burstStart = now; burstCount = 0 }
+        burstCount += 1
+        guard burstCount <= 10 else { return }
+        placeQueued = true
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                self?.placeQueued = false
+                self?.place()
+            }
+        }
     }
 
     private var buttons: [NSButton] {
@@ -45,6 +86,8 @@ final class TrafficLights {
         // In full screen the buttons live in the menu-bar reveal; leave them to AppKit.
         guard let window, !isFullScreen, let first = buttons.first,
               let container = first.superview?.superview else { return }
+        isPlacing = true
+        defer { isPlacing = false }
         let size = first.frame.size
         let margin = (Self.center.y - size.height / 2).rounded()
 
