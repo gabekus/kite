@@ -53,7 +53,7 @@ Status: ✅ Kite already does this · 🟡 partial · ❌ gap.
 | Little Arc, split view, auto-archive, Boosts | Each its own module. | Tracked in `arc-parity.md`. |
 | Updates | Sparkle, beta and stable channels. | Roadmap: Sparkle with signing. |
 | Feature flags | LaunchDarkly. | Not needed. |
-| Telemetry | Segment, Datadog, Sentry, OpenTelemetry, MetricKit, Firebase. | MetricKit only, if anything: free hang, launch and energy reports, no third party. |
+| Telemetry | Segment, Datadog, Sentry, OpenTelemetry, MetricKit, Firebase. | MetricKit only, no third party. On macOS it delivers diagnostics only (hangs, crashes, CPU and disk-write exceptions); launch and energy metrics are iOS-only, so energy comes from our own benchmark. |
 
 ## Gaps worth building
 
@@ -68,5 +68,5 @@ Status: ✅ Kite already does this · 🟡 partial · ❌ gap.
    full-screen exit and sidebar toggle, and dim sidebar chrome when the window
    resigns key.
 3. **Named springs + one Reduce Motion helper**, so every motion matches.
-4. **MetricKit** subscriber writing payloads to the support folder, as input
-   for the energy benchmark.
+4. **MetricKit** diagnostics (hangs, crashes, CPU exceptions) saved to the
+   support folder. Not energy data: macOS doesn't deliver metric payloads.
