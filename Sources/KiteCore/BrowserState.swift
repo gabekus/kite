@@ -1,5 +1,29 @@
 import Foundation
 
+/// How long an unpinned tab can sit unused before it's archived (Arc's Settings → General).
+public enum ArchiveInterval: String, Hashable, Codable, CaseIterable, Sendable {
+    case twelveHours, day, week, month
+
+    public var seconds: TimeInterval {
+        switch self {
+        case .twelveHours: 12 * 3600
+        case .day: 24 * 3600
+        case .week: 7 * 24 * 3600
+        case .month: 30 * 24 * 3600
+        }
+    }
+
+    /// Arc's wording.
+    public var title: String {
+        switch self {
+        case .twelveHours: "12 hours"
+        case .day: "24 hours"
+        case .week: "7 days"
+        case .month: "30 days"
+        }
+    }
+}
+
 public enum DarkPagesMode: String, Hashable, Codable, CaseIterable, Sendable {
     case off
     /// Darken sites that have no dark theme of their own whenever the OS is in dark mode.
@@ -26,6 +50,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public var adblockAllowedHosts: Set<String>
     /// Site Search shortcuts for the command bar (type the shortcut, then Tab).
     public var siteSearches: [SiteSearch]
+    /// When unpinned tabs archive themselves; Arc's default is 12 hours.
+    public var archiveAfter: ArchiveInterval
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -43,12 +69,13 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.blocksAds = true
         self.adblockAllowedHosts = []
         self.siteSearches = []
+        self.archiveAfter = .twelveHours
     }
 
     // Decode field by field so sessions saved by older versions still load.
     private enum CodingKeys: String, CodingKey {
         case spaces, favorites, selectedSpaceID, recentlyClosed, archived, searchEngine, darkPages, darkPageHosts
-        case blocksAds, adblockAllowedHosts, siteSearches
+        case blocksAds, adblockAllowedHosts, siteSearches, archiveAfter
     }
 
     public init(from decoder: Decoder) throws {
@@ -66,6 +93,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         blocksAds = try c.decodeIfPresent(Bool.self, forKey: .blocksAds) ?? true
         adblockAllowedHosts = try c.decodeIfPresent(Set<String>.self, forKey: .adblockAllowedHosts) ?? []
         siteSearches = try c.decodeIfPresent([SiteSearch].self, forKey: .siteSearches) ?? []
+        archiveAfter = try c.decodeIfPresent(ArchiveInterval.self, forKey: .archiveAfter) ?? .twelveHours
     }
 
     // MARK: Dark pages
@@ -232,10 +260,13 @@ public struct BrowserState: Hashable, Codable, Sendable {
             outcome = .unloaded
         } else {
             let tab = spaces[s].tabs.remove(at: location.index)
-            recentlyClosed.append(ClosedTab(tab: tab, spaceID: spaces[s].id, index: location.index))
+            let closed = ClosedTab(tab: tab, spaceID: spaces[s].id, index: location.index)
+            recentlyClosed.append(closed)
             if recentlyClosed.count > Self.recentlyClosedLimit {
                 recentlyClosed.removeFirst(recentlyClosed.count - Self.recentlyClosedLimit)
             }
+            // In Arc, closing an unpinned tab archives it: it stays findable in the archive.
+            appendToArchive([closed])
             outcome = .removed
         }
 
@@ -254,6 +285,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
         let s = spaceIndex(closed.spaceID) ?? selectedSpaceIndex
         var tab = closed.tab
         tab.lastActiveAt = now
+        // It's open again, so it's no longer in the archive.
+        archived.removeAll { $0.tab.id == tab.id }
         spaces[s].tabs.insert(tab, at: min(closed.index, spaces[s].tabs.count))
         spaces[s].selectedTabID = tab.id
         selectedSpaceID = spaces[s].id
@@ -336,17 +369,22 @@ public struct BrowserState: Hashable, Codable, Sendable {
             for (index, tab) in spaces[s].tabs.enumerated() {
                 if tab.id != selected && tab.lastActiveAt < cutoff {
                     removed.append(tab)
-                    archived.append(ClosedTab(tab: tab, spaceID: spaces[s].id, index: index))
+                    appendToArchive([ClosedTab(tab: tab, spaceID: spaces[s].id, index: index)])
                 } else {
                     kept.append(tab)
                 }
             }
             spaces[s].tabs = kept
         }
+        return removed
+    }
+
+    /// Adds tabs to the archive, dropping the oldest past `archiveLimit`.
+    mutating func appendToArchive(_ tabs: [ClosedTab]) {
+        archived.append(contentsOf: tabs)
         if archived.count > Self.archiveLimit {
             archived.removeFirst(archived.count - Self.archiveLimit)
         }
-        return removed
     }
 
     // MARK: Spaces

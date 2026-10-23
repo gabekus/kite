@@ -86,13 +86,24 @@ enum ArcMetrics {
         static let cornerRadius: CGFloat = 6
     }
 
+    /// Arc's timings: from its binary where it names them, else fitted from 60fps recordings.
+    enum Motion {
+        /// Space switch: the theme settles like `spring(response: 0.15, dampingFraction: 0.95)`.
+        static let spaceSwitchResponse: Double = 0.15
+        static let spaceSwitchDamping: Double = 0.95
+        /// Sidebar hide and show: 0.08s on a cubic Bézier through these control points, for both
+        /// directions. Arc sets the sidebar's and the content's frames once in an implicit
+        /// animation group and lets Core Animation draw the frames between.
+        static let sidebarToggleDuration: Double = 0.08
+        static let sidebarToggleCurve: (x1: Float, y1: Float, x2: Float, y2: Float) = (0.25, 0.46, 0.45, 0.94)
+    }
+
     enum CommandBar {
         static let width: CGFloat = 765
         /// Top edge as a share of the window's height, centred horizontally on the window.
         static let topFraction: CGFloat = 0.369
-        /// A plain circular corner. Fitted the same way as Arc's (a circle through the border's bright
-        /// pixels, which gave 9.4 for Arc), Kite's 11.5 gives the same fit.
-        static let cornerRadius: CGFloat = 11.5
+        /// Arc's command bar layer uses a 12pt circular corner (it sets no corner curve).
+        static let cornerRadius: CGFloat = 12
         static let borderOpacity: Double = 0.22
         /// A large soft drop shadow: it darkens the page 35% under the bottom edge, 25% at the
         /// sides and 16% at the top, fading out about 100pt away.

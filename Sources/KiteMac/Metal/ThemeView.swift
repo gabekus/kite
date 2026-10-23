@@ -56,7 +56,8 @@ final class ThemeView: MTKView, MTKViewDelegate {
     private var from: Theme
     private var to: Theme
     private var transitionStart: CFTimeInterval?
-    private let transitionDuration: CFTimeInterval = 0.4
+    /// Long enough for Arc's space-switch spring to settle within half a percent.
+    private let transitionDuration: CFTimeInterval = 0.3
     private let commandQueue = ShaderLibrary.shared.commandQueue
     private lazy var pipeline = ShaderLibrary.shared.pipeline(fragment: "kite_theme_fragment", pixelFormat: colorPixelFormat)
     private lazy var clock = FrameClock(view: self) { [unowned self] in draw() }
@@ -130,16 +131,24 @@ final class ThemeView: MTKView, MTKViewDelegate {
         needsDisplay = true
     }
 
+    /// Step response of SwiftUI's `spring(response:dampingFraction:)` with Arc's space-switch values.
+    private static func spring(_ t: CFTimeInterval) -> Double {
+        let zeta = ArcMetrics.Motion.spaceSwitchDamping
+        let omega = 2 * Double.pi / ArcMetrics.Motion.spaceSwitchResponse
+        let omegaD = omega * (1 - zeta * zeta).squareRoot()
+        return 1 - exp(-zeta * omega * t) * (cos(omegaD * t) + zeta * omega / omegaD * sin(omegaD * t))
+    }
+
     func draw(in view: MTKView) {
         var progress: Float = 1
         if let start = transitionStart {
             let now = clock.targetTimestamp ?? CACurrentMediaTime()
-            let t = max(now - start, 0) / transitionDuration
-            if t >= 1 {
+            let elapsed = max(now - start, 0)
+            if elapsed >= transitionDuration {
                 transitionStart = nil
                 from = to
             } else {
-                progress = Float(t * t * (3 - 2 * t))
+                progress = Float(min(Self.spring(elapsed), 1))
             }
         }
 

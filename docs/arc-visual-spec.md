@@ -123,7 +123,7 @@ importer doesn't keep yet.
 | Element | Arc | Notes |
 |---|---|---|
 | Panel | 765 wide, x 645.5 to 1410.5 (764 measured between the inner edges of the border) | Centred on the **window**, not the card: an incognito capture with the same 365pt sidebar puts it at the same x, 646 to 1410. Its centre, 1028, is the window's; the card's centre would be 1205.5. Top at y 474 in a 1285pt window (0.369 of the height) |
-| Panel style | fill `#1B1B1B` (`#181818` in an incognito window), 1pt border white at about 22% | No dimming behind it. A wide soft black shadow, measured over a `#28282A` page: it darkens the page by 35/29/23/18/10/6/2.5% at 1/20/30/40/60/80/100pt below the panel, by 26/17/13/10/5% at 1/20/30/40/60pt to the sides, and by 16% just above. A dark page hides it. Corner **10**, circular: over a light page, a circle fitted to the border's arc has radius 9.4 to 9.5 at the 1pt border's centre line (top-right and bottom-right corners), so the outer edge is 10 |
+| Panel style | fill `#1B1B1B` (`#181818` in an incognito window), 1pt border white at about 22% | No dimming behind it. A wide soft black shadow, measured over a `#28282A` page: it darkens the page by 35/29/23/18/10/6/2.5% at 1/20/30/40/60/80/100pt below the panel, by 26/17/13/10/5% at 1/20/30/40/60pt to the sides, and by 16% just above. A dark page hides it. Corner **12**, circular, from the decompiled `SuggestionsView`. Before the decompile: over a light page, a circle fitted to the border's arc has radius 9.4 to 9.5 at the 1pt border's centre line (top-right and bottom-right corners), so the outer edge is 10 |
 | Field | 63.5 tall | 18pt magnifier frame at x +22.5 (glyph about 11pt wide). Text field at x +52.5 (698 in the window), 23 tall. The placeholder "Search or Enter URL..." has a 10pt x-height, which is 18pt SF regular. It is white at about 25% (level 81 over the `#181818` fill) and 179.5pt wide |
 | Divider | y +63.5, 0.5pt | White at about 10%, 11pt in from the panel's edges |
 | Rows | 50pt apart, starting 4.5pt under the divider | Rows are 750 wide, 7.5 in from the panel. The fill is 746×44.5, 2pt in from the row, with a corner of about 8 |
@@ -167,7 +167,68 @@ accessibility dumper and pixel scripts.
 | Selected tab pill | white at about 20% | white at 20% |
 | ⌘T shadow, darkening at 1 / 20 / 30 / 60pt below | 35 / 29 / 23 / 10% | 38 / 32 / 26 / 12% (SwiftUI black at 0.9, radius 45, y 16) |
 | ⌘T placeholder | 18pt, level 81 | 18pt, level 83 |
-| ⌘T corner (circle fitted to the border's bright pixels) | 9.4 to 9.5 | 9.0 (Kite's value is 11.5, circular: SwiftUI's inner stroke sits differently, so the value was tuned until the fits matched) |
+| ⌘T corner | 12, circular (decompiled; a circle fit to the border gives 9.4) | 12, circular |
+
+## From Arc's binary (decompiled with Ghidra 12.1.4)
+
+Gabe approved decompiling Arc. The Ghidra project, the decompiled output and the scripts are in `~/rea-arc/decomp`
+on Gabe's Mac, and none of them are in this repo. The binary is stripped, so only a few functions have names, and
+most values can't be tied to a specific screen.
+
+**⌘T panel**
+- `CommandBar.SuggestionsView.updateLayer` sets `layer.cornerRadius = 12` and `maskedCorners = 0xc` (only the
+  bottom pair rounded in the layer's coordinates). It sets no `cornerCurve`, so the corner is circular.
+- Kite's ⌘T panel is now a circular 12. The light-page fit above, which suggested about 10, read low, most
+  likely because of the border.
+
+**Window materials** (`NSVisualEffectView`)
+- Most calls pass the material and blending mode through from a configuration value.
+- Two call sites hard-code a pair:
+  - `.popover` (6) with `.withinWindow` (1) and `isEmphasized = true`;
+  - `.windowBackground` (12) with `.behindWindow` (0).
+- Which one draws the sidebar couldn't be pinned down. Kite keeps `.sidebar` behind the window, which matches
+  the captures.
+
+**Animation vocabulary** (SwiftUI `Animation` calls, with the most frequent values first)
+
+| API | Values (count) |
+|---|---|
+| `spring(response:dampingFraction:blendDuration:)` | 0.5, 1.0, 0 (13); 0.3, 0.6, 0 (9); 0.15, 0.95, 0 (8); 0.28, 0.63, 0 (6); 0.18, 0.8, 0 (6); 1.25, 0.9, 0 (5); 0.4, 0.75, 0.1 (5); 0.25, 0.9, 0 (5); 0.2, 0.6, 0 (5) |
+| `easeInOut(duration:)` | 0.15 (16), 0.18 (13), 0.16 (11), 0.2 (8), 0.12 (6) |
+| `easeOut(duration:)` | 0.12 (8), 0.1 (7), 0.125 (3) |
+| `easeIn(duration:)` | 0.15 (6), 0.1 (3) |
+| `timingCurve` | (0.25, 0.1, 0.25, 1) — the CSS `ease` curve — at 0.3s (12), and also at 0.4, 0.25 and 0.2s |
+| `interpolatingSpring(mass:stiffness:damping:initialVelocity:)` | 8 one-offs, for example (1, 500, 25, 10) and (2, 200, 20, 1) |
+
+- Arc's house spring is critically damped with a 0.5s response. Quick fades are easeInOut at 0.15 to 0.18s.
+- The ⌘T panel itself doesn't animate (see the recording above).
+- These aren't applied to the space switch yet: the binary doesn't say which of them drives it.
+
+**Sidebar hide and show (⌘S)** (AppKit, not SwiftUI, so it isn't in the table above)
+- Both directions run one `NSAnimationContext` group: `duration` 0.08, `allowsImplicitAnimation`, and a
+  `CAMediaTimingFunction` with control points (0.25, 0.46, 0.45, 0.94).
+- Inside the group Arc sets the sidebar's frame and the web content container's frame once, then calls
+  `layoutSubtreeIfNeeded` once. Core Animation draws the frames between; nothing lays out per frame.
+- The sidebar slides with the content's edge. It doesn't fade.
+- On show, the sidebar is first laid out at its starting place and committed, then animated in.
+- A hidden sidebar has a hover reveal: a floating sidebar container that slides in with the same 0.08s curve
+  and fades some of its parts.
+- Two other window-layout animations aren't part of the toggle:
+  - a 0.2s relayout on the same curve when the home view's width changes;
+  - a 0.12s linear, auto-reversing 1.015× scale "bump" of the window contents when a Bool state turns on.
+
+## Animations, from 60fps recordings of Arc
+
+Recorded on Gabe's main Arc window, capturing only thin strips with no titles (the space-header row, and a 6pt
+strip near the bottom of the sidebar). The videos were deleted after measuring. Each motion was fitted against
+the springs and eases in Arc's binary (see the vocabulary table above).
+
+| Motion | Arc, as recorded | Best fit | Kite now |
+|---|---|---|---|
+| Space switch (⌘⌥→), theme colour | 64 / 73 / 78 / 87 / 91 / 98% per frame, settled by about 0.12s | `spring(response: 0.15, dampingFraction: 0.95)` (RMS 0.078; CSS ease at 0.1 to 0.12s is equivalent). Arc uses this spring 8 times | Same spring (`ArcMetrics.Motion`), settling within 0.3s. Recorded: 20 / 51 / 61 / 83 / 93 / 98% per frame |
+| Sidebar hide (⌘S), card edge | 365 → 236 → 106 → 46 → 20 → 10pt, 1 frame apart (about 80ms). Re-recorded: 365 → 289 → 115.5 → 42 → 10pt | Arc's own 0.08s on (0.25, 0.46, 0.45, 0.94), see above | Same group, 0.08s on that curve. Recorded at 120fps: 0.17 / 0.36 / 0.54 / 0.68 / 0.86 / 0.92 / 0.96 / 0.99 / 1, RMS 0.004 to Arc's curve |
+| Sidebar show | 10 → 145 → 292 → 340 → 362 → 365pt. Re-recorded: 10 → 113.5 → 275.5 → 331 → 362 → 365pt | Same | Same, RMS 0.004 |
+| ⌘T open and close | Instant | — | Instant |
 
 ## Still unknown
 
@@ -175,4 +236,4 @@ accessibility dumper and pixel scripts.
 - The pointer light's fade timing and whether it eases toward the pointer. Kite fades it over 0.15s and sticks it
   to the pointer.
 - The ⌘T panel's exact shadow parameters (only its effect was measured).
-- Arc's default sidebar width, light-theme fill opacities, and the space-switch and sidebar animation timings.
+- Arc's default sidebar width, light-theme fill opacities, and the space-switch animation timing.
