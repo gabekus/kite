@@ -31,11 +31,11 @@ public final class NetworkLogStore: @unchecked Sendable {
 
     /// Owner-only, where the platform has POSIX permissions.
     #if os(Windows)
-    static let privateFolder: [FileAttributeKey: Any] = [:]
-    static let privateFile: [FileAttributeKey: Any] = [:]
+    static var privateFolder: [FileAttributeKey: Any] { [:] }
+    static var privateFile: [FileAttributeKey: Any] { [:] }
     #else
-    static let privateFolder: [FileAttributeKey: Any] = [.posixPermissions: 0o700]
-    static let privateFile: [FileAttributeKey: Any] = [.posixPermissions: 0o600]
+    static var privateFolder: [FileAttributeKey: Any] { [.posixPermissions: 0o700] }
+    static var privateFile: [FileAttributeKey: Any] { [.posixPermissions: 0o600] }
     #endif
 
     public static func directory(supportDirectory: URL) -> URL {
