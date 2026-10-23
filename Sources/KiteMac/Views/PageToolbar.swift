@@ -24,10 +24,10 @@ struct PageToolbar: View {
         static let fontSize: CGFloat = 13
         // Greys tuned so a capture of Kite reads like Arc's: bar #2D2D2D, divider #3B3B3B,
         // icons #C3C3C3 (disabled #6C6C6C), host #D2D2D2.
-        static let background = grey(0x1A)
+        static let background = grey(0x24)
         static let divider = grey(0x2C)
         static let enabled = grey(0xB8)
-        static let disabled = grey(0x5E)
+        static let disabled = grey(0x59)
         static let text = grey(0xC8)
         static let siteControlsSize: CGFloat = 16
 
@@ -54,7 +54,9 @@ struct PageToolbar: View {
                     .frame(width: Metrics.buttonPitch, height: Metrics.height)
                     .help("Site Controls (not in Kite yet)")
                 Image(systemName: "rectangle.split.2x1")
-                    .font(.system(size: Metrics.iconSize, weight: .medium))
+                    .resizable()
+                    .fontWeight(.medium)
+                    .frame(width: 14, height: 14.5)
                     .foregroundStyle(Metrics.enabled)
                     .frame(width: Metrics.buttonPitch, height: Metrics.height)
                     .help("Split View (not in Kite yet)")
