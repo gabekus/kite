@@ -245,3 +245,57 @@ import JavaScriptCore
     }
 }
 #endif
+
+@Suite struct BrowserNagsTests {
+    @Test func isAnAdblockListWithRules() {
+        #expect(FilterList.looksValid(BrowserNags.list))
+        #expect(BrowserNags.list.contains("! License: MIT"))
+        #expect(BrowserNags.rules.count >= 8)
+        #expect(BrowserNags.trusted)
+    }
+
+    @Test func everyRuleIsCosmeticAndScopedToItsSites() {
+        for rule in BrowserNags.rules {
+            let domains = BrowserNags.domains(of: rule)
+            #expect(domains != nil, "\(rule) isn't a cosmetic rule")
+            #expect(domains?.isEmpty == false, "\(rule) applies to every site")
+            #expect(domains?.allSatisfy { !$0.hasPrefix("~") && $0.contains(".") } == true, "\(rule) has a bad domain")
+            #expect(!rule.contains("#@#"), "\(rule) is an exception")
+            #expect(!rule.contains("+js("), "\(rule) runs a scriptlet")
+            // adblock-rust rewrites `\b` in a :has-text() pattern as `\b ` (with a space).
+            #expect(!rule.contains(#"\b"#), "\(rule) uses \\b")
+        }
+    }
+
+    @Test func coversTheBrowsersSites() {
+        let domains = Set(BrowserNags.rules.flatMap { BrowserNags.domains(of: $0) ?? [] })
+        for site in ["www.google.*", "mail.google.com", "docs.google.com", "www.youtube.com", "bing.com",
+                     "office.com", "live.com", "microsoftedge.microsoft.com", "addons.opera.com", "forums.opera.com", "search.brave.com"] {
+            #expect(domains.contains(site), "no rule for \(site)")
+        }
+        // The Chrome Web Store is handled separately; www.microsoft.com hosts Edge's own download page.
+        #expect(!domains.contains { $0.hasPrefix("chromewebstore.") })
+        #expect(!domains.contains("microsoft.com") && !domains.contains("www.microsoft.com"))
+    }
+
+    @Test func parsesDomains() {
+        #expect(BrowserNags.domains(of: "a.com,b.org##.x") == ["a.com", "b.org"])
+        #expect(BrowserNags.domains(of: #"a.com#?#div:has-text(/x/)"#) == ["a.com"])
+        #expect(BrowserNags.domains(of: "##.generic") == [])
+        #expect(BrowserNags.domains(of: "||ads.example^") == nil)
+    }
+
+    @Test func isAppendedToTheDownloadedListsAsTrusted() {
+        let downloaded = [(text: Data("||ads.example^".utf8), trusted: false)]
+        let lists = BrowserNags.withBuiltIn(downloaded)
+        #expect(lists.count == 2)
+        #expect(lists[0].text == downloaded[0].text && !lists[0].trusted)
+        #expect(lists[1].text == Data(BrowserNags.list.utf8) && lists[1].trusted)
+        #expect(BrowserNags.withBuiltIn([]).count == 1)
+    }
+
+    @Test func fingerprintIsStableHex() {
+        #expect(BrowserNags.fingerprint == BrowserNags.fingerprint)
+        #expect(!BrowserNags.fingerprint.isEmpty && BrowserNags.fingerprint.allSatisfy(\.isHexDigit))
+    }
+}
