@@ -3,41 +3,50 @@ import KiteCore
 import WebKit
 
 /// WebKit has no DevTools protocol to drive, so Claude gets read-only access:
-/// the page's text and screenshots. Clicking and typing need the Chromium engine.
+/// the page's text and screenshots. Everything else needs the Chromium engine.
 @MainActor
 struct WebKitAutomation: PageAutomation {
     let webView: WKWebView
 
-    private static let unsupported = AutomationError(.unsupported,
-        "This Kite is running the WebKit engine, which lets Claude read pages and take screenshots but not click or type. Run Kite.app with Chromium for that.")
+    static let unsupported = AutomationError(.unsupported,
+        "This Kite is running the WebKit engine, which lets Claude read pages and take screenshots but not act on them. Run Kite.app with Chromium for that.")
 
-    func read() async throws -> (outline: String?, text: String) {
-        let text: String = try await withTimeout(10, "The page") { done in
-            webView.evaluateJavaScript(PageScripts.pageText) { result, error in
-                if let error { done(.failure(AutomationError(.failed, "The page threw: \(error.localizedDescription)"))) }
-                else { done(.success(result as? String ?? "")) }
-            }
-        }
-        return (nil, text)
+    func read(interactiveOnly: Bool) async throws -> (outline: String?, text: String) {
+        (nil, try await evaluate(PageScripts.pageText) as? String ?? "")
     }
 
-    func locate(_ target: AutomationTarget) async throws -> LocatedElement { throw Self.unsupported }
-    func focusedElement() async throws -> LocatedElement? { throw Self.unsupported }
-    func click(_ element: LocatedElement) async throws { throw Self.unsupported }
-    func type(_ text: String, into element: LocatedElement?, submit: Bool) async throws { throw Self.unsupported }
+    func mainText() async throws -> (source: String, text: String) {
+        let value = try await evaluate(PageScripts.mainText) as? [String: Any]
+        return (value?["source"] as? String ?? "body", value?["text"] as? String ?? "")
+    }
 
-    func screenshot() async throws -> Data {
+    func screenshot(format: ImageFormat) async throws -> Screenshot {
         let image: NSImage = try await withTimeout(10, "WebKit") { done in
-            webView.takeSnapshot(with: nil) { image, error in
+            let configuration = WKSnapshotConfiguration()
+            // One image pixel per CSS pixel, matching Chromium.
+            configuration.snapshotWidth = NSNumber(value: Double(webView.bounds.width))
+            webView.takeSnapshot(with: configuration) { image, error in
                 if let image { done(.success(image)) }
                 else { done(.failure(AutomationError(.failed, "WebKit couldn't capture the page: \(error?.localizedDescription ?? "no image")."))) }
             }
         }
-        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
-              let png = bitmap.representation(using: .png, properties: [:]) else {
-            throw AutomationError(.failed, "Couldn't encode the screenshot.")
+        let encoded: Data?
+        let bitmap = image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:))
+        switch format {
+        case .png: encoded = bitmap?.representation(using: .png, properties: [:])
+        case .jpeg: encoded = bitmap?.representation(using: .jpeg, properties: [.compressionFactor: 0.7])
         }
-        return png
+        guard let bitmap, let encoded else { throw AutomationError(.failed, "Couldn't encode the screenshot.") }
+        return Screenshot(data: encoded, format: format, width: bitmap.pixelsWide, height: bitmap.pixelsHigh)
+    }
+
+    private func evaluate(_ script: String) async throws -> Any? {
+        try await withTimeout(10, "The page") { done in
+            webView.evaluateJavaScript(script) { result, error in
+                if let error { done(.failure(AutomationError(.failed, "The page threw: \(error.localizedDescription)"))) }
+                else { done(.success(result)) }
+            }
+        }
     }
 }
 

@@ -1,6 +1,9 @@
 import AppKit
 import KiteCore
 import Observation
+#if canImport(CEFBridge)
+import CEFBridge
+#endif
 
 /// What the automation controller needs from the browser window.
 @MainActor
@@ -8,13 +11,15 @@ protocol AutomationHost: AnyObject {
     var window: NSWindow? { get }
     /// The tab's page, created in the background if it isn't live.
     func automationPage(for tab: BrowserTab) -> WebPage
+    func closeAutomatedTab(_ id: UUID)
 }
 
 /// "Claude in the browser", the local half: runs Claude's tool calls against
 /// real tabs, asks the user before anything that commits on their behalf, and
 /// tracks which tabs Claude is driving so the window can say so.
 ///
-/// Off by default. While off there's no socket at all.
+/// Off by default. While off there's no socket at all, and no DevTools events
+/// are collected from any tab.
 @MainActor
 @Observable
 final class AutomationController {
@@ -24,37 +29,71 @@ final class AutomationController {
         var connections: Set<Int>
     }
 
-    private(set) var isEnabled: Bool
+    struct Download: Equatable {
+        var id: Int
+        var url: String
+        var path: String
+        var state: String
+        var receivedBytes: Int64
+        var totalBytes: Int64
+    }
+
+    private(set) var settings: AutomationSettings
+    var isEnabled: Bool { settings.allowClaudeControl }
     /// Tabs Claude is driving right now, for the "Claude is controlling this tab" banner.
     private(set) var controlledTabs: [UUID: ControlledTab] = [:]
 
     @ObservationIgnored weak var host: AutomationHost?
-    @ObservationIgnored private let store: BrowserStore
+    @ObservationIgnored let store: BrowserStore
     @ObservationIgnored private let supportDirectory: URL
     @ObservationIgnored private var server: AutomationServer?
     /// Tabs the user pressed Stop on. Cleared when the setting is turned off and on again.
     @ObservationIgnored private var revoked: Set<UUID> = []
     @ObservationIgnored private var pendingConfirmations: [UUID: [NSAlert]] = [:]
     @ObservationIgnored private var expiryTimer: Timer?
+    /// Console, network and dialog state of tabs Claude has touched, and the page each was collected from.
+    @ObservationIgnored var activities: [UUID: TabActivity] = [:]
+    @ObservationIgnored private var trackedPages: [UUID: (page: ObjectIdentifier, actions: PageActions)] = [:]
+    @ObservationIgnored private var waiters: [UUID: [Waiter]] = [:]
+    @ObservationIgnored private var nextWaiterID = 0
+    /// Tabs Claude opened itself; closing any other tab asks first.
+    @ObservationIgnored var claudeOpened: Set<UUID> = []
+    @ObservationIgnored private(set) var downloads: [Int: Download] = [:]
+    @ObservationIgnored private var downloadObserver: NSObjectProtocol?
+    /// Each tab's last read, the baseline for change-only reads.
+    @ObservationIgnored var snapshots: [UUID: PageDiff.Snapshot] = [:]
 
-    private enum Timing {
+    /// True while a batch runs: a step that would need confirmation stops the batch instead of asking.
+    @TaskLocal static var inBatch = false
+
+    struct NeedsConfirmation: Error {
+        let request: ConfirmationRequest
+    }
+
+    enum Timing {
         static let idleWhileConnected: TimeInterval = 120
         static let idleAfterDisconnect: TimeInterval = 15
         static let loadWait: TimeInterval = 10
         static let confirmationWait: TimeInterval = 120
     }
 
+    private struct Waiter {
+        let id: Int
+        let check: (String?, JSONValue, TabActivity) -> Bool
+        let finish: (Bool) -> Void
+    }
+
     init(store: BrowserStore, supportDirectory: URL) {
         self.store = store
         self.supportDirectory = supportDirectory
-        isEnabled = AutomationSettings.load(from: AutomationSettings.fileURL(supportDirectory: supportDirectory)).allowClaudeControl
+        settings = AutomationSettings.load(from: AutomationSettings.fileURL(supportDirectory: supportDirectory))
     }
 
     var socketURL: URL { AutomationWire.socketURL(supportDirectory: supportDirectory) }
 
     /// Opens the socket if the setting is on. Call once the window exists.
     func start() {
-        if isEnabled && !openSocket() { isEnabled = false }
+        if isEnabled && !openSocket() { settings.allowClaudeControl = false }
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -64,14 +103,26 @@ final class AutomationController {
         } else {
             server?.stop()
             server = nil
-            stop(tabs: Set(controlledTabs.keys).union(pendingConfirmations.keys))
+            stop(tabs: Set(controlledTabs.keys).union(pendingConfirmations.keys).union(trackedPages.keys))
             revoked.removeAll()
+            activities.removeAll()
+            snapshots.removeAll()
+            claudeOpened.removeAll()
+            if let downloadObserver { NotificationCenter.default.removeObserver(downloadObserver) }
+            downloadObserver = nil
         }
-        isEnabled = enabled
+        update { $0.allowClaudeControl = enabled }
+    }
+
+    func setAllowJavaScript(_ allow: Bool) { update { $0.allowJavaScript = allow } }
+    func setUseClaudeSpace(_ use: Bool) { update { $0.useClaudeSpace = use } }
+
+    private func update(_ change: (inout AutomationSettings) -> Void) {
+        change(&settings)
         do {
-            try AutomationSettings(allowClaudeControl: enabled).save(to: AutomationSettings.fileURL(supportDirectory: supportDirectory))
+            try settings.save(to: AutomationSettings.fileURL(supportDirectory: supportDirectory))
         } catch {
-            NSLog("Kite: couldn't save the automation setting: \(error)")
+            NSLog("Kite: couldn't save the automation settings: \(error)")
         }
     }
 
@@ -88,8 +139,14 @@ final class AutomationController {
             for alert in pendingConfirmations.removeValue(forKey: id) ?? [] {
                 host?.window?.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
             }
+            for waiter in waiters.removeValue(forKey: id) ?? [] { waiter.finish(false) }
+            if let tracked = trackedPages.removeValue(forKey: id) {
+                Task { await tracked.actions.stopEvents() }
+            }
         }
     }
+
+    func isRevoked(_ id: UUID) -> Bool { revoked.contains(id) }
 
     private func openSocket() -> Bool {
         let server = AutomationServer(
@@ -115,12 +172,27 @@ final class AutomationController {
         expiryTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.expireIdleTabs() }
         }
+        watchDownloads()
         return true
+    }
+
+    private func watchDownloads() {
+        #if canImport(CEFBridge)
+        guard downloadObserver == nil else { return }
+        downloadObserver = NotificationCenter.default.addObserver(forName: .KCDownloadDidUpdate, object: nil, queue: .main) {
+            [weak self] note in
+            guard let info = note.userInfo, let id = (info["id"] as? NSNumber)?.intValue else { return }
+            let download = Download(
+                id: id, url: info["url"] as? String ?? "", path: info["path"] as? String ?? "", state: info["state"] as? String ?? "",
+                receivedBytes: (info["receivedBytes"] as? NSNumber)?.int64Value ?? 0, totalBytes: (info["totalBytes"] as? NSNumber)?.int64Value ?? -1)
+            MainActor.assumeIsolated { self?.downloads[id] = download }
+        }
+        #endif
     }
 
     // MARK: Control indicator
 
-    private func markControlled(_ id: UUID, connection: Int) {
+    func markControlled(_ id: UUID, connection: Int) {
         var entry = controlledTabs[id] ?? ControlledTab(lastActive: Date(), connections: [])
         entry.lastActive = Date()
         entry.connections.insert(connection)
@@ -141,7 +213,99 @@ final class AutomationController {
             let idle = entry.connections.isEmpty ? Timing.idleAfterDisconnect : Timing.idleWhileConnected
             if now.timeIntervalSince(entry.lastActive) > idle || !live.contains(id) { controlledTabs[id] = nil }
         }
+        // Closed tabs take their logs with them.
+        for id in Array(snapshots.keys) where !live.contains(id) { snapshots[id] = nil }
+        for id in Array(activities.keys) where !live.contains(id) {
+            activities[id] = nil
+            trackedPages[id] = nil
+        }
         if !isEnabled { expiryTimer?.invalidate() }
+    }
+
+    // MARK: Events and waiting
+
+    /// Starts collecting a tab's DevTools events, once per page (a hibernated tab gets a new page).
+    func track(_ id: UUID, page: WebPage, actions: PageActions) async throws {
+        let identity = ObjectIdentifier(page)
+        guard trackedPages[id]?.page != identity else { return }
+        trackedPages[id] = (identity, actions)
+        if activities[id] == nil { activities[id] = TabActivity() }
+        try await actions.startEvents { [weak self] method, params in
+            self?.received(method, params, tab: id)
+        }
+    }
+
+    private func received(_ method: String, _ params: JSONValue, tab id: UUID) {
+        guard activities[id] != nil, activities[id]!.ingest(method: method, params: params) || method.hasPrefix("Page.") else { return }
+        wakeWaiters(id, method: method, params: params)
+        if method.hasPrefix("Network.") || method == "Page.frameNavigated" {
+            // Network idleness needs a quiet period with no further events.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
+                MainActor.assumeIsolated { self?.wakeWaiters(id, method: nil, params: .object([:])) }
+            }
+        }
+    }
+
+    private func wakeWaiters(_ id: UUID, method: String?, params: JSONValue) {
+        guard let list = waiters[id], let activity = activities[id] else { return }
+        for waiter in list where waiter.check(method, params, activity) { waiter.finish(true) }
+    }
+
+    /// Waits until `check` passes for one of the tab's events (method nil is a timer tick), or the timeout.
+    func waitForEvent(_ id: UUID, timeout: TimeInterval, check: @escaping (String?, JSONValue, TabActivity) -> Bool) async -> Bool {
+        if check(nil, .object([:]), activities[id] ?? TabActivity()) { return true }
+        let waiterID = nextWaiterID
+        nextWaiterID += 1
+        return await withCheckedContinuation { continuation in
+            var done = false
+            let finish: (Bool) -> Void = { [weak self] result in
+                guard !done else { return }
+                done = true
+                self?.waiters[id]?.removeAll { $0.id == waiterID }
+                continuation.resume(returning: result)
+            }
+            waiters[id, default: []].append(Waiter(id: waiterID, check: check, finish: finish))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
+                MainActor.assumeIsolated { self?.wakeWaiters(id, method: nil, params: .object([:])) }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { finish(false) }
+        }
+    }
+
+    /// Runs an action, but returns early if it opens a JavaScript dialog: the page is
+    /// frozen until the dialog is answered, so the input event wouldn't finish until then.
+    func untilDialog(_ id: UUID, _ action: @escaping () async throws -> Void) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            var done = false
+            let finish: (Result<Void, Error>) -> Void = { result in
+                guard !done else { return }
+                done = true
+                continuation.resume(with: result)
+            }
+            Task {
+                do {
+                    try await action()
+                    finish(.success(()))
+                } catch {
+                    finish(.failure(error))
+                }
+            }
+            Task {
+                if await self.waitForEvent(id, timeout: Timing.loadWait * 3, check: { _, _, activity in activity.dialog != nil }) {
+                    finish(.success(()))
+                }
+            }
+        }
+    }
+
+    /// Lets a click or Return start its navigation, then waits (briefly) for the load to finish.
+    func settle(_ id: UUID, startDelay: TimeInterval = 0.25) async {
+        try? await Task.sleep(for: .seconds(startDelay))
+        if activities[id]?.dialog != nil { return }
+        let deadline = Date().addingTimeInterval(Timing.loadWait)
+        while store.pages[id]?.isLoading == true, Date() < deadline, activities[id]?.dialog == nil {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     // MARK: Running tool calls
@@ -160,156 +324,42 @@ final class AutomationController {
         }
     }
 
-    private func run(_ command: AutomationCommand, connection: Int) async throws -> ToolOutput {
-        if case .listTabs = command { return .text(AutomationReport.tabs(tabList())) }
-        if case let .navigate(nil, url, true) = command { return try await openNewTab(url, connection: connection) }
-
-        let tab = try resolveTab(command.tab)
-        markControlled(tab.id, connection: connection)
-        guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
-        let page = host.automationPage(for: tab)
-        guard let driver = page.automation else { throw AutomationError(.unsupported, "This tab's engine can't be automated.") }
-
-        switch command {
-        case .listTabs:
-            fatalError("handled above")
-
-        case .readPage(_, let limit):
-            let (outline, text) = try await driver.read()
-            let current = store.state.tab(tab.id) ?? tab
-            return .text(AutomationReport.page(tab: tab.id, url: current.url, title: current.displayTitle,
-                                               outline: outline, text: text, textLimit: limit))
-
-        case .click(_, let target):
-            let element = try await driver.locate(target)
-            try await authorize(.click(element.description), tab: tab)
-            try await driver.click(element)
-            await settle(tab.id)
-            return report("Clicked \(Self.name(target)).", tab.id)
-
-        case let .type(_, target, text, submit):
-            let element: LocatedElement
-            if let target {
-                element = try await driver.locate(target)
-            } else if let focused = try await driver.focusedElement() {
-                element = focused
-            } else {
-                throw AutomationError(.notFound, "Nothing on the page has keyboard focus. Pass a ref or selector.")
-            }
-            try await authorize(.type(element.description, text: text, submit: submit), tab: tab)
-            try await driver.type(text, into: element, submit: submit)
-            if submit { await settle(tab.id) }
-            let into = target.map { " into \(Self.name($0))" } ?? ""
-            return report("Typed \(text.count) characters\(into)\(submit ? " and pressed Return" : "").", tab.id)
-
-        case let .navigate(_, string, _):
-            let url = try authorizeURL(string)
-            try await authorize(.navigate(url), tab: tab)
-            page.load(url)
-            await settle(tab.id, startDelay: 0.3)
-            return report("Loaded.", tab.id)
-
-        case .screenshot:
-            let png = try await driver.screenshot()
-            return ToolOutput(content: [
-                .image(base64: png.base64EncodedString(), mimeType: "image/png"),
-                .text("Screenshot of tab \(tab.id.uuidString)."),
-            ])
-        }
-    }
-
-    private func openNewTab(_ string: String, connection: Int) async throws -> ToolOutput {
-        let url = try authorizeURL(string)
-        guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
-        let id = store.mutate { $0.openTab(url: url, select: false) }
-        guard let tab = store.state.tab(id) else { throw AutomationError(.failed, "Couldn't open a tab.") }
-        markControlled(id, connection: connection)
-        do {
-            try await authorize(.navigate(url), tab: tab)
-        } catch {
-            store.mutate { _ = $0.close(tab: id) }
-            throw error
-        }
-        _ = host.automationPage(for: tab)
-        await settle(id, startDelay: 0.3)
-        return report("Opened a new background tab.", id)
-    }
-
-    private func authorizeURL(_ string: String) throws -> URL {
-        guard let url = URLInput.resolve(string, engine: store.state.searchEngine) else {
-            throw AutomationError(.invalidArguments, "\"\(string)\" isn't a URL.")
-        }
-        return url
-    }
-
-    private func report(_ action: String, _ id: UUID) -> ToolOutput {
-        let tab = store.state.tab(id)
-        return .text(AutomationReport.afterAction(action, tab: id, url: tab?.url, title: tab?.displayTitle ?? ""))
-    }
-
-    private static func name(_ target: AutomationTarget) -> String {
-        switch target {
-        case .ref(let ref): ref
-        case .selector(let selector): "the element matching \(selector)"
-        }
-    }
-
-    private func tabList() -> [AutomationReport.Tab] {
-        let state = store.state
-        let front = state.selectedTab?.id
-        var tabs = state.favorites.map {
-            AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: "Favorites", section: "favorite", isFront: $0.id == front)
-        }
-        for space in state.spaces {
-            tabs += space.pinned.map {
-                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "pinned", isFront: $0.id == front)
-            }
-            tabs += space.tabs.map {
-                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "tab", isFront: $0.id == front)
-            }
-        }
-        return tabs
-    }
-
-    private func resolveTab(_ string: String?) throws -> BrowserTab {
+    func resolveTab(_ string: String?) throws -> BrowserTab {
         let tab: BrowserTab?
         if let string {
             guard let id = UUID(uuidString: string.trimmingCharacters(in: .whitespaces)) else {
-                throw AutomationError(.invalidArguments, "\"\(string)\" isn't a tab id. Call list_tabs for ids.")
+                throw AutomationError(.invalidArguments, "\"\(string)\" isn't a tab id. Call tabs_context for ids.")
             }
             tab = store.state.tab(id)
         } else {
             tab = store.state.selectedTab
         }
-        guard let tab else { throw AutomationError(.notFound, "That tab isn't open. Call list_tabs for the open tabs.") }
+        guard let tab else { throw AutomationError(.notFound, "That tab isn't open. Call tabs_context for the open tabs.") }
         if revoked.contains(tab.id) { throw AutomationError.stopped }
         return tab
     }
 
-    /// Lets a click or Return start its navigation, then waits (briefly) for the load to finish.
-    private func settle(_ id: UUID, startDelay: TimeInterval = 0.25) async {
-        try? await Task.sleep(for: .seconds(startDelay))
-        let deadline = Date().addingTimeInterval(Timing.loadWait)
-        while store.pages[id]?.isLoading == true, Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(100))
-        }
-    }
-
     // MARK: Confirmation
 
-    private func authorize(_ action: AutomationAction, tab: BrowserTab) async throws {
+    func authorize(_ action: AutomationAction, tab: BrowserTab) async throws {
         switch AutomationPolicy.evaluate(action, host: store.state.tab(tab.id)?.url?.host()) {
         case .allow:
             break
         case .deny(let reason):
             throw AutomationError(.denied, reason)
         case .confirm(let request):
-            guard await confirm(request, tab: tab.id) else {
-                if revoked.contains(tab.id) { throw AutomationError.stopped }
-                throw AutomationError.denied(request.action)
-            }
+            try await require(request, tab: tab.id)
         }
         if revoked.contains(tab.id) { throw AutomationError.stopped }
+    }
+
+    /// Asks the user; throws if they say no. Inside a batch it stops the batch instead.
+    func require(_ request: ConfirmationRequest, tab id: UUID) async throws {
+        if Self.inBatch { throw NeedsConfirmation(request: request) }
+        guard await confirm(request, tab: id) else {
+            if revoked.contains(id) { throw AutomationError.stopped }
+            throw AutomationError.denied(request.action)
+        }
     }
 
     /// Shows the tab and asks. Deny is the default button; no answer within two minutes is a no.
@@ -349,15 +399,16 @@ final class AutomationController {
         return executable.deletingLastPathComponent().appendingPathComponent("kite-cli").path
     }
 
+    /// `KITE_SUPPORT_PATH`, when this Kite runs on a test profile, so the CLI finds the same socket.
+    var profileOverride: String? { ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] }
+
     var claudeCodeCommand: String {
-        var command = "claude mcp add kite"
-        if let profile = ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] {
-            command += " -e KITE_SUPPORT_PATH=\(Self.shellQuote(profile))"
-        }
+        var command = "claude mcp add -s user kite"
+        if let profileOverride { command += " -e KITE_SUPPORT_PATH=\(Self.shellQuote(profileOverride))" }
         return command + " -- \(Self.shellQuote(cliPath)) mcp"
     }
 
-    private static func shellQuote(_ string: String) -> String {
+    static func shellQuote(_ string: String) -> String {
         string.allSatisfy { $0.isLetter || $0.isNumber || "/._-".contains($0) }
             ? string : "'" + string.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }

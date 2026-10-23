@@ -24,10 +24,12 @@ public struct MCPServer: Sendable {
 
     public static let instructions = """
         Kite is the user's own web browser. These tools act in their real tabs, signed in as them. \
-        Call read_page before click or type to get element refs. \
+        Call tabs_context first for tab ids, and read_page or find before click, type or form_input to get element refs; \
+        screenshot pixels are the coordinates the computer tool clicks. Tools work on background tabs without switching to them. \
         \(UntrustedContent.notice) \
         Kite asks the user before anything that submits a form, sends, posts, pays, buys or deletes, and before typing \
-        into password or payment fields; if they decline, the tool returns an error. Don't retry a declined action.
+        into password or payment fields, and before running JavaScript; if they decline, the tool returns an error. \
+        Don't retry a declined action.
         """
 
     public var tools: JSONValue {
@@ -39,7 +41,7 @@ public struct MCPServer: Sendable {
                 "inputSchema": tool.inputSchema,
                 "annotations": [
                     "readOnlyHint": .bool(tool.isReadOnly),
-                    "destructiveHint": .bool(tool == .click || tool == .type),
+                    "destructiveHint": .bool(tool.isDestructive),
                     "openWorldHint": true,
                 ],
             ]
@@ -47,10 +49,10 @@ public struct MCPServer: Sendable {
     }
 
     /// Handles one parsed message. Returns nil for notifications and responses, which get no reply.
-    /// `callTool` runs a tool; it's only called for valid `tools/call` requests.
+    /// `callTool` runs a tool with its arguments as sent; it's only called once they parse.
     public func handle(
         _ message: JSONValue,
-        callTool: @Sendable (AutomationCommand) async -> ToolOutput
+        callTool: @Sendable (AutomationCommand.Tool, JSONValue) async -> ToolOutput
     ) async -> JSONValue? {
         guard case .object(let object) = message else {
             return Self.error(id: .null, .invalidRequest, "Expected a JSON-RPC object (batches aren't supported).")
@@ -86,12 +88,15 @@ public struct MCPServer: Sendable {
             guard let name = params?["name"]?.stringValue else {
                 return Self.error(id: id, .invalidParams, "tools/call needs a tool name.")
             }
-            guard AutomationCommand.Tool(rawValue: name) != nil else {
+            guard let tool = AutomationCommand.Tool(name: name) else {
                 return Self.error(id: id, .invalidParams, "Unknown tool \"\(name)\".")
             }
+            let arguments = params?["arguments"] ?? .object([:])
             let output: ToolOutput
             do {
-                output = await callTool(try AutomationCommand(tool: name, arguments: params?["arguments"]))
+                // Validate here so the model hears about bad arguments without a round trip to the app.
+                _ = try AutomationCommand(tool: name, arguments: arguments)
+                output = await callTool(tool, arguments)
             } catch {
                 // Bad arguments are a tool error the model can read and fix, not a protocol error.
                 output = .failure(AutomationError(.invalidArguments, "\(error)"))

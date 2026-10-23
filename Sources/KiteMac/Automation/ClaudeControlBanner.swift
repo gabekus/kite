@@ -59,7 +59,17 @@ struct ClaudeControlBanner: View {
 
 extension BrowserWindowController: AutomationHost {
     func automationPage(for tab: BrowserTab) -> WebPage {
-        pool.page(for: tab)
+        let page = pool.page(for: tab)
+        // A tab that has never been shown has no size of its own yet; lay it out like the
+        // visible page area, so Claude reads and captures what the user would see.
+        if page.view.superview == nil, contentFrame.bounds.width > 0, page.view.frame.size != contentFrame.bounds.size {
+            page.view.frame = CGRect(origin: .zero, size: contentFrame.bounds.size)
+        }
+        return page
+    }
+
+    func closeAutomatedTab(_ id: UUID) {
+        close(tab: id)
     }
 
     /// Pins the banner to the top of the page area, above the web view.
