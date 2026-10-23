@@ -11,7 +11,7 @@ struct SadTabView: View {
         static let glyphFrame: CGFloat = 96
         /// The glyph's drawn size inside its frame.
         static let glyphSize = CGSize(width: 88, height: 95)
-        static let glyphToText: CGFloat = 68
+        static let glyphToText: CGFloat = 64
         static let fontSize: CGFloat = 13
         static let codeFontSize: CGFloat = 13
         // Text frames sit a little inside Arc's measured ink: 22 and 23.5 from the card's edges.
