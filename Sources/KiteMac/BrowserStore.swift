@@ -33,6 +33,10 @@ final class BrowserStore {
     /// nil for an incognito window: nothing is written to disk.
     @ObservationIgnored private let session: SessionStore?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// Browsing history to record into; nil for an incognito window.
+    @ObservationIgnored var history: HistoryStore?
+    /// The URL each tab last recorded, so repeated reports of one page count once.
+    @ObservationIgnored private var recordedURLs: [UUID: URL] = [:]
 
     private static let spaceIcons = ["🌿", "🎨", "📚", "🎧", "🧪", "✈️", "🍳", "🎮"]
 
@@ -106,12 +110,20 @@ final class BrowserStore {
     // MARK: Page events from web views
 
     func pageTitleChanged(_ id: UUID, _ title: String?) {
-        guard let title, !title.isEmpty, state.tab(id)?.title != title else { return }
+        guard let title, !title.isEmpty else { return }
+        if let url = recordedURLs[id] { history?.updateTitle(url, title) }
+        guard state.tab(id)?.title != title else { return }
         mutate { $0.update(tab: id) { $0.title = title } }
     }
 
     func pageURLChanged(_ id: UUID, _ url: URL?) {
-        guard let url, state.tab(id)?.url != url else { return }
+        guard let url else { return }
+        // Before the tab check: a typed URL is already on the tab when the page reports it.
+        if recordedURLs[id] != url {
+            recordedURLs[id] = url
+            history?.recordVisit(url, title: "")
+        }
+        guard state.tab(id)?.url != url else { return }
         mutate { $0.update(tab: id) { $0.url = url } }
     }
 
@@ -130,6 +142,7 @@ final class BrowserStore {
 
     func clearPage(_ id: UUID) {
         pages[id] = nil
+        recordedURLs[id] = nil
     }
 
     // MARK: Persistence

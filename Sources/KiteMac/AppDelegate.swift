@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var engine: WebEngine!
 
     private var store: BrowserStore!
+    private var history: HistoryStore!
     private var adblocker: Adblocker!
     private var windowController: BrowserWindowController!
     private var incognitoControllers: [BrowserWindowController] = []
@@ -35,6 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
         store.archiveStaleTabs(olderThan: Self.archiveAfter)
+        history = HistoryStore(fileURL: Self.supportDirectory.appendingPathComponent("history.json"))
+        store.history = history
 
         adblocker = Adblocker(directory: Self.supportDirectory.appendingPathComponent("Adblock", isDirectory: true))
         adblocker.setPolicy(enabled: store.state.blocksAds, allowedHosts: store.state.adblockAllowedHosts)
@@ -111,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func saveSession() {
         store?.saveNow()
+        history?.saveNow()
     }
 
     // MARK: Settings

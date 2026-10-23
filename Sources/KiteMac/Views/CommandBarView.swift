@@ -5,6 +5,7 @@ enum CommandSuggestion: Identifiable, Hashable {
     case open(URL)
     case search(String, URL)
     case switchTab(BrowserTab)
+    case history(HistoryEntry)
     case command(MenuCommand)
 
     var id: String {
@@ -12,6 +13,7 @@ enum CommandSuggestion: Identifiable, Hashable {
         case .open(let url): "open:\(url.absoluteString)"
         case .search(let query, _): "search:\(query)"
         case .switchTab(let tab): "tab:\(tab.id)"
+        case .history(let entry): "history:\(entry.url.absoluteString)"
         case .command(let command): "command:\(command.path)/\(command.title)"
         }
     }
@@ -67,14 +69,20 @@ private struct CommandBarView: View {
             .filter { mode == .newTab || $0.tab.id != state.selectedTab?.id }
             .map { CommandSuggestion.switchTab($0.tab) }
         let search = CommandSuggestion.search(text, state.searchEngine.searchURL(for: text))
+        // Pages visited before, minus any already open as a tab.
+        let openURLs = Set(TabSearch.rank(text, in: state, limit: 5).compactMap(\.tab.url))
+        let visited = (store.history?.search(text, limit: 6) ?? [])
+            .filter { !openURLs.contains($0.url) }
+            .prefix(3)
         if URLInput.looksLikeURL(text), let url = URLInput.resolve(text, engine: state.searchEngine) {
-            return [.open(url)] + tabs + [search]
+            return [.open(url)] + tabs + visited.filter { $0.url != url }.map(CommandSuggestion.history) + [search]
         }
+        let history = visited.map(CommandSuggestion.history)
         // Menu commands, Arc-style. A strong match ("copy url") goes above the web search.
         let commands = mode == .newTab ? MenuCommand.search(text, in: NSApp.mainMenu) : []
         let strong = commands.filter { $0.score >= 80 }.map { CommandSuggestion.command($0.command) }
         let weak = commands.filter { $0.score < 80 }.map { CommandSuggestion.command($0.command) }
-        return strong + [search] + tabs + weak
+        return strong + [search] + tabs + history + weak
     }
 
     var body: some View {
@@ -163,7 +171,8 @@ private struct SuggestionRow: View {
                 .foregroundStyle(highlighted ? Color(accent) : .primary)
                 .padding(.leading, C.rowIconX)
                 .padding(.trailing, C.rowTitleX - C.rowIconX - C.rowIconTileSize)
-            Text(title)
+            // Arc's "Title — url" rows: the part after the dash is dimmer.
+            (Text(title) + Text(subtitle.map { " — " + $0 } ?? "").foregroundColor(highlighted ? .white.opacity(0.7) : .primary.opacity(0.5)))
                 .lineLimit(1)
                 .opacity(highlighted ? 1 : C.rowTextOpacity)
             Spacer(minLength: C.actionGap)
@@ -197,6 +206,7 @@ private struct SuggestionRow: View {
         case .open: Image(systemName: "globe").resizable().scaledToFit()
         case .search: Image(systemName: "magnifyingglass").resizable().scaledToFit()
         case .switchTab(let tab): FaviconView(tab: tab, size: C.rowIconSize)
+        case .history(let entry): FaviconView(page: entry.url, size: C.rowIconSize)
         case .command: Image(systemName: "command").resizable().scaledToFit()
         }
     }
@@ -206,6 +216,7 @@ private struct SuggestionRow: View {
         case .open(let url): url.absoluteString
         case .search(let query, _): query
         case .switchTab(let tab): tab.displayTitle
+        case .history(let entry): entry.displayTitle
         case .command(let command): command.title
         }
     }
@@ -216,8 +227,18 @@ private struct SuggestionRow: View {
         case .open: "Open"
         case .search: "Search \(engine.displayName)"
         case .switchTab: "Switch to Tab"
+        case .history: nil
         case .command(let command): command.shortcut ?? command.path
         }
+    }
+
+    /// Shown after the title, like Arc's "The Browser Company — youtube.com/c/thebrowsercompany".
+    private var subtitle: String? {
+        guard case .history(let entry) = suggestion, !entry.title.isEmpty else { return nil }
+        let url = entry.url
+        let host = (url.host() ?? "").replacingOccurrences(of: "www.", with: "")
+        let path = url.path() == "/" ? "" : url.path()
+        return host + path
     }
 }
 
