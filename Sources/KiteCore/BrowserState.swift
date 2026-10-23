@@ -65,6 +65,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public var adblockAllowedHosts: Set<String>
     /// Site Search shortcuts for the command bar (type the shortcut, then Tab).
     public var siteSearches: [SiteSearch]
+    /// Which version of Arc's default Site Searches has been added, so a deleted default stays deleted.
+    var siteSearchDefaultsSeeded: Int
     /// When unpinned tabs archive themselves; Arc's default is 12 hours.
     public var archiveAfter: ArchiveInterval
 
@@ -84,13 +86,15 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.blocksAds = true
         self.adblockAllowedHosts = []
         self.siteSearches = []
+        self.siteSearchDefaultsSeeded = 0
         self.archiveAfter = .twelveHours
+        seedDefaultSiteSearches()
     }
 
     // Decode field by field so sessions saved by older versions still load.
     private enum CodingKeys: String, CodingKey {
         case spaces, favorites, selectedSpaceID, recentlyClosed, archived, searchEngine, darkPages, darkPageHosts
-        case blocksAds, adblockAllowedHosts, siteSearches, archiveAfter
+        case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,6 +112,9 @@ public struct BrowserState: Hashable, Codable, Sendable {
         blocksAds = try c.decodeIfPresent(Bool.self, forKey: .blocksAds) ?? true
         adblockAllowedHosts = try c.decodeIfPresent(Set<String>.self, forKey: .adblockAllowedHosts) ?? []
         siteSearches = try c.decodeIfPresent([SiteSearch].self, forKey: .siteSearches) ?? []
+        siteSearchDefaultsSeeded = try c.decodeIfPresent(Int.self, forKey: .siteSearchDefaultsSeeded) ?? 0
+        // Sessions saved before Kite had Arc's defaults get them now.
+        seedDefaultSiteSearches()
         archiveAfter = try c.decodeIfPresent(ArchiveInterval.self, forKey: .archiveAfter) ?? .twelveHours
     }
 
