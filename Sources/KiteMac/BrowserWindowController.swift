@@ -304,17 +304,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         store.hideCommandBar()
         switch suggestion {
         case .open(let url), .search(_, let url):
-            if mode == .editCurrent, let id = store.state.selectedTab?.id {
-                store.mutate { $0.update(tab: id) { $0.url = url } }
-                pool.loadedPage(id)?.load(url)
-            } else {
-                store.mutate { $0.openTab(url: url) }
-            }
+            open(url, mode: mode)
+        case .history(let entry):
+            open(entry.url, mode: mode)
         case .switchTab(let tab):
             store.mutate { $0.select(tab: tab.id) }
         case .command(let command):
             // After the bar closes, so the command sees the page as first responder, not the bar's field.
             DispatchQueue.main.async { command.perform() }
+        }
+    }
+
+    private func open(_ url: URL, mode: CommandBarMode) {
+        if mode == .editCurrent, let id = store.state.selectedTab?.id {
+            store.mutate { $0.update(tab: id) { $0.url = url } }
+            pool.loadedPage(id)?.load(url)
+        } else {
+            store.mutate { $0.openTab(url: url) }
         }
     }
 
