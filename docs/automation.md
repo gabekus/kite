@@ -44,7 +44,8 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 
 | (none) | `batch` | `kite call batch` | Several tool calls in one round trip. See below. |
 
-`kite call TOOL '{json}'` reaches any tool. `kite tools` lists them all. The old names `list_tabs`,
+`kite call TOOL '{json}'` reaches any tool. Options can go before or after the command
+(`kite --socket PATH mcp`). `kite tools` lists them all. The old names `list_tabs`,
 `tabs_*_mcp` and `javascript_tool` still work.
 
 ### `computer`
@@ -78,13 +79,14 @@ Most of an agent's time goes to model round trips and context, not to the browse
   `wait_for` text, then `read_page` with `changes_only`. A batch-wide `tab` applies to every step that doesn't name
   one. It stops at the first error.
 
-  It also stops before any step that would need the user's OK, without asking. That step has to be called on its
+  It also pauses (not an error) before any step that would need the user's OK, without asking. That step has to be called on its
   own, so the user sees it on its own and a batch can never chain past a confirmation. Every step goes through the
   same policy as a single call.
 - **Change-only reads.** Kite keeps each tab's last `read_page` as a baseline. After a click, type, `form_input`,
   key press, dialog answer or navigation, the result adds what changed since that read: outline and text lines,
   marked + and −. It's capped at 60 lines; past that, or on a new page, it says to call `read_page`.
-  `read_page` with `changes_only` returns only the diff. A tab that was never read costs nothing extra.
+  `read_page` with `changes_only` returns only the diff; the first one on a tab only records the baseline and says so,
+  so it stays small. `type` warns when the field it typed into isn't visible (a hidden copy of a search box, say). A tab that was never read costs nothing extra.
 - **Cheaper screenshots.**
   - JPEG (quality 70) is the default; `format: "png"` gives lossless. On a Wikipedia article that was 65 KB instead
     of 165 KB.
