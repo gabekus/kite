@@ -5,9 +5,9 @@ import AppKit
 /// back while the pointer is over their spot).
 ///
 /// AppKit lays the titlebar out again on resize and full-screen changes, so
-/// `place()` has to run after each of those. Same approach as Electron's
-/// `trafficLightPosition`: grow the titlebar container so the buttons sit
-/// centered at the wanted height, then set each button's x.
+/// `place()` has to run after each of those. Like Electron's
+/// `trafficLightPosition`, it reframes the titlebar container so the buttons sit
+/// centered at the wanted height, then sets each button's x.
 @MainActor
 final class TrafficLights {
     private static let center = ArcMetrics.Window.trafficLightCenter
@@ -48,12 +48,15 @@ final class TrafficLights {
         let size = first.frame.size
         let margin = (Self.center.y - size.height / 2).rounded()
 
-        var frame = container.frame
-        frame.size.height = size.height + 2 * margin
-        frame.origin.y = window.frame.height - frame.height
+        let firstX = (Self.center.x - size.width / 2).rounded()
+        let lastMaxX = firstX + CGFloat(buttons.count - 1) * Self.pitch + size.width
+        // Only as wide as the buttons: the titlebar takes every click inside it (for dragging
+        // and double-click zoom), and full width it would cover the sidebar's top row.
+        let frame = CGRect(x: 0, y: window.frame.height - (size.height + 2 * margin),
+                           width: lastMaxX + 2, height: size.height + 2 * margin)
         if container.frame != frame { container.frame = frame }
 
-        var x = (Self.center.x - size.width / 2).rounded()
+        var x = firstX
         for button in buttons {
             let origin = CGPoint(x: x, y: margin)
             if button.frame.origin != origin { button.setFrameOrigin(origin) }
