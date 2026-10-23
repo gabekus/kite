@@ -23,6 +23,9 @@ struct MenuCommand: Hashable {
                 if let submenu = item.submenu {
                     walk(submenu, path: path + [item.title])
                 } else if item.action != nil, item.isEnabled, !item.title.isEmpty,
+                          // AppKit's window list in the Window menu: titled after pages, not commands.
+                          item.action != #selector(NSWindow.makeKeyAndOrderFront(_:)),
+                          !(item.target is NSWindow), !(item.representedObject is NSWindow),
                           let score = CommandSearch.score(query, title: item.title) {
                     results.append((MenuCommand(item: item, path: path.joined(separator: " › ")), score))
                 }

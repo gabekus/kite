@@ -306,17 +306,23 @@ func runMCP(_ connection: KiteConnection) async {
 }
 
 func main() async -> Int32 {
-    let raw = CommandLine.arguments.dropFirst()
-    guard let name = raw.first, !["-h", "--help", "help"].contains(name) else {
+    // Options may come before the command too: `kite --socket PATH mcp`.
+    var raw = Array(CommandLine.arguments.dropFirst())
+    var commandIndex = 0
+    while commandIndex < raw.count, raw[commandIndex].hasPrefix("-"), !["-h", "--help", "--version"].contains(raw[commandIndex]) {
+        commandIndex += Arguments.valued.contains(raw[commandIndex]) ? 2 : 1
+    }
+    guard commandIndex < raw.count, !["-h", "--help", "help"].contains(raw[commandIndex]) else {
         print(usage)
         return raw.isEmpty ? 1 : 0
     }
+    let name = raw.remove(at: commandIndex)
     if name == "--version" || name == "version" {
         print("kite \(version)")
         return 0
     }
     do {
-        let args = try Arguments(raw.dropFirst())
+        let args = try Arguments(raw[...])
         let connection = KiteConnection(path: socketPath(args))
         if name == "mcp" {
             await runMCP(connection)

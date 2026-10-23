@@ -202,6 +202,14 @@ CefRefPtr<CefResourceRequestHandler> KCAdblockRequestHandler(KCBrowser* owner) {
 #endif
 }
 
+CefRefPtr<CefRequestContextHandler> KCAdblockContextHandler() {
+#if KC_HAS_ADBLOCK
+    return new AdblockContextHandler();
+#else
+    return nullptr;
+#endif
+}
+
 CefRefPtr<CefRequestContext> KCAdblockRequestContext() {
 #if KC_HAS_ADBLOCK
     // Shares cookies and storage with the global context; only adds the handler.

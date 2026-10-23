@@ -1,55 +1,105 @@
 import AppKit
 
-/// Find in page (⌘F): a small floating bar at the top right of the page.
-/// Return / ⇧Return step through matches; Esc closes it.
+/// Find in page (⌘F), matching Arc 1.169: a 300×32 navy bar at the content
+/// card's top-right corner with a magnifier, the query, an n/N counter,
+/// previous / next arrows, a divider and close. Return / ⇧Return step through matches; Esc closes it.
 @MainActor
-final class FindBar: NSVisualEffectView, NSSearchFieldDelegate {
+final class FindBar: NSView, NSTextFieldDelegate {
+    /// Measured from Arc in points; x positions are from the bar's leading edge.
+    enum Metrics {
+        static let size = NSSize(width: 300, height: 32)
+        static let cornerRadius: CGFloat = 6
+        /// Gap to the content card's top and trailing edges.
+        static let inset: CGFloat = 10
+        /// The symbol image has ~2.5pt of side bearing, so the glyph lands at 10 like Arc's.
+        static let iconX: CGFloat = 8.5
+        static let textX: CGFloat = 32
+        static let counterTrailingX: CGFloat = 207
+        static let previousCenterX: CGFloat = 225.5
+        static let nextCenterX: CGFloat = 252
+        static let dividerX: CGFloat = 270
+        static let closeCenterX: CGFloat = 283.5
+        // Colours are tuned so a screen capture of Kite reads the same as one of Arc:
+        // captures in the display profile read ~10–15 levels lighter once converted
+        // to sRGB, so Arc's captured #1B263F fill is really about #141D32.
+        static let fill = NSColor(srgbRed: 0x14 / 255, green: 0x1D / 255, blue: 0x32 / 255, alpha: 1)
+        static let divider = NSColor(srgbRed: 0x0D / 255, green: 0x15 / 255, blue: 0x2A / 255, alpha: 1)
+        static let text = NSColor(srgbRed: 0xD2 / 255, green: 0xD4 / 255, blue: 0xD8 / 255, alpha: 1)
+        static let icon = NSColor(srgbRed: 0x96 / 255, green: 0x9B / 255, blue: 0xA4 / 255, alpha: 1)
+        static let counter = NSColor(srgbRed: 0xE8 / 255, green: 0xEA / 255, blue: 0xEF / 255, alpha: 1)
+        static let caret = NSColor(srgbRed: 0x11 / 255, green: 0x7A / 255, blue: 0xFD / 255, alpha: 1)
+    }
+
     var onSearch: ((_ text: String, _ forward: Bool, _ findNext: Bool) -> Void)?
     var onClose: (() -> Void)?
 
-    let field = NSSearchField()
+    let field = NSTextField()
     private let countLabel = NSTextField(labelWithString: "")
     private var lastQuery = ""
 
     init() {
-        super.init(frame: .zero)
-        material = .popover
-        blendingMode = .withinWindow
-        state = .active
+        super.init(frame: NSRect(origin: .zero, size: Metrics.size))
+        appearance = NSAppearance(named: .darkAqua)
         wantsLayer = true
-        layer?.cornerRadius = 10
-        layer?.cornerCurve = .continuous
-        layer?.borderWidth = 0.5
-        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.backgroundColor = Metrics.fill.cgColor
+        layer?.cornerRadius = Metrics.cornerRadius
+        layer?.cornerCurve = .circular
         let shadow = NSShadow()
-        shadow.shadowBlurRadius = 10
+        shadow.shadowBlurRadius = 8
         shadow.shadowOffset = NSSize(width: 0, height: -2)
-        shadow.shadowColor = .black.withAlphaComponent(0.2)
+        shadow.shadowColor = .black.withAlphaComponent(0.35)
         self.shadow = shadow
 
-        field.placeholderString = "Find on page"
+        let icon = NSImageView(image: NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil) ?? NSImage())
+        icon.contentTintColor = Metrics.icon
+        icon.symbolConfiguration = .init(pointSize: 13, weight: .regular)
+
         field.delegate = self
-        field.sendsSearchStringImmediately = true
+        field.isBordered = false
+        field.isBezeled = false
+        field.drawsBackground = false
         field.focusRingType = .none
-        countLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        countLabel.textColor = .secondaryLabelColor
+        field.font = .systemFont(ofSize: 13)
+        field.textColor = Metrics.text
+        field.cell?.isScrollable = true
+        field.cell?.wraps = false
+        field.setAccessibilityLabel("Find on page")
 
-        let previous = Self.button("chevron.up", "Previous (⇧⌘G)") { [weak self] in self?.step(forward: false) }
-        let next = Self.button("chevron.down", "Next (⌘G)") { [weak self] in self?.step(forward: true) }
+        countLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        countLabel.textColor = Metrics.counter
+        countLabel.alignment = .right
+
+        let previous = Self.button("arrow.up", "Previous (⇧⌘G)") { [weak self] in self?.step(forward: false) }
+        let next = Self.button("arrow.down", "Next (⌘G)") { [weak self] in self?.step(forward: true) }
         let done = Self.button("xmark", "Done (Esc)") { [weak self] in self?.onClose?() }
+        // The close glyph already matched Arc at the old size; only the arrows grew.
+        done.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
 
-        let stack = NSStackView(views: [field, countLabel, previous, next, done])
-        stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 6)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        let divider = NSBox()
+        divider.boxType = .custom
+        divider.borderWidth = 0
+        divider.fillColor = Metrics.divider
+
+        for view in [icon, field, countLabel, previous, next, divider, done] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+            view.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
+        }
+        countLabel.setContentHuggingPriority(.required, for: .horizontal)
+        countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            field.widthAnchor.constraint(equalToConstant: 200),
-            countLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            widthAnchor.constraint(equalToConstant: Metrics.size.width),
+            heightAnchor.constraint(equalToConstant: Metrics.size.height),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.iconX),
+            field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.textX),
+            field.trailingAnchor.constraint(equalTo: countLabel.leadingAnchor, constant: -8),
+            countLabel.trailingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.counterTrailingX),
+            previous.centerXAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.previousCenterX),
+            next.centerXAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.nextCenterX),
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.dividerX),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+            divider.heightAnchor.constraint(equalToConstant: 16),
+            done.centerXAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.closeCenterX),
         ])
     }
 
@@ -57,6 +107,13 @@ final class FindBar: NSVisualEffectView, NSSearchFieldDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     var query: String { field.stringValue }
+
+    /// Focuses the field with Arc's blue caret.
+    func focus() {
+        window?.makeFirstResponder(field)
+        field.selectText(nil)
+        (field.currentEditor() as? NSTextView)?.insertionPointColor = Metrics.caret
+    }
 
     func setQuery(_ text: String) {
         field.stringValue = text
@@ -67,9 +124,8 @@ final class FindBar: NSVisualEffectView, NSSearchFieldDelegate {
         if let matches = result.matches {
             countLabel.stringValue = matches == 0 ? "0/0" : "\(result.activeMatch ?? 0)/\(matches)"
         } else {
-            countLabel.stringValue = result.found ? "" : "Not found"
+            countLabel.stringValue = result.found ? "" : "0/0"
         }
-        countLabel.textColor = result.found ? .secondaryLabelColor : .systemRed
     }
 
     func step(forward: Bool) {
@@ -89,7 +145,7 @@ final class FindBar: NSVisualEffectView, NSSearchFieldDelegate {
         }
     }
 
-    // MARK: NSSearchFieldDelegate
+    // MARK: NSTextFieldDelegate
 
     func controlTextDidChange(_ notification: Notification) { search() }
 
@@ -108,9 +164,12 @@ final class FindBar: NSVisualEffectView, NSSearchFieldDelegate {
     private static func button(_ symbol: String, _ help: String, action: @escaping () -> Void) -> NSButton {
         let button = ClosureButton(action: action)
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)
+        button.symbolConfiguration = .init(pointSize: 13, weight: .medium)
+        button.contentTintColor = Metrics.counter
         button.isBordered = false
         button.toolTip = help
-        button.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        button.widthAnchor.constraint(equalToConstant: 20).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 20).isActive = true
         return button
     }
 }

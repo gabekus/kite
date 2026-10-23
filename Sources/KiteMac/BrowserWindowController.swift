@@ -11,8 +11,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         static let sidebarWidths: ClosedRange<CGFloat> = 180...400
         /// Grab area along the sidebar's trailing edge, inside its padding.
         static let resizeHandleWidth: CGFloat = 8
-        static let inset: CGFloat = 8
-        static let cornerRadius: CGFloat = 10
+        static let inset = ArcMetrics.Content.inset
+        static let cornerRadius = ArcMetrics.Content.cornerRadius
         static let glowMargin: CGFloat = 28
     }
 
@@ -20,6 +20,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     let pool: PagePool
     private let adblocker: Adblocker
     private let rootView = RootView()
+    /// The system's sidebar material under the space's tint, like Arc's translucent window.
+    private let materialView = NSVisualEffectView()
     private let themeView = ThemeView()
     private let glowView = GlowView(margin: Layout.glowMargin)
     let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
@@ -42,9 +44,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var commandBarVisible = false
     private var sidebarVisible = true
 
-    init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker) {
+    /// Incognito windows keep nothing: no saved frame, and every page closes with the window.
+    let isIncognito: Bool
+
+    init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker, incognito: Bool = false) {
         self.store = store
         self.adblocker = adblocker
+        self.isIncognito = incognito
         self.pool = PagePool(engine: engine, store: store)
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
@@ -55,12 +61,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             defer: false
         )
         window.titlebarAppearsTransparent = true
+        // Clear, so the sidebar material can show the desktop through the tint.
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         window.tabbingMode = .disallowed
         window.minSize = NSSize(width: 640, height: 420)
         window.center()
-        window.setFrameAutosaveName("KiteMainWindow")
+        if !incognito { window.setFrameAutosaveName("KiteMainWindow") }
         super.init(window: window)
         window.delegate = self
 
@@ -81,6 +90,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func windowWillClose(_ notification: Notification) {
         store.saveNow()
+        if isIncognito { pool.retain(live: [], restorable: []) }
     }
 
     func windowDidResize(_ notification: Notification) { trafficLights?.place() }
@@ -108,6 +118,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 goBack: { [weak self] in self?.goBack(nil) },
                 goForward: { [weak self] in self?.goForward(nil) },
                 reload: { [weak self] in self?.reload(nil) },
+                toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
                 closeTab: { [weak self] id in self?.close(tab: id) }
             ),
             supportsDarkPages: pool.engine.supportsDarkPages
@@ -129,7 +140,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             UserDefaults.standard.set(Double(sidebarWidth), forKey: Self.sidebarWidthKey)
         }
 
-        for view in [themeView, sidebarHost!, resizeHandle, contentFrame, glowView, commandBarHost!] as [NSView] {
+        materialView.material = .sidebar
+        materialView.blendingMode = .behindWindow
+        materialView.state = .followsWindowActiveState
+
+        for view in [materialView, themeView, sidebarHost!, resizeHandle, contentFrame, glowView, commandBarHost!] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -142,6 +157,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         contentLeading = contentFrame.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: sidebarWidth)
         sidebarWidthConstraint = sidebarHost.widthAnchor.constraint(equalToConstant: sidebarWidth)
         NSLayoutConstraint.activate([
+            materialView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            materialView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            materialView.topAnchor.constraint(equalTo: rootView.topAnchor),
+            materialView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+
             themeView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             themeView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             themeView.topAnchor.constraint(equalTo: rootView.topAnchor),
@@ -203,6 +223,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let frame = contentFrame.frame
         themeView.cutoutRect = CGRect(x: frame.minX, y: rootView.bounds.height - frame.maxY, width: frame.width, height: frame.height)
         themeView.cutoutCornerRadius = Layout.cornerRadius
+        let sidebar = sidebarHost.frame
+        themeView.glowRegion = sidebarVisible
+            ? CGRect(x: sidebar.minX, y: rootView.bounds.height - sidebar.maxY, width: sidebar.width, height: sidebar.height)
+            : .zero
         trafficLights?.place()
     }
 
@@ -214,11 +238,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         themeView.setTheme(space.theme, animated: shownSpaceID != nil)
         glowView.setTheme(space.theme)
-        sidebarHost.appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
+        let appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
+        sidebarHost.appearance = appearance
+        materialView.appearance = appearance
         shownSpaceID = space.id
         // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
         let title = state.selectedTab?.title ?? ""
-        window?.title = title.isEmpty ? space.name : title
+        if isIncognito {
+            window?.title = title.isEmpty ? "Incognito" : title + " (Incognito)"
+        } else {
+            window?.title = title.isEmpty ? space.name : title
+        }
 
         let selected = state.selectedTab
         if selected?.id != shownTabID {
@@ -302,18 +332,24 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func commit(_ suggestion: CommandSuggestion, mode: CommandBarMode) {
         store.hideCommandBar()
         switch suggestion {
-        case .open(let url), .search(_, let url):
-            if mode == .editCurrent, let id = store.state.selectedTab?.id {
-                store.mutate { $0.update(tab: id) { $0.url = url } }
-                pool.loadedPage(id)?.load(url)
-            } else {
-                store.mutate { $0.openTab(url: url) }
-            }
+        case .open(let url), .search(_, let url), .siteSearch(_, _, let url):
+            open(url, mode: mode)
+        case .history(let entry):
+            open(entry.url, mode: mode)
         case .switchTab(let tab):
             store.mutate { $0.select(tab: tab.id) }
         case .command(let command):
             // After the bar closes, so the command sees the page as first responder, not the bar's field.
             DispatchQueue.main.async { command.perform() }
+        }
+    }
+
+    private func open(_ url: URL, mode: CommandBarMode) {
+        if mode == .editCurrent, let id = store.state.selectedTab?.id {
+            store.mutate { $0.update(tab: id) { $0.url = url } }
+            pool.loadedPage(id)?.load(url)
+        } else {
+            store.mutate { $0.openTab(url: url) }
         }
     }
 

@@ -252,7 +252,24 @@ public enum ArcImport {
             }
             walk(background)
             guard !colors.isEmpty else { return nil }
-            return Theme(colors: colors, grain: Float(noise ?? 0.35))
+            var intensity: Double?
+            var translucency: String?
+            func settings(_ value: Any) {
+                if let dict = value as? [String: Any] {
+                    if let i = dict["intensityFactor"] as? Double { intensity = i }
+                    if let t = dict["translucencyStyle"] {
+                        // Either a bare case name or Swift's enum encoding, {"opaque": {}}.
+                        translucency = (t as? String) ?? (t as? [String: Any])?.keys.first
+                    }
+                    for key in dict.keys.sorted() { settings(dict[key]!) }
+                } else if let list = value as? [Any] {
+                    list.forEach(settings)
+                }
+            }
+            settings(raw!)
+            // Arc draws the theme at its intensity over the window's material; "opaque" hides the material.
+            let tint = translucency == "opaque" ? 1 : Theme.defaultTint * Float(intensity ?? 1)
+            return Theme(colors: colors, grain: Float(noise ?? 0.35), tint: tint)
         }
 
         private func clamp(_ x: Double) -> Float {

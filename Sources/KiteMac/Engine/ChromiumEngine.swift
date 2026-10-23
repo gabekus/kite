@@ -10,10 +10,26 @@ final class ChromiumEngine: WebEngine {
     let supportsDarkPages = true
     var countsBlockedRequests: Bool { KCRuntime.supportsAdblock }
     private var adblocker: Adblocker?
+    /// nil is the persistent profile.
+    private let context: KCRequestContext?
+
+    init(context: KCRequestContext? = nil) {
+        self.context = context
+    }
 
     func makePage(url: URL?, restoring state: Any?) -> WebPage {
         // CEF has no equivalent of WebKit's interactionState, so a revived tab reloads its URL.
-        ChromiumPage(browser: KCBrowser(url: url, delegate: ChromiumDelegateProxy.placeholder), adblocker: adblocker)
+        ChromiumPage(
+            browser: KCBrowser(url: url, delegate: ChromiumDelegateProxy.placeholder, context: context),
+            adblocker: adblocker
+        )
+    }
+
+    /// Shares the ad blocker, whose engine and policy are already wired up process-wide.
+    func makeEphemeral() -> WebEngine {
+        let engine = ChromiumEngine(context: .incognito())
+        engine.adblocker = adblocker
+        return engine
     }
 
     func attach(_ adblocker: Adblocker) {

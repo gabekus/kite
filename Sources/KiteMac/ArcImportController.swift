@@ -21,6 +21,11 @@ enum ArcImportController {
             .appendingPathComponent("Library/Application Support/Arc/StorableSidebar.json")
     }
 
+    /// Shortcuts the user changed in Arc's Settings → Shortcuts.
+    static var keyBindingsFile: URL {
+        sidebarFile.deletingLastPathComponent().appendingPathComponent("StorableKeyBindings.json")
+    }
+
     /// Reads Arc's sidebar from its usual place, or asks for the file if Arc isn't there.
     static func start(store: BrowserStore, window: NSWindow) {
         if let data = try? Data(contentsOf: sidebarFile) {
@@ -55,7 +60,14 @@ enum ArcImportController {
         }
 
         let reimported = result.spaces.filter { store.state.spaceIndex($0.id) != nil }.count
+        let siteSearches = ArcSiteSearchImport.read()
+        let keyBindings = (try? Data(contentsOf: keyBindingsFile)).flatMap { try? ArcKeyBindingsImport.parse($0) } ?? []
         var lines = [summary(result)]
+        let extras = [
+            siteSearches.isEmpty ? nil : count(siteSearches.count, "Site Search shortcut"),
+            keyBindings.isEmpty ? nil : count(keyBindings.count, "keyboard shortcut change"),
+        ].compactMap { $0 }
+        if !extras.isEmpty { lines.append("Also imports \(extras.joined(separator: " and ")).") }
         lines += result.notes
         lines.append(reimported > 0
             ? "\(count(reimported, "space")) imported before will be replaced with Arc's current version, including changes you made to them in Kite."
@@ -88,7 +100,13 @@ enum ArcImportController {
             MainActor.assumeIsolated {
                 let skipUntitled = untitledBox?.state != .on
                 let spaces = result.spaces.filter { !(skipUntitled && result.untitledSpaceIDs.contains($0.id)) }
-                store.mutate { $0.merge(imported: spaces, favorites: result.favorites) }
+                store.mutate {
+                    $0.merge(imported: spaces, favorites: result.favorites)
+                    $0.mergeSiteSearches(siteSearches)
+                }
+                if !keyBindings.isEmpty {
+                    (NSApp.delegate as? AppDelegate)?.keyBindings.merge(keyBindings, menu: NSApp.mainMenu)
+                }
             }
         }
     }

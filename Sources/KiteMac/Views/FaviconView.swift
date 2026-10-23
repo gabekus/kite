@@ -48,10 +48,14 @@ struct FaviconView: View {
     /// The page's reported icon, else the site's /favicon.ico, so tabs that
     /// haven't loaded yet (imported, hibernated) still get an icon.
     init(tab: BrowserTab, size: CGFloat = 16) {
+        self.init(page: tab.url, icon: tab.faviconURL, size: size)
+    }
+
+    init(page: URL?, icon: URL? = nil, size: CGFloat = 16) {
         self.size = size
-        if let icon = tab.faviconURL {
+        if let icon {
             url = icon
-        } else if let page = tab.url, let scheme = page.scheme, ["http", "https"].contains(scheme), let host = page.host() {
+        } else if let page, let scheme = page.scheme, ["http", "https"].contains(scheme), let host = page.host() {
             url = URL(string: "\(scheme)://\(host)/favicon.ico")
         } else {
             url = nil

@@ -75,4 +75,6 @@ protocol WebEngine: AnyObject {
     /// Hooks the engine up to the ad blocker; called once at launch.
     func attach(_ adblocker: Adblocker)
     func makePage(url: URL?, restoring state: Any?) -> WebPage
+    /// A sibling engine whose cookies, cache and storage live in memory only (incognito).
+    func makeEphemeral() -> WebEngine
 }

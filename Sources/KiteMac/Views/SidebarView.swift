@@ -6,6 +6,7 @@ struct SidebarActions {
     var goBack: () -> Void
     var goForward: () -> Void
     var reload: () -> Void
+    var toggleSidebar: () -> Void
     var closeTab: (UUID) -> Void
 }
 
@@ -24,15 +25,19 @@ struct SidebarView: View {
         let page = selectedID.flatMap { store.pages[$0] } ?? PageStatus()
         let selectedTab = state.selectedTab
 
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 2) {
+        VStack(alignment: .leading, spacing: 0) {
+            // One row with the traffic lights: sidebar toggle after them, navigation at the far end.
+            HStack(spacing: M.navButtonSpacing) {
+                ToolbarButton(symbol: "sidebar.left", help: "Toggle Sidebar", enabled: true, action: actions.toggleSidebar)
+                    .padding(.leading, M.toggleX - M.padding)
                 Spacer()
-                ToolbarButton(symbol: "chevron.left", help: "Back", enabled: page.canGoBack, action: actions.goBack)
-                ToolbarButton(symbol: "chevron.right", help: "Forward", enabled: page.canGoForward, action: actions.goForward)
+                ToolbarButton(symbol: "arrow.left", help: "Back", enabled: page.canGoBack, action: actions.goBack)
+                ToolbarButton(symbol: "arrow.right", help: "Forward", enabled: page.canGoForward, action: actions.goForward)
                 ToolbarButton(symbol: page.isLoading ? "xmark" : "arrow.clockwise", help: "Reload", enabled: selectedID != nil, action: actions.reload)
             }
-            .frame(height: 28)
-            .padding(.top, 6)
+            .frame(height: M.topRowHeight)
+            .padding(.top, M.topRowY)
+            .padding(.trailing, M.navTrailing - M.padding)
 
             AddressPill(
                 text: selectedTab?.url?.host() ?? "Search or enter URL",
@@ -40,6 +45,7 @@ struct SidebarView: View {
                 action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
                 toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } }
             )
+            .padding(.top, M.urlFieldTopGap)
 
             if !state.favorites.isEmpty {
                 FavoritesGrid(
@@ -49,10 +55,15 @@ struct SidebarView: View {
                     onUnload: actions.closeTab,
                     onRemove: { id in store.mutate { $0.toggleFavorite(tab: id) } }
                 )
+                .padding(.top, M.favoritesTopGap)
+                .padding(.bottom, M.favoritesBottomGap)
             }
 
             List {
-                Section(space.name) {
+                Section {
+                    // A row rather than a section header: a plain List paints headers with an opaque bar.
+                    SpaceHeader(space: space)
+                        .sidebarRow(pill: false)
                     ForEach(space.pinnedItems) { item in
                         pinnedItem(item, depth: 0, selectedID: selectedID)
                             .sidebarRow()
@@ -63,30 +74,35 @@ struct SidebarView: View {
                 }
                 Section {
                     if !space.pinnedItems.isEmpty {
-                        Divider()
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .sidebarRow()
+                        Rectangle()
+                            .fill(.primary.opacity(M.dividerOpacity))
+                            .frame(height: M.dividerThickness)
+                            .padding(.horizontal, M.dividerInset)
+                            .frame(height: M.dividerRowHeight)
+                            .sidebarRow(pill: false)
                     }
                     NewTabRow { store.showCommandBar(.newTab) }
                         .sidebarRow()
                     ForEach(space.tabs) { tab in
                         row(tab, pinned: false, selected: tab.id == selectedID)
+                            .sidebarRow()
                     }
                     .onMove { from, to in
                         store.mutate { $0.moveTabs(inSpace: space.id, pinned: false, fromOffsets: from, toOffset: to) }
                     }
                 }
             }
-            .listStyle(.sidebar)
+            .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .environment(\.defaultMinListRowHeight, 30)
+            .environment(\.defaultMinListRowHeight, 1)
 
             SpaceBar(store: store)
+                .frame(height: M.bottomBarHeight)
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 10)
+        .padding(.horizontal, M.padding)
         .foregroundStyle(.primary)
+        // Arc measures from the window's top edge, under the transparent titlebar.
+        .ignoresSafeArea()
     }
 
     /// Nil hides the moon: nothing to darken, or the engine can't.
@@ -105,7 +121,7 @@ struct SidebarView: View {
             let visible = folder.isExpanded
                 ? folder.items
                 : folder.items.tabs.filter { $0.id == selectedID }.map(PinnedItem.tab)
-            return AnyView(VStack(spacing: 2) {
+            return AnyView(VStack(spacing: M.rowPitch - M.pillHeight) {
                 FolderRow(folder: folder, depth: depth) {
                     store.mutate { $0.setFolderExpanded(folder.id, !folder.isExpanded) }
                 }
@@ -127,28 +143,42 @@ struct SidebarView: View {
             onTogglePin: { store.mutate { $0.togglePin(tab: tab.id) } },
             onFavorite: { store.mutate { $0.toggleFavorite(tab: tab.id) } }
         )
-        .sidebarRow()
     }
 }
 
+private typealias M = ArcMetrics.Sidebar
+
 private extension View {
-    func sidebarRow() -> some View {
-        listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
+    /// Pills sit 41pt apart, centred in their row, like Arc's. `pill: false` is for
+    /// rows that set their own height (the header, the divider).
+    func sidebarRow(pill: Bool = true) -> some View {
+        let gap = pill ? (M.rowPitch - M.pillHeight) / 2 : 0
+        return modifier(ListEdgeCompensation())
+            .listRowInsets(EdgeInsets(top: gap, leading: 0, bottom: gap, trailing: 0))
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
     }
 }
 
-/// Translucent white reads well on any theme; the amount depends on the backdrop.
+/// A plain List on macOS keeps 8pt before and 9pt after each row whatever the
+/// row insets say; Arc's pills run the sidebar's full padded width.
+private struct ListEdgeCompensation: ViewModifier {
+    func body(content: Content) -> some View {
+        content.padding(.leading, -8).padding(.trailing, -9)
+    }
+}
+
+/// Translucent white reads well on any theme. `strength` is Arc's opacity over
+/// a dark tint; light tints need about three times as much to show.
 private struct ChromeFill: ViewModifier {
     @Environment(\.colorScheme) private var scheme
     let strength: Double
-    var cornerRadius: CGFloat = 8
+    var cornerRadius: CGFloat = M.cornerRadius
 
     func body(content: Content) -> some View {
         content.background(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.white.opacity(strength * (scheme == .dark ? 0.35 : 1)))
+                .fill(Color.white.opacity(scheme == .dark ? strength : min(strength * 3.5, 0.7)))
         )
     }
 }
@@ -162,12 +192,12 @@ private struct ToolbarButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 26, height: 26)
+                .font(.system(size: 15, weight: .regular))
+                .frame(width: M.navButtonSize, height: M.navButtonSize)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .opacity(enabled ? 0.85 : 0.3)
+        .opacity(enabled ? 0.6 : 0.25)
         .disabled(!enabled)
         .help(help)
     }
@@ -184,11 +214,12 @@ private struct AddressPill: View {
         HStack(spacing: 0) {
             Button(action: action) {
                 Text(text)
-                    .font(.system(size: 13))
+                    .font(.system(size: M.urlFieldFontSize))
+                    .opacity(M.urlFieldTextOpacity)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 10)
-                    .frame(height: 32)
+                    .padding(.leading, M.urlFieldTextInset)
+                    .frame(height: M.urlFieldHeight)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -197,7 +228,7 @@ private struct AddressPill: View {
                     .padding(.trailing, 4)
             }
         }
-        .modifier(ChromeFill(strength: 0.3))
+        .modifier(ChromeFill(strength: M.fieldFill))
     }
 }
 
@@ -212,7 +243,7 @@ private struct DarkPageToggle: View {
             Image(systemName: isDark ? "moon.fill" : "moon")
                 .font(.system(size: 11, weight: .semibold))
                 .frame(width: 24, height: 24)
-                .modifier(ChromeFill(strength: hovering ? 0.25 : 0))
+                .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0, cornerRadius: 6))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -232,10 +263,10 @@ private struct FavoritesGrid: View {
     let onUnload: (UUID) -> Void
     let onRemove: (UUID) -> Void
 
-    private let columns = [GridItem(.adaptive(minimum: 46), spacing: 8)]
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: M.favoriteSpacing), count: M.favoriteColumns)
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 8) {
+        LazyVGrid(columns: columns, spacing: M.favoriteSpacing) {
             ForEach(favorites) { tab in
                 FavoriteTile(
                     tab: tab,
@@ -258,10 +289,10 @@ private struct FavoriteTile: View {
     @State private var hovering = false
 
     var body: some View {
-        FaviconView(tab: tab, size: 20)
+        FaviconView(tab: tab, size: M.favoriteIconSize)
             .frame(maxWidth: .infinity)
-            .frame(height: 44)
-            .modifier(ChromeFill(strength: isSelected ? 0.6 : hovering ? 0.32 : 0.2, cornerRadius: 10))
+            .frame(height: M.favoriteHeight)
+            .modifier(ChromeFill(strength: isSelected ? M.fieldFill + M.selectedFill : hovering ? M.fieldFill + M.hoverFill : M.fieldFill))
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .onTapGesture(perform: onSelect)
@@ -286,13 +317,14 @@ private struct FolderRow: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: M.iconTextGap) {
             Image(systemName: folder.isExpanded ? "folder" : "folder.fill")
-                .font(.system(size: 12))
-                .frame(width: 16, height: 16)
+                .font(.system(size: 14))
+                .frame(width: M.iconSize, height: M.iconSize)
                 .opacity(0.75)
             Text(folder.name)
-                .font(.system(size: 13))
+                .font(.system(size: M.tabFontSize, weight: .semibold))
+                .opacity(M.tabTextOpacity)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
@@ -301,10 +333,10 @@ private struct FolderRow: View {
                 .rotationEffect(.degrees(folder.isExpanded ? 90 : 0))
                 .opacity(hovering ? 0.5 : 0)
         }
-        .padding(.leading, 8 + indent(depth))
-        .padding(.trailing, 8)
-        .frame(height: 30)
-        .modifier(ChromeFill(strength: hovering ? 0.18 : 0))
+        .padding(.leading, M.iconInset + indent(depth))
+        .padding(.trailing, M.iconInset)
+        .frame(height: M.pillHeight)
+        .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onToggle)
@@ -318,9 +350,9 @@ private struct FolderRow: View {
     }
 }
 
-/// Matches the width of a favicon plus its gap, like Arc's folder nesting.
+/// A favicon plus its gap per level, like Arc's folder nesting.
 private func indent(_ depth: Int) -> CGFloat {
-    CGFloat(depth) * 14
+    CGFloat(depth) * (M.iconSize + M.iconTextGap)
 }
 
 private func copyLink(_ url: URL?) {
@@ -335,13 +367,18 @@ private struct NewTabRow: View {
 
     var body: some View {
         Button(action: action) {
-            Label("New Tab", systemImage: "plus")
-                .font(.system(size: 13))
-                .opacity(0.75)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .frame(height: 30)
-                .modifier(ChromeFill(strength: hovering ? 0.18 : 0))
+            HStack(spacing: M.iconTextGap) {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: M.iconSize, height: M.iconSize)
+                Text("New Tab")
+                    .font(.system(size: M.tabFontSize))
+            }
+            .opacity(M.tabTextOpacity * 0.75)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, M.iconInset)
+            .frame(height: M.pillHeight)
+            .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -361,10 +398,11 @@ private struct TabRow: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            FaviconView(tab: tab)
+        HStack(spacing: M.iconTextGap) {
+            FaviconView(tab: tab, size: M.iconSize)
             Text(tab.displayTitle)
-                .font(.system(size: 13))
+                .font(.system(size: M.tabFontSize))
+                .opacity(M.tabTextOpacity)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
@@ -372,7 +410,7 @@ private struct TabRow: View {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
-                        .frame(width: 18, height: 18)
+                        .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -380,10 +418,10 @@ private struct TabRow: View {
                 .help(isPinned ? "Unload" : "Close Tab")
             }
         }
-        .padding(.leading, 8 + indent(depth))
-        .padding(.trailing, 8)
-        .frame(height: 30)
-        .modifier(ChromeFill(strength: isSelected ? 0.5 : hovering ? 0.18 : 0))
+        .padding(.leading, M.iconInset + indent(depth))
+        .padding(.trailing, 6)
+        .frame(height: M.pillHeight)
+        .modifier(ChromeFill(strength: isSelected ? M.selectedFill : hovering ? M.hoverFill : 0))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onSelect)
@@ -409,25 +447,74 @@ private struct SpaceBar: View {
                 } label: {
                     Text(space.icon)
                         .font(.system(size: 14))
-                        .frame(width: 28, height: 28)
-                        .modifier(ChromeFill(strength: space.id == state.selectedSpaceID ? 0.45 : 0))
+                        .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
+                        .modifier(ChromeFill(strength: space.id == state.selectedSpaceID ? M.selectedFill : 0, cornerRadius: 8))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(space.name)
+                .contextMenu { ThemeMenu(store: store, space: space) }
             }
             Spacer()
             Button {
                 store.addSpace()
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 28, height: 28)
+                    .font(.system(size: 15, weight: .regular))
+                    .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .opacity(0.7)
             .help("New Space")
+        }
+    }
+}
+
+/// The space's icon and name above its pinned tabs, Arc's small semibold caption.
+private struct SpaceHeader: View {
+    let space: Space
+
+    var body: some View {
+        HStack(spacing: M.headerTextX - M.headerIconX - M.headerIconSize) {
+            Text(space.icon)
+                .font(.system(size: 15))
+                .frame(width: M.headerIconSize, height: M.headerIconSize)
+            Text(space.name)
+                .font(.system(size: M.headerFontSize, weight: .semibold))
+                .opacity(M.headerTextOpacity)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, M.headerIconX - M.padding)
+        .padding(.top, M.headerIconTop)
+        .frame(height: M.headerHeight + M.listTopSpacer, alignment: .top)
+    }
+}
+
+/// Arc's per-space theme picker, reduced to a menu: a palette, and how strongly it tints the sidebar.
+private struct ThemeMenu: View {
+    let store: BrowserStore
+    let space: Space
+
+    var body: some View {
+        Menu("Theme Color") {
+            ForEach(Array(Theme.presets.enumerated()), id: \.offset) { index, preset in
+                Button("Color \(index + 1)") {
+                    var theme = preset
+                    theme.tint = space.theme.tint
+                    store.mutate { $0.setTheme(theme, forSpace: space.id) }
+                }
+            }
+        }
+        Menu("Theme Intensity") {
+            ForEach([("Subtle", Float(0.35)), ("Arc", Theme.defaultTint), ("Strong", Float(0.8)), ("Solid", Float(1))], id: \.0) { name, tint in
+                Button(name) {
+                    var theme = space.theme
+                    theme.tint = tint
+                    store.mutate { $0.setTheme(theme, forSpace: space.id) }
+                }
+            }
         }
     }
 }
