@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var store: BrowserStore!
     private var history: HistoryStore!
+    private(set) var keyBindings: KeyBindingsStore!
     private var adblocker: Adblocker!
     private var windowController: BrowserWindowController!
     private var incognitoControllers: [BrowserWindowController] = []
@@ -47,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController = BrowserWindowController(store: store, engine: engine, adblocker: adblocker)
         menuRouter = MenuRouter(fallback: windowController)
         NSApp.mainMenu = MainMenu.build(target: menuRouter)
+        keyBindings = KeyBindingsStore(fileURL: Self.supportDirectory.appendingPathComponent("keybindings.json"))
+        keyBindings.apply(to: NSApp.mainMenu)
         // Registered after the menu bar is set so AppKit adds Help search and the window list.
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
         NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
