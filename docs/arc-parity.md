@@ -205,7 +205,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Sync | Sidebar via CloudKit/Firebase | ❌ | Roadmap: sync |
 | Default browser, handle links | | ✅ | |
 | PWAs / installed apps | `app_mode_loader` shims | ❌ | Roadmap: PWAs |
-| Sad tab | Crashed-tab page with reload | ❌ | B5 |
+| Sad tab | Crashed-tab page: face, "Tab crashed. Maybe reload the page?", exit code bottom-right | ✅ Chromium; WebKit still reloads on its own | B5 |
 | Download from links, downloads list | | 🟡 WebKit saves files, no UI | Thread: Library |
 | Picture in Picture | Video PiP | ❌ | Thread: Mini player |
 | Gestures | Two-finger swipe back/forward | ❌ | B5 |
