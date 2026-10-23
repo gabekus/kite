@@ -230,10 +230,12 @@ import Testing
         #expect(lines.count == 3)
         let decoded = try JSONDecoder().decode(NetworkLog.Entry.self, from: Data(lines[2].utf8))
         #expect(decoded.seq == 3 && decoded.url == "https://a.example/3")
+        #if !os(Windows)
         let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
         let dirAttributes = try FileManager.default.attributesOfItem(atPath: dir.path)
         #expect((dirAttributes[.posixPermissions] as? NSNumber)?.intValue == 0o700)
+        #endif
     }
 
     @Test func keepsAWeek() throws {
@@ -270,7 +272,9 @@ import Testing
         let first = try store.export(["log": [:]], now: now)
         let second = try store.export(["log": [:]], now: now)
         #expect(first != second && first.pathExtension == "har")
+        #if !os(Windows)
         let attributes = try FileManager.default.attributesOfItem(atPath: second.path)
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        #endif
     }
 }

@@ -29,6 +29,15 @@ public final class NetworkLogStore: @unchecked Sendable {
         self.calendar = calendar
     }
 
+    /// Owner-only, where the platform has POSIX permissions.
+    #if os(Windows)
+    static let privateFolder: [FileAttributeKey: Any] = [:]
+    static let privateFile: [FileAttributeKey: Any] = [:]
+    #else
+    static let privateFolder: [FileAttributeKey: Any] = [.posixPermissions: 0o700]
+    static let privateFile: [FileAttributeKey: Any] = [.posixPermissions: 0o600]
+    #endif
+
     public static func directory(supportDirectory: URL) -> URL {
         supportDirectory.appendingPathComponent("NetworkLog", isDirectory: true)
     }
@@ -89,11 +98,11 @@ public final class NetworkLogStore: @unchecked Sendable {
         full = false
         let fm = FileManager.default
         do {
-            try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: Self.privateFolder)
+            try? fm.setAttributes(Self.privateFolder, ofItemAtPath: directory.path)
             let url = directory.appendingPathComponent(name + ".ndjson")
             if !fm.fileExists(atPath: url.path) {
-                fm.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+                fm.createFile(atPath: url.path, contents: nil, attributes: Self.privateFile)
             }
             let handle = try FileHandle(forWritingTo: url)
             size = Int(try handle.seekToEnd())
@@ -124,7 +133,7 @@ public final class NetworkLogStore: @unchecked Sendable {
     /// Writes a HAR export next to the logs (pruned with them) and returns its path.
     public func export(_ har: JSONValue, now: Date = Date()) throws -> URL {
         let fm = FileManager.default
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: Self.privateFolder)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd'T'HHmmss"
@@ -134,7 +143,7 @@ public final class NetworkLogStore: @unchecked Sendable {
             url = directory.appendingPathComponent("kite-\(formatter.string(from: now))-\(n).har")
             n += 1
         }
-        guard fm.createFile(atPath: url.path, contents: try har.encoded(), attributes: [.posixPermissions: 0o600]) else {
+        guard fm.createFile(atPath: url.path, contents: try har.encoded(), attributes: Self.privateFile) else {
             throw CocoaError(.fileWriteUnknown)
         }
         return url
