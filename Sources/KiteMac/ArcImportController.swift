@@ -55,7 +55,9 @@ enum ArcImportController {
         }
 
         let reimported = result.spaces.filter { store.state.spaceIndex($0.id) != nil }.count
+        let siteSearches = ArcSiteSearchImport.read()
         var lines = [summary(result)]
+        if !siteSearches.isEmpty { lines.append("Also imports \(count(siteSearches.count, "Site Search shortcut")).") }
         lines += result.notes
         lines.append(reimported > 0
             ? "\(count(reimported, "space")) imported before will be replaced with Arc's current version, including changes you made to them in Kite."
@@ -88,7 +90,10 @@ enum ArcImportController {
             MainActor.assumeIsolated {
                 let skipUntitled = untitledBox?.state != .on
                 let spaces = result.spaces.filter { !(skipUntitled && result.untitledSpaceIDs.contains($0.id)) }
-                store.mutate { $0.merge(imported: spaces, favorites: result.favorites) }
+                store.mutate {
+                    $0.merge(imported: spaces, favorites: result.favorites)
+                    $0.mergeSiteSearches(siteSearches)
+                }
             }
         }
     }

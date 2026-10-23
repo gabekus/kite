@@ -324,7 +324,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func commit(_ suggestion: CommandSuggestion, mode: CommandBarMode) {
         store.hideCommandBar()
         switch suggestion {
-        case .open(let url), .search(_, let url):
+        case .open(let url), .search(_, let url), .siteSearch(_, _, let url):
             open(url, mode: mode)
         case .history(let entry):
             open(entry.url, mode: mode)
