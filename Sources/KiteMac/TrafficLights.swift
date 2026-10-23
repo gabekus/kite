@@ -18,6 +18,7 @@ final class TrafficLights {
     private var sidebarVisible = true
     private var hovering = false
     private var isPlacing = false
+    private var isAnimating = false
     private var placeQueued = false
     private var burstStart: TimeInterval = 0
     private var burstCount = 0
@@ -105,7 +106,13 @@ final class TrafficLights {
             if button.frame.origin != origin { button.setFrameOrigin(origin) }
             x += Self.pitch
         }
+        // AppKit shows the buttons again when it lays the titlebar out (e.g. on becoming key).
+        if !shouldShow, !isAnimating {
+            for button in buttons where !button.isHidden { button.isHidden = true }
+        }
     }
+
+    private var shouldShow: Bool { sidebarVisible || hovering || isFullScreen }
 
     func setSidebarVisible(_ visible: Bool) {
         guard visible != sidebarVisible else { return }
@@ -121,10 +128,11 @@ final class TrafficLights {
 
     private func updateVisibility(animated: Bool) {
         hoverZone.isActive = !sidebarVisible
-        let alpha: CGFloat = sidebarVisible || hovering || isFullScreen ? 1 : 0
+        let alpha: CGFloat = shouldShow ? 1 : 0
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         // Hidden as well as transparent, so invisible buttons don't take clicks meant for the page.
         if alpha > 0 { buttons.forEach { $0.isHidden = false } }
+        isAnimating = true
         NSAnimationContext.runAnimationGroup { context in
             context.duration = animated && !reduceMotion ? 0.15 : 0
             for button in buttons {
@@ -132,7 +140,9 @@ final class TrafficLights {
             }
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, alpha == 0, !self.sidebarVisible, !self.hovering, !self.isFullScreen else { return }
+                guard let self else { return }
+                self.isAnimating = false
+                guard alpha == 0, !self.shouldShow else { return }
                 self.buttons.forEach { $0.isHidden = true }
             }
         }
