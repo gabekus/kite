@@ -49,26 +49,31 @@ private typealias C = ArcMetrics.CommandBar
 
 /// Arc 1.169's Site Search pieces, measured from a 2x capture of its command bar.
 private enum S {
-    static let faviconSize: CGFloat = 16
+    // Sizes are tuned so a capture of Kite measures like one of Arc: drawn edges
+    // anti-alias about half a point inside their frames.
+    static let faviconSize: CGFloat = 18
+    /// From the text field's start; Arc's chip starts 1.5pt right of Kite's text.
+    static let chipOffset: CGFloat = 1.5
     static let chipHeight: CGFloat = 24
-    static let chipLeading: CGFloat = 10.5
-    static let chipTrailing: CGFloat = 11
+    static let chipLeading: CGFloat = 10
+    static let chipTrailing: CGFloat = 10
     static let chipFontSize: CGFloat = 13
-    /// A brand-colour glow under the chip, visible ~2pt above and ~10pt below it.
-    static let glowOpacity: Double = 0.35
+    /// A brand-colour glow around the chip, visible ~2pt above and ~10pt below it.
+    static let glowOpacity: Double = 0.38
     static let glowRadius: CGFloat = 5
-    static let glowY: CGFloat = 3
+    static let glowY: CGFloat = 1.5
     static let chipToText: CGFloat = 11.5
     /// "Search YouTube" (#727272 on the #212121 bar), then the Tab keycap.
     static let hintOpacity: Double = 0.36
     static let hintToKey: CGFloat = 10
-    static let keySize = CGSize(width: 30, height: 22)
+    static let keySize = CGSize(width: 31, height: 22)
     static let keyCornerRadius: CGFloat = 5
-    static let keyFontSize: CGFloat = 11
+    static let keyFontSize: CGFloat = 13
     static let keyTextOpacity: Double = 0.8
-    static let keyFill = Color(red: 0x4A / 255, green: 0x4A / 255, blue: 0x4A / 255)
+    /// Captures as Arc's #4A4A4A.
+    static let keyFill = Color(red: 0x3D / 255, green: 0x3D / 255, blue: 0x3D / 255)
     /// From the keycap's right edge to the bar's.
-    static let keyTrailing: CGFloat = 20
+    static let keyTrailing: CGFloat = 21
     /// For a site with no brand colour and no usable favicon colour.
     static let fallbackColor = keyFill
 }
@@ -103,10 +108,10 @@ private struct SiteSearchChip: View {
 }
 
 private extension Color {
-    /// "RRGGBB".
+    /// "RRGGBB", in Display P3 like Arc's chips (sRGB FF0000 captures far less saturated than Arc's).
     init?(hex: String) {
         guard hex.count == 6, let value = Int(hex, radix: 16) else { return nil }
-        self.init(red: Double(value >> 16 & 0xFF) / 255, green: Double(value >> 8 & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
+        self.init(.displayP3, red: Double(value >> 16 & 0xFF) / 255, green: Double(value >> 8 & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
     }
 }
 
@@ -216,6 +221,7 @@ private struct CommandBarView: View {
                 .padding(.trailing, C.textX - C.iconX - C.iconSize)
                 if let site {
                     SiteSearchChip(site: site)
+                        .padding(.leading, S.chipOffset)
                         .padding(.trailing, S.chipToText)
                 }
                 TextField("", text: $query, prompt: Text(site == nil ? "Search or Enter URL..." : "Search...").foregroundStyle(.primary.opacity(C.placeholderOpacity)))
@@ -296,6 +302,12 @@ private struct CommandBarView: View {
     /// deleting the completion leaves what was typed.
     private func autocomplete(from old: String, to new: String) {
         if new == completed { return }
+        if let completed, new.hasPrefix(completed) {
+            // Keys typed before the completion got selected belong after what was typed.
+            self.completed = nil
+            query = typed + new.dropFirst(completed.count)
+            return
+        }
         completed = nil
         let previous = typed
         typed = new
