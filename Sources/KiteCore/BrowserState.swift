@@ -1,26 +1,41 @@
 import Foundation
 
-/// How long an unpinned tab can sit unused before it's archived (Arc's Settings → General).
+/// How long an unpinned tab can sit unused before it's archived: Arc 1.169's
+/// "Archive tabs after" choices, with Arc's internal names as raw values.
 public enum ArchiveInterval: String, Hashable, Codable, CaseIterable, Sendable {
-    case twelveHours, day, week, month
+    case never, oneHour, sixHours, twelveHours, twentyFourHours, sevenDays, thirtyDays
 
-    public var seconds: TimeInterval {
+    /// nil for `never`.
+    public var seconds: TimeInterval? {
         switch self {
+        case .never: nil
+        case .oneHour: 3600
+        case .sixHours: 6 * 3600
         case .twelveHours: 12 * 3600
-        case .day: 24 * 3600
-        case .week: 7 * 24 * 3600
-        case .month: 30 * 24 * 3600
+        case .twentyFourHours: 24 * 3600
+        case .sevenDays: 7 * 24 * 3600
+        case .thirtyDays: 30 * 24 * 3600
         }
     }
 
     /// Arc's wording.
     public var title: String {
         switch self {
+        case .never: "Never"
+        case .oneHour: "1 hour"
+        case .sixHours: "6 hours"
         case .twelveHours: "12 hours"
-        case .day: "24 hours"
-        case .week: "7 days"
-        case .month: "30 days"
+        case .twentyFourHours: "24 hours"
+        case .sevenDays: "7 days"
+        case .thirtyDays: "30 days"
         }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        // Names from the first version of this setting, before matching Arc's.
+        let renamed = ["day": "twentyFourHours", "week": "sevenDays", "month": "thirtyDays"]
+        self = Self(rawValue: renamed[raw] ?? raw) ?? .twelveHours
     }
 }
 

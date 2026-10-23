@@ -70,7 +70,8 @@ final class BrowserStore {
 
     /// Archives unpinned tabs left unused longer than the user's setting.
     func archiveStaleTabs() {
-        mutate { $0.archiveStaleTabs(olderThan: $0.archiveAfter.seconds) }
+        guard let interval = state.archiveAfter.seconds else { return }
+        mutate { $0.archiveStaleTabs(olderThan: interval) }
     }
 
     func addSpace() {

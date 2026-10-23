@@ -130,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
     }
 
-    /// Kite menu → Archive Tabs After, until there's a Settings window. The tag is the ArchiveInterval's index.
+    /// Kite menu → Archive tabs after, until there's a Settings window. The tag is the ArchiveInterval's index.
     @objc func setArchiveInterval(_ sender: NSMenuItem) {
         let intervals = ArchiveInterval.allCases
         guard intervals.indices.contains(sender.tag) else { return }
