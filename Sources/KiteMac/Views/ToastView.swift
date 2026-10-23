@@ -12,11 +12,16 @@ final class ToastView: NSView {
         /// Gap to the content card's top and trailing edges.
         static let top: CGFloat = 9
         static let trailing: CGFloat = 8
-        static let padding: CGFloat = 13
-        static let buttonSize: CGFloat = 31
-        static let topColor = NSColor(srgbRed: 0x55 / 255, green: 0x67 / 255, blue: 0x92 / 255, alpha: 1)
-        static let bottomColor = NSColor(srgbRed: 0x49 / 255, green: 0x58 / 255, blue: 0x7D / 255, alpha: 1)
-        static let buttonColor = NSColor(srgbRed: 0x74 / 255, green: 0x80 / 255, blue: 0x9C / 255, alpha: 1)
+        static let leading: CGFloat = 12.5
+        static let trailingPadding: CGFloat = 13
+        static let buttonSize = NSSize(width: 31, height: 27)
+        static let buttonTrailing: CGFloat = 11.5
+        static let textToButton: CGFloat = 14
+        // Set darker than Arc's captured pixels (#556692 → #465376, button ~#7D88A4)
+        // because they render lighter here; compared on the Mac against Arc.
+        static let topColor = NSColor(srgbRed: 0x3F / 255, green: 0x52 / 255, blue: 0x84 / 255, alpha: 1)
+        static let bottomColor = NSColor(srgbRed: 0x2B / 255, green: 0x3A / 255, blue: 0x5F / 255, alpha: 1)
+        static let buttonColor = NSColor(srgbRed: 0x68 / 255, green: 0x75 / 255, blue: 0x96 / 255, alpha: 1)
         static let duration: Duration = .seconds(4.6)
     }
 
@@ -51,7 +56,7 @@ final class ToastView: NSView {
         alphaValue = 0
         isHidden = true
 
-        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.font = .systemFont(ofSize: 13.5, weight: .semibold)
         label.textColor = .white
 
         shareButton.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: "Share")
@@ -70,13 +75,13 @@ final class ToastView: NSView {
             addSubview(view)
             view.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
         }
-        labelTrailing = label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Metrics.padding)
+        labelTrailing = label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Metrics.trailingPadding)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Metrics.height),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.padding),
-            shareButton.widthAnchor.constraint(equalToConstant: Metrics.buttonSize),
-            shareButton.heightAnchor.constraint(equalToConstant: Metrics.buttonSize),
-            shareButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(Metrics.height - Metrics.buttonSize) / 2),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.leading),
+            shareButton.widthAnchor.constraint(equalToConstant: Metrics.buttonSize.width),
+            shareButton.heightAnchor.constraint(equalToConstant: Metrics.buttonSize.height),
+            shareButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Metrics.buttonTrailing),
             labelTrailing,
         ])
     }
@@ -103,7 +108,9 @@ final class ToastView: NSView {
         label.stringValue = message
         self.shareURL = shareURL
         shareButton.isHidden = shareURL == nil
-        labelTrailing.constant = shareURL == nil ? -Metrics.padding : -(Metrics.padding + Metrics.buttonSize + (Metrics.height - Metrics.buttonSize) / 2)
+        labelTrailing.constant = shareURL == nil
+            ? -Metrics.trailingPadding
+            : -(Metrics.textToButton + Metrics.buttonSize.width + Metrics.buttonTrailing)
         isHidden = false
         NSAnimationContext.runAnimationGroup { $0.duration = 0.15; animator().alphaValue = 1 }
         hideTask?.cancel()
