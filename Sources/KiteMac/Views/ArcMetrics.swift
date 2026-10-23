@@ -78,6 +78,9 @@ enum ArcMetrics {
         // Bottom bar: library button, spaces, new space.
         static let bottomBarHeight: CGFloat = 50
         static let bottomButtonSize: CGFloat = 32
+
+        /// A peeking (hover-revealed) sidebar stays out until the pointer is 75pt right of the card's edge.
+        static let peekHoverMargin: CGFloat = 75
     }
 
     enum Content {
@@ -85,7 +88,8 @@ enum ArcMetrics {
         static let inset: CGFloat = 10
         static let cornerRadius: CGFloat = 6
         /// The sidebar's resize zone: 8pt centred on the card's leading edge (4pt over the sidebar,
-        /// 4pt over the page), from 1pt below the card's top to 1pt above its bottom.
+        /// 4pt over the page), from 1pt below the card's top to 1pt above its bottom. While the hidden
+        /// sidebar peeks, the same 8pt straddles the floating card's right edge, at the same height.
         static let resizeZoneHalfWidth: CGFloat = 4
         static let resizeZoneVerticalInset: CGFloat = 1
     }
