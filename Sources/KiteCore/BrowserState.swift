@@ -24,6 +24,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public var blocksAds: Bool
     /// Sites the blocker leaves alone (the shield's per-site off switch).
     public var adblockAllowedHosts: Set<String>
+    /// Site Search shortcuts for the command bar (type the shortcut, then Tab).
+    public var siteSearches: [SiteSearch]
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -40,12 +42,13 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.darkPageHosts = []
         self.blocksAds = true
         self.adblockAllowedHosts = []
+        self.siteSearches = []
     }
 
     // Decode field by field so sessions saved by older versions still load.
     private enum CodingKeys: String, CodingKey {
         case spaces, favorites, selectedSpaceID, recentlyClosed, archived, searchEngine, darkPages, darkPageHosts
-        case blocksAds, adblockAllowedHosts
+        case blocksAds, adblockAllowedHosts, siteSearches
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,6 +65,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         darkPageHosts = try c.decodeIfPresent(Set<String>.self, forKey: .darkPageHosts) ?? []
         blocksAds = try c.decodeIfPresent(Bool.self, forKey: .blocksAds) ?? true
         adblockAllowedHosts = try c.decodeIfPresent(Set<String>.self, forKey: .adblockAllowedHosts) ?? []
+        siteSearches = try c.decodeIfPresent([SiteSearch].self, forKey: .siteSearches) ?? []
     }
 
     // MARK: Dark pages

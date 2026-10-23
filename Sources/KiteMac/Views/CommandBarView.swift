@@ -4,6 +4,8 @@ import SwiftUI
 enum CommandSuggestion: Identifiable, Hashable {
     case open(URL)
     case search(String, URL)
+    /// A search on one site, after its Site Search shortcut and Tab.
+    case siteSearch(SiteSearch, String, URL)
     case switchTab(BrowserTab)
     case history(HistoryEntry)
     case command(MenuCommand)
@@ -12,6 +14,7 @@ enum CommandSuggestion: Identifiable, Hashable {
         switch self {
         case .open(let url): "open:\(url.absoluteString)"
         case .search(let query, _): "search:\(query)"
+        case .siteSearch(let site, let query, _): "site:\(site.id):\(query)"
         case .switchTab(let tab): "tab:\(tab.id)"
         case .history(let entry): "history:\(entry.url.absoluteString)"
         case .command(let command): "command:\(command.path)/\(command.title)"
@@ -51,6 +54,8 @@ private struct CommandBarView: View {
 
     @State private var query: String
     @State private var highlighted = 0
+    /// Set by Tab after a Site Search shortcut; the query then searches that site.
+    @State private var site: SiteSearch?
     @FocusState private var focused: Bool
 
     init(store: BrowserStore, mode: CommandBarMode, onCommit: @escaping (CommandSuggestion) -> Void) {
@@ -65,6 +70,9 @@ private struct CommandBarView: View {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return [] }
         let state = store.state
+        if let site {
+            return site.url(for: text).map { [.siteSearch(site, text, $0)] } ?? []
+        }
         let tabs = TabSearch.rank(text, in: state, limit: 5)
             .filter { mode == .newTab || $0.tab.id != state.selectedTab?.id }
             .map { CommandSuggestion.switchTab($0.tab) }
@@ -85,9 +93,15 @@ private struct CommandBarView: View {
         return strong + [search] + tabs + history + weak
     }
 
+    /// The site Tab would switch to for what's typed so far.
+    private var tabTarget: SiteSearch? {
+        site == nil ? SiteSearch.match(query, in: store.state.siteSearches) : nil
+    }
+
     var body: some View {
         let items = suggestions
         let accent = store.state.selectedSpace.theme.accent
+        let tabTarget = tabTarget
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 Image(systemName: "magnifyingglass")
@@ -95,6 +109,15 @@ private struct CommandBarView: View {
                     .frame(width: C.iconSize, height: C.iconSize)
                     .padding(.leading, C.iconX)
                     .padding(.trailing, C.textX - C.iconX - C.iconSize)
+                if let site {
+                    Text(site.name)
+                        .font(.system(size: C.rowFontSize, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color(accent), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .padding(.trailing, 8)
+                }
                 TextField("", text: $query, prompt: Text("Search or Enter URL...").foregroundStyle(.primary.opacity(C.placeholderOpacity)))
                     .textFieldStyle(.plain)
                     .font(.system(size: C.fieldFontSize))
@@ -108,8 +131,28 @@ private struct CommandBarView: View {
                         highlighted = max(highlighted - 1, 0)
                         return .handled
                     }
+                    .onKeyPress(.tab) {
+                        guard let tabTarget else { return .ignored }
+                        site = tabTarget
+                        query = ""
+                        return .handled
+                    }
+                    .onKeyPress(.delete) {
+                        // Backspace on an empty field leaves Site Search, like Chromium's keyword mode.
+                        guard site != nil, query.isEmpty else { return .ignored }
+                        site = nil
+                        return .handled
+                    }
                     .onExitCommand { store.hideCommandBar() }
-                    .padding(.trailing, C.iconX)
+                if let tabTarget {
+                    Text("Tab to Search \(tabTarget.name)")
+                        .font(.system(size: C.rowFontSize))
+                        .opacity(C.placeholderOpacity)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.leading, 8)
+                }
+                Spacer().frame(width: C.iconX)
             }
             .frame(height: C.fieldHeight)
 
@@ -204,7 +247,7 @@ private struct SuggestionRow: View {
     @ViewBuilder private var icon: some View {
         switch suggestion {
         case .open: Image(systemName: "globe").resizable().scaledToFit()
-        case .search: Image(systemName: "magnifyingglass").resizable().scaledToFit()
+        case .search, .siteSearch: Image(systemName: "magnifyingglass").resizable().scaledToFit()
         case .switchTab(let tab): FaviconView(tab: tab, size: C.rowIconSize)
         case .history(let entry): FaviconView(page: entry.url, size: C.rowIconSize)
         case .command: Image(systemName: "command").resizable().scaledToFit()
@@ -214,7 +257,7 @@ private struct SuggestionRow: View {
     private var title: String {
         switch suggestion {
         case .open(let url): url.absoluteString
-        case .search(let query, _): query
+        case .search(let query, _), .siteSearch(_, let query, _): query
         case .switchTab(let tab): tab.displayTitle
         case .history(let entry): entry.displayTitle
         case .command(let command): command.title
@@ -226,6 +269,7 @@ private struct SuggestionRow: View {
         switch suggestion {
         case .open: "Open"
         case .search: "Search \(engine.displayName)"
+        case .siteSearch(let site, _, _): "Search \(site.name)"
         case .switchTab: "Switch to Tab"
         case .history: nil
         case .command(let command): command.shortcut ?? command.path
