@@ -1,5 +1,6 @@
 #pragma once
 
+#include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
@@ -12,6 +13,10 @@
 void KCRegisterBrowser(CefRefPtr<CefBrowser> browser);
 void KCUnregisterBrowser(CefRefPtr<CefBrowser> browser);
 bool KCRuntimeIsQuitting();
+
+// SPIKE (KCDefaultClient.mm): the browser-process CefApp, whose default client
+// catches browsers Chromium creates itself.
+CefRefPtr<CefApp> KCMakeApp();
 
 // The ad blocker (KCAdblock.mm). Both return null when Kite is built without it.
 CefRefPtr<CefResourceRequestHandler> KCAdblockRequestHandler(KCBrowser* owner);

@@ -148,7 +148,7 @@ bool KCRuntimeIsQuitting() {
     CefString(&cefSettings.cache_path) = [settings.profilePath stringByAppendingPathComponent:@"Default"].UTF8String;
     CefString(&cefSettings.log_file) = [settings.profilePath stringByAppendingPathComponent:@"chromium.log"].UTF8String;
 
-    gInitialized = CefInitialize(mainArgs, cefSettings, nullptr, nullptr);
+    gInitialized = CefInitialize(mainArgs, cefSettings, KCMakeApp(), nullptr);
     if (!gInitialized) NSLog(@"Kite: CefInitialize failed (exit code %d)", CefGetExitCode());
     else ApplyEnergySaver();
     return gInitialized;

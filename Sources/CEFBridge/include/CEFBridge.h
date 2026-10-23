@@ -55,6 +55,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// id, url, path, state (in-progress, complete, canceled, interrupted), receivedBytes, totalBytes.
 extern NSString * const KCDownloadDidUpdateNotification;
 
+/// SPIKE: a browser Chromium created itself (an extension opening a tab) was closed;
+/// userInfo["url"] is the NSURL it was opening, for Kite to open as a tab.
+extern NSString * const KCRuntimeOpenURLNotification;
+
 @class KCBrowser;
 
 /// A Chromium profile for a set of browsers. `incognitoContext` keeps cookies,
