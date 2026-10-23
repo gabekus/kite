@@ -5,12 +5,14 @@ enum CommandSuggestion: Identifiable, Hashable {
     case open(URL)
     case search(String, URL)
     case switchTab(BrowserTab)
+    case command(MenuCommand)
 
     var id: String {
         switch self {
         case .open(let url): "open:\(url.absoluteString)"
         case .search(let query, _): "search:\(query)"
         case .switchTab(let tab): "tab:\(tab.id)"
+        case .command(let command): "command:\(command.path)/\(command.title)"
         }
     }
 }
@@ -62,7 +64,11 @@ private struct CommandBarView: View {
         if URLInput.looksLikeURL(text), let url = URLInput.resolve(text, engine: state.searchEngine) {
             return [.open(url)] + tabs + [search]
         }
-        return [search] + tabs
+        // Menu commands, Arc-style. A strong match ("copy url") goes above the web search.
+        let commands = mode == .newTab ? MenuCommand.search(text, in: NSApp.mainMenu) : []
+        let strong = commands.filter { $0.score >= 80 }.map { CommandSuggestion.command($0.command) }
+        let weak = commands.filter { $0.score < 80 }.map { CommandSuggestion.command($0.command) }
+        return strong + [search] + tabs + weak
     }
 
     var body: some View {
@@ -134,6 +140,8 @@ private struct SuggestionRow: View {
             Spacer()
             if case .switchTab = suggestion {
                 Text("Switch to Tab").font(.system(size: 11)).foregroundStyle(.secondary)
+            } else if case .command(let command) = suggestion, let shortcut = command.shortcut {
+                Text(shortcut).font(.system(size: 12)).foregroundStyle(.secondary)
             }
         }
         .font(.system(size: 14))
@@ -150,6 +158,7 @@ private struct SuggestionRow: View {
         case .open: Image(systemName: "globe")
         case .search: Image(systemName: "magnifyingglass")
         case .switchTab(let tab): FaviconView(tab: tab)
+        case .command: Image(systemName: "command")
         }
     }
 
@@ -158,6 +167,7 @@ private struct SuggestionRow: View {
         case .open(let url): url.absoluteString
         case .search(let query, _): query
         case .switchTab(let tab): tab.displayTitle
+        case .command(let command): command.title
         }
     }
 
@@ -166,6 +176,7 @@ private struct SuggestionRow: View {
         case .open: "Open"
         case .search: "Search \(engine.displayName)"
         case .switchTab(let tab): tab.url?.host()
+        case .command(let command): command.path
         }
     }
 }

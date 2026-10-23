@@ -69,7 +69,12 @@ enum MainMenu {
             item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false),
             .separator(),
             item("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)), toTarget: false),
+            item("Allow Claude to Run JavaScript Without Asking", #selector(AppDelegate.toggleClaudeJavaScript(_:)), toTarget: false),
+            item("Open Claude’s Tabs in a Claude Space", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),
+            item("Connect Claude Code…", #selector(AppDelegate.connectClaudeCode(_:)), toTarget: false),
             item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:))),
+            // Until there's a Settings window.
+            item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
             .separator(),
             item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false),
@@ -158,6 +163,9 @@ enum MainMenu {
             .separator(),
             item("Dark Page for This Site", #selector(BrowserWindowController.toggleDarkPage(_:)), "d", [.command, .option]),
             darkPagesMenu(),
+            .separator(),
+            item("Block Ads on This Site", #selector(BrowserWindowController.toggleAdblockForSite(_:)), "b", [.command, .option]),
+            item("Block Ads and Trackers", #selector(BrowserWindowController.toggleAdblock(_:))),
             .separator(),
             submenuItem("Developer", [
                 item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option]),

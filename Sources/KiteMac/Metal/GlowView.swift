@@ -17,8 +17,9 @@ private struct GlowUniforms {
 /// The glow that runs around the web content while a page loads.
 ///
 /// It's a transparent overlay that ignores clicks, and it only exists while
-/// it's visible: when loading ends it fades out, then pauses and hides so it
-/// costs nothing at rest.
+/// it's visible: when loading ends it fades out, then stops its frame clock and
+/// hides so it costs nothing at rest. While it runs it draws at the screen's full
+/// refresh rate.
 @MainActor
 final class GlowView: MTKView, MTKViewDelegate {
     /// How far the glow reaches past the content edge, in points.
@@ -34,6 +35,7 @@ final class GlowView: MTKView, MTKViewDelegate {
     private let startTime = CACurrentMediaTime()
     private let commandQueue = ShaderLibrary.shared.commandQueue
     private lazy var pipeline = ShaderLibrary.shared.pipeline(fragment: "kite_glow_fragment", pixelFormat: colorPixelFormat)
+    private lazy var clock = FrameClock(view: self) { [unowned self] in draw() }
 
     init(margin: CGFloat) {
         self.margin = margin
@@ -44,9 +46,9 @@ final class GlowView: MTKView, MTKViewDelegate {
         clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         layer?.isOpaque = false
         delegate = self
+        // MTKView's own timer stays off; `clock` drives frames.
         enableSetNeedsDisplay = false
         isPaused = true
-        preferredFramesPerSecond = 60
         isHidden = true
     }
 
@@ -64,23 +66,23 @@ final class GlowView: MTKView, MTKViewDelegate {
     func setLoading(_ loading: Bool, progress: Double) {
         isLoading = loading
         self.progress = Float(progress)
-        if loading && isPaused {
+        if loading && !clock.isRunning {
             lastFrame = CACurrentMediaTime()
             isHidden = false
-            isPaused = false
+            clock.start()
         }
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
-        let now = CACurrentMediaTime()
+        let now = clock.targetTimestamp ?? CACurrentMediaTime()
         let dt = Float(min(now - lastFrame, 0.1))
         lastFrame = now
         intensity += (isLoading ? 4 : -2.5) * dt
         intensity = min(max(intensity, 0), 1)
         if !isLoading && intensity == 0 {
-            isPaused = true
+            clock.stop()
             isHidden = true
             return
         }

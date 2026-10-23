@@ -25,8 +25,9 @@ private func palette(_ theme: Theme) -> ThemeUniforms.Palette {
 
 /// The space's gradient backdrop behind the sidebar and web content.
 ///
-/// It only draws when something changes (theme, size, cutout). The display link
-/// runs only during the space-switch crossfade, then the view pauses again.
+/// It only draws when something changes (theme, size, cutout). The frame clock
+/// runs only during the space-switch crossfade, at the screen's full refresh
+/// rate, then stops again.
 @MainActor
 final class ThemeView: MTKView, MTKViewDelegate {
     var cutoutRect: CGRect = .zero {
@@ -40,6 +41,7 @@ final class ThemeView: MTKView, MTKViewDelegate {
     private let transitionDuration: CFTimeInterval = 0.4
     private let commandQueue = ShaderLibrary.shared.commandQueue
     private lazy var pipeline = ShaderLibrary.shared.pipeline(fragment: "kite_theme_fragment", pixelFormat: colorPixelFormat)
+    private lazy var clock = FrameClock(view: self) { [unowned self] in draw() }
 
     init(theme: Theme = Theme.presets[0]) {
         from = theme
@@ -50,7 +52,9 @@ final class ThemeView: MTKView, MTKViewDelegate {
         framebufferOnly = true
         autoResizeDrawable = true
         delegate = self
-        setAnimating(false)
+        // On demand only; `clock` drives the crossfade.
+        enableSetNeedsDisplay = true
+        isPaused = true
     }
 
     @available(*, unavailable)
@@ -66,19 +70,14 @@ final class ThemeView: MTKView, MTKViewDelegate {
             from = to
             to = theme
             transitionStart = CACurrentMediaTime()
-            setAnimating(true)
+            clock.start()
         } else {
             from = theme
             to = theme
             transitionStart = nil
+            clock.stop()
             needsDisplay = true
         }
-    }
-
-    private func setAnimating(_ animating: Bool) {
-        enableSetNeedsDisplay = !animating
-        isPaused = !animating
-        preferredFramesPerSecond = 120
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -88,11 +87,12 @@ final class ThemeView: MTKView, MTKViewDelegate {
     func draw(in view: MTKView) {
         var progress: Float = 1
         if let start = transitionStart {
-            let t = (CACurrentMediaTime() - start) / transitionDuration
+            let now = clock.targetTimestamp ?? CACurrentMediaTime()
+            let t = max(now - start, 0) / transitionDuration
             if t >= 1 {
                 transitionStart = nil
                 from = to
-                setAnimating(false)
+                clock.stop()
             } else {
                 progress = Float(t * t * (3 - 2 * t))
             }

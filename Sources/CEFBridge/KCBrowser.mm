@@ -13,10 +13,18 @@
 - (void)attachBrowser:(CefRefPtr<CefBrowser>)browser;
 - (void)browserDidClose;
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData *)data;
+- (void)willNavigateMainFrame:(CefRefPtr<CefRequest>)request;
+- (void)mainFrameDidStartLoading;
+- (void)prepareFirstPage:(nullable NSURL *)url;
+- (NSMutableArray<NSString *> *)documentScriptIdentifiers;
+- (void)addDocumentScript:(NSString *)script navigation:(NSUInteger)navigation completion:(nullable void (^)(void))completion;
+- (void)deliverDevToolsEvent:(NSString *)method data:(NSData *)data;
 @property (nonatomic, readwrite) BOOL isLoading;
 @property (nonatomic, readwrite) BOOL canGoBack;
 @property (nonatomic, readwrite) BOOL canGoForward;
 @end
+
+NSString* const KCDownloadDidUpdateNotification = @"KCDownloadDidUpdateNotification";
 
 namespace {
 
@@ -83,7 +91,7 @@ class KCClient : public CefClient,
                  public CefFindHandler,
                  public CefDevToolsMessageObserver {
  public:
-    explicit KCClient(KCBrowser* owner) : owner_(owner) {}
+    explicit KCClient(KCBrowser* owner) : owner_(owner), adblock_(KCAdblockRequestHandler(owner)) {}
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -123,6 +131,7 @@ class KCClient : public CefClient,
                               CefRect(0, 0, (int)NSWidth(bounds), (int)NSHeight(bounds)));
         client = new KCClient(popup);
         [delegate browser:owner didCreatePopup:popup url:ToNSURL(target_url)];
+        [popup prepareFirstPage:ToNSURL(target_url)];
         return false;
     }
 
@@ -167,6 +176,10 @@ class KCClient : public CefClient,
 
     // CefLoadHandler
 
+    void OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, TransitionType transition_type) override {
+        if (frame->IsMain()) [owner_ mainFrameDidStartLoading];
+    }
+
     void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool canGoBack, bool canGoForward) override {
         KCBrowser* owner = owner_;
         owner.isLoading = isLoading;
@@ -176,6 +189,25 @@ class KCClient : public CefClient,
     }
 
     // CefRequestHandler
+
+    bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
+                        CefRefPtr<CefFrame> frame,
+                        CefRefPtr<CefRequest> request,
+                        bool user_gesture,
+                        bool is_redirect) override {
+        if (frame->IsMain()) [owner_ willNavigateMainFrame:request];
+        return false;
+    }
+
+    CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(CefRefPtr<CefBrowser> browser,
+                                                                   CefRefPtr<CefFrame> frame,
+                                                                   CefRefPtr<CefRequest> request,
+                                                                   bool is_navigation,
+                                                                   bool is_download,
+                                                                   const CefString& request_initiator,
+                                                                   bool& disable_default_handling) override {
+        return is_download ? nullptr : adblock_;
+    }
 
     bool OnOpenURLFromTab(CefRefPtr<CefBrowser> browser,
                           CefRefPtr<CefFrame> frame,
@@ -204,6 +236,17 @@ class KCClient : public CefClient,
                            CefRefPtr<CefDownloadItem> download_item,
                            CefRefPtr<CefDownloadItemCallback> callback) override {
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
+        NSString* state = download_item->IsComplete() ? @"complete"
+            : download_item->IsCanceled() ? @"canceled"
+            : download_item->IsInterrupted() ? @"interrupted" : @"in-progress";
+        [NSNotificationCenter.defaultCenter postNotificationName:KCDownloadDidUpdateNotification object:owner_ userInfo:@{
+            @"id": @(download_item->GetId()),
+            @"url": ToNSString(download_item->GetOriginalUrl()),
+            @"path": ToNSString(download_item->GetFullPath()),
+            @"state": state,
+            @"receivedBytes": @(download_item->GetReceivedBytes()),
+            @"totalBytes": @(download_item->GetTotalBytes()),
+        }];
     }
 
     // CefFindHandler
@@ -224,9 +267,17 @@ class KCClient : public CefClient,
         [owner_ deliverDevToolsResult:message_id success:success data:data];
     }
 
+    void OnDevToolsEvent(CefRefPtr<CefBrowser> browser, const CefString& method,
+                         const void* params, size_t params_size) override {
+        KCBrowser* owner = owner_;
+        if (!owner.devToolsEventHandler) return;
+        [owner deliverDevToolsEvent:ToNSString(method) data:[NSData dataWithBytes:params length:params_size]];
+    }
+
  private:
     __weak KCBrowser* owner_;
     CefRefPtr<CefRegistration> devtools_registration_;
+    CefRefPtr<CefResourceRequestHandler> adblock_;
     IMPLEMENT_REFCOUNTING(KCClient);
 };
 
@@ -243,6 +294,14 @@ class KCClient : public CefClient,
     BOOL _closed;
     int _nextMessageID;
     std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
+    NSInteger _blockedCount;
+    BOOL _blockedCountPending;
+    /// Page.addScriptToEvaluateOnNewDocument identifiers to remove when the script changes.
+    NSMutableArray<NSString*>* _documentScripts;
+    NSUInteger _navigationCount;
+    /// The registered document-start script; reloads and same-site links reuse it.
+    NSString* _documentScriptSource;
+    BOOL _runScriptAtLoadStart;
 }
 
 - (instancetype)initWithURL:(NSURL*)url delegate:(id<KCBrowserDelegate>)delegate {
@@ -250,8 +309,10 @@ class KCClient : public CefClient,
         CefWindowInfo windowInfo;
         windowInfo.SetAsChild((__bridge CefWindowHandle)_view, CefRect(0, 0, 800, 600));
         CefBrowserSettings settings;
-        std::string start = url ? url.absoluteString.UTF8String : "about:blank";
-        CefBrowserHost::CreateBrowser(windowInfo, new KCClient(self), start, settings, nullptr, nullptr);
+        // Start empty and load once attached: DevTools calls (dark pages, the ad
+        // blocker's document-start script) need the browser before the first navigation.
+        _pendingURL = url ?: [NSURL URLWithString:@"about:blank"];
+        CefBrowserHost::CreateBrowser(windowInfo, new KCClient(self), "", settings, nullptr, KCAdblockRequestContext());
     }
     return self;
 }
@@ -264,6 +325,7 @@ class KCClient : public CefClient,
         _zoomFactor = 1;
         _nextMessageID = 1000;
         _pendingDevTools = new std::map<int, void (^)(NSDictionary*, NSString*)>();
+        _documentScripts = [NSMutableArray array];
     }
     return self;
 }
@@ -281,9 +343,26 @@ class KCClient : public CefClient,
         browser->GetHost()->CloseBrowser(true);
         return;
     }
+    // Document-start scripts only run in sessions with the Page domain enabled.
+    if ([_delegate respondsToSelector:@selector(browser:documentStartScriptForURL:)]) {
+        [self executeDevToolsMethod:@"Page.enable" params:nil completion:nil];
+    }
+    if (_documentScriptSource && _documentScripts.count == 0 && !_pendingURL) {
+        [self addDocumentScript:_documentScriptSource navigation:_navigationCount completion:nil];
+    }
     if (_pendingURL) {
-        [self loadURL:_pendingURL];
+        NSURL* url = _pendingURL;
         _pendingURL = nil;
+        // A browser that hasn't navigated has no renderer yet, so a script registered
+        // now can miss the first document; it runs again at load start (the script
+        // guards against running twice).
+        NSString* script = [_delegate respondsToSelector:@selector(browser:documentStartScriptForURL:)]
+            ? [_delegate browser:self documentStartScriptForURL:url] : nil;
+        if (script.length) {
+            [self addDocumentScript:script navigation:_navigationCount completion:nil];
+            _runScriptAtLoadStart = YES;
+        }
+        [self loadURL:url];
     }
     if (_zoomFactor != 1) self.zoomFactor = _zoomFactor;
     if (_hidden) browser->GetHost()->WasHidden(true);
@@ -406,6 +485,91 @@ class KCClient : public CefClient,
         NSString* message = [object[@"message"] isKindOfClass:NSString.class] ? object[@"message"] : @"DevTools method failed.";
         completion(nil, message);
     }
+}
+
+- (NSInteger)blockedCount {
+    return _blockedCount;
+}
+
+- (void)noteBlockedRequest {
+    _blockedCount++;
+    // Pages block in bursts; tell the delegate once per run loop turn.
+    if (_blockedCountPending) return;
+    _blockedCountPending = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self->_blockedCountPending = NO;
+        if ([self.delegate respondsToSelector:@selector(browser:blockedCountDidChange:)]) {
+            [self.delegate browser:self blockedCountDidChange:self->_blockedCount];
+        }
+    });
+}
+
+/// Popups load their first page as soon as Chromium creates them, possibly before
+/// this object has its browser: keep the script now, register it when attached,
+/// and run it at load start in case the first document beat it.
+- (void)prepareFirstPage:(NSURL*)url {
+    if (!url || ![_delegate respondsToSelector:@selector(browser:documentStartScriptForURL:)]) return;
+    NSString* script = [_delegate browser:self documentStartScriptForURL:url];
+    if (!script.length) return;
+    _documentScriptSource = script;
+    _runScriptAtLoadStart = YES;
+}
+
+- (void)mainFrameDidStartLoading {
+    if (!_runScriptAtLoadStart) return;
+    _runScriptAtLoadStart = NO;
+    if (_documentScriptSource) [self evaluateJavaScript:_documentScriptSource completion:^(id) {}];
+}
+
+- (void)willNavigateMainFrame:(CefRefPtr<CefRequest>)request {
+    _blockedCount = 0;
+    if ([_delegate respondsToSelector:@selector(browser:blockedCountDidChange:)]) {
+        [_delegate browser:self blockedCountDidChange:0];
+    }
+    NSURL* url = ToNSURL(request->GetURL());
+    NSString* script = url && [_delegate respondsToSelector:@selector(browser:documentStartScriptForURL:)]
+        ? [_delegate browser:self documentStartScriptForURL:url] : nil;
+    if ((script ?: @"").length == 0 && _documentScriptSource == nil) return;
+    if ([script isEqualToString:_documentScriptSource]) return;
+
+    for (NSString* identifier in _documentScripts) {
+        [self executeDevToolsMethod:@"Page.removeScriptToEvaluateOnNewDocument" params:@{@"identifier": identifier} completion:nil];
+    }
+    [_documentScripts removeAllObjects];
+    _documentScriptSource = nil;
+    // Only a changed script makes registrations still in flight stale.
+    NSUInteger navigation = ++_navigationCount;
+    // Sent now, before the request starts, so it's registered by the time the new document commits.
+    if (script.length) [self addDocumentScript:script navigation:navigation completion:nil];
+}
+
+- (void)addDocumentScript:(NSString*)script navigation:(NSUInteger)navigation completion:(void (^)(void))completion {
+    _documentScriptSource = script;
+    __weak KCBrowser* weakSelf = self;
+    [self executeDevToolsMethod:@"Page.addScriptToEvaluateOnNewDocument"
+                         params:@{@"source": script}
+                     completion:^(NSDictionary* result) {
+        NSString* identifier = result[@"identifier"];
+        KCBrowser* strongSelf = weakSelf;
+        if (strongSelf && [identifier isKindOfClass:NSString.class]) {
+            if (strongSelf->_navigationCount == navigation) {
+                [strongSelf.documentScriptIdentifiers addObject:identifier];
+            } else {
+                // A redirect or a quick second navigation already replaced this script.
+                [strongSelf executeDevToolsMethod:@"Page.removeScriptToEvaluateOnNewDocument" params:@{@"identifier": identifier} completion:nil];
+            }
+        }
+        if (completion) completion();
+    }];
+}
+
+- (NSMutableArray<NSString*>*)documentScriptIdentifiers {
+    return _documentScripts;
+}
+
+- (void)deliverDevToolsEvent:(NSString*)method data:(NSData*)data {
+    id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (self.devToolsEventHandler) self.devToolsEventHandler(method, [json isKindOfClass:NSDictionary.class] ? json : @{});
 }
 
 - (void)close {
