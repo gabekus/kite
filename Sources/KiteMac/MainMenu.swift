@@ -189,6 +189,11 @@ enum MainMenu {
         submenu("History", [
             item("Back", #selector(BrowserWindowController.goBack(_:)), "[", id: "goBack"),
             item("Forward", #selector(BrowserWindowController.goForward(_:)), "]", id: "goForward"),
+            // Arc 1.169 goes back/forward on ⌘← / ⌘→ in a page (seen on the Mac; not in its binding table,
+            // so not remappable there). Chromium offers key equivalents to the page first, so a page
+            // text field still moves its caret.
+            alternate(#selector(BrowserWindowController.goBack(_:)), left, .command),
+            alternate(#selector(BrowserWindowController.goForward(_:)), right, .command),
         ])
 
         submenu("Tabs", [
