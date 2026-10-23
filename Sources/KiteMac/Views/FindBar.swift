@@ -19,12 +19,15 @@ final class FindBar: NSView, NSTextFieldDelegate {
         static let nextCenterX: CGFloat = 252
         static let dividerX: CGFloat = 270
         static let closeCenterX: CGFloat = 283.5
-        static let fill = NSColor(srgbRed: 0x1B / 255, green: 0x26 / 255, blue: 0x3F / 255, alpha: 1)
-        static let divider = NSColor(srgbRed: 0x18 / 255, green: 0x22 / 255, blue: 0x39 / 255, alpha: 1)
-        static let text = NSColor(srgbRed: 0xD9 / 255, green: 0xDB / 255, blue: 0xDE / 255, alpha: 1)
-        static let icon = NSColor(srgbRed: 0xA6 / 255, green: 0xAA / 255, blue: 0xB1 / 255, alpha: 1)
+        // Colours are tuned so a screen capture of Kite reads the same as one of Arc:
+        // captures in the display profile read ~10–15 levels lighter once converted
+        // to sRGB, so Arc's captured #1B263F fill is really about #141D32.
+        static let fill = NSColor(srgbRed: 0x14 / 255, green: 0x1D / 255, blue: 0x32 / 255, alpha: 1)
+        static let divider = NSColor(srgbRed: 0x0D / 255, green: 0x15 / 255, blue: 0x2A / 255, alpha: 1)
+        static let text = NSColor(srgbRed: 0xD2 / 255, green: 0xD4 / 255, blue: 0xD8 / 255, alpha: 1)
+        static let icon = NSColor(srgbRed: 0x96 / 255, green: 0x9B / 255, blue: 0xA4 / 255, alpha: 1)
         static let counter = NSColor(srgbRed: 0xE8 / 255, green: 0xEA / 255, blue: 0xEF / 255, alpha: 1)
-        static let caret = NSColor(srgbRed: 0x41 / 255, green: 0x8F / 255, blue: 0xF8 / 255, alpha: 1)
+        static let caret = NSColor(srgbRed: 0x11 / 255, green: 0x7A / 255, blue: 0xFD / 255, alpha: 1)
     }
 
     var onSearch: ((_ text: String, _ forward: Bool, _ findNext: Bool) -> Void)?
