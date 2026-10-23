@@ -18,6 +18,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     let store: BrowserStore
     let pool: PagePool
+    private let adblocker: Adblocker
     private let rootView = RootView()
     /// The system's sidebar material under the space's tint, like Arc's translucent window.
     private let materialView = NSVisualEffectView()
@@ -42,8 +43,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var commandBarVisible = false
     private var sidebarVisible = true
 
-    init(store: BrowserStore, engine: WebEngine) {
+    init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker) {
         self.store = store
+        self.adblocker = adblocker
         self.pool = PagePool(engine: engine, store: store)
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
@@ -240,6 +242,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
         appliedDark = appliedDark.filter { live.contains($0.key) }
         applyDarkPage()
+        adblocker.setPolicy(enabled: state.blocksAds, allowedHosts: state.adblockAllowedHosts)
 
         updateCommandBar()
         updateSidebar()
@@ -391,6 +394,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         store.mutate { $0.toggleDarkPage(for: tab.url) }
     }
 
+    /// Blocking on or off for the current site. Reloads so the page shows the
+    /// change right away. Arc has no ad-block control in its sidebar, so this
+    /// lives in the View menu until Kite has Arc's site controls.
+    @objc func toggleAdblockForSite(_ sender: Any?) {
+        guard let tab = store.state.selectedTab, tab.url?.host() != nil else { return NSSound.beep() }
+        store.mutate { $0.toggleAdblock(for: tab.url) }
+        shownPage?.reload()
+    }
+
+    @objc func toggleAdblock(_ sender: Any?) {
+        store.mutate { $0.blocksAds.toggle() }
+        shownPage?.reload()
+    }
+
     /// The Dark Pages menu: tags index `DarkPagesMode.allCases`.
     @objc func setDarkPagesMode(_ sender: NSMenuItem) {
         let modes = DarkPagesMode.allCases
@@ -407,6 +424,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let tab = store.state.selectedTab
             item.state = store.state.wantsDarkPage(for: tab?.url, systemIsDark: store.systemIsDark) ? .on : .off
             return pool.engine.supportsDarkPages && tab?.url?.host() != nil
+        case #selector(toggleAdblock(_:)):
+            item.state = store.state.blocksAds ? .on : .off
+            return Adblocker.isAvailable
+        case #selector(toggleAdblockForSite(_:)):
+            let tab = store.state.selectedTab
+            let on = store.state.blocksAds(on: tab?.url)
+            item.state = on ? .on : .off
+            let blocked = tab.flatMap { store.pages[$0.id]?.blockedCount } ?? 0
+            item.title = on && pool.engine.countsBlockedRequests && blocked > 0
+                ? "Block Ads on This Site (\(blocked) blocked)"
+                : "Block Ads on This Site"
+            return Adblocker.isAvailable && tab?.url?.host() != nil
         case #selector(togglePin(_:)):
             let pinned = store.state.selectedTab.flatMap { store.state.location(of: $0.id) }?.section == .pinned
             item.title = pinned ? "Unpin Tab" : "Pin Tab"

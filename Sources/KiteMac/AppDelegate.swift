@@ -10,9 +10,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var engine: WebEngine!
 
     private var store: BrowserStore!
+    private var adblocker: Adblocker!
     private var windowController: BrowserWindowController!
     private var archiveTimer: Timer?
     private var automation: AutomationController!
+    private var diagnostics: DiagnosticsRecorder!
     /// Links opened before launch finished (Kite as the default browser).
     private var pendingURLs: [URL] = []
 
@@ -31,7 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
         store.archiveStaleTabs(olderThan: Self.archiveAfter)
 
-        windowController = BrowserWindowController(store: store, engine: engine)
+        adblocker = Adblocker(directory: Self.supportDirectory.appendingPathComponent("Adblock", isDirectory: true))
+        adblocker.setPolicy(enabled: store.state.blocksAds, allowedHosts: store.state.adblockAllowedHosts)
+        engine.attach(adblocker)
+        adblocker.start()
+
+        windowController = BrowserWindowController(store: store, engine: engine, adblocker: adblocker)
         NSApp.mainMenu = MainMenu.build(target: windowController)
         // Registered after the menu bar is set so AppKit adds Help search and the window list.
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
@@ -45,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         open(pendingURLs)
         pendingURLs = []
+
+        diagnostics = DiagnosticsRecorder(directory: Self.supportDirectory.appendingPathComponent("Diagnostics", isDirectory: true))
+        diagnostics.start()
 
         archiveTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.store.archiveStaleTabs(olderThan: Self.archiveAfter) }
@@ -92,6 +102,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Claude
 
+    @objc func toggleClaudeJavaScript(_ sender: Any?) {
+        automation.setAllowJavaScript(!automation.settings.allowJavaScript)
+    }
+
+    @objc func toggleClaudeSpace(_ sender: Any?) {
+        automation.setUseClaudeSpace(!automation.settings.useClaudeSpace)
+    }
+
+    @objc func connectClaudeCode(_ sender: Any?) {
+        if !automation.isEnabled { automation.setEnabled(true) }
+        guard automation.isEnabled else { return }
+        ClaudeConnect.present(automation)
+    }
+
     @objc func toggleClaudeControl(_ sender: Any?) {
         let enable = !automation.isEnabled
         automation.setEnabled(enable)
@@ -103,23 +127,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             \(automation.claudeCodeCommand)
 
+            Or choose Connect Claude Code… to have Kite do it.
+
             Kite asks you before Claude submits a form, sends, posts, pays, buys or deletes anything, and shows \
             when Claude is controlling a tab. Turn this off in the Kite menu at any time.
             """
         alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Copy Command")
+        alert.addButton(withTitle: "Connect Claude Code…")
         if alert.runModal() == .alertSecondButtonReturn {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(automation.claudeCodeCommand, forType: .string)
+            ClaudeConnect.present(automation)
         }
     }
 }
 
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        if item.action == #selector(toggleClaudeControl(_:)) {
-            item.state = automation?.isEnabled == true ? .on : .off
-            return automation != nil
+        guard let automation else { return true }
+        switch item.action {
+        case #selector(toggleClaudeControl(_:)):
+            item.state = automation.isEnabled ? .on : .off
+        case #selector(toggleClaudeJavaScript(_:)):
+            item.state = automation.settings.allowJavaScript ? .on : .off
+            return automation.isEnabled
+        case #selector(toggleClaudeSpace(_:)):
+            item.state = automation.settings.useClaudeSpace ? .on : .off
+            return automation.isEnabled
+        default:
+            break
         }
         if item.action == #selector(toggleEnergySaver(_:)) {
             #if canImport(CEFBridge)
