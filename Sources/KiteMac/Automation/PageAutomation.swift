@@ -16,9 +16,14 @@ protocol PageAutomation {
 /// Acting on a page: everything beyond reading. Only Chromium tabs can do it.
 @MainActor
 protocol PageActions: PageAutomation {
-    /// Starts DevTools events for `TabActivity`; `stopEvents` ends them.
-    func startEvents(_ handler: @escaping (String, JSONValue) -> Void) async throws
-    func stopEvents() async
+    /// Turns on DevTools domains (Page, Runtime, Log, Network) and sends their events to `handler`.
+    /// `stopEvents` turns domains off; the handler goes once Network is off.
+    func startEvents(domains: [String], _ handler: @escaping (String, JSONValue) -> Void) async throws
+    func stopEvents(domains: [String]) async
+    /// A response body Chromium still holds: the text, and whether it's base64 (binary).
+    func responseBody(requestID: String) async throws -> (body: String, base64: Bool)
+    /// The body a request sent.
+    func requestBody(requestID: String) async throws -> String
     /// Accessibility nodes of every readable frame, for `find`.
     func allNodes() async throws -> [AXNode]
     /// Finds the element, scrolls it into view and describes it for the policy.

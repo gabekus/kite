@@ -37,18 +37,32 @@ struct ChromiumAutomation: PageActions {
 
     // MARK: Events
 
-    /// Starts the domains whose events feed `TabActivity` (console, network, dialogs, loads).
-    func startEvents(_ handler: @escaping (String, JSONValue) -> Void) async throws {
+    /// Turns on the domains whose events feed `TabActivity` and the network log.
+    func startEvents(domains: [String], _ handler: @escaping (String, JSONValue) -> Void) async throws {
         browser.devToolsEventHandler = { method, params in
             let json = (try? JSONSerialization.data(withJSONObject: params)).flatMap { try? JSONValue.decode($0) } ?? .object([:])
             handler(method, json)
         }
-        for domain in ["Page", "Runtime", "Log", "Network"] { try await call("\(domain).enable") }
+        for domain in domains {
+            // Bodies stay in Chromium (bounded per tab) until network_request asks; posted bodies aren't copied into events.
+            let params: [String: Any] = domain == "Network"
+                ? ["maxTotalBufferSize": 20_000_000, "maxResourceBufferSize": 5_000_000, "maxPostDataSize": 0] : [:]
+            try await call("\(domain).enable", params)
+        }
     }
 
-    func stopEvents() async {
-        browser.devToolsEventHandler = nil
-        for domain in ["Network", "Log", "Runtime"] { _ = try? await call("\(domain).disable", timeout: 3) }
+    func stopEvents(domains: [String]) async {
+        if domains.contains("Network") { browser.devToolsEventHandler = nil }
+        for domain in domains { _ = try? await call("\(domain).disable", timeout: 3) }
+    }
+
+    func responseBody(requestID: String) async throws -> (body: String, base64: Bool) {
+        let result = try await call("Network.getResponseBody", ["requestId": requestID], timeout: 5)
+        return (result["body"] as? String ?? "", result["base64Encoded"] as? Bool ?? false)
+    }
+
+    func requestBody(requestID: String) async throws -> String {
+        try await call("Network.getRequestPostData", ["requestId": requestID], timeout: 5)["postData"] as? String ?? ""
     }
 
     // MARK: Reading

@@ -25,7 +25,11 @@ final class PagePool {
         watchMemoryPressure()
     }
 
+    /// Called for every page made, including popups (before their tab exists).
+    var onPageCreated: ((UUID, WebPage) -> Void)?
+
     func loadedPage(_ id: UUID) -> WebPage? { pages[id] }
+    var livePages: [UUID: WebPage] { pages }
 
     func page(for tab: BrowserTab) -> WebPage {
         if let existing = pages[tab.id] { return existing }
@@ -67,6 +71,7 @@ final class PagePool {
         pages[id] = page
         lastShown[id] = Date()
         page.onEvent = { [weak self] event in self?.handle(event, from: id) }
+        onPageCreated?(id, page)
     }
 
     private func handle(_ event: PageEvent, from id: UUID) {

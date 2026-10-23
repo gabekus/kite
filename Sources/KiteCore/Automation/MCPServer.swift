@@ -29,7 +29,9 @@ public struct MCPServer: Sendable {
         \(UntrustedContent.notice) \
         Kite asks the user before anything that submits a form, sends, posts, pays, buys or deletes, and before typing \
         into password or payment fields, and before running JavaScript; if they decline, the tool returns an error. \
-        Don't retry a declined action.
+        Don't retry a declined action. \
+        When debugging a site, network_log shows what the tabs requested (pass its cursor back as since to see only \
+        new requests) and network_request gives one request's headers and bodies.
         """
 
     public var tools: JSONValue {
