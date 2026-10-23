@@ -11,8 +11,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         static let sidebarWidths: ClosedRange<CGFloat> = 180...400
         /// Grab area along the sidebar's trailing edge, inside its padding.
         static let resizeHandleWidth: CGFloat = 8
-        static let inset: CGFloat = 8
-        static let cornerRadius: CGFloat = 10
+        static let inset = ArcMetrics.Content.inset
+        static let cornerRadius = ArcMetrics.Content.cornerRadius
         static let glowMargin: CGFloat = 28
     }
 
@@ -20,6 +20,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     let pool: PagePool
     private let adblocker: Adblocker
     private let rootView = RootView()
+    /// The system's sidebar material under the space's tint, like Arc's translucent window.
+    private let materialView = NSVisualEffectView()
     private let themeView = ThemeView()
     private let glowView = GlowView(margin: Layout.glowMargin)
     let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
@@ -58,6 +60,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             defer: false
         )
         window.titlebarAppearsTransparent = true
+        // Clear, so the sidebar material can show the desktop through the tint.
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         window.tabbingMode = .disallowed
@@ -108,6 +113,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 goBack: { [weak self] in self?.goBack(nil) },
                 goForward: { [weak self] in self?.goForward(nil) },
                 reload: { [weak self] in self?.reload(nil) },
+                toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
                 closeTab: { [weak self] id in self?.close(tab: id) }
             ),
             supportsDarkPages: pool.engine.supportsDarkPages
@@ -129,7 +135,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             UserDefaults.standard.set(Double(sidebarWidth), forKey: Self.sidebarWidthKey)
         }
 
-        for view in [themeView, sidebarHost!, resizeHandle, contentFrame, glowView, commandBarHost!] as [NSView] {
+        materialView.material = .sidebar
+        materialView.blendingMode = .behindWindow
+        materialView.state = .followsWindowActiveState
+
+        for view in [materialView, themeView, sidebarHost!, resizeHandle, contentFrame, glowView, commandBarHost!] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -142,6 +152,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         contentLeading = contentFrame.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: sidebarWidth)
         sidebarWidthConstraint = sidebarHost.widthAnchor.constraint(equalToConstant: sidebarWidth)
         NSLayoutConstraint.activate([
+            materialView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            materialView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            materialView.topAnchor.constraint(equalTo: rootView.topAnchor),
+            materialView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+
             themeView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             themeView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             themeView.topAnchor.constraint(equalTo: rootView.topAnchor),
@@ -202,6 +217,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let frame = contentFrame.frame
         themeView.cutoutRect = CGRect(x: frame.minX, y: rootView.bounds.height - frame.maxY, width: frame.width, height: frame.height)
         themeView.cutoutCornerRadius = Layout.cornerRadius
+        let sidebar = sidebarHost.frame
+        themeView.glowRegion = sidebarVisible
+            ? CGRect(x: sidebar.minX, y: rootView.bounds.height - sidebar.maxY, width: sidebar.width, height: sidebar.height)
+            : .zero
     }
 
     // MARK: Sync with the store
@@ -212,7 +231,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         themeView.setTheme(space.theme, animated: shownSpaceID != nil)
         glowView.setTheme(space.theme)
-        sidebarHost.appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
+        let appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
+        sidebarHost.appearance = appearance
+        materialView.appearance = appearance
         shownSpaceID = space.id
         // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
         let title = state.selectedTab?.title ?? ""

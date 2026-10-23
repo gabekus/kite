@@ -19,24 +19,30 @@ enum CommandSuggestion: Identifiable, Hashable {
     }
 }
 
-/// Dimmed backdrop plus the bar itself. Present only while the bar is open, so
-/// the text field gets focus fresh every time.
+/// The bar over the window, like Arc's: no dimming, a click outside closes it.
+/// Present only while the bar is open, so the text field gets focus fresh every time.
 struct CommandBarOverlay: View {
     let store: BrowserStore
     let onCommit: (CommandSuggestion, CommandBarMode) -> Void
 
     var body: some View {
         if let mode = store.commandBar {
-            ZStack(alignment: .top) {
-                Color.black.opacity(0.18)
-                    .contentShape(Rectangle())
-                    .onTapGesture { store.hideCommandBar() }
-                CommandBarView(store: store, mode: mode) { onCommit($0, mode) }
-                    .padding(.top, 110)
+            GeometryReader { proxy in
+                ZStack(alignment: .top) {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { store.hideCommandBar() }
+                    CommandBarView(store: store, mode: mode) { onCommit($0, mode) }
+                        .padding(.top, (proxy.size.height * C.topFraction).rounded())
+                }
             }
+            // Measured from the window's top edge, titlebar included.
+            .ignoresSafeArea()
         }
     }
 }
+
+private typealias C = ArcMetrics.CommandBar
 
 private struct CommandBarView: View {
     let store: BrowserStore
@@ -81,14 +87,17 @@ private struct CommandBarView: View {
 
     var body: some View {
         let items = suggestions
+        let accent = store.state.selectedSpace.theme.accent
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
+            HStack(spacing: 0) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(.secondary)
-                TextField("Search or enter URL", text: $query)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: C.iconSize, height: C.iconSize)
+                    .padding(.leading, C.iconX)
+                    .padding(.trailing, C.textX - C.iconX - C.iconSize)
+                TextField("", text: $query, prompt: Text("Search or Enter URL...").foregroundStyle(.primary.opacity(C.placeholderOpacity)))
                     .textFieldStyle(.plain)
-                    .font(.system(size: 18))
+                    .font(.system(size: C.fieldFontSize))
                     .focused($focused)
                     .onSubmit { commit(items) }
                     .onKeyPress(.downArrow) {
@@ -100,27 +109,30 @@ private struct CommandBarView: View {
                         return .handled
                     }
                     .onExitCommand { store.hideCommandBar() }
+                    .padding(.trailing, C.iconX)
             }
-            .padding(.horizontal, 16)
-            .frame(height: 54)
+            .frame(height: C.fieldHeight)
 
             if !items.isEmpty {
-                Divider()
-                VStack(spacing: 2) {
+                Rectangle()
+                    .fill(.primary.opacity(C.dividerOpacity))
+                    .frame(height: 0.5)
+                    .padding(.horizontal, C.dividerInset)
+                VStack(spacing: 0) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        SuggestionRow(suggestion: item, engine: store.state.searchEngine, highlighted: index == highlighted)
+                        SuggestionRow(suggestion: item, engine: store.state.searchEngine, highlighted: index == highlighted, accent: accent)
                             .contentShape(Rectangle())
                             .onTapGesture { onCommit(item) }
                             .onHover { if $0 { highlighted = index } }
                     }
                 }
-                .padding(6)
+                .padding(.horizontal, C.rowInset)
+                .padding(.top, C.listTopGap)
+                .padding(.bottom, C.listBottomGap)
             }
         }
-        .frame(width: 620)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white.opacity(0.15)))
-        .shadow(color: .black.opacity(0.25), radius: 30, y: 12)
+        .frame(width: C.width)
+        .modifier(CommandBarPanel())
         .onAppear { focused = true }
         .onChange(of: query) { highlighted = 0 }
     }
@@ -131,43 +143,71 @@ private struct CommandBarView: View {
     }
 }
 
+/// Arc's panel: near-black in dark mode, a hairline border, a wide soft shadow.
+private struct CommandBarPanel: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: C.cornerRadius, style: .circular)
+        content
+            .background(scheme == .dark ? Color(white: 0.106) : Color(white: 0.98), in: shape)
+            .overlay(shape.strokeBorder(scheme == .dark ? Color.white.opacity(C.borderOpacity) : Color.black.opacity(0.12), lineWidth: 1))
+            .shadow(color: .black.opacity(C.shadowOpacity), radius: C.shadowRadius, y: C.shadowY)
+    }
+}
+
 private struct SuggestionRow: View {
     let suggestion: CommandSuggestion
     let engine: SearchEngine
     let highlighted: Bool
+    let accent: ThemeColor
 
     var body: some View {
-        HStack(spacing: 10) {
-            icon.frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).lineLimit(1)
-                if let subtitle {
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }
+        HStack(spacing: 0) {
+            icon
+                .frame(width: C.rowIconSize, height: C.rowIconSize)
+                .frame(width: C.rowIconTileSize, height: C.rowIconTileSize)
+                .background(highlighted ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .foregroundStyle(highlighted ? Color(accent) : .primary)
+                .padding(.leading, C.rowIconX)
+                .padding(.trailing, C.rowTitleX - C.rowIconX - C.rowIconTileSize)
+            // Arc's "Title — url" rows: the part after the dash is dimmer.
+            (Text(title) + Text(subtitle.map { " — " + $0 } ?? "").foregroundColor(.primary.opacity(highlighted ? 0.7 : 0.5)))
+                .lineLimit(1)
+                .opacity(highlighted ? 1 : C.rowTextOpacity)
+            Spacer(minLength: C.actionGap)
+            if let detail {
+                Text(detail)
+                    .opacity(highlighted ? 0.8 : C.rowDetailOpacity)
+                    .padding(.trailing, C.actionGap)
             }
-            Spacer()
-            if case .switchTab = suggestion {
-                Text("Switch to Tab").font(.system(size: 11)).foregroundStyle(.secondary)
-            } else if case .command(let command) = suggestion, let shortcut = command.shortcut {
-                Text(shortcut).font(.system(size: 12)).foregroundStyle(.secondary)
-            }
+            Image(systemName: "arrow.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(highlighted ? Color(accent) : .primary)
+                .frame(width: C.actionBoxSize, height: C.actionBoxSize)
+                .background(highlighted ? Color.white : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .opacity(highlighted ? 1 : 0.7)
+                .padding(.trailing, C.actionBoxTrailing)
         }
-        .font(.system(size: 14))
-        .padding(.horizontal, 10)
-        .frame(height: 40)
+        .font(.system(size: C.rowFontSize, weight: .medium))
+        .foregroundStyle(highlighted ? Color.white : .primary)
+        .frame(height: C.rowFillHeight)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(highlighted ? Color.accentColor.opacity(0.22) : .clear)
+            RoundedRectangle(cornerRadius: C.rowCornerRadius, style: .continuous)
+                .fill(highlighted ? Color(accent) : .clear)
         )
+        .padding(.horizontal, C.rowFillInset)
+        .padding(.top, C.rowFillInset)
+        .frame(height: C.rowPitch, alignment: .top)
     }
 
     @ViewBuilder private var icon: some View {
         switch suggestion {
-        case .open: Image(systemName: "globe")
-        case .search: Image(systemName: "magnifyingglass")
-        case .switchTab(let tab): FaviconView(tab: tab)
-        case .history(let entry): FaviconView(page: entry.url)
-        case .command: Image(systemName: "command")
+        case .open: Image(systemName: "globe").resizable().scaledToFit()
+        case .search: Image(systemName: "magnifyingglass").resizable().scaledToFit()
+        case .switchTab(let tab): FaviconView(tab: tab, size: C.rowIconSize)
+        case .history(let entry): FaviconView(page: entry.url, size: C.rowIconSize)
+        case .command: Image(systemName: "command").resizable().scaledToFit()
         }
     }
 
@@ -181,13 +221,29 @@ private struct SuggestionRow: View {
         }
     }
 
-    private var subtitle: String? {
+    /// Arc's dim label before the arrow: what Return will do.
+    private var detail: String? {
         switch suggestion {
         case .open: "Open"
         case .search: "Search \(engine.displayName)"
-        case .switchTab(let tab): tab.url?.host()
-        case .history(let entry): entry.url.host()
-        case .command(let command): command.path
+        case .switchTab: "Switch to Tab"
+        case .history: nil
+        case .command(let command): command.shortcut ?? command.path
         }
+    }
+
+    /// Shown after the title, like Arc's "The Browser Company — youtube.com/c/thebrowsercompany".
+    private var subtitle: String? {
+        guard case .history(let entry) = suggestion, !entry.title.isEmpty else { return nil }
+        let url = entry.url
+        let host = (url.host() ?? "").replacingOccurrences(of: "www.", with: "")
+        let path = url.path() == "/" ? "" : url.path()
+        return host + path
+    }
+}
+
+private extension Color {
+    init(_ color: ThemeColor) {
+        self.init(.sRGB, red: Double(color.r), green: Double(color.g), blue: Double(color.b))
     }
 }
