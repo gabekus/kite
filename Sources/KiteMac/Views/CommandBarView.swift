@@ -172,7 +172,7 @@ private struct SuggestionRow: View {
                 .padding(.leading, C.rowIconX)
                 .padding(.trailing, C.rowTitleX - C.rowIconX - C.rowIconTileSize)
             // Arc's "Title — url" rows: the part after the dash is dimmer.
-            (Text(title) + Text(subtitle.map { " — " + $0 } ?? "").foregroundColor(.primary.opacity(highlighted ? 0.7 : 0.5)))
+            (Text(title) + Text(subtitle.map { " — " + $0 } ?? "").foregroundColor(highlighted ? .white.opacity(0.7) : .primary.opacity(0.5)))
                 .lineLimit(1)
                 .opacity(highlighted ? 1 : C.rowTextOpacity)
             Spacer(minLength: C.actionGap)
