@@ -11,7 +11,7 @@ extension BrowserWindowController {
         // Both types, so apps that take a URL (Finder, Messages) get a link and text fields get the string.
         pasteboard.writeObjects([url as NSURL])
         pasteboard.setString(url.absoluteString, forType: .string)
-        showToast("Copied URL")
+        showToast("Copied Current URL", shareURL: url)
     }
 
     @objc func copyURLAsMarkdown(_ sender: Any?) {
@@ -19,7 +19,7 @@ extension BrowserWindowController {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(LinkFormat.markdown(title: tab.title, url: url), forType: .string)
-        showToast("Copied as Markdown")
+        showToast("Copied as Markdown", shareURL: url)
     }
 
     @objc func copyURLAsQuote(_ sender: Any?) {
@@ -32,22 +32,23 @@ extension BrowserWindowController {
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
-            self?.showToast(selection.isEmpty ? "Nothing selected, copied link" : "Copied as Quote")
+            self?.showToast(selection.isEmpty ? "Nothing selected, copied link" : "Copied as Quote", shareURL: url)
         }
     }
 
-    func showToast(_ message: String) {
+    func showToast(_ message: String, shareURL: URL? = nil) {
         guard let root = window?.contentView else { return }
         let toast = root.subviews.lazy.compactMap { $0 as? ToastView }.first ?? {
             let toast = ToastView()
             toast.translatesAutoresizingMaskIntoConstraints = false
-            root.addSubview(toast)
+            // Above the page, at the content card's top-right corner like Arc's.
+            root.addSubview(toast, positioned: .above, relativeTo: contentFrame)
             NSLayoutConstraint.activate([
-                toast.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-                toast.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -24),
+                toast.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: ToastView.Metrics.top),
+                toast.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor, constant: -ToastView.Metrics.trailing),
             ])
             return toast
         }()
-        toast.show(message)
+        toast.show(message, shareURL: shareURL)
     }
 }
