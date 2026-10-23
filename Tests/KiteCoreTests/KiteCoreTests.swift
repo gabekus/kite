@@ -386,3 +386,17 @@ import Testing
         #expect(state.spaces[0].name == "Work")
     }
 }
+
+@Suite struct CommandSearchTests {
+    @Test func prefersTitlePrefixThenWordPrefixes() {
+        #expect(CommandSearch.score("copy", title: "Copy URL") == 100)
+        #expect(CommandSearch.score("cop url", title: "Copy URL as Markdown") == 80)
+        #expect(CommandSearch.score("markdown url", title: "Copy URL as Markdown") == 80)
+        #expect(CommandSearch.score("ark", title: "Copy URL as Markdown") == 50)
+    }
+
+    @Test func rejectsNonMatches() {
+        #expect(CommandSearch.score("zoom", title: "Copy URL") == nil)
+        #expect(CommandSearch.score("  ", title: "Copy URL") == nil)
+    }
+}
