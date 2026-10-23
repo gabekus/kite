@@ -57,6 +57,8 @@ private struct CommandBarView: View {
     /// Set by Tab after a Site Search shortcut; the query then searches that site.
     @State private var site: SiteSearch?
     @FocusState private var focused: Bool
+    /// Catches Backspace on an empty field, which the field editor swallows before onKeyPress.
+    @State private var backspaceMonitor: Any?
 
     init(store: BrowserStore, mode: CommandBarMode, onCommit: @escaping (CommandSuggestion) -> Void) {
         self.store = store
@@ -118,7 +120,7 @@ private struct CommandBarView: View {
                         .background(Color(accent), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                         .padding(.trailing, 8)
                 }
-                TextField("", text: $query, prompt: Text("Search or Enter URL...").foregroundStyle(.primary.opacity(C.placeholderOpacity)))
+                TextField("", text: $query, prompt: Text(site.map { "Search \($0.name)" } ?? "Search or Enter URL...").foregroundStyle(.primary.opacity(C.placeholderOpacity)))
                     .textFieldStyle(.plain)
                     .font(.system(size: C.fieldFontSize))
                     .focused($focused)
@@ -135,12 +137,6 @@ private struct CommandBarView: View {
                         guard let tabTarget else { return .ignored }
                         site = tabTarget
                         query = ""
-                        return .handled
-                    }
-                    .onKeyPress(.delete) {
-                        // Backspace on an empty field leaves Site Search, like Chromium's keyword mode.
-                        guard site != nil, query.isEmpty else { return .ignored }
-                        site = nil
                         return .handled
                     }
                     .onExitCommand { store.hideCommandBar() }
@@ -176,8 +172,32 @@ private struct CommandBarView: View {
         }
         .frame(width: C.width)
         .modifier(CommandBarPanel())
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            installBackspaceMonitor()
+        }
+        .onDisappear {
+            if let backspaceMonitor { NSEvent.removeMonitor(backspaceMonitor) }
+            backspaceMonitor = nil
+        }
         .onChange(of: query) { highlighted = 0 }
+    }
+
+    /// Backspace on an empty field leaves Site Search, like Chromium's keyword mode.
+    private func installBackspaceMonitor() {
+        let site = $site, query = $query
+        backspaceMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let isBackspace = event.keyCode == 51
+                && event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock).isEmpty
+            guard isBackspace else { return event }
+            // Local monitors run on the main thread.
+            let leave = MainActor.assumeIsolated {
+                guard site.wrappedValue != nil, query.wrappedValue.isEmpty else { return false }
+                site.wrappedValue = nil
+                return true
+            }
+            return leave ? nil : event
+        }
     }
 
     private func commit(_ items: [CommandSuggestion]) {
