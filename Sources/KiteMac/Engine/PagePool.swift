@@ -94,6 +94,8 @@ final class PagePool {
             store.mutate { $0.openTab(id: newID, url: nil) }
         case .closeRequested:
             store.mutate { $0.close(tab: id) }
+        case .blockedCount(let count):
+            store.updatePage(id) { $0.blockedCount = count }
         }
     }
 

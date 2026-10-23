@@ -68,6 +68,14 @@ enum MainMenu {
         submenu("Kite", [
             item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false),
             .separator(),
+            item("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)), toTarget: false),
+            item("Allow Claude to Run JavaScript Without Asking", #selector(AppDelegate.toggleClaudeJavaScript(_:)), toTarget: false),
+            item("Open Claude’s Tabs in a Claude Space", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),
+            item("Connect Claude Code…", #selector(AppDelegate.connectClaudeCode(_:)), toTarget: false),
+            item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:))),
+            // Until there's a Settings window.
+            item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
+            .separator(),
             item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false),
             item("Show All", #selector(NSApplication.unhideAllApplications(_:)), toTarget: false),
@@ -86,6 +94,8 @@ enum MainMenu {
             item("Close Tab", #selector(BrowserWindowController.closeTab(_:)), "w"),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift], toTarget: false),
             .separator(),
+            item("Share…", #selector(BrowserWindowController.share(_:))),
+            item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:))),
             item("Print…", #selector(BrowserWindowController.printPage(_:)), "p"),
         ])
 
@@ -144,6 +154,8 @@ enum MainMenu {
             item("Stop Loading", #selector(BrowserWindowController.stopLoading(_:)), "."),
             item("Reload Page", #selector(BrowserWindowController.reload(_:)), "r"),
             item("Force Reload Page", #selector(BrowserWindowController.forceReload(_:)), "r", [.command, .shift]),
+            item("Clear Cookies and Refresh", #selector(BrowserWindowController.clearCookiesAndRefresh(_:))),
+            item("Clear Cache and Refresh", #selector(BrowserWindowController.clearCacheAndRefresh(_:))),
             .separator(),
             item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0"),
             item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "="),
@@ -151,6 +163,9 @@ enum MainMenu {
             .separator(),
             item("Dark Page for This Site", #selector(BrowserWindowController.toggleDarkPage(_:)), "d", [.command, .option]),
             darkPagesMenu(),
+            .separator(),
+            item("Block Ads on This Site", #selector(BrowserWindowController.toggleAdblockForSite(_:)), "b", [.command, .option]),
+            item("Block Ads and Trackers", #selector(BrowserWindowController.toggleAdblock(_:))),
             .separator(),
             submenuItem("Developer", [
                 item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option]),
@@ -193,12 +208,28 @@ enum MainMenu {
             item("Previous Space", #selector(BrowserWindowController.previousSpace(_:)), left, [.command, .option]),
             .separator(),
         ] + (1...9).map { n in
-            item("Space \(n)", #selector(BrowserWindowController.selectSpaceNumber(_:)), "\(n)", .control, tag: n)
+            let space = item("Space \(n)", #selector(BrowserWindowController.selectSpaceNumber(_:)), "\(n)", .control, tag: n)
+            // Hidden while there's no such space, but ⌃n still reaches validation once there is.
+            space.allowsKeyEquivalentWhenHidden = true
+            return space
         })
 
         submenu("Window", [
+            item("Stay On Top", #selector(BrowserWindowController.toggleStayOnTop(_:))),
+            .separator(),
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m", toTarget: false),
             item("Zoom", #selector(NSWindow.performZoom(_:)), toTarget: false),
+            .separator(),
+            item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), toTarget: false),
+        ])
+
+        submenu("Help", [
+            item("Keyboard Shortcuts", #selector(BrowserWindowController.showKeyboardShortcuts(_:))),
+            .separator(),
+            submenuItem("Troubleshooting", [
+                item("Reveal Kite Data", #selector(BrowserWindowController.revealDataFolder(_:))),
+                item("Copy Kite Info", #selector(BrowserWindowController.copyKiteInfo(_:))),
+            ]),
         ])
 
         return main

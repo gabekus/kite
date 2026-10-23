@@ -11,6 +11,8 @@ enum PageEvent {
     /// A popup the page opened (window.open, target=_blank). It becomes a new tab.
     case popup(WebPage)
     case closeRequested
+    /// Requests the ad blocker stopped since the page started loading.
+    case blockedCount(Int)
 }
 
 /// Find-in-page progress. Counts are nil when the engine can't report them (WebKit).
@@ -18,6 +20,11 @@ struct FindResult {
     var found: Bool
     var matches: Int?
     var activeMatch: Int?
+}
+
+enum SiteDataKind {
+    case cookies
+    case cache
 }
 
 /// One tab's web content, independent of the engine behind it.
@@ -45,6 +52,10 @@ protocol WebPage: AnyObject {
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void)
     func stopFinding()
     func printPage()
+    /// The page as one file for Save Page As: MHTML on Chromium, a web archive on WebKit.
+    func archive(completion: @escaping (_ data: Data?, _ fileExtension: String) -> Void)
+    /// Clears one site's cookies or cache (Arc's "Clear … and Refresh"). Reloading is up to the caller.
+    func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void)
     func setForceDark(_ enabled: Bool)
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void)
     /// Engine-specific state for restoring history after hibernation, if supported.
@@ -59,5 +70,9 @@ protocol WebEngine: AnyObject {
     var name: String { get }
     var supportsDevTools: Bool { get }
     var supportsDarkPages: Bool { get }
+    /// Whether the engine reports how many requests it blocked (WebKit can't).
+    var countsBlockedRequests: Bool { get }
+    /// Hooks the engine up to the ad blocker; called once at launch.
+    func attach(_ adblocker: Adblocker)
     func makePage(url: URL?, restoring state: Any?) -> WebPage
 }

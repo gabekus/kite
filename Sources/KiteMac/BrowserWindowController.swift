@@ -18,10 +18,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     let store: BrowserStore
     let pool: PagePool
+    private let adblocker: Adblocker
     private let rootView = RootView()
     private let themeView = ThemeView()
     private let glowView = GlowView(margin: Layout.glowMargin)
-    private let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
+    let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
     private let contentClip = NSView()
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
@@ -40,8 +41,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var commandBarVisible = false
     private var sidebarVisible = true
 
-    init(store: BrowserStore, engine: WebEngine) {
+    init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker) {
         self.store = store
+        self.adblocker = adblocker
         self.pool = PagePool(engine: engine, store: store)
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
@@ -207,6 +209,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         glowView.setTheme(space.theme)
         sidebarHost.appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
         shownSpaceID = space.id
+        // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
+        let title = state.selectedTab?.title ?? ""
+        window?.title = title.isEmpty ? space.name : title
 
         let selected = state.selectedTab
         if selected?.id != shownTabID {
@@ -216,6 +221,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
         appliedDark = appliedDark.filter { live.contains($0.key) }
         applyDarkPage()
+        adblocker.setPolicy(enabled: state.blocksAds, allowedHosts: state.adblockAllowedHosts)
 
         updateCommandBar()
         updateSidebar()
@@ -297,6 +303,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             }
         case .switchTab(let tab):
             store.mutate { $0.select(tab: tab.id) }
+        case .command(let command):
+            // After the bar closes, so the command sees the page as first responder, not the bar's field.
+            DispatchQueue.main.async { command.perform() }
         }
     }
 
@@ -364,6 +373,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         store.mutate { $0.toggleDarkPage(for: tab.url) }
     }
 
+    /// Blocking on or off for the current site. Reloads so the page shows the
+    /// change right away. Arc has no ad-block control in its sidebar, so this
+    /// lives in the View menu until Kite has Arc's site controls.
+    @objc func toggleAdblockForSite(_ sender: Any?) {
+        guard let tab = store.state.selectedTab, tab.url?.host() != nil else { return NSSound.beep() }
+        store.mutate { $0.toggleAdblock(for: tab.url) }
+        shownPage?.reload()
+    }
+
+    @objc func toggleAdblock(_ sender: Any?) {
+        store.mutate { $0.blocksAds.toggle() }
+        shownPage?.reload()
+    }
+
     /// The Dark Pages menu: tags index `DarkPagesMode.allCases`.
     @objc func setDarkPagesMode(_ sender: NSMenuItem) {
         let modes = DarkPagesMode.allCases
@@ -380,19 +403,36 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let tab = store.state.selectedTab
             item.state = store.state.wantsDarkPage(for: tab?.url, systemIsDark: store.systemIsDark) ? .on : .off
             return pool.engine.supportsDarkPages && tab?.url?.host() != nil
+        case #selector(toggleAdblock(_:)):
+            item.state = store.state.blocksAds ? .on : .off
+            return Adblocker.isAvailable
+        case #selector(toggleAdblockForSite(_:)):
+            let tab = store.state.selectedTab
+            let on = store.state.blocksAds(on: tab?.url)
+            item.state = on ? .on : .off
+            let blocked = tab.flatMap { store.pages[$0.id]?.blockedCount } ?? 0
+            item.title = on && pool.engine.countsBlockedRequests && blocked > 0
+                ? "Block Ads on This Site (\(blocked) blocked)"
+                : "Block Ads on This Site"
+            return Adblocker.isAvailable && tab?.url?.host() != nil
         case #selector(togglePin(_:)):
             let pinned = store.state.selectedTab.flatMap { store.state.location(of: $0.id) }?.section == .pinned
             item.title = pinned ? "Unpin Tab" : "Pin Tab"
             return store.state.selectedTab != nil
         case #selector(selectSpaceNumber(_:)):
-            // Arc lists spaces by name. Numbers past the last space stay as disabled placeholders
-            // (hiding them could skip validation, so ⌃N wouldn't come back for a new space).
+            // Arc lists only the spaces that exist, by name.
             let spaces = store.state.spaces
-            guard spaces.indices.contains(item.tag - 1) else {
-                item.title = "Space \(item.tag)"
-                return false
-            }
+            let exists = spaces.indices.contains(item.tag - 1)
+            item.isHidden = !exists
+            guard exists else { return false }
             item.title = "\(spaces[item.tag - 1].icon) \(spaces[item.tag - 1].name)"
+        case #selector(toggleStayOnTop(_:)):
+            item.state = window?.level == .floating ? .on : .off
+        case #selector(setAsDefaultBrowser(_:)):
+            item.state = Self.isDefaultBrowser ? .on : .off
+        case #selector(share(_:)), #selector(savePageAs(_:)),
+             #selector(clearCookiesAndRefresh(_:)), #selector(clearCacheAndRefresh(_:)):
+            return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):
             return shownPage?.isLoading ?? false
         case #selector(toggleFullScreenMode(_:)):

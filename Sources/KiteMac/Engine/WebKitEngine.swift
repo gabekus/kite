@@ -7,9 +7,11 @@ final class WebKitEngine: WebEngine {
     let name = "WebKit"
     let supportsDevTools = false
     let supportsDarkPages = false
+    let countsBlockedRequests = false
 
     private let configuration: WKWebViewConfiguration
     private let downloads = DownloadCoordinator()
+    private var contentRules: WebKitContentRules?
 
     init() {
         let configuration = WKWebViewConfiguration()
@@ -19,11 +21,36 @@ final class WebKitEngine: WebEngine {
         configuration.preferences.isElementFullscreenEnabled = true
         configuration.preferences.isFraudulentWebsiteWarningEnabled = true
         configuration.allowsAirPlayForMediaPlayback = true
+        Self.allowFullRefreshRate(configuration.preferences)
         self.configuration = configuration
     }
 
+    func attach(_ adblocker: Adblocker) {
+        guard Adblocker.isAvailable else { return }
+        contentRules = WebKitContentRules(adblocker: adblocker)
+    }
+
+    /// WebKit holds pages near 60fps unless its internal "Prefer Page Rendering
+    /// Updates near 60fps" feature is off. It's private API, so look it up
+    /// defensively and leave WebKit alone if it's missing.
+    private static func allowFullRefreshRate(_ preferences: WKPreferences) {
+        let features = NSSelectorFromString("_features")
+        let setEnabled = NSSelectorFromString("_setEnabled:forFeature:")
+        guard WKPreferences.responds(to: features), preferences.responds(to: setEnabled),
+              let list = WKPreferences.perform(features)?.takeUnretainedValue() as? [NSObject],
+              let feature = list.first(where: {
+                  $0.responds(to: NSSelectorFromString("key"))
+                      && $0.value(forKey: "key") as? String == "PreferPageRenderingUpdatesNear60FPSEnabled"
+              })
+        else { return }
+        typealias SetEnabled = @convention(c) (AnyObject, Selector, Bool, AnyObject) -> Void
+        let set = unsafeBitCast(preferences.method(for: setEnabled), to: SetEnabled.self)
+        set(preferences, setEnabled, false, feature)
+    }
+
     func makePage(url: URL?, restoring state: Any?) -> WebPage {
-        let page = WebKitPage(configuration: configuration, downloads: downloads)
+        // A copy, since the page swaps in its own content controller.
+        let page = WebKitPage(configuration: configuration.copy() as! WKWebViewConfiguration, downloads: downloads, contentRules: contentRules)
         if let state {
             page.webView.interactionState = state
         } else if let url {
@@ -38,6 +65,7 @@ final class WebKitPage: NSObject, WebPage {
     let webView: WKWebView
     var onEvent: ((PageEvent) -> Void)?
     private let downloads: DownloadCoordinator
+    private let contentRules: WebKitContentRules?
     private var observations: [NSKeyValueObservation] = []
 
     private static let inPageSchemes: Set<String> = ["http", "https", "about", "blob", "data", "file", "javascript"]
@@ -48,9 +76,14 @@ final class WebKitPage: NSObject, WebPage {
         })()
         """
 
-    init(configuration: WKWebViewConfiguration, downloads: DownloadCoordinator) {
+    init(configuration: WKWebViewConfiguration, downloads: DownloadCoordinator, contentRules: WebKitContentRules?) {
+        // Each page gets its own content controller so ad-block rules can differ per site.
+        if let contentRules {
+            configuration.userContentController = contentRules.makeController()
+        }
         webView = WKWebView(frame: .zero, configuration: configuration)
         self.downloads = downloads
+        self.contentRules = contentRules
         super.init()
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
@@ -92,6 +125,23 @@ final class WebKitPage: NSObject, WebPage {
 
     func stopFinding() {
         webView.evaluateJavaScript("getSelection().removeAllRanges()")
+    }
+
+    func archive(completion: @escaping (Data?, String) -> Void) {
+        webView.createWebArchiveData { completion(try? $0.get(), "webarchive") }
+    }
+
+    func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void) {
+        guard let host = url.host() else { return completion() }
+        let store = webView.configuration.websiteDataStore
+        let types: Set<String> = kind == .cookies
+            ? [WKWebsiteDataTypeCookies]
+            : [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache]
+        store.fetchDataRecords(ofTypes: types) { records in
+            // Records are grouped by registrable domain ("example.com" covers "www.example.com").
+            let matching = records.filter { host == $0.displayName || host.hasSuffix("." + $0.displayName) }
+            store.removeData(ofTypes: types, for: matching, completionHandler: completion)
+        }
     }
 
     func printPage() {
@@ -163,6 +213,9 @@ extension WebKitPage: WKNavigationDelegate {
             onEvent?(.openInNewTab(url, foreground: flags.contains(.shift)))
             return decisionHandler(.cancel)
         }
+        if navigationAction.targetFrame?.isMainFrame == true {
+            contentRules?.apply(to: webView.configuration.userContentController, url: url)
+        }
         decisionHandler(.allow)
     }
 
@@ -202,7 +255,7 @@ extension WebKitPage: WKUIDelegate {
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        let popup = WebKitPage(configuration: configuration, downloads: downloads)
+        let popup = WebKitPage(configuration: configuration, downloads: downloads, contentRules: contentRules)
         onEvent?(.popup(popup))
         return popup.webView
     }

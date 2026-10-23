@@ -19,6 +19,22 @@ let cefDirectory = Context.packageDirectory + "/ThirdParty/cef"
 let hasCEF = FileManager.default.fileExists(atPath: cefDirectory + "/build/libcef_dll_wrapper/libcef_dll_wrapper.a")
 
 var macDependencies: [Target.Dependency] = ["KiteCore"]
+
+// The ad blocker (Brave's adblock-rust) is built only after scripts/build-adblock.sh
+// has run. Without it Kite builds and runs with no ad blocking.
+let adblockLibrary = Context.packageDirectory + "/Sources/KiteAdblock/rust/target/lib"
+let hasAdblock = FileManager.default.fileExists(atPath: adblockLibrary + "/libkite_adblock.a")
+if hasAdblock {
+    targets.append(
+        .target(
+            name: "KiteAdblock",
+            exclude: ["rust"],
+            linkerSettings: [.unsafeFlags(["-L", adblockLibrary, "-lkite_adblock"])]
+        )
+    )
+    macDependencies.append("KiteAdblock")
+}
+
 if hasCEF {
     let cefFlags = ["-I", cefDirectory, "-std=c++20", "-fno-rtti", "-fno-exceptions", "-fno-threadsafe-statics", "-fno-strict-aliasing"]
     let cefLink: [LinkerSetting] = [
@@ -29,6 +45,7 @@ if hasCEF {
     targets += [
         .target(
             name: "CEFBridge",
+            dependencies: hasAdblock ? ["KiteAdblock"] : [],
             cxxSettings: [.unsafeFlags(cefFlags)],
             linkerSettings: cefLink
         ),
@@ -41,6 +58,11 @@ if hasCEF {
     products.append(.executable(name: "KiteHelper", targets: ["KiteHelper"]))
     macDependencies.append("CEFBridge")
 }
+
+// The `kite` CLI and MCP server. Built as kite-cli: a "kite" binary would collide
+// with "Kite" on a case-insensitive disk. bundle-app.sh installs it as Contents/Helpers/kite.
+targets.append(.executableTarget(name: "KiteCLI", dependencies: ["KiteCore"]))
+products.append(.executable(name: "kite-cli", targets: ["KiteCLI"]))
 
 targets.append(
     .executableTarget(
