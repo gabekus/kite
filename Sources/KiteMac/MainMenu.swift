@@ -30,7 +30,7 @@ enum MainMenu {
         ) -> NSMenuItem {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
             // The command's stable name for shortcut overrides (KeyBindings), Arc's where Arc has one.
-            item.identifier = id.map(NSUserInterfaceItemIdentifier.init)
+            item.identifier = id.map { NSUserInterfaceItemIdentifier(rawValue: $0) }
             item.keyEquivalentModifierMask = modifiers
             item.tag = tag
             item.target = toTarget ? target : nil
