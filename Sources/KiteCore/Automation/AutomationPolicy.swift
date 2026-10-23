@@ -64,10 +64,19 @@ public struct ElementDescription: Codable, Hashable, Sendable {
 
 /// An action Claude asks to take, as the policy sees it.
 public enum AutomationAction: Hashable, Sendable {
+    /// A click on an element, or on whatever is under a coordinate (hit-tested by the page).
     case click(ElementDescription)
     /// `element` nil means the focused element, described as well as the page allows.
     case type(ElementDescription?, text: String, submit: Bool)
+    /// Keys pressed while `focused` has focus.
+    case keys([KeyChord], focused: ElementDescription?)
+    case formInput(ElementDescription, value: String)
     case navigate(URL)
+    /// `allowedInSettings` is the profile's "run JavaScript without asking" switch.
+    case javascript(code: String, allowedInSettings: Bool)
+    case uploadFiles([String], into: ElementDescription)
+    /// Answering a page's dialog. `kind` is CDP's: alert, confirm, prompt or beforeunload.
+    case answerDialog(kind: String, message: String, accept: Bool)
 }
 
 /// What the user is asked before an action runs.
@@ -130,6 +139,13 @@ public enum AutomationPolicy {
             }
 
         case .click(let element):
+            if element.tag == "iframe" || element.tag == "frame" {
+                // A cross-site frame Kite can't see into: payment widgets live there, so ask.
+                let frameHost = element.href.flatMap { URL(string: $0)?.host() } ?? "another site"
+                return .confirm(ConfirmationRequest(
+                    action: "click inside an embedded page from \(frameHost)\(site)",
+                    detail: "Kite can't see what's under the pointer in that frame (\(element.summary))."))
+            }
             if submitsForm(element) {
                 return .confirm(ConfirmationRequest(
                     action: "submit a form\(site)",
@@ -149,13 +165,74 @@ public enum AutomationPolicy {
                     action: "type \(kind)\(site)",
                     detail: "Field: \(element.summary). Claude wants to type \(text.count) characters (hidden)\(submit ? " and press Return" : "")."))
             }
-            if submit {
+            if submit, !isSearchField(element) {
                 return .confirm(ConfirmationRequest(
                     action: "submit\(site)",
                     detail: "Claude wants to type “\(preview(text))” into \(element?.summary ?? "the focused field") and press Return, which can submit a form or send a message."))
             }
             return .allow
+
+        case let .keys(chords, focused):
+            guard let focused else { return .allow }
+            for chord in chords {
+                let isTextField = isTextEntry(focused)
+                if chord.isEnter || (chord.key == " " && !isTextField) {
+                    // Return or Space on a button or link is a click on it.
+                    if !isTextField {
+                        let decision = evaluate(.click(focused), host: host)
+                        if decision != .allow { return decision }
+                        continue
+                    }
+                    // Return in a field can submit or send (⌘/Ctrl-Return too). Search boxes are fine.
+                    if !isSearchField(focused) {
+                        return .confirm(ConfirmationRequest(
+                            action: "press Return\(site)",
+                            detail: "Focus is in \(focused.summary). Return there can submit a form or send a message."))
+                    }
+                }
+            }
+            return .allow
+
+        case let .formInput(element, value):
+            if isSensitiveField(element) {
+                return .confirm(ConfirmationRequest(
+                    action: "fill in a sensitive field\(site)",
+                    detail: "Field: \(element.summary). Claude wants to enter \(value.count) characters (hidden)."))
+            }
+            return .allow
+
+        case let .javascript(code, allowed):
+            if allowed { return .allow }
+            return .confirm(ConfirmationRequest(
+                action: "run JavaScript\(site)",
+                detail: "Code:\n\(code.count > 600 ? code.prefix(599) + "…" : Substring(code))\n\nScripts act as you on this site. Allow JavaScript without asking in Kite's menu."))
+
+        case let .uploadFiles(paths, element):
+            return .confirm(ConfirmationRequest(
+                action: "upload \(paths.count == 1 ? "a file" : "\(paths.count) files")\(site)",
+                detail: "Into \(element.summary):\n" + paths.map { "• \($0)" }.joined(separator: "\n")))
+
+        case let .answerDialog(kind, message, accept):
+            guard accept, kind != "alert" else { return .allow }
+            let what = kind == "beforeunload" ? "leave the page (unsaved changes may be lost)" : "answer OK to the page's \(kind)"
+            return .confirm(ConfirmationRequest(action: "\(what)\(site)", detail: "The page asks: “\(preview(message))”"))
         }
+    }
+
+    /// Where Return runs a search rather than sending something.
+    static func isSearchField(_ element: ElementDescription?) -> Bool {
+        guard let element else { return false }
+        if element.type == "search" || element.role == "searchbox" { return true }
+        let words = Set(normalizedWords([element.name, element.id, element.label, element.placeholder]
+            .compactMap { $0 }.joined(separator: " ")))
+        return !words.isDisjoint(with: ["search", "query", "q", "find", "lookup"])
+    }
+
+    /// Fields that take typed text, as opposed to buttons, links and checkboxes.
+    static func isTextEntry(_ element: ElementDescription) -> Bool {
+        if element.isContentEditable || element.tag == "textarea" { return true }
+        guard element.tag == "input" else { return ["textbox", "searchbox", "combobox"].contains(element.role ?? "") }
+        return !["button", "submit", "reset", "image", "checkbox", "radio", "file", "range", "color"].contains(element.type ?? "text")
     }
 
     /// Submit buttons and image inputs inside a form, including <button> without a type (it defaults to submit).
@@ -185,7 +262,7 @@ public enum AutomationPolicy {
         return nil
     }
 
-    static func isSensitiveField(_ element: ElementDescription) -> Bool {
+    public static func isSensitiveField(_ element: ElementDescription) -> Bool {
         if element.type == "password" { return true }
         if let autocomplete = element.autocomplete,
            autocomplete.contains("password") || autocomplete.hasPrefix("cc-") || autocomplete.contains(" cc-")
