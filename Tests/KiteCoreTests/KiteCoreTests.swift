@@ -137,7 +137,9 @@ import Testing
         state.archiveAfter = .sevenDays
         let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
         #expect(decoded.archiveAfter == .sevenDays)
-        #expect(ArchiveInterval.thirtyDays.seconds == TimeInterval(30 * 24 * 3600))
+        // Unwrapped first: comparing an Optional<Double> in #expect crashes the Windows 6.2 compiler.
+        let thirtyDays = try #require(ArchiveInterval.thirtyDays.seconds)
+        #expect(thirtyDays == 30 * 24 * 3600)
         #expect(ArchiveInterval.never.seconds == nil)
         // The first version's names still load.
         let old = try JSONDecoder().decode([ArchiveInterval].self, from: Data(#"["week", "day", "bogus"]"#.utf8))
