@@ -40,6 +40,17 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)shutdown;
 @end
 
+/// Kite's ad blocker on Chromium's network thread. A no-op when Kite is built
+/// without it (scripts/build-adblock.sh).
+@interface KCRuntime (Adblock)
+@property (class, nonatomic, readonly) BOOL supportsAdblock;
+/// `engine` is a `KAEngine *`. Chromium checks requests on another thread, so it
+/// holds `owner` (which frees the engine) until no request still uses it. Nil stops blocking.
++ (void)setAdblockEngine:(nullable void *)engine owner:(nullable id)owner;
+/// Global on/off plus the sites the shield turned off (lowercase hosts).
++ (void)setAdblockEnabled:(BOOL)enabled allowedHosts:(NSSet<NSString *> *)hosts;
+@end
+
 /// Posted on the main thread as a download progresses. `object` is the KCBrowser; userInfo has
 /// id, url, path, state (in-progress, complete, canceled, interrupted), receivedBytes, totalBytes.
 extern NSString * const KCDownloadDidUpdateNotification;
@@ -62,6 +73,11 @@ NS_SWIFT_UI_ACTOR
 /// The page called window.close().
 - (void)browserDidRequestClose:(KCBrowser *)browser;
 @optional
+/// Requests blocked since the page started loading.
+- (void)browser:(KCBrowser *)browser blockedCountDidChange:(NSInteger)count;
+/// Asked before each main-frame navigation; the script runs at document start
+/// in every new document until the next navigation.
+- (nullable NSString *)browser:(KCBrowser *)browser documentStartScriptForURL:(NSURL *)url;
 /// Find-in-page results; `activeMatch` is 1-based. Arrives several times per search.
 - (void)browser:(KCBrowser *)browser findResultCount:(int)count activeMatch:(int)activeMatch final:(BOOL)final;
 @end
@@ -79,6 +95,8 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) BOOL canGoForward;
 /// 1.0 = 100%.
 @property (nonatomic) double zoomFactor;
+/// Requests the ad blocker stopped since the page started loading.
+@property (nonatomic, readonly) NSInteger blockedCount;
 
 - (void)loadURL:(NSURL *)url;
 - (void)goBack;
