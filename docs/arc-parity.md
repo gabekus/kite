@@ -163,7 +163,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Feature | What it does in Arc | Kite | Plan |
 |---|---|---|---|
-| Command bar | Search tabs, history, actions, site search (type a site, Tab) | ✅ URL/search, open tabs, history, every menu command, site search (Arc's 19 defaults plus anything imported from Arc) | Site Search editor: Settings thread; chip colour, hint wording and match order pending the visual pass |
+| Command bar | Search tabs, history, actions, site search (type a site, Tab) | ✅ URL/search, open tabs, history, every menu command, site search (Arc's 19 defaults plus anything imported from Arc) | Site Search editor: Settings thread. Site Search looks like Arc's (favicon, "Search YouTube" + Tab keycap, brand-colour chip, "Search...", inline completion of shortcuts); whether Arc also completes history URLs inline is unverified |
 | Sidebar | Favorites grid, pinned, unpinned "Today", folders, space switcher | 🟡 | Other session (favorites, folders, resize) |
 | Sidebar hover reveal | Hidden sidebar slides in at the left edge | ❌ | Thread: sidebar left-edge peek |
 | Auto-archive | "Archive tabs after": Never / 1 hour / 6 hours / 12 hours / 24 hours / 7 days / 30 days, per profile | ✅ Kite menu → Archive tabs after (moves to Settings; no profiles yet) | B5 |
