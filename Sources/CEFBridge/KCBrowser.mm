@@ -538,6 +538,25 @@ class KCClient : public CefClient,
     }
 }
 
+- (void)callDevToolsMethod:(NSString*)method
+                    params:(NSDictionary<NSString*, id>*)params
+                 sessionID:(NSString*)sessionID
+                completion:(void (^)(NSDictionary*, NSString*))completion {
+    if (!_browser) {
+        completion(nil, @"not-ready");
+        return;
+    }
+    int messageID = _nextMessageID++;
+    NSMutableDictionary* message = [@{@"id": @(messageID), @"method": method, @"params": params ?: @{}} mutableCopy];
+    if (sessionID) message[@"sessionId"] = sessionID;
+    NSData* json = [NSJSONSerialization dataWithJSONObject:message options:0 error:nil];
+    (*_pendingDevTools)[messageID] = [completion copy];
+    if (!_browser->GetHost()->SendDevToolsMessage(json.bytes, json.length)) {
+        _pendingDevTools->erase(messageID);
+        completion(nil, @"Chromium couldn't send the DevTools message.");
+    }
+}
+
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData*)data {
     auto it = _pendingDevTools->find(messageID);
     if (it == _pendingDevTools->end()) return;

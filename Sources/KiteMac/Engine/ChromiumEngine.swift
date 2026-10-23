@@ -147,7 +147,26 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     /// Google's "Add to Kite" buttons run in an isolated world whose binding only
     /// Kite's script can call; the page's own scripts can't see either.
+    /// SPIKE: KITE_SPIKE_LOAD_EXTENSION=<unpacked dir> loads it live, in-process, once.
+    private static var spikeLoadDone = false
+
+    private func spikeLoadExtension() {
+        guard !Self.spikeLoadDone, let path = ProcessInfo.processInfo.environment["KITE_SPIKE_LOAD_EXTENSION"] else { return }
+        Self.spikeLoadDone = true
+        browser.callDevToolsMethod("Extensions.loadUnpacked", params: ["path": path], sessionID: nil) { result, error in
+            NSLog("KiteSpike: page-session Extensions.loadUnpacked -> %@ %@", String(describing: result), error ?? "")
+        }
+        browser.callDevToolsMethod("Target.attachToBrowserTarget", params: nil, sessionID: nil) { [weak self] result, error in
+            NSLog("KiteSpike: Target.attachToBrowserTarget -> %@ %@", String(describing: result), error ?? "")
+            guard let self, let session = result?["sessionId"] as? String else { return }
+            self.browser.callDevToolsMethod("Extensions.loadUnpacked", params: ["path": path], sessionID: session) { result, error in
+                NSLog("KiteSpike: browser-session Extensions.loadUnpacked -> %@ %@", String(describing: result), error ?? "")
+            }
+        }
+    }
+
     private func setUpKiteWorld() {
+        spikeLoadExtension()
         kiteWorldReady = true
         browser.kiteEventHandler = { [weak self] method, params in self?.handleKiteEvent(method, params) }
         browser.executeDevToolsMethod("Runtime.enable", params: nil, completion: nil)

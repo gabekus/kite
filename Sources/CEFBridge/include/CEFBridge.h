@@ -152,6 +152,12 @@ NS_SWIFT_UI_ACTOR
                    completion:(nullable void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result))completion;
 /// DevTools protocol events (after a domain's `enable`), on the main thread. Nil to stop.
 @property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^devToolsEventHandler)(NSString *method, NSDictionary *params);
+/// SPIKE: like callDevToolsMethod, sent as a raw protocol message, optionally to a
+/// session this browser's DevTools client attached to (flat mode).
+- (void)callDevToolsMethod:(NSString *)method
+                    params:(nullable NSDictionary<NSString *, id> *)params
+                 sessionID:(nullable NSString *)sessionID
+                completion:(void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result, NSString * _Nullable error))completion;
 /// SPIKE: DevTools protocol events for Kite's own page features (isolated-world
 /// bindings), separate from devToolsEventHandler, which automation takes over.
 @property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^kiteEventHandler)(NSString *method, NSDictionary *params);
