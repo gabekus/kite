@@ -155,7 +155,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Arc item | Kite | Plan |
 |---|---|---|
-| Essential Keyboard Shortcuts (cheat sheet) | ✅ Help → Keyboard Shortcuts, built from the menus | |
+| Essential Keyboard Shortcuts (cheat sheet) | ✅ Arc's floating 475×458 window: 5 fixed commands with their live shortcuts as blue keycaps; "View All" opens the full list. Split View and Little Arc rows show a shortcut only once remapped or built | |
 | Restore Data, Reveal Data folder, Copy Info, Task Manager, Record Trace | 🟡 Reveal Kite Data, Copy Kite Info | Task Manager later |
 | Getting Started, Contact, Help Center, Export Arc Notes | ❌ | Skip |
 
