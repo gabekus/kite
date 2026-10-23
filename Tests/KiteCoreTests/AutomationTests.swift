@@ -19,12 +19,12 @@ import Testing
 }
 
 @Suite struct AutomationCommandTests {
-    @Test func parsesEveryTool() throws {
-        #expect(try AutomationCommand(tool: "list_tabs", arguments: nil) == .listTabs)
+    @Test func parsesTheOriginalTools() throws {
+        #expect(try AutomationCommand(tool: "list_tabs", arguments: nil) == .tabsContext)
         #expect(try AutomationCommand(tool: "read_page", arguments: ["tab": "T"])
-            == .readPage(tab: "T", maxTextLength: AutomationCommand.defaultMaxTextLength))
-        #expect(try AutomationCommand(tool: "read_page", arguments: ["max_text_length": 999_999_999])
-            == .readPage(tab: nil, maxTextLength: AutomationCommand.maxTextLengthLimit))
+            == .readPage(tab: "T", maxTextLength: AutomationCommand.defaultMaxTextLength, interactiveOnly: false))
+        #expect(try AutomationCommand(tool: "read_page", arguments: ["max_text_length": 999_999_999, "filter": "interactive"])
+            == .readPage(tab: nil, maxTextLength: AutomationCommand.maxTextLengthLimit, interactiveOnly: true))
         #expect(try AutomationCommand(tool: "click", arguments: ["ref": "e12"]) == .click(tab: nil, target: .ref("e12")))
         #expect(try AutomationCommand(tool: "click", arguments: ["selector": "#go", "tab": "T"])
             == .click(tab: "T", target: .selector("#go")))
@@ -33,6 +33,63 @@ import Testing
         #expect(try AutomationCommand(tool: "navigate", arguments: ["url": "example.com", "new_tab": true])
             == .navigate(tab: nil, url: "example.com", newTab: true))
         #expect(try AutomationCommand(tool: "screenshot", arguments: [:]) == .screenshot(tab: nil))
+    }
+
+    @Test func parsesTabAndKiteTools() throws {
+        #expect(try AutomationCommand(tool: "tabs_create", arguments: ["url": "x.com", "space": "claude"])
+            == .tabsCreate(url: "x.com", active: false, placement: .claudeSpace))
+        #expect(try AutomationCommand(tool: "tabs_create_mcp", arguments: ["active": true])
+            == .tabsCreate(url: nil, active: true, placement: .currentSpace))
+        #expect(try AutomationCommand(tool: "tabs_create", arguments: ["space": "Work"])
+            == .tabsCreate(url: nil, active: false, placement: .space("Work")))
+        #expect(try AutomationCommand(tool: "tabs_close", arguments: ["tab": "T"]) == .tabsClose(tab: "T"))
+        #expect(try AutomationCommand(tool: "resize_window", arguments: ["width": 1200, "height": 800])
+            == .resizeWindow(width: 1200, height: 800))
+        #expect(try AutomationCommand(tool: "pin_tab", arguments: ["pinned": false]) == .pinTab(tab: nil, pinned: false))
+        #expect(try AutomationCommand(tool: "pin_tab", arguments: [:]) == .pinTab(tab: nil, pinned: true))
+        #expect(try AutomationCommand(tool: "move_to_folder", arguments: ["folder": "Reading", "tab": "T"])
+            == .moveToFolder(tab: "T", folder: "Reading"))
+    }
+
+    @Test func parsesPageTools() throws {
+        #expect(try AutomationCommand(tool: "find", arguments: ["query": "sign in button"]) == .find(tab: nil, query: "sign in button"))
+        #expect(try AutomationCommand(tool: "form_input", arguments: ["ref": "e3", "value": true])
+            == .formInput(tab: nil, target: .ref("e3"), value: true))
+        #expect(try AutomationCommand(tool: "javascript_tool", arguments: ["text": "1+1"]) == .javascript(tab: nil, code: "1+1"))
+        #expect(try AutomationCommand(tool: "wait_for", arguments: ["condition": "selector", "value": "#done", "timeout_ms": 2500])
+            == .waitFor(tab: nil, condition: .selector("#done"), timeout: 2.5))
+        #expect(try AutomationCommand(tool: "wait_for", arguments: ["condition": "network_idle"])
+            == .waitFor(tab: nil, condition: .networkIdle, timeout: 10))
+        #expect(try AutomationCommand(tool: "read_console_messages", arguments: ["pattern": "err(or)?", "only_errors": true])
+            == .readConsole(tab: nil, pattern: "err(or)?", onlyErrors: true, limit: 100, clear: false))
+        #expect(try AutomationCommand(tool: "upload_file", arguments: ["ref": "e9", "paths": ["a.pdf"]])
+            == .uploadFile(tab: nil, target: .ref("e9"), paths: ["a.pdf"]))
+        #expect(try AutomationCommand(tool: "handle_dialog", arguments: ["accept": false])
+            == .handleDialog(tab: nil, accept: false, promptText: nil))
+    }
+
+    @Test func parsesComputerActions() throws {
+        func action(_ args: [String: JSONValue]) throws -> ComputerAction {
+            guard case .computer(_, let action) = try AutomationCommand(tool: "computer", arguments: .object(args)) else {
+                throw AutomationCommand.InvalidArguments("not computer")
+            }
+            return action
+        }
+        #expect(try action(["action": "screenshot"]) == .screenshot)
+        #expect(try action(["action": "double_click", "coordinate": [10, 20.5]])
+            == .click(.point(ViewportPoint(x: 10, y: 20.5)), button: .left, count: 2, modifiers: []))
+        #expect(try action(["action": "right_click", "ref": "e4", "modifiers": "cmd+shift"])
+            == .click(.target(.ref("e4")), button: .right, count: 1, modifiers: [.meta, .shift]))
+        #expect(try action(["action": "scroll", "scroll_direction": "up"]) == .scroll(nil, direction: .up, amount: 3))
+        #expect(try action(["action": "left_click_drag", "start_coordinate": [1, 2], "coordinate": [3, 4]])
+            == .drag(from: ViewportPoint(x: 1, y: 2), to: ViewportPoint(x: 3, y: 4)))
+        #expect(try action(["action": "wait", "duration": 2]) == .wait(seconds: 2))
+        #expect(try action(["action": "zoom", "region": [0, 0, 100, 50]]) == .zoom(x0: 0, y0: 0, x1: 100, y1: 50))
+        guard case .key(let chords, 2) = try action(["action": "key", "text": "cmd+a Backspace", "repeat": 2]) else {
+            Issue.record("expected keys")
+            return
+        }
+        #expect(chords.map(\.key) == ["a", "Backspace"])
     }
 
     @Test(arguments: [
@@ -45,7 +102,23 @@ import Testing
         ("navigate", ["url": "x.com", "tab": "T", "new_tab": true]),
         ("read_page", ["max_text_length": -1]),
         ("read_page", ["max_text_length": 1.5]),
+        ("read_page", ["filter": "buttons"]),
         ("list_tabs", ["a", "b"]),
+        ("tabs_close", [:]),
+        ("resize_window", ["width": 10, "height": 800]),
+        ("form_input", ["ref": "e1", "value": ["a"]]),
+        ("computer", ["action": "fly"]),
+        ("computer", ["action": "left_click"]),
+        ("computer", ["action": "left_click", "coordinate": [1]]),
+        ("computer", ["action": "left_click", "coordinate": [-1, 4]]),
+        ("computer", ["action": "key", "text": "hyper+q"]),
+        ("computer", ["action": "zoom", "region": [10, 10, 5, 20]]),
+        ("computer", ["action": "wait", "duration": 120]),
+        ("wait_for", ["condition": "selector"]),
+        ("wait_for", ["condition": "load", "timeout_ms": 60000]),
+        ("read_network_requests", ["url_pattern": "("]),
+        ("upload_file", ["ref": "e1", "paths": []]),
+        ("handle_dialog", [:]),
     ] as [(String, JSONValue)])
     func rejectsBadArguments(tool: String, arguments: JSONValue) {
         #expect(throws: AutomationCommand.InvalidArguments.self) {
@@ -53,25 +126,52 @@ import Testing
         }
     }
 
-    @Test func argumentsRoundTrip() throws {
-        let commands: [AutomationCommand] = [
-            .listTabs,
-            .readPage(tab: "T", maxTextLength: 50),
-            .click(tab: nil, target: .selector("button.primary")),
-            .type(tab: "T", target: .ref("e4"), text: "hello", submit: true),
-            .navigate(tab: nil, url: "https://example.com", newTab: true),
-            .screenshot(tab: "T"),
-        ]
-        for command in commands {
-            #expect(try AutomationCommand(tool: command.tool.rawValue, arguments: command.arguments) == command)
+    @Test func everyToolHasASchemaAndDescription() {
+        for tool in AutomationCommand.Tool.allCases {
+            #expect(tool.inputSchema["type"] == "object", "\(tool)")
+            #expect(!tool.summary.isEmpty)
+            for case .string(let name) in tool.inputSchema["required"]?.arrayValue ?? [] {
+                #expect(tool.inputSchema["properties"]?[name] != nil, "\(tool) requires undeclared \(name)")
+            }
         }
+        #expect(AutomationCommand.Tool.type.inputSchema["required"] == ["text"])
+        #expect(AutomationCommand.Tool.tabsContext.inputSchema["required"] == nil)
+        #expect(AutomationCommand.Tool.tabsContext.title == "Tabs Context")
+    }
+}
+
+@Suite struct KeyChordTests {
+    @Test func parsesNamedKeysAndModifiers() throws {
+        let enter = try KeyChord.parse("Enter")
+        #expect(enter.isEnter && enter.keyCode == 13 && enter.text == "\r" && enter.modifiers.isEmpty)
+        #expect(try KeyChord.parse("return").isEnter)
+        let tab = try KeyChord.parse("shift+Tab")
+        #expect(tab.key == "Tab" && tab.modifiers == .shift)
+        #expect(try KeyChord.parse("ArrowLeft").keyCode == 37)
+        #expect(try KeyChord.parse("F5").key == "F5")
     }
 
-    @Test func schemasNameTheirRequiredArguments() {
-        #expect(AutomationCommand.Tool.type.inputSchema["required"] == ["text"])
-        #expect(AutomationCommand.Tool.navigate.inputSchema["required"] == ["url"])
-        #expect(AutomationCommand.Tool.listTabs.inputSchema["required"] == nil)
-        #expect(AutomationCommand.Tool.click.inputSchema["properties"]?["ref"] != nil)
+    @Test func commandShortcutsNameTheirEditingCommand() throws {
+        let selectAll = try KeyChord.parse("cmd+a")
+        #expect(selectAll.modifiers == .meta && selectAll.text == nil && selectAll.commands == ["selectAll"])
+        #expect(try KeyChord.parse("command+shift+z").commands == ["redo"])
+        #expect(try KeyChord.parse("ctrl+c").commands.isEmpty)
+    }
+
+    @Test func lettersDigitsAndPunctuation() throws {
+        let upper = try KeyChord.parse("A")
+        #expect(upper.key == "A" && upper.code == "KeyA" && upper.keyCode == 65 && upper.modifiers == .shift)
+        #expect(try KeyChord.parse("7").code == "Digit7")
+        #expect(try KeyChord.parse("/").code == "Slash")
+        #expect(try KeyChord.parse("+").text == "+")
+        #expect(try KeyChord.parse("cmd++").modifiers == .meta)
+    }
+
+    @Test func sequencesAndErrors() throws {
+        #expect(try KeyChord.parseSequence("cmd+a  Delete").count == 2)
+        #expect(throws: KeyChord.ParseError.self) { try KeyChord.parse("hyper+x") }
+        #expect(throws: KeyChord.ParseError.self) { try KeyChord.parse("Enterr") }
+        #expect(throws: KeyChord.ParseError.self) { try KeyChord.parseSequence("   ") }
     }
 }
 
@@ -108,8 +208,9 @@ import Testing
     }
 
     @Test func socketLivesInAPrivateFolderInTheProfile() {
-        let url = AutomationWire.socketURL(supportDirectory: URL(fileURLWithPath: "/tmp/kite-profile"))
-        #expect(url.path == "/tmp/kite-profile/Automation/kite.sock")
+        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("kite-profile", isDirectory: true)
+        let url = AutomationWire.socketURL(supportDirectory: profile)
+        #expect(url.pathComponents.suffix(3) == ["kite-profile", "Automation", "kite.sock"])
     }
 }
 
@@ -313,18 +414,18 @@ import Testing
 @Suite struct MCPServerTests {
     private let server = MCPServer(version: "1.0")
 
-    private func send(_ message: JSONValue, output: ToolOutput = .text("done")) async -> (JSONValue?, [AutomationCommand]) {
+    private func send(_ message: JSONValue, output: ToolOutput = .text("done")) async -> (JSONValue?, [String]) {
         let calls = Calls()
-        let response = await server.handle(message) { command in
-            await calls.add(command)
+        let response = await server.handle(message) { tool, arguments in
+            await calls.add("\(tool.rawValue) \((try? String(decoding: arguments.encoded(), as: UTF8.self)) ?? "")")
             return output
         }
         return (response, await calls.all)
     }
 
     private actor Calls {
-        var all: [AutomationCommand] = []
-        func add(_ command: AutomationCommand) { all.append(command) }
+        var all: [String] = []
+        func add(_ call: String) { all.append(call) }
     }
 
     @Test func initializesWithTheClientsVersion() async {
@@ -342,16 +443,22 @@ import Testing
         #expect(response?["result"]?["protocolVersion"]?.stringValue == MCPServer.supportedProtocolVersions[0])
     }
 
-    @Test func listsSixTools() async {
+    @Test func listsEveryTool() async {
         let (response, _) = await send(["jsonrpc": "2.0", "id": 2, "method": "tools/list"])
-        let names = response?["result"]?["tools"]?.arrayValue?.compactMap { $0["name"]?.stringValue }
-        #expect(names == ["list_tabs", "read_page", "click", "type", "navigate", "screenshot"])
+        let tools = response?["result"]?["tools"]?.arrayValue ?? []
+        #expect(tools.compactMap { $0["name"]?.stringValue } == AutomationCommand.Tool.allCases.map(\.rawValue))
+        let javascript = tools.first { $0["name"] == "javascript" }
+        #expect(javascript?["annotations"]?["destructiveHint"] == true)
+        #expect(tools.first { $0["name"] == "find" }?["annotations"]?["readOnlyHint"] == true)
     }
 
     @Test func callsTools() async {
         let (response, calls) = await send(
             ["jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": ["name": "click", "arguments": ["ref": "e5"]]])
-        #expect(calls == [.click(tab: nil, target: .ref("e5"))])
+        // Aliases reach the app under the canonical name.
+        let (_, aliased) = await send(["jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": ["name": "list_tabs"]])
+        #expect(aliased == ["tabs_context {}"])
+        #expect(calls == [#"click {"ref":"e5"}"#])
         #expect(response?["result"]?["content"]?[0]?["text"] == "done")
     }
 

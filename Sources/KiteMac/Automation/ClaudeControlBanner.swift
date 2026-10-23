@@ -62,6 +62,10 @@ extension BrowserWindowController: AutomationHost {
         pool.page(for: tab)
     }
 
+    func closeAutomatedTab(_ id: UUID) {
+        close(tab: id)
+    }
+
     /// Pins the banner to the top of the page area, above the web view.
     func installAutomationBanner(_ automation: AutomationController) {
         guard let root = window?.contentView else { return }

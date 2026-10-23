@@ -97,7 +97,8 @@ public enum AccessibilityOutline {
         public var truncated: Bool
     }
 
-    public static func render(_ nodes: [AXNode], maxLines: Int = 1_500) -> Result {
+    /// `interactiveOnly` keeps just the controls, unindented.
+    public static func render(_ nodes: [AXNode], maxLines: Int = 1_500, interactiveOnly: Bool = false) -> Result {
         guard !nodes.isEmpty else { return Result(text: "", lineCount: 0, truncated: false) }
         let byID = Dictionary(nodes.map { ($0.nodeId, $0) }, uniquingKeysWith: { first, _ in first })
         let roots = nodes.filter { $0.parentId == nil || byID[$0.parentId!] == nil }
@@ -109,12 +110,13 @@ public enum AccessibilityOutline {
         func visit(_ node: AXNode, depth: Int) {
             guard !truncated, visited.insert(node.nodeId).inserted else { return }
             var childDepth = depth
-            if !node.ignored, let line = line(for: node) {
+            let shown = !interactiveOnly || interactiveRoles.contains(node.role?.value?.stringValue?.lowercased() ?? "")
+            if !node.ignored, shown, let line = line(for: node) {
                 if lines.count >= maxLines {
                     truncated = true
                     return
                 }
-                lines.append(String(repeating: "  ", count: depth) + "- " + line)
+                lines.append(String(repeating: "  ", count: interactiveOnly ? 0 : depth) + "- " + line)
                 childDepth += 1
             }
             for id in node.childIds ?? [] {
