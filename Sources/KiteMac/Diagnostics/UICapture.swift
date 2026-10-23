@@ -29,6 +29,10 @@ enum UICapture {
         var lines = ["Window \(window.windowNumber) captured at \(UIReport.number(scale))× "
             + "(\(captured.width)×\(captured.height) px), sRGB."]
         lines += notes
+        if !window.occlusionState.contains(.visible) && !UIDiagnostics.enabledByEnvironment {
+            lines.append("The window is covered, so Chromium may have stopped painting the page: a blank card here isn't Kite's "
+                + "drawing. Read web content with the page screenshot tool. (KITE_DIAGNOSTICS=1 test builds keep pages painting.)")
+        }
 
         if !pixels.isEmpty {
             let bitmap = NSBitmapImageRep(cgImage: captured)

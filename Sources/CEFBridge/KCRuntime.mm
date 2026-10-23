@@ -137,6 +137,7 @@ bool KCRuntimeIsQuitting() {
     std::vector<char *> argv;
     for (NSString *argument in arguments) argv.push_back(strdup(argument.UTF8String));
     if (settings.useMockKeychain) argv.push_back(strdup("--use-mock-keychain"));
+    for (NSString *argument in settings.extraSwitches) argv.push_back(strdup(argument.UTF8String));
     CefMainArgs mainArgs((int)argv.size(), argv.data());
 
     CefSettings cefSettings;

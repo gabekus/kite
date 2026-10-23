@@ -23,6 +23,10 @@ MainActor.assumeIsolated {
         // for "Chromium Safe Storage". KITE_MOCK_KEYCHAIN=0 or 1 overrides.
         settings.useMockKeychain = environment["KITE_MOCK_KEYCHAIN"].map { $0 == "1" }
             ?? (environment["KITE_SUPPORT_PATH"] != nil)
+        // Diagnostics runs sit behind the user's windows; keep pages painting so ui capture sees them.
+        if UIDiagnostics.enabledByEnvironment {
+            settings.extraSwitches = ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"]
+        }
         if KCRuntime.initialize(with: settings) {
             delegate.engine = ChromiumEngine()
             KCRuntime.runMessageLoop()

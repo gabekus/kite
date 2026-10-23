@@ -39,22 +39,19 @@ struct UIInputSender {
             let flags = Self.flags(modifiers)
             let (down, up): (NSEvent.EventType, NSEvent.EventType) = button == .right ? (.rightMouseDown, .rightMouseUp) : (.leftMouseDown, .leftMouseUp)
             let hit = hitName(point), note = firstMouseNote(at: point)
-            for click in 1...count {
-                post(down, at: point, flags: flags, clickCount: click)
-                post(up, at: point, flags: flags, clickCount: click)
-            }
+            var rest: [Gesture] = [(up, point, 1)]
+            for click in Swift.stride(from: 2, through: count, by: 1) { rest += [(down, point, click), (up, point, click)] }
+            send(down, then: rest, at: point, flags: flags)
             try? await Task.sleep(for: .milliseconds(50))
             return "\(count == 1 ? "Clicked" : "\(count)× clicked") \(button.rawValue) at (\(UIReport.number(point.x)), \(UIReport.number(point.y))) on \(hit)." + note
         case let .drag(from, to, steps):
             let hit = hitName(from), note = firstMouseNote(at: from)
-            post(.leftMouseDown, at: from, flags: [], clickCount: 1)
-            for step in 1...steps {
+            let moves = (1...steps).map { step -> Gesture in
                 let t = Double(step) / Double(steps)
-                let point = UIPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)
-                post(.leftMouseDragged, at: point, flags: [], clickCount: 1)
-                try? await Task.sleep(for: .milliseconds(8))
+                return (.leftMouseDragged, UIPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t), 1)
             }
-            post(.leftMouseUp, at: to, flags: [], clickCount: 1)
+            send(.leftMouseDown, then: moves + [(.leftMouseUp, to, 1)], at: from, flags: [])
+            try? await Task.sleep(for: .milliseconds(50))
             return "Dragged from (\(UIReport.number(from.x)), \(UIReport.number(from.y))) to (\(UIReport.number(to.x)), \(UIReport.number(to.y))) in \(steps) steps, starting on \(hit)." + note
         case let .scroll(point, dx, dy):
             guard let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
@@ -89,9 +86,12 @@ struct UIInputSender {
             flags.insert(.function)
             if chord.code.hasPrefix("Arrow") { flags.insert(.numericPad) }
         }
-        let characters = Self.functionCharacters[chord.code] ?? chord.text ?? chord.key
-        // What the key types without ⌘/⌃/⌥: AppKit matches key equivalents on this.
-        let ignoringModifiers = Self.functionCharacters[chord.code] ?? (chord.modifiers.contains(.shift) ? chord.key.uppercased() : chord.key.lowercased())
+        // With ⌘ or ⌃ held a real key event carries the unshifted character ("w" for ⌘⇧W), and AppKit
+        // matches menu key equivalents on that plus the flags.
+        let isCommand = !chord.modifiers.isDisjoint(with: [.meta, .control])
+        let characters = Self.functionCharacters[chord.code] ?? (isCommand ? chord.key.lowercased() : chord.text ?? chord.key)
+        let ignoringModifiers = Self.functionCharacters[chord.code]
+            ?? (isCommand || !chord.modifiers.contains(.shift) ? chord.key.lowercased() : chord.key.uppercased())
         let timestamp = ProcessInfo.processInfo.systemUptime
         guard let down = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: timestamp,
                                           windowNumber: window.windowNumber, context: nil, characters: characters,
@@ -118,6 +118,10 @@ struct UIInputSender {
         // AppKit offers keys with ⌘ or ⌃ (and function keys) as key equivalents before typing them.
         let isEquivalentCandidate = !event.modifierFlags.isDisjoint(with: [.command, .control]) || event.modifierFlags.contains(.function)
         if isEquivalentCandidate {
+            // Menu commands that target the front browser window go to this one instead. Ones sent up the
+            // responder chain (Close Window) still go to Kite's key or main window.
+            MenuRouter.deliveringTo = window.windowController as? BrowserWindowController
+            defer { MenuRouter.deliveringTo = nil }
             if window.performKeyEquivalent(with: event) { return "claimed as a key equivalent by a view (Kite in background)" }
             if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return "handled by the menu bar (Kite in background)" }
         }
@@ -140,12 +144,25 @@ struct UIInputSender {
 
     // MARK: Mouse
 
-    private func post(_ type: NSEvent.EventType, at point: UIPoint, flags: NSEvent.ModifierFlags, clickCount: Int) {
-        guard let event = NSEvent.mouseEvent(
+    /// Sends a mouse down with the rest of its gesture already queued. Views like NSTextView run their own
+    /// tracking loop inside mouseDown, waiting for the mouse up; sent one by one, that loop would never end.
+    /// Whatever no loop takes is dispatched from the queue to the window as usual.
+    private typealias Gesture = (type: NSEvent.EventType, point: UIPoint, clickCount: Int)
+
+    private func send(_ down: NSEvent.EventType, then rest: [Gesture], at point: UIPoint, flags: NSEvent.ModifierFlags) {
+        for event in rest {
+            if let event = mouseEvent(event.type, at: event.point, flags: flags, clickCount: event.clickCount) {
+                NSApp.postEvent(event, atStart: false)
+            }
+        }
+        if let event = mouseEvent(down, at: point, flags: flags, clickCount: 1) { window.sendEvent(event) }
+    }
+
+    private func mouseEvent(_ type: NSEvent.EventType, at point: UIPoint, flags: NSEvent.ModifierFlags, clickCount: Int) -> NSEvent? {
+        NSEvent.mouseEvent(
             with: type, location: window.basePoint(point), modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount, pressure: type == .leftMouseUp || type == .rightMouseUp ? 0 : 1
-        ) else { return }
-        window.sendEvent(event)
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clickCount,
+            pressure: type == .leftMouseUp || type == .rightMouseUp ? 0 : 1)
     }
 
     /// With the window not key, AppKit gives a click only to views that accept first mouse; a real first
