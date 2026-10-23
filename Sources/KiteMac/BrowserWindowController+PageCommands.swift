@@ -53,9 +53,11 @@ extension BrowserWindowController {
         }
         bar.onClose = { [weak self] in self?.hideFindBar() }
         if let root = window?.contentView {
-            // Above the page, pinned to the content card's top-right corner like Arc's.
+            // Above the page and the loading glow (whose translucent edge would wash it
+            // out), pinned to the content card's top-right corner like Arc's.
             bar.translatesAutoresizingMaskIntoConstraints = false
-            root.addSubview(bar, positioned: .above, relativeTo: contentFrame)
+            let glow = root.subviews.first { $0 is GlowView }
+            root.addSubview(bar, positioned: .above, relativeTo: glow ?? contentFrame)
             NSLayoutConstraint.activate([
                 bar.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: FindBar.Metrics.inset),
                 bar.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor, constant: -FindBar.Metrics.inset),
