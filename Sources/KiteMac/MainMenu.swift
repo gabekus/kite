@@ -165,6 +165,28 @@ enum MainMenu {
             item("Clear Cookies and Refresh", #selector(BrowserWindowController.clearCookiesAndRefresh(_:)), id: "clearCookiesAndRefresh"),
             item("Clear Cache and Refresh", #selector(BrowserWindowController.clearCacheAndRefresh(_:)), id: "clearCacheAndRefresh"),
             .separator(),
+            // Arc's names and IDs from its MainMenu.nib; ⌃⇧= and ⌃⇧- are Arc's defaults.
+            item("Add Split View", #selector(BrowserWindowController.addSplitView(_:)), "=", [.control, .shift], id: "addSplitView"),
+            item("Close this Split Pane", #selector(BrowserWindowController.closeSplitPane(_:)), "-", [.control, .shift], id: "removeSplitView"),
+            item("Separate Page from Split View", #selector(BrowserWindowController.separateFromSplitView(_:)), id: "separateTabFromSplitView"),
+        ] + (1...SplitView.maxPanes).map { n in
+            // Arc builds these in code and hides them; their default keys aren't in its binary.
+            let pane = item("Switch to Split View \(n)", #selector(BrowserWindowController.focusSplitPane(_:)), "\(n)", [.control, .shift], tag: n, id: "switchToSplitView\(n)")
+            pane.isHidden = true
+            pane.allowsKeyEquivalentWhenHidden = true
+            return pane
+        } + [
+            {
+                let next = item("Switch to Next Split View", #selector(BrowserWindowController.focusNextSplitPane(_:)), id: "switchToNextWindowPane")
+                next.isHidden = true
+                return next
+            }(),
+            {
+                let previous = item("Switch to Previous Split View", #selector(BrowserWindowController.focusPreviousSplitPane(_:)), id: "switchToPreviousWindowPane")
+                previous.isHidden = true
+                return previous
+            }(),
+            .separator(),
             item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0", id: "actualSize"),
             item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "=", id: "zoomIn"),
             item("Zoom Out", #selector(BrowserWindowController.zoomOut(_:)), "-", id: "zoomOut"),

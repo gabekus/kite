@@ -35,9 +35,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var sidebarWidth: CGFloat
     private var appearanceObservation: NSKeyValueObservation?
 
+    /// The focused tab: the selected one, or the focused pane of its split.
     private var shownTabID: UUID?
     private var shownSpaceID: UUID?
     private(set) weak var shownPage: WebPage?
+    /// Every tab on screen in pane order, and its page: one, or a split's panes.
+    private var shownTabIDs: [UUID] = []
+    private var shownPages: [UUID: WebPage] = [:]
+    private let splitPanes = SplitPanesView()
+    private var paneClickMonitor: Any?
     /// Last dark-pages setting sent to each page, so it's only re-sent on change.
     private var appliedDark: [UUID: Bool] = [:]
     private var commandBarVisible = false
@@ -91,6 +97,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     required init?(coder: NSCoder) { fatalError() }
 
     func windowWillClose(_ notification: Notification) {
+        if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
+        paneClickMonitor = nil
         store.saveNow()
         if isIncognito { pool.retain(live: [], restorable: []) }
     }
@@ -203,6 +211,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             commandBarHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
         ])
         trafficLights = TrafficLights(window: window, host: sidebarHost)
+
+        splitPanes.onDividerDrag = { [weak self] index, fraction, minimum in
+            guard let self, let split = store.state.selectedSplit else { return }
+            store.mutate { $0.moveSplitDivider(split.id, index: index, fraction: fraction, minimum: minimum) }
+        }
+        // Clicking into a pane focuses it. Web views take their own clicks, so watch from outside.
+        paneClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            self?.focusPane(under: event)
+            return event
+        }
+    }
+
+    private func focusPane(under event: NSEvent) {
+        guard event.window === window, shownTabIDs.count > 1, splitPanes.superview != nil else { return }
+        let point = splitPanes.convert(event.locationInWindow, from: nil)
+        guard let id = splitPanes.pane(at: point), id != shownTabID else { return }
+        store.mutate { $0.select(tab: id) }
     }
 
     private static let sidebarWidthKey = "SidebarWidth"
@@ -223,7 +248,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     private func layoutChanged() {
         // Metal works top-left; AppKit's origin is bottom-left.
-        let frame = cardCoverDuringToggle ?? contentFrame.frame
+        // The theme shows through the gaps between a split's panes.
+        let frame = shownTabIDs.count > 1 ? .zero : cardCoverDuringToggle ?? contentFrame.frame
         themeView.cutoutRect = CGRect(x: frame.minX, y: rootView.bounds.height - frame.maxY, width: frame.width, height: frame.height)
         themeView.cutoutCornerRadius = Layout.cornerRadius
         let sidebar = sidebarHost.frame
@@ -253,8 +279,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
 
         let selected = state.selectedTab
-        if selected?.id != shownTabID {
-            show(selected)
+        let visible = state.visibleTabs
+        if selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
+            show(visible, focused: selected?.id)
+        }
+        if let split = state.selectedSplit {
+            splitPanes.setLayout(factors: split.normalizedFactors, orientation: split.orientation)
         }
         let live = state.allTabIDs
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
@@ -266,36 +296,65 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         updateSidebar()
     }
 
-    private func show(_ tab: BrowserTab?) {
+    /// Puts `tabs` on screen, side by side when there are several, and focuses `focused`.
+    private func show(_ tabs: [BrowserTab], focused: UUID?) {
         hideFindBar()
-        shownPage?.view.removeFromSuperview()
-        shownPage = nil
-        shownTabID = tab?.id
-        emptyLabel.isHidden = tab != nil
-        guard let tab else {
+        let ids = tabs.map(\.id)
+        if ids != shownTabIDs {
+            for page in shownPages.values { page.view.removeFromSuperview() }
+            splitPanes.setPanes([])
+            splitPanes.removeFromSuperview()
+            shownPages = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, pool.page(for: $0)) })
+            shownTabIDs = ids
+            if tabs.count > 1 {
+                splitPanes.setPanes(ids.map { ($0, shownPages[$0]!.view) })
+                contentClip.addSubview(splitPanes)
+                contentClip.page = splitPanes
+            } else if let id = ids.first, let page = shownPages[id] {
+                page.view.autoresizingMask = []
+                contentClip.addSubview(page.view)
+                contentClip.page = page.view
+            } else {
+                contentClip.page = nil
+            }
+            setSplitChrome(tabs.count > 1)
+        }
+        shownTabID = focused
+        shownPage = focused.flatMap { shownPages[$0] }
+        emptyLabel.isHidden = !tabs.isEmpty
+        guard let focused else {
             glowView.setLoading(false, progress: 0)
             return
         }
-
-        let page = pool.page(for: tab)
-        page.view.autoresizingMask = []
-        contentClip.addSubview(page.view)
-        contentClip.page = page.view
-        shownPage = page
-        pool.didShow(tab.id)
+        pool.didShow(ids)
         if store.commandBar == nil {
-            page.focus()
+            shownPage?.focus()
         }
-        pageChanged(tab.id)
+        pageChanged(focused)
+    }
+
+    /// How far the focused pane's top and trailing edges sit inside the content card (zero without a split).
+    var focusedPaneInsets: (top: CGFloat, trailing: CGFloat) {
+        guard shownTabIDs.count > 1, let id = shownTabID, let frame = splitPanes.frame(of: id) else { return (0, 0) }
+        // The split view is flipped and fills the card.
+        return (frame.minY, splitPanes.bounds.width - frame.maxX)
+    }
+
+    /// A split's panes are cards of their own, so the shared card stops drawing while one is shown.
+    private func setSplitChrome(_ split: Bool) {
+        contentClip.layer?.backgroundColor = split ? NSColor.clear.cgColor : NSColor.windowBackgroundColor.cgColor
+        contentFrame.layer?.shadowOpacity = split ? 0 : ShadowView.opacity
+        layoutChanged()
     }
 
     /// Dark pages follow the site, so this re-checks whenever the shown tab's URL changes.
     private func applyDarkPage() {
-        guard let id = shownTabID, let page = shownPage else { return }
-        let dark = store.state.wantsDarkPage(for: store.state.tab(id)?.url, systemIsDark: store.systemIsDark)
-        guard appliedDark[id] != dark else { return }
-        appliedDark[id] = dark
-        page.setForceDark(dark)
+        for (id, page) in shownPages {
+            let dark = store.state.wantsDarkPage(for: store.state.tab(id)?.url, systemIsDark: store.systemIsDark)
+            guard appliedDark[id] != dark else { continue }
+            appliedDark[id] = dark
+            page.setForceDark(dark)
+        }
     }
 
     private func pageChanged(_ id: UUID) {
@@ -466,6 +525,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if let valid = validateSplitItem(item) { return valid }
         switch item.action {
         case #selector(setDarkPagesMode(_:)):
             let modes = DarkPagesMode.allCases
@@ -616,6 +676,7 @@ final class RootView: NSView {
 /// Draws the content card's shadow from an explicit path, which spares Core
 /// Animation an offscreen pass to work out the shape every frame.
 final class ShadowView: NSView {
+    static let opacity: Float = 0.18
     private let cornerRadius: CGFloat
 
     init(cornerRadius: CGFloat) {
@@ -623,7 +684,7 @@ final class ShadowView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOpacity = 0.18
+        layer?.shadowOpacity = Self.opacity
         layer?.shadowRadius = 8
         layer?.shadowOffset = CGSize(width: 0, height: -2)
     }

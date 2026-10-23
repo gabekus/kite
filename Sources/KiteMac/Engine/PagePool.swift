@@ -3,7 +3,7 @@ import KiteCore
 
 /// Creates, tracks and hibernates the page behind each tab, for either engine.
 ///
-/// Only the selected tab is on screen; the rest are told they're hidden so the
+/// Only the selected tab (or its split's panes) is on screen; the rest are told they're hidden so the
 /// engine throttles them. At most `policy.maxLiveTabs` pages exist at once and
 /// the least recently shown are torn down (keeping whatever history the engine
 /// can save). On launch nothing loads except the selected tab.
@@ -16,7 +16,7 @@ final class PagePool {
     private var pages: [UUID: WebPage] = [:]
     private var lastShown: [UUID: Date] = [:]
     private var savedState: [UUID: Any] = [:]
-    private var visibleID: UUID?
+    private var visibleIDs: Set<UUID> = []
     private var memoryPressure: DispatchSourceMemoryPressure?
 
     init(engine: WebEngine, store: BrowserStore) {
@@ -34,12 +34,17 @@ final class PagePool {
         return page
     }
 
-    func didShow(_ id: UUID) {
-        if let previous = visibleID, previous != id { pages[previous]?.setVisible(false) }
-        visibleID = id
-        pages[id]?.setVisible(true)
-        lastShown[id] = Date()
-        hibernate(policy.tabsToEvict(live: lastShown, protected: [id]))
+    /// The tabs now on screen: one, or a split's panes.
+    func didShow(_ ids: [UUID]) {
+        let shown = Set(ids)
+        for previous in visibleIDs.subtracting(shown) { pages[previous]?.setVisible(false) }
+        visibleIDs = shown
+        let now = Date()
+        for id in ids {
+            pages[id]?.setVisible(true)
+            lastShown[id] = now
+        }
+        hibernate(policy.tabsToEvict(live: lastShown, protected: shown))
     }
 
     /// Drops pages for tabs that no longer exist, and saved history for tabs that can't come back.
@@ -103,7 +108,7 @@ final class PagePool {
     private func hibernate(_ ids: [UUID]) {
         for id in ids {
             pages[id]?.checkBusy { [weak self] busy in
-                guard let self, !busy, id != self.visibleID else { return }
+                guard let self, !busy, !self.visibleIDs.contains(id) else { return }
                 self.discard(id, keepHistory: true)
             }
         }
@@ -114,7 +119,7 @@ final class PagePool {
         source.setEventHandler { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.hibernate(self.pages.keys.filter { $0 != self.visibleID })
+                self.hibernate(self.pages.keys.filter { !self.visibleIDs.contains($0) })
             }
         }
         source.resume()

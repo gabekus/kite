@@ -50,6 +50,12 @@ extension BrowserWindowController {
             ])
             return toast
         }()
+        // In a split, Arc puts it at the focused pane's top-right corner instead.
+        let pane = focusedPaneInsets
+        for constraint in root.constraints where constraint.firstItem === toast {
+            if constraint.firstAttribute == .top { constraint.constant = ToastView.Metrics.top + pane.top }
+            if constraint.firstAttribute == .trailing { constraint.constant = -ToastView.Metrics.trailing - pane.trailing }
+        }
         toast.show(message, shareURL: shareURL)
     }
 }
