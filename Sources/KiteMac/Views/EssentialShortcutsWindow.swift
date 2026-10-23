@@ -22,9 +22,14 @@ enum EssentialShortcutsWindow {
         let window = window ?? makeWindow()
         self.window = window
         let keys = rows.map { shortcut(for: $0.action, menu: menu, overrides: overrides) }
-        window.contentView = NSHostingView(rootView: EssentialShortcutsView(keys: keys) {
+        let host = NSHostingView(rootView: EssentialShortcutsView(keys: keys) {
             ShortcutsWindow.show(for: NSApp.mainMenu)
         })
+        // Otherwise the window grows to fit the content below the titlebar.
+        host.sizingOptions = []
+        window.contentView = host
+        // The frame, titlebar included, is Arc's 475x458; the content runs under the titlebar.
+        window.setFrame(NSRect(origin: window.frame.origin, size: M.size), display: false)
         if let screen = NSScreen.main {
             // Top-right of the screen, just under the menu bar.
             let visible = screen.visibleFrame
@@ -62,15 +67,15 @@ enum EssentialShortcutsWindow {
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(displayP3Red: 0x1E / 255, green: 0x26 / 255, blue: 0x3D / 255, alpha: 1)
-        // The frame, titlebar included, is Arc's 475x458; the content runs under the titlebar.
-        window.setFrame(NSRect(origin: .zero, size: M.size), display: false)
+        // Captures as Arc's #1E263D.
+        window.backgroundColor = NSColor(displayP3Red: 0x15 / 255, green: 0x19 / 255, blue: 0x2C / 255, alpha: 1)
         return window
     }
 }
 
 /// Arc 1.169's measurements, in points from the window's top-left. Text positions are
-/// where the capitals' tops land; colours are Display P3, as Arc's capture reads them.
+/// where the capitals' tops land. Colours are Display P3, tuned so a capture of Kite
+/// reads Arc's values (noted beside each).
 private enum M {
     static let size = NSSize(width: 475, height: 458)
     static let leading: CGFloat = 31
@@ -89,8 +94,8 @@ private enum M {
     static let titleSize: CGFloat = 15
     static let subtitleSize: CGFloat = 11.5
     static let titleToSubtitle: CGFloat = 20
-    static let subtitleColor = p3(0xC4, 0xC5, 0xCD)
-    static let separator = p3(0x2D, 0x34, 0x48)
+    static let subtitleColor = p3(0xBA, 0xBB, 0xC4) // #C4C5CD
+    static let separator = p3(0x1F, 0x24, 0x36) // #2D3448
     static let separatorWidth: CGFloat = 413
     static let keySize = CGSize(width: 27.5, height: 28.5)
     /// The keycaps' top relative to the title's capitals.
@@ -99,10 +104,10 @@ private enum M {
     static let keyCornerRadius: CGFloat = 5
     static let keyLip: CGFloat = 3.5
     static let keyFontSize: CGFloat = 14
-    static let keyTop = p3(0xC2, 0xD4, 0xF4)
-    static let keyBottom = p3(0xAC, 0xC5, 0xEB)
-    static let keyBlue = p3(0x41, 0x8F, 0xF9)
-    static let keyLipTop = p3(0x37, 0x78, 0xD0)
+    static let keyTop = p3(0xBA, 0xCD, 0xF2) // #C2D4F4
+    static let keyBottom = p3(0x97, 0xB5, 0xE4) // #ACC5EB
+    static let keyBlue = p3(0x32, 0x7B, 0xF7) // #418FF9
+    static let keyLipTop = p3(0x1F, 0x50, 0xA9) // #3778D0
 
     /// Where a line of SF text's frame starts for its capitals to start at `capTop`.
     static func textTop(capTop: CGFloat, size: CGFloat) -> CGFloat { capTop - size * 0.25 }
