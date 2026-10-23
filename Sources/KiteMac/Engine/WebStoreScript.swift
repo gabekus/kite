@@ -35,7 +35,19 @@ enum WebStoreScript {
           promo(text)?.remove();
         }
       };
-      new MutationObserver(fix).observe(document, { childList: true, subtree: true });
+      // #kite-add (from GoogleResultsScript's button): start the store's Add flow once.
+      // That only opens the install prompt; the user still confirms there.
+      let pendingAdd = location.hash === '#kite-add';
+      if (pendingAdd) history.replaceState(null, '', location.pathname + location.search);
+      const startAdd = () => {
+        if (!pendingAdd) return;
+        const button = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Add to Kite' && !b.disabled);
+        if (!button) return;
+        pendingAdd = false;
+        button.click();
+      };
+      new MutationObserver(() => { fix(); startAdd(); }).observe(document, { childList: true, subtree: true });
+      setTimeout(() => { pendingAdd = false; }, 15000);
     })();
     """#
 }

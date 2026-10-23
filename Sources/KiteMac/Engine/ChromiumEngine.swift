@@ -191,7 +191,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     @objc(browser:documentStartScriptForURL:)
     func browser(_ browser: KCBrowser, documentStartScriptFor url: URL) -> String? {
-        let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url)].compactMap { $0 }
+        let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url), GoogleResultsScript.script(for: url)].compactMap { $0 }
         return scripts.isEmpty ? nil : scripts.joined(separator: "\n")
     }
 
