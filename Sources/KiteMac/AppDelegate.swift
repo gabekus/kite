@@ -61,7 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // SPIKE: tabs extensions open land here instead of a Chrome-style window.
         NotificationCenter.default.addObserver(forName: .KCRuntimeOpenURL, object: nil, queue: .main) { [weak self] note in
             guard let url = note.userInfo?["url"] as? URL else { return }
-            MainActor.assumeIsolated { self?.open([url]) }
+            // In the background, so an extension's welcome page doesn't pull you off yours.
+            MainActor.assumeIsolated { _ = self?.store.mutate { $0.openTab(url: url, select: false) } }
         }
         #endif
         NSApp.activate(ignoringOtherApps: true)

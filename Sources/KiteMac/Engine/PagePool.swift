@@ -18,9 +18,8 @@ final class PagePool {
     private var savedState: [UUID: Any] = [:]
     private var visibleID: UUID?
     private var memoryPressure: DispatchSourceMemoryPressure?
-    /// SPIKE: store tabs Kite opened from its own "Add to Kite" button, with the
-    /// extension id whose Add flow to start once the page has loaded.
-    private var pendingExtensionAdds: [UUID: String] = [:]
+    /// SPIKE: installs started from Kite's own "Add to Kite" button, by extension id.
+    private var extensionInstalls: [String: BackgroundExtensionInstall] = [:]
 
     init(engine: WebEngine, store: BrowserStore) {
         self.engine = engine
@@ -89,11 +88,12 @@ final class PagePool {
                 $0.canGoBack = canGoBack
                 $0.canGoForward = canGoForward
             }
-            if !isLoading { startPendingExtensionAdd(in: id) }
+            if !isLoading { markInstalledExtensions(in: id) }
         case .addExtension(let extensionID):
-            guard let url = URL(string: "https://chromewebstore.google.com/detail/\(extensionID)") else { return }
-            let tabID = store.mutate { $0.openTab(url: url, select: true) }
-            pendingExtensionAdds[tabID] = extensionID
+            guard extensionInstalls[extensionID] == nil, let source = pages[id] else { return }
+            extensionInstalls[extensionID] = BackgroundExtensionInstall(extensionID: extensionID, engine: engine, source: source) {
+                [weak self] in self?.extensionInstalls[extensionID] = nil
+            }
         case let .openInNewTab(url, foreground):
             store.mutate { $0.openTab(url: url, select: foreground) }
         case .popup(let page):
@@ -113,18 +113,12 @@ final class PagePool {
         }
     }
 
-    /// Starts the store's Add flow, once, in a tab Kite opened for that extension and
-    /// only while it shows that extension's store page.
-    private func startPendingExtensionAdd(in id: UUID) {
-        guard let extensionID = pendingExtensionAdds[id], let page = pages[id] else { return }
-        guard let url = store.state.tab(id)?.url, url.host == "chromewebstore.google.com",
-              url.pathComponents.count >= 3, url.pathComponents[1] == "detail", url.lastPathComponent == extensionID else {
-            if store.state.tab(id) == nil { pendingExtensionAdds[id] = nil }
-            return
+    /// Google results for extensions that are already installed say "Added".
+    private func markInstalledExtensions(in id: UUID) {
+        guard let page = pages[id], GoogleResultsScript.isSearchPage(store.state.tab(id)?.url) else { return }
+        for extensionID in BackgroundExtensionInstall.installedIDs() {
+            page.evaluateJavaScript(BackgroundExtensionInstall.label(extensionID, "Added", disabled: true)) { _ in }
         }
-        pendingExtensionAdds[id] = nil
-        NSLog("KiteSpike: starting the store's Add flow for %@", extensionID)
-        page.evaluateJavaScript(WebStoreScript.startAddScript) { _ in }
     }
 
     /// Hibernates tabs unless they're playing media or using the camera or mic.

@@ -61,6 +61,15 @@ extern NSString * const KCRuntimeOpenURLNotification;
 
 @class KCBrowser;
 
+/// SPIKE: Chrome's extension install dialog closed (added or cancelled). Main thread.
+extern NSString * const KCExtensionInstallDialogDidCloseNotification;
+
+@interface KCRuntime (ExtensionWindows)
+/// Attaches Chrome's install dialog to the front Kite window, and keeps the
+/// "added" bubble and Chrome-style browser windows off screen.
++ (void)installExtensionWindowHooks;
+@end
+
 /// A Chromium profile for a set of browsers. `incognitoContext` keeps cookies,
 /// cache and storage in memory only; they vanish when the last browser using it closes.
 NS_SWIFT_UI_ACTOR

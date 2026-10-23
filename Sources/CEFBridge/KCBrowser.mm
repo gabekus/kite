@@ -245,13 +245,33 @@ class KCClient : public CefClient,
                           CefRefPtr<CefDownloadItem> download_item,
                           const CefString& suggested_name,
                           CefRefPtr<CefBeforeDownloadCallback> callback) override {
+        // SPIKE: a store install fetches the extension's .crx as a download. It isn't
+        // the user's file: keep it out of ~/Downloads; Chromium's installer takes it from there.
+        if (IsExtensionPackage(download_item, suggested_name)) {
+            NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:@"KiteExtensionInstalls"];
+            [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+            NSString* name = [NSString stringWithFormat:@"%u-%@", download_item->GetId(), ToNSString(suggested_name)];
+            callback->Continue([directory stringByAppendingPathComponent:name].UTF8String, false);
+            return true;
+        }
         callback->Continue(UniqueDownloadURL(ToNSString(suggested_name)).path.UTF8String, false);
         return true;
+    }
+
+    static bool IsExtensionPackage(CefRefPtr<CefDownloadItem> item, const CefString& suggested_name) {
+        if (item->GetMimeType().ToString() == "application/x-chrome-extension") return true;
+        NSString* name = ToNSString(suggested_name).lowercaseString;
+        NSString* host = [NSURL URLWithString:ToNSString(item->GetOriginalUrl())].host.lowercaseString ?: @"";
+        BOOL googleHost = [host isEqualToString:@"clients2.google.com"] || [host hasSuffix:@".gvt1.com"] ||
+                          [host isEqualToString:@"clients2.googleusercontent.com"];
+        return [name hasSuffix:@".crx"] && googleHost;
     }
 
     void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
                            CefRefPtr<CefDownloadItem> download_item,
                            CefRefPtr<CefDownloadItemCallback> callback) override {
+        // Extension packages from a store install never show up as the user's downloads.
+        if (IsExtensionPackage(download_item, download_item->GetSuggestedFileName())) return;
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
         NSString* state = download_item->IsComplete() ? @"complete"
             : download_item->IsCanceled() ? @"canceled"

@@ -65,6 +65,7 @@ enum GoogleResultsScript {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'kite-add';
+        button.dataset.id = id;
         button.textContent = 'Add to Kite';
         // Listeners added here live in Kite's world; the page can only send untrusted clicks.
         button.addEventListener('click', (event) => {

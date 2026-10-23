@@ -87,10 +87,12 @@ class KCDefaultClient : public CefClient, public CefLifeSpanHandler, public CefR
         NSView* view = (__bridge NSView*)host->GetWindowHandle();
         NSLog(@"KiteSpike: default client OnBeforeBrowse id=%d %s window visible=%d", browser->GetIdentifier(),
               url.ToString().c_str(), view.window.isVisible);
-        // Chrome's own pages (the new tab page the window starts with) stay put.
-        if (url.ToString().rfind("chrome://", 0) == 0) return false;
-        if (browser->GetIdentifier() == gAnchorID || url.ToString().rfind("about:blank", 0) == 0) return false;
-        PostOpenURL(url);
+        if (browser->GetIdentifier() == gAnchorID) return false;
+        // Chrome's own pages (the new tab page such a window starts with) aren't worth
+        // a Kite tab, but are closed too so the Chrome-style window goes away.
+        std::string spec = url.ToString();
+        bool chromePage = spec.rfind("chrome://", 0) == 0 || spec.rfind("about:blank", 0) == 0;
+        if (!chromePage) PostOpenURL(url);
         dispatch_async(dispatch_get_main_queue(), ^{
             host->CloseBrowser(true);
         });

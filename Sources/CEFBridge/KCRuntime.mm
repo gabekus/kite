@@ -150,7 +150,10 @@ bool KCRuntimeIsQuitting() {
 
     gInitialized = CefInitialize(mainArgs, cefSettings, KCMakeApp(), nullptr);
     if (!gInitialized) NSLog(@"Kite: CefInitialize failed (exit code %d)", CefGetExitCode());
-    else ApplyEnergySaver();
+    else {
+        ApplyEnergySaver();
+        [KCRuntime installExtensionWindowHooks];
+    }
     return gInitialized;
 }
 
