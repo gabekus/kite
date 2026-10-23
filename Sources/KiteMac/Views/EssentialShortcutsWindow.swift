@@ -108,6 +108,7 @@ private enum M {
     static let keyBottom = p3(0x97, 0xB5, 0xE4) // #ACC5EB
     static let keyBlue = p3(0x32, 0x7B, 0xF7) // #418FF9
     static let keyLipTop = p3(0x1F, 0x50, 0xA9) // #3778D0
+    static let keyLipBottom = p3(0x2A, 0x66, 0xC8) // #418FF9 with the border
 
     /// Where a line of SF text's frame starts for its capitals to start at `capTop`.
     static func textTop(capTop: CGFloat, size: CGFloat) -> CGFloat { capTop - size * 0.25 }
@@ -211,7 +212,7 @@ private struct Keycap: View {
                 shape.stroke(.white.opacity(0.8), lineWidth: 1).mask(alignment: .top) { Rectangle().frame(height: 3) }
             }
             .padding(.bottom, M.keyLip)
-            .background(LinearGradient(colors: [M.keyLipTop, M.keyBlue], startPoint: .top, endPoint: .bottom), in: shape)
+            .background(LinearGradient(colors: [M.keyLipTop, M.keyLipBottom], startPoint: .top, endPoint: .bottom), in: shape)
             .overlay(shape.strokeBorder(M.keyBlue, lineWidth: 1))
     }
 }
