@@ -48,6 +48,46 @@ public enum AutomationReport {
         return "Tab \(tab.uuidString)\n" + UntrustedContent.wrap(body, source: source)
     }
 
+    public struct SpaceSummary: Hashable, Sendable {
+        public var id: UUID
+        public var name: String
+        public var icon: String
+        public var pinned: Int
+        public var tabs: Int
+        public var folders: [String]
+        public var isFront: Bool
+
+        public init(id: UUID, name: String, icon: String, pinned: Int, tabs: Int, folders: [String], isFront: Bool) {
+            self.id = id
+            self.name = name
+            self.icon = icon
+            self.pinned = pinned
+            self.tabs = tabs
+            self.folders = folders
+            self.isFront = isFront
+        }
+    }
+
+    /// Space names are the user's own, not a page's, so they aren't wrapped.
+    public static func spaces(_ spaces: [SpaceSummary]) -> String {
+        spaces.map { space in
+            var line = "- space \(space.id.uuidString) \(space.icon) \(AccessibilityOutline.quote(space.name))"
+            line += space.isFront ? " [front]" : ""
+            line += ": \(space.pinned) pinned, \(space.tabs) tab\(space.tabs == 1 ? "" : "s")"
+            if !space.folders.isEmpty { line += "; folders: " + space.folders.map(AccessibilityOutline.quote).joined(separator: ", ") }
+            return line
+        }.joined(separator: "\n")
+    }
+
+    public static func find(_ matches: [ElementFinder.Match], query: String, url: URL?) -> String {
+        guard !matches.isEmpty else {
+            return "Nothing matches \"\(query)\". Try other words, or read_page for the whole outline."
+        }
+        return "\(matches.count) match\(matches.count == 1 ? "" : "es"), best first:\n"
+            + UntrustedContent.wrap(matches.map { "- \($0.line) [ref=\($0.ref)]" }.joined(separator: "\n"),
+                                    source: url?.absoluteString ?? "page")
+    }
+
     /// One line after an action: where the tab ended up.
     public static func afterAction(_ action: String, tab: UUID, url: URL?, title: String) -> String {
         "\(action) Tab \(tab.uuidString) is now at:\n"
@@ -61,14 +101,22 @@ public enum AutomationReport {
 /// the session so a throwaway test profile never turns it on for the real one.
 public struct AutomationSettings: Codable, Hashable, Sendable {
     public var allowClaudeControl: Bool
+    /// Skip the confirmation before Claude runs JavaScript in a page.
+    public var allowJavaScript: Bool
+    /// Open Claude's new tabs in a "Claude" space instead of the current one.
+    public var useClaudeSpace: Bool
 
-    public init(allowClaudeControl: Bool = false) {
+    public init(allowClaudeControl: Bool = false, allowJavaScript: Bool = false, useClaudeSpace: Bool = false) {
         self.allowClaudeControl = allowClaudeControl
+        self.allowJavaScript = allowJavaScript
+        self.useClaudeSpace = useClaudeSpace
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         allowClaudeControl = try c.decodeIfPresent(Bool.self, forKey: .allowClaudeControl) ?? false
+        allowJavaScript = try c.decodeIfPresent(Bool.self, forKey: .allowJavaScript) ?? false
+        useClaudeSpace = try c.decodeIfPresent(Bool.self, forKey: .useClaudeSpace) ?? false
     }
 
     public static func fileURL(supportDirectory: URL) -> URL {

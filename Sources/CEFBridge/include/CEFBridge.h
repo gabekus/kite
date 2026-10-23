@@ -51,6 +51,10 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)setAdblockEnabled:(BOOL)enabled allowedHosts:(NSSet<NSString *> *)hosts;
 @end
 
+/// Posted on the main thread as a download progresses. `object` is the KCBrowser; userInfo has
+/// id, url, path, state (in-progress, complete, canceled, interrupted), receivedBytes, totalBytes.
+extern NSString * const KCDownloadDidUpdateNotification;
+
 @class KCBrowser;
 
 // CEF's UI thread is the main thread, so Swift can treat these as main-actor types.
@@ -119,6 +123,8 @@ NS_SWIFT_UI_ACTOR
 - (void)executeDevToolsMethod:(NSString *)method
                        params:(nullable NSDictionary<NSString *, id> *)params
                    completion:(nullable void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result))completion;
+/// DevTools protocol events (after a domain's `enable`), on the main thread. Nil to stop.
+@property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^devToolsEventHandler)(NSString *method, NSDictionary *params);
 /// Like executeDevToolsMethod, but a failure comes back as the protocol's error
 /// message. `error` is "not-ready" until the browser exists.
 - (void)callDevToolsMethod:(NSString *)method
