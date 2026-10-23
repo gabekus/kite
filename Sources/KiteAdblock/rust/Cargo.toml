@@ -8,9 +8,11 @@ license = "MPL-2.0"
 crate-type = ["staticlib"]
 
 [dependencies]
+# css-validation parses uBO procedural selectors (:has-text, :upward…) into steps
+# Kite applies in the page, and drops selectors browsers would reject.
 # Not "single-thread": Kite checks requests on CEF's IO thread while the UI thread
 # asks for cosmetic resources, so the engine must be Send + Sync.
-adblock = { version = "0.13.3", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling", "content-blocking", "resource-assembler"] }
+adblock = { version = "0.13.3", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling", "content-blocking", "resource-assembler", "css-validation"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

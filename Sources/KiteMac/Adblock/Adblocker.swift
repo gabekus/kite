@@ -50,7 +50,13 @@ final class Adblocker {
         var listsUpdatedAt: Date?
         var resourcesUpdatedAt: Date?
         var uboRelease: String?
+        /// `engineFormat` the cached engine was built with.
+        var engineFormat: Int?
     }
+
+    /// Bump when the Rust build changes how lists compile (e.g. adblock-rust
+    /// features), so an engine cached by an older Kite is rebuilt, not reused.
+    private static let engineFormat = 2
 
     init(directory: URL) {
         self.directory = directory
@@ -142,7 +148,7 @@ final class Adblocker {
 
     private func loadCacheNow() {
         let start = Date()
-        guard let data = try? Data(contentsOf: engineURL), let engine = AdblockEngine.deserialize(data) else { return }
+        guard readStatus().engineFormat == Self.engineFormat, let data = try? Data(contentsOf: engineURL), let engine = AdblockEngine.deserialize(data) else { return }
         if let resources = try? Data(contentsOf: resourcesURL) { _ = engine.useResources(resources) }
         publish(engine)
         NSLog("Kite: ad blocker loaded from cache in %.0f ms", Date().timeIntervalSince(start) * 1000)
@@ -154,9 +160,10 @@ final class Adblocker {
         let engineURL = engineURL, resourcesURL = resourcesURL
         let lists = readLists()
         guard !lists.isEmpty else { return }
+        let cacheIsCurrent = readStatus().engineFormat == Self.engineFormat
         let loaded: AdblockEngine? = await Task.detached(priority: .userInitiated) {
             let resources = try? Data(contentsOf: resourcesURL)
-            var engine = (try? Data(contentsOf: engineURL)).flatMap(AdblockEngine.deserialize)
+            var engine = cacheIsCurrent ? (try? Data(contentsOf: engineURL)).flatMap(AdblockEngine.deserialize) : nil
             if engine == nil {
                 engine = AdblockEngine.build(lists: lists)
                 if let data = engine?.serialize() { try? data.write(to: engineURL, options: .atomic) }
@@ -164,7 +171,14 @@ final class Adblocker {
             if let resources { _ = engine?.useResources(resources) }
             return engine
         }.value
-        if let loaded { publish(loaded) }
+        if let loaded {
+            if !cacheIsCurrent {
+                var status = readStatus()
+                status.engineFormat = Self.engineFormat
+                writeStatus(status)
+            }
+            publish(loaded)
+        }
     }
 
     private func publish(_ engine: AdblockEngine) {
@@ -222,8 +236,9 @@ final class Adblocker {
                 NSLog("Kite: couldn't update uBlock Origin resources: \(error)")
             }
         }
+        guard changed else { return writeStatus(status) }
+        status.engineFormat = Self.engineFormat
         writeStatus(status)
-        guard changed else { return }
 
         let lists = readLists()
         let engineURL = engineURL, resourcesURL = resourcesURL

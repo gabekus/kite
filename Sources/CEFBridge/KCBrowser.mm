@@ -15,6 +15,7 @@
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData *)data;
 - (void)willNavigateMainFrame:(CefRefPtr<CefRequest>)request;
 - (void)mainFrameDidStartLoading;
+- (void)prepareFirstPage:(nullable NSURL *)url;
 - (NSMutableArray<NSString *> *)documentScriptIdentifiers;
 - (void)addDocumentScript:(NSString *)script navigation:(NSUInteger)navigation completion:(nullable void (^)(void))completion;
 @property (nonatomic, readwrite) BOOL isLoading;
@@ -127,6 +128,7 @@ class KCClient : public CefClient,
                               CefRect(0, 0, (int)NSWidth(bounds), (int)NSHeight(bounds)));
         client = new KCClient(popup);
         [delegate browser:owner didCreatePopup:popup url:ToNSURL(target_url)];
+        [popup prepareFirstPage:ToNSURL(target_url)];
         return false;
     }
 
@@ -273,7 +275,7 @@ class KCClient : public CefClient,
     std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
     NSInteger _blockedCount;
     BOOL _blockedCountPending;
-    /// Page.addScriptToEvaluateOnNewDocument identifiers to remove at the next navigation.
+    /// Page.addScriptToEvaluateOnNewDocument identifiers to remove when the script changes.
     NSMutableArray<NSString*>* _documentScripts;
     NSUInteger _navigationCount;
     /// The registered document-start script; reloads and same-site links reuse it.
@@ -323,6 +325,9 @@ class KCClient : public CefClient,
     // Document-start scripts only run in sessions with the Page domain enabled.
     if ([_delegate respondsToSelector:@selector(browser:documentStartScriptForURL:)]) {
         [self executeDevToolsMethod:@"Page.enable" params:nil completion:nil];
+    }
+    if (_documentScriptSource && _documentScripts.count == 0 && !_pendingURL) {
+        [self addDocumentScript:_documentScriptSource navigation:_navigationCount completion:nil];
     }
     if (_pendingURL) {
         NSURL* url = _pendingURL;
@@ -478,6 +483,17 @@ class KCClient : public CefClient,
     });
 }
 
+/// Popups load their first page as soon as Chromium creates them, possibly before
+/// this object has its browser: keep the script now, register it when attached,
+/// and run it at load start in case the first document beat it.
+- (void)prepareFirstPage:(NSURL*)url {
+    if (!url || ![_delegate respondsToSelector:@selector(browser:documentStartScriptForURL:)]) return;
+    NSString* script = [_delegate browser:self documentStartScriptForURL:url];
+    if (!script.length) return;
+    _documentScriptSource = script;
+    _runScriptAtLoadStart = YES;
+}
+
 - (void)mainFrameDidStartLoading {
     if (!_runScriptAtLoadStart) return;
     _runScriptAtLoadStart = NO;
@@ -485,7 +501,6 @@ class KCClient : public CefClient,
 }
 
 - (void)willNavigateMainFrame:(CefRefPtr<CefRequest>)request {
-    NSUInteger navigation = ++_navigationCount;
     _blockedCount = 0;
     if ([_delegate respondsToSelector:@selector(browser:blockedCountDidChange:)]) {
         [_delegate browser:self blockedCountDidChange:0];
@@ -501,6 +516,8 @@ class KCClient : public CefClient,
     }
     [_documentScripts removeAllObjects];
     _documentScriptSource = nil;
+    // Only a changed script makes registrations still in flight stale.
+    NSUInteger navigation = ++_navigationCount;
     // Sent now, before the request starts, so it's registered by the time the new document commits.
     if (script.length) [self addDocumentScript:script navigation:navigation completion:nil];
 }

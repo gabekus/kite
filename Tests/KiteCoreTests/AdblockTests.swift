@@ -168,3 +168,80 @@ import Testing
         #expect(resources[0]["content"] as? String == Data("function setConstant(){}".utf8).base64EncodedString())
     }
 }
+
+@Suite struct ProceduralFilterTests {
+    @Test func parsesAdblockRustSteps() throws {
+        let json = #"{"selector":[{"type":"css-selector","arg":"[onclick] p"},{"type":"has-text","arg":"/Ad/"},{"type":"xpath","arg":"../../.."}]}"#
+        let filter = try #require(ProceduralFilter(json: json))
+        #expect(filter.selector.map(\.type) == ["css-selector", "has-text", "xpath"])
+        #expect(filter.selector[2].arg == "../../..")
+        #expect(filter.action == nil)
+    }
+
+    @Test func parsesActions() throws {
+        let remove = try #require(ProceduralFilter(json: #"{"selector":[{"type":"css-selector","arg":".ad"}],"action":{"type":"remove"}}"#))
+        #expect(remove.action == .init(type: "remove", arg: nil))
+        let style = try #require(ProceduralFilter(json: #"{"selector":[{"type":"css-selector","arg":"body"}],"action":{"type":"style","arg":"overflow: auto !important"}}"#))
+        #expect(style.action?.arg == "overflow: auto !important")
+        let attr = try #require(ProceduralFilter(json: #"{"selector":[{"type":"css-selector","arg":"a"}],"action":{"type":"remove-attr","arg":"onclick"}}"#))
+        #expect(attr.action?.type == "remove-attr")
+    }
+
+    @Test(arguments: [
+        #"{"selector":[{"type":"css-selector","arg":"div"},{"type":"watch-attr","arg":"class"}]}"#,  // Unknown step.
+        #"{"selector":[{"type":"css-selector","arg":"div"}],"action":{"type":"set-attr","arg":"x"}}"#,  // Unknown action.
+        #"{"selector":[{"type":"has-text","arg":"Ad"}]}"#,  // Must start from a CSS selector.
+        #"not json"#,
+    ])
+    func skipsFiltersKiteCantApply(json: String) {
+        #expect(ProceduralFilter(json: json) == nil)
+    }
+
+    @Test func cosmeticResourcesKeepOnlyUsableFilters() throws {
+        let json = #"""
+            {"hide_selectors":[],"procedural_actions":[
+              "{\"selector\":[{\"type\":\"css-selector\",\"arg\":\"div\"},{\"type\":\"upward\",\"arg\":\"2\"}]}",
+              "{\"selector\":[{\"type\":\"css-selector\",\"arg\":\"div\"},{\"type\":\"future-step\",\"arg\":\"\"}]}"
+            ],"exceptions":[],"injected_script":"","generichide":false}
+            """#
+        let resources = try JSONDecoder().decode(CosmeticResources.self, from: Data(json.utf8))
+        #expect(resources.procedural.count == 1)
+        #expect(resources.procedural[0].selector.last == .init(type: "upward", arg: "2"))
+    }
+
+    @Test func scriptRunsTheEngineOnlyWhenNeeded() {
+        let plain = CosmeticResources(hideSelectors: [".ad"]).documentStartScript(host: "a.example", styleID: "k1", drain: nil)
+        #expect(!plain.contains("const procedural"))
+
+        let filter = ProceduralFilter(selector: [.init(type: "css-selector", arg: "h2"), .init(type: "has-text", arg: "Sponsored")])
+        let script = CosmeticResources(procedural: [filter]).documentStartScript(host: "a.example", styleID: "k1", drain: nil)
+        #expect(script.contains(#"const procedural = [{"selector":[{"#))
+        #expect(script.contains("requestIdleCallback"))
+        #expect(script.contains("'has-text'"))
+    }
+}
+
+#if canImport(JavaScriptCore)
+import JavaScriptCore
+
+@Suite struct DocumentScriptSyntaxTests {
+    /// The script is one unit: a syntax error would also lose the page's CSS and scriptlets.
+    @Test func compilesInJavaScriptCore() throws {
+        let filters = [
+            ProceduralFilter(selector: [.init(type: "css-selector", arg: "h2"), .init(type: "has-text", arg: "/Promoted/i")]),
+            ProceduralFilter(selector: [.init(type: "css-selector", arg: ".ad")], action: .init(type: "style", arg: "height: 0 !important")),
+        ]
+        let resources = CosmeticResources(hideSelectors: [#"a[href*="x"]"#], injectedScript: "function s(){}\ntry { s() } catch (e) {}", procedural: filters)
+        let script = resources.documentStartScript(host: "a.example", styleID: "k1", drain: "__kite_q")
+        let context = try #require(JSContext())
+        context.setObject(script, forKeyedSubscript: "source" as NSString)
+        let result = context.evaluateScript("try { new Function(source); 'ok' } catch (e) { String(e) }")
+        #expect(result?.toString() == "ok")
+        #expect(context.evaluateScript("try { new Function(\(Self.quoted(CosmeticResources.drainScript("__kite_q")))); 'ok' } catch (e) { String(e) }")?.toString() == "ok")
+    }
+
+    private static func quoted(_ s: String) -> String {
+        String(decoding: try! JSONSerialization.data(withJSONObject: [s]), as: UTF8.self).dropFirst().dropLast().description
+    }
+}
+#endif
