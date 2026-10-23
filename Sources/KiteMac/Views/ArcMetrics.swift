@@ -84,6 +84,10 @@ enum ArcMetrics {
         /// Gap around the web content card; it starts right at the sidebar's edge.
         static let inset: CGFloat = 10
         static let cornerRadius: CGFloat = 6
+        /// The sidebar's resize zone: 8pt centred on the card's leading edge (4pt over the sidebar,
+        /// 4pt over the page), from 1pt below the card's top to 1pt above its bottom.
+        static let resizeZoneHalfWidth: CGFloat = 4
+        static let resizeZoneVerticalInset: CGFloat = 1
     }
 
     /// Arc's timings: from its binary where it names them, else fitted from 60fps recordings.

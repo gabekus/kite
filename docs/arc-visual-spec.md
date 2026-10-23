@@ -62,6 +62,25 @@ bottom bar. The back/forward/reload buttons end at 359, which is 6pt from the ed
   is 1681×1265.
 - Its corner is about 6 (a circle fit gives 6.5; Kite's 6 continuous fits 6.25).
 
+## Sidebar resize zone → `ArcMetrics.Content.resizeZone*`
+
+Measured on 2026-10-23 by moving the pointer 0.5pt at a time across Arc 1.169's edge (an incognito window,
+1285pt tall, card from x 294) and reading the system cursor after each move. Arc's binary agrees on the mechanism.
+
+| | Arc |
+|---|---|
+| Across | `resizeLeftRight` from 4pt left of the card's edge to 4pt right of it, over the page (x 290 to 297.5 for a card at 294; x 295 to 302.5 for one at 299) |
+| Down | 1pt inside the card's top and bottom: y 11 to 1273.5 for a card from 10 to 1275. Same across at y 20, 640 and 1272 |
+| Sidebar hidden | none, anywhere (Arc hides the region with the sidebar) |
+| Hover reveal | none at the floating sidebar's edge |
+| Window inactive | none (tracking options 0x227: entered/exited, moved, cursor update, key window only, visible rect) |
+
+- In the binary, `Arc.SidebarResizeRegionView` is its own view, framed by the window layout controller and hidden
+  with the sidebar. Its `cursorUpdate:` sets `NSCursor.resizeLeftRight`. It carries a pan recognizer for the drag and
+  a two-click recognizer.
+- Kite's handle straddles the card's edge the same way and sits above the page and the glow. It keeps cursor rects
+  and invalidates them whenever the handle moves, so the zone follows a drag and the hide/show slide.
+
 ## Material → `Theme.tint`, `NSVisualEffectView` in `BrowserWindowController`
 
 - **Arc:**

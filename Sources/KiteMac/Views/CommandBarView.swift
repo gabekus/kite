@@ -47,6 +47,103 @@ struct CommandBarOverlay: View {
 
 private typealias C = ArcMetrics.CommandBar
 
+/// Arc 1.169's Site Search pieces, measured from a 2x capture of its command bar.
+private enum S {
+    // Sizes are tuned so a capture of Kite measures like one of Arc: drawn edges
+    // anti-alias about half a point inside their frames.
+    static let faviconSize: CGFloat = 18
+    static let faviconOffset: CGFloat = 1.5
+    /// From the text field's start; Arc's chip starts 1.5pt right of Kite's text.
+    static let chipOffset: CGFloat = 1.5
+    static let chipHeight: CGFloat = 24
+    static let chipLeading: CGFloat = 10
+    static let chipTrailing: CGFloat = 9.5
+    static let chipFontSize: CGFloat = 13
+    /// A brand-colour glow around the chip, visible ~2pt above and ~10pt below it.
+    static let glowOpacity: Double = 0.38
+    static let glowRadius: CGFloat = 6
+    static let glowY: CGFloat = 1.5
+    static let chipToText: CGFloat = 9.5
+    /// "Search YouTube" (#727272 on the #212121 bar), then the Tab keycap.
+    static let hintOpacity: Double = 0.36
+    static let hintToKey: CGFloat = 10
+    static let keySize = CGSize(width: 31, height: 22)
+    static let keyCornerRadius: CGFloat = 5
+    static let keyFontSize: CGFloat = 13
+    static let keyTextOpacity: Double = 0.8
+    /// Captures as Arc's #4A4A4A.
+    static let keyFill = Color(red: 0x3D / 255, green: 0x3D / 255, blue: 0x3D / 255)
+    /// From the keycap's right edge to the bar's.
+    static let keyTrailing: CGFloat = 21
+    /// For a site with no brand colour and no usable favicon colour.
+    static let fallbackColor = keyFill
+}
+
+/// The capsule after Tab, filled with the site's brand colour: Arc's for its defaults,
+/// otherwise the favicon's dominant colour.
+private struct SiteSearchChip: View {
+    let site: SiteSearch
+    @State private var faviconColor: Color?
+
+    private var color: Color {
+        site.color.flatMap(Color.init(hex:)) ?? faviconColor ?? S.fallbackColor
+    }
+
+    var body: some View {
+        Text(site.name)
+            .font(.system(size: S.chipFontSize, weight: .semibold))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .padding(.leading, S.chipLeading)
+            .padding(.trailing, S.chipTrailing)
+            .frame(height: S.chipHeight)
+            .background(color, in: Capsule())
+            .shadow(color: color.opacity(S.glowOpacity), radius: S.glowRadius, y: S.glowY)
+            .task(id: site.id) {
+                guard site.color == nil, let page = site.url(for: ""), let host = page.host(),
+                      let icon = URL(string: "https://\(host)/favicon.ico"),
+                      let image = await FaviconCache.shared.image(for: icon) else { return }
+                faviconColor = image.dominantColor.map(Color.init(nsColor:))
+            }
+    }
+}
+
+private extension Color {
+    /// "RRGGBB", in Display P3 like Arc's chips (sRGB FF0000 captures far less saturated than Arc's).
+    init?(hex: String) {
+        guard hex.count == 6, let value = Int(hex, radix: 16) else { return nil }
+        self.init(.displayP3, red: Double(value >> 16 & 0xFF) / 255, green: Double(value >> 8 & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
+    }
+}
+
+private extension NSImage {
+    /// The most common saturated hue in the icon, averaged; nil for a grey or empty icon.
+    var dominantColor: NSColor? {
+        let side = 16
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        var bins: [Int: (count: Int, r: CGFloat, g: CGFloat, b: CGFloat)] = [:]
+        for x in 0..<side {
+            for y in 0..<side {
+                guard let pixel = bitmap.colorAt(x: x, y: y), pixel.alphaComponent > 0.5,
+                      pixel.saturationComponent > 0.25, pixel.brightnessComponent > 0.15 else { continue }
+                let bin = Int(pixel.hueComponent * 12) % 12
+                let sum = bins[bin, default: (0, 0, 0, 0)]
+                bins[bin] = (sum.count + 1, sum.r + pixel.redComponent, sum.g + pixel.greenComponent, sum.b + pixel.blueComponent)
+            }
+        }
+        guard let top = bins.values.max(by: { $0.count < $1.count }) else { return nil }
+        let n = CGFloat(top.count)
+        return NSColor(srgbRed: top.r / n, green: top.g / n, blue: top.b / n, alpha: 1)
+    }
+}
+
 private struct CommandBarView: View {
     let store: BrowserStore
     let mode: CommandBarMode
@@ -60,6 +157,10 @@ private struct CommandBarView: View {
     @Environment(\.colorScheme) private var scheme
     /// Catches Backspace on an empty field, which the field editor swallows before onKeyPress.
     @State private var backspaceMonitor: Any?
+    /// What the user typed, without the inline completion after it.
+    @State private var typed = ""
+    /// The field's text while it shows an inline completion.
+    @State private var completed: String?
 
     init(store: BrowserStore, mode: CommandBarMode, onCommit: @escaping (CommandSuggestion) -> Void) {
         self.store = store
@@ -67,6 +168,7 @@ private struct CommandBarView: View {
         self.onCommit = onCommit
         let current = mode == .editCurrent ? store.state.selectedTab?.url?.absoluteString : nil
         _query = State(initialValue: current ?? "")
+        _typed = State(initialValue: current ?? "")
     }
 
     private var suggestions: [CommandSuggestion] {
@@ -107,21 +209,25 @@ private struct CommandBarView: View {
         let tabTarget = tabTarget
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                Magnifier()
-                    .stroke(scheme == .dark ? Color.white : Color.black, style: StrokeStyle(lineWidth: C.magnifierStroke, lineCap: .round))
-                    .frame(width: C.iconSize, height: C.iconSize)
-                    .padding(.leading, C.iconX)
-                    .padding(.trailing, C.textX - C.iconX - C.iconSize)
-                if let site {
-                    Text(site.name)
-                        .font(.system(size: C.rowFontSize, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color(accent), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .padding(.trailing, 8)
+                Group {
+                    // Like Arc: the site's icon while Tab would enter its Site Search.
+                    if let tabTarget {
+                        FaviconView(page: tabTarget.url(for: ""), size: S.faviconSize)
+                            .offset(x: S.faviconOffset)
+                    } else {
+                        Magnifier()
+                            .stroke(scheme == .dark ? Color.white : Color.black, style: StrokeStyle(lineWidth: C.magnifierStroke, lineCap: .round))
+                    }
                 }
-                TextField("", text: $query, prompt: Text(site.map { "Search \($0.name)" } ?? "Search or Enter URL...").foregroundStyle(.primary.opacity(C.placeholderOpacity)))
+                .frame(width: C.iconSize, height: C.iconSize)
+                .padding(.leading, C.iconX)
+                .padding(.trailing, C.textX - C.iconX - C.iconSize)
+                if let site {
+                    SiteSearchChip(site: site)
+                        .padding(.leading, S.chipOffset)
+                        .padding(.trailing, S.chipToText)
+                }
+                TextField("", text: $query, prompt: Text(site == nil ? "Search or Enter URL..." : "Search...").foregroundStyle(.primary.opacity(C.placeholderOpacity)))
                     .textFieldStyle(.plain)
                     .font(.system(size: C.fieldFontSize, weight: .medium))
                     .offset(y: -C.fieldTextLift)
@@ -143,14 +249,21 @@ private struct CommandBarView: View {
                     }
                     .onExitCommand { store.hideCommandBar() }
                 if let tabTarget {
-                    Text("Tab to Search \(tabTarget.name)")
-                        .font(.system(size: C.rowFontSize))
-                        .opacity(C.placeholderOpacity)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .padding(.leading, 8)
+                    HStack(spacing: S.hintToKey) {
+                        Text("Search \(tabTarget.name)")
+                            .font(.system(size: C.rowFontSize))
+                            .opacity(S.hintOpacity)
+                        Text("Tab")
+                            .font(.system(size: S.keyFontSize, weight: .semibold))
+                            .foregroundStyle(.white.opacity(S.keyTextOpacity))
+                            .frame(width: S.keySize.width, height: S.keySize.height)
+                            .background(S.keyFill, in: RoundedRectangle(cornerRadius: S.keyCornerRadius, style: .continuous))
+                    }
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.leading, 8)
                 }
-                Spacer().frame(width: C.iconX)
+                Spacer().frame(width: tabTarget == nil ? C.iconX : S.keyTrailing)
             }
             .frame(height: C.fieldHeight)
 
@@ -182,7 +295,41 @@ private struct CommandBarView: View {
             if let backspaceMonitor { NSEvent.removeMonitor(backspaceMonitor) }
             backspaceMonitor = nil
         }
-        .onChange(of: query) { highlighted = 0 }
+        .onChange(of: query) { old, new in
+            highlighted = 0
+            autocomplete(from: old, to: new)
+        }
+    }
+
+    /// Arc completes a Site Search shortcut inline as you type ("you" → "you" + selected
+    /// "tube.com"), so Return opens the site and Tab searches it. Only when typing forward:
+    /// deleting the completion leaves what was typed.
+    private func autocomplete(from old: String, to new: String) {
+        if new == completed { return }
+        if let completed, new.hasPrefix(completed) {
+            // Keys typed before the completion got selected belong after what was typed.
+            self.completed = nil
+            query = typed + new.dropFirst(completed.count)
+            return
+        }
+        completed = nil
+        let previous = typed
+        typed = new
+        guard site == nil, new.count > previous.count, new.hasPrefix(previous), !new.contains(" "),
+              let match = store.state.siteSearches.first(where: {
+                  $0.shortcut.count > new.count && $0.shortcut.lowercased().hasPrefix(new.lowercased())
+              })
+        else { return }
+        let text = new + match.shortcut.dropFirst(new.count)
+        completed = text
+        query = text
+        let typedLength = (new as NSString).length
+        let completionLength = (text as NSString).length - typedLength
+        // After SwiftUI has put the new text in the field editor.
+        DispatchQueue.main.async {
+            guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.string == text else { return }
+            editor.setSelectedRange(NSRange(location: typedLength, length: completionLength))
+        }
     }
 
     /// Backspace on an empty field leaves Site Search, like Chromium's keyword mode.

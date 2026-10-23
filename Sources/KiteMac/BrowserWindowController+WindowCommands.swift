@@ -78,6 +78,6 @@ extension BrowserWindowController {
     }
 
     @objc func showKeyboardShortcuts(_ sender: Any?) {
-        ShortcutsWindow.show(for: NSApp.mainMenu)
+        EssentialShortcutsWindow.show(menu: NSApp.mainMenu, overrides: (NSApp.delegate as? AppDelegate)?.keyBindings.bindings)
     }
 }

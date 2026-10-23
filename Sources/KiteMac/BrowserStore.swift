@@ -9,6 +9,8 @@ struct PageStatus: Equatable {
     var canGoBack = false
     var canGoForward = false
     var blockedCount = 0
+    /// Set when the page's process crashed: the exit code shown on the crashed-tab page.
+    var crashCode: Int?
 }
 
 enum CommandBarMode: Equatable {
