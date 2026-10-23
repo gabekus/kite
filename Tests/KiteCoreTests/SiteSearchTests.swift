@@ -44,6 +44,31 @@ import Testing
         #expect(state.siteSearches[0].name == "YouTube Music")
     }
 
+    @Test func newProfilesHaveArcsDefaults() {
+        let state = BrowserState.makeDefault()
+        #expect(state.siteSearches.count == SiteSearch.arcDefaults.count)
+        #expect(SiteSearch.match("youtube", in: state.siteSearches)?.name == "YouTube")
+        #expect(SiteSearch.match("you", in: state.siteSearches)?.shortcut == "youtube.com")
+        #expect(SiteSearch.match("wiki", in: state.siteSearches)?.name == "Wikipedia")
+    }
+
+    @Test func sessionsFromBeforeDefaultsGetThemOnce() throws {
+        var state = BrowserState.makeDefault()
+        let mine = SiteSearch(name: "My YouTube", shortcut: "youtube.com", urlTemplate: "https://www.youtube.com/results?q=%s")
+        state.siteSearches = [mine]
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as! [String: Any]
+        json["siteSearchDefaultsSeeded"] = nil
+        var old = try JSONDecoder().decode(BrowserState.self, from: JSONSerialization.data(withJSONObject: json))
+        // The user's own youtube.com entry stays; the other defaults are added.
+        #expect(old.siteSearches.count == SiteSearch.arcDefaults.count)
+        #expect(old.siteSearches.first { $0.shortcut == "youtube.com" }?.name == "My YouTube")
+
+        // A default the user deleted stays deleted after a relaunch.
+        old.siteSearches.removeAll { $0.shortcut == "github.com" }
+        let relaunched = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(old))
+        #expect(!relaunched.siteSearches.contains { $0.shortcut == "github.com" })
+    }
+
     @Test func oldSessionsDecodeWithNoSiteSearches() throws {
         var state = BrowserState.makeDefault()
         state.siteSearches = [youtube]
