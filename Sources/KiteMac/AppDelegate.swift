@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var engine: WebEngine!
 
     private var store: BrowserStore!
+    private var adblocker: Adblocker!
     private var windowController: BrowserWindowController!
     private var archiveTimer: Timer?
     private var automation: AutomationController!
@@ -31,7 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
         store.archiveStaleTabs(olderThan: Self.archiveAfter)
 
-        windowController = BrowserWindowController(store: store, engine: engine)
+        adblocker = Adblocker(directory: Self.supportDirectory.appendingPathComponent("Adblock", isDirectory: true))
+        adblocker.setPolicy(enabled: store.state.blocksAds, allowedHosts: store.state.adblockAllowedHosts)
+        engine.attach(adblocker)
+        adblocker.start()
+
+        windowController = BrowserWindowController(store: store, engine: engine, adblocker: adblocker)
         NSApp.mainMenu = MainMenu.build(target: windowController)
         // Registered after the menu bar is set so AppKit adds Help search and the window list.
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
