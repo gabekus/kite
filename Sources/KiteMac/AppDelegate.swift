@@ -64,6 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let url = note.userInfo?["url"] as? URL else { return }
             MainActor.assumeIsolated { _ = self?.store.mutate { $0.openTab(url: url, select: false) } }
         }
+        KCRuntime.extensionDialogAnchor = { [weak self] window in
+            MainActor.assumeIsolated {
+                guard let self else { return .zero }
+                let controllers = [self.windowController!] + self.incognitoControllers
+                return controllers.first { $0.window === window }?.webAreaInWindow ?? .zero
+            }
+        }
         #endif
         NSApp.activate(ignoringOtherApps: true)
         open(pendingURLs)

@@ -60,6 +60,17 @@ extern NSString * const KCDownloadDidUpdateNotification;
 /// Chromium's own window for it is never shown.
 extern NSString * const KCRuntimeOpenURLNotification;
 
+/// Posted on the main thread when Chrome's extension install dialog closes, whether
+/// the extension was added or not.
+extern NSString * const KCExtensionInstallDialogDidCloseNotification;
+
+@interface KCRuntime (ExtensionWindows)
+/// Where Chrome's install dialog hangs: the web area of a Kite window, in that
+/// window's coordinates (empty for the whole window). The dialog is centred on it,
+/// just below its top edge.
+@property (class, nonatomic, copy, nullable) NSRect (^extensionDialogAnchor)(NSWindow *window);
+@end
+
 @class KCBrowser;
 
 /// A Chromium profile for a set of browsers. `incognitoContext` keeps cookies,
