@@ -421,7 +421,7 @@ extension AutomationController {
         let spaceID: UUID?
         switch placement {
         case .currentSpace: spaceID = nil
-        case .claudeSpace: spaceID = store.mutate { $0.claudeSpace(theme: Theme.presets[Theme.presets.count - 1]) }
+        case .claudeSpace: spaceID = store.mutate { $0.claudeSpace() }
         case .space(let name):
             guard let index = store.state.space(matching: name) else {
                 throw AutomationError(.notFound, "There's no space called \(name). Call list_spaces.")

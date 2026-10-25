@@ -6,6 +6,8 @@ import Foundation
 extension BrowserState {
     /// The name of the space Claude's tabs can open into.
     public static let claudeSpaceName = "Claude"
+    /// Orange, like Claude (✳️ renders green).
+    public static let claudeSpaceIcon = "✴️"
 
     /// A space by id, or by name (case-insensitive).
     public func space(matching idOrName: String) -> Int? {
@@ -23,9 +25,16 @@ extension BrowserState {
     }
 
     /// The Claude space, made (in the background) the first time it's needed.
-    public mutating func claudeSpace(theme: Theme) -> UUID {
-        if let index = space(matching: Self.claudeSpaceName) { return spaces[index].id }
-        return addBackgroundSpace(name: Self.claudeSpaceName, icon: "✳️", theme: theme)
+    public mutating func claudeSpace(theme: Theme = .claude) -> UUID {
+        if let index = space(matching: Self.claudeSpaceName) {
+            // Claude spaces made before it was orange: the green ✳️ and the last preset theme.
+            if spaces[index].icon == "✳️" {
+                spaces[index].icon = Self.claudeSpaceIcon
+                if spaces[index].theme == Theme.presets.last { spaces[index].theme = theme }
+            }
+            return spaces[index].id
+        }
+        return addBackgroundSpace(name: Self.claudeSpaceName, icon: Self.claudeSpaceIcon, theme: theme)
     }
 
     /// Every folder in a space's pinned section, depth first.

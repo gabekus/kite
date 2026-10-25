@@ -29,6 +29,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
     private var sidebarHost: NSHostingView<SidebarView>!
+    /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
+    let claudeButton = ClaudeButtonModel()
     private var trafficLights: TrafficLights!
     private var commandBarHost: NSHostingView<CommandBarOverlay>!
     private var contentLeading: NSLayoutConstraint!
@@ -157,7 +159,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sidebarHost = NSHostingView(rootView: SidebarView(
             store: store,
             actions: actions,
-            supportsDarkPages: pool.engine.supportsDarkPages
+            supportsDarkPages: pool.engine.supportsDarkPages,
+            claude: claudeButton
         ))
         toolbarHost = NSHostingView(rootView: PageToolbar(store: store, actions: actions))
         toolbarHost.sizingOptions = []

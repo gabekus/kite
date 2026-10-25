@@ -65,6 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         claudeTasks = ClaudeTasksController(store: store, automation: automation, supportDirectory: Self.supportDirectory)
         claudeTasks.showPanel = { [weak self] id in self?.tasksWindow().show(task: id) }
         windowController.hidesInsteadOfClosing = { [weak self] in self?.claudeTasks.isRunningAny == true }
+        windowController.claudeButton.tasks = claudeTasks
+        windowController.claudeButton.open = { [weak self] in self?.claudeButtonClicked() }
         #if canImport(CEFBridge)
         // Pages extensions open (welcome pages, chrome.windows.create) become background
         // tabs, so installing one doesn't pull you off the page you're on.
@@ -219,6 +221,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.show(task: id)
         } else {
             window.showComposer(attachTab: false)
+        }
+    }
+
+    /// The sidebar's Claude button: sets Claude up the first time, then opens Claude Tasks.
+    private func claudeButtonClicked() {
+        guard !claudeTasks.isSetUp else { return showClaudeTasks(nil) }
+        Task { @MainActor in
+            if await claudeTasks.setUp() { tasksWindow().showComposer(attachTab: false) }
         }
     }
 

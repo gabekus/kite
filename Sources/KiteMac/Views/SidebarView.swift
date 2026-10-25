@@ -18,6 +18,7 @@ struct SidebarView: View {
     let actions: SidebarActions
     /// False on WebKit, which can't force pages dark.
     let supportsDarkPages: Bool
+    let claude: ClaudeButtonModel
 
     var body: some View {
         let state = store.state
@@ -106,7 +107,7 @@ struct SidebarView: View {
             .scrollContentBackground(.hidden)
             .environment(\.defaultMinListRowHeight, 1)
 
-            SpaceBar(store: store)
+            SpaceBar(store: store, claude: claude)
                 .frame(height: M.bottomBarHeight)
         }
         .padding(.horizontal, M.padding)
@@ -557,6 +558,7 @@ private struct SplitRow: View {
 
 private struct SpaceBar: View {
     let store: BrowserStore
+    let claude: ClaudeButtonModel
 
     var body: some View {
         let state = store.state
@@ -576,6 +578,7 @@ private struct SpaceBar: View {
                 .contextMenu { ThemeMenu(store: store, space: space) }
             }
             Spacer()
+            ClaudeSidebarButton(model: claude, size: M.bottomButtonSize)
             Button {
                 store.addSpace()
             } label: {

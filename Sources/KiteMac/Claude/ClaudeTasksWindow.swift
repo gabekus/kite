@@ -141,7 +141,7 @@ private struct ClaudeTaskRow: View {
 
     private var tint: Color {
         switch task.status {
-        case .running, .done: .green
+        case .running, .done: .claude
         case .failed: .orange
         case .stopped: .secondary
         }

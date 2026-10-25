@@ -48,7 +48,7 @@ enum ClaudeConnect {
         let profile = automation.profileOverride
         let directory = linkDirectory
         Task.detached {
-            let lines = [linkCommand(cli: cli, into: directory), registerWithClaudeCode(cli: cli, profile: profile)]
+            let lines = register(cli: cli, profile: profile, linkDirectory: directory)
             await MainActor.run {
                 let done = NSAlert()
                 done.messageText = "Claude Code"
@@ -56,6 +56,11 @@ enum ClaudeConnect {
                 done.runModal()
             }
         }
+    }
+
+    /// Links `kite` and adds Kite's MCP server to Claude Code. Returns what happened, a line per step.
+    nonisolated static func register(cli: String, profile: String?, linkDirectory directory: URL) -> [String] {
+        [linkCommand(cli: cli, into: directory), registerWithClaudeCode(cli: cli, profile: profile)]
     }
 
     nonisolated private static func linkCommand(cli: String, into directory: URL) -> String {

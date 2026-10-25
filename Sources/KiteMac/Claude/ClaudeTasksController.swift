@@ -13,6 +13,19 @@ import UserNotifications
 @Observable
 final class ClaudeTasksController {
     private(set) var tasks: [ClaudeTask] = []
+    /// Tasks with a Claude Code process, observable (for the sidebar button and the panel).
+    private(set) var runningIDs: Set<UUID> = []
+    /// Claude Code is installed and signed in, and Kite's tools are on. Until then the
+    /// sidebar's Claude button shows a yellow dot, and clicking it sets everything up.
+    private(set) var isSetUp = UserDefaults.standard.bool(forKey: ClaudeTasksController.setUpKey)
+    var isSettingUp = false
+
+    static let setUpKey = "claudeSetUp"
+
+    func markSetUp(_ setUp: Bool) {
+        isSetUp = setUp
+        UserDefaults.standard.set(setUp, forKey: Self.setUpKey)
+    }
     /// The task the panel shows.
     var selectedID: UUID? {
         didSet { if let selectedID { markRead(selectedID) } }
@@ -23,7 +36,7 @@ final class ClaudeTasksController {
     @ObservationIgnored var showPanel: ((UUID) -> Void)?
 
     @ObservationIgnored private let store: BrowserStore
-    @ObservationIgnored private let automation: AutomationController
+    @ObservationIgnored let automation: AutomationController
     @ObservationIgnored private let fileURL: URL
     @ObservationIgnored private let workDirectory: URL
     @ObservationIgnored private var runs: [UUID: Run] = [:]
@@ -79,9 +92,11 @@ final class ClaudeTasksController {
         updateBadge()
     }
 
-    var isRunningAny: Bool { !runs.isEmpty }
+    var isRunningAny: Bool { !runningIDs.isEmpty }
 
-    func isRunning(_ id: UUID) -> Bool { runs[id] != nil }
+    func isRunning(_ id: UUID) -> Bool { runningIDs.contains(id) }
+
+    var unreadCount: Int { tasks.filter(\.unread).count }
 
     func task(_ id: UUID) -> ClaudeTask? { tasks.first { $0.id == id } }
 
@@ -152,7 +167,7 @@ final class ClaudeTasksController {
         let title = tasks[i].title
         let existing = tasks[i].folderID.flatMap { folder in store.state.folder(matching: folder.uuidString)?.folder.id }
         let folder = existing ?? store.mutate { state -> UUID in
-            let space = state.claudeSpace(theme: Theme.presets[Theme.presets.count - 1])
+            let space = state.claudeSpace()
             return state.createFolder(name: title, inSpace: state.space(matching: space.uuidString) ?? 0)
         }
         store.mutate { _ = $0.moveTab(tab, toFolder: folder) }
@@ -215,7 +230,8 @@ final class ClaudeTasksController {
         guard let claude else {
             runs[id] = nil
             updateActivity()
-            return fail(id, "Couldn't find Claude Code (the claude command). Install it and sign in with `claude`, then try again.")
+            markSetUp(false)
+            return fail(id, "Couldn't find Claude Code. Click the Claude button in the sidebar to set it up again.")
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
@@ -318,6 +334,7 @@ final class ClaudeTasksController {
 
     /// Keeps the Mac from idle-sleeping while a task runs (a closed lid still sleeps).
     private func updateActivity() {
+        if runningIDs != Set(runs.keys) { runningIDs = Set(runs.keys) }
         if runs.isEmpty, let activity {
             ProcessInfo.processInfo.endActivity(activity)
             self.activity = nil
@@ -344,7 +361,7 @@ final class ClaudeTasksController {
     }
 
     private func updateBadge() {
-        let unread = tasks.filter(\.unread).count
+        let unread = unreadCount
         NSApp.dockTile.badgeLabel = unread > 0 ? "\(unread)" : nil
     }
 

@@ -134,4 +134,16 @@ import Testing
         let decoded = try JSONDecoder().decode(AutomationWire.Request.self, from: line.dropLast())
         #expect(decoded.task == "T")
     }
+
+    @Test func theClaudeSpaceIsOrange() throws {
+        var state = BrowserState(spaces: [Space(name: "Home", icon: "🏠", theme: Theme.presets[0])])
+        let fresh = state.claudeSpace()
+        let index = try #require(state.space(matching: fresh.uuidString))
+        #expect(state.spaces[index].icon == "✴️" && state.spaces[index].theme == .claude)
+        // One made before, with the green ✳️ and the last preset, turns orange on next use.
+        state.spaces[index].icon = "✳️"
+        state.spaces[index].theme = Theme.presets.last!
+        #expect(state.claudeSpace() == fresh)
+        #expect(state.spaces[index].icon == "✴️" && state.spaces[index].theme == .claude)
+    }
 }
