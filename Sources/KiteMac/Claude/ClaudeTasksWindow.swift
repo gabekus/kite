@@ -165,7 +165,6 @@ private struct ClaudeTaskComposerView: View {
             Text("Claude works in background tabs in the Claude space, and lets you know when it's done. "
                  + "Kite still asks before anything is submitted, sent, bought or deleted.")
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             TextEditor(text: $composer.goal)
                 .font(.body)
                 .focused($focused)
