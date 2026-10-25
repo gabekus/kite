@@ -151,6 +151,13 @@ final class AutomationController {
         }
     }
 
+    /// Ends page loads Chromium answered but never reported finished (see `NetworkLog.finishAnsweredDocuments`).
+    func pageFinishedLoading(_ id: UUID) {
+        guard isEnabled else { return }
+        let finished = network.finishAnsweredDocuments(tab: id.uuidString)
+        if isRecordingNetwork { networkStore.append(finished) }
+    }
+
     private func startRecording() {
         networkStore.prune()
         for (id, page) in host?.livePages ?? [:] {

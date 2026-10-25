@@ -27,6 +27,8 @@ final class PagePool {
 
     /// Called for every page made, including popups (before their tab exists).
     var onPageCreated: ((UUID, WebPage) -> Void)?
+    /// Called when a tab's page stops loading.
+    var onLoadFinished: ((UUID) -> Void)?
 
     func loadedPage(_ id: UUID) -> WebPage? { pages[id] }
     var livePages: [UUID: WebPage] { pages }
@@ -91,6 +93,7 @@ final class PagePool {
                 $0.canGoBack = canGoBack
                 $0.canGoForward = canGoForward
             }
+            if !isLoading { onLoadFinished?(id) }
         case let .openInNewTab(url, foreground):
             store.mutate { $0.openTab(url: url, select: foreground) }
         case .popup(let page):

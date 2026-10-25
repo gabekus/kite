@@ -135,6 +135,23 @@ public struct NetworkLog: Sendable {
         earlyHeaders = earlyHeaders.filter { !$0.key.hasPrefix(prefix) }
     }
 
+    /// Finishes the tab's page loads that were answered but never got an end event. Chromium
+    /// sometimes drops `loadingFinished` for a new tab's first document, so the page finishing
+    /// its load ends it instead (without size or receive timing; duration is by the wall clock).
+    public mutating func finishAnsweredDocuments(tab: String, now: Date = Date()) -> [Entry] {
+        let prefix = tab + "|"
+        let keys = pendingOrder.filter { key in
+            key.hasPrefix(prefix) && pending[key].map { $0.entry.status != nil && $0.entry.type == "document" } == true
+        }
+        guard !keys.isEmpty else { return [] }
+        pendingOrder.removeAll { keys.contains($0) }
+        return keys.compactMap { key in
+            guard var item = pending.removeValue(forKey: key) else { return nil }
+            item.entry.duration = max(0, (now.timeIntervalSince1970 - item.entry.time) * 1000)
+            return finish(item, at: nil, encodedLength: nil)
+        }
+    }
+
     public func entry(_ seq: Int) -> Entry? {
         // Seqs are consecutive, so the position is known unless the log was cleared.
         guard let first = entries.first, seq >= first.seq else { return nil }

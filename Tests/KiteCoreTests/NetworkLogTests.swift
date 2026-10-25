@@ -73,6 +73,28 @@ import Testing
         #expect(log.ingest(method: "Network.loadingFinished", params: ["requestId": "1"], tab: tab).isEmpty)
     }
 
+    @Test func aLoadedPageEndsAnAnsweredDocumentChromiumNeverFinished() throws {
+        var log = NetworkLog()
+        _ = log.ingest(method: "Network.requestWillBeSent", params: [
+            "requestId": "L1", "timestamp": 5, "wallTime": 1_000, "type": "Document", "request": ["url": "https://a.example/"],
+        ], tab: tab)
+        _ = log.ingest(method: "Network.requestWillBeSent", params: [
+            "requestId": "2", "type": "Fetch", "request": ["url": "https://a.example/api"],
+        ], tab: tab)
+        _ = log.ingest(method: "Network.responseReceived", params: ["requestId": "L1", "response": ["status": 200]], tab: tab)
+        // Not answered yet: stays pending.
+        _ = log.ingest(method: "Network.requestWillBeSent", params: [
+            "requestId": "L3", "type": "Document", "request": ["url": "https://b.example/"],
+        ], tab: tab)
+        let done = log.finishAnsweredDocuments(tab: tab, now: Date(timeIntervalSince1970: 1_000.5))
+        let entry = try #require(done.first)
+        #expect(done.count == 1 && entry.url == "https://a.example/" && entry.status == 200)
+        #expect(entry.duration == 500 && entry.timings == nil)
+        #expect(log.finishAnsweredDocuments(tab: tab).isEmpty)
+        // The fetch still finishes normally.
+        #expect(log.ingest(method: "Network.loadingFinished", params: ["requestId": "2"], tab: tab).count == 1)
+    }
+
     @Test func skipsDataURLs() {
         var log = NetworkLog()
         _ = log.ingest(method: "Network.requestWillBeSent", params: ["requestId": "1", "request": ["url": "data:image/png;base64,AAAA"]], tab: tab)
