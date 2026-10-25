@@ -133,9 +133,11 @@ import Testing
         var log = NetworkLog()
         let entry = try #require(load(&log, id: "1", url: "https://api.example/x", requestHeaders: [
             "Authorization": "Bearer abc.def", "Cookie": "sid=s3cret; theme=dark", "X-Request-Id": "r-1", "X-Session-Token": "t",
-            "Accept": "application/json",
+            "Accept": "application/json", "Referer": "https://app.example/cb?token=abc123&q=1",
+            ":path": "/x?token=abc123&q=1",
         ], responseHeaders: [
             "Set-Cookie": "sid=new; Path=/; HttpOnly\nlang=en; Path=/", "Access-Control-Allow-Credentials": "true",
+            "Location": "https://app.example/next?code=xyz",
             "WWW-Authenticate": "Bearer realm=\"api\"", "Content-Type": "application/json",
         ]).first)
         let request = Dictionary(entry.requestHeaders.map { ($0.name, $0.value) }, uniquingKeysWith: { a, _ in a })
@@ -143,11 +145,14 @@ import Testing
         #expect(request["Cookie"] == "sid=[redacted]; theme=[redacted]")
         #expect(request["X-Session-Token"] == "[redacted]")
         #expect(request["X-Request-Id"] == "r-1" && request["Accept"] == "application/json")
+        #expect(request["Referer"] == "https://app.example/cb?token=REDACTED&q=1")
+        #expect(request[":path"] == "/x?token=REDACTED&q=1")
         let response = entry.responseHeaders.map { "\($0.name): \($0.value)" }
         #expect(response.contains("Set-Cookie: sid=[redacted]; Path=/; HttpOnly"))
         #expect(response.contains("Set-Cookie: lang=[redacted]; Path=/"))
         #expect(response.contains("Access-Control-Allow-Credentials: true"))
         #expect(response.contains("WWW-Authenticate: Bearer realm=\"api\""))
+        #expect(response.contains("Location: https://app.example/next?code=REDACTED"))
         // The detail view and anything saved only ever see the redacted values.
         let detail = NetworkLog.detail(entry, headers: true)
         #expect(!detail.contains("abc.def") && !detail.contains("s3cret"))
@@ -184,6 +189,7 @@ import Testing
         #expect(!redacted.contains("eyJ.abc") && !redacted.contains(#""s""#) && !redacted.contains(#"p\"w"#))
         #expect(redacted.contains(#""user":"gabe""#) && redacted.contains(#""count":3"#))
         #expect(Redaction.body("username=g&password=hunter2&remember=1") == "username=g&password=[redacted]&remember=1")
+        #expect(Redaction.body(#"{"url": "https://a.example/get?token=abc123&q=1"}"#) == #"{"url": "https://a.example/get?token=REDACTED&q=1"}"#)
         #expect(Redaction.body("<p>a=b</p>\n") == "<p>a=b</p>\n")
         #expect(Redaction.body("if(a==b&&key=1)run()") == "if(a==b&&key=1)run()")
     }

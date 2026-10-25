@@ -512,6 +512,9 @@ public enum Redaction {
                     parts[0] = "\(name)=\(mask)"
                 }
                 header.value = parts.joined(separator: ";")
+            case "referer", "location", "content-location", ":path":
+                // URLs, with the same secrets as the request's own URL.
+                header.value = url(header.value)
             case let name where isSecret(name) && !publicHeader(name):
                 header.value = mask
             default:
@@ -554,9 +557,15 @@ public enum Redaction {
         if let json = try? NSRegularExpression(pattern: #""([^"\\]{1,100})"\s*:\s*"((?:[^"\\]|\\.)*)""#) {
             let matches = json.matches(in: result, range: NSRange(result.startIndex..., in: result)).reversed()
             for match in matches {
-                guard let nameRange = Range(match.range(at: 1), in: result), isSecret(String(result[nameRange])),
+                guard let nameRange = Range(match.range(at: 1), in: result),
                       let valueRange = Range(match.range(at: 2), in: result) else { continue }
-                result.replaceSubrange(valueRange, with: mask)
+                let value = String(result[valueRange])
+                if isSecret(String(result[nameRange])) {
+                    result.replaceSubrange(valueRange, with: mask)
+                } else if value.contains("://"), value.contains("?") || value.contains("#") {
+                    // "url": "https://…?token=…", as echo and redirect APIs send back.
+                    result.replaceSubrange(valueRange, with: url(value))
+                }
             }
         }
         // a=1&password=…  (a whole-body form)
