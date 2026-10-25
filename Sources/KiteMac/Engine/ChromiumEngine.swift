@@ -1,6 +1,7 @@
 #if canImport(CEFBridge)
 import AppKit
 import CEFBridge
+import KiteCore
 
 /// Chromium via CEF: Chrome's engine, Chrome DevTools, and an optional CDP port.
 @MainActor
@@ -185,6 +186,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     @objc(browser:renderProcessDidTerminateWithCode:)
     func browser(_ browser: KCBrowser, renderProcessDidTerminateWithCode code: Int32) { onEvent?(.crashed(code: Int(code))) }
+
+    @objc(browser:isExtensionPackageWithMIMEType:suggestedName:url:)
+    func browser(_ browser: KCBrowser, isExtensionPackageWithMIMEType mimeType: String, suggestedName: String, url: URL?) -> Bool {
+        ExtensionPackage.isDownload(mimeType: mimeType, suggestedName: suggestedName, url: url)
+    }
 
     @objc(browser:blockedCountDidChange:)
     func browser(_ browser: KCBrowser, blockedCountDidChange count: Int) { onEvent?(.blockedCount(count)) }
