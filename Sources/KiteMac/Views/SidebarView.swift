@@ -8,6 +8,7 @@ struct SidebarActions {
     var reload: () -> Void
     var toggleSidebar: () -> Void
     var closeTab: (UUID) -> Void
+    var addSplitView: () -> Void
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -69,12 +70,14 @@ struct SidebarView: View {
                     // A row rather than a section header: a plain List paints headers with an opaque bar.
                     SpaceHeader(space: space)
                         .sidebarRow(pill: false)
-                    ForEach(space.pinnedItems) { item in
-                        pinnedItem(item, depth: 0, selectedID: selectedID)
+                    let pinnedGroups = SidebarGroup.group(space.pinnedItems.map(\.id), splits: space.splits)
+                    ForEach(pinnedGroups) { group in
+                        pinnedGroup(group, in: space.pinnedItems, depth: 0, selectedID: selectedID)
                             .sidebarRow()
                     }
                     .onMove { from, to in
-                        store.mutate { $0.moveTabs(inSpace: space.id, pinned: true, fromOffsets: from, toOffset: to) }
+                        let (items, target) = SidebarGroup.itemMove(pinnedGroups, from: from, to: to, itemCount: space.pinnedItems.count)
+                        store.mutate { $0.moveTabs(inSpace: space.id, pinned: true, fromOffsets: items, toOffset: target) }
                     }
                 }
                 Section {
@@ -88,12 +91,14 @@ struct SidebarView: View {
                     }
                     NewTabRow { store.showCommandBar(.newTab) }
                         .sidebarRow()
-                    ForEach(space.tabs) { tab in
-                        row(tab, pinned: false, selected: tab.id == selectedID)
+                    let unpinnedGroups = SidebarGroup.group(space.tabs.map(\.id), splits: space.splits)
+                    ForEach(unpinnedGroups) { group in
+                        unpinnedGroup(group, in: space.tabs, selectedID: selectedID)
                             .sidebarRow()
                     }
                     .onMove { from, to in
-                        store.mutate { $0.moveTabs(inSpace: space.id, pinned: false, fromOffsets: from, toOffset: to) }
+                        let (items, target) = SidebarGroup.itemMove(unpinnedGroups, from: from, to: to, itemCount: space.tabs.count)
+                        store.mutate { $0.moveTabs(inSpace: space.id, pinned: false, fromOffsets: items, toOffset: target) }
                     }
                 }
             }
@@ -130,11 +135,49 @@ struct SidebarView: View {
                 FolderRow(folder: folder, depth: depth) {
                     store.mutate { $0.setFolderExpanded(folder.id, !folder.isExpanded) }
                 }
-                ForEach(visible) { child in
-                    pinnedItem(child, depth: depth + 1, selectedID: selectedID)
+                ForEach(SidebarGroup.group(visible.map(\.id), splits: store.state.selectedSpace.splits)) { group in
+                    pinnedGroup(group, in: visible, depth: depth + 1, selectedID: selectedID)
                 }
             })
         }
+    }
+
+    @ViewBuilder
+    private func unpinnedGroup(_ group: SidebarGroup, in tabs: [BrowserTab], selectedID: UUID?) -> some View {
+        if let split = group.split {
+            splitRow(split, tabs: group.indices.map { tabs[$0] }, pinned: false, selectedID: selectedID)
+        } else {
+            let tab = tabs[group.indices[0]]
+            row(tab, pinned: false, selected: tab.id == selectedID)
+        }
+    }
+
+    private func pinnedGroup(_ group: SidebarGroup, in items: [PinnedItem], depth: Int, selectedID: UUID?) -> AnyView {
+        guard let split = group.split else {
+            return pinnedItem(items[group.indices[0]], depth: depth, selectedID: selectedID)
+        }
+        let tabs = group.indices.compactMap { index -> BrowserTab? in
+            if case .tab(let tab) = items[index] { return tab }
+            return nil
+        }
+        return AnyView(splitRow(split, tabs: tabs, pinned: true, selectedID: selectedID, depth: depth))
+    }
+
+    private func splitRow(_ split: SplitView, tabs: [BrowserTab], pinned: Bool, selectedID: UUID?, depth: Int = 0) -> some View {
+        SplitRow(
+            tabs: tabs,
+            isPinned: pinned,
+            focusedID: tabs.contains { $0.id == selectedID } ? selectedID : nil,
+            depth: depth,
+            onSelect: { id in
+                store.mutate { state in
+                    if let target = id ?? state.focusTarget(of: split) { state.select(tab: target) }
+                }
+            },
+            onClose: actions.closeTab,
+            onSeparate: { id in store.mutate { $0.separateFromSplit(tab: id) } },
+            onTogglePin: { store.mutate { $0.togglePin(tab: split.tabIDs[0]) } }
+        )
     }
 
     private func row(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int = 0) -> some View {
@@ -437,6 +480,78 @@ private struct TabRow: View {
             Divider()
             Button(isPinned ? "Unload Tab" : "Close Tab", action: onClose)
         }
+    }
+}
+
+/// A split view's sidebar row: its panes side by side, 4pt apart and equally wide, each a
+/// favicon and title (only the favicon when it gets 60pt or narrower), like Arc's.
+private struct SplitRow: View {
+    private typealias S = ArcMetrics.Split
+
+    let tabs: [BrowserTab]
+    let isPinned: Bool
+    /// The focused pane, when this split is the one on screen.
+    let focusedID: UUID?
+    var depth = 0
+    /// A pane's tab, or nil for the row as a whole.
+    let onSelect: (UUID?) -> Void
+    let onClose: (UUID) -> Void
+    let onSeparate: (UUID) -> Void
+    let onTogglePin: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            let count = CGFloat(max(tabs.count, 1))
+            let width = (geometry.size.width - S.rowItemSpacing * (count - 1)) / count
+            HStack(spacing: S.rowItemSpacing) {
+                ForEach(tabs) { tab in
+                    item(tab, width: width)
+                }
+            }
+        }
+        .padding(.leading, indent(depth))
+        .frame(height: M.pillHeight)
+        .modifier(ChromeFill(strength: focusedID != nil ? M.selectedFill : hovering ? M.hoverFill : 0))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { onSelect(nil) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Split View")
+    }
+
+    private func item(_ tab: BrowserTab, width: CGFloat) -> some View {
+        let compact = width <= S.rowCompactWidth
+        return HStack(spacing: M.iconTextGap) {
+            FaviconView(tab: tab, size: M.iconSize)
+            if !compact {
+                Text(tab.displayTitle)
+                    .font(.system(size: M.tabFontSize))
+                    .opacity(M.tabTextOpacity)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, compact ? 0 : M.iconInset)
+        .frame(width: width, height: M.pillHeight)
+        .background(
+            // Unverified: Arc's focused pane gets the item's fill; the row carries the selection.
+            RoundedRectangle(cornerRadius: min(width / 2, S.rowItemMaxCornerRadius), style: .continuous)
+                .fill(Color.white.opacity(tab.id == focusedID ? M.hoverFill : 0))
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect(tab.id) }
+        .help(tab.displayTitle)
+        .contextMenu {
+            Button("Separate Page from Split View") { onSeparate(tab.id) }
+            Button(isPinned ? "Unpin Split View" : "Pin Split View", action: onTogglePin)
+            Button("Copy Link") { copyLink(tab.url) }
+            Divider()
+            Button("Close this Split Pane") { onClose(tab.id) }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(tab.id == focusedID ? [.isButton, .isSelected] : .isButton)
     }
 }
 

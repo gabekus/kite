@@ -45,7 +45,7 @@ struct PageToolbar: View {
                 button("arrow.right", "Forward", enabled: page.canGoForward, action: actions.goForward)
                 button(page.isLoading ? "xmark" : "arrow.clockwise", "Reload", enabled: selected != nil, action: actions.reload)
                 Spacer()
-                // Kite has neither yet: drawn as in Arc, but they do nothing.
+                // Kite has no Site Controls yet: drawn as in Arc, but it does nothing.
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 8, weight: .semibold))
                     .frame(width: Metrics.siteControlsSize, height: Metrics.siteControlsSize)
@@ -53,13 +53,17 @@ struct PageToolbar: View {
                     .foregroundStyle(Metrics.enabled)
                     .frame(width: Metrics.buttonPitch, height: Metrics.height)
                     .help("Site Controls (not in Kite yet)")
-                Image(systemName: "rectangle.split.2x1")
-                    .resizable()
-                    .fontWeight(.medium)
-                    .frame(width: 14, height: 14.5)
-                    .foregroundStyle(Metrics.enabled)
-                    .frame(width: Metrics.buttonPitch, height: Metrics.height)
-                    .help("Split View (not in Kite yet)")
+                Button(action: actions.addSplitView) {
+                    Image(systemName: "rectangle.split.2x1")
+                        .resizable()
+                        .fontWeight(.medium)
+                        .frame(width: 14, height: 14.5)
+                        .foregroundStyle(Metrics.enabled)
+                        .frame(width: Metrics.buttonPitch, height: Metrics.height)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Add Split View")
             }
             .padding(.leading, Metrics.leading)
             .padding(.trailing, Metrics.trailing)

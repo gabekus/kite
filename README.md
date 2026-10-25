@@ -15,7 +15,8 @@ and drops the account wall.
 | Engine | Chromium 156 via [CEF](https://github.com/chromiumembedded/cef), with WebKit as a lightweight fallback |
 | Chrome DevTools | ⌥⌘I, or the CDP port (`KITE_REMOTE_DEBUGGING_PORT`) |
 | Spaces, pinned and unpinned tabs, auto-archive after 12h | ✅ |
-| Command bar (⌘T new tab, ⌘L edit URL, switch to open tabs) | ✅ |
+| Command bar (⌘T new tab, click the URL to edit it, switch to open tabs) | ✅ |
+| Split view (⌘L, up to 4 panes) | ✅ |
 | Metal theme gradients and loading glow | ✅ |
 | Tab hibernation and memory-pressure handling | ✅ |
 | Favorites grid, pinned folders, resizable sidebar | ✅ |

@@ -286,6 +286,15 @@ public struct BrowserState: Hashable, Codable, Sendable {
         let s = location.space ?? selectedSpaceIndex
         let ordered = sidebarTabs(in: s)
         let wasSelected = spaces[s].selectedTabID == id
+        // Closing a pane keeps the rest of its split on screen.
+        let splitNeighbor = split(containing: id).flatMap { found -> UUID? in
+            let split = found.split
+            guard let i = split.tabIDs.firstIndex(of: id) else { return nil }
+            // The pane before it, or the one after when it was first.
+            let rest = split.tabIDs.filter { $0 != id }
+            return rest.isEmpty ? nil : rest[max(i - 1, 0)]
+        }
+        defer { normalizeSplits() }
 
         let outcome: CloseOutcome
         if location.section != .unpinned {
@@ -302,7 +311,14 @@ public struct BrowserState: Hashable, Codable, Sendable {
             outcome = .removed
         }
 
-        if wasSelected {
+        if location.section != .unpinned, let i = spaces[s].splits.firstIndex(where: { $0.tabIDs.contains(id) }) {
+            // An unloaded pinned pane leaves its split too, or it would come back blank.
+            spaces[s].splits[i].remove(id)
+        }
+
+        if wasSelected, let splitNeighbor {
+            spaces[s].selectedTabID = splitNeighbor
+        } else if wasSelected {
             // Prefer the tab that slides into this one's place, then the one above it.
             let position = ordered.firstIndex { $0.id == id } ?? 0
             let remaining = ordered.filter { $0.id != id }
@@ -327,6 +343,24 @@ public struct BrowserState: Hashable, Codable, Sendable {
 
     public mutating func togglePin(tab id: UUID) {
         guard let location = location(of: id), let s = location.space else { return }
+        // A split pins and unpins as one item, keeping its panes together and in order.
+        if let split = split(containing: id)?.split {
+            let members = split.tabIDs.compactMap { member -> BrowserTab? in
+                if let i = spaces[s].tabs.firstIndex(where: { $0.id == member }) { return spaces[s].tabs.remove(at: i) }
+                return spaces[s].pinnedItems.removeTab(member)
+            }
+            if location.section == .pinned {
+                spaces[s].tabs.insert(contentsOf: members, at: 0)
+            } else {
+                spaces[s].pinnedItems.append(contentsOf: members.map(PinnedItem.tab))
+            }
+            return
+        }
+        togglePinOne(id, in: s)
+    }
+
+    private mutating func togglePinOne(_ id: UUID, in s: Int) {
+        guard let location = location(of: id) else { return }
         if location.section == .pinned {
             if let tab = spaces[s].pinnedItems.removeTab(id) {
                 spaces[s].tabs.insert(tab, at: 0)
@@ -340,6 +374,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
     /// Moves a tab into the favorites, or a favorite back to the current space's unpinned tabs.
     public mutating func toggleFavorite(tab id: UUID) {
         guard let location = location(of: id) else { return }
+        defer { normalizeSplits() }
         switch location.section {
         case .favorite:
             let tab = favorites.remove(at: location.index)
@@ -375,19 +410,19 @@ public struct BrowserState: Hashable, Codable, Sendable {
 
     /// ⌘1…⌘8 pick the nth tab in sidebar order, ⌘9 the last one.
     public mutating func selectTab(number: Int, now: Date = Date()) {
-        let tabs = sidebarTabs(in: selectedSpaceIndex)
-        guard !tabs.isEmpty, number >= 1 else { return }
-        let index = number >= 9 ? tabs.count - 1 : number - 1
-        guard tabs.indices.contains(index) else { return }
-        select(tab: tabs[index].id, now: now)
+        let stops = sidebarStops(in: selectedSpaceIndex)
+        guard !stops.isEmpty, number >= 1 else { return }
+        let index = number >= 9 ? stops.count - 1 : number - 1
+        guard stops.indices.contains(index) else { return }
+        select(tab: stops[index], now: now)
     }
 
     public mutating func selectAdjacentTab(offset: Int, now: Date = Date()) {
-        let tabs = sidebarTabs(in: selectedSpaceIndex)
-        guard !tabs.isEmpty else { return }
-        let current = tabs.firstIndex { $0.id == selectedSpace.selectedTabID } ?? 0
-        let next = ((current + offset) % tabs.count + tabs.count) % tabs.count
-        select(tab: tabs[next].id, now: now)
+        let stops = sidebarStops(in: selectedSpaceIndex)
+        guard !stops.isEmpty else { return }
+        let current = stops.firstIndex { $0 == selectedSpace.selectedTabID } ?? 0
+        let next = ((current + offset) % stops.count + stops.count) % stops.count
+        select(tab: stops[next], now: now)
     }
 
     /// Unpinned tabs untouched for `interval` move to the archive, like Arc's auto-archive.
@@ -408,6 +443,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
             }
             spaces[s].tabs = kept
         }
+        normalizeSplits()
         return removed
     }
 

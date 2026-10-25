@@ -133,6 +133,8 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     /// Unpinned tabs, newest first.
     public var tabs: [BrowserTab]
     public var selectedTabID: UUID?
+    /// Tabs shown side by side. Each member also stays in `pinnedItems` or `tabs`.
+    public var splits: [SplitView]
 
     public init(
         id: UUID = UUID(),
@@ -141,7 +143,8 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
         theme: Theme,
         pinnedItems: [PinnedItem] = [],
         tabs: [BrowserTab] = [],
-        selectedTabID: UUID? = nil
+        selectedTabID: UUID? = nil,
+        splits: [SplitView] = []
     ) {
         self.id = id
         self.name = name
@@ -150,6 +153,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
         self.pinnedItems = pinnedItems
         self.tabs = tabs
         self.selectedTabID = selectedTabID
+        self.splits = splits
     }
 
     /// Pinned tabs in sidebar order, including those inside folders.
@@ -159,7 +163,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     public var allTabs: [BrowserTab] { pinned + tabs }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, icon, theme, pinnedItems, pinned, tabs, selectedTabID
+        case id, name, icon, theme, pinnedItems, pinned, tabs, selectedTabID, splits
     }
 
     public init(from decoder: Decoder) throws {
@@ -176,6 +180,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
         }
         tabs = try c.decode([BrowserTab].self, forKey: .tabs)
         selectedTabID = try c.decodeIfPresent(UUID.self, forKey: .selectedTabID)
+        splits = try c.decodeIfPresent([SplitView].self, forKey: .splits) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -187,6 +192,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
         try c.encode(pinnedItems, forKey: .pinnedItems)
         try c.encode(tabs, forKey: .tabs)
         try c.encodeIfPresent(selectedTabID, forKey: .selectedTabID)
+        if !splits.isEmpty { try c.encode(splits, forKey: .splits) }
     }
 }
 

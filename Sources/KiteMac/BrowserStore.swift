@@ -97,8 +97,17 @@ final class BrowserStore {
     func hideCommandBar() {
         guard commandBar != nil else { return }
         commandBar = nil
+        // Closed without picking a page for the new pane: cancel the split.
+        if let pane = pendingSplitPane {
+            pendingSplitPane = nil
+            state.cancelSplitPane(pane)
+            scheduleSave()
+        }
         onChange?()
     }
+
+    /// The empty pane Add Split View just opened, until a page is picked for it.
+    @ObservationIgnored var pendingSplitPane: UUID?
 
     func setSystemIsDark(_ dark: Bool) {
         guard dark != systemIsDark else { return }
