@@ -563,23 +563,16 @@ private struct SpaceBar: View {
     var body: some View {
         let state = store.state
         HStack(spacing: 4) {
-            // The spaces scroll rather than widen the bar: an over-wide bar pushes the whole sidebar off its left edge.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach(state.spaces) { space in
-                        Button {
-                            store.mutate { $0.selectSpace(space.id) }
-                        } label: {
-                            Text(space.icon)
-                                .font(.system(size: 14))
-                                .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
-                                .modifier(ChromeFill(strength: space.id == state.selectedSpaceID ? M.selectedFill : 0, cornerRadius: 8))
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help(space.name)
-                        .contextMenu { ThemeMenu(store: store, space: space) }
-                    }
+            // Too many spaces to fit scroll rather than widen the bar: an over-wide bar pushes the whole
+            // sidebar off its left edge. While they fit they stay a plain row, so the bar's empty part
+            // still drags the window (a scroll view never does).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 0) {
+                    spaceIcons(state)
+                    Spacer(minLength: 0)
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    spaceIcons(state)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -595,6 +588,25 @@ private struct SpaceBar: View {
             .buttonStyle(.plain)
             .opacity(0.7)
             .help("New Space")
+        }
+    }
+
+    private func spaceIcons(_ state: BrowserState) -> some View {
+        HStack(spacing: 4) {
+            ForEach(state.spaces) { space in
+                Button {
+                    store.mutate { $0.selectSpace(space.id) }
+                } label: {
+                    Text(space.icon)
+                        .font(.system(size: 14))
+                        .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
+                        .modifier(ChromeFill(strength: space.id == state.selectedSpaceID ? M.selectedFill : 0, cornerRadius: 8))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(space.name)
+                .contextMenu { ThemeMenu(store: store, space: space) }
+            }
         }
     }
 }
