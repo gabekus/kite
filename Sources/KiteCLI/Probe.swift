@@ -48,7 +48,9 @@ enum Probe {
                 throw ProbeError("\(app.localizedName ?? target) has no window \(index).")
             }
             let depth = Int(args.options["--depth"] ?? "") ?? 30
-            let root = node(windows[index], origin: origin, depth: depth, text: args.flags.contains("--text"))
+            // Without --text, only roles, frames and structural attributes leave this process.
+            let raw = node(windows[index], origin: origin, depth: depth)
+            let root = args.flags.contains("--text") ? raw : raw.redactingText()
             print(UIReport.tree(root, depth: depth, match: args.options["--match"], maxNodes: Int(args.options["--max"] ?? "") ?? 2000,
                                 source: "\(app.localizedName ?? target) window"))
         case "capture":
@@ -121,20 +123,19 @@ enum Probe {
         return CGRect(origin: point, size: extent)
     }
 
-    static func node(_ element: AXUIElement, origin: CGPoint, depth: Int, text: Bool) -> UINode {
+    static func node(_ element: AXUIElement, origin: CGPoint, depth: Int) -> UINode {
         let role = attribute(element, kAXRoleAttribute) as? String ?? "AXUnknown"
         var attributes: [UINode.Attribute] = []
         if let subrole = attribute(element, kAXSubroleAttribute) as? String { attributes.append(.init("subrole", subrole)) }
         if (attribute(element, kAXSelectedAttribute) as? Bool) == true { attributes.append(.init("selected", "true")) }
         if (attribute(element, kAXEnabledAttribute) as? Bool) == false { attributes.append(.init("enabled", "false")) }
-        let rawLabel = (attribute(element, kAXDescriptionAttribute) as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let label = (attribute(element, kAXDescriptionAttribute) as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? (attribute(element, kAXTitleAttribute) as? String).flatMap { $0.isEmpty ? nil : $0 }
-        let label = rawLabel.map { text ? $0 : "‹\($0.count) chars›" }
         let frame = frame(of: element).map {
             UIRect(x: $0.minX - origin.x, y: $0.minY - origin.y, width: $0.width, height: $0.height)
         }
         let children = depth > 1 ? (attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []).map {
-            node($0, origin: origin, depth: depth - 1, text: text)
+            node($0, origin: origin, depth: depth - 1)
         } : []
         return UINode(kind: role, identifier: attribute(element, kAXIdentifierAttribute) as? String, label: label, frame: frame,
                       attributes: attributes, children: children)
