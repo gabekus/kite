@@ -22,6 +22,7 @@ extension BrowserState {
         guard !cleared.isEmpty else { return [] }
         appendToArchive(cleared.enumerated().map { ClosedTab(tab: $1, spaceID: spaces[s].id, index: $0) })
         spaces[s].tabs = []
+        normalizeSplits()
         if let selected = spaces[s].selectedTabID, cleared.contains(where: { $0.id == selected }) {
             spaces[s].selectedTabID = spaces[s].pinned.first?.id
         }

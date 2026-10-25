@@ -106,6 +106,11 @@ public enum AutomationCommand: Hashable, Sendable {
     // Debugging
     case readConsole(tab: String?, pattern: String?, onlyErrors: Bool, limit: Int, clear: Bool)
     case readNetwork(tab: String?, urlPattern: String?, limit: Int, clear: Bool)
+    /// Kite's HAR-style log across tabs, from a cursor. `query.tab` nil means every tab.
+    case networkLog(query: NetworkLog.Query)
+    /// One request in full: headers, timing, and its bodies while the page still has them.
+    case networkRequest(id: Int, body: Bool, maxBodyLength: Int)
+    case exportHAR(query: NetworkLog.Query, bodies: Bool)
     case listDownloads
 
     // Kite
@@ -128,6 +133,7 @@ public enum AutomationCommand: Hashable, Sendable {
     public static let maxTextLengthLimit = 200_000
     public static let defaultLogLimit = 100
     public static let maxWait: Double = 30
+    public static let defaultBodyLength = 4_000
 
     public enum Tool: String, CaseIterable, Sendable {
         case tabsContext = "tabs_context"
@@ -150,6 +156,9 @@ public enum AutomationCommand: Hashable, Sendable {
         case uploadFile = "upload_file"
         case readConsole = "read_console_messages"
         case readNetwork = "read_network_requests"
+        case networkLog = "network_log"
+        case networkRequest = "network_request"
+        case exportHAR = "export_har"
         case listDownloads = "list_downloads"
         case listSpaces = "list_spaces"
         case switchSpace = "switch_space"
@@ -199,6 +208,9 @@ public enum AutomationCommand: Hashable, Sendable {
         case .uploadFile: .uploadFile
         case .readConsole: .readConsole
         case .readNetwork: .readNetwork
+        case .networkLog: .networkLog
+        case .networkRequest: .networkRequest
+        case .exportHAR: .exportHAR
         case .listDownloads: .listDownloads
         case .listSpaces: .listSpaces
         case .switchSpace: .switchSpace
@@ -309,6 +321,17 @@ public enum AutomationCommand: Hashable, Sendable {
         case .readNetwork:
             self = .readNetwork(tab: tab, urlPattern: try a.pattern("url_pattern"),
                                 limit: try a.int("limit", in: 1...1000) ?? Self.defaultLogLimit, clear: try a.bool("clear"))
+        case .networkLog:
+            self = .networkLog(query: try a.networkQuery(tab: tab, limit: 1...1000))
+        case .networkRequest:
+            guard let id = try a.int("id", in: 1...Int.max) else { throw InvalidArguments("\"id\" (the number after # in network_log) is required.") }
+            self = .networkRequest(id: id, body: try (a.values["body"] == nil || a.bool("body")),
+                                   maxBodyLength: try a.int("max_body_length", in: 0...Self.maxTextLengthLimit) ?? Self.defaultBodyLength)
+        case .exportHAR:
+            var query = try a.networkQuery(tab: tab, limit: 1...NetworkLog.capacity)
+            if a.values["limit"] == nil { query.limit = NetworkLog.capacity }
+            if a.values["type"] == nil { query.types = ["all"] }
+            self = .exportHAR(query: query, bodies: try a.bool("bodies"))
         case .listDownloads:
             self = .listDownloads
         case .listSpaces:
@@ -392,6 +415,32 @@ private struct Arguments {
             throw Invalid("\"\(key)\" must be a whole number from \(range.lowerBound) to \(range.upperBound).")
         }
         return int
+    }
+
+    /// The filters `network_log` and `export_har` share.
+    func networkQuery(tab: String?, limit range: ClosedRange<Int>) throws -> NetworkLog.Query {
+        var query = NetworkLog.Query(tab: tab, since: try int("since", in: 0...Int.max), urlPattern: try pattern("url_pattern"),
+                                     host: try string("host").flatMap { $0.isEmpty ? nil : $0 },
+                                     limit: try int("limit", in: range) ?? NetworkLog.defaultLimit)
+        if let status = try string("status")?.lowercased(), !status.isEmpty {
+            guard NetworkLog.statusFilters.contains(status) else {
+                throw Invalid("\"status\" is one of \(NetworkLog.statusFilters.joined(separator: ", ")).")
+            }
+            query.status = status
+        }
+        // "fetch,xhr" or ["fetch", "xhr"].
+        let types: [String]
+        switch values["type"] {
+        case .string(let list)?: types = list.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        case .array(let list)?: types = try list.map {
+            guard let type = $0.stringValue else { throw Invalid("\"type\" must be a string or a list of strings.") }
+            return type.lowercased()
+        }
+        case nil, .null?: types = []
+        default: throw Invalid("\"type\" must be a string or a list of strings.")
+        }
+        if !types.filter({ !$0.isEmpty }).isEmpty { query.types = Set(types.filter { !$0.isEmpty }) }
+        return query
     }
 
     func imageFormat() throws -> ImageFormat {

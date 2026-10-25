@@ -15,6 +15,9 @@ enum PageEvent {
     case blockedCount(Int)
     /// The page's process died; the tab shows the crashed-tab page until it loads again.
     case crashed(code: Int)
+    /// Kite's own "Add to Kite" button on a Google result was clicked (checked by the
+    /// engine): install that Chrome Web Store extension without leaving the page.
+    case addExtension(id: String)
 }
 
 /// Find-in-page progress. Counts are nil when the engine can't report them (WebKit).

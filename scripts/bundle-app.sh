@@ -21,6 +21,8 @@ swift build -c "$CONFIG" --product kite-cli
 mkdir -p "$CONTENTS/Helpers"
 cp "$BIN/kite-cli" "$CONTENTS/Helpers/kite"
 cp Resources/Info.plist "$CONTENTS/Info.plist"
+# Built from Resources/AppIcon.svg (1024 canvas, 824 body, the macOS icon grid).
+cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 cp Sources/KiteMac/Shaders/*.metal "$CONTENTS/Resources/Shaders/"
 
 # Precompiled shaders mean no Metal compile at launch. Falls back to runtime

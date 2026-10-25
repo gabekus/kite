@@ -19,8 +19,8 @@ Plan: **B1–B6** are small PR-sized batches worked down in order (see the end).
 Gabe's Arc binds **⌘L to Add Split View** and **⇧⌘S to Next Space**. Arc's
 documented defaults are ⌘L = edit URL and ⌥⌘→ = next space, so these look
 like his remaps (Settings → Shortcuts). That's what "⌘L should be split view
-by default" means. Kite keeps ⌘L as Open Location until split view exists,
-then follows Gabe's binding, and shortcuts become remappable (B6).
+by default" means. Kite follows Gabe's bindings by default: ⌘L is Add Split View (Open Location
+has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 
 ## Shortcuts and menus
 
@@ -34,7 +34,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Import from Another Browser… | | 🟡 Arc only | Thread: import (Chrome/Safari later) |
 | Check for Updates… | | ❌ | Roadmap: Sparkle |
 | Hide / Hide Others / Show All | ⌘H / ⌥⌘H | ✅ | |
-| Quit, with optional warn-before-quit | ⌘Q | 🟡 no warning | B5 |
+| Quit, with optional warn-before-quit | ⌘Q | 🟡 "Quit Kite?" with Arc's three buttons; look unmeasured, Kite menu toggle until Settings | B5 |
 | Share Arc, Privacy Policy, Sign Out | | ❌ | Skip? (sign-out comes with sync) |
 
 ### File
@@ -84,8 +84,8 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Stop Loading | ⌘. | ✅ | |
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
 | Clear Cookies and Refresh / Clear Cache and Refresh | | ✅ per site | |
-| Add Split View | ⌘L (Gabe) / ⌃⇧= (default) | ❌ | Thread: Split view |
-| Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | ❌ | Thread: Split view |
+| Add Split View | ⌘L (Gabe) / ⌃⇧= (default) | ✅ `addSplitView`, empty pane + command bar (live check pending) | Thread: Split view |
+| Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | 🟡 all but Expand Current Split | Thread: Split view |
 | Zoom Actual / In / Out | ⌘0 / ⌘+ / ⌘- | ✅ | |
 | Cast | | ❌ | Skip? |
 | Developer → View Source | ⌥⌘U | ✅ Chromium (new `view-source:` tab) | |
@@ -171,7 +171,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | ❌ | Thread: Peek |
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
 | Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | ❌ | Thread: Little Arc |
-| Split View | Up to 4 panes, saved in the sidebar | ❌ | Thread: Split view |
+| Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal panes, divider, sidebar row; no vertical layout or drag-to-split yet | Thread: Split view |
 | Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | ❌ | Thread: Mini player |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
 | Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |

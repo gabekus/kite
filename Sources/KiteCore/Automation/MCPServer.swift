@@ -31,7 +31,9 @@ public struct MCPServer: Sendable {
         into password or payment fields, and before running JavaScript; if they decline, the tool returns an error. \
         Don't retry a declined action. \
         To check Kite's own interface (sidebar, command bar, menus, cursors, animations), use the ui tool, not \
-        screenshots of the screen or the user's mouse.
+        screenshots of the screen or the user's mouse. \
+        When debugging a site, network_log shows what the tabs requested (pass its cursor back as since to see only \
+        new requests) and network_request gives one request's headers and bodies.
         """
 
     public var tools: JSONValue {

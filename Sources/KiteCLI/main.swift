@@ -27,7 +27,10 @@ let usage = """
                                                      Save a screenshot of a tab (JPEG unless --format png)
       kite js CODE [--tab ID]                        Run JavaScript in the page (Kite asks first)
       kite console [--tab ID] [--errors]             Console messages since Claude started driving the tab
-      kite network [--tab ID]                        Network requests since then
+      kite network [--tab ID] [--errors] [--status 4xx] [--host H] [--type fetch,xhr] [--url REGEX] [--all]
+                   [--since N] [--follow]            Kite's network log; --follow keeps printing new requests
+      kite request ID [--no-body]                    One request in full (headers, timing, bodies)
+      kite har [--tab ID] [--bodies] [filters]       Export the network log as a HAR file
       kite spaces                                    List spaces
       kite call TOOL [JSON]                          Call any MCP tool, e.g. kite call computer '{"action":"scroll"}'
       kite ui ACTION [JSON] [-o FILE]                Kite's own UI (Diagnostics for Claude): windows, tree, capture,
@@ -80,6 +83,9 @@ final class KiteConnection: @unchecked Sendable {
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         guard path.utf8.count < MemoryLayout.size(ofValue: address.sun_path) else { return false }
+        // The socket may sit in a shared folder (/tmp for deep profiles): only talk to one the user owns.
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_uid == getuid() else { return false }
         withUnsafeMutableBytes(of: &address.sun_path) { buffer in
             buffer.copyBytes(from: path.utf8)
             buffer[path.utf8.count] = 0
@@ -171,7 +177,8 @@ struct Arguments {
     var flags: Set<String> = []
 
     static let valued: Set<String> = ["--tab", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
-                                      "--window", "--depth", "--match", "--region", "--pixels"]
+                                      "--window", "--depth", "--match", "--region", "--pixels",
+                                      "--status", "--host", "--type", "--url", "--since", "--limit"]
 
     init(_ raw: ArraySlice<String>) throws {
         var iterator = raw.makeIterator()
@@ -257,8 +264,26 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
     case "console":
         tool = "read_console_messages"
         if args.flags.contains("--errors") { json["only_errors"] = true }
-    case "network":
-        tool = "read_network_requests"
+    case "network", "har":
+        tool = name == "har" ? "export_har" : "network_log"
+        for (option, key) in [("--status", "status"), ("--host", "host"), ("--type", "type"), ("--url", "url_pattern")] {
+            if let value = args.options[option] { json[key] = .string(value) }
+        }
+        for (option, key) in [("--since", "since"), ("--limit", "limit")] {
+            guard let value = args.options[option] else { continue }
+            guard let n = Int(value) else { throw CLIError("\(option) needs a number.") }
+            json[key] = .number(Double(n))
+        }
+        if args.flags.contains("--errors") { json["status"] = "errors" }
+        if args.flags.contains("--all") { json["type"] = "all" }
+        if args.flags.contains("--bodies") { json["bodies"] = true }
+    case "request":
+        tool = "network_request"
+        guard let id = Int(try first("a request id").trimmingCharacters(in: CharacterSet(charactersIn: "#"))) else {
+            throw CLIError("kite request needs the number from kite network, like 12.")
+        }
+        json["id"] = .number(Double(id))
+        if args.flags.contains("--no-body") { json["body"] = false }
     case "spaces":
         tool = "list_spaces"
     case "ui":
@@ -323,6 +348,32 @@ func runMCP(_ connection: KiteConnection) async {
     }
 }
 
+/// `kite network --follow`: prints new requests as they finish, like `tail -f`, by asking
+/// for everything after the last cursor once a second.
+func follow(_ connection: KiteConnection, _ arguments: JSONValue) async -> Int32 {
+    var arguments = arguments.objectValue ?? [:]
+    var first = true
+    while true {
+        let output = await connection.call(AutomationCommand.Tool.networkLog.rawValue, .object(arguments))
+        if output.isError {
+            FileHandle.standardError.write(Data("kite: \(output.text)\n".utf8))
+            return 1
+        }
+        for line in output.text.split(separator: "\n") {
+            if let cursor = line.wholeMatch(of: /cursor: (\d+)/).flatMap({ Int($0.1) }) {
+                arguments["since"] = .number(Double(cursor))
+            } else if line.hasPrefix("#") || (first && line.hasPrefix("No requests yet")) {
+                print(line)
+            }
+        }
+        fflush(stdout)
+        first = false
+        // A tail asks for everything new, so later calls aren't capped at the first call's limit.
+        arguments["limit"] = 1000
+        try? await Task.sleep(for: .seconds(1))
+    }
+}
+
 func main() async -> Int32 {
     // Options may come before the command too: `kite --socket PATH mcp`.
     var raw = Array(CommandLine.arguments.dropFirst())
@@ -358,6 +409,9 @@ func main() async -> Int32 {
             return 0
         }
         let (tool, arguments) = try toolCall(for: name, args)
+        if tool == .networkLog && args.flags.contains("--follow") {
+            return await follow(connection, arguments)
+        }
         let output = await connection.call(tool.rawValue, arguments)
         if output.isError {
             FileHandle.standardError.write(Data("kite: \(output.text)\n".utf8))

@@ -9,6 +9,8 @@ import CEFBridge
 @MainActor
 protocol AutomationHost: AnyObject {
     var window: NSWindow? { get }
+    /// Pages that exist right now (shown or in the background), for recording the network.
+    var livePages: [UUID: WebPage] { get }
     /// The tab's page, created in the background if it isn't live.
     func automationPage(for tab: BrowserTab) -> WebPage
     func closeAutomatedTab(_ id: UUID)
@@ -54,6 +56,13 @@ final class AutomationController {
     /// Console, network and dialog state of tabs Claude has touched, and the page each was collected from.
     @ObservationIgnored var activities: [UUID: TabActivity] = [:]
     @ObservationIgnored private var trackedPages: [UUID: (page: ObjectIdentifier, actions: PageActions)] = [:]
+    /// Every request in the tabs being watched, redacted. See `NetworkLog`.
+    @ObservationIgnored var network = NetworkLog()
+    /// Where recorded requests go on disk, and HAR exports.
+    @ObservationIgnored private(set) lazy var networkStore = NetworkLogStore(
+        directory: NetworkLogStore.directory(supportDirectory: supportDirectory))
+    /// Pages whose Network domain is on because recording is, whether or not Claude drives them.
+    @ObservationIgnored private var recordedPages: [UUID: (page: ObjectIdentifier, actions: PageActions)] = [:]
     @ObservationIgnored private var waiters: [UUID: [Waiter]] = [:]
     @ObservationIgnored private var nextWaiterID = 0
     /// Tabs Claude opened itself; closing any other tab asks first.
@@ -97,6 +106,7 @@ final class AutomationController {
     /// Opens the socket if the setting is on. Call once the window exists.
     func start() {
         if isEnabled && !openSocket() { settings.allowClaudeControl = false }
+        if isRecordingNetwork { startRecording() }
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -107,6 +117,8 @@ final class AutomationController {
             server?.stop()
             server = nil
             stop(tabs: Set(controlledTabs.keys).union(pendingConfirmations.keys).union(trackedPages.keys))
+            stopRecording()
+            network.clear()
             revoked.removeAll()
             activities.removeAll()
             snapshots.removeAll()
@@ -115,6 +127,63 @@ final class AutomationController {
             downloadObserver = nil
         }
         update { $0.allowClaudeControl = enabled }
+        if enabled && isRecordingNetwork { startRecording() }
+    }
+
+    // MARK: Network recording
+
+    /// Every tab's requests go to the network log (and to disk), not just the tabs Claude drives.
+    var isRecordingNetwork: Bool { isEnabled && settings.recordNetwork }
+
+    func setRecordNetwork(_ record: Bool) {
+        guard record != settings.recordNetwork else { return }
+        update { $0.recordNetwork = record }
+        if isRecordingNetwork { startRecording() } else { stopRecording() }
+    }
+
+    /// A tab got a page (opened, revived, or a popup): watch it if recording.
+    func pageCreated(_ id: UUID, _ page: WebPage) {
+        guard isRecordingNetwork, let actions = page.automation as? PageActions else { return }
+        // Not in a Task: the page loads its first URL as soon as Chromium attaches it.
+        recordedPages[id] = (ObjectIdentifier(page), actions)
+        actions.startEventsNow(domains: ["Network"]) { [weak self] method, params in
+            self?.received(method, params, tab: id)
+        }
+    }
+
+    /// Ends page loads Chromium answered but never reported finished (see `NetworkLog.finishAnsweredDocuments`).
+    func pageFinishedLoading(_ id: UUID) {
+        guard isEnabled else { return }
+        let finished = network.finishAnsweredDocuments(tab: id.uuidString)
+        if isRecordingNetwork { networkStore.append(finished) }
+    }
+
+    private func startRecording() {
+        networkStore.prune()
+        for (id, page) in host?.livePages ?? [:] {
+            Task { await record(id, page: page) }
+        }
+    }
+
+    private func stopRecording() {
+        for (id, recorded) in recordedPages where trackedPages[id]?.page != recorded.page {
+            Task { await recorded.actions.stopEvents(domains: ["Network"]) }
+        }
+        recordedPages.removeAll()
+        networkStore.flush()
+    }
+
+    private func record(_ id: UUID, page: WebPage) async {
+        let identity = ObjectIdentifier(page)
+        guard isRecordingNetwork, recordedPages[id]?.page != identity, let actions = page.automation as? PageActions else { return }
+        recordedPages[id] = (identity, actions)
+        do {
+            try await actions.startEvents(domains: ["Network"]) { [weak self] method, params in
+                self?.received(method, params, tab: id)
+            }
+        } catch {
+            recordedPages[id] = nil
+        }
     }
 
     func setAllowJavaScript(_ allow: Bool) { update { $0.allowJavaScript = allow } }
@@ -132,6 +201,7 @@ final class AutomationController {
     func shutdown() {
         server?.stop()
         server = nil
+        if settings.recordNetwork { networkStore.flush() }
     }
 
     /// The Stop button: Claude loses these tabs until the setting is turned off and on.
@@ -144,12 +214,21 @@ final class AutomationController {
             }
             for waiter in waiters.removeValue(forKey: id) ?? [] { waiter.finish(false) }
             if let tracked = trackedPages.removeValue(forKey: id) {
-                Task { await tracked.actions.stopEvents() }
+                // Recording keeps the tab's Network domain on.
+                let keepNetwork = recordedPages[id]?.page == tracked.page
+                Task { await tracked.actions.stopEvents(domains: keepNetwork ? ["Log", "Runtime"] : ["Network", "Log", "Runtime"]) }
             }
         }
     }
 
     func isRevoked(_ id: UUID) -> Bool { revoked.contains(id) }
+    var revokedTabs: Set<UUID> { revoked }
+
+    /// The driver of the tab's current page, if its network is being watched, for fetching bodies.
+    func networkActions(_ tab: String) -> PageActions? {
+        guard let id = UUID(uuidString: tab) else { return nil }
+        return trackedPages[id]?.actions ?? recordedPages[id]?.actions
+    }
 
     private func openSocket() -> Bool {
         let server = AutomationServer(
@@ -222,6 +301,10 @@ final class AutomationController {
             activities[id] = nil
             trackedPages[id] = nil
         }
+        for id in Array(recordedPages.keys) where !live.contains(id) {
+            recordedPages[id] = nil
+            network.forget(tab: id.uuidString)
+        }
         if !isEnabled { expiryTimer?.invalidate() }
     }
 
@@ -233,12 +316,16 @@ final class AutomationController {
         guard trackedPages[id]?.page != identity else { return }
         trackedPages[id] = (identity, actions)
         if activities[id] == nil { activities[id] = TabActivity() }
-        try await actions.startEvents { [weak self] method, params in
+        try await actions.startEvents(domains: ["Page", "Runtime", "Log", "Network"]) { [weak self] method, params in
             self?.received(method, params, tab: id)
         }
     }
 
     private func received(_ method: String, _ params: JSONValue, tab id: UUID) {
+        if method.hasPrefix("Network.") {
+            let finished = network.ingest(method: method, params: params, tab: id.uuidString)
+            if isRecordingNetwork { networkStore.append(finished) }
+        }
         guard activities[id] != nil, activities[id]!.ingest(method: method, params: params) || method.hasPrefix("Page.") else { return }
         wakeWaiters(id, method: method, params: params)
         if method.hasPrefix("Network.") || method == "Page.frameNavigated" {

@@ -8,10 +8,10 @@ enum MainMenu {
     static func build(target: AnyObject) -> NSMenu {
         // We provide Enter Full Screen (⌃⌘F) ourselves; stop AppKit adding its fn-F copy.
         UserDefaults.standard.set(false, forKey: "NSFullScreenMenuItemEverywhere")
-        let main = NSMenu()
+        let main = TypingSafeMenu()
 
         func submenu(_ title: String, _ items: [NSMenuItem]) {
-            let menu = NSMenu(title: title)
+            let menu = TypingSafeMenu(title: title)
             items.forEach(menu.addItem)
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             item.submenu = menu
@@ -46,7 +46,7 @@ enum MainMenu {
         }
 
         func submenuItem(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
-            let menu = NSMenu(title: title)
+            let menu = TypingSafeMenu(title: title)
             items.forEach(menu.addItem)
             let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             parent.submenu = menu
@@ -59,7 +59,7 @@ enum MainMenu {
         let down = String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
 
         func darkPagesMenu() -> NSMenuItem {
-            let menu = NSMenu(title: "Dark Pages")
+            let menu = TypingSafeMenu(title: "Dark Pages")
             let titles: [DarkPagesMode: String] = [.off: "Off", .matchSystem: "Match System", .always: "Always"]
             for (i, mode) in DarkPagesMode.allCases.enumerated() {
                 menu.addItem(item(titles[mode]!, #selector(BrowserWindowController.setDarkPagesMode(_:)), tag: i))
@@ -75,6 +75,7 @@ enum MainMenu {
             item("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)), toTarget: false),
             item("Allow Claude to Run JavaScript Without Asking", #selector(AppDelegate.toggleClaudeJavaScript(_:)), toTarget: false),
             item("Open Claude’s Tabs in a Claude Space", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),
+            item("Record Network for Claude", #selector(AppDelegate.toggleRecordNetwork(_:)), toTarget: false),
             item("Connect Claude Code…", #selector(AppDelegate.connectClaudeCode(_:)), toTarget: false),
             // Lets Claude read Kite's own interface (the ui tool) while debugging Kite.
             item("Diagnostics for Claude", #selector(AppDelegate.toggleClaudeDiagnostics(_:)), toTarget: false),
@@ -89,13 +90,16 @@ enum MainMenu {
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false, id: "hideOthers"),
             item("Show All", #selector(NSApplication.unhideAllApplications(_:)), toTarget: false, id: "showAll"),
             .separator(),
-            item("Quit Kite", #selector(NSApplication.terminate(_:)), "q", toTarget: false, id: "quitKite"),
+            item("Warn Before Quitting", #selector(AppDelegate.toggleQuitWarning(_:)), toTarget: false),
+            .separator(),
+            item("Quit Kite", #selector(AppDelegate.quitKite(_:)), "q", toTarget: false, id: "quitKite"),
         ])
 
         submenu("File", [
             item("New Tab", #selector(BrowserWindowController.newTab(_:)), "t", id: "newTab"),
             item("New Incognito Window", #selector(MenuRouter.newIncognitoWindow(_:)), "n", [.command, .shift], id: "newIncognitoWindow"),
-            item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), "l", id: "openLocation"),
+            // No key, like Gabe's Arc: ⌘L is Add Split View. Clicking the URL pill still edits the URL.
+            item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), id: "openLocation"),
             item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift], id: "reopenClosedTab"),
             .separator(),
             // Temporary: remove with ArcImportController.swift after Arc shuts down (2026-12-22).
@@ -168,6 +172,29 @@ enum MainMenu {
             item("Force Reload Page", #selector(BrowserWindowController.forceReload(_:)), "r", [.command, .shift], id: "forceReloadPage"),
             item("Clear Cookies and Refresh", #selector(BrowserWindowController.clearCookiesAndRefresh(_:)), id: "clearCookiesAndRefresh"),
             item("Clear Cache and Refresh", #selector(BrowserWindowController.clearCacheAndRefresh(_:)), id: "clearCacheAndRefresh"),
+            .separator(),
+            // Arc's names and IDs from its MainMenu.nib. ⌘L is Gabe's binding; ⌃⇧= (Arc's default) still works.
+            item("Add Split View", #selector(BrowserWindowController.addSplitView(_:)), "l", id: "addSplitView"),
+            alternate(#selector(BrowserWindowController.addSplitView(_:)), "=", [.control, .shift]),
+            item("Close this Split Pane", #selector(BrowserWindowController.closeSplitPane(_:)), "-", [.control, .shift], id: "removeSplitView"),
+            item("Separate Page from Split View", #selector(BrowserWindowController.separateFromSplitView(_:)), id: "separateTabFromSplitView"),
+        ] + (1...SplitView.maxPanes).map { n in
+            // Arc builds these in code and hides them; their default keys aren't in its binary.
+            let pane = item("Switch to Split View \(n)", #selector(BrowserWindowController.focusSplitPane(_:)), "\(n)", [.control, .shift], tag: n, id: "switchToSplitView\(n)")
+            pane.isHidden = true
+            pane.allowsKeyEquivalentWhenHidden = true
+            return pane
+        } + [
+            {
+                let next = item("Switch to Next Split View", #selector(BrowserWindowController.focusNextSplitPane(_:)), id: "switchToNextWindowPane")
+                next.isHidden = true
+                return next
+            }(),
+            {
+                let previous = item("Switch to Previous Split View", #selector(BrowserWindowController.focusPreviousSplitPane(_:)), id: "switchToPreviousWindowPane")
+                previous.isHidden = true
+                return previous
+            }(),
             .separator(),
             item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0", id: "actualSize"),
             item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "=", id: "zoomIn"),
@@ -250,5 +277,15 @@ enum MainMenu {
         ])
 
         return main
+    }
+}
+
+/// A menu that never takes a keystroke without ⌘, ⌃, ⌥ or fn. AppKit matches a plain E
+/// to its Edit › Emoji & Symbols (fn E), and CEF hands the menu every key a page doesn't
+/// use, so a plain E anywhere on a page opened the emoji picker.
+final class TypingSafeMenu: NSMenu {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard !event.modifierFlags.isDisjoint(with: [.command, .control, .option, .function]) else { return false }
+        return super.performKeyEquivalent(with: event)
     }
 }
