@@ -20,8 +20,11 @@ final class ClaudeTasksWindowController: NSWindowController, NSWindowDelegate {
         window.setFrameAutosaveName("ClaudeTasks")
         super.init(window: window)
         window.delegate = self
-        window.contentViewController = NSHostingController(
-            rootView: ClaudeTasksView(tasks: tasks, store: store, composer: composer))
+        let hosting = NSHostingController(rootView: ClaudeTasksView(tasks: tasks, store: store, composer: composer))
+        // Otherwise the window grows to the view's ideal size: a long transcript made it taller than the screen.
+        hosting.sizingOptions = []
+        window.contentViewController = hosting
+        window.setContentSize(NSSize(width: 760, height: 540))
         if !window.setFrameUsingName("ClaudeTasks") { window.center() }
         tasks.isPanelVisible = { [weak window] in window?.isVisible == true && window?.isMiniaturized == false }
         tasks.showPanel = { [weak self] id in self?.show(task: id) }

@@ -49,7 +49,7 @@ struct ClaudeMark: Shape {
         let center = CGPoint(x: rect.midX, y: rect.midY)
         let outer = min(rect.width, rect.height) / 2
         for i in 0..<rays {
-            let angle = Double(i) / Double(rays) * 2 * .pi - .pi / 2
+            let angle = CGFloat(i) / CGFloat(rays) * 2 * .pi - .pi / 2
             // Alternate long and short rays, like a hand-drawn spark.
             let length = i.isMultiple(of: 2) ? outer : outer * 0.72
             path.move(to: CGPoint(x: center.x + cos(angle) * outer * 0.18, y: center.y + sin(angle) * outer * 0.18))
