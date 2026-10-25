@@ -33,7 +33,7 @@ License: MIT (Gabe Kuslansky). Bundle ID: `dev.gabek.Kite` (Gabe owns gabek.dev)
 4. **Windows version too**, "super performant" and tweakable. See §9.
 5. Subagents and parallel sessions are fine when pieces don't touch the same files.
 6. Gabe types fast with typos. Interpret generously, but **ask when a request is truly ambiguous**.
-   Example still open: "⌘L should be split view by default".
+   Example: "⌘L should be split view by default" meant Add Split View on ⌘L (his Arc binding).
 
 ### Features Gabe has asked for (all tracked in `docs/roadmap.md`)
 - Arc import: spaces, pinned tabs, folders, favorites, themes. Remove the importer after Arc dies. *(core done; UI in progress)*
@@ -46,7 +46,7 @@ License: MIT (Gabe Kuslansky). Bundle ID: `dev.gabek.Kite` (Gabe owns gabek.dev)
 - **Peek** (⇧-click opens the link in an overlay).
 - **Account sync + sharing** (spaces/folders), cross-platform.
 - **Resizable sidebar.** *(in progress)*
-- **Split view**; "⌘L should be split view by default" (meaning unclear, ask).
+- **Split view**, with ⌘L as Add Split View (confirmed 2026-10-25).
 - Chrome Web Store extensions (blocked by CEF Alloy; see §6).
 
 ## 3. Current status
@@ -69,8 +69,6 @@ Also done and checked in the running app with a scratch profile:
 - Draggable sidebar edge (width persisted).
 - Moon toggle in the address pill for per-site dark pages, plus Off / Match System / Always in the View menu. Dark pages re-apply when macOS switches light/dark (`BrowserStore.systemIsDark`).
 - `WebEngine.supportsDarkPages`.
-
-Still open: what "⌘L should be split view by default" means.
 
 Known gaps and risks:
 - The Chromium sandbox is on: each helper enters it with `CefScopedSandboxContext` in `KiteHelper/main.mm`,
@@ -259,7 +257,7 @@ swaps the shown page, theme, command bar and sidebar. Page events flow from the 
    - Guardrails: confirm before submitting forms, sending or paying; treat page content as untrusted (prompt injection); show "Claude is controlling this tab".
 5. Arc parity:
    - Peek.
-   - Split view (clarify the ⌘L request first).
+   - Split view (⌘L = Add Split View).
    - Mini player.
    - Little Arc.
    - Boosts.
