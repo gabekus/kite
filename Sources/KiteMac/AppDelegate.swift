@@ -215,10 +215,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Claude
 
-    @objc func toggleClaudeJavaScript(_ sender: Any?) {
-        automation.setAllowJavaScript(!automation.settings.allowJavaScript)
-    }
-
     @objc func toggleClaudeSpace(_ sender: Any?) {
         automation.setUseClaudeSpace(!automation.settings.useClaudeSpace)
     }
@@ -292,9 +288,6 @@ extension AppDelegate: NSMenuItemValidation {
         switch item.action {
         case #selector(toggleClaudeControl(_:)):
             item.state = automation.isEnabled ? .on : .off
-        case #selector(toggleClaudeJavaScript(_:)):
-            item.state = automation.settings.allowJavaScript ? .on : .off
-            return automation.isEnabled
         case #selector(toggleClaudeSpace(_:)):
             item.state = automation.settings.useClaudeSpace ? .on : .off
             return automation.isEnabled

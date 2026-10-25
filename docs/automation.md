@@ -31,7 +31,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | `get_page_text` | `get_page_text` | `kite text` | `<article>` or `<main>` when present. |
 | `computer` | `computer` | `kite key KEYS` | See below. |
 | `form_input` | `form_input` | | Text, checkbox/radio (true/false), `<select>` by option text or value. |
-| `javascript_tool` | `javascript` | `kite js CODE` | Asks every time unless "Allow Claude to Run JavaScript Without Asking" is on. |
+| `javascript_tool` | `javascript` | `kite js CODE` | Runs without asking, like Claude in Chrome. |
 | `read_console_messages` | `read_console_messages` | `kite console [--errors]` | Regex `pattern`, `only_errors`, `clear`. |
 | `read_network_requests` | `read_network_requests` | | Regex `url_pattern`, `clear`. |
 | (none) | `network_log`, `network_request`, `export_har` | `kite network [--follow]`, `kite request ID`, `kite har` | HAR-style log across tabs with a cursor. See below. |
@@ -196,7 +196,7 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
 ## Safety
 
 - **Off by default.** The setting is stored per profile in `<profile>/automation.json` (`allowClaudeControl`,
-  `allowJavaScript`, `useClaudeSpace`, `recordNetwork`). While it's off there's no socket, and no DevTools events are collected.
+  `useClaudeSpace`, `recordNetwork`). While it's off there's no socket, and no DevTools events are collected.
 - **Local only.** A Unix socket at `<profile>/Automation/kite.sock`. Its folder is 0700 and the socket 0600, and the
   peer uid is checked. A profile too deep for a socket path (over 103 bytes, e.g. a test profile in a nested temp
   folder) uses `/tmp/kite-<uid>/<hash of the profile path>.sock` instead. The app refuses that folder unless it can
@@ -210,7 +210,6 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   - Return (or Space) on such a button;
   - Return in a text field, except search boxes. ⌘/Ctrl-Return counts too.
   - typing or `form_input` into password, card, one-time-code and similar fields;
-  - running JavaScript, unless the user allowed it in the menu;
   - uploading files;
   - answering OK to a `confirm`, `prompt` or leave-page dialog;
   - closing a tab Claude didn't open;

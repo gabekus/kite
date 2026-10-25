@@ -182,7 +182,7 @@ extension AutomationController {
             return try await computer(action, tab: tab, driver: driver, actions: actions)
 
         case .javascript(_, let code):
-            try await authorize(.javascript(code: code, allowedInSettings: settings.allowJavaScript), tab: tab)
+            try await authorize(.javascript(code: code), tab: tab)
             let actions = try act()
             var result = "(a dialog opened before the script finished)"
             try await untilDialog(tab.id) { result = try await actions.run(code) }

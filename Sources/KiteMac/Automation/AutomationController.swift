@@ -198,7 +198,6 @@ final class AutomationController {
         }
     }
 
-    func setAllowJavaScript(_ allow: Bool) { update { $0.allowJavaScript = allow } }
     func setUseClaudeSpace(_ use: Bool) { update { $0.useClaudeSpace = use } }
 
     private func update(_ change: (inout AutomationSettings) -> Void) {

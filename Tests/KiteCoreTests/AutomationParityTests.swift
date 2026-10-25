@@ -51,12 +51,8 @@ import Testing
         #expect(!asks(.formInput(ElementDescription(tag: "input", type: "checkbox", label: "Bacon"), value: "true")))
     }
 
-    @Test func javascriptAsksUnlessAllowed() {
-        #expect(asks(.javascript(code: "document.title", allowedInSettings: false)))
-        #expect(!asks(.javascript(code: "document.title", allowedInSettings: true)))
-        if case .confirm(let request) = AutomationPolicy.evaluate(.javascript(code: String(repeating: "x", count: 2000), allowedInSettings: false), host: nil) {
-            #expect(request.detail.count < 1000)
-        }
+    @Test func javascriptRunsWithoutAsking() {
+        #expect(!asks(.javascript(code: "document.title")))
     }
 
     @Test func uploadsAlwaysAskAndListThePaths() {
