@@ -12,14 +12,44 @@ import KiteCore
 @MainActor
 final class ExtensionsModel: ObservableObject {
     @Published private(set) var extensions: [InstalledExtension] = []
+    /// Shown in the toolbar, in order. Kite keeps these; Chromium has no pin state for Alloy tabs.
+    @Published private(set) var pinnedIDs: [String]
 
-    private let engine: WebEngine
+    let engine: WebEngine
     private var helper: ChromiumPage?
     private var helperReady = false
     private var waiting: [() -> Void] = []
 
+    /// In the profile folder (not UserDefaults), so it follows the profile and test
+    /// profiles keep their own.
+    private static var pinnedFile: URL { AppDelegate.supportDirectory.appendingPathComponent("PinnedExtensions.json") }
+    private static var shared: ExtensionsModel?
+
+    /// One model for the persistent profile, shared by its windows.
+    static func shared(engine: WebEngine) -> ExtensionsModel {
+        if let shared { return shared }
+        let model = ExtensionsModel(engine: engine)
+        shared = model
+        return model
+    }
+
     init(engine: WebEngine) {
         self.engine = engine
+        let saved = (try? Data(contentsOf: Self.pinnedFile)).flatMap { try? JSONDecoder().decode([String].self, from: $0) }
+        pinnedIDs = (saved ?? []).filter(ChromeWebStore.isExtensionID)
+    }
+
+    /// Pinned extensions that are installed and on, in pin order.
+    var pinned: [InstalledExtension] {
+        pinnedIDs.compactMap { id in extensions.first { $0.id == id && $0.enabled } }
+    }
+
+    func isPinned(_ id: String) -> Bool { pinnedIDs.contains(id) }
+
+    func setPinned(_ id: String, _ pinned: Bool) {
+        pinnedIDs.removeAll { $0 == id }
+        if pinned { pinnedIDs.append(id) }
+        try? JSONEncoder().encode(pinnedIDs).write(to: Self.pinnedFile, options: .atomic)
     }
 
     /// Re-reads the list (installs happen in Chromium, so ask whenever it's shown).
@@ -29,9 +59,20 @@ final class ExtensionsModel: ObservableObject {
                 if let error { NSLog("Kite: couldn't list extensions: %@", error) }
                 return
             }
-            self.extensions = InstalledExtensions.list(managementJSON: json, folders: self.extensionFolders())
+            let folders = self.extensionFolders()
+            self.extensions = InstalledExtensions.list(managementJSON: json, folders: folders)
+            // Chromium writes a new extension's folder to Secure Preferences a few seconds
+            // later; until then there's no icon or popup, so look again.
+            if self.extensions.contains(where: { folders[$0.id] == nil }), self.folderRetries < 5 {
+                self.folderRetries += 1
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.refresh() }
+            } else {
+                self.folderRetries = 0
+            }
         }
     }
+
+    private var folderRetries = 0
 
     func setEnabled(_ id: String, _ enabled: Bool) {
         guard ChromeWebStore.isExtensionID(id) else { return }

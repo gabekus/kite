@@ -276,6 +276,24 @@ the springs and eases in Arc's binary (see the vocabulary table above).
 | Sidebar show | 10 → 145 → 292 → 340 → 362 → 365pt. Re-recorded: 10 → 113.5 → 275.5 → 331 → 362 → 365pt | Same | Same, RMS 0.004 |
 | ⌘T open and close | Instant | — | Instant |
 
+## Extensions in the toolbar → `ExtensionsToolbarItems`, `ExtensionsMenu`
+
+Measured on Arc 1.169 with the masked probe (roles and frames only) on a window with the content toolbar showing
+(sidebar hidden), Oct 2026. Window points; the toolbar row is y 10–42.
+
+| | Arc | Kite |
+|---|---|---|
+| Pinned extension icon | 16×16 at y=18, pitch 36 | Same: 16pt icons in 36×32 slots |
+| Extensions button | 32×28 at y=12, left edge 12 after the last icon | Same (Kite: 1148 → 1160) |
+| Button to Site Controls' icon | 12 (1973 → 1985) | 12 (1192 → 1204) |
+| Menu | AXPopover 262×486 hanging from the button, content inset 13 | SwiftUI popover, 262 wide, inset 13 |
+| Menu tiles | 48×32, 4 columns on a 56 pitch, rows on a 40 pitch; pinned tiles carry a 14×14 button at the tile's (37, 21) | Same grid; pinned tiles show a 14pt pin badge there |
+| Cursor over the items | Arrow (cursorprobe) | Arrow (`kite ui pointer`) |
+
+Not measured (text wasn't read): what the menu's top row of four 48.75×32.75 buttons, its second section (three
+208×33 rows) and its two bottom buttons (82×32, 32×32) do. Kite leaves them out; pin, on/off, options and remove
+are in each tile's right-click menu instead. Arc's hover reveal in the sidebar URL row: none found.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

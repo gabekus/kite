@@ -110,6 +110,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !urls.isEmpty { windowController.window?.makeKeyAndOrderFront(nil) }
     }
 
+    /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
+    @objc func openURLFromExtensionsMenu(_ sender: Any?) {
+        guard let url = sender as? URL else { return }
+        store.mutate { _ = $0.openTab(url: url) }
+    }
+
     /// ⇧⌘N. Each incognito window gets its own in-memory profile, gone when it closes.
     func openIncognitoWindow() {
         let controller = BrowserWindowController(
