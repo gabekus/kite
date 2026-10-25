@@ -57,6 +57,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         automation.host = windowController
         windowController.installAutomationBanner(automation)
         automation.start()
+        // A test build on a throwaway profile with KITE_DIAGNOSTICS=1 comes up ready for Claude.
+        if UIDiagnostics.enabledByEnvironment && !automation.isEnabled { automation.setEnabled(true) }
+        UIDiagnostics.shared.applySetting()
         #if canImport(CEFBridge)
         // Pages extensions open (welcome pages, chrome.windows.create) become background
         // tabs, so installing one doesn't pull you off the page you're on.
@@ -72,7 +75,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         #endif
-        NSApp.activate(ignoringOtherApps: true)
+        // A diagnostics run stays in the background and behind the user's windows, so testing never takes their
+        // focus or covers their work (capture reads covered windows).
+        if UIDiagnostics.enabledByEnvironment {
+            windowController.window?.orderBack(nil)
+            NSApp.setActivationPolicy(.regular)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         open(pendingURLs)
         pendingURLs = []
 
@@ -195,6 +205,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ClaudeConnect.present(automation)
     }
 
+    @objc func toggleClaudeDiagnostics(_ sender: Any?) {
+        UIDiagnostics.shared.setEnabled(!UserDefaults.standard.bool(forKey: UIDiagnostics.defaultsKey))
+    }
+
     @objc func toggleClaudeControl(_ sender: Any?) {
         let enable = !automation.isEnabled
         automation.setEnabled(enable)
@@ -231,6 +245,9 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(toggleClaudeSpace(_:)):
             item.state = automation.settings.useClaudeSpace ? .on : .off
             return automation.isEnabled
+        case #selector(toggleClaudeDiagnostics(_:)):
+            item.state = UIDiagnostics.isEnabled ? .on : .off
+            return automation.isEnabled && !UIDiagnostics.enabledByEnvironment
         case #selector(toggleRecordNetwork(_:)):
             item.state = automation.settings.recordNetwork ? .on : .off
             return automation.isEnabled

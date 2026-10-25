@@ -11,8 +11,12 @@ final class MenuRouter: NSObject, NSMenuItemValidation {
         self.fallback = fallback
     }
 
+    /// While `ui input` delivers a key to a background window, menu commands go to that window.
+    static var deliveringTo: BrowserWindowController?
+
     var current: BrowserWindowController? {
-        NSApp.keyWindow?.windowController as? BrowserWindowController
+        Self.deliveringTo
+            ?? NSApp.keyWindow?.windowController as? BrowserWindowController
             ?? NSApp.mainWindow?.windowController as? BrowserWindowController
             ?? fallback
     }

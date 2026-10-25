@@ -22,6 +22,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// a fixed key instead of one from the login keychain, so there's no keychain
 /// prompt. Only for throwaway test profiles, never for real browsing data.
 @property (nonatomic) BOOL useMockKeychain;
+/// Extra Chromium switches, e.g. "--disable-backgrounding-occluded-windows".
+@property (nonatomic, copy) NSArray<NSString *> *extraSwitches;
 @end
 
 @interface KCRuntime : NSObject

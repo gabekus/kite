@@ -35,6 +35,8 @@ extension AutomationCommand.Tool {
             "Loads a URL in a tab (or a new background tab with new_tab), or goes \"back\"/\"forward\". Waits for the load."
         case .resizeWindow:
             "Resizes Kite's window, in points."
+        case .ui:
+            UIInspection.summary
         case .batch:
             "Runs several tool calls in one round trip, in order (e.g. click, type, key Enter, wait_for, read_page with changes_only). Stops at the first error, and pauses (not an error) before any step that needs the user's OK: call that step on its own and Kite asks them. Steps take the batch's tab unless they name one."
         case .readPage:
@@ -95,6 +97,8 @@ extension AutomationCommand.Tool {
         switch self {
         case .tabsContext, .listDownloads, .listSpaces:
             break
+        case .ui:
+            return UIInspection.inputSchema
         case .tabsCreate:
             properties = [
                 "url": ["type": "string", "description": "URL to open (blank tab when omitted)."],

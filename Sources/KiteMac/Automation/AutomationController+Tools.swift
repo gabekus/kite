@@ -32,6 +32,12 @@ extension AutomationController {
             return try await exportHAR(try networkQuery(query), bodies: bodies)
         case .listSpaces, .switchSpace, .createSpace, .pinTab, .createFolder, .moveToFolder:
             return try kiteCommand(command)
+        case .ui(let inspection):
+            guard UIDiagnostics.isEnabled else {
+                throw AutomationError(.disabled, "Diagnostics for Claude is off. Ask the user to turn it on in the Kite menu "
+                    + "(test builds: launch with KITE_DIAGNOSTICS=1 and a KITE_SUPPORT_PATH profile).")
+            }
+            return try await UIDiagnostics.shared.run(inspection)
         case .batch(let steps):
             return await runBatch(steps, connection: connection)
         default:
