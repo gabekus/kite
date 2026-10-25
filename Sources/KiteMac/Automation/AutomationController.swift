@@ -80,6 +80,9 @@ final class AutomationController {
     /// The Claude task (Claude Tasks panel) the running call comes from, if Kite started its client.
     @TaskLocal static var agentTask: UUID?
 
+    /// TypeSafe's Jev, when the user has a key: quick typed decisions (see `Jev`).
+    @ObservationIgnored var jev: JevClient?
+
     /// Claude Tasks: whether a task id is one of Kite's running tasks, and where its new tabs go.
     @ObservationIgnored var isRunningTask: ((UUID) -> Bool)?
     @ObservationIgnored var taskOpenedTab: ((_ task: UUID, _ tab: UUID) -> Void)?

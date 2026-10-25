@@ -119,7 +119,17 @@ extension AutomationController {
 
         case .find(_, let query):
             let nodes = try await act().allNodes()
-            return .text(AutomationReport.find(ElementFinder.find(nodes, query: query), query: query, url: store.state.tab(tab.id)?.url))
+            var matches = ElementFinder.find(nodes, query: query)
+            // Jev reads meaning, not just words ("checkout" finds "Proceed to payment"), in well under a second.
+            if let jev {
+                let candidates = ElementFinder.candidates(nodes, query: query, limit: Jev.maxOptions)
+                if candidates.count > 1, let answers = try? await jev.ask(state: query, questions: Jev.finding(query, among: candidates)) {
+                    let picked = Jev.found(answers, among: candidates)
+                    let refs = Set(picked.map(\.ref))
+                    matches = Array((picked + matches.filter { !refs.contains($0.ref) }).prefix(20))
+                }
+            }
+            return .text(AutomationReport.find(matches, query: query, url: store.state.tab(tab.id)?.url))
 
         case .getPageText(_, let limit):
             let (source, text) = try await driver.mainText()

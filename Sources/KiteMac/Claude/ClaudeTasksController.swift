@@ -201,19 +201,39 @@ final class ClaudeTasksController {
     // MARK: Running Claude Code
 
     private func launch(_ id: UUID, prompt: String, resume: String?) {
-        let arguments = ClaudeInvocation.arguments(kiteCLI: automation.cliPath, profile: automation.profileOverride,
-                                                   taskID: id, resume: resume)
+        let cli = automation.cliPath, profile = automation.profileOverride
         let directory = workDirectory
+        let jev = automation.jev
+        // What the user just asked (the goal, or the follow-up), without the attached tab.
+        let goal = task(id)?.entries.last { $0.kind == .user }?.text
         // A placeholder so the task counts as running (and keeps Kite awake) while Claude Code is found.
         let placeholder = Run(process: Process())
         runs[id] = placeholder
         updateActivity()
         Task.detached { [weak self] in
+            // Jev sizes the goal while Claude Code is found: a quick lookup runs on the fast model.
+            async let model = Self.model(for: goal, jev: jev)
             let claude = ClaudeConnect.findClaude()
             let environment = Self.environment()
+            let chosen = await model
+            let arguments = ClaudeInvocation.arguments(kiteCLI: cli, profile: profile, taskID: id, resume: resume, model: chosen)
+            await self?.noteModel(chosen, for: id)
             await self?.spawn(id, claude: claude, arguments: arguments, environment: environment,
                               directory: directory, prompt: prompt, placeholder: placeholder)
         }
+    }
+
+    /// Each turn is sized on its own, so a quick follow-up on a long task is quick too.
+    nonisolated private static func model(for goal: String?, jev: JevClient?) async -> String? {
+        guard let goal, let jev else { return nil }
+        let (state, questions) = Jev.routing(goal: goal)
+        guard let answers = try? await jev.ask(state: state, questions: questions) else { return nil }
+        return Jev.model(for: answers)
+    }
+
+    private func noteModel(_ model: String?, for id: UUID) {
+        guard let model, let i = index(id) else { return }
+        tasks[i].append(ClaudeTask.Entry(.note, "Quick lookup, so this runs on the fast model (\(model.capitalized))."))
     }
 
     private func spawn(_ id: UUID, claude: String?, arguments: [String], environment: [String: String],
