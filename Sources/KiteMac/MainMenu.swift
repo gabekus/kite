@@ -87,7 +87,9 @@ enum MainMenu {
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false, id: "hideOthers"),
             item("Show All", #selector(NSApplication.unhideAllApplications(_:)), toTarget: false, id: "showAll"),
             .separator(),
-            item("Quit Kite", #selector(NSApplication.terminate(_:)), "q", toTarget: false, id: "quitKite"),
+            item("Warn Before Quitting", #selector(AppDelegate.toggleQuitWarning(_:)), toTarget: false),
+            .separator(),
+            item("Quit Kite", #selector(AppDelegate.quitKite(_:)), "q", toTarget: false, id: "quitKite"),
         ])
 
         submenu("File", [

@@ -34,7 +34,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 | Import from Another Browser… | | 🟡 Arc only | Thread: import (Chrome/Safari later) |
 | Check for Updates… | | ❌ | Roadmap: Sparkle |
 | Hide / Hide Others / Show All | ⌘H / ⌥⌘H | ✅ | |
-| Quit, with optional warn-before-quit | ⌘Q | 🟡 no warning | B5 |
+| Quit, with optional warn-before-quit | ⌘Q | 🟡 "Quit Kite?" with Arc's three buttons; look unmeasured, Kite menu toggle until Settings | B5 |
 | Share Arc, Privacy Policy, Sign Out | | ❌ | Skip? (sign-out comes with sync) |
 
 ### File
