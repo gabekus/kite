@@ -1,6 +1,9 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#endif
 import Foundation
 
+#if canImport(CryptoKit)
 /// Chrome's extension ids: the first 16 bytes of the SHA-256 of the public key, each
 /// nibble written as a letter a–p.
 public enum ChromeExtensionID {
@@ -10,6 +13,7 @@ public enum ChromeExtensionID {
         }.joined()
     }
 }
+#endif
 
 /// An installed extension as Kite's extensions list shows it.
 public struct InstalledExtension: Equatable, Sendable, Identifiable {

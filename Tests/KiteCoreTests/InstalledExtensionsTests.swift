@@ -63,6 +63,7 @@ import Testing
         #expect(list[1].optionsURL?.absoluteString == "chrome-extension://\(uBlock)/dashboard.html")
     }
 
+    #if canImport(CryptoKit)
     @Test func helperIDMatchesItsManifestKey() throws {
         let manifestURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -71,4 +72,5 @@ import Testing
         let key = try #require(Data(base64Encoded: manifest?["key"] as? String ?? ""))
         #expect(ChromeExtensionID.fromPublicKey(key) == KiteHelperExtension.id)
     }
+    #endif
 }
