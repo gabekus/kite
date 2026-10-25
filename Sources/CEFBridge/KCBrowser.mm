@@ -245,6 +245,15 @@ class KCClient : public CefClient,
                           CefRefPtr<CefDownloadItem> download_item,
                           const CefString& suggested_name,
                           CefRefPtr<CefBeforeDownloadCallback> callback) override {
+        if (IsExtensionPackage(download_item, suggested_name)) {
+            // Chromium's installer picks it up from here; it never reaches Downloads.
+            NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:@"KiteExtensionInstalls"];
+            [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+            NSString* name = [NSString stringWithFormat:@"%u-%@", download_item->GetId(),
+                                                       ToNSString(suggested_name).lastPathComponent];
+            callback->Continue([directory stringByAppendingPathComponent:name].UTF8String, false);
+            return true;
+        }
         callback->Continue(UniqueDownloadURL(ToNSString(suggested_name)).path.UTF8String, false);
         return true;
     }
@@ -252,6 +261,8 @@ class KCClient : public CefClient,
     void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
                            CefRefPtr<CefDownloadItem> download_item,
                            CefRefPtr<CefDownloadItemCallback> callback) override {
+        // A store install's package isn't the user's download: no bounce, not listed.
+        if (IsExtensionPackage(download_item, download_item->GetSuggestedFileName())) return;
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
         NSString* state = download_item->IsComplete() ? @"complete"
             : download_item->IsCanceled() ? @"canceled"
@@ -264,6 +275,15 @@ class KCClient : public CefClient,
             @"receivedBytes": @(download_item->GetReceivedBytes()),
             @"totalBytes": @(download_item->GetTotalBytes()),
         }];
+    }
+
+    bool IsExtensionPackage(CefRefPtr<CefDownloadItem> item, const CefString& suggested_name) {
+        id<KCBrowserDelegate> delegate = owner_.delegate;
+        if (![delegate respondsToSelector:@selector(browser:isExtensionPackageWithMIMEType:suggestedName:url:)]) return false;
+        return [delegate browser:owner_
+            isExtensionPackageWithMIMEType:ToNSString(item->GetMimeType())
+                             suggestedName:ToNSString(suggested_name)
+                                       url:ToNSURL(item->GetOriginalUrl())];
     }
 
     // CefFindHandler
@@ -287,7 +307,7 @@ class KCClient : public CefClient,
     void OnDevToolsEvent(CefRefPtr<CefBrowser> browser, const CefString& method,
                          const void* params, size_t params_size) override {
         KCBrowser* owner = owner_;
-        if (!owner.devToolsEventHandler) return;
+        if (!owner.devToolsEventHandler && !owner.pageFeatureEventHandler) return;
         [owner deliverDevToolsEvent:ToNSString(method) data:[NSData dataWithBytes:params length:params_size]];
     }
 
@@ -616,7 +636,9 @@ class KCClient : public CefClient,
 
 - (void)deliverDevToolsEvent:(NSString*)method data:(NSData*)data {
     id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-    if (self.devToolsEventHandler) self.devToolsEventHandler(method, [json isKindOfClass:NSDictionary.class] ? json : @{});
+    NSDictionary* params = [json isKindOfClass:NSDictionary.class] ? json : @{};
+    if (self.pageFeatureEventHandler) self.pageFeatureEventHandler(method, params);
+    if (self.devToolsEventHandler) self.devToolsEventHandler(method, params);
 }
 
 - (void)close {
