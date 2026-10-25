@@ -25,7 +25,7 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
     static func show(_ url: URL, engine: WebEngine, relativeTo rect: NSRect, of view: NSView) -> ExtensionPopover {
         shown?.popover.close()
         let popover = ExtensionPopover(url: url, engine: engine)
-        popover.popover.show(relativeTo: rect, of: view, preferredEdge: .maxY)
+        popover.popover.show(relativeTo: rect, of: view, preferredEdge: belowEdge(of: view))
         shown = popover
         return popover
     }
@@ -59,6 +59,11 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15 * Double(self.sizePolls)) { [weak self] in self?.fitToPage() }
             }
         }
+    }
+
+    /// The rect's bottom edge, so the popover hangs below its anchor.
+    static func belowEdge(of view: NSView) -> NSRectEdge {
+        view.isFlipped ? .maxY : .minY
     }
 
     static func clamped(_ size: NSSize) -> NSSize {
