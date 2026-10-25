@@ -307,7 +307,7 @@ class KCClient : public CefClient,
     void OnDevToolsEvent(CefRefPtr<CefBrowser> browser, const CefString& method,
                          const void* params, size_t params_size) override {
         KCBrowser* owner = owner_;
-        if (!owner.devToolsEventHandler) return;
+        if (!owner.devToolsEventHandler && !owner.pageFeatureEventHandler) return;
         [owner deliverDevToolsEvent:ToNSString(method) data:[NSData dataWithBytes:params length:params_size]];
     }
 
@@ -636,7 +636,9 @@ class KCClient : public CefClient,
 
 - (void)deliverDevToolsEvent:(NSString*)method data:(NSData*)data {
     id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-    if (self.devToolsEventHandler) self.devToolsEventHandler(method, [json isKindOfClass:NSDictionary.class] ? json : @{});
+    NSDictionary* params = [json isKindOfClass:NSDictionary.class] ? json : @{};
+    if (self.pageFeatureEventHandler) self.pageFeatureEventHandler(method, params);
+    if (self.devToolsEventHandler) self.devToolsEventHandler(method, params);
 }
 
 - (void)close {
