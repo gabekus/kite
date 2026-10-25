@@ -143,8 +143,12 @@ final class AutomationController {
 
     /// A tab got a page (opened, revived, or a popup): watch it if recording.
     func pageCreated(_ id: UUID, _ page: WebPage) {
-        guard isRecordingNetwork else { return }
-        Task { await record(id, page: page) }
+        guard isRecordingNetwork, let actions = page.automation as? PageActions else { return }
+        // Not in a Task: the page loads its first URL as soon as Chromium attaches it.
+        recordedPages[id] = (ObjectIdentifier(page), actions)
+        actions.startEventsNow(domains: ["Network"]) { [weak self] method, params in
+            self?.received(method, params, tab: id)
+        }
     }
 
     private func startRecording() {

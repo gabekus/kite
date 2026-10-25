@@ -19,6 +19,8 @@ protocol PageActions: PageAutomation {
     /// Turns on DevTools domains (Page, Runtime, Log, Network) and sends their events to `handler`.
     /// `stopEvents` turns domains off; the handler goes once Network is off.
     func startEvents(domains: [String], _ handler: @escaping (String, JSONValue) -> Void) async throws
+    /// The same without waiting for answers, so a page that was just made has them before it loads.
+    func startEventsNow(domains: [String], _ handler: @escaping (String, JSONValue) -> Void)
     func stopEvents(domains: [String]) async
     /// A response body Chromium still holds: the text, and whether it's base64 (binary).
     func responseBody(requestID: String) async throws -> (body: String, base64: Bool)

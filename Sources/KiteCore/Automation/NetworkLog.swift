@@ -260,7 +260,8 @@ public struct NetworkLog: Sendable {
 
     /// `#12 GET 200 fetch 85ms 1.2kB api.example.com/v1/items?page=2`
     static func line(_ entry: Entry, showTab: Bool) -> String {
-        let state = entry.failure.map { "ERR(\($0))" } ?? entry.status.map(String.init) ?? "-"
+        // Chromium fails a document with an empty error response (a bare 404) after its status arrived.
+        let state = entry.failure.map { (entry.status.map { "\($0) " } ?? "") + "ERR(\($0))" } ?? entry.status.map(String.init) ?? "-"
         var parts = ["#\(entry.seq)"]
         if showTab { parts.append("[" + entry.tab.prefix(4).lowercased() + "]") }
         parts += [entry.method, state, entry.type ?? "other"]

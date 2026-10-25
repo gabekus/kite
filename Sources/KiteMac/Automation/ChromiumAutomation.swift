@@ -39,16 +39,27 @@ struct ChromiumAutomation: PageActions {
 
     /// Turns on the domains whose events feed `TabActivity` and the network log.
     func startEvents(domains: [String], _ handler: @escaping (String, JSONValue) -> Void) async throws {
+        setEventHandler(handler)
+        for domain in domains { try await call("\(domain).enable", Self.enableParams(domain)) }
+    }
+
+    /// `startEvents` without waiting. A tab that's still opening queues the calls in
+    /// the bridge, so they're on before its first request (a Task would be too late).
+    func startEventsNow(domains: [String], _ handler: @escaping (String, JSONValue) -> Void) {
+        setEventHandler(handler)
+        for domain in domains { browser.callDevToolsMethod("\(domain).enable", params: Self.enableParams(domain)) { _, _ in } }
+    }
+
+    private func setEventHandler(_ handler: @escaping (String, JSONValue) -> Void) {
         browser.devToolsEventHandler = { method, params in
             let json = (try? JSONSerialization.data(withJSONObject: params)).flatMap { try? JSONValue.decode($0) } ?? .object([:])
             handler(method, json)
         }
-        for domain in domains {
-            // Bodies stay in Chromium (bounded per tab) until network_request asks; posted bodies aren't copied into events.
-            let params: [String: Any] = domain == "Network"
-                ? ["maxTotalBufferSize": 20_000_000, "maxResourceBufferSize": 5_000_000, "maxPostDataSize": 0] : [:]
-            try await call("\(domain).enable", params)
-        }
+    }
+
+    /// Bodies stay in Chromium (bounded per tab) until network_request asks; posted bodies aren't copied into events.
+    private static func enableParams(_ domain: String) -> [String: Any] {
+        domain == "Network" ? ["maxTotalBufferSize": 20_000_000, "maxResourceBufferSize": 5_000_000, "maxPostDataSize": 0] : [:]
     }
 
     func stopEvents(domains: [String]) async {
