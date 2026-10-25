@@ -370,6 +370,7 @@ class KCClient : public CefClient,
     BOOL _pendingFocus;
     BOOL _hidden;
     double _zoomFactor;
+    BOOL _forceDark;
     BOOL _closed;
     int _nextMessageID;
     std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
@@ -460,6 +461,7 @@ class KCClient : public CefClient,
         [self loadURL:url];
     }
     if (_zoomFactor != 1) self.zoomFactor = _zoomFactor;
+    if (_forceDark) [self applyForceDark];
     if (_hidden) browser->GetHost()->WasHidden(true);
     if (_pendingFocus) [self focus];
 }
@@ -526,8 +528,16 @@ class KCClient : public CefClient,
 }
 
 - (void)setForceDark:(BOOL)enabled {
+    if (enabled == _forceDark) return;
+    _forceDark = enabled;
+    // Before the browser exists (launch, restored tabs) this only records the
+    // wish; attachBrowser applies it.
+    if (_browser) [self applyForceDark];
+}
+
+- (void)applyForceDark {
     [self executeDevToolsMethod:@"Emulation.setAutoDarkModeOverride"
-                         params:enabled ? @{@"enabled": @YES} : @{}
+                         params:_forceDark ? @{@"enabled": @YES} : @{}
                      completion:nil];
 }
 
