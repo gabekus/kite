@@ -22,6 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var diagnostics: DiagnosticsRecorder!
     /// Links opened before launch finished (Kite as the default browser).
     private var pendingURLs: [URL] = []
+    #if canImport(CEFBridge)
+    /// The menu bar's Extensions menu.
+    private var extensionsMenu: ExtensionsMenuBar?
+    #endif
 
 
     static var supportDirectory: URL {
@@ -46,6 +50,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController = BrowserWindowController(store: store, engine: engine, adblocker: adblocker)
         menuRouter = MenuRouter(fallback: windowController)
         NSApp.mainMenu = MainMenu.build(target: menuRouter)
+        #if canImport(CEFBridge)
+        if engine is ChromiumEngine, let mainMenu = NSApp.mainMenu {
+            extensionsMenu = ExtensionsMenuBar(model: ExtensionsModel.shared(engine: engine))
+            extensionsMenu?.install(in: mainMenu)
+        }
+        #endif
         keyBindings = KeyBindingsStore(fileURL: Self.supportDirectory.appendingPathComponent("keybindings.json"))
         keyBindings.apply(to: NSApp.mainMenu)
         // Registered after the menu bar is set so AppKit adds Help search and the window list.
@@ -108,6 +118,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store.mutate { _ = $0.openTab(url: url) }
         }
         if !urls.isEmpty { windowController.window?.makeKeyAndOrderFront(nil) }
+    }
+
+    /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
+    @objc func openURLFromExtensionsMenu(_ sender: Any?) {
+        guard let url = sender as? URL else { return }
+        store.mutate { _ = $0.openTab(url: url) }
     }
 
     /// ⇧⌘N. Each incognito window gets its own in-memory profile, gone when it closes.

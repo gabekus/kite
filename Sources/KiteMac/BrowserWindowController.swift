@@ -150,7 +150,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             actions: actions,
             supportsDarkPages: pool.engine.supportsDarkPages
         ))
-        toolbarHost = NSHostingView(rootView: PageToolbar(store: store, actions: actions))
+        var toolbar = PageToolbar(store: store, actions: actions)
+        #if canImport(CEFBridge)
+        // Extensions run in the persistent Chromium profile only.
+        if !isIncognito, pool.engine is ChromiumEngine { toolbar.extensions = ExtensionsModel.shared(engine: pool.engine) }
+        #endif
+        toolbarHost = NSHostingView(rootView: toolbar)
         toolbarHost.sizingOptions = []
         toolbarHost.isHidden = true
         contentClip.toolbar = toolbarHost
