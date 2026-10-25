@@ -563,21 +563,26 @@ private struct SpaceBar: View {
     var body: some View {
         let state = store.state
         HStack(spacing: 4) {
-            ForEach(state.spaces) { space in
-                Button {
-                    store.mutate { $0.selectSpace(space.id) }
-                } label: {
-                    Text(space.icon)
-                        .font(.system(size: 14))
-                        .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
-                        .modifier(ChromeFill(strength: space.id == state.selectedSpaceID ? M.selectedFill : 0, cornerRadius: 8))
-                        .contentShape(Rectangle())
+            // The spaces scroll rather than widen the bar: an over-wide bar pushes the whole sidebar off its left edge.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(state.spaces) { space in
+                        Button {
+                            store.mutate { $0.selectSpace(space.id) }
+                        } label: {
+                            Text(space.icon)
+                                .font(.system(size: 14))
+                                .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
+                                .modifier(ChromeFill(strength: space.id == state.selectedSpaceID ? M.selectedFill : 0, cornerRadius: 8))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(space.name)
+                        .contextMenu { ThemeMenu(store: store, space: space) }
+                    }
                 }
-                .buttonStyle(.plain)
-                .help(space.name)
-                .contextMenu { ThemeMenu(store: store, space: space) }
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
             ClaudeSidebarButton(model: claude, size: M.bottomButtonSize)
             Button {
                 store.addSpace()
