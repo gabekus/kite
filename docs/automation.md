@@ -33,7 +33,8 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | `form_input` | `form_input` | | Text, checkbox/radio (true/false), `<select>` by option text or value. |
 | `javascript_tool` | `javascript` | `kite js CODE` | Asks every time unless "Allow Claude to Run JavaScript Without Asking" is on. |
 | `read_console_messages` | `read_console_messages` | `kite console [--errors]` | Regex `pattern`, `only_errors`, `clear`. |
-| `read_network_requests` | `read_network_requests` | `kite network` | Regex `url_pattern`, `clear`. |
+| `read_network_requests` | `read_network_requests` | | Regex `url_pattern`, `clear`. |
+| (none) | `network_log`, `network_request`, `export_har` | `kite network [--follow]`, `kite request ID`, `kite har` | HAR-style log across tabs with a cursor. See below. |
 | `upload_image` / `file_upload` | `upload_file` | | Paths on this Mac. The sheet lists them first. |
 | (none) | `click`, `type`, `screenshot` | `kite click/type/screenshot` | Kept from the first version. |
 | (none) | `wait_for` | | load, navigation, selector, text, network_idle. Event-driven. |
@@ -94,10 +95,50 @@ Most of an agent's time goes to model round trips and context, not to the browse
     reads off a scaled screenshot are mapped back to the page for every `computer` action.
   - `zoom` still returns full resolution.
 
+## Network log
+
+`read_network_requests` only sees a tab after Claude first touches it, and keeps method, URL and status. The network
+log is for debugging with Claude: the user reproduces a bug in their own tabs, then Claude reads what happened.
+
+- **Record Network for Claude** (Kite menu, off by default, needs control on) logs every tab in the main window, not
+  just the tabs Claude drives. Incognito windows are never logged. Without it, the log still covers Claude's tabs, in
+  memory only.
+- **What's kept.** For each finished request: method, URL, status, resource type, MIME type, protocol, server
+  address, initiator, size on the wire, duration, timing phases (blocked, dns, connect, ssl, send, wait, receive), and
+  request and response headers (the ones that actually went out, from the `ExtraInfo` events). The newest 5,000 are
+  kept in memory.
+- **Redaction, before anything is kept.** Cookie and Set-Cookie keep only cookie names and attributes. Authorization,
+  API key, CSRF, session and token headers are masked. Secret-looking query and fragment parameters are masked
+  (`token`, `code`, `state`, `sig`, `key`, `password`, `X-Amz-Signature` and similar), and so are passwords in URLs.
+  Bodies get the same treatment for JSON fields and form fields when they're fetched.
+- **Bodies are never stored.** Chromium holds them (up to 20 MB per tab, 5 MB per response) and `network_request`
+  fetches them on request. Request bodies aren't copied into events (`maxPostDataSize: 0`).
+- **On disk.** While recording, finished requests are appended to `<profile>/NetworkLog/YYYY-MM-DD.ndjson`, one
+  JSON object per line (folder 0700, files 0600), so `jq` and `tail -f` work on them too. Days older than 7 are
+  deleted, and a day stops at 100 MB. HAR exports go to the same folder and are deleted on the same schedule.
+
+Tools:
+- `network_log`: one short line per request, like `#41 POST 422 fetch 87ms 1.2kB api.example/v1/orders`, then
+  `cursor: 41`. `since` returns only newer requests, so polling it is a tail. Filters: `tab` (default every tab),
+  `status` (`2xx`…`5xx`, `errors`), `host` (with subdomains), `type` (`fetch,xhr`, or `all`), `url_pattern`,
+  `limit` (default 50). Successful images, fonts, stylesheets and media are hidden unless `type` is `all`; failures
+  always show.
+- `network_request`: one request in full: timing, redacted headers, and both bodies while Chromium still has them,
+  cut to `max_body_length` (default 4,000 characters).
+- `export_har`: a HAR 1.2 file of the matching requests (every type), with text bodies when `bodies` is true.
+  Returns the path.
+
+Built for cost. Everything is answered from memory over the local socket, with no page work, so a call costs well
+under a millisecond. The per-request line is about 20 tokens. A tail returns only what's new, headers and bodies
+come only when asked for, and the tools work inside `batch`: a click, `wait_for` network_idle and
+`network_log` with `since` make one round trip.
+
+`kite network --follow` prints new requests as they finish, polling the cursor once a second.
+
 ## Safety
 
 - **Off by default.** The setting is stored per profile in `<profile>/automation.json` (`allowClaudeControl`,
-  `allowJavaScript`, `useClaudeSpace`). While it's off there's no socket, and no DevTools events are collected.
+  `allowJavaScript`, `useClaudeSpace`, `recordNetwork`). While it's off there's no socket, and no DevTools events are collected.
 - **Local only.** A Unix socket at `<profile>/Automation/kite.sock`. Its folder is 0700 and the socket 0600, and the
   peer uid is checked. A profile too deep for a socket path (over 103 bytes, e.g. a test profile in a nested temp
   folder) uses `/tmp/kite-<uid>/<hash of the profile path>.sock` instead. The app refuses that folder unless it can
@@ -154,6 +195,7 @@ How dialogs work:
   - `AutomationPolicy`: what needs confirmation.
   - `ElementFinder`: `find`.
   - `TabActivity`: console, network, dialogs and idleness.
+  - `NetworkLog`, `Redaction` and `NetworkLogStore`: the network log, its redaction, and its files on disk.
   - `AccessibilityOutline`, `UntrustedContent`, `MCPServer`, `AutomationWire`, `AutomationReport`.
 - `Sources/KiteCore/BrowserState+Automation.swift` holds the additions behind the Kite tools: background spaces, the
   Claude space, folders and moving tabs into them. Nothing in it changes existing mutations.
