@@ -8,6 +8,7 @@ struct SidebarActions {
     var reload: () -> Void
     var toggleSidebar: () -> Void
     var closeTab: (UUID) -> Void
+    var addSplitView: () -> Void
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -27,25 +28,30 @@ struct SidebarView: View {
 
         VStack(alignment: .leading, spacing: 0) {
             // One row with the traffic lights: sidebar toggle after them, navigation at the far end.
+            // With View → Show Toolbar, navigation and the URL move to the bar over the page.
             HStack(spacing: M.navButtonSpacing) {
                 ToolbarButton(symbol: "sidebar.left", help: "Toggle Sidebar", enabled: true, action: actions.toggleSidebar)
                     .padding(.leading, M.toggleX - M.padding)
                 Spacer()
-                ToolbarButton(symbol: "arrow.left", help: "Back", enabled: page.canGoBack, action: actions.goBack)
-                ToolbarButton(symbol: "arrow.right", help: "Forward", enabled: page.canGoForward, action: actions.goForward)
-                ToolbarButton(symbol: page.isLoading ? "xmark" : "arrow.clockwise", help: "Reload", enabled: selectedID != nil, action: actions.reload)
+                if !state.showsToolbar {
+                    ToolbarButton(symbol: "arrow.left", help: "Back", enabled: page.canGoBack, action: actions.goBack)
+                    ToolbarButton(symbol: "arrow.right", help: "Forward", enabled: page.canGoForward, action: actions.goForward)
+                    ToolbarButton(symbol: page.isLoading ? "xmark" : "arrow.clockwise", help: "Reload", enabled: selectedID != nil, action: actions.reload)
+                }
             }
             .frame(height: M.topRowHeight)
             .padding(.top, M.topRowY)
             .padding(.trailing, M.navTrailing - M.padding)
 
-            AddressPill(
-                text: selectedTab?.url?.host() ?? "Search or enter URL",
-                isDark: darkPageState(for: selectedTab),
-                action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
-                toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } }
-            )
-            .padding(.top, M.urlFieldTopGap)
+            if !state.showsToolbar {
+                AddressPill(
+                    text: selectedTab?.url?.host() ?? "Search or enter URL",
+                    isDark: darkPageState(for: selectedTab),
+                    action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
+                    toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } }
+                )
+                .padding(.top, M.urlFieldTopGap)
+            }
 
             if !state.favorites.isEmpty {
                 FavoritesGrid(

@@ -79,7 +79,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 |---|---|---|---|
 | Appearance: Automatic / Light / Dark (websites) | | 🟡 Dark Pages Off/Match/Always | Have it; the other session owns this |
 | Show Sidebar | ⌘S | ✅ | |
-| Show Toolbar (URL bar on top) | ⇧⌘D | ❌ | B5 (`topBarURLEnabled`) |
+| Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host and (disabled until built) Site Controls and Split View; the sidebar drops its nav buttons and URL field. "Show full URL" setting not yet | B5 (`topBarURLEnabled`) |
 | Collapse Pinned Tabs | | ❌ | B3 |
 | Stop Loading | ⌘. | ✅ | |
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
@@ -155,7 +155,7 @@ then follows Gabe's binding, and shortcuts become remappable (B6).
 
 | Arc item | Kite | Plan |
 |---|---|---|
-| Essential Keyboard Shortcuts (cheat sheet) | ✅ Help → Keyboard Shortcuts, built from the menus | |
+| Essential Keyboard Shortcuts (cheat sheet) | ✅ Arc's floating 475×458 window: 5 fixed commands with their live shortcuts as blue keycaps; "View All" opens the full list. Split View and Little Arc rows show a shortcut only once remapped or built | |
 | Restore Data, Reveal Data folder, Copy Info, Task Manager, Record Trace | 🟡 Reveal Kite Data, Copy Kite Info | Task Manager later |
 | Getting Started, Contact, Help Center, Export Arc Notes | ❌ | Skip |
 

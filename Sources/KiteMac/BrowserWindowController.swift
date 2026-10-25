@@ -24,6 +24,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let glowView = GlowView(margin: Layout.glowMargin)
     let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
     private let contentClip = ContentClipView()
+    /// View → Show Toolbar's bar across the top of the card.
+    private var toolbarHost: NSHostingView<PageToolbar>!
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
     private var sidebarHost: NSHostingView<SidebarView>!
@@ -123,17 +125,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.font = .systemFont(ofSize: 15, weight: .medium)
 
+        let actions = SidebarActions(
+            goBack: { [weak self] in self?.goBack(nil) },
+            goForward: { [weak self] in self?.goForward(nil) },
+            reload: { [weak self] in self?.reload(nil) },
+            toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
+            closeTab: { [weak self] id in self?.close(tab: id) },
+            addSplitView: { [weak self] in self?.addSplitView(nil) }
+        )
         sidebarHost = NSHostingView(rootView: SidebarView(
             store: store,
-            actions: SidebarActions(
-                goBack: { [weak self] in self?.goBack(nil) },
-                goForward: { [weak self] in self?.goForward(nil) },
-                reload: { [weak self] in self?.reload(nil) },
-                toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
-                closeTab: { [weak self] id in self?.close(tab: id) }
-            ),
+            actions: actions,
             supportsDarkPages: pool.engine.supportsDarkPages
         ))
+        toolbarHost = NSHostingView(rootView: PageToolbar(store: store, actions: actions))
+        toolbarHost.sizingOptions = []
+        toolbarHost.isHidden = true
+        contentClip.toolbar = toolbarHost
         commandBarHost = NSHostingView(rootView: CommandBarOverlay(store: store) { [weak self] suggestion, mode in
             self?.commit(suggestion, mode: mode)
         })
@@ -296,6 +304,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         updateCommandBar()
         updateSidebar()
+        updateToolbar()
     }
 
     /// Puts `tabs` on screen, side by side when there are several, and focuses `focused`.
@@ -310,16 +319,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             shownTabIDs = ids
             if tabs.count > 1 {
                 splitPanes.setPanes(ids.map { ($0, shownPages[$0]!.view) })
-                contentClip.addSubview(splitPanes)
+                contentClip.addSubview(splitPanes, positioned: .below, relativeTo: toolbarHost)
                 contentClip.page = splitPanes
             } else if let id = ids.first, let page = shownPages[id] {
                 page.view.autoresizingMask = []
-                contentClip.addSubview(page.view)
+                contentClip.addSubview(page.view, positioned: .below, relativeTo: toolbarHost)
                 contentClip.page = page.view
             } else {
                 contentClip.page = nil
             }
             setSplitChrome(tabs.count > 1)
+            updateToolbar()
         }
         shownTabID = focused
         shownPage = focused.flatMap { shownPages[$0] }
@@ -387,6 +397,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         // Re-adding brings it above a page shown since.
         contentClip.addSubview(host)
         sadTab = host
+    }
+
+    private func updateToolbar() {
+        // Arc disables Show Toolbar in split view tabs; the bar belongs to a single page.
+        let visible = store.state.showsToolbar && shownTabIDs.count <= 1
+        toolbarHost.isHidden = !visible
+        contentClip.topInset = visible ? PageToolbar.Metrics.inset : 0
+    }
+
+    @objc func toggleToolbar(_ sender: Any?) {
+        store.mutate { $0.showsToolbar.toggle() }
     }
 
     private func updateCommandBar() {
@@ -587,6 +608,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             // ⌘← / ⌘→ belong to a focused AppKit text field (the command bar) for line start/end.
             // A disabled key equivalent passes the key on.
             return !(window?.firstResponder is NSText)
+        case #selector(toggleToolbar(_:)):
+            item.title = store.state.showsToolbar ? "Hide Toolbar" : "Show Toolbar"
+            return store.state.selectedSplit == nil
         case #selector(toggleStayOnTop(_:)):
             item.state = window?.level == .floating ? .on : .off
         case #selector(setAsDefaultBrowser(_:)):
@@ -681,6 +705,17 @@ final class ContentClipView: NSView {
     var minimumPageWidth: CGFloat = 0 {
         didSet { if minimumPageWidth != oldValue { layoutPage() } }
     }
+    /// The toolbar across the top, when shown; the page starts below `topInset`.
+    weak var toolbar: NSView? {
+        didSet {
+            guard let toolbar, toolbar.superview !== self else { return }
+            addSubview(toolbar)
+            layoutPage()
+        }
+    }
+    var topInset: CGFloat = 0 {
+        didSet { if topInset != oldValue { layoutPage() } }
+    }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
@@ -688,8 +723,9 @@ final class ContentClipView: NSView {
     }
 
     private func layoutPage() {
-        let frame = CGRect(x: 0, y: 0, width: max(bounds.width, minimumPageWidth), height: bounds.height)
+        let frame = CGRect(x: 0, y: 0, width: max(bounds.width, minimumPageWidth), height: bounds.height - topInset)
         if let page, page.frame != frame { page.frame = frame }
+        toolbar?.frame = CGRect(x: 0, y: bounds.height - PageToolbar.Metrics.inset, width: bounds.width, height: PageToolbar.Metrics.inset)
     }
 }
 
