@@ -112,6 +112,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// True while closing the window should only hide it: Claude tasks are working in its tabs.
+    var hidesInsteadOfClosing: (() -> Bool)?
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard !isIncognito, hidesInsteadOfClosing?() == true else { return true }
+        sender.orderOut(nil)
+        return false
+    }
+
     func windowWillClose(_ notification: Notification) {
         if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
         paneClickMonitor = nil

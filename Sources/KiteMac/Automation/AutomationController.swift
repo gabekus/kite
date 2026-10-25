@@ -77,6 +77,12 @@ final class AutomationController {
 
     /// True while a batch runs: a step that would need confirmation stops the batch instead of asking.
     @TaskLocal static var inBatch = false
+    /// The Claude task (Claude Tasks panel) the running call comes from, if Kite started its client.
+    @TaskLocal static var agentTask: UUID?
+
+    /// Claude Tasks: whether a task id is one of Kite's running tasks, and where its new tabs go.
+    @ObservationIgnored var isRunningTask: ((UUID) -> Bool)?
+    @ObservationIgnored var taskOpenedTab: ((_ task: UUID, _ tab: UUID) -> Void)?
 
     struct NeedsConfirmation: Error {
         let request: ConfirmationRequest
@@ -404,7 +410,8 @@ final class AutomationController {
         guard isEnabled else { return .failure(.disabled) }
         do {
             let command = try AutomationCommand(tool: request.tool, arguments: request.arguments)
-            return try await run(command, connection: connection)
+            let task = request.task.flatMap(UUID.init(uuidString:)).flatMap { isRunningTask?($0) == true ? $0 : nil }
+            return try await Self.$agentTask.withValue(task) { try await run(command, connection: connection) }
         } catch let error as AutomationError {
             return .failure(error)
         } catch let error as AutomationCommand.InvalidArguments {

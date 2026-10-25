@@ -82,4 +82,50 @@ extension BrowserState {
         }
         return true
     }
+
+    /// Removes a folder and everything in it (a Claude task's folder, when the user clears
+    /// the task's tabs). Returns the ids of the tabs that went with it.
+    @discardableResult
+    public mutating func removeFolder(_ id: UUID) -> [UUID] {
+        for s in spaces.indices {
+            guard let folder = spaces[s].pinnedItems.removeFolder(id) else { continue }
+            let removed = folder.items.tabs.map(\.id)
+            if let selected = spaces[s].selectedTabID, removed.contains(selected) {
+                spaces[s].selectedTabID = spaces[s].allTabs.first?.id
+            }
+            normalizeSplits()
+            return removed
+        }
+        return []
+    }
+}
+
+extension BrowserState {
+    /// Removes a pinned tab (in or out of a folder) for good, without archiving it: a tab a
+    /// Claude task opened in its folder and then closed. Pinned tabs otherwise only unload on close.
+    @discardableResult
+    public mutating func removePinnedTab(_ id: UUID) -> Bool {
+        guard let location = location(of: id), location.section == .pinned, let s = location.space,
+              spaces[s].pinnedItems.removeTab(id) != nil else { return false }
+        if spaces[s].selectedTabID == id { spaces[s].selectedTabID = spaces[s].allTabs.first?.id }
+        normalizeSplits()
+        return true
+    }
+}
+
+extension [PinnedItem] {
+    mutating func removeFolder(_ id: UUID) -> TabFolder? {
+        for i in indices {
+            guard case .folder(var folder) = self[i] else { continue }
+            if folder.id == id {
+                remove(at: i)
+                return folder
+            }
+            if let removed = folder.items.removeFolder(id) {
+                self[i] = .folder(folder)
+                return removed
+            }
+        }
+        return nil
+    }
 }

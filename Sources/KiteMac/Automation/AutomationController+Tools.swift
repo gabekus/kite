@@ -414,6 +414,10 @@ extension AutomationController {
         if let url, case .deny(let reason) = AutomationPolicy.evaluate(.navigate(url), host: nil) {
             throw AutomationError(.denied, reason)
         }
+        // A Claude task's tabs go in its folder in the Claude space, out of the user's way.
+        let task = Self.agentTask
+        var placement = placement
+        if task != nil, case .currentSpace = placement { placement = .claudeSpace }
         let spaceID: UUID?
         switch placement {
         case .currentSpace: spaceID = nil
@@ -425,6 +429,7 @@ extension AutomationController {
             spaceID = store.state.spaces[index].id
         }
         let id = store.mutate { $0.openTab(url: url, in: spaceID, select: false) }
+        if let task { taskOpenedTab?(task, id) }
         if active { store.mutate { $0.select(tab: id) } }
         claudeOpened.insert(id)
         markControlled(id, connection: connection)
@@ -450,7 +455,10 @@ extension AutomationController {
                 action: "close a tab it didn't open",
                 detail: "Tab: “\(tab.displayTitle)”. You can reopen it with ⇧⌘T."), tab: tab.id)
         }
-        host?.closeAutomatedTab(tab.id)
+        // A task's tabs are pinned in its folder, where closing would only unload them.
+        if Self.agentTask == nil || !store.mutate({ $0.removePinnedTab(tab.id) }) {
+            host?.closeAutomatedTab(tab.id)
+        }
         claudeOpened.remove(tab.id)
         return .text("Closed tab \(tab.id.uuidString).")
     }

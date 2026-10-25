@@ -94,7 +94,7 @@ enum ClaudeConnect {
     }
 
     /// GUI apps don't get the shell's PATH, so look where Claude Code installs, then ask a login shell.
-    nonisolated private static func findClaude() -> String? {
+    nonisolated static func findClaude() -> String? {
         let environment = ProcessInfo.processInfo.environment
         if let override = environment["KITE_CLAUDE_BIN"] { return override }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -107,7 +107,7 @@ enum ClaudeConnect {
         return status == 0 && path.hasPrefix("/") ? path : nil
     }
 
-    nonisolated private static func run(_ executable: String, _ arguments: [String]) -> (Int32, String) {
+    nonisolated static func run(_ executable: String, _ arguments: [String]) -> (Int32, String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments

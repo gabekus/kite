@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuRouter: MenuRouter!
     private var archiveTimer: Timer?
     private var automation: AutomationController!
+    private var claudeTasks: ClaudeTasksController!
+    private var claudeTasksWindow: ClaudeTasksWindowController?
     private var diagnostics: DiagnosticsRecorder!
     /// Links opened before launch finished (Kite as the default browser).
     private var pendingURLs: [URL] = []
@@ -60,6 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A test build on a throwaway profile with KITE_DIAGNOSTICS=1 comes up ready for Claude.
         if UIDiagnostics.enabledByEnvironment && !automation.isEnabled { automation.setEnabled(true) }
         UIDiagnostics.shared.applySetting()
+        claudeTasks = ClaudeTasksController(store: store, automation: automation, supportDirectory: Self.supportDirectory)
+        claudeTasks.showPanel = { [weak self] id in self?.tasksWindow().show(task: id) }
+        windowController.hidesInsteadOfClosing = { [weak self] in self?.claudeTasks.isRunningAny == true }
         #if canImport(CEFBridge)
         // Pages extensions open (welcome pages, chrome.windows.create) become background
         // tabs, so installing one doesn't pull you off the page you're on.
@@ -133,7 +138,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// The Dock icon brings back the window hidden while Claude tasks ran.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows { windowController?.window?.makeKeyAndOrderFront(nil) }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        claudeTasks?.stopAll()
+        claudeTasks?.saveNow()
         saveSession()
         automation?.shutdown()
     }
@@ -197,6 +210,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleRecordNetwork(_ sender: Any?) {
         automation.setRecordNetwork(!automation.settings.recordNetwork)
+    }
+
+    /// Kite menu → Claude Tasks…: Kite's own Claude, working in background tabs.
+    @objc func showClaudeTasks(_ sender: Any?) {
+        let window = tasksWindow()
+        if let id = claudeTasks.selectedID ?? claudeTasks.tasks.first?.id {
+            window.show(task: id)
+        } else {
+            window.showComposer(attachTab: false)
+        }
+    }
+
+    /// Kite menu → Ask Claude About This Tab…: a new task with the front tab attached.
+    @objc func askClaudeAboutTab(_ sender: Any?) {
+        tasksWindow().showComposer(attachTab: store.state.selectedTab != nil)
+    }
+
+    private func tasksWindow() -> ClaudeTasksWindowController {
+        if let claudeTasksWindow { return claudeTasksWindow }
+        let controller = ClaudeTasksWindowController(tasks: claudeTasks, store: store)
+        claudeTasksWindow = controller
+        return controller
     }
 
     @objc func connectClaudeCode(_ sender: Any?) {

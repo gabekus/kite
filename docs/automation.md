@@ -271,6 +271,33 @@ How dialogs work:
   - `devToolsEventHandler` delivers DevTools events;
   - `KCDownloadDidUpdateNotification` reports downloads.
 
+## Claude Tasks: Kite's own Claude
+
+Kite menu → **Claude Tasks…** (or **Ask Claude About This Tab…**) gives Claude a goal without leaving Kite.
+Kite runs Claude Code headless on the user's own Claude login (no API key):
+
+```
+claude -p --output-format stream-json --verbose --include-partial-messages \
+  --mcp-config '{"mcpServers":{"kite":{"command":".../Helpers/kite","args":["mcp"],"env":{"KITE_AGENT_TASK":"<task id>"}}}}' \
+  --strict-mcp-config --tools "" --allowedTools mcp__kite --permission-mode dontAsk --append-system-prompt …
+```
+
+- **Only Kite's tools.** `--strict-mcp-config` skips the user's other MCP servers and `--tools ""` removes Claude Code's
+  shell, file and web tools. Every Kite safety rule still applies: the confirmation sheets, untrusted-content blocks
+  and the Stop button. Starting a task turns on Allow Claude to Control the Browser.
+- **Background.** `kite mcp` sends `KITE_AGENT_TASK` with each call. Tabs that task opens go into a folder named after
+  the task in the Claude space, never in front of the user. Tabs it closes are removed from the folder for good.
+  **Close Tabs** removes the folder.
+- **Keeps going.** While a task runs, Kite holds an idle-sleep assertion, and closing the main window only hides it
+  (the Dock icon brings it back). A closed lid still sleeps the Mac.
+- **Finishing.** The task posts a notification (clicking it opens the task) and badges the Dock icon until it's read.
+  **Follow up** runs another turn in the same Claude Code session (`--resume`).
+- **What's kept.** `<profile>/Claude/tasks.json` (0600, last 50 tasks) holds the goal, Claude's replies, one line per
+  tool call and errors. Tool results (page content) are never stored. Claude Code runs in `<profile>/Claude/Work`, so
+  no project's CLAUDE.md applies.
+- **Pieces.** `ClaudeTask`, `ClaudeStream` (stream-json parser) and `ClaudeInvocation` live in `KiteCore/Claude`.
+  `ClaudeTasksController` (processes, tabs, notifications) and `ClaudeTasksWindow` live in `KiteMac/Claude`.
+
 ## Not done yet
 
 - Cross-site (out-of-process) iframes can't be read; clicks into them ask first.

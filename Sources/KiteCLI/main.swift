@@ -53,6 +53,8 @@ final class KiteConnection: @unchecked Sendable {
     private var fd: Int32 = -1
     private var nextID = 1
     private var pending: [Int: CheckedContinuation<ToolOutput, Never>] = [:]
+    /// Set when Kite started this `kite mcp` for one of its Claude tasks.
+    private let task = ProcessInfo.processInfo.environment[ClaudeInvocation.taskEnvironmentKey]
 
     init(path: String) { self.path = path }
 
@@ -69,7 +71,7 @@ final class KiteConnection: @unchecked Sendable {
             let socket = fd
             lock.unlock()
 
-            guard let line = try? AutomationWire.encodeLine(AutomationWire.Request(id: id, tool: tool, arguments: arguments)),
+            guard let line = try? AutomationWire.encodeLine(AutomationWire.Request(id: id, tool: tool, arguments: arguments, task: task)),
                   writeAll(socket, line) else {
                 finish(id, .failure(AutomationError(.failed, "Lost the connection to Kite.")))
                 disconnect(socket)
