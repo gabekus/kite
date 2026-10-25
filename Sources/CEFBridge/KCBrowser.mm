@@ -381,6 +381,9 @@ class KCClient : public CefClient,
     /// The registered document-start script; reloads and same-site links reuse it.
     NSString* _documentScriptSource;
     BOOL _runScriptAtLoadStart;
+    /// DevTools calls made before the browser exists; sent ahead of the first navigation.
+    NSMutableArray<void (^)(void)>* _queuedDevTools;
+    BOOL _attached;
 }
 
 - (instancetype)initWithURL:(NSURL*)url delegate:(id<KCBrowserDelegate>)delegate {
@@ -410,6 +413,7 @@ class KCClient : public CefClient,
         _nextMessageID = 1000;
         _pendingDevTools = new std::map<int, void (^)(NSDictionary*, NSString*)>();
         _documentScripts = [NSMutableArray array];
+        _queuedDevTools = [NSMutableArray array];
     }
     return self;
 }
@@ -420,10 +424,15 @@ class KCClient : public CefClient,
 
 - (void)attachBrowser:(CefRefPtr<CefBrowser>)browser {
     _browser = browser;
+    _attached = YES;
+    NSArray<void (^)(void)>* queued = [_queuedDevTools copy];
+    [_queuedDevTools removeAllObjects];
     NSView* browserView = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
     browserView.frame = _view.bounds;
     browserView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     if (_closed) {
+        _browser = nullptr;
+        for (void (^call)(void) in queued) call();
         browser->GetHost()->CloseBrowser(true);
         return;
     }
@@ -431,6 +440,8 @@ class KCClient : public CefClient,
     if ([_delegate respondsToSelector:@selector(browser:documentStartScriptForURL:)]) {
         [self executeDevToolsMethod:@"Page.enable" params:nil completion:nil];
     }
+    // Before the first load, so a Network.enable made while the tab was opening sees its document.
+    for (void (^call)(void) in queued) call();
     if (_documentScriptSource && _documentScripts.count == 0 && !_pendingURL) {
         [self addDocumentScript:_documentScriptSource navigation:_navigationCount completion:nil];
     }
@@ -544,7 +555,12 @@ class KCClient : public CefClient,
                     params:(NSDictionary<NSString*, id>*)params
                 completion:(void (^)(NSDictionary*, NSString*))completion {
     if (!_browser) {
-        completion(nil, @"not-ready");
+        if (_attached || _closed) {
+            completion(nil, @"not-ready");
+        } else {
+            void (^copied)(NSDictionary*, NSString*) = [completion copy];
+            [_queuedDevTools addObject:^{ [self callDevToolsMethod:method params:params completion:copied]; }];
+        }
         return;
     }
     int messageID = _nextMessageID++;

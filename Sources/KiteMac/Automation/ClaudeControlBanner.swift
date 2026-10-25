@@ -68,12 +68,16 @@ extension BrowserWindowController: AutomationHost {
         return page
     }
 
+    var livePages: [UUID: WebPage] { pool.livePages }
+
     func closeAutomatedTab(_ id: UUID) {
         close(tab: id)
     }
 
     /// Pins the banner to the top of the page area, above the web view.
     func installAutomationBanner(_ automation: AutomationController) {
+        pool.onPageCreated = { [weak automation] id, page in automation?.pageCreated(id, page) }
+        pool.onLoadFinished = { [weak automation] id in automation?.pageFinishedLoading(id) }
         guard let root = window?.contentView else { return }
         let host = NSHostingView(rootView: ClaudeControlBanner(automation: automation, store: store))
         host.sizingOptions = [.intrinsicContentSize]
