@@ -395,7 +395,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return
         }
         pool.didShow(ids)
-        if store.commandBar == nil {
+        // A new split pane's command bar is about to open and takes the focus.
+        if store.commandBar == nil, store.pendingSplitPane == nil {
             shownPage?.focus()
         }
         pageChanged(focused)
@@ -597,6 +598,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     // MARK: Commands
 
     private func commit(_ suggestion: CommandSuggestion, mode: CommandBarMode) {
+        // A page picked for a new split pane keeps the split; anything else leaves it to be cancelled.
+        switch suggestion {
+        case .open, .search, .siteSearch, .history: store.pendingSplitPane = nil
+        default: break
+        }
         store.hideCommandBar()
         switch suggestion {
         case .open(let url), .search(_, let url), .siteSearch(_, _, let url):

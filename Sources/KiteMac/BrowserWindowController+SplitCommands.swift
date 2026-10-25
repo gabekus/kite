@@ -4,16 +4,20 @@ import KiteCore
 /// Arc's split view commands (View menu).
 extension BrowserWindowController {
     /// Adds an empty pane after the focused one and opens the command bar to fill it.
+    /// Esc closes the bar and cancels the split (`BrowserStore.hideCommandBar`).
     @objc func addSplitView(_ sender: Any?) {
-        switch store.mutate({ $0.addSplitPane() }) {
-        case .added:
-            store.showCommandBar(.editCurrent)
-        case .full:
-            // Arc's toast for a fifth pane.
-            showToast("Cannot Add New Pane")
-        case .noTab:
-            NSSound.beep()
+        guard store.state.selectedTab != nil else { return NSSound.beep() }
+        // Arc shows "Cannot Add New Pane" for a fifth; Gabe wants nothing to happen.
+        guard (store.state.selectedSplit?.tabIDs.count ?? 0) < SplitView.maxPanes else { return }
+        store.hideCommandBar()
+        // Marked pending first, so showing the new pane doesn't hand focus to its page.
+        let pane = UUID()
+        store.pendingSplitPane = pane
+        guard store.mutate({ $0.addSplitPane(id: pane) }) == .added(pane) else {
+            store.pendingSplitPane = nil
+            return
         }
+        store.showCommandBar(.editCurrent)
     }
 
     /// Arc's Close this Split Pane: closes the focused pane's tab.

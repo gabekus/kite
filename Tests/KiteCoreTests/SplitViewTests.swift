@@ -55,6 +55,24 @@ import Testing
         #expect(state.visibleTabs.map(\.id) == [ids[0]])
     }
 
+    @Test func cancellingAnEmptyPaneUndoesTheSplit() {
+        var (state, ids) = makeState()
+        guard case .added(let pane) = state.addSplitPane() else { return }
+        state.cancelSplitPane(pane)
+        #expect(state.selectedSpace.splits.isEmpty)
+        #expect(state.selectedSpace.tabs.map(\.id) == ids)
+        #expect(state.selectedTab?.id == ids[0])
+        #expect(state.archived.isEmpty && state.recentlyClosed.isEmpty)
+    }
+
+    @Test func cancellingKeepsAPaneThatLoadedSomething() {
+        var (state, _) = makeState()
+        guard case .added(let pane) = state.addSplitPane() else { return }
+        state.update(tab: pane) { $0.url = URL(string: "https://example.com") }
+        state.cancelSplitPane(pane)
+        #expect(state.selectedSplit?.tabIDs.count == 2)
+    }
+
     @Test func separatingLeavesTheTabOpenOnItsOwn() {
         var (state, ids) = makeState()
         guard case .added(let b) = state.addSplitPane() else { return }

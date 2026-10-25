@@ -119,11 +119,11 @@ extension BrowserState {
     /// Arc's Add Split View: adds an empty pane after the focused one and focuses it.
     /// A tab that isn't split yet becomes a two-pane split.
     @discardableResult
-    public mutating func addSplitPane(now: Date = Date()) -> AddSplitResult {
+    public mutating func addSplitPane(id: UUID = UUID(), now: Date = Date()) -> AddSplitResult {
         guard let focused = selectedTab, let location = location(of: focused.id) else { return .noTab }
         // Favorites belong to no space; split them in the current one.
         let s = location.space ?? selectedSpaceIndex
-        let newTab = BrowserTab(url: nil, lastActiveAt: now)
+        let newTab = BrowserTab(id: id, url: nil, lastActiveAt: now)
 
         if let i = spaces[s].splits.firstIndex(where: { $0.tabIDs.contains(focused.id) }) {
             guard spaces[s].splits[i].tabIDs.count < SplitView.maxPanes else { return .full }
@@ -150,6 +150,24 @@ extension BrowserState {
             spaces[s].tabs.insert(tab, at: i + 1)
         } else if !spaces[s].pinnedItems.insertTab(tab, after: neighbor) {
             spaces[s].tabs.insert(tab, at: 0)
+        }
+    }
+
+    /// Esc on a new pane's command bar: the still-empty pane goes away without being archived,
+    /// and the pane before it gets focus back. A pane that has loaded something stays.
+    public mutating func cancelSplitPane(_ id: UUID) {
+        guard let s = split(containing: id)?.space, tab(id)?.url == nil,
+              let split = spaces[s].splits.first(where: { $0.tabIDs.contains(id) }),
+              let index = split.tabIDs.firstIndex(of: id) else { return }
+        let rest = split.tabIDs.filter { $0 != id }
+        if let i = spaces[s].tabs.firstIndex(where: { $0.id == id }) {
+            spaces[s].tabs.remove(at: i)
+        } else {
+            _ = spaces[s].pinnedItems.removeTab(id)
+        }
+        normalizeSplits()
+        if spaces[s].selectedTabID == id, !rest.isEmpty {
+            spaces[s].selectedTabID = rest[max(index - 1, 0)]
         }
     }
 
