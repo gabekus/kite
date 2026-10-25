@@ -425,7 +425,11 @@ final class AutomationController {
         let tab: BrowserTab?
         if let string {
             guard let id = UUID(uuidString: string.trimmingCharacters(in: .whitespaces)) else {
-                throw AutomationError(.invalidArguments, "\"\(string)\" isn't a tab id. Call tabs_context for ids.")
+                // Models sometimes send a placeholder ("${tab}"): name the real ids so the retry needs no extra call.
+                let opened = claudeOpened.filter { store.state.tab($0) != nil }.prefix(5).map(\.uuidString)
+                let hint = opened.isEmpty ? "" : " Tabs you opened: " + opened.joined(separator: ", ") + "."
+                throw AutomationError(.invalidArguments,
+                    "\"\(string)\" isn't a tab id. Pass the id itself (a UUID, as tabs_create or tabs_context gave it), or omit tab for the front tab.\(hint) Call tabs_context for every id.")
             }
             tab = store.state.tab(id)
         } else {
