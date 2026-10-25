@@ -120,7 +120,7 @@ import Testing
         let a = state.openTab(url: URL(string: "https://a.example"), in: space, select: false)
         let b = state.openTab(url: URL(string: "https://b.example"), in: space, select: false)
         #expect(state.moveTab(a, toFolder: folder) && state.moveTab(b, toFolder: folder))
-        #expect(state.removePinnedTab(a))
+        #expect(state.removePinnedTab(a) == true)
         #expect(state.tab(a) == nil && state.tab(b) != nil)
         #expect(state.removeFolder(folder) == [b])
         #expect(state.tab(b) == nil && state.folder(matching: folder.uuidString) == nil)
