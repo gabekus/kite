@@ -24,6 +24,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL useMockKeychain;
 /// Extra Chromium switches, e.g. "--disable-backgrounding-occluded-windows".
 @property (nonatomic, copy) NSArray<NSString *> *extraSwitches;
+/// Unpacked extensions loaded at launch (Kite's helper), merged into any
+/// --load-extension switch Kite was started with.
+@property (nonatomic, copy) NSArray<NSString *> *extensionDirectories;
 @end
 
 @interface KCRuntime : NSObject

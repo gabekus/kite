@@ -133,7 +133,20 @@ bool KCRuntimeIsQuitting() {
         return NO;
     }
 
-    NSArray<NSString *> *arguments = NSProcessInfo.processInfo.arguments;
+    // Chromium keeps only the last --load-extension, so Kite's own extensions join any
+    // given on the command line.
+    NSMutableArray<NSString *> *arguments = [NSProcessInfo.processInfo.arguments mutableCopy];
+    if (settings.extensionDirectories.count) {
+        NSString *prefix = @"--load-extension=";
+        NSMutableArray<NSString *> *directories = [NSMutableArray array];
+        for (NSString *argument in [arguments copy]) {
+            if (![argument hasPrefix:prefix]) continue;
+            [directories addObjectsFromArray:[[argument substringFromIndex:prefix.length] componentsSeparatedByString:@","]];
+            [arguments removeObject:argument];
+        }
+        [directories addObjectsFromArray:settings.extensionDirectories];
+        [arguments addObject:[prefix stringByAppendingString:[directories componentsJoinedByString:@","]]];
+    }
     std::vector<char *> argv;
     for (NSString *argument in arguments) argv.push_back(strdup(argument.UTF8String));
     if (settings.useMockKeychain) argv.push_back(strdup("--use-mock-keychain"));

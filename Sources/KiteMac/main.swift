@@ -29,6 +29,11 @@ MainActor.assumeIsolated {
         if UIDiagnostics.enabledByEnvironment {
             settings.extraSwitches = ["--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"]
         }
+        // Kite's helper extension lists and manages extensions (ExtensionsModel).
+        if let helper = Bundle.main.resourceURL?.appendingPathComponent("KiteHelperExtension"),
+           FileManager.default.fileExists(atPath: helper.appendingPathComponent("manifest.json").path) {
+            settings.extensionDirectories = [helper.path]
+        }
         if KCRuntime.initialize(with: settings) {
             delegate.engine = ChromiumEngine()
             KCRuntime.runMessageLoop()
