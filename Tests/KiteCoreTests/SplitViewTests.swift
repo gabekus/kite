@@ -65,6 +65,15 @@ import Testing
         #expect(state.archived.isEmpty && state.recentlyClosed.isEmpty)
     }
 
+    @Test func cancellingUndoesAPaneShowingAboutBlank() {
+        var (state, ids) = makeState()
+        guard case .added(let pane) = state.addSplitPane() else { return }
+        state.update(tab: pane) { $0.url = URL(string: "about:blank") }
+        state.cancelSplitPane(pane)
+        #expect(state.selectedSpace.splits.isEmpty)
+        #expect(state.selectedSpace.tabs.map(\.id) == ids)
+    }
+
     @Test func cancellingKeepsAPaneThatLoadedSomething() {
         var (state, _) = makeState()
         guard case .added(let pane) = state.addSplitPane() else { return }

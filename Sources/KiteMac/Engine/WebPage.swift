@@ -49,6 +49,9 @@ protocol WebPage: AnyObject {
     func reloadIgnoringCache()
     func stopLoading()
     func focus()
+    /// The command bar took the keyboard: the page mustn't take it back until `focus` or `allowFocus`.
+    func blur()
+    func allowFocus()
     /// Offscreen pages should throttle rendering and timers.
     func setVisible(_ visible: Bool)
     func showDevTools()

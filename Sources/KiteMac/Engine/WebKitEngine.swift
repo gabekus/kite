@@ -115,6 +115,9 @@ final class WebKitPage: NSObject, WebPage {
     func reloadIgnoringCache() { webView.reloadFromOrigin() }
     func stopLoading() { webView.stopLoading() }
     func focus() { webView.window?.makeFirstResponder(webView) }
+    // WebKit takes the keyboard only through AppKit, which the command bar already guards.
+    func blur() {}
+    func allowFocus() {}
     // WebKit throttles views that aren't in a window on its own.
     func setVisible(_ visible: Bool) {}
     // Web Inspector opens from the context menu; there's no public API to open it.
