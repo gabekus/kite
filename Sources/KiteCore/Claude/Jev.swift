@@ -48,6 +48,10 @@ public enum Jev {
 
     public struct BadResponse: Error, CustomStringConvertible {
         public var description: String
+
+        public init(description: String) {
+            self.description = description
+        }
     }
 
     public static func answers(from data: Data) throws -> Answers {
