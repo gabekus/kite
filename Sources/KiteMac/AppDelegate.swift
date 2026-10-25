@@ -57,6 +57,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         automation.host = windowController
         windowController.installAutomationBanner(automation)
         automation.start()
+        #if canImport(CEFBridge)
+        // Pages extensions open (welcome pages, chrome.windows.create) become background
+        // tabs, so installing one doesn't pull you off the page you're on.
+        NotificationCenter.default.addObserver(forName: .KCRuntimeOpenURL, object: nil, queue: .main) { [weak self] note in
+            guard let url = note.userInfo?["url"] as? URL else { return }
+            MainActor.assumeIsolated { _ = self?.store.mutate { $0.openTab(url: url, select: false) } }
+        }
+        KCRuntime.extensionDialogAnchor = { [weak self] window in
+            MainActor.assumeIsolated {
+                guard let self else { return .zero }
+                let controllers = [self.windowController!] + self.incognitoControllers
+                return controllers.first { $0.window === window }?.webAreaInWindow ?? .zero
+            }
+        }
+        #endif
         NSApp.activate(ignoringOtherApps: true)
         open(pendingURLs)
         pendingURLs = []
@@ -138,6 +153,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.archiveStaleTabs()
     }
 
+    // MARK: Quitting
+
+    /// ⌘Q and Kite → Quit Kite. Only these ask first: quits from the Dock, scripts
+    /// (scripts/install-app.sh) and logging out go straight to terminate.
+    @objc func quitKite(_ sender: Any?) {
+        guard let store, store.state.warnsBeforeQuitting else { return NSApp.terminate(sender) }
+        switch QuitDialog.run(over: NSApp.keyWindow ?? NSApp.mainWindow) {
+        case .quit:
+            NSApp.terminate(sender)
+        case .quitAndDontAskAgain:
+            store.mutate { $0.warnsBeforeQuitting = false }
+            NSApp.terminate(sender)
+        case .cancel:
+            break
+        }
+    }
+
+    /// Kite menu → Warn Before Quitting, until there's a Settings window (Arc has it in General).
+    @objc func toggleQuitWarning(_ sender: Any?) {
+        store.mutate { $0.warnsBeforeQuitting.toggle() }
+    }
+
     // MARK: Claude
 
     @objc func toggleClaudeJavaScript(_ sender: Any?) {
@@ -195,6 +232,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(setArchiveInterval(_:)), let store {
             item.state = ArchiveInterval.allCases.firstIndex(of: store.state.archiveAfter) == item.tag ? .on : .off
+        }
+        if item.action == #selector(toggleQuitWarning(_:)), let store {
+            item.state = store.state.warnsBeforeQuitting ? .on : .off
         }
         if item.action == #selector(toggleEnergySaver(_:)) {
             #if canImport(CEFBridge)

@@ -1,6 +1,7 @@
 #if canImport(CEFBridge)
 import AppKit
 import CEFBridge
+import KiteCore
 
 /// Chromium via CEF: Chrome's engine, Chrome DevTools, and an optional CDP port.
 @MainActor
@@ -139,11 +140,66 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         browser.view.removeFromSuperview()
     }
 
+    // MARK: Add to Kite on Google results
+
+    private var googleWorldRegistered = false
+    /// Kite's isolated-world execution contexts, by id, with their frame ids.
+    private var kiteContexts: [Int: String] = [:]
+
+    /// Registers the isolated world and its binding the first time this tab shows
+    /// Google results; other tabs never get them. Runtime is (re-)enabled on each
+    /// results page, in case automation turned it off.
+    private func prepareGoogleResults() {
+        browser.executeDevToolsMethod("Runtime.enable", params: nil, completion: nil)
+        guard !googleWorldRegistered else { return }
+        googleWorldRegistered = true
+        browser.pageFeatureEventHandler = { [weak self] method, params in self?.handlePageFeatureEvent(method, params) }
+        browser.executeDevToolsMethod(
+            "Runtime.addBinding",
+            params: ["name": GoogleResultsScript.bindingName, "executionContextName": GoogleResultsScript.worldName],
+            completion: nil
+        )
+        browser.executeDevToolsMethod(
+            "Page.addScriptToEvaluateOnNewDocument",
+            params: ["source": GoogleResultsScript.source, "worldName": GoogleResultsScript.worldName, "runImmediately": true],
+            completion: nil
+        )
+    }
+
+    private func handlePageFeatureEvent(_ method: String, _ params: [AnyHashable: Any]) {
+        switch method {
+        case "Runtime.executionContextCreated":
+            guard let context = params["context"] as? [String: Any],
+                  context["name"] as? String == GoogleResultsScript.worldName, let id = context["id"] as? Int,
+                  let frame = (context["auxData"] as? [String: Any])?["frameId"] as? String else { return }
+            kiteContexts[id] = frame
+        case "Runtime.executionContextDestroyed":
+            if let id = params["executionContextId"] as? Int { kiteContexts[id] = nil }
+        case "Runtime.executionContextsCleared":
+            kiteContexts.removeAll()
+        case "Runtime.bindingCalled":
+            // Only from Kite's world, in the main frame of a Google results page.
+            guard params["name"] as? String == GoogleResultsScript.bindingName,
+                  let context = params["executionContextId"] as? Int, let frame = kiteContexts[context],
+                  GoogleSearch.isResultsPage(address),
+                  let id = GoogleResultsScript.extensionID(fromPayload: params["payload"] as? String ?? "") else { return }
+            browser.executeDevToolsMethod("Page.getFrameTree", params: nil) { [weak self] result in
+                guard let self else { return }
+                let main = ((result?["frameTree"] as? [String: Any])?["frame"] as? [String: Any])?["id"] as? String
+                guard main == frame, GoogleSearch.isResultsPage(self.address) else { return }
+                self.onEvent?(.addExtension(id: id))
+            }
+        default:
+            break
+        }
+    }
+
     // MARK: KCBrowserDelegate
 
     func browser(_ browser: KCBrowser, titleDidChange title: String) { onEvent?(.title(title)) }
     func browser(_ browser: KCBrowser, addressDidChange url: URL) {
         address = url
+        if GoogleSearch.isResultsPage(url) { prepareGoogleResults() }
         onEvent?(.url(url))
     }
     func browser(_ browser: KCBrowser, faviconDidChange url: URL?) { onEvent?(.favicon(url)) }
@@ -186,12 +242,18 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     @objc(browser:renderProcessDidTerminateWithCode:)
     func browser(_ browser: KCBrowser, renderProcessDidTerminateWithCode code: Int32) { onEvent?(.crashed(code: Int(code))) }
 
+    @objc(browser:isExtensionPackageWithMIMEType:suggestedName:url:)
+    func browser(_ browser: KCBrowser, isExtensionPackageWithMIMEType mimeType: String, suggestedName: String, url: URL?) -> Bool {
+        ExtensionPackage.isDownload(mimeType: mimeType, suggestedName: suggestedName, url: url)
+    }
+
     @objc(browser:blockedCountDidChange:)
     func browser(_ browser: KCBrowser, blockedCountDidChange count: Int) { onEvent?(.blockedCount(count)) }
 
     @objc(browser:documentStartScriptForURL:)
     func browser(_ browser: KCBrowser, documentStartScriptFor url: URL) -> String? {
-        adblocker?.documentStartScript(for: url)
+        let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url)].compactMap { $0 }
+        return scripts.isEmpty ? nil : scripts.joined(separator: "\n")
     }
 
     func browser(_ browser: KCBrowser, findResultCount count: Int32, activeMatch: Int32, final: Bool) {
