@@ -57,6 +57,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         automation.host = windowController
         windowController.installAutomationBanner(automation)
         automation.start()
+        #if canImport(CEFBridge)
+        // Pages extensions open (welcome pages, chrome.windows.create) become background
+        // tabs, so installing one doesn't pull you off the page you're on.
+        NotificationCenter.default.addObserver(forName: .KCRuntimeOpenURL, object: nil, queue: .main) { [weak self] note in
+            guard let url = note.userInfo?["url"] as? URL else { return }
+            MainActor.assumeIsolated { _ = self?.store.mutate { $0.openTab(url: url, select: false) } }
+        }
+        #endif
         NSApp.activate(ignoringOtherApps: true)
         open(pendingURLs)
         pendingURLs = []

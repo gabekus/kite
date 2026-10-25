@@ -1,5 +1,6 @@
 #pragma once
 
+#include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
@@ -12,6 +13,14 @@
 void KCRegisterBrowser(CefRefPtr<CefBrowser> browser);
 void KCUnregisterBrowser(CefRefPtr<CefBrowser> browser);
 bool KCRuntimeIsQuitting();
+
+// Browsers Chromium creates itself (KCDefaultClient.mm). The app's CefApp gives them
+// a client that sends their pages to Kite tabs and closes them.
+CefRefPtr<CefApp> KCMakeApp();
+/// While any exist, Chrome-style browser windows are theirs and stay off screen.
+bool KCHasChromiumCreatedBrowsers();
+// Chrome's extension windows: install dialog, "added" bubble (KCExtensionWindows.mm).
+void KCInstallExtensionWindowHooks();
 
 // The ad blocker (KCAdblock.mm). Both return null when Kite is built without it.
 CefRefPtr<CefResourceRequestHandler> KCAdblockRequestHandler(KCBrowser* owner);

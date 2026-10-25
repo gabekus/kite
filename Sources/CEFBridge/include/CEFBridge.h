@@ -55,6 +55,11 @@ NS_ASSUME_NONNULL_BEGIN
 /// id, url, path, state (in-progress, complete, canceled, interrupted), receivedBytes, totalBytes.
 extern NSString * const KCDownloadDidUpdateNotification;
 
+/// Posted on the main thread when Chromium opened a page outside Kite's tabs (an
+/// extension's welcome page, chrome.windows.create). userInfo["url"] is the NSURL;
+/// Chromium's own window for it is never shown.
+extern NSString * const KCRuntimeOpenURLNotification;
+
 @class KCBrowser;
 
 /// A Chromium profile for a set of browsers. `incognitoContext` keeps cookies,
