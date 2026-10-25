@@ -52,6 +52,11 @@ public enum ArcKeyBindingsImport {
         guard let scalar = arc.keyEquivalent.unicodeScalars.first, arc.keyEquivalent.unicodeScalars.count == 1 else { return nil }
         let key = arrows[arc.keyEquivalent] ?? functionKeys[scalar.value] ?? arc.keyEquivalent
         let modifiers = Set(modifierBits.filter { arc.deviceIndependentModifierFlags & $0.0 != 0 }.map(\.1))
-        return KeyShortcut(key, modifiers)
+        // fn (1 << 23) has no Kite modifier. Dropping it would leave a bare key that fires while typing.
+        if arc.deviceIndependentModifierFlags & 1 << 23 != 0, arrows[arc.keyEquivalent] == nil, functionKeys[scalar.value] == nil {
+            return nil
+        }
+        let shortcut = KeyShortcut(key, modifiers)
+        return shortcut.isSafeKeyEquivalent ? shortcut : nil
     }
 }

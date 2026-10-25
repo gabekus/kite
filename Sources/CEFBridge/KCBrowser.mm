@@ -6,6 +6,7 @@
 
 #include "include/cef_client.h"
 #include "include/cef_devtools_message_observer.h"
+#include "include/cef_keyboard_handler.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
@@ -96,6 +97,7 @@ class KCClient : public CefClient,
                  public CefRequestHandler,
                  public CefDownloadHandler,
                  public CefFindHandler,
+                 public CefKeyboardHandler,
                  public CefDevToolsMessageObserver {
  public:
     explicit KCClient(KCBrowser* owner) : owner_(owner), adblock_(KCAdblockRequestHandler(owner)) {}
@@ -106,6 +108,7 @@ class KCClient : public CefClient,
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
     CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
     CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
+    CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
 
     // CefLifeSpanHandler
 
@@ -294,6 +297,21 @@ class KCClient : public CefClient,
         if ([delegate respondsToSelector:@selector(browser:findResultCount:activeMatch:final:)]) {
             [delegate browser:owner_ findResultCount:count activeMatch:activeMatchOrdinal final:finalUpdate];
         }
+    }
+
+    // CefKeyboardHandler
+
+    /// CEF hands every key the page didn't cancel to the main menu, including plain
+    /// typing. AppKit then matches a plain E to Edit > Emoji & Symbols (fn E), so every
+    /// e typed into a page opened the emoji picker. Only keys with a modifier that can
+    /// make a shortcut go on to the menu, as in Chrome.
+    bool OnKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event, CefEventHandle os_event) override {
+        NSEvent* ns_event = CAST_CEF_EVENT_HANDLE_TO_NSEVENT(os_event);
+        if (ns_event.type != NSEventTypeKeyDown) return false;
+        NSEventModifierFlags shortcutModifiers =
+            NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagFunction;
+        // true means handled, so CEF skips the menu.
+        return (ns_event.modifierFlags & shortcutModifiers) == 0;
     }
 
     // CefDevToolsMessageObserver
