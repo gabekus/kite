@@ -93,7 +93,8 @@ enum MainMenu {
         submenu("File", [
             item("New Tab", #selector(BrowserWindowController.newTab(_:)), "t", id: "newTab"),
             item("New Incognito Window", #selector(MenuRouter.newIncognitoWindow(_:)), "n", [.command, .shift], id: "newIncognitoWindow"),
-            item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), "l", id: "openLocation"),
+            // No key, like Gabe's Arc: ⌘L is Add Split View. Clicking the URL pill still edits the URL.
+            item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), id: "openLocation"),
             item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift], id: "reopenClosedTab"),
             .separator(),
             // Temporary: remove with ArcImportController.swift after Arc shuts down (2026-12-22).
@@ -167,8 +168,9 @@ enum MainMenu {
             item("Clear Cookies and Refresh", #selector(BrowserWindowController.clearCookiesAndRefresh(_:)), id: "clearCookiesAndRefresh"),
             item("Clear Cache and Refresh", #selector(BrowserWindowController.clearCacheAndRefresh(_:)), id: "clearCacheAndRefresh"),
             .separator(),
-            // Arc's names and IDs from its MainMenu.nib; ⌃⇧= and ⌃⇧- are Arc's defaults.
-            item("Add Split View", #selector(BrowserWindowController.addSplitView(_:)), "=", [.control, .shift], id: "addSplitView"),
+            // Arc's names and IDs from its MainMenu.nib. ⌘L is Gabe's binding; ⌃⇧= (Arc's default) still works.
+            item("Add Split View", #selector(BrowserWindowController.addSplitView(_:)), "l", id: "addSplitView"),
+            alternate(#selector(BrowserWindowController.addSplitView(_:)), "=", [.control, .shift]),
             item("Close this Split Pane", #selector(BrowserWindowController.closeSplitPane(_:)), "-", [.control, .shift], id: "removeSplitView"),
             item("Separate Page from Split View", #selector(BrowserWindowController.separateFromSplitView(_:)), id: "separateTabFromSplitView"),
         ] + (1...SplitView.maxPanes).map { n in

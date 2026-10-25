@@ -19,8 +19,8 @@ Plan: **B1–B6** are small PR-sized batches worked down in order (see the end).
 Gabe's Arc binds **⌘L to Add Split View** and **⇧⌘S to Next Space**. Arc's
 documented defaults are ⌘L = edit URL and ⌥⌘→ = next space, so these look
 like his remaps (Settings → Shortcuts). That's what "⌘L should be split view
-by default" means. Kite keeps ⌘L as Open Location until split view exists,
-then follows Gabe's binding, and shortcuts become remappable (B6).
+by default" means. Kite follows Gabe's bindings by default: ⌘L is Add Split View (Open Location
+has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 
 ## Shortcuts and menus
 
