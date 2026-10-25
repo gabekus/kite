@@ -34,6 +34,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var contentLeading: NSLayoutConstraint!
     private var sidebarLeading: NSLayoutConstraint!
     private var sidebarWidthConstraint: NSLayoutConstraint!
+    private var sidebarTop: NSLayoutConstraint!
+    private var sidebarBottom: NSLayoutConstraint!
+    /// The resize handle straddles the content card's edge when docked, the peek card's right edge while peeking.
+    private var resizeHandleDocked: NSLayoutConstraint!
+    private var resizeHandlePeek: NSLayoutConstraint!
+    /// A resize drag is under way; a peeking card doesn't slide out until it ends.
+    private var resizingSidebar = false
+    private let peekCard = PeekCard()
+    private let peekEdge = HoverStrip()
+    private let peekZone = HoverStrip()
+    private var peeking = false
+    private var peekTimer: DispatchWorkItem?
     private var sidebarWidth: CGFloat
     private var appearanceObservation: NSKeyValueObservation?
 
@@ -145,10 +157,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         commandBarHost.isHidden = true
 
         var dragStartWidth: CGFloat = 0
-        resizeHandle.onBegin = { [weak self] in dragStartWidth = self?.sidebarWidth ?? 0 }
+        resizeHandle.onBegin = { [weak self] in
+            dragStartWidth = self?.sidebarWidth ?? 0
+            self?.resizingSidebar = true
+        }
         resizeHandle.onDrag = { [weak self] dx in self?.setSidebarWidth(dragStartWidth + dx) }
         resizeHandle.onEnd = { [weak self] in
             guard let self else { return }
+            // Like Arc, a peek released away from the card stays out until the pointer comes back and leaves.
+            resizingSidebar = false
+            peekZone.resync()
             UserDefaults.standard.set(Double(sidebarWidth), forKey: Self.sidebarWidthKey)
         }
 
@@ -156,7 +174,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         materialView.blendingMode = .behindWindow
         materialView.state = .followsWindowActiveState
 
-        for view in [materialView, themeView, sidebarHost!, contentFrame, glowView, resizeHandle, commandBarHost!] as [NSView] {
+        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, commandBarHost!, peekEdge, peekZone] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -169,6 +187,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         contentLeading = contentFrame.leadingAnchor.constraint(equalTo: rootView.leadingAnchor, constant: sidebarWidth)
         sidebarLeading = sidebarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor)
         sidebarWidthConstraint = sidebarHost.widthAnchor.constraint(equalToConstant: sidebarWidth)
+        sidebarTop = sidebarHost.topAnchor.constraint(equalTo: rootView.topAnchor)
+        sidebarBottom = sidebarHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor)
+        resizeHandleDocked = resizeHandle.centerXAnchor.constraint(equalTo: contentFrame.leadingAnchor)
+        resizeHandlePeek = resizeHandle.centerXAnchor.constraint(equalTo: sidebarHost.trailingAnchor)
         NSLayoutConstraint.activate([
             materialView.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             materialView.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
@@ -181,12 +203,30 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             themeView.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
             sidebarLeading,
-            sidebarHost.topAnchor.constraint(equalTo: rootView.topAnchor),
-            sidebarHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            sidebarTop,
+            sidebarBottom,
             sidebarWidthConstraint,
 
+            peekCard.leadingAnchor.constraint(equalTo: sidebarHost.leadingAnchor),
+            peekCard.trailingAnchor.constraint(equalTo: sidebarHost.trailingAnchor),
+            peekCard.topAnchor.constraint(equalTo: sidebarHost.topAnchor),
+            peekCard.bottomAnchor.constraint(equalTo: sidebarHost.bottomAnchor),
+
+            peekEdge.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            peekEdge.topAnchor.constraint(equalTo: rootView.topAnchor),
+            peekEdge.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            peekEdge.widthAnchor.constraint(equalToConstant: Peek.edgeWidth),
+
+            // The card, the inset to its left (the pointer resting on the window's edge keeps it out) and,
+            // like Arc, a margin to its right.
+            peekZone.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            peekZone.topAnchor.constraint(equalTo: rootView.topAnchor),
+            peekZone.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            peekZone.trailingAnchor.constraint(equalTo: sidebarHost.trailingAnchor, constant: ArcMetrics.Sidebar.peekHoverMargin),
+
             // Like Arc: straddles the card's edge and spans the card's height, above the page and glow.
-            resizeHandle.centerXAnchor.constraint(equalTo: contentFrame.leadingAnchor),
+            // Peeking, it moves to the floating card's right edge but keeps the content card's height.
+            resizeHandleDocked,
             resizeHandle.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: ArcMetrics.Content.resizeZoneVerticalInset),
             resizeHandle.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor, constant: -ArcMetrics.Content.resizeZoneVerticalInset),
             resizeHandle.widthAnchor.constraint(equalToConstant: 2 * ArcMetrics.Content.resizeZoneHalfWidth),
@@ -214,6 +254,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             commandBarHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
         ])
         trafficLights = TrafficLights(window: window, host: sidebarHost)
+
+        // The peeking sidebar draws over the page; its views are raised by z-position rather
+        // than reordered, which would drop their constraints.
+        for view in [peekCard, sidebarHost!, resizeHandle, commandBarHost!] as [NSView] { view.wantsLayer = true }
+        commandBarHost.layer?.zPosition = 20
+        peekCard.isHidden = true
+        peekEdge.onHover = { [weak self] inside in self?.edgeHovered(inside) }
+        peekZone.onHover = { [weak self] inside in
+            guard let self, !inside, !resizingSidebar else { return }
+            setPeeking(false)
+        }
     }
 
     private static let sidebarWidthKey = "SidebarWidth"
@@ -227,7 +278,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         guard width != sidebarWidth else { return }
         sidebarWidth = width
         sidebarWidthConstraint.constant = width
-        if sidebarVisible { contentLeading.constant = width } else { sidebarLeading.constant = -width }
+        if sidebarVisible { contentLeading.constant = width } else if !peeking { sidebarLeading.constant = -width }
         // Lay out now so the theme's cutout moves in the same frame as the page.
         rootView.layoutSubtreeIfNeeded()
     }
@@ -254,6 +305,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
         sidebarHost.appearance = appearance
         materialView.appearance = appearance
+        peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil)
+        peekCard.material.appearance = appearance
         shownSpaceID = space.id
         // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
         let title = state.selectedTab?.title ?? ""
@@ -360,6 +413,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sidebarVisible = visible
         resizeHandle.isHidden = !visible
         sidebarHost.isHidden = false
+        peekTimer?.cancel()
+        peekEdge.isActive = false
+        // Docking a peeking sidebar: the card grows out to the window's edges, then is plain sidebar.
+        let wasPeeking = peeking
+        peeking = false
+        peekZone.isActive = false
+        sidebarTop.constant = 0
+        sidebarBottom.constant = 0
         sidebarToggles += 1
         let toggle = sidebarToggles
 
@@ -389,9 +450,80 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 self.contentClip.minimumPageWidth = 0
                 self.cardCoverDuringToggle = nil
                 self.sidebarHost.isHidden = !self.sidebarVisible
+                if wasPeeking { self.raiseSidebar(false) }
+                self.peekEdge.isActive = !self.sidebarVisible
                 self.layoutChanged()
             }
         })
+    }
+
+    // MARK: Peek
+
+    private func edgeHovered(_ inside: Bool) {
+        peekTimer?.cancel()
+        guard inside, !sidebarVisible, !peeking else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.setPeeking(true) }
+        }
+        peekTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Peek.delay, execute: work)
+    }
+
+    private func setPeeking(_ peek: Bool) {
+        guard peek != peeking, !sidebarVisible else { return }
+        peeking = peek
+        peekTimer?.cancel()
+        sidebarToggles += 1
+        let toggle = sidebarToggles
+        let offscreen = -(sidebarWidth + Peek.inset)
+
+        if peek {
+            peekEdge.isActive = false
+            sidebarHost.isHidden = false
+            raiseSidebar(true)
+            sidebarLeading.constant = Peek.inset
+            sidebarTop.constant = Peek.inset
+            sidebarBottom.constant = -Peek.inset
+            rootView.layoutSubtreeIfNeeded()
+            // Final frames are set once; Core Animation springs the layers in from off the edge.
+            Peek.slideIn(sidebarHost.layer, from: offscreen)
+            Peek.slideIn(peekCard.layer, from: offscreen)
+            peekZone.isActive = true
+            resizeHandle.isHidden = false
+            return
+        }
+
+        peekZone.isActive = false
+        resizeHandle.isHidden = true
+        let curve = ArcMetrics.Motion.sidebarToggleCurve
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = ArcMetrics.Motion.sidebarToggleDuration
+            context.timingFunction = CAMediaTimingFunction(controlPoints: curve.x1, curve.y1, curve.x2, curve.y2)
+            context.allowsImplicitAnimation = true
+            sidebarLeading.constant = offscreen
+            rootView.layoutSubtreeIfNeeded()
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, toggle == self.sidebarToggles else { return }
+                self.sidebarHost.isHidden = true
+                self.raiseSidebar(false)
+                self.sidebarLeading.constant = -self.sidebarWidth
+                self.sidebarTop.constant = 0
+                self.sidebarBottom.constant = 0
+                self.peekEdge.isActive = true
+            }
+        })
+    }
+
+    /// Puts the sidebar and its card above the page while peeking, and back under it after.
+    private func raiseSidebar(_ raise: Bool) {
+        peekCard.isHidden = !raise
+        peekCard.layer?.zPosition = raise ? 10 : 0
+        sidebarHost.layer?.zPosition = raise ? 11 : 0
+        resizeHandle.layer?.zPosition = raise ? 12 : 0
+        resizeHandleDocked.isActive = !raise
+        resizeHandlePeek.isActive = raise
+        rootView.frontViews = raise ? [resizeHandle, sidebarHost] : []
     }
 
     // MARK: Commands
@@ -664,6 +796,15 @@ final class ContentClipView: NSView {
 /// Reports layout passes so the theme can skip pixels under the web content.
 final class RootView: NSView {
     var onLayout: (() -> Void)?
+    /// Take clicks, first to last, ahead of the views above them in subview order (they're raised by z-position).
+    var frontViews: [NSView] = []
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        for front in frontViews where !front.isHidden {
+            if let hit = front.hitTest(convert(point, from: superview)) { return hit }
+        }
+        return super.hitTest(point)
+    }
 
     override func layout() {
         super.layout()
