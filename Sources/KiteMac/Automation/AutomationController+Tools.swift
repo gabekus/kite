@@ -439,7 +439,10 @@ extension AutomationController {
             spaceID = store.state.spaces[index].id
         }
         let id = store.mutate { $0.openTab(url: url, in: spaceID, select: false) }
-        if let task { taskOpenedTab?(task, id) }
+        if let task {
+            taskOpenedTab?(task, id)
+            taskTabs[task, default: []].append(id)
+        }
         if active { store.mutate { $0.select(tab: id) } }
         claudeOpened.insert(id)
         markControlled(id, connection: connection)
