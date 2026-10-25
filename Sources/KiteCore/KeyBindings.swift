@@ -40,6 +40,12 @@ public struct KeyShortcut: Codable, Hashable, Sendable {
         self.init(try c.decode(String.self, forKey: .key), Set(try c.decode([Modifier].self, forKey: .modifiers)))
     }
 
+    /// Whether it can be a menu key equivalent without taking keys a page or text field
+    /// needs: it must hold ⌃, ⌥ or ⌘. A bare or ⇧-only key fires instead of typing.
+    public var isSafeKeyEquivalent: Bool {
+        modifiers.contains { $0 != .shift }
+    }
+
     /// "⇧⌘S", as menus show it.
     public var displayString: String {
         modifiers.map(\.symbol).joined() + (Self.namedKeys[key] ?? key.uppercased())

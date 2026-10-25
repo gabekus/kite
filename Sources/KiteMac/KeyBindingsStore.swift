@@ -43,7 +43,9 @@ final class KeyBindingsStore {
     /// Sets every item's key equivalent from its default plus the overrides.
     func apply(to menu: NSMenu?) {
         guard let menu else { return }
-        let items = Self.items(in: menu)
+        // Items whose shortcut KeyShortcut can't describe stay as they are: AppKit's own
+        // Emoji & Symbols (fn E) would otherwise lose fn and fire on a bare E while typing.
+        let items = Self.items(in: menu).filter(\.hasDescribableShortcut)
         for item in items where defaults[ObjectIdentifier(item)] == nil {
             defaults[ObjectIdentifier(item)] = .some(item.shortcut)
         }
@@ -56,7 +58,12 @@ final class KeyBindingsStore {
             current[key] = .some(defaults[ObjectIdentifier(item)] ?? nil)
         }
         for (key, shortcut) in bindings.resolve(defaults: current) {
-            keys[key]?.shortcut = shortcut
+            guard let item = keys[key], item.shortcut != shortcut else { continue }
+            if let shortcut, !shortcut.isSafeKeyEquivalent {
+                NSLog("Kite: ignoring shortcut \(shortcut.displayString) for \(key): it would take keys from typing")
+                continue
+            }
+            item.shortcut = shortcut
         }
     }
 
@@ -79,6 +86,13 @@ final class KeyBindingsStore {
 }
 
 extension NSMenuItem {
+    /// False for a key equivalent with modifiers KeyShortcut has no name for, such as fn.
+    var hasDescribableShortcut: Bool {
+        keyEquivalent.isEmpty
+            || keyEquivalentModifierMask.intersection(.deviceIndependentFlagsMask)
+                .subtracting([.control, .option, .shift, .command]).isEmpty
+    }
+
     /// The key equivalent as a KeyShortcut, and back.
     var shortcut: KeyShortcut? {
         get {

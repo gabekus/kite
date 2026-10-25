@@ -8,10 +8,10 @@ enum MainMenu {
     static func build(target: AnyObject) -> NSMenu {
         // We provide Enter Full Screen (⌃⌘F) ourselves; stop AppKit adding its fn-F copy.
         UserDefaults.standard.set(false, forKey: "NSFullScreenMenuItemEverywhere")
-        let main = NSMenu()
+        let main = TypingSafeMenu()
 
         func submenu(_ title: String, _ items: [NSMenuItem]) {
-            let menu = NSMenu(title: title)
+            let menu = TypingSafeMenu(title: title)
             items.forEach(menu.addItem)
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             item.submenu = menu
@@ -46,7 +46,7 @@ enum MainMenu {
         }
 
         func submenuItem(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
-            let menu = NSMenu(title: title)
+            let menu = TypingSafeMenu(title: title)
             items.forEach(menu.addItem)
             let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             parent.submenu = menu
@@ -59,7 +59,7 @@ enum MainMenu {
         let down = String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
 
         func darkPagesMenu() -> NSMenuItem {
-            let menu = NSMenu(title: "Dark Pages")
+            let menu = TypingSafeMenu(title: "Dark Pages")
             let titles: [DarkPagesMode: String] = [.off: "Off", .matchSystem: "Match System", .always: "Always"]
             for (i, mode) in DarkPagesMode.allCases.enumerated() {
                 menu.addItem(item(titles[mode]!, #selector(BrowserWindowController.setDarkPagesMode(_:)), tag: i))
@@ -87,7 +87,9 @@ enum MainMenu {
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false, id: "hideOthers"),
             item("Show All", #selector(NSApplication.unhideAllApplications(_:)), toTarget: false, id: "showAll"),
             .separator(),
-            item("Quit Kite", #selector(NSApplication.terminate(_:)), "q", toTarget: false, id: "quitKite"),
+            item("Warn Before Quitting", #selector(AppDelegate.toggleQuitWarning(_:)), toTarget: false),
+            .separator(),
+            item("Quit Kite", #selector(AppDelegate.quitKite(_:)), "q", toTarget: false, id: "quitKite"),
         ])
 
         submenu("File", [
@@ -272,5 +274,15 @@ enum MainMenu {
         ])
 
         return main
+    }
+}
+
+/// A menu that never takes a keystroke without ⌘, ⌃, ⌥ or fn. AppKit matches a plain E
+/// to its Edit › Emoji & Symbols (fn E), and CEF hands the menu every key a page doesn't
+/// use, so a plain E anywhere on a page opened the emoji picker.
+final class TypingSafeMenu: NSMenu {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard !event.modifierFlags.isDisjoint(with: [.command, .control, .option, .function]) else { return false }
+        return super.performKeyEquivalent(with: event)
     }
 }

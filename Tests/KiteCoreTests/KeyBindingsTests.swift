@@ -47,4 +47,12 @@ import Testing
         #expect(resolved["toggleSidebar"] == .some(nil))
         #expect(resolved["notAKiteCommand"] == nil)
     }
+
+    @Test func onlyModifiedShortcutsAreSafeKeyEquivalents() {
+        #expect(cmdL.isSafeKeyEquivalent)
+        #expect(KeyShortcut("e", [.option]).isSafeKeyEquivalent)
+        #expect(!KeyShortcut("e", []).isSafeKeyEquivalent)
+        #expect(!KeyShortcut("e", [.shift]).isSafeKeyEquivalent)
+        #expect(!KeyShortcut("escape", []).isSafeKeyEquivalent)
+    }
 }

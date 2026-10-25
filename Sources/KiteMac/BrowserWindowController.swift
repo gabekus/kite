@@ -46,6 +46,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var shownPages: [UUID: WebPage] = [:]
     private let splitPanes = SplitPanesView()
     private var paneClickMonitor: Any?
+    /// The page card, in window coordinates: where Chrome's extension install dialog hangs.
+    var webAreaInWindow: NSRect { contentFrame.convert(contentFrame.bounds, to: nil) }
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
     /// Last dark-pages setting sent to each page, so it's only re-sent on change.

@@ -61,6 +61,13 @@ import Testing
         #expect(withCapsLock == KeyShortcut("=", [.control, .shift]))
     }
 
+    @Test func skipsShortcutsThatWouldFireWhileTyping() {
+        // fn E (Emoji & Symbols) must not come across as a bare E.
+        #expect(ArcKeyBindingsImport.shortcut(.init(keyEquivalent: "e", deviceIndependentModifierFlags: 1 << 23)) == nil)
+        #expect(ArcKeyBindingsImport.shortcut(.init(keyEquivalent: "e", deviceIndependentModifierFlags: 0)) == nil)
+        #expect(ArcKeyBindingsImport.shortcut(.init(keyEquivalent: "E", deviceIndependentModifierFlags: 1 << 17)) == nil)
+    }
+
     @Test func importedOverridesFreeArcsKeys() throws {
         let bindings = KeyBindings(userOverrides: try ArcKeyBindingsImport.parse(Data(json.utf8)))
         let resolved = bindings.resolve(defaults: [

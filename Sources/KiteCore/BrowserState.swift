@@ -72,6 +72,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
     /// View → Show Toolbar: back/forward/reload and the URL in a bar over the page
     /// instead of in the sidebar. Off by default, as in Arc.
     public var showsToolbar: Bool
+    /// Ask "Quit Kite?" on ⌘Q, as Arc's "Warn before quitting" does. On by default.
+    public var warnsBeforeQuitting: Bool
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -92,6 +94,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.siteSearchDefaultsSeeded = 0
         self.archiveAfter = .twelveHours
         self.showsToolbar = false
+        self.warnsBeforeQuitting = true
         seedDefaultSiteSearches()
     }
 
@@ -99,6 +102,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case spaces, favorites, selectedSpaceID, recentlyClosed, archived, searchEngine, darkPages, darkPageHosts
         case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter, showsToolbar
+        case warnsBeforeQuitting
     }
 
     public init(from decoder: Decoder) throws {
@@ -121,6 +125,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         seedDefaultSiteSearches()
         archiveAfter = try c.decodeIfPresent(ArchiveInterval.self, forKey: .archiveAfter) ?? .twelveHours
         showsToolbar = try c.decodeIfPresent(Bool.self, forKey: .showsToolbar) ?? false
+        warnsBeforeQuitting = try c.decodeIfPresent(Bool.self, forKey: .warnsBeforeQuitting) ?? true
     }
 
     // MARK: Dark pages

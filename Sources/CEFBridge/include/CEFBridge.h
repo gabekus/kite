@@ -55,6 +55,22 @@ NS_ASSUME_NONNULL_BEGIN
 /// id, url, path, state (in-progress, complete, canceled, interrupted), receivedBytes, totalBytes.
 extern NSString * const KCDownloadDidUpdateNotification;
 
+/// Posted on the main thread when Chromium opened a page outside Kite's tabs (an
+/// extension's welcome page, chrome.windows.create). userInfo["url"] is the NSURL;
+/// Chromium's own window for it is never shown.
+extern NSString * const KCRuntimeOpenURLNotification;
+
+/// Posted on the main thread when Chrome's extension install dialog closes, whether
+/// the extension was added or not.
+extern NSString * const KCExtensionInstallDialogDidCloseNotification;
+
+@interface KCRuntime (ExtensionWindows)
+/// Where Chrome's install dialog hangs: the web area of a Kite window, in that
+/// window's coordinates (empty for the whole window). The dialog is centred on it,
+/// just below its top edge.
+@property (class, nonatomic, copy, nullable) NSRect (^extensionDialogAnchor)(NSWindow *window);
+@end
+
 @class KCBrowser;
 
 /// A Chromium profile for a set of browsers. `incognitoContext` keeps cookies,
@@ -90,6 +106,12 @@ NS_SWIFT_UI_ACTOR
 - (void)browser:(KCBrowser *)browser findResultCount:(int)count activeMatch:(int)activeMatch final:(BOOL)final;
 /// The page's renderer crashed or was killed; `code` is its exit code (11 for a segfault).
 - (void)browser:(KCBrowser *)browser renderProcessDidTerminateWithCode:(int)code;
+/// YES for a store install's extension package (.crx): it's saved to a temporary
+/// folder for Chromium's installer and isn't reported as a download.
+- (BOOL)browser:(KCBrowser *)browser
+    isExtensionPackageWithMIMEType:(NSString *)mimeType
+                     suggestedName:(NSString *)suggestedName
+                               url:(nullable NSURL *)url;
 @end
 
 /// One Chromium browser (one tab), hosted in `view`.
@@ -139,6 +161,9 @@ NS_SWIFT_UI_ACTOR
                    completion:(nullable void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result))completion;
 /// DevTools protocol events (after a domain's `enable`), on the main thread. Nil to stop.
 @property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^devToolsEventHandler)(NSString *method, NSDictionary *params);
+/// The same events for Kite's own page features (such as Google's Add to Kite
+/// buttons), kept apart from devToolsEventHandler, which automation takes over.
+@property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^pageFeatureEventHandler)(NSString *method, NSDictionary *params);
 /// Like executeDevToolsMethod, but a failure comes back as the protocol's error
 /// message. `error` is "not-ready" until the browser exists.
 - (void)callDevToolsMethod:(NSString *)method
