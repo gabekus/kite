@@ -213,6 +213,21 @@ import Testing
         let url = AutomationWire.socketURL(supportDirectory: profile)
         #expect(url.pathComponents.suffix(3) == ["kite-profile", "Automation", "kite.sock"])
     }
+
+    #if !os(Windows)
+    @Test func aDeepProfileGetsAShortSocketPath() {
+        let deep = URL(fileURLWithPath: "/private/tmp/claude-501/-Users-gabe-dev-kite/185c7dde-9bac-43e6-9940-f0f453a3e69b/scratchpad/ks.20bJ",
+                       isDirectory: true)
+        let url = AutomationWire.socketURL(supportDirectory: deep)
+        #expect(url.path.utf8.count <= AutomationWire.maxSocketPathLength)
+        #expect(url.path.hasPrefix("/tmp/kite-\(getuid())/") && url.pathExtension == "sock")
+        // The app and the CLI compute it separately, so it has to be the same every time, and differ per profile.
+        #expect(url == AutomationWire.socketURL(supportDirectory: deep))
+        #expect(url != AutomationWire.socketURL(supportDirectory: deep.appendingPathComponent("other", isDirectory: true)))
+        #expect(AutomationWire.fnv1a("") == "cbf29ce484222325")
+        #expect(AutomationWire.fnv1a("a") == "af63dc4c8601ec8c")
+    }
+    #endif
 }
 
 @Suite struct AutomationPolicyTests {
