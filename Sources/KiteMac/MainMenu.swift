@@ -72,8 +72,8 @@ enum MainMenu {
         submenu("Kite", [
             item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false, id: "aboutKite"),
             .separator(),
-            item("Claude Tasks…", #selector(AppDelegate.showClaudeTasks(_:)), toTarget: false, id: "claudeTasks"),
-            item("Ask Claude About This Tab…", #selector(AppDelegate.askClaudeAboutTab(_:)), toTarget: false, id: "askClaudeAboutTab"),
+            // Claude's chat bubble at the bottom of the page; the menu item only carries the shortcut.
+            item("Ask Claude", #selector(BrowserWindowController.toggleClaudeBubble(_:)), "j", id: "askClaude"),
             .separator(),
             item("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)), toTarget: false),
             item("Allow Claude to Run JavaScript Without Asking", #selector(AppDelegate.toggleClaudeJavaScript(_:)), toTarget: false),

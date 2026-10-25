@@ -64,7 +64,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UIDiagnostics.shared.applySetting()
         automation.jev = JevClient.fromKeychain()
         claudeTasks = ClaudeTasksController(store: store, automation: automation, supportDirectory: Self.supportDirectory)
-        claudeTasks.showPanel = { [weak self] id in self?.tasksWindow().show(task: id) }
+        // A notification clicked: the bubble, on that task.
+        claudeTasks.showPanel = { [weak self] id in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.windowController.window?.makeKeyAndOrderFront(nil)
+            self?.windowController.claudeBubble.open(task: id)
+        }
+        claudeTasks.isPanelVisible = { [weak self] in
+            guard let self else { return false }
+            let window = claudeTasksWindow?.window
+            return windowController.claudeBubble.isOpen || (window?.isVisible == true && window?.isMiniaturized == false)
+        }
+        windowController.claudeBubble.tasks = claudeTasks
+        windowController.claudeBubble.showAllTasks = { [weak self] in self?.showClaudeTasks(nil) }
         windowController.hidesInsteadOfClosing = { [weak self] in self?.claudeTasks.isRunningAny == true }
         windowController.claudeButton.tasks = claudeTasks
         windowController.claudeButton.open = { [weak self] in self?.claudeButtonClicked() }
@@ -215,7 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         automation.setRecordNetwork(!automation.settings.recordNetwork)
     }
 
-    /// Kite menu → Claude Tasks…: Kite's own Claude, working in background tabs.
+    /// Every task, from the bubble's All Tasks button.
     @objc func showClaudeTasks(_ sender: Any?) {
         let window = tasksWindow()
         if let id = claudeTasks.selectedID ?? claudeTasks.tasks.first?.id {
@@ -225,17 +237,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The sidebar's Claude button: sets Claude up the first time, then opens Claude Tasks.
+    /// The sidebar's Claude button: sets Claude up the first time, then toggles the bubble.
     private func claudeButtonClicked() {
-        guard !claudeTasks.isSetUp else { return showClaudeTasks(nil) }
+        guard !claudeTasks.isSetUp else { return windowController.claudeBubble.toggle() }
         Task { @MainActor in
-            if await claudeTasks.setUp() { tasksWindow().showComposer(attachTab: false) }
+            if await claudeTasks.setUp() { windowController.claudeBubble.open() }
         }
-    }
-
-    /// Kite menu → Ask Claude About This Tab…: a new task with the front tab attached.
-    @objc func askClaudeAboutTab(_ sender: Any?) {
-        tasksWindow().showComposer(attachTab: store.state.selectedTab != nil)
     }
 
     private func tasksWindow() -> ClaudeTasksWindowController {

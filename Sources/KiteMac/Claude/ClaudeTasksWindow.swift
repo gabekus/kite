@@ -26,8 +26,6 @@ final class ClaudeTasksWindowController: NSWindowController, NSWindowDelegate {
         window.contentViewController = hosting
         window.setContentSize(NSSize(width: 760, height: 540))
         if !window.setFrameUsingName("ClaudeTasks") { window.center() }
-        tasks.isPanelVisible = { [weak window] in window?.isVisible == true && window?.isMiniaturized == false }
-        tasks.showPanel = { [weak self] id in self?.show(task: id) }
     }
 
     @available(*, unavailable)
@@ -266,7 +264,7 @@ private struct ClaudeTaskDetail: View {
     }
 }
 
-private struct ClaudeTaskEntryView: View {
+struct ClaudeTaskEntryView: View {
     let entry: ClaudeTask.Entry
 
     var body: some View {
@@ -297,7 +295,7 @@ private struct ClaudeTaskEntryView: View {
 
 /// Claude's replies: paragraphs, lists, headings, code and tables (SwiftUI's own
 /// Markdown only does inline styles).
-private struct ClaudeMarkdown: View {
+struct ClaudeMarkdown: View {
     let text: String
 
     enum Block {
