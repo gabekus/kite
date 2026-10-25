@@ -20,7 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var archiveTimer: Timer?
     private var automation: AutomationController!
     private var claudeTasks: ClaudeTasksController!
-    private var claudeTasksWindow: ClaudeTasksWindowController?
     private var diagnostics: DiagnosticsRecorder!
     /// Links opened before launch finished (Kite as the default browser).
     private var pendingURLs: [URL] = []
@@ -70,13 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.windowController.window?.makeKeyAndOrderFront(nil)
             self?.windowController.claudeBubble.open(task: id)
         }
-        claudeTasks.isPanelVisible = { [weak self] in
-            guard let self else { return false }
-            let window = claudeTasksWindow?.window
-            return windowController.claudeBubble.isOpen || (window?.isVisible == true && window?.isMiniaturized == false)
-        }
+        claudeTasks.isPanelVisible = { [weak self] in self?.windowController.claudeBubble.isOpen == true }
         windowController.claudeBubble.tasks = claudeTasks
-        windowController.claudeBubble.showAllTasks = { [weak self] in self?.showClaudeTasks(nil) }
         windowController.hidesInsteadOfClosing = { [weak self] in self?.claudeTasks.isRunningAny == true }
         windowController.claudeButton.tasks = claudeTasks
         windowController.claudeButton.open = { [weak self] in self?.claudeButtonClicked() }
@@ -223,16 +217,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         automation.setRecordNetwork(!automation.settings.recordNetwork)
     }
 
-    /// Every task, from the bubble's All Tasks button.
-    @objc func showClaudeTasks(_ sender: Any?) {
-        let window = tasksWindow()
-        if let id = claudeTasks.selectedID ?? claudeTasks.tasks.first?.id {
-            window.show(task: id)
-        } else {
-            window.showComposer(attachTab: false)
-        }
-    }
-
     /// The sidebar's Claude button: sets Claude up the first time, then toggles the bubble.
     private func claudeButtonClicked() {
         guard !claudeTasks.isSetUp else { return windowController.claudeBubble.toggle() }
@@ -241,12 +225,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func tasksWindow() -> ClaudeTasksWindowController {
-        if let claudeTasksWindow { return claudeTasksWindow }
-        let controller = ClaudeTasksWindowController(tasks: claudeTasks, store: store)
-        claudeTasksWindow = controller
-        return controller
-    }
 
     @objc func connectClaudeCode(_ sender: Any?) {
         if !automation.isEnabled { automation.setEnabled(true) }

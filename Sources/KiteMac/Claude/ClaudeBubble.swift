@@ -17,7 +17,6 @@ final class ClaudeBubbleModel {
     /// Bumped to move focus into the text field.
     var focusToken = 0
     @ObservationIgnored var onOpenChange: (Bool) -> Void = { _ in }
-    @ObservationIgnored var showAllTasks: () -> Void = {}
 
     /// Opens on `task`, or on the task it showed last (a fresh composer once that's done and read).
     func open(task: UUID? = nil, attachTab: Bool = false) {
@@ -112,13 +111,39 @@ struct ClaudeBubble: View {
             if tasks.isRunning(task.id) {
                 headerButton("Stop", symbol: "stop.circle") { tasks.stop(task.id) }
             }
+            recentTasks(tasks)
             headerButton("New Task", symbol: "square.and.pencil") { model.newTask() }
-            headerButton("All Tasks", symbol: "list.bullet") { model.showAllTasks() }
             headerButton("Hide (Esc)", symbol: "xmark") { model.close() }
         }
         .padding(.horizontal, 14)
         .padding(.top, 10)
         .padding(.bottom, 6)
+    }
+
+    /// Earlier tasks, newest first: a small menu instead of a window.
+    @ViewBuilder
+    private func recentTasks(_ tasks: ClaudeTasksController) -> some View {
+        let recent = tasks.tasks.prefix(15)
+        if recent.count > 1 || (recent.count == 1 && model.taskID == nil) {
+            Menu {
+                ForEach(Array(recent)) { task in
+                    Button {
+                        model.open(task: task.id)
+                    } label: {
+                        Text(tasks.isRunning(task.id) ? "● \(task.title)" : task.title)
+                    }
+                    .disabled(task.id == model.taskID)
+                }
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .foregroundStyle(.secondary)
+            .help("Earlier tasks")
+        }
     }
 
     private func headerButton(_ help: String, symbol: String, action: @escaping () -> Void) -> some View {
@@ -189,6 +214,9 @@ struct ClaudeBubble: View {
                 }
                 .buttonStyle(.plain)
                 .help(model.attachTab ? "Attached “\(frontTab.displayTitle)”" : "Attach this tab")
+            }
+            if task == nil, let tasks = model.tasks {
+                recentTasks(tasks)
             }
             if task == nil {
                 Button("Hide (Esc)", systemImage: "xmark") { model.close() }
