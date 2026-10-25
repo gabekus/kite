@@ -140,7 +140,9 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
 - **Off by default.** The setting is stored per profile in `<profile>/automation.json` (`allowClaudeControl`,
   `allowJavaScript`, `useClaudeSpace`, `recordNetwork`). While it's off there's no socket, and no DevTools events are collected.
 - **Local only.** A Unix socket at `<profile>/Automation/kite.sock`. Its folder is 0700 and the socket 0600, and the
-  peer uid is checked.
+  peer uid is checked. A profile too deep for a socket path (over 103 bytes, e.g. a test profile in a nested temp
+  folder) uses `/tmp/kite-<uid>/<hash of the profile path>.sock` instead. The app refuses that folder unless it can
+  make it 0700, and the CLI only connects to a socket the user owns.
 - **Confirmation sheet.** Kite selects the tab and asks. Deny is the default button; after 2 minutes the answer is
   Deny. A denial comes back to Claude as a tool error. Kite asks before:
   - submitting a form;

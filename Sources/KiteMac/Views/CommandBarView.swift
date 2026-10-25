@@ -154,6 +154,7 @@ private struct CommandBarView: View {
     /// Set by Tab after a Site Search shortcut; the query then searches that site.
     @State private var site: SiteSearch?
     @FocusState private var focused: Bool
+    @Environment(\.colorScheme) private var scheme
     /// Catches Backspace on an empty field, which the field editor swallows before onKeyPress.
     @State private var backspaceMonitor: Any?
     /// What the user typed, without the inline completion after it.
@@ -214,8 +215,8 @@ private struct CommandBarView: View {
                         FaviconView(page: tabTarget.url(for: ""), size: S.faviconSize)
                             .offset(x: S.faviconOffset)
                     } else {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 13, weight: .medium))
+                        Magnifier()
+                            .stroke(scheme == .dark ? Color.white : Color.black, style: StrokeStyle(lineWidth: C.magnifierStroke, lineCap: .round))
                     }
                 }
                 .frame(width: C.iconSize, height: C.iconSize)
@@ -228,7 +229,8 @@ private struct CommandBarView: View {
                 }
                 TextField("", text: $query, prompt: Text(site == nil ? "Search or Enter URL..." : "Search...").foregroundStyle(.primary.opacity(C.placeholderOpacity)))
                     .textFieldStyle(.plain)
-                    .font(.system(size: C.fieldFontSize))
+                    .font(.system(size: C.fieldFontSize, weight: .medium))
+                    .offset(y: -C.fieldTextLift)
                     .focused($focused)
                     .onSubmit { commit(items) }
                     .onKeyPress(.downArrow) {
@@ -267,7 +269,7 @@ private struct CommandBarView: View {
 
             if !items.isEmpty {
                 Rectangle()
-                    .fill(.primary.opacity(C.dividerOpacity))
+                    .fill((scheme == .dark ? Color.white : Color.black).opacity(C.dividerOpacity))
                     .frame(height: 0.5)
                     .padding(.horizontal, C.dividerInset)
                 VStack(spacing: 0) {
@@ -353,16 +355,60 @@ private struct CommandBarView: View {
     }
 }
 
-/// Arc's panel: near-black in dark mode, a hairline border, a wide soft shadow.
+/// Arc's panel: a dark tint over the blurred page, a hairline border, a wide soft shadow.
 private struct CommandBarPanel: ViewModifier {
     @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: C.cornerRadius, style: .circular)
         content
-            .background(scheme == .dark ? Color(white: 0.106) : Color(white: 0.98), in: shape)
+            .background {
+                ZStack {
+                    PanelMaterial(material: scheme == .dark ? .hudWindow : .popover)
+                    Color(white: scheme == .dark ? C.darkTint : C.lightTint).opacity(C.tintOpacity)
+                }
+                .clipShape(shape)
+            }
             .overlay(shape.strokeBorder(scheme == .dark ? Color.white.opacity(C.borderOpacity) : Color.black.opacity(0.12), lineWidth: 1))
+            // A black hairline just outside the border, which shows on light pages.
+            .overlay(
+                RoundedRectangle(cornerRadius: C.cornerRadius + C.outlineWidth, style: .circular)
+                    .strokeBorder(Color.black, lineWidth: C.outlineWidth)
+                    .padding(-C.outlineWidth)
+            )
             .shadow(color: .black.opacity(C.shadowOpacity), radius: C.shadowRadius, y: C.shadowY)
+    }
+}
+
+/// Arc's field icon: a ring with a short, thin handle, the same stroke all round. It is
+/// not SF Symbols' magnifyingglass, whose handle is longer and heavier.
+private struct Magnifier: Shape {
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.minX + C.magnifierCenter.x, y: rect.minY + C.magnifierCenter.y)
+        let diagonal = CGFloat(0.5).squareRoot()
+        var path = Path()
+        path.addEllipse(in: CGRect(x: center.x - C.magnifierRadius, y: center.y - C.magnifierRadius,
+                                   width: C.magnifierRadius * 2, height: C.magnifierRadius * 2))
+        path.move(to: CGPoint(x: center.x + C.magnifierRadius * diagonal, y: center.y + C.magnifierRadius * diagonal))
+        path.addLine(to: CGPoint(x: center.x + C.magnifierHandleEnd * diagonal, y: center.y + C.magnifierHandleEnd * diagonal))
+        return path
+    }
+}
+
+/// The blurred page under the panel. Within-window blending samples the web view too,
+/// since the window server composites Chromium's layers into the backdrop.
+private struct PanelMaterial: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .withinWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.material = material
     }
 }
 

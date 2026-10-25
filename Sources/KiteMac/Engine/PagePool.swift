@@ -18,6 +18,8 @@ final class PagePool {
     private var savedState: [UUID: Any] = [:]
     private var visibleID: UUID?
     private var memoryPressure: DispatchSourceMemoryPressure?
+    /// Installs started from Google's "Add to Kite" buttons, by extension id.
+    private var extensionInstalls: [String: BackgroundExtensionInstall] = [:]
 
     init(engine: WebEngine, store: BrowserStore) {
         self.engine = engine
@@ -93,7 +95,16 @@ final class PagePool {
                 $0.canGoBack = canGoBack
                 $0.canGoForward = canGoForward
             }
-            if !isLoading { onLoadFinished?(id) }
+            if !isLoading {
+                markInstalledExtensions(in: id)
+                onLoadFinished?(id)
+            }
+        case .addExtension(let extensionID):
+            guard extensionInstalls[extensionID] == nil, let source = pages[id],
+                  let storeURL = ChromeWebStore.detailURL(for: extensionID) else { return }
+            extensionInstalls[extensionID] = BackgroundExtensionInstall(
+                extensionID: extensionID, storeURL: storeURL, engine: engine, source: source
+            ) { [weak self] in self?.extensionInstalls[extensionID] = nil }
         case let .openInNewTab(url, foreground):
             store.mutate { $0.openTab(url: url, select: foreground) }
         case .popup(let page):
@@ -110,6 +121,15 @@ final class PagePool {
                 $0.crashCode = code
                 $0.isLoading = false
             }
+        }
+    }
+
+    /// On Google results, extensions that are already installed say "Added".
+    private func markInstalledExtensions(in id: UUID) {
+        guard let page = pages[id], GoogleSearch.isResultsPage(store.state.tab(id)?.url) else { return }
+        for extensionID in BackgroundExtensionInstall.installedIDs() {
+            guard let script = GoogleResultsScript.label(extensionID, "Added", disabled: true) else { continue }
+            page.evaluateJavaScript(script) { _ in }
         }
     }
 

@@ -166,8 +166,35 @@ swaps the shown page, theme, command bar and sidebar. Page events flow from the 
 
 **CEF on macOS**
 - `CefWindowInfo.SetAsChild(parentView, …)` forces **Alloy style** ("Alloy style will always be used if parent_view is provided").
-  Alloy has **no extension API** in CEF 156. Chrome Web Store extensions need **Chrome style**, which on Mac requires
-  a Views-hosted window (`CefWindow` + `CefBrowserView`). The pending spike: can our AppKit sidebar and Metal views live in that NSWindow?
+
+**Extensions (measured Oct 2026, CEF 156 / Chromium 156.0.8078.17; spike branch `extensions-self-install`)**
+- Kite's **Alloy-style tabs run Chrome extensions**: MV3 service workers, content scripts and `chrome-extension://` pages
+  (a popup page opened as a tab has `chrome.runtime`/`chrome.tabs`). `--load-extension=<dir>` works at launch, with or
+  without `--enable-extensions`.
+- **Installing from the Chrome Web Store works**: the store page has `chrome.webstorePrivate`/`chrome.management`, and
+  Add to Chrome brings up Chrome's own native "Add "X"?" dialog (a Views window). The install lands in
+  `<profile>/Chromium/Default/Extensions/<id>/<version>`.
+- **`chrome://extensions` is blocked** in Alloy-style browsers (`ERR_ABORTED`; chromium.log: "Navigation to chrome://extensions/
+  is blocked in Alloy-style browser"). Kite needs its own extensions UI.
+- **`chrome.tabs.create` fails with "No current window"**: Kite's tabs aren't Chrome windows. `chrome.windows.create` and
+  extension welcome pages *do* create a Chrome-style browser window (tab strip, omnibox, extension toolbar); those browsers get
+  `CefBrowserProcessHandler::GetDefaultClient()`'s client, and their windows are `BrowserNativeWidgetWindow`.
+  Kite routes them into background tabs (`KCDefaultClient.mm`) and never orders those windows in (`KCExtensionWindows.mm`).
+  A hidden Chrome-style "anchor" browser would make `tabs.create` work, but its window couldn't be hidden reliably.
+- **Chrome's install dialog can't be hidden or replaced** without patching CEF: its NSWindow title is empty (the "Add …?" text is
+  only its accessibility title), Chrome fades it in itself (alpha steps 0.29 → 1, bypassing `-setAlphaValue:`), and
+  "Add extension" stays disabled while the dialog isn't really visible (its anti-clickjacking delay). So Kite attaches Chrome's
+  own dialog to the Kite window as a sheet instead; a native Kite card needs a CEF change (an install-prompt callback).
+- `--apps-gallery-install-auto-confirm-for-tests=accept` is **not** honoured.
+- The store's "Switch to Chrome?" popup/banner isn't driven by `navigator.userAgentData` brands: adding a "Google Chrome" brand
+  changed nothing, and Arc 155 (Chromium-only brands, same `webstorePrivate` methods) gets "Add to Arc" and no promos. Kite
+  rewrites the store page instead (`WebStoreScript`).
+- A store install downloads the `.crx` through the tab's `CefDownloadHandler`; route it to a temp folder, not ~/Downloads.
+- **`Extensions.loadUnpacked` (CDP) only works on a browser-target session**, i.e. over the TCP debugging port. From a page
+  session (what `ExecuteDevToolsMethod` reaches) it's "Method not available"; `Target.attachToBrowserTarget` is "Not allowed"
+  in-process and over TCP; `--remote-debugging-pipe` (fds 3/4) never answered. So a Kite-managed install (download the CRX from
+  `clients2.google.com/service/update2/crx`, verify, unpack with the manifest `key` so the id stays the store's) can only load
+  it at launch via `--load-extension`, i.e. after a restart, and Chromium then reports it as installType `development`.
 - **`DoClose` must return `true`** for tab browsers. Returning false sends `performClose:` to the *whole window*.
   We remove the browser's NSView ourselves (`dispatch_async` → `removeFromSuperview`) to complete the close.
 - When quitting, `closeAllBrowsersAndQuit` closes every browser. `browserDidClose` must **not** report `browserDidRequestClose`

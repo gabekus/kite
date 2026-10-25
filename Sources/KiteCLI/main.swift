@@ -80,6 +80,9 @@ final class KiteConnection: @unchecked Sendable {
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         guard path.utf8.count < MemoryLayout.size(ofValue: address.sun_path) else { return false }
+        // The socket may sit in a shared folder (/tmp for deep profiles): only talk to one the user owns.
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_uid == getuid() else { return false }
         withUnsafeMutableBytes(of: &address.sun_path) { buffer in
             buffer.copyBytes(from: path.utf8)
             buffer[path.utf8.count] = 0

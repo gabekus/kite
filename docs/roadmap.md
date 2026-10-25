@@ -53,11 +53,31 @@ that opens the site in a chrome-less Kite window with its own icon and Dock tile
 
 ## Extensions
 
-Alloy-style CEF (what we use to embed Chromium in our own view) has no
-extension API. Chrome Web Store extensions need CEF's Chrome style, which on
-macOS requires a CEF Views-hosted window. Spike: host the page in a Chrome-style
-`CefBrowserView` inside a CEF window, and check whether our AppKit sidebar and
-Metal views can live in the same `NSWindow`.
+Kite's Alloy-style CEF 156 tabs run Chrome extensions, and installing from the
+Chrome Web Store works (facts in HANDOFF.md §6).
+
+Done:
+- The store page says Add to Kite / Remove from Kite, without the Switch to
+  Chrome banner and popup.
+- Google results that link to a store extension get an Add to Kite button that
+  installs without leaving the page (hidden store page, Chrome's own dialog).
+- Chrome's install dialog hangs as a sheet on the Kite window; the "added"
+  bubble and Chrome-style windows never show; pages extensions open become
+  background tabs; store downloads stay out of ~/Downloads.
+
+Next:
+- Extensions UI: `chrome://extensions` is blocked in Alloy style, so Kite needs
+  its own list (enable, remove, site access) and toolbar icons that open each
+  extension's popup.
+- `chrome.tabs.create` fails ("No current window") because Kite's tabs aren't
+  Chrome windows; extensions that open tabs that way need a fix.
+- A native Kite confirm card instead of Chrome's dialog. Chrome's dialog can't be
+  hidden, so this needs an install-prompt callback in CEF: propose it upstream
+  rather than carry a CEF fork (a fork means rebuilding Chromium, ~100–150 GB, for
+  every release). Fallback: Kite installs extensions itself and loads them at
+  launch, which needs a restart.
+- 1Password's desktop-app link: install native-messaging host manifests where
+  Kite's Chromium looks for them.
 
 ## Sync and sharing
 

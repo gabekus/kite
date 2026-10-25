@@ -33,6 +33,9 @@ final class Adblocker {
 
     #if canImport(KiteAdblock)
     private(set) var engine: AdblockEngine?
+    /// Just `BrowserNags`, for pages the main engine doesn't filter (the ad blocker
+    /// is off there, or the lists haven't downloaded yet). Builds in about a millisecond.
+    private lazy var nagEngine = AdblockEngine.build(lists: BrowserNags.withBuiltIn([]))
     /// Exceptions for the last pages asked about, so the class/id reports don't recompute them.
     private var exceptionsByHost: [String: [String]] = [:]
     #endif
@@ -52,11 +55,21 @@ final class Adblocker {
         var uboRelease: String?
         /// `engineFormat` the cached engine was built with.
         var engineFormat: Int?
+        /// `BrowserNags.fingerprint` of the copy of that list in the cached engine.
+        var browserNags: String?
+
+        var cacheIsCurrent: Bool { engineFormat == Adblocker.engineFormat && browserNags == BrowserNags.fingerprint }
+
+        mutating func markCacheCurrent() {
+            engineFormat = Adblocker.engineFormat
+            browserNags = BrowserNags.fingerprint
+        }
     }
 
     /// Bump when the Rust build changes how lists compile (e.g. adblock-rust
     /// features), so an engine cached by an older Kite is rebuilt, not reused.
-    private static let engineFormat = 2
+    /// 3: engines include `BrowserNags`.
+    private nonisolated static let engineFormat = 3
 
     init(directory: URL) {
         self.directory = directory
@@ -91,13 +104,20 @@ final class Adblocker {
 
     // MARK: Cosmetic filtering
 
-    /// What to run at document start for a page, or nil when it isn't filtered.
+    /// What to run at document start for a page, or nil when there's nothing to do.
+    /// Pages the ad blocker skips still get `BrowserNags`.
     func documentStartScript(for url: URL) -> String? {
         #if canImport(KiteAdblock)
-        guard blocks(url), let engine, let host = url.host(), let resources = engine.cosmeticResources(for: url) else { return nil }
-        exceptionsByHost[host] = resources.exceptions
-        if exceptionsByHost.count > 64 { exceptionsByHost = [host: resources.exceptions] }
-        return resources.documentStartScript(host: host, styleID: String(styleID), drain: drainName)
+        guard let host = url.host(), url.scheme?.hasPrefix("http") == true else { return nil }
+        if blocks(url), let engine, let resources = engine.cosmeticResources(for: url) {
+            exceptionsByHost[host] = resources.exceptions
+            if exceptionsByHost.count > 64 { exceptionsByHost = [host: resources.exceptions] }
+            return resources.documentStartScript(host: host, styleID: String(styleID), drain: drainName)
+        }
+        // The nag list has no generic rules, so there's no class/id queue to drain.
+        guard let resources = nagEngine?.cosmeticResources(for: url),
+              !resources.hideSelectors.isEmpty || !resources.procedural.isEmpty else { return nil }
+        return resources.documentStartScript(host: host, styleID: String(styleID), drain: nil)
         #else
         return nil
         #endif
@@ -140,15 +160,17 @@ final class Adblocker {
         try? JSONEncoder().encode(status).write(to: statusURL, options: .atomic)
     }
 
-    /// The downloaded list texts. Only WebKit's rule conversion needs them after the
-    /// engine is built, so they're read from disk on demand instead of kept in memory.
+    /// The downloaded list texts, then `BrowserNags`; empty until a list has
+    /// downloaded. Only WebKit's rule conversion needs them after the engine is
+    /// built, so they're read from disk on demand instead of kept in memory.
     nonisolated func readLists() -> [(text: Data, trusted: Bool)] {
-        FilterList.defaults.compactMap { list in (try? Data(contentsOf: listURL(list))).map { ($0, list.trusted) } }
+        let downloaded = FilterList.defaults.compactMap { list in (try? Data(contentsOf: listURL(list))).map { ($0, list.trusted) } }
+        return downloaded.isEmpty ? [] : BrowserNags.withBuiltIn(downloaded)
     }
 
     private func loadCacheNow() {
         let start = Date()
-        guard readStatus().engineFormat == Self.engineFormat, let data = try? Data(contentsOf: engineURL), let engine = AdblockEngine.deserialize(data) else { return }
+        guard readStatus().cacheIsCurrent, let data = try? Data(contentsOf: engineURL), let engine = AdblockEngine.deserialize(data) else { return }
         if let resources = try? Data(contentsOf: resourcesURL) { _ = engine.useResources(resources) }
         publish(engine)
         NSLog("Kite: ad blocker loaded from cache in %.0f ms", Date().timeIntervalSince(start) * 1000)
@@ -160,7 +182,7 @@ final class Adblocker {
         let engineURL = engineURL, resourcesURL = resourcesURL
         let lists = readLists()
         guard !lists.isEmpty else { return }
-        let cacheIsCurrent = readStatus().engineFormat == Self.engineFormat
+        let cacheIsCurrent = readStatus().cacheIsCurrent
         let loaded: AdblockEngine? = await Task.detached(priority: .userInitiated) {
             let resources = try? Data(contentsOf: resourcesURL)
             var engine = cacheIsCurrent ? (try? Data(contentsOf: engineURL)).flatMap(AdblockEngine.deserialize) : nil
@@ -174,7 +196,7 @@ final class Adblocker {
         if let loaded {
             if !cacheIsCurrent {
                 var status = readStatus()
-                status.engineFormat = Self.engineFormat
+                status.markCacheCurrent()
                 writeStatus(status)
             }
             publish(loaded)
@@ -237,7 +259,7 @@ final class Adblocker {
             }
         }
         guard changed else { return writeStatus(status) }
-        status.engineFormat = Self.engineFormat
+        status.markCacheCurrent()
         writeStatus(status)
 
         let lists = readLists()
