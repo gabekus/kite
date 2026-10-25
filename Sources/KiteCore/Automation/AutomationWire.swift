@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// What a tool call returns: MCP's `CallToolResult` shape, so the relay passes it through.
 public struct ToolOutput: Codable, Hashable, Sendable {
@@ -127,10 +132,36 @@ public enum AutomationWire {
         return data
     }
 
+    /// The longest socket path `sockaddr_un` takes on macOS (104 bytes with the terminating NUL).
+    public static let maxSocketPathLength = 103
+
     /// Where the app listens and the CLI connects: inside the profile's support
     /// directory, in a folder only the user can open.
+    ///
+    /// A profile too deep for a socket path (a test profile in a nested temp
+    /// folder) gets `/tmp/kite-<uid>/<hash of the profile path>.sock` instead, so
+    /// each profile still has its own socket and the CLI finds the same one.
     public static func socketURL(supportDirectory: URL) -> URL {
-        supportDirectory.appendingPathComponent("Automation", isDirectory: true).appendingPathComponent("kite.sock")
+        let preferred = supportDirectory.appendingPathComponent("Automation", isDirectory: true).appendingPathComponent("kite.sock")
+        #if os(Windows)
+        return preferred
+        #else
+        guard preferred.path.utf8.count > maxSocketPathLength else { return preferred }
+        let profile = supportDirectory.standardizedFileURL.path
+        return URL(fileURLWithPath: "/tmp/kite-\(getuid())", isDirectory: true)
+            .appendingPathComponent(fnv1a(profile) + ".sock")
+        #endif
+    }
+
+    /// A stable hash (Swift's `Hasher` is seeded per process, and the app and CLI must agree).
+    static func fnv1a(_ string: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in string.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        let hex = String(hash, radix: 16)
+        return String(repeating: "0", count: 16 - hex.count) + hex
     }
 }
 

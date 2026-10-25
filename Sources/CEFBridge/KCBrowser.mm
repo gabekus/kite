@@ -6,6 +6,7 @@
 
 #include "include/cef_client.h"
 #include "include/cef_devtools_message_observer.h"
+#include "include/cef_keyboard_handler.h"
 #include "include/cef_parser.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
@@ -96,6 +97,7 @@ class KCClient : public CefClient,
                  public CefRequestHandler,
                  public CefDownloadHandler,
                  public CefFindHandler,
+                 public CefKeyboardHandler,
                  public CefDevToolsMessageObserver {
  public:
     explicit KCClient(KCBrowser* owner) : owner_(owner), adblock_(KCAdblockRequestHandler(owner)) {}
@@ -106,6 +108,7 @@ class KCClient : public CefClient,
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
     CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
     CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
+    CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
 
     // CefLifeSpanHandler
 
@@ -245,6 +248,15 @@ class KCClient : public CefClient,
                           CefRefPtr<CefDownloadItem> download_item,
                           const CefString& suggested_name,
                           CefRefPtr<CefBeforeDownloadCallback> callback) override {
+        if (IsExtensionPackage(download_item, suggested_name)) {
+            // Chromium's installer picks it up from here; it never reaches Downloads.
+            NSString* directory = [NSTemporaryDirectory() stringByAppendingPathComponent:@"KiteExtensionInstalls"];
+            [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+            NSString* name = [NSString stringWithFormat:@"%u-%@", download_item->GetId(),
+                                                       ToNSString(suggested_name).lastPathComponent];
+            callback->Continue([directory stringByAppendingPathComponent:name].UTF8String, false);
+            return true;
+        }
         callback->Continue(UniqueDownloadURL(ToNSString(suggested_name)).path.UTF8String, false);
         return true;
     }
@@ -252,6 +264,8 @@ class KCClient : public CefClient,
     void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
                            CefRefPtr<CefDownloadItem> download_item,
                            CefRefPtr<CefDownloadItemCallback> callback) override {
+        // A store install's package isn't the user's download: no bounce, not listed.
+        if (IsExtensionPackage(download_item, download_item->GetSuggestedFileName())) return;
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
         NSString* state = download_item->IsComplete() ? @"complete"
             : download_item->IsCanceled() ? @"canceled"
@@ -266,6 +280,15 @@ class KCClient : public CefClient,
         }];
     }
 
+    bool IsExtensionPackage(CefRefPtr<CefDownloadItem> item, const CefString& suggested_name) {
+        id<KCBrowserDelegate> delegate = owner_.delegate;
+        if (![delegate respondsToSelector:@selector(browser:isExtensionPackageWithMIMEType:suggestedName:url:)]) return false;
+        return [delegate browser:owner_
+            isExtensionPackageWithMIMEType:ToNSString(item->GetMimeType())
+                             suggestedName:ToNSString(suggested_name)
+                                       url:ToNSURL(item->GetOriginalUrl())];
+    }
+
     // CefFindHandler
 
     void OnFindResult(CefRefPtr<CefBrowser> browser, int identifier, int count, const CefRect& selectionRect,
@@ -274,6 +297,21 @@ class KCClient : public CefClient,
         if ([delegate respondsToSelector:@selector(browser:findResultCount:activeMatch:final:)]) {
             [delegate browser:owner_ findResultCount:count activeMatch:activeMatchOrdinal final:finalUpdate];
         }
+    }
+
+    // CefKeyboardHandler
+
+    /// CEF hands every key the page didn't cancel to the main menu, including plain
+    /// typing. AppKit then matches a plain E to Edit > Emoji & Symbols (fn E), so every
+    /// e typed into a page opened the emoji picker. Only keys with a modifier that can
+    /// make a shortcut go on to the menu, as in Chrome.
+    bool OnKeyEvent(CefRefPtr<CefBrowser> browser, const CefKeyEvent& event, CefEventHandle os_event) override {
+        NSEvent* ns_event = CAST_CEF_EVENT_HANDLE_TO_NSEVENT(os_event);
+        if (ns_event.type != NSEventTypeKeyDown) return false;
+        NSEventModifierFlags shortcutModifiers =
+            NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagFunction;
+        // true means handled, so CEF skips the menu.
+        return (ns_event.modifierFlags & shortcutModifiers) == 0;
     }
 
     // CefDevToolsMessageObserver
@@ -287,7 +325,7 @@ class KCClient : public CefClient,
     void OnDevToolsEvent(CefRefPtr<CefBrowser> browser, const CefString& method,
                          const void* params, size_t params_size) override {
         KCBrowser* owner = owner_;
-        if (!owner.devToolsEventHandler) return;
+        if (!owner.devToolsEventHandler && !owner.pageFeatureEventHandler) return;
         [owner deliverDevToolsEvent:ToNSString(method) data:[NSData dataWithBytes:params length:params_size]];
     }
 
@@ -344,6 +382,9 @@ class KCClient : public CefClient,
     /// The registered document-start script; reloads and same-site links reuse it.
     NSString* _documentScriptSource;
     BOOL _runScriptAtLoadStart;
+    /// DevTools calls made before the browser exists; sent ahead of the first navigation.
+    NSMutableArray<void (^)(void)>* _queuedDevTools;
+    BOOL _attached;
 }
 
 - (instancetype)initWithURL:(NSURL*)url delegate:(id<KCBrowserDelegate>)delegate {
@@ -373,6 +414,7 @@ class KCClient : public CefClient,
         _nextMessageID = 1000;
         _pendingDevTools = new std::map<int, void (^)(NSDictionary*, NSString*)>();
         _documentScripts = [NSMutableArray array];
+        _queuedDevTools = [NSMutableArray array];
     }
     return self;
 }
@@ -383,10 +425,15 @@ class KCClient : public CefClient,
 
 - (void)attachBrowser:(CefRefPtr<CefBrowser>)browser {
     _browser = browser;
+    _attached = YES;
+    NSArray<void (^)(void)>* queued = [_queuedDevTools copy];
+    [_queuedDevTools removeAllObjects];
     NSView* browserView = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
     browserView.frame = _view.bounds;
     browserView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     if (_closed) {
+        _browser = nullptr;
+        for (void (^call)(void) in queued) call();
         browser->GetHost()->CloseBrowser(true);
         return;
     }
@@ -394,6 +441,8 @@ class KCClient : public CefClient,
     if ([_delegate respondsToSelector:@selector(browser:documentStartScriptForURL:)]) {
         [self executeDevToolsMethod:@"Page.enable" params:nil completion:nil];
     }
+    // Before the first load, so a Network.enable made while the tab was opening sees its document.
+    for (void (^call)(void) in queued) call();
     if (_documentScriptSource && _documentScripts.count == 0 && !_pendingURL) {
         [self addDocumentScript:_documentScriptSource navigation:_navigationCount completion:nil];
     }
@@ -516,7 +565,12 @@ class KCClient : public CefClient,
                     params:(NSDictionary<NSString*, id>*)params
                 completion:(void (^)(NSDictionary*, NSString*))completion {
     if (!_browser) {
-        completion(nil, @"not-ready");
+        if (_attached || _closed) {
+            completion(nil, @"not-ready");
+        } else {
+            void (^copied)(NSDictionary*, NSString*) = [completion copy];
+            [_queuedDevTools addObject:^{ [self callDevToolsMethod:method params:params completion:copied]; }];
+        }
         return;
     }
     int messageID = _nextMessageID++;
@@ -626,7 +680,9 @@ class KCClient : public CefClient,
 
 - (void)deliverDevToolsEvent:(NSString*)method data:(NSData*)data {
     id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
-    if (self.devToolsEventHandler) self.devToolsEventHandler(method, [json isKindOfClass:NSDictionary.class] ? json : @{});
+    NSDictionary* params = [json isKindOfClass:NSDictionary.class] ? json : @{};
+    if (self.pageFeatureEventHandler) self.pageFeatureEventHandler(method, params);
+    if (self.devToolsEventHandler) self.devToolsEventHandler(method, params);
 }
 
 - (void)close {

@@ -3,7 +3,7 @@ import KiteCore
 
 /// Creates, tracks and hibernates the page behind each tab, for either engine.
 ///
-/// Only the selected tab is on screen; the rest are told they're hidden so the
+/// Only the selected tab (or its split's panes) is on screen; the rest are told they're hidden so the
 /// engine throttles them. At most `policy.maxLiveTabs` pages exist at once and
 /// the least recently shown are torn down (keeping whatever history the engine
 /// can save). On launch nothing loads except the selected tab.
@@ -16,8 +16,10 @@ final class PagePool {
     private var pages: [UUID: WebPage] = [:]
     private var lastShown: [UUID: Date] = [:]
     private var savedState: [UUID: Any] = [:]
-    private var visibleID: UUID?
+    private var visibleIDs: Set<UUID> = []
     private var memoryPressure: DispatchSourceMemoryPressure?
+    /// Installs started from Google's "Add to Kite" buttons, by extension id.
+    private var extensionInstalls: [String: BackgroundExtensionInstall] = [:]
 
     init(engine: WebEngine, store: BrowserStore) {
         self.engine = engine
@@ -25,7 +27,13 @@ final class PagePool {
         watchMemoryPressure()
     }
 
+    /// Called for every page made, including popups (before their tab exists).
+    var onPageCreated: ((UUID, WebPage) -> Void)?
+    /// Called when a tab's page stops loading.
+    var onLoadFinished: ((UUID) -> Void)?
+
     func loadedPage(_ id: UUID) -> WebPage? { pages[id] }
+    var livePages: [UUID: WebPage] { pages }
 
     func page(for tab: BrowserTab) -> WebPage {
         if let existing = pages[tab.id] { return existing }
@@ -34,12 +42,17 @@ final class PagePool {
         return page
     }
 
-    func didShow(_ id: UUID) {
-        if let previous = visibleID, previous != id { pages[previous]?.setVisible(false) }
-        visibleID = id
-        pages[id]?.setVisible(true)
-        lastShown[id] = Date()
-        hibernate(policy.tabsToEvict(live: lastShown, protected: [id]))
+    /// The tabs now on screen: one, or a split's panes.
+    func didShow(_ ids: [UUID]) {
+        let shown = Set(ids)
+        for previous in visibleIDs.subtracting(shown) { pages[previous]?.setVisible(false) }
+        visibleIDs = shown
+        let now = Date()
+        for id in ids {
+            pages[id]?.setVisible(true)
+            lastShown[id] = now
+        }
+        hibernate(policy.tabsToEvict(live: lastShown, protected: shown))
     }
 
     /// Drops pages for tabs that no longer exist, and saved history for tabs that can't come back.
@@ -67,6 +80,7 @@ final class PagePool {
         pages[id] = page
         lastShown[id] = Date()
         page.onEvent = { [weak self] event in self?.handle(event, from: id) }
+        onPageCreated?(id, page)
     }
 
     private func handle(_ event: PageEvent, from id: UUID) {
@@ -86,6 +100,16 @@ final class PagePool {
                 $0.canGoBack = canGoBack
                 $0.canGoForward = canGoForward
             }
+            if !isLoading {
+                markInstalledExtensions(in: id)
+                onLoadFinished?(id)
+            }
+        case .addExtension(let extensionID):
+            guard extensionInstalls[extensionID] == nil, let source = pages[id],
+                  let storeURL = ChromeWebStore.detailURL(for: extensionID) else { return }
+            extensionInstalls[extensionID] = BackgroundExtensionInstall(
+                extensionID: extensionID, storeURL: storeURL, engine: engine, source: source
+            ) { [weak self] in self?.extensionInstalls[extensionID] = nil }
         case let .openInNewTab(url, foreground):
             store.mutate { $0.openTab(url: url, select: foreground) }
         case .popup(let page):
@@ -105,11 +129,20 @@ final class PagePool {
         }
     }
 
+    /// On Google results, extensions that are already installed say "Added".
+    private func markInstalledExtensions(in id: UUID) {
+        guard let page = pages[id], GoogleSearch.isResultsPage(store.state.tab(id)?.url) else { return }
+        for extensionID in BackgroundExtensionInstall.installedIDs() {
+            guard let script = GoogleResultsScript.label(extensionID, "Added", disabled: true) else { continue }
+            page.evaluateJavaScript(script) { _ in }
+        }
+    }
+
     /// Hibernates tabs unless they're playing media or using the camera or mic.
     private func hibernate(_ ids: [UUID]) {
         for id in ids {
             pages[id]?.checkBusy { [weak self] busy in
-                guard let self, !busy, id != self.visibleID else { return }
+                guard let self, !busy, !self.visibleIDs.contains(id) else { return }
                 self.discard(id, keepHistory: true)
             }
         }
@@ -120,7 +153,7 @@ final class PagePool {
         source.setEventHandler { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.hibernate(self.pages.keys.filter { $0 != self.visibleID })
+                self.hibernate(self.pages.keys.filter { !self.visibleIDs.contains($0) })
             }
         }
         source.resume()

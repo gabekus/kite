@@ -63,6 +63,15 @@ import Testing
             == .waitFor(tab: nil, condition: .networkIdle, timeout: 10))
         #expect(try AutomationCommand(tool: "read_console_messages", arguments: ["pattern": "err(or)?", "only_errors": true])
             == .readConsole(tab: nil, pattern: "err(or)?", onlyErrors: true, limit: 100, clear: false))
+        #expect(try AutomationCommand(tool: "network_log", arguments: ["since": 12, "status": "4XX", "type": "fetch, XHR", "host": "api.example"])
+            == .networkLog(query: NetworkLog.Query(since: 12, host: "api.example", status: "4xx", types: ["fetch", "xhr"])))
+        #expect(try AutomationCommand(tool: "network_log", arguments: [:]) == .networkLog(query: NetworkLog.Query()))
+        #expect(try AutomationCommand(tool: "network_request", arguments: ["id": 7])
+            == .networkRequest(id: 7, body: true, maxBodyLength: 4_000))
+        #expect(try AutomationCommand(tool: "network_request", arguments: ["id": 7, "body": false, "max_body_length": 10])
+            == .networkRequest(id: 7, body: false, maxBodyLength: 10))
+        #expect(try AutomationCommand(tool: "export_har", arguments: ["tab": "T"])
+            == .exportHAR(query: NetworkLog.Query(tab: "T", types: ["all"], limit: NetworkLog.capacity), bodies: false))
         #expect(try AutomationCommand(tool: "upload_file", arguments: ["ref": "e9", "paths": ["a.pdf"]])
             == .uploadFile(tab: nil, target: .ref("e9"), paths: ["a.pdf"]))
         #expect(try AutomationCommand(tool: "handle_dialog", arguments: ["accept": false])
@@ -118,6 +127,13 @@ import Testing
         ("wait_for", ["condition": "selector"]),
         ("wait_for", ["condition": "load", "timeout_ms": 60000]),
         ("read_network_requests", ["url_pattern": "("]),
+        ("network_log", ["status": "6xx"]),
+        ("network_log", ["since": -1]),
+        ("network_log", ["type": 5]),
+        ("network_log", ["limit": 0]),
+        ("network_request", [:]),
+        ("network_request", ["id": "x"]),
+        ("network_request", ["id": 3, "body": "yes"]),
         ("upload_file", ["ref": "e1", "paths": []]),
         ("handle_dialog", [:]),
     ] as [(String, JSONValue)])
@@ -213,6 +229,21 @@ import Testing
         let url = AutomationWire.socketURL(supportDirectory: profile)
         #expect(url.pathComponents.suffix(3) == ["kite-profile", "Automation", "kite.sock"])
     }
+
+    #if !os(Windows)
+    @Test func aDeepProfileGetsAShortSocketPath() {
+        let deep = URL(fileURLWithPath: "/private/tmp/claude-501/-Users-gabe-dev-kite/185c7dde-9bac-43e6-9940-f0f453a3e69b/scratchpad/ks.20bJ",
+                       isDirectory: true)
+        let url = AutomationWire.socketURL(supportDirectory: deep)
+        #expect(url.path.utf8.count <= AutomationWire.maxSocketPathLength)
+        #expect(url.path.hasPrefix("/tmp/kite-\(getuid())/") && url.pathExtension == "sock")
+        // The app and the CLI compute it separately, so it has to be the same every time, and differ per profile.
+        #expect(url == AutomationWire.socketURL(supportDirectory: deep))
+        #expect(url != AutomationWire.socketURL(supportDirectory: deep.appendingPathComponent("other", isDirectory: true)))
+        #expect(AutomationWire.fnv1a("") == "cbf29ce484222325")
+        #expect(AutomationWire.fnv1a("a") == "af63dc4c8601ec8c")
+    }
+    #endif
 }
 
 @Suite struct AutomationPolicyTests {

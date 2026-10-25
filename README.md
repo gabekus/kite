@@ -15,7 +15,8 @@ and drops the account wall.
 | Engine | Chromium 156 via [CEF](https://github.com/chromiumembedded/cef), with WebKit as a lightweight fallback |
 | Chrome DevTools | ⌥⌘I, or the CDP port (`KITE_REMOTE_DEBUGGING_PORT`) |
 | Spaces, pinned and unpinned tabs, auto-archive after 12h | ✅ |
-| Command bar (⌘T new tab, ⌘L edit URL, switch to open tabs) | ✅ |
+| Command bar (⌘T new tab, click the URL to edit it, switch to open tabs) | ✅ |
+| Split view (⌘L, up to 4 panes) | ✅ |
 | Metal theme gradients and loading glow | ✅ |
 | Tab hibernation and memory-pressure handling | ✅ |
 | Favorites grid, pinned folders, resizable sidebar | ✅ |
@@ -33,6 +34,13 @@ scripts/fetch-cef.sh          # downloads CEF (~135 MB, SHA-1 checked) and build
 scripts/bundle-app.sh debug   # builds build/Kite.app
 open build/Kite.app
 ```
+
+`scripts/install-app.sh` builds a release Kite.app and installs it to /Applications,
+so it opens from the Dock, Launchpad and Spotlight with its icon. `scripts/update-app.sh`
+does the same from the latest `origin/main` (or `scripts/update-app.sh <branch>` to test a
+branch), in a separate `../kite-release` worktree. /Applications/Kite.app is the one Kite
+that gets used and tested. If it's open, the new build is staged and goes in when you quit
+Kite; pass `--restart` to quit it now (tabs are saved) and reopen it.
 
 For quick UI work without Chromium, `swift run Kite` runs on WebKit.
 `swift test` runs the core tests.

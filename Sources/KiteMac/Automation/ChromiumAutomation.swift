@@ -37,18 +37,43 @@ struct ChromiumAutomation: PageActions {
 
     // MARK: Events
 
-    /// Starts the domains whose events feed `TabActivity` (console, network, dialogs, loads).
-    func startEvents(_ handler: @escaping (String, JSONValue) -> Void) async throws {
+    /// Turns on the domains whose events feed `TabActivity` and the network log.
+    func startEvents(domains: [String], _ handler: @escaping (String, JSONValue) -> Void) async throws {
+        setEventHandler(handler)
+        for domain in domains { try await call("\(domain).enable", Self.enableParams(domain)) }
+    }
+
+    /// `startEvents` without waiting. A tab that's still opening queues the calls in
+    /// the bridge, so they're on before its first request (a Task would be too late).
+    func startEventsNow(domains: [String], _ handler: @escaping (String, JSONValue) -> Void) {
+        setEventHandler(handler)
+        for domain in domains { browser.callDevToolsMethod("\(domain).enable", params: Self.enableParams(domain)) { _, _ in } }
+    }
+
+    private func setEventHandler(_ handler: @escaping (String, JSONValue) -> Void) {
         browser.devToolsEventHandler = { method, params in
             let json = (try? JSONSerialization.data(withJSONObject: params)).flatMap { try? JSONValue.decode($0) } ?? .object([:])
             handler(method, json)
         }
-        for domain in ["Page", "Runtime", "Log", "Network"] { try await call("\(domain).enable") }
     }
 
-    func stopEvents() async {
-        browser.devToolsEventHandler = nil
-        for domain in ["Network", "Log", "Runtime"] { _ = try? await call("\(domain).disable", timeout: 3) }
+    /// Bodies stay in Chromium (bounded per tab) until network_request asks; posted bodies aren't copied into events.
+    private static func enableParams(_ domain: String) -> [String: Any] {
+        domain == "Network" ? ["maxTotalBufferSize": 20_000_000, "maxResourceBufferSize": 5_000_000, "maxPostDataSize": 0] : [:]
+    }
+
+    func stopEvents(domains: [String]) async {
+        if domains.contains("Network") { browser.devToolsEventHandler = nil }
+        for domain in domains { _ = try? await call("\(domain).disable", timeout: 3) }
+    }
+
+    func responseBody(requestID: String) async throws -> (body: String, base64: Bool) {
+        let result = try await call("Network.getResponseBody", ["requestId": requestID], timeout: 5)
+        return (result["body"] as? String ?? "", result["base64Encoded"] as? Bool ?? false)
+    }
+
+    func requestBody(requestID: String) async throws -> String {
+        try await call("Network.getRequestPostData", ["requestId": requestID], timeout: 5)["postData"] as? String ?? ""
     }
 
     // MARK: Reading

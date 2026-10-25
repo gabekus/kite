@@ -78,6 +78,9 @@ enum ArcMetrics {
         // Bottom bar: library button, spaces, new space.
         static let bottomBarHeight: CGFloat = 50
         static let bottomButtonSize: CGFloat = 32
+
+        /// A peeking (hover-revealed) sidebar stays out until the pointer is 75pt right of the card's edge.
+        static let peekHoverMargin: CGFloat = 75
     }
 
     enum Content {
@@ -85,9 +88,33 @@ enum ArcMetrics {
         static let inset: CGFloat = 10
         static let cornerRadius: CGFloat = 6
         /// The sidebar's resize zone: 8pt centred on the card's leading edge (4pt over the sidebar,
-        /// 4pt over the page), from 1pt below the card's top to 1pt above its bottom.
+        /// 4pt over the page), from 1pt below the card's top to 1pt above its bottom. While the hidden
+        /// sidebar peeks, the same 8pt straddles the floating card's right edge, at the same height.
         static let resizeZoneHalfWidth: CGFloat = 4
         static let resizeZoneVerticalInset: CGFloat = 1
+    }
+
+    /// Split view. From Arc's binary (`SplitViewDraggerHandleView`, the sidebar's split row);
+    /// values marked unverified still need a live measurement.
+    enum Split {
+        /// Gap between two panes. Unverified: the same as the card's inset for now.
+        static let gap: CGFloat = Content.inset
+        /// The divider's grip: a 2×24pt pill, corner 1, centred in the gap.
+        static let gripSize = CGSize(width: 2, height: 24)
+        static let gripCornerRadius: CGFloat = 1
+        /// Arc's `DragHint` asset: black (white in dark mode) at 20%, 50% on hover.
+        static let gripOpacity: Double = 0.20
+        static let gripHoverOpacity: Double = 0.50
+        static let gripFadeDuration: Double = 0.16
+        /// Narrowest a pane can be dragged. Unverified.
+        static let minimumPaneWidth: CGFloat = 200
+
+        // The sidebar row: one item per pane, side by side.
+        static let rowItemSpacing: CGFloat = 4
+        /// An item this narrow or narrower shows only its favicon.
+        static let rowCompactWidth: CGFloat = 60
+        /// Each item's corner is min(width / 2, this).
+        static let rowItemMaxCornerRadius: CGFloat = 8
     }
 
     /// Arc's timings: from its binary where it names them, else fitted from 60fps recordings.
