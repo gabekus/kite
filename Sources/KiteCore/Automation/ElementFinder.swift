@@ -81,6 +81,25 @@ public enum ElementFinder {
             .map(\.0)
     }
 
+    /// Every element `find` could answer with, in page order: what a model picks from.
+    /// Past `limit`, the word matches for `query` go first so they're never cut.
+    public static func candidates(_ nodes: [AXNode], query: String, limit: Int) -> [Match] {
+        var all: [Match] = []
+        for node in nodes where !node.ignored {
+            guard let id = node.backendDOMNodeId, let role = node.role?.value?.stringValue?.lowercased() else { continue }
+            let name = node.name?.value?.stringValue ?? ""
+            let interactive = AccessibilityOutline.interactiveRoles.contains(role)
+            guard interactive || (role == "heading" && !name.isEmpty) else { continue }
+            var line = role
+            if !name.isEmpty { line += " " + AccessibilityOutline.quote(AccessibilityOutline.clean(name)) }
+            all.append(Match(ref: AccessibilityOutline.ref(forBackendNodeID: id), line: line, score: 0))
+        }
+        guard all.count > limit else { return all }
+        let preferred = find(nodes, query: query, limit: limit)
+        let refs = Set(preferred.map(\.ref))
+        return Array((preferred + all.filter { !refs.contains($0.ref) }).prefix(limit))
+    }
+
     static func words(_ text: String) -> [String] {
         text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
     }
