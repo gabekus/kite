@@ -55,8 +55,8 @@ public enum ClaudeInvocation {
         Close tabs you opened that aren't part of the result. If the user attached a tab, it's theirs: read it, \
         but don't navigate away from it.
 
-        Kite asks the user before you submit forms, send, post, pay, buy or delete anything, type into password or \
-        payment fields, or run JavaScript. If they decline, say what you couldn't do instead of retrying. Never \
+        Kite asks the user before you submit forms, send, post, pay, buy or delete anything, or type into password or \
+        payment fields. If they decline, say what you couldn't do instead of retrying. Never \
         enter credentials or payment details yourself. \(UntrustedContent.notice)
         """
 

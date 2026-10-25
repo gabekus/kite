@@ -25,7 +25,7 @@ let usage = """
       kite open URL [--here | --tab ID]              Open URL in a new background tab (or navigate one)
       kite screenshot [--tab ID] [--format png] [-o FILE]
                                                      Save a screenshot of a tab (JPEG unless --format png)
-      kite js CODE [--tab ID]                        Run JavaScript in the page (Kite asks first)
+      kite js CODE [--tab ID]                        Run JavaScript in the page
       kite console [--tab ID] [--errors]             Console messages since Claude started driving the tab
       kite network [--tab ID] [--errors] [--status 4xx] [--host H] [--type fetch,xhr] [--url REGEX] [--all]
                    [--since N] [--follow]            Kite's network log; --follow keeps printing new requests
