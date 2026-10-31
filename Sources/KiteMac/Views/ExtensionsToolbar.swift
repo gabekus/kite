@@ -206,6 +206,44 @@ private struct ExtensionIcon: View {
     }
 }
 
+/// 1Password's key in the sidebar's address field: part of Kite, always shown while
+/// 1Password is installed and on. Sized like Arc's buttons at the field's right end (30pt).
+struct OnePasswordFieldButton: View {
+    @ObservedObject var model: ExtensionsModel
+    @State private var anchor: NSView?
+    @State private var hovering = false
+
+    /// Set by the 1Password integration to open 1Password its own way; returns false to
+    /// fall back to the extension's popup.
+    static var open: ((NSView) -> Bool)?
+
+    var body: some View {
+        if let onePassword = model.onePassword {
+            Button { open(onePassword) } label: {
+                Image(systemName: "key.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 30, height: 30)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(hovering ? 0.1 : 0)))
+                    .background(AnchorView(view: $anchor))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(hovering ? 0.9 : 0.6)
+            .onHover { hovering = $0 }
+            .help("1Password")
+            .accessibilityLabel("1Password")
+        }
+    }
+
+    private func open(_ onePassword: InstalledExtension) {
+        guard let anchor else { return }
+        if Self.open?(anchor) == true { return }
+        if let popup = onePassword.popupURL {
+            ExtensionPopover.show(popup, engine: model.engine, relativeTo: anchor.bounds, of: anchor)
+        }
+    }
+}
+
 extension ExtensionsMenu {
     private static var shown: NSPopover?
 

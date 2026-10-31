@@ -153,6 +153,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let extensions = ExtensionsModel.shared(engine: pool.engine)
             toolbar.extensions = extensions
             sidebar.showExtensions = { view in ExtensionsMenu.present(model: extensions, from: view) }
+            sidebar.fieldAccessory = AnyView(OnePasswordFieldButton(model: extensions))
         }
         #endif
         sidebarHost = NSHostingView(rootView: sidebar)

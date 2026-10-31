@@ -11,7 +11,11 @@ import KiteCore
 /// Removing still asks with Chrome's own "Remove …?" dialog, attached to the window.
 @MainActor
 final class ExtensionsModel: ObservableObject {
+    /// The user's extensions: everything but Kite's helper and the ones Kite treats as
+    /// part of itself (1Password), which can't be removed, turned off or pinned here.
     @Published private(set) var extensions: [InstalledExtension] = []
+    /// 1Password while it's installed and on: the address field's key button opens it.
+    @Published private(set) var onePassword: InstalledExtension?
     /// Shown in the toolbar, in order. Kite keeps these; Chromium has no pin state for Alloy tabs.
     @Published private(set) var pinnedIDs: [String]
 
@@ -24,6 +28,8 @@ final class ExtensionsModel: ObservableObject {
     /// profiles keep their own.
     private static var pinnedFile: URL { AppDelegate.supportDirectory.appendingPathComponent("PinnedExtensions.json") }
     private static var shared: ExtensionsModel?
+    /// 1Password's Chrome Web Store id (checked against its CRX's signing key).
+    static let onePasswordID = "aeblfdkhhhdcdjpifhhbdiojplfjncoa"
 
     /// One model for the persistent profile, shared by its windows.
     static func shared(engine: WebEngine) -> ExtensionsModel {
@@ -60,10 +66,12 @@ final class ExtensionsModel: ObservableObject {
                 return
             }
             let folders = self.extensionFolders()
-            self.extensions = InstalledExtensions.list(managementJSON: json, folders: folders)
+            let all = InstalledExtensions.list(managementJSON: json, folders: folders)
+            self.extensions = all.filter { $0.id != Self.onePasswordID }
+            self.onePassword = all.first { $0.id == Self.onePasswordID && $0.enabled }
             // Chromium writes a new extension's folder to Secure Preferences a few seconds
             // later; until then there's no icon or popup, so look again.
-            if self.extensions.contains(where: { folders[$0.id] == nil }), self.folderRetries < 5 {
+            if all.contains(where: { folders[$0.id] == nil }), self.folderRetries < 5 {
                 self.folderRetries += 1
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.refresh() }
             } else {

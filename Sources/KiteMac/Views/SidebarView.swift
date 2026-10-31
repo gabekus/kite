@@ -21,6 +21,9 @@ struct SidebarView: View {
     /// Opens the extensions popover from the address field's hover button; nil where
     /// extensions don't run (incognito, WebKit).
     var showExtensions: ((NSView) -> Void)?
+    /// Always shown at the address field's right end (1Password's key); hides itself when
+    /// there's nothing to show.
+    var fieldAccessory: AnyView?
 
     var body: some View {
         let state = store.state
@@ -52,7 +55,8 @@ struct SidebarView: View {
                     isDark: darkPageState(for: selectedTab),
                     action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
                     toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } },
-                    showExtensions: showExtensions
+                    showExtensions: showExtensions,
+                    accessory: fieldAccessory
                 )
                 .padding(.top, M.urlFieldTopGap)
             }
@@ -262,6 +266,7 @@ private struct AddressPill: View {
     let action: () -> Void
     let toggleDark: () -> Void
     var showExtensions: ((NSView) -> Void)?
+    var accessory: AnyView?
     @State private var hovering = false
 
     var body: some View {
@@ -279,8 +284,12 @@ private struct AddressPill: View {
             .buttonStyle(.plain)
             // Arc 1.169 reveals its Site Control Center button (30×30, with the extensions)
             // at the field's right end while the pointer is over the field.
-            if let showExtensions, hovering {
-                ExtensionsFieldButton(action: showExtensions)
+            // Arc's buttons there are 30pt wide on a 28pt pitch.
+            HStack(spacing: -2) {
+                if let accessory { accessory }
+                if let showExtensions, hovering {
+                    ExtensionsFieldButton(action: showExtensions)
+                }
             }
             if let isDark {
                 DarkPageToggle(isDark: isDark, action: toggleDark)
