@@ -49,11 +49,16 @@ struct SidebarView: View {
             // With View → Show Toolbar, navigation and the URL move to the bar over the page.
             let header = HeaderLayout(sidebarWidth: width)
             HStack(spacing: 0) {
-                ToolbarButton(symbol: "sidebar.left", help: "Toggle Sidebar", enabled: true, size: header.buttonSize, action: actions.toggleSidebar)
-                    .padding(.leading, M.toggleX - M.padding)
-                Spacer(minLength: M.toggleToNavMinGap)
+                // Arc's compact header drops the toggle into the More menu.
+                if !header.isCompact {
+                    ToolbarButton(symbol: "sidebar.left", help: "Toggle Sidebar", enabled: true, action: actions.toggleSidebar)
+                        .padding(.leading, M.toggleX - M.padding)
+                }
+                Spacer(minLength: 0)
                 if !state.showsToolbar {
                     NavigationButtons(layout: header, page: page, hasTab: selectedID != nil, actions: actions)
+                } else if header.isCompact {
+                    NavigationMoreButton(size: header.buttonSize, page: page, hasTab: selectedID != nil, showsReload: false, actions: actions)
                 }
             }
             .frame(height: M.topRowHeight)
@@ -294,31 +299,22 @@ private struct ToolbarButton: View {
     }
 }
 
-/// Arc's header layouts by sidebar width (see `ArcMetrics.Sidebar.headerCompactBelow`), and how
-/// many navigation buttons fit beside the toggle.
+/// Arc's header layouts by sidebar width (see `ArcMetrics.Sidebar.headerCompactBelow`).
 struct HeaderLayout: Equatable {
     let isCompact: Bool
     let buttonSize: CGFloat
     let spacing: CGFloat
-    /// Navigation buttons that fit right of the toggle: back, forward and reload (or More).
-    let slots: Int
 
     init(sidebarWidth: CGFloat) {
         isCompact = sidebarWidth < M.headerCompactBelow
         buttonSize = isCompact ? M.compactNavButtonSize : M.navButtonSize
         spacing = isCompact ? M.compactNavButtonSpacing : M.navButtonSpacing
-        // From the toggle's right edge plus the minimum gap to where the buttons must end.
-        let start = M.toggleX + buttonSize + M.toggleToNavMinGap
-        let end = sidebarWidth - M.navTrailing
-        let fit = Int(((end - start + spacing) / (buttonSize + spacing)).rounded(.down))
-        slots = min(max(fit, 0), 3)
     }
 }
 
-/// Back, forward and reload at the header's right end. Compact (Arc's narrow layout) shrinks
-/// them and puts reload in a More menu. Narrower than Arc's compact row fits, forward and then
-/// back move into the menu too, so nothing ever overlaps the toggle (Kite's own fallback; Arc's
-/// look at those widths is unverified).
+/// Back, forward and reload at the header's right end. Arc 1.169's compact layout (from its
+/// binary, `BrowserNavigationButtons`) shrinks them to 28pt with no gap and swaps the sidebar
+/// toggle and reload for a More menu, which fits down to Arc's 164pt minimum.
 private struct NavigationButtons: View {
     let layout: HeaderLayout
     let page: PageStatus
@@ -326,41 +322,37 @@ private struct NavigationButtons: View {
     let actions: SidebarActions
 
     var body: some View {
-        // Compact always ends in More; regular only when reload doesn't fit.
-        let showsMore = layout.isCompact || layout.slots < 3
-        let direct = max(layout.slots - (showsMore ? 1 : 0), 0)
         HStack(spacing: layout.spacing) {
-            if direct >= 1 {
-                ToolbarButton(symbol: "arrow.left", help: "Back", enabled: page.canGoBack, size: layout.buttonSize, action: actions.goBack)
-            }
-            if direct >= 2 {
-                ToolbarButton(symbol: "arrow.right", help: "Forward", enabled: page.canGoForward, size: layout.buttonSize, action: actions.goForward)
-            }
-            if !showsMore {
+            ToolbarButton(symbol: "arrow.left", help: "Back", enabled: page.canGoBack, size: layout.buttonSize, action: actions.goBack)
+            ToolbarButton(symbol: "arrow.right", help: "Forward", enabled: page.canGoForward, size: layout.buttonSize, action: actions.goForward)
+            if layout.isCompact {
+                NavigationMoreButton(size: layout.buttonSize, page: page, hasTab: hasTab, showsReload: true, actions: actions)
+            } else {
                 ToolbarButton(symbol: page.isLoading ? "xmark" : "arrow.clockwise", help: "Reload", enabled: hasTab, size: layout.buttonSize, action: actions.reload)
-            } else if layout.slots >= 1 {
-                NavigationMoreButton(size: layout.buttonSize, showsBack: direct < 1, showsForward: direct < 2, page: page, hasTab: hasTab, actions: actions)
             }
         }
     }
 }
 
-/// Arc's `navigationButtonsMore`: the reload commands, and back/forward when they don't fit.
+/// Arc's `navigationButtonsMore`: reload, the sidebar toggle and force reload, from the strings
+/// beside it in Arc's binary. Item order and wording are unverified.
 private struct NavigationMoreButton: View {
     let size: CGFloat
-    let showsBack: Bool
-    let showsForward: Bool
     let page: PageStatus
     let hasTab: Bool
+    /// False while View → Show Toolbar has reload over the page.
+    let showsReload: Bool
     let actions: SidebarActions
 
     var body: some View {
         Menu {
-            if showsBack { Button("Back", action: actions.goBack).disabled(!page.canGoBack) }
-            if showsForward { Button("Forward", action: actions.goForward).disabled(!page.canGoForward) }
-            if showsBack || showsForward { Divider() }
-            Button(page.isLoading ? "Stop" : "Reload", action: actions.reload).disabled(!hasTab)
-            Button("Force Reload", action: actions.forceReload).disabled(!hasTab)
+            if showsReload {
+                Button(page.isLoading ? "Stop" : "Reload", action: actions.reload).disabled(!hasTab)
+            }
+            Button("Toggle Sidebar", action: actions.toggleSidebar)
+            if showsReload {
+                Button("Force Reload", action: actions.forceReload).disabled(!hasTab)
+            }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 15, weight: .regular))
