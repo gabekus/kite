@@ -10,8 +10,8 @@ enum ArcMetrics {
         /// Centre to centre, close to minimize to zoom.
         static let trafficLightPitch: CGFloat = 20
         /// Pointing anywhere in here colours all three lights (gaps included); measured in Arc 1.169
-        /// with 1pt pointer sweeps, ±1pt.
-        static let trafficLightHoverArea = CGRect(x: 12, y: 17, width: 60, height: 13)
+        /// with 1pt pointer sweeps: colour from x 12 to 72 and y 17 to 30 inclusive.
+        static let trafficLightHoverArea = CGRect(x: 12, y: 17, width: 61, height: 14)
     }
 
     enum Sidebar {

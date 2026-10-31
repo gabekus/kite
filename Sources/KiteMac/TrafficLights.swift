@@ -19,7 +19,7 @@ final class TrafficLights {
 
         let center = ArcMetrics.Window.trafficLightCenter
         let pitch = ArcMetrics.Window.trafficLightPitch
-        // Wide enough for Arc's hover area, which runs to x 72; the group takes no clicks of its
+        // Wide enough for Arc's hover area, which runs to x 73; the group takes no clicks of its
         // own, so the sidebar toggle at x 71 keeps them.
         let originX = (center.x - size.width / 2).rounded()
         group.frame = CGRect(x: originX,
