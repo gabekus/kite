@@ -150,7 +150,8 @@ import Testing
 
 @Suite struct ClaudeDesktopLinkTests {
     private func object(_ data: Data?) throws -> [String: Any] {
-        try #require(JSONSerialization.jsonObject(with: try #require(data)) as? [String: Any])
+        let data = try #require(data)
+        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
     @Test func addsKiteAndKeepsTheRestOfTheConfig() throws {

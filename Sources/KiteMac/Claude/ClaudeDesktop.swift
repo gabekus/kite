@@ -58,7 +58,7 @@ enum ClaudeDesktop {
         guard let appURL else { return }
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: ClaudeDesktopLink.bundleIdentifier)
         guard !running.isEmpty else {
-            NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+            NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
             return
         }
         running.forEach { $0.terminate() }
@@ -68,7 +68,7 @@ enum ClaudeDesktop {
                 try? await Task.sleep(for: .milliseconds(100))
                 waited += 1
             }
-            NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+            NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
         }
     }
 
