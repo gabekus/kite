@@ -19,10 +19,14 @@ final class TrafficLights {
 
         let center = ArcMetrics.Window.trafficLightCenter
         let pitch = ArcMetrics.Window.trafficLightPitch
-        // Only as big as the three buttons, so the sidebar toggle next to them keeps its clicks.
-        group.frame = CGRect(x: (center.x - size.width / 2).rounded(),
+        // Wide enough for Arc's hover area, which runs to x 73; the group takes no clicks of its
+        // own, so the sidebar toggle at x 71 keeps them.
+        let originX = (center.x - size.width / 2).rounded()
+        group.frame = CGRect(x: originX,
                              y: host.isFlipped ? (center.y - size.height / 2).rounded() : host.bounds.height - (center.y + size.height / 2).rounded(),
-                             width: CGFloat(buttons.count - 1) * pitch + size.width, height: size.height)
+                             width: max(CGFloat(buttons.count - 1) * pitch + size.width, ArcMetrics.Window.trafficLightHoverArea.maxX - originX),
+                             height: size.height)
+        group.hoverArea = ArcMetrics.Window.trafficLightHoverArea.offsetBy(dx: -originX, dy: -(center.y - size.height / 2).rounded())
         group.autoresizingMask = host.isFlipped ? [.maxXMargin, .maxYMargin] : [.maxXMargin, .minYMargin]
         for (index, (button, action)) in zip(buttons, actions).enumerated() {
             button.setFrameOrigin(CGPoint(x: CGFloat(index) * pitch, y: 0))
@@ -50,6 +54,10 @@ final class TrafficLights {
 /// in light. Here the buttons are drawn transparent while away and plain circles stand in.
 private final class ButtonGroup: NSView {
     private let dim = DimmedLights()
+    /// Window points from the top-left, shifted to the group's top-left.
+    var hoverArea: CGRect = .zero {
+        didSet { updateTrackingAreas() }
+    }
     private var inside = false {
         didSet { update() }
     }
@@ -79,7 +87,14 @@ private final class ButtonGroup: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        // Not `.inVisibleRect`, which tracks the whole visible rect rather than this one.
+        let rect = isFlipped ? hoverArea : CGRect(x: hoverArea.minX, y: bounds.height - hoverArea.maxY, width: hoverArea.width, height: hoverArea.height)
+        addTrackingArea(NSTrackingArea(rect: rect, options: [.mouseEnteredAndExited, .activeAlways], owner: self))
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self || hit === dim ? nil : hit
     }
 
     override func mouseEntered(with event: NSEvent) { inside = true }
