@@ -3,11 +3,14 @@
 Claude Code (or any MCP client) can drive real Kite tabs on the user's own Claude plan, the way Claude in Chrome
 drives Chrome.
 
-**Connect:** Kite menu → **Connect Claude Code…** turns control on and asks once. It then:
+**Connect:** Kite menu → **Connect Claude…** turns control on and asks once. It then:
 - links `kite` into `~/.local/bin`;
-- runs `claude mcp add -s user kite -- …/Kite.app/Contents/Helpers/kite mcp`.
+- runs `claude mcp add -s user kite -- …/Kite.app/Contents/Helpers/kite mcp`;
+- if the Claude desktop app is installed, adds the same server to
+  `~/Library/Application Support/Claude/claude_desktop_config.json` (everything else in the file is kept, and the
+  old file is saved as `claude_desktop_config.json.kite-backup`), then quits and reopens Claude so it loads it.
 
-The same sheet can copy a `claude_desktop_config.json` snippet for Claude Desktop. By hand:
+The same sheet can still copy the snippet instead. By hand:
 
 ```bash
 claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
@@ -305,3 +308,25 @@ claude -p --output-format stream-json --verbose --include-partial-messages \
 - Downloads are listed but can't be started, cancelled or redirected.
 - No split view or Peek tools: those features don't exist in Kite yet.
 - WebKit tabs can only be read and captured.
+
+## One Claude with the Claude desktop app
+
+The goal: Kite's Claude and the Claude desktop app should be the same Claude, so it knows what the user did in
+Desktop. What Desktop knows (chat history, chat search, memory, projects) lives in the claude.ai account and is
+only reachable from inside a Desktop or claude.ai chat. Nothing hands it to `claude -p`, and Desktop's local data
+isn't an API. So Kite joins Desktop instead of running a second Claude next to it:
+
+- **Desktop has Kite's tools.** Setup (the sidebar's Claude button) and Connect Claude… add Kite to
+  `claude_desktop_config.json`. Desktop loads servers from that file into its Chat tab, Cowork and its local
+  Code sessions, so whatever Claude does in Kite from Desktop is in that chat, with Desktop's memory.
+- **⌘J asks in Desktop.** With **Kite menu → Ask Claude in the Claude App** on (the default when Desktop is
+  installed), Return in the ⌘J bar opens `claude://claude.ai/new?q=…` with the request (and the attached tab's
+  title, URL and Kite tab id) in a new Desktop chat. Desktop shows it in the composer and the user sends it. The
+  bar's ↗ button switches between Desktop and running here.
+- **Kite tasks continue in Desktop.** A task that ran here (`claude -p`) has a Claude Code session id; the bar's
+  "Continue in the Claude App" button runs `claude --desktop --resume <id>`, which opens that session in
+  Desktop's Code tab (Claude Code 2.1.285+, Claude subscription sign-in).
+
+Limits: Desktop doesn't send a `q` prompt by itself (by design), and a headless task that's opened in Desktop
+shouldn't get more Kite follow-ups, or the two would write to one transcript.
+

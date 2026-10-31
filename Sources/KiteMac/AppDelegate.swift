@@ -245,6 +245,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         automation.setUseClaudeSpace(!automation.settings.useClaudeSpace)
     }
 
+    /// Kite menu → Ask Claude in the Claude App: where ⌘J sends requests.
+    @objc func toggleClaudeRunsInDesktop(_ sender: Any?) {
+        claudeTasks.runsIn = claudeTasks.runsIn == .desktop ? .kite : .desktop
+    }
+
     @objc func toggleRecordNetwork(_ sender: Any?) {
         automation.setRecordNetwork(!automation.settings.recordNetwork)
     }
@@ -279,13 +284,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             \(automation.claudeCodeCommand)
 
-            Or choose Connect Claude Code… to have Kite do it.
+            Or choose Connect Claude… to have Kite do it, for Claude Code and the Claude app.
 
             Kite asks you before Claude submits a form, sends, posts, pays, buys or deletes anything, and shows \
             when Claude is controlling a tab. Turn this off in the Kite menu at any time.
             """
         alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Connect Claude Code…")
+        alert.addButton(withTitle: "Connect Claude…")
         if alert.runModal() == .alertSecondButtonReturn {
             ClaudeConnect.present(automation)
         }
@@ -304,6 +309,9 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(toggleClaudeDiagnostics(_:)):
             item.state = UIDiagnostics.isEnabled ? .on : .off
             return automation.isEnabled && !UIDiagnostics.enabledByEnvironment
+        case #selector(toggleClaudeRunsInDesktop(_:)):
+            item.state = claudeTasks?.runsIn == .desktop ? .on : .off
+            return ClaudeDesktop.isInstalled
         case #selector(toggleRecordNetwork(_:)):
             item.state = automation.settings.recordNetwork ? .on : .off
             return automation.isEnabled

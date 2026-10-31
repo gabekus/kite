@@ -78,7 +78,8 @@ enum MainMenu {
             item("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)), toTarget: false),
             item("Open Claude’s Tabs in a Claude Space", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),
             item("Record Network for Claude", #selector(AppDelegate.toggleRecordNetwork(_:)), toTarget: false),
-            item("Connect Claude Code…", #selector(AppDelegate.connectClaudeCode(_:)), toTarget: false),
+            item("Ask Claude in the Claude App", #selector(AppDelegate.toggleClaudeRunsInDesktop(_:)), toTarget: false),
+            item("Connect Claude…", #selector(AppDelegate.connectClaudeCode(_:)), toTarget: false),
             // Lets Claude read Kite's own interface (the ui tool) while debugging Kite.
             item("Diagnostics for Claude", #selector(AppDelegate.toggleClaudeDiagnostics(_:)), toTarget: false),
             item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:)), id: "defaultBrowser"),

@@ -22,6 +22,13 @@ final class ClaudeTasksController {
 
     static let setUpKey = "claudeSetUp"
 
+    /// Where ⌘J sends a request: the Claude desktop app (one Claude, with its memory and
+    /// history) or a headless Claude Code task in Kite. Desktop when it's installed.
+    var runsIn: ClaudeRunsIn = UserDefaults.standard.string(forKey: ClaudeRunsIn.defaultsKey).flatMap(ClaudeRunsIn.init)
+        ?? (ClaudeDesktop.isInstalled ? .desktop : .kite) {
+        didSet { UserDefaults.standard.set(runsIn.rawValue, forKey: ClaudeRunsIn.defaultsKey) }
+    }
+
     func markSetUp(_ setUp: Bool) {
         isSetUp = setUp
         UserDefaults.standard.set(setUp, forKey: Self.setUpKey)
@@ -127,6 +134,45 @@ final class ClaudeTasksController {
             ClaudeInvocation.TabContext(id: $0.id, title: $0.displayTitle, url: $0.url?.absoluteString ?? "")
         }
         launch(task.id, prompt: ClaudeInvocation.prompt(goal: goal, tab: context), resume: nil)
+    }
+
+    // MARK: Claude desktop app
+
+    /// Sends a ⌘J request to a new chat in the Claude desktop app, which has Kite's tools,
+    /// so it happens in the same Claude as the user's other chats. Returns false when
+    /// Desktop isn't installed (the caller runs it in Kite instead).
+    func handOffToDesktop(goal: String, tab: BrowserTab?) -> Bool {
+        let goal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !goal.isEmpty, ClaudeDesktop.isInstalled else { return false }
+        // Desktop's Claude reaches the browser through Kite's MCP server.
+        if !automation.isEnabled { automation.setEnabled(true) }
+        if !ClaudeDesktop.isLinked {
+            let cli = automation.cliPath, profile = automation.profileOverride
+            Task.detached { _ = ClaudeDesktop.link(cli: cli, profile: profile) }
+        }
+        let context = tab.map {
+            ClaudeInvocation.TabContext(id: $0.id, title: $0.displayTitle, url: $0.url?.absoluteString ?? "")
+        }
+        return ClaudeDesktop.openChat(prompt: ClaudeDesktopLink.prompt(goal: goal, tab: context))
+    }
+
+    /// A finished task that ran in Kite can carry on in Desktop's Code tab, as the same session.
+    func canOpenInDesktop(_ id: UUID) -> Bool {
+        guard ClaudeDesktop.isInstalled, runs[id] == nil, let task = task(id) else { return false }
+        return task.sessionID != nil
+    }
+
+    func openInDesktop(_ id: UUID) {
+        guard canOpenInDesktop(id), let sessionID = task(id)?.sessionID else { return }
+        Task.detached { [weak self] in
+            let failure = ClaudeDesktop.openSession(sessionID)
+            await MainActor.run {
+                guard let self, let i = self.index(id) else { return }
+                self.tasks[i].append(ClaudeTask.Entry(.note, failure.map { "Couldn't open this in Claude: \($0)" }
+                    ?? "Opened in the Claude app. Carry on there; it's the same conversation."))
+                self.scheduleSave()
+            }
+        }
     }
 
     /// Another turn on a finished task, in the same Claude conversation.

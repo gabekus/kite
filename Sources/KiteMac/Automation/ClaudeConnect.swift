@@ -1,8 +1,9 @@
 import AppKit
+import KiteCore
 
-/// "Connect Claude Code…": links the `kite` command onto the PATH and registers
-/// Kite's MCP server with Claude Code, after the user says so. Claude Desktop
-/// can't be configured from outside, so it gets a config snippet to paste.
+/// "Connect Claude…": links the `kite` command onto the PATH, registers Kite's MCP
+/// server with Claude Code, and adds it to the Claude desktop app's
+/// claude_desktop_config.json, after the user says so.
 @MainActor
 enum ClaudeConnect {
     /// Where the `kite` link goes. `KITE_BIN_DIR` overrides it for tests.
@@ -12,21 +13,24 @@ enum ClaudeConnect {
     }
 
     static func present(_ automation: AutomationController) {
+        let desktop = ClaudeDesktop.isInstalled
         let alert = NSAlert()
-        alert.messageText = "Connect Claude Code to Kite?"
+        alert.messageText = desktop ? "Connect Claude Code and the Claude app to Kite?" : "Connect Claude Code to Kite?"
         alert.informativeText = """
             Kite will:
             • link the kite command into \(linkDirectory.path), for scripts and terminals
             • run \(automation.claudeCodeCommand)
+            """ + (desktop ? """
 
-            For Claude Desktop, Copy Desktop Config puts what to add to claude_desktop_config.json on the clipboard.
-            """
+            • add Kite to the Claude desktop app (claude_desktop_config.json, with a backup), so its chats, \
+            Cowork and Code sessions can use your browser. Kite quits and reopens Claude to load it.
+            """ : "")
         alert.addButton(withTitle: "Connect")
         alert.addButton(withTitle: "Copy Desktop Config")
         alert.addButton(withTitle: "Cancel")
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            connect(automation)
+            connect(automation, desktop: desktop)
         case .alertSecondButtonReturn:
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(desktopConfig(automation), forType: .string)
@@ -36,22 +40,24 @@ enum ClaudeConnect {
     }
 
     static func desktopConfig(_ automation: AutomationController) -> String {
-        var server: [String: Any] = ["command": automation.cliPath, "args": ["mcp"]]
-        if let profile = automation.profileOverride { server["env"] = ["KITE_SUPPORT_PATH": profile] }
-        let data = (try? JSONSerialization.data(withJSONObject: ["mcpServers": ["kite": server]],
+        let server = ClaudeDesktopLink.server(kiteCLI: automation.cliPath, profile: automation.profileOverride)
+        let data = (try? JSONSerialization.data(withJSONObject: ["mcpServers": [ClaudeDesktopLink.serverName: server]],
                                                 options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }
 
-    private static func connect(_ automation: AutomationController) {
+    private static func connect(_ automation: AutomationController, desktop: Bool) {
         let cli = automation.cliPath
         let profile = automation.profileOverride
         let directory = linkDirectory
         Task.detached {
-            let lines = register(cli: cli, profile: profile, linkDirectory: directory)
+            let linked = desktop ? ClaudeDesktop.link(cli: cli, profile: profile) : nil
+            let lines = register(cli: cli, profile: profile, linkDirectory: directory) + (linked.map { [$0.line] } ?? [])
             await MainActor.run {
+                // The user asked for this, so reload Desktop now rather than leave it without Kite.
+                if linked == .added, ClaudeDesktop.isRunning { ClaudeDesktop.relaunch() }
                 let done = NSAlert()
-                done.messageText = "Claude Code"
+                done.messageText = "Claude"
                 done.informativeText = lines.joined(separator: "\n\n")
                 done.runModal()
             }
