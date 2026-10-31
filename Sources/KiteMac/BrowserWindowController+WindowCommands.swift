@@ -79,8 +79,13 @@ extension BrowserWindowController {
 
     /// Window › View Downloads… (⇧⌘J, as in Arc): the downloads list from the sidebar's bottom bar.
     @objc func viewDownloads(_ sender: Any?) {
-        if !store.isSidebarVisible, !downloadsButton.isListShown { store.toggleSidebar() }
-        downloadsButton.isListShown.toggle()
+        guard store.isSidebarVisible || downloadsButton.isListShown else {
+            // The list hangs from the sidebar's button: bring the sidebar back first.
+            store.toggleSidebar()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.downloadsButton.toggle() }
+            return
+        }
+        downloadsButton.toggle()
     }
 
     @objc func showKeyboardShortcuts(_ sender: Any?) {

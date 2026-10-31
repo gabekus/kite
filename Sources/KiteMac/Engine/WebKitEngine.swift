@@ -338,7 +338,12 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
         suggestedFilename: String,
         completionHandler: @escaping @MainActor (URL?) -> Void
     ) {
-        let directory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        var directory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        // Test runs on a throwaway profile save into their own folder, never the user's Downloads.
+        let environment = ProcessInfo.processInfo.environment
+        if let test = environment["KITE_TEST_DOWNLOADS_PATH"], !test.isEmpty, environment["KITE_SUPPORT_PATH"] != nil {
+            directory = URL(fileURLWithPath: test, isDirectory: true)
+        }
         let destination = Self.uniqueURL(in: directory, name: suggestedFilename)
         DownloadsModel.shared.track(download, destination: destination)
         completionHandler(destination)

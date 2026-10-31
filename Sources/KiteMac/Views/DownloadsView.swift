@@ -4,12 +4,49 @@ import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Whether this window's downloads list is open. ⇧⌘J (Window › View Downloads…) and the
-/// sidebar button both flip it.
+/// This window's downloads list: a popover from the sidebar's downloads button. ⇧⌘J (Window ›
+/// View Downloads…) and the button both toggle it.
 @MainActor
 @Observable
-final class DownloadsButtonModel {
-    var isListShown = false
+final class DownloadsButtonModel: NSObject, NSPopoverDelegate {
+    private(set) var isListShown = false
+    @ObservationIgnored weak var anchor: NSView?
+    @ObservationIgnored private var popover: NSPopover?
+
+    /// Shows the button while the list is open, even with nothing downloaded yet.
+    private(set) var isButtonForced = false
+
+    func toggle() {
+        if let popover, popover.isShown { return popover.close() }
+        guard let anchor, anchor.window != nil else {
+            // No downloads yet, so no button: show it, then hang the list from it.
+            guard !isButtonForced else { return }
+            isButtonForced = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self else { return }
+                if self.anchor?.window != nil { self.toggle() } else { self.isButtonForced = false }
+            }
+            return
+        }
+        let popover = NSPopover()
+        let host = NSHostingController(rootView: DownloadsList())
+        // Sized before it shows and as the list changes, so the popover stays on its button.
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
+        popover.contentSize = host.view.fittingSize
+        popover.behavior = .transient
+        popover.delegate = self
+        // Above the button: it sits at the bottom of the window.
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .minY : .maxY)
+        self.popover = popover
+        isListShown = true
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        popover = nil
+        isListShown = false
+        isButtonForced = false
+    }
 }
 
 /// Arc's download colours, from its asset catalogs (`assetutil --info`): the Little Arc
@@ -40,8 +77,8 @@ struct DownloadsSidebarButton: View {
 
     var body: some View {
         let list = downloads.list
-        if !list.items.isEmpty || model.isListShown {
-            Button { model.isListShown.toggle() } label: {
+        if !list.items.isEmpty || model.isListShown || model.isButtonForced {
+            Button { model.toggle() } label: {
                 ZStack {
                     if !list.active.isEmpty {
                         Circle()
@@ -67,16 +104,31 @@ struct DownloadsSidebarButton: View {
             .opacity(0.7)
             .help("Downloads")
             .accessibilityLabel("Downloads")
-            .popover(isPresented: Binding(get: { model.isListShown }, set: { model.isListShown = $0 }), arrowEdge: .top) {
-                DownloadsList()
-            }
+            .background(DownloadsAnchor(model: model))
         }
+    }
+}
+
+/// Hands the button's NSView to the model, which anchors the popover to it.
+private struct DownloadsAnchor: NSViewRepresentable {
+    let model: DownloadsButtonModel
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { model.anchor = view }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if model.anchor !== nsView { model.anchor = nsView }
     }
 }
 
 /// Recent downloads, newest first: progress while downloading, then open, reveal in Finder,
 /// cancel or hide each one (Arc's Library › Downloads page and its download context menu).
 struct DownloadsList: View {
+    /// One row's height plus the gap between rows.
+    static let rowPitch: CGFloat = 54
     private var downloads: DownloadsModel { .shared }
 
     var body: some View {
@@ -99,6 +151,7 @@ struct DownloadsList: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .focusEffectDisabled()
                 .help("Open Downloads Folder")
             }
             .padding(.horizontal, 14)
@@ -121,11 +174,10 @@ struct DownloadsList: View {
                     .padding(.horizontal, 6)
                     .padding(.bottom, 6)
                 }
-                .frame(maxHeight: 360)
+                .frame(height: min(CGFloat(items.count) * DownloadsList.rowPitch + 6, 360))
             }
         }
         .frame(width: 320)
-        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -163,7 +215,7 @@ private struct DownloadRow: View {
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .frame(height: DownloadsList.rowPitch - 2)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? DownloadColors.rowHovered : .clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
