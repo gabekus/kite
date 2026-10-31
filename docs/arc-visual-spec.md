@@ -95,21 +95,14 @@ Measured on 2026-10-23 by moving the pointer 0.5pt at a time across Arc 1.169's 
   - **Gradient:** very soft. The red channel rises from 37 to 44 between the top and bottom of the sidebar, and to
     51 next to the card's right edge.
   - **Grain:** a standard deviation of about 0.5 levels per channel, so it's barely visible.
-  - **Glow:** a soft white light under the pointer, not a fixed part of the gradient. With the pointer off the
-    sidebar there is none. A 2D Gaussian fitted to Gabe's screenshot (RMS error 1.5 levels):
-    - **Size:** σ 110pt wide by 34pt tall, so its half-maximum ellipse is about 260×80pt.
-    - **Strength:** it adds about 29 levels of neutral white at its centre, about 14% over a grey-green theme of
-      `#30342D`.
-    - **Position:** centred on the pointer.
+  - **No pointer light:** Arc draws no light or glow that follows the pointer over the sidebar (Gabe, 31 Oct
+    2026). An earlier pass fitted a Gaussian (σ 110×34pt, 14% white) to a bright patch in one screenshot and
+    took it for one. Kite drew it until PR "Remove the sidebar pointer light"; don't add it back.
 - **Kite:** the theme shader now draws translucently (premultiplied, alpha `Theme.tint`, default 0.55) over the
   system `.sidebar` behind-window material, which also darkens inactive windows.
   - Each space keeps its own `Theme`. The space button's context menu gets **Theme Color** (presets) and **Theme
     Intensity** (the tint).
   - `Theme.accent` gives the colour of the command bar's selected row.
-  - **Pointer light:** `ThemeView` follows the pointer over the sidebar with a tracking area. It draws the same
-    Gaussian (σ 110×34pt, 14% white) in the theme shader and fades in and out over about 0.15s. It only shows in
-    the key window, and only redraws when the pointer moves or the light is fading. On a light preset in Kite it
-    added 30 levels at its centre.
 
 ## Arc's theme shader, from its metallib (decompiled)
 
@@ -339,7 +332,5 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
-- The pointer light's fade timing and whether it eases toward the pointer. Kite fades it over 0.15s and sticks it
-  to the pointer.
 - The ⌘T panel's exact shadow parameters (only its effect was measured).
 - Arc's default sidebar width, light-theme fill opacities, and the space-switch animation timing.
