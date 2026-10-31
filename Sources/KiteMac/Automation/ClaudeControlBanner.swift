@@ -124,13 +124,28 @@ extension BrowserWindowController: AutomationHost {
         pool.onPageCreated = { [weak automation] id, page in automation?.pageCreated(id, page) }
         pool.onLoadFinished = { [weak automation] id in automation?.pageFinishedLoading(id) }
         guard let root = window?.contentView else { return }
-        let host = NSHostingView(rootView: ClaudeControlBanner(automation: automation, store: store))
-        host.sizingOptions = [.intrinsicContentSize]
+        // A strip across the page area, rather than a view sized to the banner: the banner's size changes
+        // with Claude's state, and an intrinsically sized host stayed 0×0, so its buttons never got clicks.
+        let host = BannerHostingView(rootView: ClaudeControlBanner(automation: automation, store: store)
+            .frame(maxWidth: .infinity, alignment: .top))
+        host.sizingOptions = []
+        // The strip reaches under the titlebar; its safe area would push the banner down.
+        host.safeAreaRegions = []
         host.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(host)
         NSLayoutConstraint.activate([
-            host.centerXAnchor.constraint(equalTo: contentFrame.centerXAnchor),
+            host.leadingAnchor.constraint(equalTo: contentFrame.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor),
             host.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: 10),
+            host.heightAnchor.constraint(equalToConstant: 28),
         ])
+    }
+}
+
+/// Lets clicks through to the page everywhere except on the banner's controls.
+private final class BannerHostingView<Content: View>: NSHostingView<Content> {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? nil : hit
     }
 }
