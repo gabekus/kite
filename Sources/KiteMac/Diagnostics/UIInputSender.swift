@@ -66,6 +66,34 @@ struct UIInputSender {
             guard let event = NSEvent(cgEvent: cgEvent) else { throw AutomationError(.failed, "Couldn't make a scroll event.") }
             window.sendEvent(event)
             return "Scrolled dx \(UIReport.number(dx)), dy \(UIReport.number(dy)) at (\(UIReport.number(point.x)), \(UIReport.number(point.y))) on \(hitName(point))."
+        case let .swipe(point, dx, steps, seconds, hold):
+            let screen = window.convertPoint(toScreen: window.basePoint(point))
+            let location = CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.height ?? 0) - screen.y)
+            let interval = seconds / Double(steps)
+            func post(_ delta: Double, phase: CGScrollPhase) throws {
+                guard let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 0,
+                                            wheel2: Int32(delta.rounded()), wheel3: 0) else {
+                    throw AutomationError(.failed, "Couldn't make a scroll event.")
+                }
+                cgEvent.location = location
+                cgEvent.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                cgEvent.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+                cgEvent.setDoubleValueField(.scrollWheelEventPointDeltaAxis2, value: delta)
+                cgEvent.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: delta)
+                cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+                cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
+                guard let event = NSEvent(cgEvent: cgEvent) else { throw AutomationError(.failed, "Couldn't make a scroll event.") }
+                window.sendEvent(event)
+            }
+            // Without natural scrolling a scroll delta runs against the fingers, so a finger travel of dx
+            // is a delta of -dx.
+            for step in 0..<steps {
+                try post(-dx / Double(steps), phase: step == 0 ? .began : .changed)
+                try? await Task.sleep(for: .seconds(interval))
+            }
+            if !hold { try post(0, phase: .ended) }
+            try? await Task.sleep(for: .milliseconds(50))
+            return (hold ? "Holding after swiping " : "Swiped ") + "\(UIReport.number(dx))pt in \(steps) steps over \(UIReport.number(seconds))s at (\(UIReport.number(point.x)), \(UIReport.number(point.y))) on \(hitName(point))."
         }
     }
 
@@ -195,7 +223,7 @@ struct UIInputSender {
     private func send(_ down: NSEvent.EventType, then rest: [Gesture], at point: UIPoint, flags: NSEvent.ModifierFlags) {
         for event in rest {
             if let event = mouseEvent(event.type, at: event.point, flags: flags, clickCount: event.clickCount) {
-                NSApp.postEvent(event, atStart: false)
+                window.sendEvent(event)
             }
         }
         if let event = mouseEvent(down, at: point, flags: flags, clickCount: 1) { window.sendEvent(event) }

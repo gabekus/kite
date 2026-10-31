@@ -63,6 +63,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var shownPages: [UUID: WebPage] = [:]
     private let splitPanes = SplitPanesView()
     private var paneClickMonitor: Any?
+    private var spaceSwipe: SpaceSwipeController!
     /// The page card, in window coordinates: where Chrome's extension install dialog hangs.
     var webAreaInWindow: NSRect { contentFrame.convert(contentFrame.bounds, to: nil) }
     /// After every sync: tabs, selection or pages may have changed.
@@ -85,7 +86,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         self.pool = PagePool(engine: engine, store: store)
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
-        let window = NSWindow(
+        let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -159,13 +160,30 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             reload: { [weak self] in self?.reload(nil) },
             toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
             closeTab: { [weak self] id in self?.close(tab: id) },
-            addSplitView: { [weak self] in self?.addSplitView(nil) }
+            addSplitView: { [weak self] in self?.addSplitView(nil) },
+            editTheme: { [weak self] id in self?.editTheme(ofSpace: id) },
+            renameSpace: { [weak self] id in self?.renameSpace(id: id) },
+            changeSpaceIcon: { [weak self] id in self?.changeIcon(ofSpace: id) },
+            deleteSpace: { [weak self] id in self?.deleteSpace(id) }
+        )
+        spaceSwipe = SpaceSwipeController(
+            store: store,
+            sidebar: { [weak self] in self?.sidebarHost },
+            showTheme: { [weak self] from, to, progress in
+                self?.themeView.setInteractiveTheme(from: from, to: to, progress: progress)
+                self?.peekCard.theme.setInteractiveTheme(from: from, to: to, progress: progress)
+            },
+            settleTheme: { [weak self] theme in
+                self?.themeView.finishInteractiveTheme(landingOn: theme)
+                self?.peekCard.theme.finishInteractiveTheme(landingOn: theme)
+            }
         )
         var sidebar = SidebarView(
             store: store,
             actions: actions,
             supportsDarkPages: pool.engine.supportsDarkPages,
-            claude: claudeButton
+            claude: claudeButton,
+            swipe: spaceSwipe.model
         )
         var toolbar = PageToolbar(store: store, actions: actions)
         #if canImport(CEFBridge)
@@ -323,6 +341,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             self?.focusPane(under: event)
             return event
         }
+        if let window = window as? BrowserWindow { spaceSwipe.install(in: window) }
     }
 
     private func focusPane(under event: NSEvent) {
@@ -848,6 +867,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     @objc func nextSpace(_ sender: Any?) { store.mutate { $0.selectAdjacentSpace(offset: 1) } }
     @objc func previousSpace(_ sender: Any?) { store.mutate { $0.selectAdjacentSpace(offset: -1) } }
     @objc func newSpace(_ sender: Any?) { store.addSpace() }
+    @objc func editTheme(_ sender: Any?) { editTheme(ofSpace: store.state.selectedSpaceID) }
+
+    func editTheme(ofSpace id: UUID) {
+        if !store.isSidebarVisible { store.toggleSidebar() }
+        ThemeEditor.present(store: store, spaceID: id, from: sidebarHost)
+    }
 }
 
 /// The sidebar's trailing edge. Reports horizontal drag distance since mouse-down.

@@ -53,6 +53,9 @@ import Testing
             == .input(window: nil, event: .click(UIPoint(x: 20, y: 30), button: .left, count: 2, modifiers: .meta)))
         #expect(try ui(["action": "input", "scroll": [100, 200], "dy": -40])
             == .input(window: nil, event: .scroll(UIPoint(x: 100, y: 200), dx: 0, dy: -40)))
+        #expect(try ui(["action": "input", "swipe": [150, 400], "dx": -200, "hold": true])
+            == .input(window: nil, event: .swipe(UIPoint(x: 150, y: 400), dx: -200, steps: 12, seconds: 0.2, hold: true)))
+        #expect(throws: AutomationCommand.InvalidArguments.self) { try ui(["action": "input", "swipe": [1, 2]]) }
         #expect(throws: AutomationCommand.InvalidArguments.self) { try ui(["action": "input"]) }
         #expect(throws: AutomationCommand.InvalidArguments.self) { try ui(["action": "input", "keys": "a", "text": "b"]) }
     }

@@ -9,6 +9,11 @@ struct SidebarActions {
     var toggleSidebar: () -> Void
     var closeTab: (UUID) -> Void
     var addSplitView: () -> Void
+    /// A space's context menu in the strip.
+    var editTheme: (UUID) -> Void
+    var renameSpace: (UUID) -> Void
+    var changeSpaceIcon: (UUID) -> Void
+    var deleteSpace: (UUID) -> Void
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -25,6 +30,8 @@ struct SidebarView: View {
     /// Always shown at the address field's right end (1Password's key); hides itself when
     /// there's nothing to show.
     var fieldAccessory: AnyView?
+    /// Where a two-finger swipe between spaces has the pages.
+    var swipe = SpaceSwipeModel()
 
     var body: some View {
         let state = store.state
@@ -74,54 +81,61 @@ struct SidebarView: View {
                 .padding(.bottom, M.favoritesBottomGap)
             }
 
-            List {
-                Section {
-                    // A row rather than a section header: a plain List paints headers with an opaque bar.
-                    SpaceHeader(space: space)
-                        .sidebarRow(pill: false)
-                    let pinnedGroups = SidebarGroup.group(space.pinnedItems.map(\.id), splits: space.splits)
-                    ForEach(pinnedGroups) { group in
-                        pinnedGroup(group, in: space.pinnedItems, depth: 0, selectedID: selectedID)
-                            .sidebarRow()
-                    }
-                    .onMove { from, to in
-                        let (items, target) = SidebarGroup.itemMove(pinnedGroups, from: from, to: to, itemCount: space.pinnedItems.count)
-                        store.mutate { $0.moveTabs(inSpace: space.id, pinned: true, fromOffsets: items, toOffset: target) }
-                    }
-                }
-                Section {
-                    if !space.pinnedItems.isEmpty {
-                        Rectangle()
-                            .fill(.primary.opacity(M.dividerOpacity))
-                            .frame(height: M.dividerThickness)
-                            .padding(.horizontal, M.dividerInset)
-                            .frame(height: M.dividerRowHeight)
-                            .sidebarRow(pill: false)
-                    }
-                    NewTabRow { store.showCommandBar(.newTab) }
-                        .sidebarRow()
-                    let unpinnedGroups = SidebarGroup.group(space.tabs.map(\.id), splits: space.splits)
-                    ForEach(unpinnedGroups) { group in
-                        unpinnedGroup(group, in: space.tabs, selectedID: selectedID)
-                            .sidebarRow()
-                    }
-                    .onMove { from, to in
-                        let (items, target) = SidebarGroup.itemMove(unpinnedGroups, from: from, to: to, itemCount: space.tabs.count)
-                        store.mutate { $0.moveTabs(inSpace: space.id, pinned: false, fromOffsets: items, toOffset: target) }
-                    }
-                }
+            SpacePages(store: store, swipe: swipe) { space in
+                spaceList(space)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .environment(\.defaultMinListRowHeight, 1)
 
-            SpaceBar(store: store, claude: claude)
+            SpaceBar(store: store, actions: actions, claude: claude)
                 .frame(height: M.bottomBarHeight)
         }
         .padding(.horizontal, M.padding)
         .foregroundStyle(.primary)
         // Arc measures from the window's top edge, under the transparent titlebar.
         .ignoresSafeArea()
+    }
+
+    /// One space's page: its header, pinned items, new tab and today's tabs.
+    private func spaceList(_ space: Space) -> some View {
+        List {
+            Section {
+                // A row rather than a section header: a plain List paints headers with an opaque bar.
+                SpaceHeader(space: space)
+                    .sidebarRow(pill: false)
+                let pinnedGroups = SidebarGroup.group(space.pinnedItems.map(\.id), splits: space.splits)
+                ForEach(pinnedGroups) { group in
+                    pinnedGroup(group, in: space.pinnedItems, depth: 0, selectedID: space.selectedTabID)
+                        .sidebarRow()
+                }
+                .onMove { from, to in
+                    let (items, target) = SidebarGroup.itemMove(pinnedGroups, from: from, to: to, itemCount: space.pinnedItems.count)
+                    store.mutate { $0.moveTabs(inSpace: space.id, pinned: true, fromOffsets: items, toOffset: target) }
+                }
+            }
+            Section {
+                if !space.pinnedItems.isEmpty {
+                    Rectangle()
+                        .fill(.primary.opacity(M.dividerOpacity))
+                        .frame(height: M.dividerThickness)
+                        .padding(.horizontal, M.dividerInset)
+                        .frame(height: M.dividerRowHeight)
+                        .sidebarRow(pill: false)
+                }
+                NewTabRow { store.showCommandBar(.newTab) }
+                    .sidebarRow()
+                let unpinnedGroups = SidebarGroup.group(space.tabs.map(\.id), splits: space.splits)
+                ForEach(unpinnedGroups) { group in
+                    unpinnedGroup(group, in: space.tabs, selectedID: space.selectedTabID)
+                        .sidebarRow()
+                }
+                .onMove { from, to in
+                    let (items, target) = SidebarGroup.itemMove(unpinnedGroups, from: from, to: to, itemCount: space.tabs.count)
+                    store.mutate { $0.moveTabs(inSpace: space.id, pinned: false, fromOffsets: items, toOffset: target) }
+                }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, 1)
     }
 
     /// Nil hides the moon: nothing to darken, or the engine can't.
@@ -604,6 +618,7 @@ private struct SplitRow: View {
 
 private struct SpaceBar: View {
     let store: BrowserStore
+    let actions: SidebarActions
     let claude: ClaudeButtonModel
 
     var body: some View {
@@ -651,7 +666,14 @@ private struct SpaceBar: View {
                 }
                 .buttonStyle(.plain)
                 .help(space.name)
-                .contextMenu { ThemeMenu(store: store, space: space) }
+                .contextMenu {
+                    Button("Edit Theme…") { actions.editTheme(space.id) }
+                    Button("Rename Space…") { actions.renameSpace(space.id) }
+                    Button("Change Icon…") { actions.changeSpaceIcon(space.id) }
+                    Divider()
+                    Button("Delete Space…") { actions.deleteSpace(space.id) }
+                        .disabled(state.spaces.count < 2)
+                }
             }
         }
     }
@@ -675,32 +697,5 @@ private struct SpaceHeader: View {
         .padding(.leading, M.headerIconX - M.padding)
         .padding(.top, M.headerIconTop)
         .frame(height: M.headerHeight + M.listTopSpacer, alignment: .top)
-    }
-}
-
-/// Arc's per-space theme picker, reduced to a menu: a palette, and how strongly it tints the sidebar.
-private struct ThemeMenu: View {
-    let store: BrowserStore
-    let space: Space
-
-    var body: some View {
-        Menu("Theme Color") {
-            ForEach(Array(Theme.presets.enumerated()), id: \.offset) { index, preset in
-                Button("Color \(index + 1)") {
-                    var theme = preset
-                    theme.tint = space.theme.tint
-                    store.mutate { $0.setTheme(theme, forSpace: space.id) }
-                }
-            }
-        }
-        Menu("Theme Intensity") {
-            ForEach([("Subtle", Float(0.35)), ("Arc", Theme.defaultTint), ("Strong", Float(0.8)), ("Solid", Float(1))], id: \.0) { name, tint in
-                Button(name) {
-                    var theme = space.theme
-                    theme.tint = tint
-                    store.mutate { $0.setTheme(theme, forSpace: space.id) }
-                }
-            }
-        }
     }
 }

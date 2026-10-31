@@ -56,6 +56,10 @@ final class ThemeView: MTKView, MTKViewDelegate {
     private var from: Theme
     private var to: Theme
     private var transitionStart: CFTimeInterval?
+    /// Where a transition starts from: 0 for a switch, the swipe's progress when a swipe is let go.
+    private var startProgress: Float = 0
+    /// Set while fingers are swiping between spaces: the crossfade follows them instead of the clock.
+    private var interactiveProgress: Float?
     /// Long enough for Arc's space-switch spring to settle within half a percent.
     private let transitionDuration: CFTimeInterval = 0.3
     private let commandQueue = ShaderLibrary.shared.commandQueue
@@ -83,7 +87,9 @@ final class ThemeView: MTKView, MTKViewDelegate {
     required init(coder: NSCoder) { fatalError() }
 
     func setTheme(_ theme: Theme, animated: Bool) {
+        guard interactiveProgress == nil else { return }
         guard theme != to else { return }
+        startProgress = 0
         if animated {
             // Interrupted mid-fade: continue from whichever side was showing more.
             if let start = transitionStart, CACurrentMediaTime() - start < transitionDuration / 2 {
@@ -100,6 +106,31 @@ final class ThemeView: MTKView, MTKViewDelegate {
             clock.stop()
             needsDisplay = true
         }
+    }
+
+    /// Mid-swipe: shows `from` crossfaded towards `to` by `progress`, held until the swipe moves again.
+    func setInteractiveTheme(from: Theme, to: Theme, progress: Float) {
+        self.from = from
+        self.to = to
+        interactiveProgress = min(max(progress, 0), 1)
+        transitionStart = nil
+        needsDisplay = true
+    }
+
+    /// The swipe was let go: settles on `theme`, which is either side of the crossfade, with the
+    /// space-switch spring from wherever the fingers left it.
+    func finishInteractiveTheme(landingOn theme: Theme) {
+        let p = interactiveProgress ?? 1
+        interactiveProgress = nil
+        if theme == to {
+            startProgress = p
+        } else {
+            // Back where it started: the same mix, read from the other end.
+            swap(&from, &to)
+            startProgress = 1 - p
+        }
+        transitionStart = CACurrentMediaTime()
+        clock.start()
     }
 
     override func updateTrackingAreas() {
@@ -140,7 +171,7 @@ final class ThemeView: MTKView, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
-        var progress: Float = 1
+        var progress: Float = interactiveProgress ?? 1
         if let start = transitionStart {
             let now = clock.targetTimestamp ?? CACurrentMediaTime()
             let elapsed = max(now - start, 0)
@@ -148,7 +179,7 @@ final class ThemeView: MTKView, MTKViewDelegate {
                 transitionStart = nil
                 from = to
             } else {
-                progress = Float(min(Self.spring(elapsed), 1))
+                progress = startProgress + (1 - startProgress) * Float(min(Self.spring(elapsed), 1))
             }
         }
 

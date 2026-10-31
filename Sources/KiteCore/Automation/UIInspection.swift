@@ -43,6 +43,10 @@ public enum UIInputEvent: Hashable, Sendable {
     case drag(from: UIPoint, to: UIPoint, steps: Int)
     /// Wheel deltas in points; positive dy scrolls content up (like a swipe up on a trackpad).
     case scroll(UIPoint, dx: Double, dy: Double)
+    /// A two-finger trackpad swipe: began, `steps` changes adding up to `dx` points of finger travel
+    /// (positive is rightwards) over `seconds`, then ended (unless `hold`, which leaves the fingers down
+    /// so the next swipe carries on), through the window like a real gesture.
+    case swipe(UIPoint, dx: Double, steps: Int, seconds: Double, hold: Bool)
 }
 
 /// The `ui` tool: Kite's own native interface (window, sidebar, command bar, menus), read from
@@ -148,7 +152,7 @@ public enum UIInspection: Hashable, Sendable {
         window's top-left. Actions: windows; tree (views with frames, materials, radii, colours, fonts, SwiftUI elements; \
         root, depth, match, layers); capture (exact window pixels even when covered or in the background; region \
         [x,y,w,h], pixels [[x,y],…] for hex colours only); pointer (synthetic moves via points or from/to/steps: view hit, \
-        cursor rects, tracking areas, cursor shown); input (keys, text, click, drag, scroll into Kite's window only); \
+        cursor rects, tracking areas, cursor shown); input (keys, text, click, drag, scroll, trackpad swipe into Kite's window only); \
         menu (every item, shortcut, action, enabled; flags unsafe shortcuts); key_log (where recent keys went); \
         trace (animations with durations and curves, sampled frames and frame timing for seconds, after optional keys).
         """
@@ -182,6 +186,8 @@ public enum UIInspection: Hashable, Sendable {
                 "modifiers": ["type": "string", "description": "input click: e.g. \"cmd\" or \"shift+alt\"."],
                 "scroll": point,
                 "dx": ["type": "number"], "dy": ["type": "number"],
+                "swipe": point,
+                "hold": ["type": "boolean", "description": "input swipe: keep the fingers down at the end."],
                 "seconds": ["type": "number", "description": "trace: how long to record (default 1.5, max 10)."],
                 "limit": ["type": "integer", "minimum": 1, "maximum": 500],
                 "clear": ["type": "boolean"],
@@ -293,9 +299,16 @@ private struct UIArguments {
             guard dx != 0 || dy != 0 else { throw Invalid("Scrolling needs \"dx\" or \"dy\".") }
             events.append(.scroll(point, dx: dx, dy: dy))
         }
+        if let point = try point("swipe") {
+            guard let dx = try double("dx"), dx != 0 else { throw Invalid("A swipe needs \"dx\", the finger travel in points.") }
+            let seconds = try double("seconds") ?? 0.2
+            guard seconds > 0, seconds <= 3 else { throw Invalid("A swipe's \"seconds\" is more than 0 and at most 3.") }
+            events.append(.swipe(point, dx: dx, steps: try int("steps", in: 1...UIInspection.maxPointerSteps) ?? 12, seconds: seconds,
+                                 hold: try bool("hold")))
+        }
         guard events.count == 1 else {
             throw Invalid(events.isEmpty
-                ? "input needs one of \"keys\", \"text\", \"click\" [x, y], \"from\"+\"to\" (a drag) or \"scroll\" [x, y]."
+                ? "input needs one of \"keys\", \"text\", \"click\" [x, y], \"from\"+\"to\" (a drag), \"scroll\" [x, y] or \"swipe\" [x, y]."
                 : "input takes one event at a time; use batch for several.")
         }
         return events[0]
