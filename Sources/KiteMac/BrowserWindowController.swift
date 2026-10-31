@@ -31,6 +31,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var sidebarHost: NSHostingView<SidebarView>!
     /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
     let claudeButton = ClaudeButtonModel()
+    let downloadsButton = DownloadsButtonModel()
     /// Claude's chat bubble over the page; AppDelegate connects it to Claude Tasks.
     let claudeBubble = ClaudeBubbleModel()
     private var claudeBubbleHost: NSHostingView<ClaudeBubble>!
@@ -165,7 +166,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             store: store,
             actions: actions,
             supportsDarkPages: pool.engine.supportsDarkPages,
-            claude: claudeButton
+            claude: claudeButton,
+            downloads: downloadsButton
         )
         var toolbar = PageToolbar(store: store, actions: actions)
         #if canImport(CEFBridge)

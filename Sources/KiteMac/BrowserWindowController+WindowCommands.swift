@@ -77,6 +77,12 @@ extension BrowserWindowController {
         showToast("Copied Kite info")
     }
 
+    /// Window › View Downloads… (⇧⌘J, as in Arc): the downloads list from the sidebar's bottom bar.
+    @objc func viewDownloads(_ sender: Any?) {
+        if !store.isSidebarVisible, !downloadsButton.isListShown { store.toggleSidebar() }
+        downloadsButton.isListShown.toggle()
+    }
+
     @objc func showKeyboardShortcuts(_ sender: Any?) {
         EssentialShortcutsWindow.show(menu: NSApp.mainMenu, overrides: (NSApp.delegate as? AppDelegate)?.keyBindings.bindings)
     }

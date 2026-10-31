@@ -46,8 +46,20 @@ NSURL* ToNSURL(const CefString& string) {
     return [NSURL URLWithString:ToNSString(string)];
 }
 
+// Live downloads' callbacks, by Chromium's download id, so the downloads list can cancel them.
+// Download callbacks run on the main (UI) thread.
+std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>>& DownloadCallbacks() {
+    static std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>> callbacks;
+    return callbacks;
+}
+
 NSURL* UniqueDownloadURL(NSString* name) {
     NSURL* directory = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
+    // Test runs on a throwaway profile save into their own folder, never the user's Downloads.
+    NSString* testDirectory = NSProcessInfo.processInfo.environment[@"KITE_TEST_DOWNLOADS_PATH"];
+    if (testDirectory.length && NSProcessInfo.processInfo.environment[@"KITE_SUPPORT_PATH"].length) {
+        directory = [NSURL fileURLWithPath:testDirectory isDirectory:YES];
+    }
     NSString* base = name.stringByDeletingPathExtension;
     NSString* extension = name.pathExtension;
     NSURL* candidate = [directory URLByAppendingPathComponent:name];
@@ -268,6 +280,8 @@ class KCClient : public CefClient,
         // A store install's package isn't the user's download: no bounce, not listed.
         if (IsExtensionPackage(download_item, download_item->GetSuggestedFileName())) return;
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
+        if (download_item->IsInProgress()) DownloadCallbacks()[download_item->GetId()] = callback;
+        else DownloadCallbacks().erase(download_item->GetId());
         NSString* state = download_item->IsComplete() ? @"complete"
             : download_item->IsCanceled() ? @"canceled"
             : download_item->IsInterrupted() ? @"interrupted" : @"in-progress";
@@ -278,6 +292,7 @@ class KCClient : public CefClient,
             @"state": state,
             @"receivedBytes": @(download_item->GetReceivedBytes()),
             @"totalBytes": @(download_item->GetTotalBytes()),
+            @"speed": @(download_item->GetCurrentSpeed()),
         }];
     }
 
@@ -712,6 +727,13 @@ class KCClient : public CefClient,
     _closed = YES;
     _delegate = nil;
     if (_browser) _browser->GetHost()->CloseBrowser(true);
+}
+
++ (BOOL)cancelDownloadWithID:(NSInteger)downloadID {
+    auto it = DownloadCallbacks().find((uint32_t)downloadID);
+    if (it == DownloadCallbacks().end()) return NO;
+    it->second->Cancel();
+    return YES;
 }
 
 @end

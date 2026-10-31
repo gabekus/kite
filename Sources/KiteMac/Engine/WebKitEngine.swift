@@ -329,7 +329,7 @@ extension WebKitPage: WKUIDelegate {
     }
 }
 
-/// Saves WebKit downloads to ~/Downloads without overwriting existing files.
+/// Saves WebKit downloads to ~/Downloads without overwriting existing files, and lists them.
 @MainActor
 final class DownloadCoordinator: NSObject, WKDownloadDelegate {
     func download(
@@ -339,11 +339,18 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
         completionHandler: @escaping @MainActor (URL?) -> Void
     ) {
         let directory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        completionHandler(Self.uniqueURL(in: directory, name: suggestedFilename))
+        let destination = Self.uniqueURL(in: directory, name: suggestedFilename)
+        DownloadsModel.shared.track(download, destination: destination)
+        completionHandler(destination)
     }
 
     func downloadDidFinish(_ download: WKDownload) {
         NSApp.requestUserAttention(.informationalRequest)
+        DownloadsModel.shared.webKitDownload(download, finished: .complete)
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: any Error, resumeData: Data?) {
+        DownloadsModel.shared.webKitDownload(download, finished: .interrupted)
     }
 
     private static func uniqueURL(in directory: URL, name: String) -> URL {
