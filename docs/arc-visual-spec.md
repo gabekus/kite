@@ -263,6 +263,48 @@ most values can't be tied to a specific screen.
   - a 0.2s relayout on the same curve when the home view's width changes;
   - a 0.12s linear, auto-reversing 1.015× scale "bump" of the window contents when a Bool state turns on.
 
+## Traffic lights and tab drag (Arc incognito window, 31 Oct 2026)
+
+**Traffic lights → `ArcMetrics.Window.trafficLightHoverArea`, `TrafficLights.swift`**
+- **Away from the lights:** all three are grey, (89,90,89) over the sidebar's (14,15,19). That holds whether
+  or not Arc is frontmost.
+- **Pointer anywhere in one rectangle:** all three show colour and their marks, whether or not Arc is
+  frontmost. The rectangle runs from window x 12 to 72 and y 17 to 30 inclusive, gaps between buttons
+  included. Colours: close (140,26,16), minimize (143,89,28), zoom (97,197,85).
+- **Binary:** next to the standalone buttons Arc calls `setAlphaValue:`. The value is picked from
+  `currentDrawingAppearance` (0.33 or 0.1), and is 1.0 on hover.
+
+**Tab drag** (three recordings plus a window-list poll; the recorder skips frames where only the cursor moves,
+so timings are ±0.3s)
+- **Inside the sidebar:** one run showed a translucent full-width copy of the row, × included, following the
+  pointer, and a white insertion line with a small circle at its left end marking the slot. The other rows
+  don't slide apart, and on drop the list reorders in a frame or two. Another run showed nothing but the
+  cursor, so this may depend on speed or start point.
+- **Out over the page:**
+  - About 1.1s after the pointer crosses the sidebar edge, a portrait card replaces the row copy in a single
+    frame. It's about 170×250pt, near-black, with rounded corners, a favicon square and the bold white title,
+    centred.
+  - The pointer stays on the title line, about 25pt left of centre.
+  - No soft shadow shows, but the binary's drag window sets one (y −30, radius 19).
+  - The page dims in that same frame, and a thin light line appears at the sidebar edge.
+- **Back into the sidebar:** at the edge the card turns back into a translucent row-sized pill. The page
+  brightens only after the drop.
+- **Dropped over the page:** cancelled. No new window and no split; the tab stays where it was.
+- **Windows during a drag:** 0.5 to 0.9s after mouse-down, Arc opens three, all gone after the drop:
+  - a full-screen window at layer 500, which is where the card is drawn;
+  - a 30pt strip on the sidebar's right edge;
+  - an 80pt strip just off the window's left edge.
+- **Binary:**
+  - A real `NSDraggingSession` with a bitmap of the row (`cacheDisplayInRect:toBitmapImageRep:`).
+  - A borderless, mouse-transparent `ArcDraggingWindow` showing a snapshot, with a rounded shadow path.
+  - Two clear floating child panels registered for drags (`SidebarDragRegionWindow`,
+    `SidebarItemDragTargetWindow`).
+- **Not observed yet:**
+  - What the edge strips accept: other windows, other spaces, split view.
+  - What triggers the card: time or distance.
+  - The return animation.
+  - Kite's own drag, which needs Kite in front.
+
 ## Animations, from 60fps recordings of Arc
 
 Recorded on Gabe's main Arc window, capturing only thin strips with no titles (the space-header row, and a 6pt

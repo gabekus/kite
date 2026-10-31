@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuRouter: MenuRouter!
     private var archiveTimer: Timer?
     private var automation: AutomationController!
+    private var claudeTasks: ClaudeTasksController!
     private var diagnostics: DiagnosticsRecorder!
     /// Links opened before launch finished (Kite as the default browser).
     private var pendingURLs: [URL] = []
@@ -70,6 +71,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A test build on a throwaway profile with KITE_DIAGNOSTICS=1 comes up ready for Claude.
         if UIDiagnostics.enabledByEnvironment && !automation.isEnabled { automation.setEnabled(true) }
         UIDiagnostics.shared.applySetting()
+        automation.jev = JevClient.fromKeychain()
+        claudeTasks = ClaudeTasksController(store: store, automation: automation, supportDirectory: Self.supportDirectory)
+        // A notification clicked: the bubble, on that task.
+        claudeTasks.showPanel = { [weak self] id in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.windowController.window?.makeKeyAndOrderFront(nil)
+            self?.windowController.claudeBubble.open(task: id)
+        }
+        claudeTasks.isPanelVisible = { [weak self] in self?.windowController.claudeBubble.isOpen == true }
+        windowController.claudeBubble.tasks = claudeTasks
+        windowController.hidesInsteadOfClosing = { [weak self] in self?.claudeTasks.isRunningAny == true }
+        windowController.claudeButton.tasks = claudeTasks
+        windowController.claudeButton.open = { [weak self] in self?.claudeButtonClicked() }
         #if canImport(CEFBridge)
         // Pages extensions open (welcome pages, chrome.windows.create) become background
         // tabs, so installing one doesn't pull you off the page you're on.
@@ -149,7 +163,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// The Dock icon brings back the window hidden while Claude tasks ran.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows { windowController?.window?.makeKeyAndOrderFront(nil) }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        claudeTasks?.stopAll()
+        claudeTasks?.saveNow()
         saveSession()
         automation?.shutdown()
     }
@@ -203,10 +225,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Claude
 
-    @objc func toggleClaudeJavaScript(_ sender: Any?) {
-        automation.setAllowJavaScript(!automation.settings.allowJavaScript)
-    }
-
     @objc func toggleClaudeSpace(_ sender: Any?) {
         automation.setUseClaudeSpace(!automation.settings.useClaudeSpace)
     }
@@ -214,6 +232,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleRecordNetwork(_ sender: Any?) {
         automation.setRecordNetwork(!automation.settings.recordNetwork)
     }
+
+    /// The sidebar's Claude button: sets Claude up the first time, then toggles the bubble.
+    private func claudeButtonClicked() {
+        guard !claudeTasks.isSetUp else { return windowController.claudeBubble.toggle() }
+        Task { @MainActor in
+            if await claudeTasks.setUp() { windowController.claudeBubble.open() }
+        }
+    }
+
 
     @objc func connectClaudeCode(_ sender: Any?) {
         if !automation.isEnabled { automation.setEnabled(true) }
@@ -255,9 +282,6 @@ extension AppDelegate: NSMenuItemValidation {
         switch item.action {
         case #selector(toggleClaudeControl(_:)):
             item.state = automation.isEnabled ? .on : .off
-        case #selector(toggleClaudeJavaScript(_:)):
-            item.state = automation.settings.allowJavaScript ? .on : .off
-            return automation.isEnabled
         case #selector(toggleClaudeSpace(_:)):
             item.state = automation.settings.useClaudeSpace ? .on : .off
             return automation.isEnabled

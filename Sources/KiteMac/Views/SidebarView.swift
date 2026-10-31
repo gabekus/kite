@@ -18,6 +18,7 @@ struct SidebarView: View {
     let actions: SidebarActions
     /// False on WebKit, which can't force pages dark.
     let supportsDarkPages: Bool
+    let claude: ClaudeButtonModel
     /// Opens the extensions popover from the address field's hover button; nil where
     /// extensions don't run (incognito, WebKit).
     var showExtensions: ((NSView) -> Void)?
@@ -114,7 +115,7 @@ struct SidebarView: View {
             .scrollContentBackground(.hidden)
             .environment(\.defaultMinListRowHeight, 1)
 
-            SpaceBar(store: store)
+            SpaceBar(store: store, claude: claude)
                 .frame(height: M.bottomBarHeight)
         }
         .padding(.horizontal, M.padding)
@@ -603,9 +604,40 @@ private struct SplitRow: View {
 
 private struct SpaceBar: View {
     let store: BrowserStore
+    let claude: ClaudeButtonModel
 
     var body: some View {
         let state = store.state
+        HStack(spacing: 4) {
+            // Too many spaces to fit scroll rather than widen the bar: an over-wide bar pushes the whole
+            // sidebar off its left edge. While they fit they stay a plain row, so the bar's empty part
+            // still drags the window (a scroll view never does).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 0) {
+                    spaceIcons(state)
+                    Spacer(minLength: 0)
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    spaceIcons(state)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            ClaudeSidebarButton(model: claude, size: M.bottomButtonSize)
+            Button {
+                store.addSpace()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .regular))
+                    .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(0.7)
+            .help("New Space")
+        }
+    }
+
+    private func spaceIcons(_ state: BrowserState) -> some View {
         HStack(spacing: 4) {
             ForEach(state.spaces) { space in
                 Button {
@@ -621,18 +653,6 @@ private struct SpaceBar: View {
                 .help(space.name)
                 .contextMenu { ThemeMenu(store: store, space: space) }
             }
-            Spacer()
-            Button {
-                store.addSpace()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .regular))
-                    .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .opacity(0.7)
-            .help("New Space")
         }
     }
 }

@@ -103,11 +103,14 @@ public enum AutomationWire {
         public var id: Int
         public var tool: String
         public var arguments: JSONValue
+        /// The Claude task this call comes from (`KITE_AGENT_TASK`), when Kite started the client itself.
+        public var task: String?
 
-        public init(id: Int, tool: String, arguments: JSONValue) {
+        public init(id: Int, tool: String, arguments: JSONValue, task: String? = nil) {
             self.id = id
             self.tool = tool
             self.arguments = arguments
+            self.task = task
         }
     }
 
