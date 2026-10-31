@@ -65,6 +65,10 @@ enum ArcMetrics {
         /// Favicon's leading edge inside the pill (x 17 in the window).
         static let iconInset: CGFloat = 9
         static let iconTextGap: CGFloat = 8
+        /// Each folder level indents its rows this much. Arc 1.169's binary: the tab list's
+        /// outline view sets indentationPerLevel 16, and its cell frame override only shifts every
+        /// level by the same constant; tab cells add no depth term of their own.
+        static let nestingIndent: CGFloat = 16
         static let tabFontSize: CGFloat = 14
         static let tabTextOpacity: Double = 0.865
         static let selectedFill: Double = 0.20
