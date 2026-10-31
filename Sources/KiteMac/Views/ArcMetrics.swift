@@ -133,6 +133,9 @@ enum ArcMetrics {
         static let rowItemSpacing: CGFloat = 4
         /// An item this narrow or narrower shows only its favicon.
         static let rowCompactWidth: CGFloat = 60
+        /// A title gets 20pt or less after the favicon: hidden, leaving just the favicon
+        /// (`SplitViewCellChildItemView.layout` in Arc 1.169's binary).
+        static let rowTitleMinWidth: CGFloat = 20
         /// Each item's corner is min(width / 2, this).
         static let rowItemMaxCornerRadius: CGFloat = 8
     }
