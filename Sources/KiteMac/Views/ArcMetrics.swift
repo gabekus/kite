@@ -28,6 +28,21 @@ enum ArcMetrics {
         /// The sidebar toggle's x, just right of the traffic lights.
         static let toggleX: CGFloat = 71
 
+        /// How far the sidebar can be dragged. From Arc 1.169's binary (the resize pan handler):
+        /// 164 to 500. Arc also hides the sidebar when dragged below 82; Kite doesn't yet.
+        static let widths: ClosedRange<CGFloat> = 164...500
+        /// Arc's `SidebarHeaderWidthLayout`, from the header's width (Arc 1.169's binary): compact
+        /// under 212, medium from 212 to under 228 (four 47pt favorite tiles with 8pt gaps and
+        /// padding), regular from 228. Compact shrinks the navigation buttons to 28pt with no gap
+        /// and swaps reload for a More menu.
+        static let headerCompactBelow: CGFloat = 212
+        static let headerMediumBelow: CGFloat = 228
+        static let compactNavButtonSize: CGFloat = 28
+        static let compactNavButtonSpacing: CGFloat = 0
+        /// Kite's own floor between the toggle and the navigation buttons, so they never touch:
+        /// the buttons' own 2pt gap.
+        static let toggleToNavMinGap: CGFloat = 2
+
         // URL field.
         static let urlFieldTopGap: CGFloat = 6.5
         static let urlFieldHeight: CGFloat = 36

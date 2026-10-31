@@ -8,7 +8,7 @@ import SwiftUI
 final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
     private enum Layout {
         static let defaultSidebarWidth: CGFloat = 240
-        static let sidebarWidths: ClosedRange<CGFloat> = 180...400
+        static let sidebarWidths = ArcMetrics.Sidebar.widths
         static let inset = ArcMetrics.Content.inset
         static let cornerRadius = ArcMetrics.Content.cornerRadius
         static let glowMargin: CGFloat = 28
@@ -157,6 +157,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             goBack: { [weak self] in self?.goBack(nil) },
             goForward: { [weak self] in self?.goForward(nil) },
             reload: { [weak self] in self?.reload(nil) },
+            forceReload: { [weak self] in self?.forceReload(nil) },
             toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
             closeTab: { [weak self] id in self?.close(tab: id) },
             addSplitView: { [weak self] in self?.addSplitView(nil) }
