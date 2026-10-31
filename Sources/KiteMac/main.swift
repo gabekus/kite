@@ -1,4 +1,5 @@
 import AppKit
+import KiteCore
 #if canImport(CEFBridge)
 import CEFBridge
 #endif
@@ -19,6 +20,15 @@ MainActor.assumeIsolated {
     if KCRuntime.isAvailable && environment["KITE_ENGINE"] != "webkit" {
         let settings = KCRuntimeSettings()
         settings.profilePath = AppDelegate.supportDirectory.appendingPathComponent("Chromium").path
+        // Extensions such as 1Password reach their desktop apps through these. Chromium reads a
+        // manifest on every connect, so syncing again when Kite comes forward picks up new apps.
+        let hostsDirectory = URL(fileURLWithPath: settings.profilePath).appendingPathComponent("NativeMessagingHosts")
+        let hostsQueue = DispatchQueue(label: "dev.gabek.Kite.native-messaging-hosts", qos: .utility)
+        let syncHosts = { NativeMessagingHosts.sync(from: NativeMessagingHosts.macSourceDirectories(), into: hostsDirectory) }
+        syncHosts()
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: nil) { _ in
+            hostsQueue.async { syncHosts() }
+        }
         settings.remoteDebuggingPort = Int32(environment["KITE_REMOTE_DEBUGGING_PORT"] ?? "") ?? 0
         KCRuntime.energySaverEnabled = UserDefaults.standard.bool(forKey: AppDelegate.energySaverKey)
         // Test profiles stay out of the login keychain, so test runs never prompt
