@@ -208,7 +208,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Sad tab | Crashed-tab page: face, "Tab crashed. Maybe reload the page?", exit code bottom-right | ✅ Chromium; WebKit still reloads on its own | B5 |
 | Download from links, downloads list | | 🟡 WebKit saves files, no UI | Thread: Library |
 | Picture in Picture | Video PiP | ❌ | Thread: Mini player |
-| Gestures | Two-finger swipe back/forward | ❌ | B5 |
+| Gestures | Two-finger swipe back/forward: Chromium's `HistorySwiper` + history overlay (dark circle with arrow sliding in from the edge), only when the page can't scroll that way | 🟡 WebKit (system gesture); Chromium: Kite's own recogniser with Chromium's overlay geometry, threshold for trackpads unverified | B5 |
 | Welcome / onboarding | | ❌ | Skip |
 
 ## Batches

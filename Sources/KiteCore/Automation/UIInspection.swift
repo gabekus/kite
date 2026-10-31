@@ -43,6 +43,13 @@ public enum UIInputEvent: Hashable, Sendable {
     case drag(from: UIPoint, to: UIPoint, steps: Int)
     /// Wheel deltas in points; positive dy scrolls content up (like a swipe up on a trackpad).
     case scroll(UIPoint, dx: Double, dy: Double)
+    /// A trackpad scroll with gesture phases. `.gesture` sends began, `steps` changed events
+    /// sharing dx/dy, then ended; the other phases send one event (to hold a gesture mid-way).
+    case phasedScroll(UIPoint, dx: Double, dy: Double, phase: ScrollPhase, steps: Int)
+
+    public enum ScrollPhase: String, Hashable, Sendable, CaseIterable {
+        case gesture, began, changed, ended, cancelled
+    }
 }
 
 /// The `ui` tool: Kite's own native interface (window, sidebar, command bar, menus), read from
@@ -148,7 +155,7 @@ public enum UIInspection: Hashable, Sendable {
         window's top-left. Actions: windows; tree (views with frames, materials, radii, colours, fonts, SwiftUI elements; \
         root, depth, match, layers); capture (exact window pixels even when covered or in the background; region \
         [x,y,w,h], pixels [[x,y],…] for hex colours only); pointer (synthetic moves via points or from/to/steps: view hit, \
-        cursor rects, tracking areas, cursor shown); input (keys, text, click, drag, scroll into Kite's window only); \
+        cursor rects, tracking areas, cursor shown); input (keys, text, click, drag, scroll, phased trackpad scroll into Kite's window only); \
         menu (every item, shortcut, action, enabled; flags unsafe shortcuts); key_log (where recent keys went); \
         trace (animations with durations and curves, sampled frames and frame timing for seconds, after optional keys).
         """
@@ -182,6 +189,8 @@ public enum UIInspection: Hashable, Sendable {
                 "modifiers": ["type": "string", "description": "input click: e.g. \"cmd\" or \"shift+alt\"."],
                 "scroll": point,
                 "dx": ["type": "number"], "dy": ["type": "number"],
+                "phase": ["type": "string", "enum": .array(UIInputEvent.ScrollPhase.allCases.map { .string($0.rawValue) }),
+                          "description": "input scroll: send a phased trackpad scroll (gesture = began, steps changed, ended)."],
                 "seconds": ["type": "number", "description": "trace: how long to record (default 1.5, max 10)."],
                 "limit": ["type": "integer", "minimum": 1, "maximum": 500],
                 "clear": ["type": "boolean"],
@@ -290,8 +299,16 @@ private struct UIArguments {
         }
         if let point = try point("scroll") {
             let dx = try double("dx") ?? 0, dy = try double("dy") ?? 0
-            guard dx != 0 || dy != 0 else { throw Invalid("Scrolling needs \"dx\" or \"dy\".") }
-            events.append(.scroll(point, dx: dx, dy: dy))
+            if let name = try string("phase") {
+                guard let phase = UIInputEvent.ScrollPhase(rawValue: name) else {
+                    throw Invalid("\"phase\" is one of \(UIInputEvent.ScrollPhase.allCases.map(\.rawValue).joined(separator: ", ")).")
+                }
+                let steps = try int("steps", in: 1...UIInspection.maxPointerSteps) ?? 10
+                events.append(.phasedScroll(point, dx: dx, dy: dy, phase: phase, steps: steps))
+            } else {
+                guard dx != 0 || dy != 0 else { throw Invalid("Scrolling needs \"dx\" or \"dy\".") }
+                events.append(.scroll(point, dx: dx, dy: dy))
+            }
         }
         guard events.count == 1 else {
             throw Invalid(events.isEmpty
