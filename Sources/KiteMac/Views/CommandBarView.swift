@@ -356,7 +356,10 @@ private struct CommandBarView: View {
 }
 
 /// Arc's panel: a dark tint over the blurred page, a hairline border, a wide soft shadow.
-private struct CommandBarPanel: ViewModifier {
+/// ⌘J's Claude bar uses the same panel with `accent` set: the border and a faint glow
+/// take that colour instead of white.
+struct CommandBarPanel: ViewModifier {
+    var accent: Color?
     @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
@@ -369,7 +372,7 @@ private struct CommandBarPanel: ViewModifier {
                 }
                 .clipShape(shape)
             }
-            .overlay(shape.strokeBorder(scheme == .dark ? Color.white.opacity(C.borderOpacity) : Color.black.opacity(0.12), lineWidth: 1))
+            .overlay(shape.strokeBorder(border, lineWidth: 1))
             // A black hairline just outside the border, which shows on light pages.
             .overlay(
                 RoundedRectangle(cornerRadius: C.cornerRadius + C.outlineWidth, style: .circular)
@@ -377,6 +380,12 @@ private struct CommandBarPanel: ViewModifier {
                     .padding(-C.outlineWidth)
             )
             .shadow(color: .black.opacity(C.shadowOpacity), radius: C.shadowRadius, y: C.shadowY)
+            .shadow(color: (accent ?? .clear).opacity(C.accentGlowOpacity), radius: C.accentGlowRadius)
+    }
+
+    private var border: Color {
+        if let accent { return accent.opacity(C.accentBorderOpacity) }
+        return scheme == .dark ? Color.white.opacity(C.borderOpacity) : Color.black.opacity(0.12)
     }
 }
 

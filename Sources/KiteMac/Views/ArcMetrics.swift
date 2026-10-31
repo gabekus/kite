@@ -194,5 +194,10 @@ enum ArcMetrics {
         static let actionBoxSize: CGFloat = 24
         static let actionBoxTrailing: CGFloat = 13
         static let actionGap: CGFloat = 7
+        /// Kite's own, for ⌘J's Claude bar (Arc has no equivalent): the border in Claude's
+        /// colour instead of white, and a faint glow of it around the panel.
+        static let accentBorderOpacity: Double = 0.55
+        static let accentGlowOpacity: Double = 0.22
+        static let accentGlowRadius: CGFloat = 14
     }
 }
