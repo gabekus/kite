@@ -44,13 +44,36 @@ final class TrafficLights {
     }
 }
 
-/// Shows the buttons' ×, – and + marks while the pointer is over any of them, as the
-/// titlebar does. AppKit's window buttons ask their superview `_mouseInGroup:` for this.
+/// Arc keeps its traffic lights grey, even in the key window, until the pointer is on them;
+/// then all three show their colours and marks (measured in Arc 1.169: (89,90,90) at each centre
+/// while away, full colour on hover). Arc's binary dims them by appearance: 0.33 in dark, 0.1
+/// in light. Here the buttons are drawn transparent while away and plain circles stand in.
 private final class ButtonGroup: NSView {
+    private let dim = DimmedLights()
     private var inside = false {
-        didSet { subviews.forEach { $0.needsDisplay = true } }
+        didSet { update() }
     }
 
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        guard subview !== dim else { return }
+        // Keep the stand-in circles on top, centred on each button.
+        dim.frame = bounds
+        dim.autoresizingMask = [.width, .height]
+        dim.centers = subviews.filter { $0 !== dim }.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) }
+        addSubview(dim, positioned: .above, relativeTo: nil)
+        update()
+    }
+
+    private func update() {
+        for button in subviews where button !== dim {
+            button.alphaValue = inside ? 1 : 0
+            button.needsDisplay = true
+        }
+        dim.isHidden = inside
+    }
+
+    /// AppKit's window buttons ask their superview this to decide whether to show their marks.
     @objc(_mouseInGroup:) func mouseInGroup(_ button: NSButton) -> Bool { inside }
 
     override func updateTrackingAreas() {
@@ -61,4 +84,23 @@ private final class ButtonGroup: NSView {
 
     override func mouseEntered(with event: NSEvent) { inside = true }
     override func mouseExited(with event: NSEvent) { inside = false }
+}
+
+/// Three plain circles where the buttons are, in the label colour at Arc's dimmed opacity.
+private final class DimmedLights: NSView {
+    static let diameter: CGFloat = 12
+    var centers: [CGPoint] = [] {
+        didSet { needsDisplay = true }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        (dark ? NSColor.white.withAlphaComponent(0.33) : NSColor.black.withAlphaComponent(0.1)).setFill()
+        let r = Self.diameter / 2
+        for c in centers {
+            NSBezierPath(ovalIn: CGRect(x: c.x - r, y: c.y - r, width: Self.diameter, height: Self.diameter)).fill()
+        }
+    }
 }
