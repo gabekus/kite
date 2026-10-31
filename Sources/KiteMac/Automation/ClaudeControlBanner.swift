@@ -10,7 +10,9 @@ struct ClaudeControlBanner: View {
     var body: some View {
         let controlled = automation.controlledTabs
         let front = store.state.selectedTab?.id
-        if !controlled.isEmpty {
+        if let front, let signIn = automation.signIns[front] {
+            signInBanner(signIn, tab: front)
+        } else if !controlled.isEmpty {
             let frontControlled = front.map { controlled[$0] != nil } ?? false
             let latest = controlled.max { $0.value.lastActive < $1.value.lastActive }?.key
             HStack(spacing: 10) {
@@ -47,6 +49,49 @@ struct ClaudeControlBanner: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Claude is controlling the browser")
         }
+    }
+
+    /// sign_in: Claude waits while the user signs in. 1Password reopens its popup; Done says
+    /// they're signed in (for pages Kite can't tell about); Cancel hands the tab back unsigned.
+    private func signInBanner(_ request: SignInRequest, tab: UUID) -> some View {
+        let accent = Color(red: 0.85, green: 0.47, blue: 0.34)
+        return HStack(spacing: 10) {
+            Image(systemName: "key.fill")
+                .foregroundStyle(accent)
+            Text("Claude is waiting for you to sign in to \(request.host)")
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(request.reason.map { "Claude needs you signed in \($0)." } ?? "Claude needs you signed in.")
+            if automation.canOpenPasswordManager {
+                Button("1Password") { automation.openPasswordManager() }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 12))
+                    .help("Fill this login with 1Password (⇧⌘X). Claude never sees the password.")
+            }
+            Button("Cancel") { automation.answerSignIn(tab, .cancelled) }
+                .buttonStyle(.borderless)
+                .font(.system(size: 12))
+            Button {
+                automation.answerSignIn(tab, .signedIn)
+            } label: {
+                Text("Done").font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(accent)
+            .controlSize(.small)
+            .help("You're signed in: give the tab back to Claude")
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .padding(.vertical, 5)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(accent.opacity(0.6), lineWidth: 1))
+        .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+        .frame(maxWidth: 560)
+        .fixedSize()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Claude is waiting for you to sign in")
     }
 
     private func message(controlled: [UUID: AutomationController.ControlledTab], frontControlled: Bool, latest: UUID?) -> String {

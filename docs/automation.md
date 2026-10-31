@@ -40,6 +40,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | (none) | `wait_for` | | load, navigation, selector, text, network_idle. Event-driven. |
 | (none) | `handle_dialog` | | alert / confirm / prompt / beforeunload. |
 | (none) | `list_downloads` | | Downloads since control was turned on. |
+| (none) | `sign_in` | `kite call sign_in` | Hands a login page to the user, with 1Password. See below. |
 | (none) | `list_spaces`, `switch_space`, `create_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces` | Kite's own organization. |
 | `gif_creator`, `shortcuts_*`, `switch_browser` | not yet | | |
 
@@ -226,6 +227,19 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   - form values.
 - **Indicator.** A "Claude is controlling this tab" pill floats over the page, with Show and **Stop**. Stop revokes
   the tab: it ends its event collection and fails pending confirmations and waits.
+- **Sign-in handoff (`sign_in`).** Claude never types or sees passwords. When a page needs the user signed in,
+  Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and swaps the
+  pill for "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the
+  page itself, so the password goes from the vault into the form and never through Kite's tools or the model.
+  - While it waits, every other tool on that tab fails ("The user is signing in on this tab"), so nothing can read
+    the filled fields.
+  - It ends when the page has moved to a different URL and shows no visible password or one-time-code field (two
+    checks 0.5 s apart), when the user presses Done or Cancel, on Stop, or after 5 minutes.
+  - On Cancel or timeout, Kite empties the page's password and code fields before handing the tab back.
+  - Claude gets only "signed in / cancelled / timed out" and the tab's new URL and title.
+  - Limits: only the top frame is checked (a login inside an iframe needs Done), and after sign-in Claude can still
+    run `javascript` on the page as usual. This is the same model as 1Password's own agentic autofill: the agent never
+    holds the credential.
 
 ## Events, waits and dialogs
 
