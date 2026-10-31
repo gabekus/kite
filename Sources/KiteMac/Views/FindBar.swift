@@ -179,6 +179,8 @@ final class FindBar: NSView, NSTextFieldDelegate {
         button.contentTintColor = Metrics.counter
         button.isBordered = false
         button.toolTip = help
+        // The image's description alone leaves the button reading as "Button".
+        button.setAccessibilityLabel(help)
         button.widthAnchor.constraint(equalToConstant: 20).isActive = true
         button.heightAnchor.constraint(equalToConstant: 20).isActive = true
         return button
