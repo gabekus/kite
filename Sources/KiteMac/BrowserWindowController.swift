@@ -161,7 +161,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             closeTab: { [weak self] id in self?.close(tab: id) },
             addSplitView: { [weak self] in self?.addSplitView(nil) }
         )
-        var sidebar = SidebarView(store: store, actions: actions, supportsDarkPages: pool.engine.supportsDarkPages, claude: claudeButton)
+        var sidebar = SidebarView(
+            store: store,
+            actions: actions,
+            supportsDarkPages: pool.engine.supportsDarkPages,
+            claude: claudeButton
+        )
         var toolbar = PageToolbar(store: store, actions: actions)
         #if canImport(CEFBridge)
         // Extensions run in the persistent Chromium profile only.
