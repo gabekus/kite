@@ -240,6 +240,28 @@ private struct ChromeFill: ViewModifier {
     }
 }
 
+/// A tab or split row's pill. Arc's colours for these come in light and dark pairs
+/// rather than one white scaled up, so on a light theme a hovered tab gets a faint
+/// dark wash instead of a white haze.
+private struct TabPillFill: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    let isSelected: Bool
+    let isHovered: Bool
+
+    func body(content: Content) -> some View {
+        content.background(
+            RoundedRectangle(cornerRadius: M.cornerRadius, style: .continuous).fill(fill)
+        )
+    }
+
+    private var fill: Color {
+        let dark = scheme == .dark
+        if isSelected { return .white.opacity(dark ? M.selectedFill : M.selectedFillLight) }
+        if isHovered { return dark ? .white.opacity(M.hoverFill) : Color(red: 0.055, green: 0.059, blue: 0.063).opacity(M.hoverFillLight) }
+        return .clear
+    }
+}
+
 private struct ToolbarButton: View {
     let symbol: String
     let help: String
@@ -516,7 +538,7 @@ private struct TabRow: View {
         .padding(.leading, M.iconInset + indent(depth))
         .padding(.trailing, 6)
         .frame(height: M.pillHeight)
-        .modifier(ChromeFill(strength: isSelected ? M.selectedFill : hovering ? M.hoverFill : 0))
+        .modifier(TabPillFill(isSelected: isSelected, isHovered: hovering))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onSelect)
@@ -559,7 +581,7 @@ private struct SplitRow: View {
         }
         .padding(.leading, indent(depth))
         .frame(height: M.pillHeight)
-        .modifier(ChromeFill(strength: focusedID != nil ? M.selectedFill : hovering ? M.hoverFill : 0))
+        .modifier(TabPillFill(isSelected: focusedID != nil, isHovered: hovering))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { onSelect(nil) }

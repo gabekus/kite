@@ -69,6 +69,11 @@ enum ArcMetrics {
         static let tabTextOpacity: Double = 0.865
         static let selectedFill: Double = 0.20
         static let hoverFill: Double = 0.10
+        /// A tab pill's fill on a light theme (Arc's TabCellBackgroundCurrent and
+        /// SidebarItemBackground assets): near-opaque white when selected, and a faint
+        /// dark wash, not white, on hover. Dark themes use selectedFill and hoverFill.
+        static let selectedFillLight: Double = 0.85
+        static let hoverFillLight: Double = 0.05
         /// Pinned tabs and folders start 3pt below the header.
         static let listTopSpacer: CGFloat = 3
 
