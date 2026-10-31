@@ -812,6 +812,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):
             return shownPage?.isLoading ?? false
+        case #selector(showOnePassword(_:)):
+            #if canImport(CEFBridge)
+            return !isIncognito
+            #else
+            return false
+            #endif
         case #selector(toggleFullScreenMode(_:)):
             item.title = window?.styleMask.contains(.fullScreen) == true ? "Exit Full Screen" : "Enter Full Screen"
         default:
