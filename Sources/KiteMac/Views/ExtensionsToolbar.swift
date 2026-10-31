@@ -206,16 +206,19 @@ private struct ExtensionIcon: View {
     }
 }
 
-/// Hands SwiftUI's backing NSView to code that anchors AppKit popovers.
-private struct AnchorView: NSViewRepresentable {
-    @Binding var view: NSView?
+extension ExtensionsMenu {
+    private static var shown: NSPopover?
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async { self.view = view }
-        return view
+    /// The extensions popover hanging from `view`, from places that aren't SwiftUI
+    /// popovers already (the sidebar's address field, the menu bar).
+    static func present(model: ExtensionsModel, from view: NSView, rect: NSRect? = nil) {
+        shown?.close()
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: ExtensionsMenu(model: model) { [weak popover] in popover?.close() })
+        popover.show(relativeTo: rect ?? view.bounds, of: view, preferredEdge: ExtensionPopover.belowEdge(of: view))
+        shown = popover
+        model.refresh()
     }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 #endif
