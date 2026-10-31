@@ -24,6 +24,9 @@ cp Resources/Info.plist "$CONTENTS/Info.plist"
 # Built from Resources/AppIcon.svg (1024 canvas, 824 body, the macOS icon grid).
 cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 cp Sources/KiteMac/Shaders/*.metal "$CONTENTS/Resources/Shaders/"
+# Kite's helper extension (lists and manages extensions), loaded at launch.
+rm -rf "$CONTENTS/Resources/KiteHelperExtension"
+cp -R Resources/KiteHelperExtension "$CONTENTS/Resources/KiteHelperExtension"
 
 # Precompiled shaders mean no Metal compile at launch. Falls back to runtime
 # compilation if the Metal toolchain isn't installed.
