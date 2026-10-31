@@ -58,12 +58,14 @@ fi
 # identity keeps the code identity the same across rebuilds, so the keychain
 # remembers "Always Allow" for Kite. Ad-hoc signing changes it on every build,
 # and macOS asks for your password again. Order: KITE_SIGN_IDENTITY, then a
-# valid Apple Development cert, then "Kite Local Signing" (make-signing-cert.sh).
+# valid Developer ID Application cert (1Password only trusts a browser signed
+# with one), then Apple Development, then "Kite Local Signing" (make-signing-cert.sh).
 SIGN_ID="${KITE_SIGN_IDENTITY:-}"
-if [[ -z "$SIGN_ID" ]]; then
+for kind in "Developer ID Application" "Apple Development"; do
+    [[ -n "$SIGN_ID" ]] && break
     # By SHA-1, since an expired copy of the same cert would make the name ambiguous.
-    SIGN_ID="$(security find-identity -v -p codesigning | awk '/"Apple Development: / { print $2; exit }')"
-fi
+    SIGN_ID="$(security find-identity -v -p codesigning | awk -v kind="\"$kind: " 'index($0, kind) { print $2; exit }')"
+done
 if [[ -z "$SIGN_ID" ]] && security find-certificate -c "Kite Local Signing" >/dev/null 2>&1; then
     SIGN_ID="Kite Local Signing"
 fi
