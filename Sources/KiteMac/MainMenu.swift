@@ -113,6 +113,9 @@ enum MainMenu {
             item("Share…", #selector(BrowserWindowController.share(_:)), id: "share"),
             item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"),
             item("Print…", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
+            .separator(),
+            // 1Password's own shortcut for its popup.
+            item("1Password…", #selector(BrowserWindowController.showOnePassword(_:)), "x", [.command, .shift], id: "onePassword"),
         ])
 
         submenu("Edit", [

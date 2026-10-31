@@ -84,8 +84,9 @@ in the background; `input` says so. See docs/automation.md for what else works i
 the background.
 
 For Arc, `kite probe Arc tree` gives the accessibility tree in the same window
-points (roles and frames; text stays hidden unless `--text`, which is Gabe's
-data), and `kite probe Arc capture --window N -o arc.png` captures one window
+points (roles and frames; text, accessibility identifiers and other attributes
+stay hidden unless `--text`, which is Gabe's data: Arc puts tab titles in its
+identifiers), and `kite probe Arc capture --window N -o arc.png` captures one window
 in the background. Use an Arc incognito window, and close it when done. These
 need Accessibility and Screen Recording permission for the app running `kite`.
 

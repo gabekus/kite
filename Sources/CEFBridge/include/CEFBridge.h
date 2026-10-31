@@ -24,6 +24,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL useMockKeychain;
 /// Extra Chromium switches, e.g. "--disable-backgrounding-occluded-windows".
 @property (nonatomic, copy) NSArray<NSString *> *extraSwitches;
+/// Unpacked extensions loaded at launch (Kite's helper), merged into any
+/// --load-extension switch Kite was started with.
+@property (nonatomic, copy) NSArray<NSString *> *extensionDirectories;
 @end
 
 @interface KCRuntime : NSObject
@@ -171,6 +174,12 @@ NS_SWIFT_UI_ACTOR
 - (void)callDevToolsMethod:(NSString *)method
                     params:(nullable NSDictionary<NSString *, id> *)params
                 completion:(void (NS_SWIFT_UI_ACTOR ^)(NSDictionary * _Nullable result, NSString * _Nullable error))completion;
+/// Messages for DevTools sessions attached with Target.attachToTarget (flatten): each
+/// carries its "sessionId". Kite's tabs bridge uses them to reach extension service
+/// workers. Set, they no longer reach the result and event callbacks above.
+@property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^sessionMessageHandler)(NSDictionary *message);
+/// Sends a raw DevTools message, such as one to an attached session.
+- (void)sendDevToolsMessage:(NSDictionary<NSString *, id> *)message;
 - (void)close;
 @end
 

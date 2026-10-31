@@ -19,6 +19,12 @@ struct SidebarView: View {
     /// False on WebKit, which can't force pages dark.
     let supportsDarkPages: Bool
     let claude: ClaudeButtonModel
+    /// Opens the extensions popover from the address field's hover button; nil where
+    /// extensions don't run (incognito, WebKit).
+    var showExtensions: ((NSView) -> Void)?
+    /// Always shown at the address field's right end (1Password's key); hides itself when
+    /// there's nothing to show.
+    var fieldAccessory: AnyView?
 
     var body: some View {
         let state = store.state
@@ -49,7 +55,9 @@ struct SidebarView: View {
                     text: selectedTab?.url?.host() ?? "Search or enter URL",
                     isDark: darkPageState(for: selectedTab),
                     action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
-                    toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } }
+                    toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } },
+                    showExtensions: showExtensions,
+                    accessory: fieldAccessory
                 )
                 .padding(.top, M.urlFieldTopGap)
             }
@@ -258,6 +266,9 @@ private struct AddressPill: View {
     let isDark: Bool?
     let action: () -> Void
     let toggleDark: () -> Void
+    var showExtensions: ((NSView) -> Void)?
+    var accessory: AnyView?
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -272,12 +283,47 @@ private struct AddressPill: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // Arc 1.169 reveals its Site Control Center button (30×30, with the extensions)
+            // at the field's right end while the pointer is over the field.
+            // Arc's buttons there are 30pt wide on a 28pt pitch.
+            HStack(spacing: -2) {
+                if let accessory { accessory }
+                if let showExtensions, hovering {
+                    ExtensionsFieldButton(action: showExtensions)
+                }
+            }
             if let isDark {
                 DarkPageToggle(isDark: isDark, action: toggleDark)
                     .padding(.trailing, 4)
             }
         }
         .modifier(ChromeFill(strength: M.fieldFill))
+        .onHover { hovering = $0 }
+    }
+}
+
+/// The address field's extensions button: opens the extensions popover under it.
+private struct ExtensionsFieldButton: View {
+    let action: (NSView) -> Void
+    @State private var anchor: NSView?
+    @State private var hovering = false
+
+    static let size: CGFloat = 30
+
+    var body: some View {
+        Button { if let anchor { action(anchor) } } label: {
+            Image(systemName: "puzzlepiece.extension")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: Self.size, height: Self.size)
+                .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0, cornerRadius: 6))
+                .background(AnchorView(view: $anchor))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(hovering ? 0.9 : 0.6)
+        .onHover { hovering = $0 }
+        .help("Extensions")
+        .accessibilityLabel("Extensions")
     }
 }
 

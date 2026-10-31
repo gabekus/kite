@@ -128,6 +128,20 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         browser.evaluateJavaScript(script, completion: completion)
     }
 
+    /// Like evaluateJavaScript, awaiting a returned promise, and optionally as if the user
+    /// had just clicked (APIs such as chrome.management.uninstall require that). Only for
+    /// Kite's own pages: the result is the value, or nil with the protocol's error.
+    func evaluate(_ expression: String, userGesture: Bool, completion: @escaping (Any?, String?) -> Void) {
+        let params: [String: Any] = ["expression": expression, "awaitPromise": true, "returnByValue": true, "userGesture": userGesture]
+        browser.callDevToolsMethod("Runtime.evaluate", params: params) { result, error in
+            if let error { return completion(nil, error) }
+            if let exception = result?["exceptionDetails"] as? [String: Any] {
+                return completion(nil, (exception["exception"] as? [String: Any])?["description"] as? String ?? "exception")
+            }
+            completion((result?["result"] as? [String: Any])?["value"], nil)
+        }
+    }
+
     func hibernationState() -> Any? { nil }
 
     func checkBusy(_ completion: @escaping (Bool) -> Void) {
@@ -252,7 +266,8 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     @objc(browser:documentStartScriptForURL:)
     func browser(_ browser: KCBrowser, documentStartScriptFor url: URL) -> String? {
-        let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url)].compactMap { $0 }
+        let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url), ExtensionTabsScript.script(for: url)]
+            .compactMap { $0 }
         return scripts.isEmpty ? nil : scripts.joined(separator: "\n")
     }
 

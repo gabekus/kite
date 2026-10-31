@@ -65,6 +65,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var paneClickMonitor: Any?
     /// The page card, in window coordinates: where Chrome's extension install dialog hangs.
     var webAreaInWindow: NSRect { contentFrame.convert(contentFrame.bounds, to: nil) }
+    /// After every sync: tabs, selection or pages may have changed.
+    var didSync: (() -> Void)?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
     private var commandBarVisible = false
@@ -159,13 +161,24 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             closeTab: { [weak self] id in self?.close(tab: id) },
             addSplitView: { [weak self] in self?.addSplitView(nil) }
         )
-        sidebarHost = NSHostingView(rootView: SidebarView(
+        var sidebar = SidebarView(
             store: store,
             actions: actions,
             supportsDarkPages: pool.engine.supportsDarkPages,
             claude: claudeButton
-        ))
-        toolbarHost = NSHostingView(rootView: PageToolbar(store: store, actions: actions))
+        )
+        var toolbar = PageToolbar(store: store, actions: actions)
+        #if canImport(CEFBridge)
+        // Extensions run in the persistent Chromium profile only.
+        if !isIncognito, pool.engine is ChromiumEngine {
+            let extensions = ExtensionsModel.shared(engine: pool.engine)
+            toolbar.extensions = extensions
+            sidebar.showExtensions = { view in ExtensionsMenu.present(model: extensions, from: view) }
+            sidebar.fieldAccessory = AnyView(OnePasswordFieldButton(model: extensions))
+        }
+        #endif
+        sidebarHost = NSHostingView(rootView: sidebar)
+        toolbarHost = NSHostingView(rootView: toolbar)
         toolbarHost.sizingOptions = []
         toolbarHost.isHidden = true
         contentClip.toolbar = toolbarHost
@@ -385,6 +398,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         updateCommandBar()
         updateSidebar()
         updateToolbar()
+        didSync?()
     }
 
     /// Puts `tabs` on screen, side by side when there are several, and focuses `focused`.
