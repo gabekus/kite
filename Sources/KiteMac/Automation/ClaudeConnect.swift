@@ -48,7 +48,7 @@ enum ClaudeConnect {
         let profile = automation.profileOverride
         let directory = linkDirectory
         Task.detached {
-            let lines = [linkCommand(cli: cli, into: directory), registerWithClaudeCode(cli: cli, profile: profile)]
+            let lines = register(cli: cli, profile: profile, linkDirectory: directory)
             await MainActor.run {
                 let done = NSAlert()
                 done.messageText = "Claude Code"
@@ -56,6 +56,11 @@ enum ClaudeConnect {
                 done.runModal()
             }
         }
+    }
+
+    /// Links `kite` and adds Kite's MCP server to Claude Code. Returns what happened, a line per step.
+    nonisolated static func register(cli: String, profile: String?, linkDirectory directory: URL) -> [String] {
+        [linkCommand(cli: cli, into: directory), registerWithClaudeCode(cli: cli, profile: profile)]
     }
 
     nonisolated private static func linkCommand(cli: String, into directory: URL) -> String {
@@ -94,7 +99,7 @@ enum ClaudeConnect {
     }
 
     /// GUI apps don't get the shell's PATH, so look where Claude Code installs, then ask a login shell.
-    nonisolated private static func findClaude() -> String? {
+    nonisolated static func findClaude() -> String? {
         let environment = ProcessInfo.processInfo.environment
         if let override = environment["KITE_CLAUDE_BIN"] { return override }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -107,7 +112,7 @@ enum ClaudeConnect {
         return status == 0 && path.hasPrefix("/") ? path : nil
     }
 
-    nonisolated private static func run(_ executable: String, _ arguments: [String]) -> (Int32, String) {
+    nonisolated static func run(_ executable: String, _ arguments: [String]) -> (Int32, String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments

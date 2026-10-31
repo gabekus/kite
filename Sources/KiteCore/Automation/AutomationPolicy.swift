@@ -72,8 +72,7 @@ public enum AutomationAction: Hashable, Sendable {
     case keys([KeyChord], focused: ElementDescription?)
     case formInput(ElementDescription, value: String)
     case navigate(URL)
-    /// `allowedInSettings` is the profile's "run JavaScript without asking" switch.
-    case javascript(code: String, allowedInSettings: Bool)
+    case javascript(code: String)
     case uploadFiles([String], into: ElementDescription)
     /// Answering a page's dialog. `kind` is CDP's: alert, confirm, prompt or beforeunload.
     case answerDialog(kind: String, message: String, accept: Bool)
@@ -201,11 +200,9 @@ public enum AutomationPolicy {
             }
             return .allow
 
-        case let .javascript(code, allowed):
-            if allowed { return .allow }
-            return .confirm(ConfirmationRequest(
-                action: "run JavaScript\(site)",
-                detail: "Code:\n\(code.count > 600 ? code.prefix(599) + "…" : Substring(code))\n\nScripts act as you on this site. Allow JavaScript without asking in Kite's menu."))
+        case .javascript:
+            // Gabe's call (2026-10-25): Claude runs page JavaScript without asking, as in Claude in Chrome.
+            return .allow
 
         case let .uploadFiles(paths, element):
             return .confirm(ConfirmationRequest(

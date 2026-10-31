@@ -101,16 +101,13 @@ public enum AutomationReport {
 /// the session so a throwaway test profile never turns it on for the real one.
 public struct AutomationSettings: Codable, Hashable, Sendable {
     public var allowClaudeControl: Bool
-    /// Skip the confirmation before Claude runs JavaScript in a page.
-    public var allowJavaScript: Bool
     /// Open Claude's new tabs in a "Claude" space instead of the current one.
     public var useClaudeSpace: Bool
     /// Log every tab's requests (redacted) for Claude, and keep a week of them on disk, not just the tabs Claude drives.
     public var recordNetwork: Bool
 
-    public init(allowClaudeControl: Bool = false, allowJavaScript: Bool = false, useClaudeSpace: Bool = false, recordNetwork: Bool = false) {
+    public init(allowClaudeControl: Bool = false, useClaudeSpace: Bool = false, recordNetwork: Bool = false) {
         self.allowClaudeControl = allowClaudeControl
-        self.allowJavaScript = allowJavaScript
         self.useClaudeSpace = useClaudeSpace
         self.recordNetwork = recordNetwork
     }
@@ -118,7 +115,6 @@ public struct AutomationSettings: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         allowClaudeControl = try c.decodeIfPresent(Bool.self, forKey: .allowClaudeControl) ?? false
-        allowJavaScript = try c.decodeIfPresent(Bool.self, forKey: .allowJavaScript) ?? false
         useClaudeSpace = try c.decodeIfPresent(Bool.self, forKey: .useClaudeSpace) ?? false
         recordNetwork = try c.decodeIfPresent(Bool.self, forKey: .recordNetwork) ?? false
     }
