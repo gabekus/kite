@@ -23,7 +23,7 @@ final class BackgroundExtensionInstall {
     /// Gives up (and relabels the button) if nothing happened in this long.
     private static let timeout: TimeInterval = 120
 
-    init(extensionID: String, storeURL: URL, engine: WebEngine, source: WebPage, onFinish: @escaping () -> Void) {
+    init(extensionID: String, storeURL: URL, engine: WebEngine, source: WebPage?, onFinish: @escaping () -> Void) {
         self.extensionID = extensionID
         self.source = source
         self.onFinish = onFinish

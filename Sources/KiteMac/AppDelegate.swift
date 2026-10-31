@@ -86,6 +86,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             windowController.didSync = { [weak bridge] in bridge?.setNeedsUpdate() }
             bridge.start(engine: windowController.pool.engine)
             extensionTabs = bridge
+            // Once the window is up, so Chrome's "Add 1Password?" dialog has somewhere to hang.
+            let engine = windowController.pool.engine
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { OnePasswordIntegration.installIfNeeded(engine: engine) }
         }
         KCRuntime.extensionDialogAnchor = { [weak self] window in
             MainActor.assumeIsolated {

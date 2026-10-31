@@ -40,3 +40,15 @@ extension BrowserWindowController: ExtensionTabsHost {
     }
 }
 #endif
+
+#if canImport(CEFBridge)
+extension BrowserWindowController {
+    /// ⇧⌘X: 1Password's popup over the top right of the page, for the selected tab.
+    @objc func showOnePassword(_ sender: Any?) {
+        guard !isIncognito else { return NSSound.beep() }
+        let bounds = contentFrame.bounds
+        let anchor = NSRect(x: bounds.maxX - 40, y: contentFrame.isFlipped ? bounds.minY : bounds.maxY - 1, width: 1, height: 1)
+        if !OnePasswordIntegration.showPopup(engine: pool.engine, relativeTo: anchor, of: contentFrame) { NSSound.beep() }
+    }
+}
+#endif

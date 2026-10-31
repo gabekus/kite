@@ -53,6 +53,7 @@ final class ExtensionTabsBridge {
     private var lastState: String?
     private var updateScheduled = false
     private var observers: [NSObjectProtocol] = []
+    private var healthCheck: Timer?
 
     init(host: ExtensionTabsHost) {
         self.host = host
@@ -88,6 +89,10 @@ final class ExtensionTabsBridge {
                 if let error { NSLog("Kite: extensions can't see Kite's tabs: %@", error) }
             }
             self.setNeedsUpdate()
+        }
+        // Also checks every worker still has the script.
+        healthCheck = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pushState(force: true) }
         }
     }
 
@@ -233,12 +238,15 @@ final class ExtensionTabsBridge {
         guard force || state != lastState else { return }
         lastState = state
         for session in sessions.values where !session.isEmpty {
-            send(session, "Runtime.evaluate", ["expression": updateCall(state)])
+            // A worker whose script went missing (it restarted unseen) gets it again.
+            send(session, "Runtime.evaluate", ["expression": updateCall(state), "returnByValue": true]) { [weak self] result, _ in
+                if (result?["result"] as? [String: Any])?["value"] as? Bool == false { self?.inject(session) }
+            }
         }
     }
 
     private func updateCall(_ state: String) -> String {
-        "globalThis.__kite?.update(\(state))"
+        "globalThis.__kite ? (globalThis.__kite.update(\(state)), true) : false"
     }
 
     /// Kite's tabs as JSON for ExtensionTabsScript. Tabs whose Chromium id isn't known
