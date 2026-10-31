@@ -5,7 +5,8 @@ import AppKit
 /// previous / next arrows, a divider and close. Return / ⇧Return step through matches; Esc closes it.
 @MainActor
 final class FindBar: NSView, NSTextFieldDelegate {
-    /// Measured from Arc in points; x positions are from the bar's leading edge.
+    /// Measured from Arc in points; x positions are from the bar's leading edge at its full 300pt
+    /// (everything right of the query is laid out from the trailing edge, so it holds when narrower).
     enum Metrics {
         static let size = NSSize(width: 300, height: 32)
         static let cornerRadius: CGFloat = 6
@@ -87,19 +88,27 @@ final class FindBar: NSView, NSTextFieldDelegate {
         }
         countLabel.setContentHuggingPriority(.required, for: .horizontal)
         countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Arc's 300pt, but never wider than the card leaves room for (the window can be narrow
+        // enough since the card can be under 320pt): the query field gives up the width. Kept
+        // below the window's size priorities (490/500) so it never holds the window open.
+        field.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(230), for: .horizontal)
+        let preferredWidth = widthAnchor.constraint(equalToConstant: Metrics.size.width)
+        preferredWidth.priority = NSLayoutConstraint.Priority(240)
+        let w = Metrics.size.width
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: Metrics.size.width),
+            preferredWidth,
+            widthAnchor.constraint(lessThanOrEqualToConstant: w),
             heightAnchor.constraint(equalToConstant: Metrics.size.height),
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.iconX),
             field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.textX),
             field.trailingAnchor.constraint(equalTo: countLabel.leadingAnchor, constant: -8),
-            countLabel.trailingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.counterTrailingX),
-            previous.centerXAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.previousCenterX),
-            next.centerXAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.nextCenterX),
-            divider.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.dividerX),
+            countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: Metrics.counterTrailingX - w),
+            previous.centerXAnchor.constraint(equalTo: trailingAnchor, constant: Metrics.previousCenterX - w),
+            next.centerXAnchor.constraint(equalTo: trailingAnchor, constant: Metrics.nextCenterX - w),
+            divider.leadingAnchor.constraint(equalTo: trailingAnchor, constant: Metrics.dividerX - w),
             divider.widthAnchor.constraint(equalToConstant: 1),
             divider.heightAnchor.constraint(equalToConstant: 16),
-            done.centerXAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.closeCenterX),
+            done.centerXAnchor.constraint(equalTo: trailingAnchor, constant: Metrics.closeCenterX - w),
         ])
     }
 
