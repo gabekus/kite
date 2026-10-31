@@ -29,6 +29,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
     private var sidebarHost: NSHostingView<SidebarView>!
+    /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
+    let claudeButton = ClaudeButtonModel()
+    /// Claude's chat bubble over the page; AppDelegate connects it to Claude Tasks.
+    let claudeBubble = ClaudeBubbleModel()
+    private var claudeBubbleHost: NSHostingView<ClaudeBubble>!
     private var trafficLights: TrafficLights!
     private var commandBarHost: NSHostingView<CommandBarOverlay>!
     private var contentLeading: NSLayoutConstraint!
@@ -112,6 +117,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// True while closing the window should only hide it: Claude tasks are working in its tabs.
+    var hidesInsteadOfClosing: (() -> Bool)?
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard !isIncognito, hidesInsteadOfClosing?() == true else { return true }
+        sender.orderOut(nil)
+        return false
+    }
+
     func windowWillClose(_ notification: Notification) {
         if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
         paneClickMonitor = nil
@@ -148,7 +162,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sidebarHost = NSHostingView(rootView: SidebarView(
             store: store,
             actions: actions,
-            supportsDarkPages: pool.engine.supportsDarkPages
+            supportsDarkPages: pool.engine.supportsDarkPages,
+            claude: claudeButton
         ))
         toolbarHost = NSHostingView(rootView: PageToolbar(store: store, actions: actions))
         toolbarHost.sizingOptions = []
@@ -162,6 +177,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             (host as? NSHostingView<CommandBarOverlay>)?.sizingOptions = []
         }
         commandBarHost.isHidden = true
+        claudeBubbleHost = NSHostingView(rootView: ClaudeBubble(model: claudeBubble, store: store))
+        claudeBubbleHost.isHidden = true
+        claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
 
         var dragStartWidth: CGFloat = 0
         resizeHandle.onBegin = { [weak self] in
@@ -181,7 +199,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         materialView.blendingMode = .behindWindow
         materialView.state = .followsWindowActiveState
 
-        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, commandBarHost!, peekEdge, peekZone] as [NSView] {
+        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, claudeBubbleHost!, commandBarHost!, peekEdge, peekZone] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -255,6 +273,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             glowView.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: -Layout.glowMargin),
             glowView.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor, constant: Layout.glowMargin),
 
+            // Bottom centre of the page, as wide as the bubble wants up to the page's width.
+            claudeBubbleHost.centerXAnchor.constraint(equalTo: contentFrame.centerXAnchor),
+            claudeBubbleHost.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor),
+            claudeBubbleHost.widthAnchor.constraint(lessThanOrEqualTo: contentFrame.widthAnchor),
+            claudeBubbleHost.topAnchor.constraint(greaterThanOrEqualTo: contentFrame.topAnchor),
+            { let width = claudeBubbleHost.widthAnchor.constraint(equalToConstant: ClaudeBubble.Metrics.maxWidth + 32)
+              width.priority = .defaultHigh
+              return width }(),
+
             commandBarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             commandBarHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             commandBarHost.topAnchor.constraint(equalTo: rootView.topAnchor),
@@ -264,8 +291,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         // The peeking sidebar draws over the page; its views are raised by z-position rather
         // than reordered, which would drop their constraints.
-        for view in [peekCard, sidebarHost!, resizeHandle, commandBarHost!] as [NSView] { view.wantsLayer = true }
+        for view in [peekCard, sidebarHost!, resizeHandle, claudeBubbleHost!, commandBarHost!] as [NSView] { view.wantsLayer = true }
         commandBarHost.layer?.zPosition = 20
+        claudeBubbleHost.layer?.zPosition = 15
         peekCard.isHidden = true
         peekEdge.onHover = { [weak self] inside in self?.edgeHovered(inside) }
         peekZone.onHover = { [weak self] inside in
@@ -456,6 +484,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let visible = store.state.showsToolbar && shownTabIDs.count <= 1
         toolbarHost.isHidden = !visible
         contentClip.topInset = visible ? PageToolbar.Metrics.inset : 0
+    }
+
+    /// ⌘J: Claude's chat bubble.
+    @objc func toggleClaudeBubble(_ sender: Any?) {
+        claudeBubble.toggle()
+    }
+
+    private func claudeBubbleOpened(_ open: Bool) {
+        claudeBubbleHost.isHidden = !open
+        if open {
+            window?.makeFirstResponder(claudeBubbleHost)
+        } else {
+            shownPage?.focus()
+        }
     }
 
     @objc func toggleToolbar(_ sender: Any?) {
