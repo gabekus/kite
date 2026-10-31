@@ -35,7 +35,8 @@ struct CommandBarOverlay: View {
                     Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture { store.hideCommandBar() }
-                    CommandBarView(store: store, mode: mode) { onCommit($0, mode) }
+                    // Arc's 765pt, but never past the window's edges: the window can be 640 wide.
+                    CommandBarView(store: store, mode: mode, width: min(C.width, proxy.size.width - 2 * C.minimumWindowMargin)) { onCommit($0, mode) }
                         .padding(.top, (proxy.size.height * C.topFraction).rounded())
                 }
             }
@@ -147,6 +148,7 @@ private extension NSImage {
 private struct CommandBarView: View {
     let store: BrowserStore
     let mode: CommandBarMode
+    let width: CGFloat
     let onCommit: (CommandSuggestion) -> Void
 
     @State private var query: String
@@ -162,9 +164,10 @@ private struct CommandBarView: View {
     /// The field's text while it shows an inline completion.
     @State private var completed: String?
 
-    init(store: BrowserStore, mode: CommandBarMode, onCommit: @escaping (CommandSuggestion) -> Void) {
+    init(store: BrowserStore, mode: CommandBarMode, width: CGFloat, onCommit: @escaping (CommandSuggestion) -> Void) {
         self.store = store
         self.mode = mode
+        self.width = width
         self.onCommit = onCommit
         let current = mode == .editCurrent ? store.state.selectedTab?.url?.absoluteString : nil
         _query = State(initialValue: current ?? "")
@@ -285,7 +288,7 @@ private struct CommandBarView: View {
                 .padding(.bottom, C.listBottomGap)
             }
         }
-        .frame(width: C.width)
+        .frame(width: width)
         .modifier(CommandBarPanel())
         .onAppear {
             focused = true
