@@ -29,7 +29,7 @@ final class ExtensionsModel: ObservableObject {
     private static var pinnedFile: URL { AppDelegate.supportDirectory.appendingPathComponent("PinnedExtensions.json") }
     private static var shared: ExtensionsModel?
     /// 1Password's Chrome Web Store id (checked against its CRX's signing key).
-    static let onePasswordID = "aeblfdkhhhdcdjpifhhbdiojplfjncoa"
+    static let onePasswordID = OnePassword.extensionID
 
     /// One model for the persistent profile, shared by its windows.
     static func shared(engine: WebEngine) -> ExtensionsModel {
