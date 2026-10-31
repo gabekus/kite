@@ -293,7 +293,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             claudeBubbleHost.widthAnchor.constraint(lessThanOrEqualTo: contentFrame.widthAnchor),
             claudeBubbleHost.topAnchor.constraint(greaterThanOrEqualTo: contentFrame.topAnchor),
             { let width = claudeBubbleHost.widthAnchor.constraint(equalToConstant: ClaudeBubble.Metrics.maxWidth + 32)
-              width.priority = .defaultHigh
+              // Below the window's own size priorities (490/500), or the bubble's 652pt holds
+              // the window open at sidebar + 662 and the window can't shrink to its minimum.
+              width.priority = .defaultLow
               return width }(),
 
             commandBarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
