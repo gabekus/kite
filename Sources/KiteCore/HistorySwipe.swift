@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 /// Two-finger swipe back/forward on Chromium pages: the decisions, kept free of AppKit so
