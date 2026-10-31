@@ -558,9 +558,9 @@ private struct FolderRow: View {
     }
 }
 
-/// A favicon plus its gap per level, like Arc's folder nesting.
+/// Arc's folder nesting per level (see `ArcMetrics.Sidebar.nestingIndent`).
 private func indent(_ depth: Int) -> CGFloat {
-    CGFloat(depth) * (M.iconSize + M.iconTextGap)
+    CGFloat(depth) * M.nestingIndent
 }
 
 private func copyLink(_ url: URL?) {
@@ -717,6 +717,8 @@ private struct SplitRow: View {
             Button("Close this Split Pane") { onClose(tab.id) }
         }
         .accessibilityElement(children: .combine)
+        // Icon-only items would otherwise read as the favicon's symbol name.
+        .accessibilityLabel(tab.displayTitle)
         .accessibilityAddTraits(tab.id == focusedID ? [.isButton, .isSelected] : .isButton)
     }
 }
