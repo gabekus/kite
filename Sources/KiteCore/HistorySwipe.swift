@@ -134,10 +134,23 @@ public enum HistorySwipe {
     /// The arrow sits in the inner half of the circle, inset this much on each side.
     public static let arrowInset: CGFloat = 10
 
-    /// The shield's frame in its container (bottom-left origin, as AppKit's default) and its
-    /// black fill alpha. Chromium's `-[HistoryOverlayController setProgress:finished:]`.
+    /// The shield's frame in its container (bottom-left origin, as AppKit's default). KiteCore stays
+    /// Foundation-only, so this is plain numbers rather than a CGRect.
+    public struct Frame: Equatable, Sendable {
+        public var x, y, width, height: CGFloat
+
+        public init(x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat) {
+            self.x = x
+            self.y = y
+            self.width = width
+            self.height = height
+        }
+    }
+
+    /// The shield's frame in a container of the given size, and its black fill alpha.
+    /// Chromium's `-[HistoryOverlayController setProgress:finished:]`.
     public static func shield(direction: Direction, progress: CGFloat, finished: Bool,
-                              in parent: CGRect) -> (frame: CGRect, alpha: CGFloat) {
+                              parentWidth: CGFloat, parentHeight: CGFloat) -> (frame: Frame, alpha: CGFloat) {
         var height = shieldHeight
         var alpha = min(shieldMaxAlpha, max(progress, shieldMinAlpha))
         if finished {
@@ -145,7 +158,7 @@ public enum HistorySwipe {
             alpha = shieldFinishedAlpha
         }
         let width = min(shieldRadius * progress, shieldRadius)
-        let x = direction == .forward ? parent.maxX - width : parent.minX - shieldRadius * 2 + width
-        return (CGRect(x: x, y: parent.height / 2 - height / 2, width: shieldRadius * 2, height: height), alpha)
+        let x = direction == .forward ? parentWidth - width : -shieldRadius * 2 + width
+        return (Frame(x: x, y: parentHeight / 2 - height / 2, width: shieldRadius * 2, height: height), alpha)
     }
 }

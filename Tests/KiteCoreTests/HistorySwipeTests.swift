@@ -46,18 +46,17 @@ import Testing
     }
 
     @Test func shieldMatchesChromiumsHistoryOverlay() {
-        let parent = CGRect(x: 0, y: 0, width: 800, height: 600)
         // Hidden off the left edge at the start, alpha floored at 0.25.
-        let start = HistorySwipe.shield(direction: .back, progress: 0, finished: false, in: parent)
-        #expect(start.frame == CGRect(x: -140, y: 230, width: 140, height: 140))
+        let start = HistorySwipe.shield(direction: .back, progress: 0, finished: false, parentWidth: 800, parentHeight: 600)
+        #expect(start.frame == HistorySwipe.Frame(x: -140, y: 230, width: 140, height: 140))
         #expect(start.alpha == 0.25)
         // Halfway: 35 pt showing, alpha follows progress.
-        let mid = HistorySwipe.shield(direction: .back, progress: 0.5, finished: false, in: parent)
-        #expect(mid.frame.maxX == 35 && mid.alpha == 0.5)
+        let mid = HistorySwipe.shield(direction: .back, progress: 0.5, finished: false, parentWidth: 800, parentHeight: 600)
+        #expect(mid.frame.x + mid.frame.width == 35 && mid.alpha == 0.5)
         // Near the end alpha caps at 0.65; once finished it grows 10 pt taller at 0.75.
-        #expect(HistorySwipe.shield(direction: .back, progress: 0.9, finished: false, in: parent).alpha == 0.65)
-        let done = HistorySwipe.shield(direction: .forward, progress: 1, finished: true, in: parent)
-        #expect(done.frame == CGRect(x: 730, y: 225, width: 140, height: 150))
+        #expect(HistorySwipe.shield(direction: .back, progress: 0.9, finished: false, parentWidth: 800, parentHeight: 600).alpha == 0.65)
+        let done = HistorySwipe.shield(direction: .forward, progress: 1, finished: true, parentWidth: 800, parentHeight: 600)
+        #expect(done.frame == HistorySwipe.Frame(x: 730, y: 225, width: 140, height: 150))
         #expect(done.alpha == 0.75)
     }
 

@@ -287,7 +287,9 @@ final class HistoryOverlayView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     func setProgress(_ progress: CGFloat, finished: Bool) {
-        let (frame, alpha) = HistorySwipe.shield(direction: direction, progress: progress, finished: finished, in: bounds)
+        let (shieldFrame, alpha) = HistorySwipe.shield(direction: direction, progress: progress, finished: finished,
+                                                       parentWidth: bounds.width, parentHeight: bounds.height)
+        let frame = CGRect(x: shieldFrame.x, y: shieldFrame.y, width: shieldFrame.width, height: shieldFrame.height)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         if shield.frame.size != frame.size || shape.path == nil {
