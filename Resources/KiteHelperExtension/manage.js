@@ -19,6 +19,14 @@ window.kiteHelper = {
     return JSON.stringify((await chrome.management.get(id)).enabled);
   },
 
+  // Chromium's tab id for each page target, so Kite can tell extensions which of its
+  // tabs is which (ExtensionTabsBridge). Lists targets only; attaches to nothing.
+  async tabTargets() {
+    const targets = await chrome.debugger.getTargets();
+    return JSON.stringify(targets.filter((t) => t.type === 'page' && t.tabId !== undefined)
+      .map((t) => ({ targetId: t.id, tabId: t.tabId })));
+  },
+
   // Needs a user gesture (Kite evaluates it with one), and Chrome asks with its own
   // "Remove …?" dialog. Resolves to false when the user cancels.
   async remove(id) {

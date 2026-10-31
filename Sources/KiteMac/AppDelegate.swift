@@ -18,6 +18,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Routes menu commands to whichever browser window is in front.
     private var menuRouter: MenuRouter!
     private var archiveTimer: Timer?
+    #if canImport(CEFBridge)
+    /// Shows extensions Kite's tabs (tabs.query and friends).
+    private var extensionTabs: ExtensionTabsBridge?
+    #endif
     private var automation: AutomationController!
     private var diagnostics: DiagnosticsRecorder!
     /// Links opened before launch finished (Kite as the default browser).
@@ -76,6 +80,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(forName: .KCRuntimeOpenURL, object: nil, queue: .main) { [weak self] note in
             guard let url = note.userInfo?["url"] as? URL else { return }
             MainActor.assumeIsolated { _ = self?.store.mutate { $0.openTab(url: url, select: false) } }
+        }
+        if windowController.pool.engine is ChromiumEngine {
+            let bridge = ExtensionTabsBridge(host: windowController)
+            windowController.didSync = { [weak bridge] in bridge?.setNeedsUpdate() }
+            bridge.start(engine: windowController.pool.engine)
+            extensionTabs = bridge
         }
         KCRuntime.extensionDialogAnchor = { [weak self] window in
             MainActor.assumeIsolated {

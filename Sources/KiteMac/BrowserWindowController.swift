@@ -60,6 +60,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var paneClickMonitor: Any?
     /// The page card, in window coordinates: where Chrome's extension install dialog hangs.
     var webAreaInWindow: NSRect { contentFrame.convert(contentFrame.bounds, to: nil) }
+    /// After every sync: tabs, selection or pages may have changed.
+    var didSync: (() -> Void)?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
     private var commandBarVisible = false
@@ -363,6 +365,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         updateCommandBar()
         updateSidebar()
         updateToolbar()
+        didSync?()
     }
 
     /// Puts `tabs` on screen, side by side when there are several, and focuses `focused`.
