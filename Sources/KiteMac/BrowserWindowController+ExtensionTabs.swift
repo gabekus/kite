@@ -51,4 +51,12 @@ extension BrowserWindowController {
         if !OnePasswordIntegration.showPopup(engine: pool.engine, relativeTo: anchor, of: contentFrame) { NSSound.beep() }
     }
 }
+#else
+import AppKit
+
+extension BrowserWindowController {
+    /// WebKit-only builds (no CEF) have no extensions, so ⇧⌘X has nothing to open.
+    /// The File menu still names this action; validateMenuItem keeps it disabled.
+    @objc func showOnePassword(_ sender: Any?) { NSSound.beep() }
+}
 #endif
