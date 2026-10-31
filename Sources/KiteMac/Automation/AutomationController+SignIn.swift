@@ -58,7 +58,7 @@ extension AutomationController {
             if isRevoked(id) || store.state.tab(id) == nil { return .cancelled }
             if let answer = signIns[id]?.answer { return answer }
             // Keep the tab counted as Claude's, so the banner stays while the user signs in.
-            if var entry = controlledTabs[id] { entry.lastActive = Date(); controlledTabs[id] = entry }
+            touchControlled(id)
             if store.pages[id]?.isLoading != true,
                let json = try? await actions.run(SignInHandoff.probeScript),
                let probe = SignInHandoff.Probe(json: json),

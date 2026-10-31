@@ -298,6 +298,11 @@ final class AutomationController {
         controlledTabs[id] = entry
     }
 
+    /// Refreshes a controlled tab's idle clock without adding a connection.
+    func touchControlled(_ id: UUID) {
+        controlledTabs[id]?.lastActive = Date()
+    }
+
     private func disconnected(_ connection: Int) {
         for (id, var entry) in controlledTabs where entry.connections.contains(connection) {
             entry.connections.remove(connection)
