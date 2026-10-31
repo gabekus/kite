@@ -50,7 +50,7 @@ bottom bar. The back/forward/reload buttons end at 359, which is 6pt from the ed
 | URL field | 8, 46, 349×36 | Corner about 11 (a circle fit gives 12.5; Kite's 11 continuous fits 12.75). Fill is white at 10% over the tint. Text starts at x 20 (12pt in), 13pt regular, white at 60% |
 | Favourites grid | 8, 90, 349×102 | 4 columns of 81.25×47 tiles, 8pt apart both ways (x 8, 97.5, 186.5, 276; y 90, 145). 18pt favicon. Same corner and fill as the URL field. 8pt above and below the grid |
 | Space header | row y 200 to 239 | 26pt icon at 13, 205. Name at x 41, 13pt semibold, white at 45%, centred at y 218. Rows start 3pt below the header (y 239) |
-| Tab row | 41pt apart | 36pt pill from x 8 to 357, centred in its row. 18pt favicon at x 17 (9pt inside the pill). Title at x 43 (8pt gap), 14pt regular, 86.5% grey. The selected pill is white at 20% (19 to 20.5% in Gabe's screenshot, and the same in an incognito window); a hover pill is about 10% |
+| Tab row | 41pt apart | 36pt pill from x 8 to 357, centred in its row. 18pt favicon at x 17 (9pt inside the pill). Title at x 43 (8pt gap), 14pt regular, 86.5% grey. The selected pill is white at 20% (19 to 20.5% in Gabe's screenshot, and the same in an incognito window); a hover pill is about 10%. Light themes differ: see *Tab pill fills* below |
 | Folder row | as a tab row | Title 14pt semibold |
 | Divider row | 25pt tall | 0.5pt line from x 18 to 347 (10pt inside the pills), white at about 8%, centred |
 | New Tab row | as a tab row | `plus` glyph in the 18pt icon slot |
@@ -264,6 +264,20 @@ most values can't be tied to a specific screen.
   - a 0.12s linear, auto-reversing 1.015× scale "bump" of the window contents when a Bool state turns on.
 
 ## Traffic lights and tab drag (Arc incognito window, 31 Oct 2026)
+
+**Tab pill fills → `TabPillFill` in `SidebarView.swift`, `ArcMetrics.Sidebar`** (31 Oct 2026)
+- **Hover, measured:** a flat fill with no blur or material, there in the first capture after the pointer
+  arrives (captures are about 0.15s apart, so a fade shorter than that can't be ruled out) and gone the same way.
+  Incognito window: (12,15,20) under the pill becomes (36,39,44), white at 10%. Gabe's grey space: 79 becomes 96,
+  also 10%, with its selected tab at 113 (20%). The × appears on hover.
+- **Colours, from the binary:** the tab cell's background picks `TabCellBackgroundCurrent` for the selected tab
+  and, on hover, a colour its caller passes in, which is `SidebarItemBackground`. Their asset values:
+  - `SidebarItemBackground` (hover): dark (0.98,0.984,1) at 10%; light (0.055,0.059,0.063) at 5%.
+  - `TabCellBackgroundCurrent` (selected): dark (0.98,0.984,1) at 20%; light white at 85%.
+- So on a light theme a hovered tab gets a faint dark wash, not white. Kite used to scale its dark-theme white up
+  3.5 times on light themes (35% on hover, 70% selected), which read as a light frosted patch.
+- **Not observed:** Arc on a light theme. Incognito is always dark and Gabe's Arc spaces are all dark or grey,
+  so the light values come from the assets only.
 
 **Traffic lights → `ArcMetrics.Window.trafficLightHoverArea`, `TrafficLights.swift`**
 - **Away from the lights:** all three are grey, (89,90,89) over the sidebar's (14,15,19). That holds whether
