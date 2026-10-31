@@ -92,6 +92,8 @@ final class FindBar: NSView, NSTextFieldDelegate {
         // enough since the card can be under 320pt): the query field gives up the width. Kept
         // below the window's size priorities (490/500) so it never holds the window open.
         field.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(230), for: .horizontal)
+        // And doesn't hug its text, which would otherwise shrink the bar to fit the query.
+        field.setContentHuggingPriority(NSLayoutConstraint.Priority(200), for: .horizontal)
         let preferredWidth = widthAnchor.constraint(equalToConstant: Metrics.size.width)
         preferredWidth.priority = NSLayoutConstraint.Priority(240)
         let w = Metrics.size.width
