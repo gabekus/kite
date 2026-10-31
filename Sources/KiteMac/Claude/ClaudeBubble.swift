@@ -181,6 +181,8 @@ struct ClaudeBubble: View {
         .buttonStyle(.plain)
         .foregroundStyle(active ? Color.claude : .secondary)
         .help(help)
+        // Otherwise VoiceOver reads the symbol's own name ("Attachements" for paperclip).
+        .accessibilityLabel(help)
     }
 
     /// Earlier tasks, newest first: a small menu instead of a window.
