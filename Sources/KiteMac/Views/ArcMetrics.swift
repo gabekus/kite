@@ -102,6 +102,14 @@ enum ArcMetrics {
         // Bottom bar: library button, spaces, new space.
         static let bottomBarHeight: CGFloat = 50
         static let bottomButtonSize: CGFloat = 32
+        /// The space strip's cells, centred between the bar's end buttons (Arc's tree: 36×34 at x 92.5,
+        /// 126.5, 160.5 in a strip from 42 to 247, y 1243 in a bar from 1235).
+        static let spaceCellSize = CGSize(width: 36, height: 34)
+        static let spaceCellPitch: CGFloat = 34
+        /// Not measured (Arc draws the strip only under the pointer, which captures can't see).
+        static let spaceDotSize: CGFloat = 6
+        static let spaceDotOpacity: Double = 0.45
+        static let spaceIconFontSize: CGFloat = 14
 
         /// A peeking (hover-revealed) sidebar stays out until the pointer is 75pt right of the card's edge.
         static let peekHoverMargin: CGFloat = 75

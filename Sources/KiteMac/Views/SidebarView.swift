@@ -1085,19 +1085,15 @@ private struct SpaceBar: View {
         HStack(spacing: 4) {
             // Arc's Library button sits at the bar's leading end and carries download progress.
             DownloadsSidebarButton(model: downloads, size: M.bottomButtonSize)
-            // Too many spaces to fit scroll rather than widen the bar: an over-wide bar pushes the whole
-            // sidebar off its left edge. While they fit they stay a plain row, so the bar's empty part
-            // still drags the window (a scroll view never does).
+            // Arc centres the spaces in the room between its end buttons. Too many to fit scroll rather
+            // than widen the bar: an over-wide bar pushes the whole sidebar off its left edge.
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 0) {
-                    spaceIcons(state)
-                    Spacer(minLength: 0)
-                }
+                spaceIcons(state)
                 ScrollView(.horizontal, showsIndicators: false) {
                     spaceIcons(state)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity)
             ClaudeSidebarButton(model: claude, size: M.bottomButtonSize)
             Button {
                 store.addSpace()
@@ -1113,23 +1109,47 @@ private struct SpaceBar: View {
         }
     }
 
+    /// Arc's cells are 36×34 on a 34pt pitch (accessibility tree, 1 Nov 2026), centred. From Gabe's
+    /// screenshots: the space you're in shows its icon in colour, the others are small dots, and an icon
+    /// stays grey until its space is the active one.
     private func spaceIcons(_ state: BrowserState) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: M.spaceCellPitch - M.spaceCellSize.width) {
             ForEach(state.spaces) { space in
-                Button {
+                SpaceCell(space: space, selected: space.id == state.selectedSpaceID) {
                     store.mutate { $0.selectSpace(space.id) }
-                } label: {
-                    Text(space.icon)
-                        .font(.system(size: 14))
-                        .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
-                        .modifier(ChromeFill(strength: space.id == state.selectedSpaceID ? M.selectedFill : 0, cornerRadius: 8))
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .help(space.name)
                 .contextMenu { SpaceContextMenu(store: store, actions: actions, space: space) }
             }
         }
+    }
+}
+
+private struct SpaceCell: View {
+    let space: Space
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if selected, !space.icon.isEmpty {
+                    Text(space.icon).font(.system(size: M.spaceIconFontSize))
+                } else if hovering, !space.icon.isEmpty {
+                    // Unmeasured: a dot under the pointer shows its icon, still grey.
+                    Text(space.icon).font(.system(size: M.spaceIconFontSize)).grayscale(1).opacity(M.spaceDotOpacity)
+                } else {
+                    Circle()
+                        .fill(.primary.opacity(selected ? 1 : M.spaceDotOpacity))
+                        .frame(width: M.spaceDotSize, height: M.spaceDotSize)
+                }
+            }
+            .frame(width: M.spaceCellSize.width, height: M.spaceCellSize.height)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(space.name)
     }
 }
 
