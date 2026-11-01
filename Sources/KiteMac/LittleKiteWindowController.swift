@@ -206,7 +206,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
             host.adoptPopup(popup)
         case .closeRequested:
             close()
-        case .favicon, .progress, .blockedCount, .crashed, .addExtension:
+        case .favicon, .progress, .blockedCount, .crashed, .addExtension, .media:
             break
         }
     }

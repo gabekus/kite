@@ -135,6 +135,8 @@ final class PagePool {
             store.mutate { $0.close(tab: id) }
         case .blockedCount(let count):
             store.updatePage(id) { $0.blockedCount = count }
+        case .media(let media):
+            store.mediaChanged(id, media)
         case .crashed(let code):
             store.updatePage(id) {
                 $0.crashCode = code
