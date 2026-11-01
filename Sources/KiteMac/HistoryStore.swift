@@ -78,6 +78,12 @@ final class HistoryStore {
         saveNow()
     }
 
+    /// Delete browsing data's history: pages visited at or after `since` (nil: all).
+    func removeVisits(since: Date?) {
+        history.removeVisits(since: since)
+        saveNow()
+    }
+
     /// Debounced: a page load sends its URL and title in quick succession.
     private func scheduleSave() {
         saveTask?.cancel()

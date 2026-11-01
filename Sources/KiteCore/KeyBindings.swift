@@ -86,7 +86,7 @@ public enum KeyShortcutPriority: String, Codable, CaseIterable, Sendable {
     public static let defaults: [String: KeyShortcutPriority] = {
         let kiteWins = [
             "addressBar", "archiveTab", "closeWindow", "copyCurrentURL", "copyCurrentURLAsQuote",
-            "copyCurrentURLAsMarkdown", "nextRecentTabItem", "goBack", "goForward", "hideKite", "minimize",
+            "copyCurrentURLAsMarkdown", "cycleNextTab", "cyclePreviousTab", "goBack", "goForward", "hideKite", "minimize",
             "newIncognitoWindow", "newTab", "newWindow", "quitKite", "reopenClosedTab", "nextTab", "previousTab",
             "newLittleBrowserWindow",
         ]

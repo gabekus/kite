@@ -1151,6 +1151,115 @@ static cef_content_setting_types_t KCContentSettingType(KCSitePermission permiss
     context->SetContentSetting(site, site, KCContentSettingType(permission), setting);
 }
 
+static cef_content_setting_values_t KCContentSettingValue(KCSitePermissionValue value) {
+    switch (value) {
+        case KCSitePermissionValueAllow: return CEF_CONTENT_SETTING_VALUE_ALLOW;
+        case KCSitePermissionValueBlock: return CEF_CONTENT_SETTING_VALUE_BLOCK;
+        case KCSitePermissionValueAsk: return CEF_CONTENT_SETTING_VALUE_ASK;
+        case KCSitePermissionValueDefault: return CEF_CONTENT_SETTING_VALUE_DEFAULT;
+    }
+    return CEF_CONTENT_SETTING_VALUE_DEFAULT;
+}
+
+// Empty URLs read and write the content type's default (CefRequestContext).
+- (KCSitePermissionValue)defaultSitePermission:(KCSitePermission)permission {
+    if (!_browser) return KCSitePermissionValueDefault;
+    CefRefPtr<CefRequestContext> context = _browser->GetHost()->GetRequestContext();
+    if (!context) return KCSitePermissionValueDefault;
+    switch (context->GetContentSetting(CefString(), CefString(), KCContentSettingType(permission))) {
+        case CEF_CONTENT_SETTING_VALUE_ALLOW: return KCSitePermissionValueAllow;
+        case CEF_CONTENT_SETTING_VALUE_BLOCK: return KCSitePermissionValueBlock;
+        case CEF_CONTENT_SETTING_VALUE_ASK: return KCSitePermissionValueAsk;
+        default: return KCSitePermissionValueDefault;
+    }
+}
+
+- (void)setDefaultSitePermission:(KCSitePermission)permission value:(KCSitePermissionValue)value {
+    if (!_browser) return;
+    CefRefPtr<CefRequestContext> context = _browser->GetHost()->GetRequestContext();
+    if (!context) return;
+    context->SetContentSetting(CefString(), CefString(), KCContentSettingType(permission), KCContentSettingValue(value));
+}
+
+static id KCFoundationValue(CefRefPtr<CefValue> value) {
+    if (!value) return nil;
+    switch (value->GetType()) {
+        case VTYPE_NULL: return NSNull.null;
+        case VTYPE_BOOL: return @(value->GetBool());
+        case VTYPE_INT: return @(value->GetInt());
+        case VTYPE_DOUBLE: return @(value->GetDouble());
+        case VTYPE_STRING: return [NSString stringWithUTF8String:value->GetString().ToString().c_str()];
+        case VTYPE_DICTIONARY: {
+            CefRefPtr<CefDictionaryValue> dictionary = value->GetDictionary();
+            CefDictionaryValue::KeyList keys;
+            dictionary->GetKeys(keys);
+            NSMutableDictionary* result = [NSMutableDictionary dictionaryWithCapacity:keys.size()];
+            for (const CefString& key : keys) {
+                id item = KCFoundationValue(dictionary->GetValue(key));
+                if (item) result[[NSString stringWithUTF8String:key.ToString().c_str()]] = item;
+            }
+            return result;
+        }
+        case VTYPE_LIST: {
+            CefRefPtr<CefListValue> list = value->GetList();
+            NSMutableArray* result = [NSMutableArray arrayWithCapacity:list->GetSize()];
+            for (size_t i = 0; i < list->GetSize(); i++) {
+                id item = KCFoundationValue(list->GetValue(i));
+                [result addObject:item ?: NSNull.null];
+            }
+            return result;
+        }
+        default: return nil;
+    }
+}
+
+static CefRefPtr<CefValue> KCCefValue(id object) {
+    CefRefPtr<CefValue> value = CefValue::Create();
+    if ([object isKindOfClass:NSNumber.class]) {
+        NSNumber* number = object;
+        if (CFGetTypeID((__bridge CFTypeRef)number) == CFBooleanGetTypeID()) {
+            value->SetBool(number.boolValue);
+        } else if (strcmp(number.objCType, @encode(double)) == 0 || strcmp(number.objCType, @encode(float)) == 0) {
+            value->SetDouble(number.doubleValue);
+        } else {
+            value->SetInt(number.intValue);
+        }
+    } else if ([object isKindOfClass:NSString.class]) {
+        value->SetString(((NSString*)object).UTF8String);
+    } else if ([object isKindOfClass:NSDictionary.class]) {
+        CefRefPtr<CefDictionaryValue> dictionary = CefDictionaryValue::Create();
+        [(NSDictionary*)object enumerateKeysAndObjectsUsingBlock:^(id key, id item, BOOL*) {
+            if ([key isKindOfClass:NSString.class]) dictionary->SetValue(((NSString*)key).UTF8String, KCCefValue(item));
+        }];
+        value->SetDictionary(dictionary);
+    } else if ([object isKindOfClass:NSArray.class]) {
+        CefRefPtr<CefListValue> list = CefListValue::Create();
+        NSArray* array = object;
+        for (NSUInteger i = 0; i < array.count; i++) list->SetValue(i, KCCefValue(array[i]));
+        value->SetList(list);
+    } else {
+        value->SetNull();
+    }
+    return value;
+}
+
+- (id)preferenceNamed:(NSString*)name {
+    if (!_browser) return nil;
+    CefRefPtr<CefRequestContext> context = _browser->GetHost()->GetRequestContext();
+    if (!context || !context->HasPreference(name.UTF8String)) return nil;
+    return KCFoundationValue(context->GetPreference(name.UTF8String));
+}
+
+- (BOOL)setPreferenceNamed:(NSString*)name value:(id)value {
+    if (!_browser) return NO;
+    CefRefPtr<CefRequestContext> context = _browser->GetHost()->GetRequestContext();
+    if (!context || !context->CanSetPreference(name.UTF8String)) return NO;
+    CefString error;
+    bool ok = context->SetPreference(name.UTF8String, value ? KCCefValue(value) : nullptr, error);
+    if (!ok) NSLog(@"Kite: couldn't set %@: %s", name, error.ToString().c_str());
+    return ok;
+}
+
 - (void)applyForceDark {
     [self executeDevToolsMethod:@"Emulation.setAutoDarkModeOverride"
                          params:_forceDark ? @{@"enabled": @YES} : @{}

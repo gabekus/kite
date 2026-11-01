@@ -108,6 +108,18 @@ final class ExtensionsModel: ObservableObject {
         }
     }
 
+    /// Delete browsing data's Chromium share, by chrome.browsingData in this profile.
+    func deleteBrowsingData(_ types: Set<BrowsingDataType>, since: Date?, completion: @escaping () -> Void) {
+        let names = types.map(\.rawValue).sorted()
+        guard let json = try? JSONSerialization.data(withJSONObject: names),
+              let list = String(data: json, encoding: .utf8) else { return completion() }
+        let millis = since.map { Int64($0.timeIntervalSince1970 * 1000) } ?? 0
+        call("kiteHelper.deleteBrowsingData(\(list), \(millis))") { _, error in
+            if let error { NSLog("Kite: couldn't delete browsing data: %@", error) }
+            completion()
+        }
+    }
+
     // MARK: Helper page
 
     private func call(_ expression: String, userGesture: Bool = false, completion: @escaping (Any?, String?) -> Void) {

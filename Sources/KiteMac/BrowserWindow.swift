@@ -7,15 +7,24 @@ final class BrowserWindow: NSWindow {
     var scrollInterceptor: ((NSEvent) -> Bool)?
     /// Offered left-button presses, drags and releases first (`PageTopWindowDragger`); true when it took one.
     var mouseInterceptor: ((NSEvent) -> Bool)?
+    /// Keys and modifier changes, before any view or the menu bar sees them (the tab switcher while ⌃ is
+    /// held). Here rather than in an NSEvent monitor so `ui input`'s synthetic keys reach it too.
+    var keyInterceptor: ((NSEvent) -> Bool)?
+    /// The modifiers held as of the last modifier change this window saw.
+    private(set) var heldModifiers: NSEvent.ModifierFlags = []
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .scrollWheel, scrollInterceptor?(event) == true { return }
         if [.leftMouseDown, .leftMouseDragged, .leftMouseUp].contains(event.type), mouseInterceptor?(event) == true { return }
+        if event.type == .flagsChanged { heldModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask) }
+        if [.keyDown, .keyUp, .flagsChanged].contains(event.type), keyInterceptor?(event) == true { return }
         super.sendEvent(event)
     }
 
-    /// Before the web view can claim a shortcut for its page: Prefer Kite shortcuts run here (Settings › Shortcuts).
+    /// Before the web view can claim a shortcut for its page: the tab switcher's keys, then Prefer Kite
+    /// shortcuts (Settings › Shortcuts).
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        ShortcutPriorityRouter.shared.takeBeforePage(event, in: self) || super.performKeyEquivalent(with: event)
+        if event.type == .keyDown, keyInterceptor?(event) == true { return true }
+        return ShortcutPriorityRouter.shared.takeBeforePage(event, in: self) || super.performKeyEquivalent(with: event)
     }
 }

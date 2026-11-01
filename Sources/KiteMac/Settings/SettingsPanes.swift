@@ -113,11 +113,12 @@ struct ProfilesPane: View {
                         SettingsRow(title: "Download location") { DownloadLocationPicker() }
                     }
                     SettingsSection(header: "Your Data and Settings") {
-                        DataLink("Privacy and Security", SettingsIcon(symbol: "lock.fill", color: .blue))
-                        DataLink("Passwords", SettingsIcon(symbol: "key.fill", color: .green))
-                        DataLink("Credit Cards", SettingsIcon(symbol: "creditcard.and.123", color: .yellow))
-                        DataLink("Notifications", SettingsIcon(symbol: "bell.fill", color: .orange))
-                        DataLink("Clear Browsing Data", SettingsIcon(symbol: "trash.fill", color: .red))
+                        // Arc opens Chromium's pages for the selected profile; Kite opens its own.
+                        DataLink("Privacy and Security", SettingsIcon(symbol: "lock.fill", color: .blue)) { $0?.openSettingsPage(.privacy) }
+                        DataLink("Passwords", SettingsIcon(symbol: "key.fill", color: .green), enabled: passwordManager) { $0?.openProfilePasswordManager() }
+                        DataLink("Credit Cards", SettingsIcon(symbol: "creditcard.and.123", color: .yellow), enabled: passwordManager) { $0?.openProfilePasswordManager() }
+                        DataLink("Notifications", SettingsIcon(symbol: "bell.fill", color: .orange)) { $0?.openSettingsPage(.permission(.notifications)) }
+                        DataLink("Clear Browsing Data", SettingsIcon(symbol: "trash.fill", color: .red)) { $0?.openSettingsPage(.clearBrowserData) }
                     }
                 }
                 .frame(width: 331)
@@ -211,22 +212,37 @@ private struct ProfileList: View {
     }
 }
 
+extension ProfilesPane {
+    /// Passwords and Credit Cards open the password manager, so they need one installed.
+    fileprivate var passwordManager: Bool { (NSApp.delegate as? AppDelegate)?.canOpenProfilePasswordManager ?? false }
+}
+
 /// A row in Arc's "Your Data and Settings": coloured icon, label, and an arrow on the right.
+/// The whole row opens its page.
 private struct DataLink: View {
     let title: String
     let icon: SettingsIcon
+    let enabled: Bool
+    let action: (AppDelegate?) -> Void
 
-    init(_ title: String, _ icon: SettingsIcon) {
+    init(_ title: String, _ icon: SettingsIcon, enabled: Bool = true, action: @escaping (AppDelegate?) -> Void) {
         self.title = title
         self.icon = icon
+        self.enabled = enabled
+        self.action = action
     }
 
     var body: some View {
-        SettingsRow(title: title, icon: icon) {
-            Image(systemName: "arrow.right").foregroundStyle(Color.accentColor)
+        Button { action(NSApp.delegate as? AppDelegate) } label: {
+            SettingsRow(title: title, icon: icon) {
+                Image(systemName: "arrow.right").foregroundStyle(Color.accentColor)
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .padding(.vertical, -2.5)
-        .disabled(true)
+        .disabled(!enabled)
+        .accessibilityIdentifier("dataLink." + title)
     }
 }
 
@@ -490,7 +506,11 @@ struct AdvancedPane: View {
                 BoostsEnabledRow()
             }
             HStack(spacing: 8) {
-                Button("More Settings…") {}.disabled(true)
+                // Arc opens arc://settings; Kite's Chromium settings pages start at Privacy and security.
+                Button("More Settings…") {
+                    guard let app = NSApp.delegate as? AppDelegate, let store = app.browserStore else { return }
+                    app.openSettingsPage(.privacy, profile: store.state.selectedProfileDirectory)
+                }
                 Button("Reset Translated-site Prompts") {}.disabled(true)
                 Spacer()
                 Button("Export Data") { (NSApp.delegate as? AppDelegate)?.exportData(from: NSApp.keyWindow) }

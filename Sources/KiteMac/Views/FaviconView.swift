@@ -56,7 +56,7 @@ struct FaviconView: View {
         switch InternalPage(page) {
         case .history: symbol = "clock.arrow.circlepath"
         case .archive: symbol = "archivebox"
-        case .siteSettings: symbol = "gearshape"
+        case .siteSettings, .settings: symbol = "gearshape"
         case .searchEngines: symbol = "magnifyingglass"
         case nil: break
         }

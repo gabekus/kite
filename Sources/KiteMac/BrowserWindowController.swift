@@ -16,6 +16,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     let store: BrowserStore
     let pool: PagePool
+    /// Tabs › Tab Switcher (forward) ⌃Tab / (backward) ⌃⇧Tab.
+    lazy var tabSwitcher = RecentTabSwitcherController(owner: self)
     #if canImport(CEFBridge)
     /// The current space's profile's extensions, for the toolbar, sidebar and menu bar.
     private(set) var extensionsSelection: ExtensionsSelection?
@@ -101,6 +103,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var permissionPrompt: PermissionPromptCard?
     /// Kite's own pages (kite://history, kite://archive) over the panes showing them, by tab.
     private var internalPages: [UUID: (url: URL, host: NSView)] = [:]
+    /// A settings page's toast that should show on the page its tab goes to next ("Last hour deleted").
+    private var settingsToasts: [UUID: String] = [:]
     private var commandBarVisible = false
     private var sidebarVisible = true
     /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
@@ -145,6 +149,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.delegate = self
 
         buildViews()
+        window.keyInterceptor = { [weak self] event in self?.tabSwitcher.intercept(event) ?? false }
         store.onChange = { [weak self] in self?.sync() }
         store.onPageChange = { [weak self] id in self?.pageChanged(id) }
         pool.onPageTaken = { [weak self] id in self?.pageTaken(id) }
@@ -555,7 +560,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             // A page coming forward (⌘T, a tab opened from the Archive, another space) leaves the Library.
             if library.isOpen, shownTabID != nil { library.close() }
             show(visible, focused: selected?.id)
+            tabSwitcher.shownTabChanged()
         }
+        tabSwitcher.storeChanged()
         if let split = state.selectedSplit {
             splitPanes.setLayout(factors: split.layoutFactors, orientation: split.orientation)
         }
@@ -812,6 +819,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return NSHostingView(rootView: ArchivePageView(store: store, open: open) { [weak self] tabID in
                 self?.restoreArchivedTab(tabID)
             })
+        case .settings:
+            // The tab's own profile, as Chromium's settings pages: its (blank) page reads the prefs.
+            let controls = ProfileDataControls(
+                page: { [weak self] in self?.pool.loadedPage(id) },
+                engine: pool.engine(forTab: id),
+                history: store.historyRoot?.forProfile(store.state.profileDirectory(ofTab: id)))
+            return NSHostingView(rootView: SettingsPageView(
+                page: SettingsPage(url) ?? .privacy, controls: controls,
+                navigate: { [weak self] page, toast in self?.showSettingsPage(page, in: id, toast: toast) },
+                toast: settingsToasts.removeValue(forKey: id)))
         case .siteSettings:
             // Chromium keeps permissions per profile, so the tab's own (blank) page reads them.
             return NSHostingView(rootView: SiteSettingsPageView(
@@ -823,6 +840,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         case .searchEngines:
             return NSHostingView(rootView: SearchEnginesPageView(store: store))
         }
+    }
+
+    /// Moves a kite://settings tab to another settings page; the engine page stays blank.
+    private func showSettingsPage(_ page: SettingsPage, in id: UUID, toast: String?) {
+        settingsToasts[id] = toast
+        store.mutate { $0.update(tab: id) { $0.url = page.url; $0.title = page.tabTitle } }
     }
 
     private func openFromInternalPage(_ id: UUID, _ url: URL, newTab: Bool) {

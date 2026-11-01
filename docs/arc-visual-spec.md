@@ -2959,6 +2959,46 @@ Read from Arc's compiled `Base.lproj/MainMenu.nib` (control connectors: action, 
 - Not verified: the pop-up's open menu (modal), Other… and Ask every time live (they'd open panels over Gabe's
   work), and the Chromium engine (the test build runs WebKit).
 
+
+## Profile settings › Your Data and Settings → `SettingsPage`, `BrowsingDataType`, `BrowsingDataPeriod`, `PermissionException` (KiteCore), `SettingsPagesView.swift`, `AppDelegate+ProfileData` (Arc 1.171 binary, Arc's Chromium resources, 1 Nov 2026)
+
+What each row opens (binary, not observed live: Arc's Settings window wasn't pressed):
+- `FUN_10052c248` (an `ADK.ChromiumBrowser` method, so per profile) switches over a page enum whose case names
+  are in arc-strings.txt line 151566ff (`siteSettings, settings, searchEngines, passwords, privacy, notifications,
+  clearBrowserData, creditCards, …`) and appends one path each to the browser's scheme prefix
+  (arc.s 1353121–1353481): `settings/privacy`, `password-manager/passwords`, `settings/payments`,
+  `settings/content/notifications`, `settings/clearBrowserData` (strings 63377–63380). So the rows open
+  Chromium's own pages (arc://settings/…) for the profile. That they open as a new tab is inferred
+  (Arc's other `arc://settings/…` openers, e.g. All Site Settings…, open tabs); unverified.
+- Arc 1.171 runs Chromium 156.0.8078 (ArcCore CFBundleVersion 8078.74), the same as Kite's CEF 156.0.8078.17.
+  The pages' layout and wording below come from Arc's own copy: ArcCore.framework/Resources/en.lproj/locale.pak
+  (ids 6458–6489, 6604, 6808–6814, 7034–7075) and the settings WebUI bundle in resources.pak.
+- Privacy and security (`settings-privacy-page`): Delete browsing data ("Delete history, cookies, cache, and
+  more") opening the dialog (route clearBrowserData; closing goes back to privacy and shows a 5 s toast), Privacy
+  Guide, Third-party cookies, Security, Site settings ("Control what information websites can use and what content
+  they can show you"). Kite: the first and last.
+- Delete browsing data (`settings-clear-browsing-data-dialog`): title "Delete browsing data"; time chips from
+  [Last 15 min, Last hour, Last 24 hours, Last 7 days, Last 4 weeks, All time], at most 4 shown (the first 3, then
+  the selected one, else the 4th), the rest under "More ▾"; default Last hour (`browser.clear_data.time_period`, Chromium's
+  TimePeriod numbers). Checkboxes in order Browsing history, Cookies and other site data, Cached images and files,
+  Download history, Autofill form data, Site settings, Hosted app data; shown: the default three plus any whose
+  `browser.clear_data.*` pref is on, the rest behind "Show more ⌄". Buttons Cancel and, when not signed in to
+  Google, "Delete from this device" (disabled with nothing checked); prefs are saved on delete. Toast: "$1 deleted"
+  with the long period name, "Deleted" for all time.
+- Site settings › <permission>: "Default behavior" + "Sites automatically follow this setting when you visit
+  them" (notifications add a sentence), radio "Sites can ask to …" / "Don't allow sites to …"; "Customized
+  behaviors" with "Not allowed to …" and "Allowed to …" lists, "No sites added" when empty.
+
+Kite: kite://settings/{privacy, clearBrowserData, content, content/<camera|microphone|location|notifications>},
+drawn natively (Kite's tabs are Alloy-style and can't host chrome://settings), in the tab's profile. Chromium:
+dialog choices in the same prefs; deletion through Kite's helper extension (`chrome.browsingData.remove`, since
+the period start; hosted app data = protectedWeb storage) plus Kite's history.json and downloads list; Site
+settings removes the four permissions' content-settings exceptions changed in the range (their `last_modified`);
+defaults via CEF content settings with empty URLs. WebKit: `WKWebsiteDataStore.removeData(modifiedSince:)` for
+site data and cache, Kite's history and downloads; no permission pages. Passwords / Credit Cards: Kite's Chromium
+tabs have no Chrome password manager or card autofill, so both rows open the password manager's popup (disabled
+without one, and on WebKit).
+
 ## Shortcut priority and Extension Shortcuts → `ShortcutPriorityRouter`, `KeyShortcutPriority`, `ShortcutsPane` (Arc 1.171, 1 Nov 2026)
 
 Sources: `Base.lproj/MainMenu.nib` (user-defined runtime attributes, parsed in scratch), `arc-strings.txt`, Arc's
@@ -3001,6 +3041,34 @@ the priorities read).
   the page. Chromium: ⌘F with Prefer Kite ran Find before the page. With Kite in the background Chromium's view
   declines key equivalents, so its page-first path couldn't be driven.
 
+## Tab Switcher ⌃Tab / ⌃⇧Tab (g112) → `RecentTabSwitcher` (KiteCore), `RecentTabSwitcherController`, `RecentTabSwitcherView` (Arc 1.171 MainMenu.nib, strings and Ghidra decompile, 1 Nov 2026)
+
+- Menu (MainMenu.nib, Tabs menu, hidden at runtime, key equivalent allowed when hidden): "Tab Switcher (forward)"
+  `\t` ⌃ (mask 262144), binding `cycleNextTab`, action `cycleToNextRecentTab:`, outlet `nextRecentTabItem`;
+  "Tab Switcher (backward)" back-tab ⌃⇧ (393216), `cyclePreviousTab`, `cycleToPreviousRecentTab:`. Command bar keywords
+  "Toggle Tabs; Switch tabs; Recent tabs". Kite's old hidden ⌃⇧Tab → Previous Tab alternate is gone (Arc doesn't have it).
+- `ModalItemSwitcherWindowController` (decompile 0x1024ad594–0x1024ae918): `presentationTimer` fires at
+  `0.1 − elapsed` s after the request, so a quick tap switches without the overlay. While open an event monitor for
+  keyDown | flagsChanged (mask 0x1400) swallows every key: the next/previous shortcuts (and
+  `cyclePreviousTabAlternateShortcut`) cycle; keyCode 123 ← previous, 124 → next, 53 Esc dismisses without switching,
+  13 (W) closes the focused item (`updateModalItemSwitcher(confirmedItemIDsToClose:)`). A flagsChanged with none of
+  the shortcuts' modifiers left held commits. `appDidResignActive` dismisses without switching.
+- Window: borderless transparent child of the browser window (style 0x8000, level 3, no shadow, clear background),
+  framed from the parent window on every resize. Title (not drawn): `NSLocalizedString("Recent Items", comment:
+  "Title for the recent tabs overlay")`.
+- View (`ModalItemSwitcherView`, 0x1024a1000–0x1024a8b18): panel RoundedRectangle continuous r24 with a black 50%
+  shadow; horizontal ScrollView (scrolls to the focused item), HStack, padding 16; each item padding 12; focus highlight
+  r8 sliding with `spring(response 0.15, damping 0.95)`, scroll `easeOut(0.1)`; card r6 with black 6% and 20% radius-2
+  shadows; snapshot clipped r4, stroke 2 at 10%; label HStack spacing 8: favicon 16 (r4) + title medium 14, padding
+  horizontal 2. Items: `id, components (snapshot or title+image per split pane), layoutOrientation, isHidden`.
+- Kite: an overlay view inside the window (not a child window), the current space's tabs (favorites, pinned,
+  unpinned) most recent first; cards show the page as it last looked on screen (captured 1 s after a tab is shown,
+  and when the switcher starts), else the favicon. Keys reach it via `BrowserWindow.keyInterceptor` (sendEvent and
+  performKeyEquivalent) so `ui input` works; `ui input {"flags":"ctrl"}` / `{"flags":"none"}` sends the modifier changes.
+- Inferred / unverified: whether Arc's items span spaces (Kite: current space), `preferredSnapshotWidth` (Kite 180 pt),
+  the highlight and panel colours (Kite: primary at 15%, hudWindow material), split items (Kite: one card per tab),
+  and no pixel comparison with Arc (opening it needs keys sent to Arc).
+
 ## Settings › Advanced: theme data for websites, Export Data, More Settings… → `ThemeCSS`, `DataExport` (KiteCore), `PagePool.updateThemeCSS()`, `AppDelegate.exportData(from:)` (Arc 1.171 strings, disassembly and decompile, defaults key names, Settings AX recording; 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, Ghidra decompiles in `~/rea-arc/decomp/out-g95/at*.txt`, `~/rea-arc/settings/pane-7.txt`.
@@ -3024,4 +3092,4 @@ Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, Ghidra decompile
 - Inferred: the space's containers (pinned, then unpinned) are rendered one after another with an empty line between them.
 - Kite: the same format, "Kite Data Export.md", the same panel. `KITE_TEST_EXPORT_DATA_PATH` (test builds only) writes without the panel.
 
-**More Settings…** stays disabled. Strings 80409–80410: "Clicking opens arc://settings", Chromium's own settings WebUI, which Kite's Alloy-style tabs can't host. **Reset Translated-site Prompts** stays disabled: Kite has no translation.
+**More Settings…**: strings 80409–80410, "Clicking opens arc://settings", Chromium's own settings WebUI, which Kite's Alloy-style tabs can't host. Kite opens its own Chromium settings pages instead (kite://settings/privacy, from g100/g101) in a new tab for the current space's profile. **Reset Translated-site Prompts** stays disabled: Kite has no translation.
