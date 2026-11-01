@@ -1137,8 +1137,8 @@ Sources: `~/rea-arc/arc-strings.txt` 73677–73738 (module `SiteControlCenter`: 
 | Footer | 82×32 left, 32×32 right, both 23 from the edges | Same |
 | From the toolbar | top y 38, right edge = window's | top 38, right edge 1280 of 1280 |
 
-Kite differs: no Boosts, capture or sidebar preview; extensions stay in their own popover; action row
-has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers, Developer Mode and four permission rows, shown
+Kite differs: no capture or sidebar preview (Boosts: see g52 below); extensions stay in their own popover; action row
+has only Copy URL, Share and New Boost; the Settings rows are Arc's Block Ads & Trackers, Developer Mode and four permission rows, shown
 always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
 circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
 
@@ -1166,9 +1166,36 @@ circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
   permissions and an Ask (default) / Allow / Block menu per permission, Chromium's site details layout trimmed to
   the four permissions Kite's CEF bridge reads (`KCBrowser sitePermission`). WebKit keeps none, so the page says so.
   Chromium's usage/data section and its other permission types (JavaScript, pop-ups, sound, MIDI…) aren't there.
-- Still missing from Arc's popover: the Capture / full-page / Portrait Mode and New Boost action buttons, the Boosts
-  and Extensions sections, the sidebar Preview row, and the footer menu's Manage Boosts…, New Boost, Manage
-  Extensions… and Add Extension… (`includeBoostsInContextMenu` suggests the Boost items are conditional).
+- Still missing from Arc's popover: the Capture / full-page / Portrait Mode action buttons, the Extensions
+  section, the sidebar Preview row, and the footer menu's Manage Extensions… and Add Extension… (Boosts: g52 below).
+
+### Boosts in the Site Control Center (g52, Arc 1.171 binary, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` 73696–73727 (`SiteControlCenterBoostsView.swift`, `…ActionButton.swift`,
+`…FooterView.swift`) and 164060–164170 (the feature's state, actions and view members); Swift immediates decoded from
+`~/rea-arc/decomp/arc.s` next to each `NSLocalizedString` comment; asset sizes from `assetutil --info` on
+`ARC_SiteControlCenter.bundle/Contents/Resources/Assets.car`. Arc wasn't driven or captured for this.
+
+- New Boost action button: tooltip "New Boost" (0x10137411c, comment "Tooltip for the new Boost button in the site
+  control center."); action `newBoost` / `didClickNewBoost`.
+- Boosts section: title "Boosts" (0x101374bf4), hover text "Manage" (0x101374c64); header click
+  `onManageBoostsClick` → `didClickManageBoosts`. Rows: subtitle "Enabled" (0x101375974, "Subtitle for active
+  Boost") / "Disabled" (0x1013759bc); the row view has `onToggleClick`, `onEditClick` and a hovered state
+  (`didClickToggleBoost`, `didClickEditBoost`); symbol `boost.sparkle.fill`, an 18×18 template image (assets also
+  `boost.sparkle`, `boost.fill`). State fields: `boosts` with `title`, `isActive`.
+- Footer menu order (0x10137d6f4–0x10137de00): Clear Cache, Clear Cookies, **Manage Boosts…**, **New Boost…**
+  (0x10137dac0: "New Boost" + "…"), Manage Extensions…, Add Extension…, All Site Settings…. The two Boost items sit
+  behind a branch on a Bool from the view store (0x10137d940); the footer's state is `isSecure` and
+  `includeBoostsInContextMenu`. What sets the flag wasn't traced.
+- Kite: the New Boost button third in the action row (Arc's Capture button, between Share and New Boost, is left
+  out), opening the editor; the Boosts section between the actions and Settings when the site has Boosts, each row
+  the Boost's name with Enabled / Disabled, a click flips it, a pencil on hover opens the editor (a separate edit
+  control is inferred from `onEditClick` + hover); the header and Manage Boosts… open Library › Boosts
+  (`viewBoosts`). Inferred: the footer shows Manage Boosts… / New Boost… only when the site has no Boosts section
+  (`SiteControls.includesBoostsInMenu`); none of the Boost parts show in incognito (Boosts don't run there). Arc's
+  `boost.sparkle.fill` image isn't copied: Kite uses SF Symbol `wand.and.stars`. Row styling is Kite's existing
+  setting-row style; Arc's pixels weren't read. Toggling doesn't reload the page (CSS/JS apply at the next load;
+  zaps update live).
 
 ## Site permission prompt → `PermissionPromptView`, `PermissionPromptCard` (Arc 1.171 binary, 1 Nov 2026)
 
