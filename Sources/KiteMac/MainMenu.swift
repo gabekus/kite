@@ -102,6 +102,8 @@ enum MainMenu {
             submenuItem("Archive tabs after", ArchiveInterval.allCases.enumerated().map { i, interval in
                 item(interval.title, #selector(AppDelegate.setArchiveInterval(_:)), tag: i, toTarget: false)
             }),
+            // Arc's Arc menu: "Import from Another Browser…", no shortcut, just before Check for Updates (read from its menu bar).
+            item("Import from Another Browser…", #selector(BrowserWindowController.importFromAnotherBrowser(_:)), id: "importFromAnotherBrowser"),
             // Arc's Arc menu: "Check for Updates…", no shortcut, last item before Services (read from its menu bar).
             item("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)), toTarget: false, id: "checkForUpdates"),
             .separator(),
@@ -127,7 +129,7 @@ enum MainMenu {
             item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift], id: "reopenClosedTab"),
             .separator(),
             // Temporary: remove with ArcImportController.swift after Arc shuts down (2026-12-22).
-            item("Import from Arc…", #selector(BrowserWindowController.importFromArc(_:)), id: "importFromAnotherBrowser"),
+            item("Import from Arc…", #selector(BrowserWindowController.importFromArc(_:)), id: "importFromArc"),
             .separator(),
             item("Archive Tab", #selector(BrowserWindowController.closeTab(_:)), "w", id: "archiveTab"),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift], toTarget: false, id: "closeWindow"),

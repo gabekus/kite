@@ -59,7 +59,7 @@ final class BrowserStore {
     /// The URL each tab last recorded, so repeated reports of one page count once.
     @ObservationIgnored private var recordedURLs: [UUID: URL] = [:]
 
-    private static let spaceIcons = ["🌿", "🎨", "📚", "🎧", "🧪", "✈️", "🍳", "🎮"]
+    static let spaceIcons = ["🌿", "🎨", "📚", "🎧", "🧪", "✈️", "🍳", "🎮"]
 
     /// An incognito window's store: one dark space, never saved.
     static func incognito() -> BrowserStore {
