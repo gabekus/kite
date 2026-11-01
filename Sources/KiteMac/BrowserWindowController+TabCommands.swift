@@ -120,11 +120,27 @@ extension BrowserWindowController {
     /// Renames the space in place in its header, like Arc.
     @objc func renameSpace(_ sender: Any?) { store.beginRenaming(space: store.state.selectedSpaceID) }
 
-    /// Change Space Icon: Arc's icon picker (CustomInfoPicker's EmojiAndIconPicker), a popover on
-    /// the space's header, rather than a dialog.
+    /// The space's icon is one emoji; the field opens the emoji picker.
     func changeIcon(ofSpace id: UUID) {
-        guard store.state.spaces.contains(where: { $0.id == id }) else { return }
-        store.pickIcon(forSpace: id)
+        guard let window, let space = store.state.spaces.first(where: { $0.id == id }) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Change Space Icon"
+        alert.informativeText = "Type or pick an emoji."
+        alert.addButton(withTitle: "Change")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: space.icon)
+        field.frame = NSRect(x: 0, y: 0, width: 60, height: 24)
+        field.font = .systemFont(ofSize: 15)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.store.mutate { $0.setSpaceIcon(space.id, to: field.stringValue) }
+        }
+        DispatchQueue.main.async {
+            field.currentEditor()?.selectAll(nil)
+            NSApp.orderFrontCharacterPalette(field)
+        }
     }
 
     /// A folder's Rename…: edits its name in place in its sidebar row, like a tab's title.

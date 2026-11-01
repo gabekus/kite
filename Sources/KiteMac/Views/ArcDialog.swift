@@ -134,29 +134,49 @@ final class ArcDialog {
 }
 
 /// Arc's `DialogViewBase`, `DialogTitle`, `DialogDetailLabel`, `TextInput` and
-/// `DialogButtonStyleView` numbers (static analysis of Arc's binary; not yet checked against a
-/// live capture).
+/// Arc's dialog geometry and colours, measured on Arc 1.171's Rename Tab… sheet (window capture at 2×,
+/// 1 Nov 2026), with the paddings that agree with `DialogViewBase` in its binary (28 outside, 10 more
+/// for the title and field). Arc draws it dark whatever the appearance.
 enum ArcDialogMetrics {
     static let defaultWidth: CGFloat = 450
     static let horizontalPadding: CGFloat = 28
-    static let bottomPadding: CGFloat = 28
-    static let titleTopPadding: CGFloat = 27
-    static let titleSize: CGFloat = 18
+    static let contentInset: CGFloat = 10
+    static let topPadding: CGFloat = 54
+    static let bottomPadding: CGFloat = 27
+    static let titleSize: CGFloat = 17
     static let detailSize: CGFloat = 14
     static let detailLineSpacing: CGFloat = 4
-    static let stackSpacing: CGFloat = 16
-    static let fieldFontSize: CGFloat = 18
+    static let titleToField: CGFloat = 25
+    static let fieldToButtons: CGFloat = 21.5
+    static let fieldHeight: CGFloat = 36
+    static let fieldFontSize: CGFloat = 17
     static let fieldCornerRadius: CGFloat = 5
-    static let fieldPadding: CGFloat = 5
-    static let fieldFocusRing: CGFloat = 3
-    static let fieldBottomPadding: CGFloat = 14
-    static let buttonHorizontalPadding: CGFloat = 12
-    static let buttonVerticalPadding: CGFloat = 10
-    static let buttonMinWidth: CGFloat = 62
-    static let buttonCornerRadius: CGFloat = 13
+    static let fieldTextInset: CGFloat = 10
+    static let buttonHeight: CGFloat = 36
+    static let buttonCornerRadius: CGFloat = 8
+    static let buttonLeading: CGFloat = 13
+    static let buttonTrailing: CGFloat = 12.5
+    static let buttonTitleToKey: CGFloat = 9
+    static let buttonFontSize: CGFloat = 15
     static let buttonSpacing: CGFloat = 8
-    static let hintFontSize: CGFloat = 11
-    static let hintCornerRadius: CGFloat = 4
+    static let keyHeight: CGFloat = 19
+    static let keyCornerRadius: CGFloat = 4
+    static let keyFontSize: CGFloat = 11
+
+    static let background = rgb(0x1E263D)
+    static let fieldFill = rgb(0x494F60)
+    static let fieldBorder = rgb(0x6F7380)
+    static let secondaryFill = rgb(0x3E4073)
+    static let secondaryBorder = rgb(0x7678B7)
+    static let secondaryKey = rgb(0x606089)
+    static let primaryFill = rgb(0x4155F4)
+    static let primaryBorder = rgb(0x7F88F7)
+    static let primaryKey = rgb(0x5969F5)
+    static let destructiveFill = rgb(0xD8423A)
+
+    private static func rgb(_ hex: Int) -> Color {
+        Color(red: Double(hex >> 16 & 0xFF) / 255, green: Double(hex >> 8 & 0xFF) / 255, blue: Double(hex & 0xFF) / 255)
+    }
 }
 
 private typealias M = ArcDialogMetrics
@@ -168,51 +188,57 @@ private struct DialogView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(model.title)
-                .font(.system(size: M.titleSize, weight: .bold))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, M.titleTopPadding)
-                .accessibilityAddTraits(.isHeader)
-            if let message = model.message, !message.isEmpty {
-                Text(message)
-                    .font(.system(size: M.detailSize))
-                    .lineSpacing(M.detailLineSpacing)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(model.title)
+                    .font(.system(size: M.titleSize, weight: .semibold))
+                    .foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                    .padding(.top, 8)
+                    .accessibilityAddTraits(.isHeader)
+                if let message = model.message, !message.isEmpty {
+                    Text(message)
+                        .font(.system(size: M.detailSize))
+                        .lineSpacing(M.detailLineSpacing)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .padding(.top, 8)
+                }
+                if let field = model.field {
+                    TextField("", text: $model.text, prompt: Text(field.placeholder).foregroundStyle(.white.opacity(0.4)))
+                        .textFieldStyle(.plain)
+                        .font(.system(size: M.fieldFontSize, weight: .medium))
+                        .foregroundStyle(.white)
+                        .focused($fieldFocused)
+                        .onSubmit(submit)
+                        .padding(.horizontal, M.fieldTextInset)
+                        .frame(height: M.fieldHeight)
+                        .background(RoundedRectangle(cornerRadius: M.fieldCornerRadius, style: .continuous).fill(M.fieldFill))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: M.fieldCornerRadius, style: .continuous)
+                                .strokeBorder(M.fieldBorder, lineWidth: 1)
+                        )
+                        .padding(.top, M.titleToField)
+                        .accessibilityLabel(model.title)
+                        .onAppear { fieldFocused = true }
+                }
             }
-            if let field = model.field {
-                TextField("", text: $model.text, prompt: Text(field.placeholder))
-                    .textFieldStyle(.plain)
-                    .font(.system(size: M.fieldFontSize, weight: .medium))
-                    .focused($fieldFocused)
-                    .onSubmit(submit)
-                    .padding(M.fieldPadding)
-                    .background(
-                        RoundedRectangle(cornerRadius: M.fieldCornerRadius, style: .continuous)
-                            .fill(Color.primary.opacity(0.06))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: M.fieldCornerRadius, style: .continuous)
-                            .strokeBorder(Color.accentColor.opacity(fieldFocused ? 0.6 : 0), lineWidth: M.fieldFocusRing)
-                    )
-                    .padding(.top, M.stackSpacing)
-                    .padding(.bottom, M.fieldBottomPadding - M.stackSpacing)
-                    .accessibilityLabel(model.title)
-                    .onAppear { fieldFocused = true }
-            }
+            .padding(.horizontal, M.contentInset)
             HStack(spacing: M.buttonSpacing) {
                 Spacer(minLength: 0)
                 ForEach(Array(model.actions.enumerated()), id: \.offset) { index, action in
-                    DialogButton(action: action, isDefault: index == model.defaultIndex) { model.choose(index) }
+                    ArcDialogButton(action.title, role: action.role, isDefault: index == model.defaultIndex) {
+                        model.choose(index)
+                    }
                 }
             }
-            .padding(.top, M.stackSpacing)
+            .padding(.top, model.field == nil ? M.titleToField : M.fieldToButtons)
         }
+        .padding(.top, M.topPadding)
         .padding(.horizontal, M.horizontalPadding)
         .padding(.bottom, M.bottomPadding)
         .frame(width: width, alignment: .leading)
+        .background(M.background)
+        .environment(\.colorScheme, .dark)
     }
 
     private func submit() {
@@ -220,61 +246,72 @@ private struct DialogView: View {
     }
 }
 
-/// Arc's `DialogButtonStyleView`: a 13 pt-radius pill, the primary filled with the accent colour
-/// (red when destructive), the others clear with a 1 pt outline, each with its key hint
-/// (`ButtonHotkeyHint`: ↩ on the default, esc on Cancel).
-private struct DialogButton: View {
-    let action: ArcDialog.Action
+/// Arc's dialog button (`DialogButtonStyleView`): a filled rounded rectangle with a lighter 1 pt edge,
+/// its title, and its key in a chip (`ButtonHotkeyHint`): ↩ on the default button, ESC on Cancel.
+/// The primary is Arc's blue (red when destructive), the others its muted indigo.
+struct ArcDialogButton: View {
+    let title: String
+    let role: ArcDialog.Action.Role
     let isDefault: Bool
+    var isEnabled = true
     let perform: () -> Void
     @State private var hovering = false
 
+    init(_ title: String, role: ArcDialog.Action.Role, isDefault: Bool, isEnabled: Bool = true,
+         perform: @escaping () -> Void) {
+        self.title = title
+        self.role = role
+        self.isDefault = isDefault
+        self.isEnabled = isEnabled
+        self.perform = perform
+    }
+
     var body: some View {
         Button(action: perform) {
-            HStack(spacing: 6) {
-                Text(action.title)
-                    .font(.system(size: 13, weight: .semibold))
-                if let hint {
-                    Text(hint)
-                        .font(.system(size: M.hintFontSize, weight: .medium))
-                        .padding(.vertical, 1)
-                        .padding(.horizontal, 5)
+            HStack(spacing: M.buttonTitleToKey) {
+                Text(title)
+                    .font(.system(size: M.buttonFontSize, weight: .medium))
+                if let key {
+                    Text(key)
+                        .font(.system(size: M.keyFontSize, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .padding(.horizontal, 6)
+                        .frame(height: M.keyHeight)
+                        .background(RoundedRectangle(cornerRadius: M.keyCornerRadius, style: .continuous).fill(keyFill))
                         .overlay(
-                            RoundedRectangle(cornerRadius: M.hintCornerRadius, style: .continuous)
-                                .strokeBorder(foreground.opacity(0.35), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: M.keyCornerRadius, style: .continuous)
+                                .strokeBorder(isPrimary ? M.primaryBorder : .clear, lineWidth: 1)
                         )
-                        .opacity(0.75)
                 }
             }
-            .foregroundStyle(foreground)
-            .padding(.horizontal, M.buttonHorizontalPadding)
-            .padding(.vertical, M.buttonVerticalPadding)
-            .frame(minWidth: M.buttonMinWidth)
-            .background(
-                RoundedRectangle(cornerRadius: M.buttonCornerRadius, style: .continuous)
-                    .fill(fill)
-            )
+            .foregroundStyle(.white)
+            .padding(.leading, M.buttonLeading)
+            .padding(.trailing, key == nil ? M.buttonLeading : M.buttonTrailing)
+            .frame(height: M.buttonHeight)
+            .background(RoundedRectangle(cornerRadius: M.buttonCornerRadius, style: .continuous).fill(fill))
             .overlay(
                 RoundedRectangle(cornerRadius: M.buttonCornerRadius, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(isFilled ? 0 : (hovering ? 0.3 : 0.15)), lineWidth: 1)
+                    .strokeBorder(isPrimary ? M.primaryBorder : M.secondaryBorder, lineWidth: 1)
             )
+            .brightness(hovering && isEnabled ? 0.05 : 0)
+            .opacity(isEnabled ? 1 : 0.4)
             .contentShape(RoundedRectangle(cornerRadius: M.buttonCornerRadius, style: .continuous))
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
         .onHover { hovering = $0 }
         .keyboardShortcut(shortcut)
-        .accessibilityLabel(action.title)
+        .accessibilityLabel(title)
     }
 
-    private var isFilled: Bool { isDefault }
-    private var hint: String? { isDefault ? "↩" : action.role == .cancel ? "esc" : nil }
+    private var isPrimary: Bool { isDefault }
+    private var key: String? { isDefault ? "↩" : role == .cancel ? "ESC" : nil }
     private var shortcut: KeyboardShortcut? {
-        isDefault ? .defaultAction : action.role == .cancel ? .cancelAction : nil
+        isDefault ? .defaultAction : role == .cancel ? .cancelAction : nil
     }
-    private var foreground: Color { isFilled ? .white : .primary }
     private var fill: Color {
-        guard isFilled else { return .clear }
-        let base = action.role == .destructive ? Color.red : Color.accentColor
-        return hovering ? base.opacity(0.85) : base
+        guard isPrimary else { return M.secondaryFill }
+        return role == .destructive ? M.destructiveFill : M.primaryFill
     }
+    private var keyFill: Color { isPrimary ? M.primaryKey : M.secondaryKey }
 }

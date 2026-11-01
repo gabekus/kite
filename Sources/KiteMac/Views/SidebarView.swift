@@ -1280,15 +1280,6 @@ private struct SpaceHeader: View {
             }
             .buttonStyle(.plain)
             .help("Change Space Icon")
-            .popover(isPresented: Binding(
-                get: { store.iconPickerSpaceID == space.id },
-                set: { if !$0, store.iconPickerSpaceID == space.id { store.iconPickerSpaceID = nil } }
-            ), arrowEdge: .bottom) {
-                SpaceIconPicker(current: space.icon) { icon in
-                    store.mutate { $0.setSpaceIcon(space.id, to: icon) }
-                    store.iconPickerSpaceID = nil
-                }
-            }
             if renaming {
                 TextField("Space Name", text: $draft)
                     .textFieldStyle(.plain)

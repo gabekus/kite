@@ -609,7 +609,7 @@ immediates decoded from the `mov`/`movk` pairs before each `NSLocalizedString` c
   and "Replace Pinned Tab with the Current Site" (strings ~79423, ~79443).
 - Kite: `BrowserState.editPinnedURL(_:to:)` (a URL or bare host, never a search: `URLInput.url`),
   `replacePinnedURLWithCurrent(_:)`, `hasPinnedURL(tab:)` (`KiteCore/PinnedURL.swift`); `EditPinnedPageMenu` in the
-  pinned tab row's and favorite tile's context menus; the dialog is an `NSAlert` sheet like Kite's Rename Tab….
+  pinned tab row's and favorite tile's context menus; the dialog is `ArcDialog` (see "Dialogs" below), 393 pt wide.
 - Inferred, not observed: favorites get the submenu too (Arc has one tab context menu and favorites keep a pinned
   URL); the submenu's place in the menu; Save leaving the tab on its current page (so "Back to Pinned URL" then
   offers the new one); what Arc does with input that isn't a URL (Kite beeps and keeps the old one).
@@ -1522,6 +1522,35 @@ ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-stri
 - What the split looks like (which pane, focus, what a full split does) isn't traced. Kite follows Add Split View: a new pane after the
   clicked tab, focused. On a full split Kite does nothing, which matches Gabe's choice for Add Split View; Arc shows "Cannot Add New Pane".
 - No settings text mentions this click. The only Links-pane modifier settings are Peek (⇧) and Little Arc (⌥⌘).
+
+## Dialogs → `ArcDialog`, `PageDialogs` (Arc 1.171 binary, and a live capture of Rename Tab…, 1 Nov 2026)
+
+Arc never shows an NSAlert with a text field. Rename Tab…, Edit Pinned URL, New Folder… and Rename Space go
+through `DialogsClient` (`SharedWindowFeature/WindowData+Dialogs.swift`, `ARCClients/DialogsClient`).
+
+- Window: `Dialogs.SheetWindow`, an NSWindow holding `NSHostingController<DialogView>`. Init (`0x100fc2224`):
+  styleMask titled + fullSizeContentView, non-opaque, released when closed, transparent title bar,
+  collectionBehavior fullScreenAuxiliary. Shown with `beginSheet` on the browser window and taken down with
+  `endSheet`, so it moves like any sheet (no custom animation found).
+- Width: `DialogDisplayOptions.dialogWidth`, default 450 (`0x1045567f0`); Edit Pinned URL passes 393.
+- `DialogViewBase`: horizontal padding 28, bottom 28; title (`DialogTitle`) system 18 bold; detail
+  (`DialogDetailLabel`) 14 regular, line spacing 4; content spacing 8 and 16.
+- `TextInput`: system 18 medium in a rounded rect (radius 5, padding 5) with a 3 pt `strokeBorder` overlay
+  (blue or red: read as focus and invalid); bottom padding 14.
+- `DialogButtonStyleView`: padding 12 × 10, min width 62, radius 13, a 1 pt outline on the non-primary buttons,
+  primary filled. `ButtonHotkeyHint`: an ↩ / esc chip, 11 pt, radius 4.
+- Not resolved: the background colour (Kite uses the sheet's own material), any corner radius or shadow beyond
+  the system sheet, the button order (Kite: Cancel, then the primary on the right, as macOS does).
+- Page dialogs: Arc implements ADK's willRunJavaScriptAlertPanel / ConfirmPanel / TextInputPanel and the
+  beforeunload panel itself, so pages don't get Chromium's alert either. Their wording isn't in the binary;
+  Kite uses Chrome's ("example.com says", OK / Cancel, "Leave site?" / "Changes you made may not be saved.").
+  Kite takes them from Chromium with a `CefJSDialogHandler` (`KCBrowser.mm`) and from WebKit's WKUIDelegate.
+- Folder Rename… is edited in place in the row (no folder-rename dialog string exists; Arc has
+  `EditableTextFieldWithCompletionHandler`). Inferred, not traced.
+- Change Space Icon is Arc's `CustomInfoPicker/EmojiAndIconPicker` popover, not a dialog (the Spaces work
+  covers it).
+- Profile dialogs are a separate Arc system (`ProfilesUI`: `ProfileCreationSheetWindow`,
+  `ProfileChangeSheetWindow`); not covered here.
 
 ## Still unknown
 

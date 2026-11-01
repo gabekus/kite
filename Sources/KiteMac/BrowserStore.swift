@@ -48,8 +48,6 @@ final class BrowserStore {
     private(set) var renamingTabID: UUID?
     /// The folder whose name is being edited in place in the sidebar.
     private(set) var renamingFolderID: UUID?
-    /// The space whose icon picker is open on its sidebar header.
-    var iconPickerSpaceID: UUID?
     private(set) var isSidebarVisible = true
     private(set) var revealRequest: RevealRequest?
     /// macOS light/dark, which dark pages follow in `.matchSystem`.
@@ -187,13 +185,6 @@ final class BrowserStore {
     }
 
     func endRenamingFolder() { renamingFolderID = nil }
-
-    /// Opens Arc's icon picker on the space's header (selecting the space so its header shows).
-    func pickIcon(forSpace id: UUID) {
-        if !isSidebarVisible { toggleSidebar() }
-        mutate { $0.selectSpace(id) }
-        iconPickerSpaceID = id
-    }
 
     func showCommandBar(_ mode: CommandBarMode) {
         commandBar = mode
