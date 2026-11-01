@@ -2498,3 +2498,35 @@ doing it: a live folder needs a signed-in GitHub session, which an incognito win
   (`hasSeenGithubLiveFolderEducation` → `hasSeenLiveFolderIntro`). Which icon the popover shows is unverified (Kite: folder).
 - **Still unverified (Arc not recorded; Gabe's GitHub Live Folder is off):** the alert's button titles, the "Last fetch"
   date format, whether viewing (not making) a pull request also files it, and whether the popover times out.
+
+## Menu bar titles → `MainMenu`, `ShortcutMirror` (KeyBindingsStore) (Arc 1.171 menu bar and MainMenu.nib, 1 Nov 2026)
+
+Sources: Arc 1.171's menu bar read with `menudump` (read-only, `~/rea-arc/notes/arc-menu-1.171.txt`), and
+`strings` on `Arc.app/Contents/Resources/Base.lproj/MainMenu.nib` (titles, `arcKeyBindingID`s, type-travel
+triggers). Kite's menu bar checked the same way (an AX read of the test Kite, plus `kite ui menu`).
+
+- View › Show/Hide Sidebar (nib title, id `toggleSidebar`, trigger "Toggle Sidebar") shows "Hide Sidebar"
+  while the sidebar is visible (menudump). "Show Sidebar" while hidden comes from the string table's
+  "Show sidebar menu item title" / "Hide sidebar menu item title" **[inferred wording]**.
+- Refresh the Page (`reloadPage`, trigger "Reload Page"), Force Refresh the Page (`forceReloadPage`, triggers
+  "Force Reload; Force Refresh"), Zoom to Actual Size (`actualSize`, trigger "Reset Zoom").
+- The history menu is titled "Archive" and sits after Spaces and Tabs: Go Back ⌘[ (`goBack`, triggers "Go Back;
+  Back; Navigate Back"), Go Forward ⌘] (`goForward`), —, View History ⌘Y, View Archive…, Clear Archive. Kite
+  keeps its Tabs-before-Spaces order (the Spaces menu belongs to another thread).
+- File: New Tab… ⌘T, New Window, Blank Window, New Incognito Window, New Little Arc Window, Restore Last Closed
+  Tab ⇧⌘T (`reopenClosedTab`, trigger "Reopen Closed Tab"), —, Open Command Bar (`addressBar`, no key), —, New
+  Profile, New Easel, —, Close Window, —, Share…, Capture…, Capture Full Page, Capture in Portrait Mode, Save Page
+  As (no ellipsis; triggers "Save Page; Save File"), Print. The nib's actions include `toggleOpenOmnibox:`, so
+  Open Command Bar toggles the command bar in Kite **[inferred: which nib item uses that action isn't read]**.
+  Kite keeps Open Location…, Import from Arc…, Archive Tab, Install Page as App… and 1Password… in place.
+- Tabs opens with New Tab… ⌘T, then Pin Tab ⌘D (nib "Pin/Unpin Tab", retitled by state). Kite's copy of New
+  Tab… is a `ShortcutMirror`: no ID of its own, shows File › New Tab…'s shortcut (overrides included), and the
+  command bar and Settings → Shortcuts list the command once. `kite ui menu` doesn't flag two items on one
+  shortcut as a conflict when they run the same action.
+- Window: Stay On Top, Minimize Window ⌘M (`minimize`), Zoom, no separator between. AppKit adds Minimize All ⌥⌘M
+  and Zoom All as ⌥ alternates, Fill, Center, Move & Resize, Full Screen Tile, Remove Window from Set and Arrange
+  in Front for both apps (none of them is in Arc's nib; Kite's AX read shows the same items).
+- App menu: Hide Other Windows ⌥⌘H (`hideOthers`, trigger "Hide Others").
+- Arc's type-travel triggers for these items are Kite `CommandBarKeywords`, so the command bar still finds the
+  old titles ("Reload Page", "Toggle Sidebar", "Back").
+

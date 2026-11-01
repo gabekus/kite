@@ -71,7 +71,8 @@ final class KeyBindingsStore {
         guard let menu else { return }
         // Items whose shortcut KeyShortcut can't describe stay as they are: AppKit's own
         // Emoji & Symbols (fn E) would otherwise lose fn and fire on a bare E while typing.
-        let items = Self.items(in: menu).filter(\.hasDescribableShortcut)
+        let all = Self.items(in: menu)
+        let items = all.filter { $0.hasDescribableShortcut && !($0.representedObject is ShortcutMirror) }
         for item in items where defaults[ObjectIdentifier(item)] == nil {
             defaults[ObjectIdentifier(item)] = .some(item.shortcut)
         }
@@ -91,6 +92,11 @@ final class KeyBindingsStore {
             }
             item.shortcut = shortcut
         }
+        for mirror in all {
+            guard let id = (mirror.representedObject as? ShortcutMirror)?.id, let source = keys[id],
+                  mirror.shortcut != source.shortcut else { continue }
+            mirror.shortcut = source.shortcut
+        }
     }
 
     private func save() {
@@ -108,6 +114,20 @@ final class KeyBindingsStore {
         menu.items.flatMap { item in
             item.submenu.map { items(in: $0) } ?? (item.isSeparatorItem ? [] : [item])
         }
+    }
+}
+
+/// A second menu item for a command that already has one (Arc's Tabs › New Tab… repeats File › New Tab…).
+/// It has no ID of its own, so Settings → Shortcuts and the command bar list the command once, and it
+/// always shows the shortcut of the item with `id`.
+final class ShortcutMirror: NSObject {
+    let id: String
+    init(_ id: String) { self.id = id }
+
+    @MainActor static func copy(of item: NSMenuItem, id: String) -> NSMenuItem {
+        item.identifier = nil
+        item.representedObject = ShortcutMirror(id)
+        return item
     }
 }
 

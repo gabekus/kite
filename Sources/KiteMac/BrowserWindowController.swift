@@ -1145,6 +1145,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         store.showCommandBar(store.state.selectedTab == nil ? .newTab : .editCurrent)
     }
 
+    /// Arc's File › Open Command Bar (`toggleOpenOmnibox:`): opens the command bar on the current page, or
+    /// closes it when it's already open.
+    @objc func openCommandBar(_ sender: Any?) {
+        if store.commandBar != nil { store.hideCommandBar() } else { openLocation(sender) }
+    }
+
     @objc func closeTab(_ sender: Any?) {
         // ⌘W in another window (DevTools, a panel) closes that window, not a tab.
         if let key = NSApp.keyWindow, key !== window {
@@ -1307,6 +1313,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return !(window?.firstResponder is NSText)
         case #selector(clearArchive(_:)):
             return !store.state.archived.isEmpty
+        case #selector(toggleSidebar(_:)):
+            // Arc's Show/Hide Sidebar item, titled for what it will do.
+            item.title = store.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar"
         case #selector(toggleToolbar(_:)):
             item.title = store.state.showsToolbar ? "Hide Toolbar" : "Show Toolbar"
             return store.state.selectedSplit == nil

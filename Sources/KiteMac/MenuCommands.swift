@@ -30,6 +30,8 @@ struct MenuCommand: Hashable {
             for item in menu.items where !item.isSeparatorItem {
                 let keywords = item.representedObject as? CommandBarKeywords
                 if item.isHidden && keywords == nil { continue }
+                // A repeat of a command listed elsewhere in the menu bar (Tabs › New Tab…).
+                if item.representedObject is ShortcutMirror { continue }
                 if let submenu = item.submenu {
                     walk(submenu, path: path + [item.title])
                 } else if item.action != nil, item.isEnabled, !item.title.isEmpty,
