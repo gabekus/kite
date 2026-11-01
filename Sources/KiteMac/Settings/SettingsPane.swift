@@ -28,19 +28,27 @@ enum SettingsMetrics {
     static let iconCornerRadius: CGFloat = 5
 
     // Captured from Arc in dark mode: window #2B2B29, section #2E2E2C, border and separators #3F3F3E.
-    // Light mode wasn't observed; it uses the system's equivalents.
+    // Arc draws these as macOS grouped-form sections, so in light mode they're the system's colours
+    // (Arc's asset catalogs have no light values for them; light mode wasn't captured live).
     static let background = dynamic(dark: 0x2B2B29, light: .windowBackgroundColor)
     static let sectionFill = dynamic(dark: 0x2E2E2C, light: .controlBackgroundColor)
     static let line = dynamic(dark: 0x3F3F3E, light: .separatorColor)
 
-    private static func dynamic(dark: UInt32, light: NSColor) -> Color {
+    static func dynamic(dark: UInt32, light: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
-            guard appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua else { return light }
-            return NSColor(
-                srgbRed: CGFloat(dark >> 16 & 0xFF) / 255, green: CGFloat(dark >> 8 & 0xFF) / 255,
-                blue: CGFloat(dark & 0xFF) / 255, alpha: 1
-            )
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? srgb(dark) : light
         })
+    }
+
+    static func dynamic(dark: UInt32, light: UInt32) -> Color {
+        dynamic(dark: dark, light: srgb(light))
+    }
+
+    static func srgb(_ hex: UInt32) -> NSColor {
+        NSColor(
+            srgbRed: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255, alpha: 1
+        )
     }
 }
 
