@@ -10,9 +10,21 @@ extension BrowserWindowController {
         window?.contentView?.subviews.lazy.compactMap { $0 as? FindBar }.first
     }
 
+    private var askPanel: AskOnPagePanel? {
+        window?.contentView?.subviews.lazy.compactMap { $0 as? AskOnPagePanel }.first
+    }
+
     @objc func showFind(_ sender: Any?) {
         guard shownPage != nil else { return NSSound.beep() }
         let bar = findBar ?? makeFindBar()
+        // Arc's find field takes ⌘F itself (CommandFTextField.onCommandF): in a conversation it
+        // goes back to plain find (`onShouldResetToFindInPage`).
+        if !bar.isHidden, bar.inConversation {
+            askPanel?.reset()
+            bar.clearQuery()
+        }
+        bar.askEnabled = AskOnPage.isEnabled(in: .standard)
+        bar.updatePlaceholder()
         bar.isHidden = false
         bar.focus()
     }
@@ -35,6 +47,8 @@ extension BrowserWindowController {
     func hideFindBar() {
         guard let bar = findBar, !bar.isHidden else { return }
         bar.isHidden = true
+        askPanel?.reset()
+        bar.clearQuery()
         shownPage?.stopFinding()
         shownPage?.focus()
     }
@@ -52,6 +66,10 @@ extension BrowserWindowController {
             page.find(text, forward: forward, findNext: findNext) { bar?.show($0) }
         }
         bar.onClose = { [weak self] in self?.hideFindBar() }
+        bar.onAsk = { [weak self, weak bar] question in
+            guard let self, let bar else { return }
+            askOnPage(question, bar: bar)
+        }
         if let root = window?.contentView {
             // Above the page and the loading glow, pinned to the content card's
             // top-right corner like Arc's.
@@ -64,8 +82,52 @@ extension BrowserWindowController {
                 // In a card narrower than the bar, it narrows rather than spilling over the sidebar.
                 bar.leadingAnchor.constraint(greaterThanOrEqualTo: contentFrame.leadingAnchor, constant: FindBar.Metrics.inset),
             ])
+            // Ask on Page's answers, under the bar and as wide as it.
+            let panel = AskOnPagePanel()
+            panel.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(panel, positioned: .above, relativeTo: bar)
+            NSLayoutConstraint.activate([
+                panel.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: AskOnPagePanel.Metrics.gap),
+                panel.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+                panel.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+                panel.bottomAnchor.constraint(lessThanOrEqualTo: contentFrame.bottomAnchor, constant: -FindBar.Metrics.inset),
+            ])
+            panel.onFindQuote = { [weak self, weak bar] quote, found in
+                guard let page = self?.shownPage else { return found(false) }
+                page.find(quote, forward: true, findNext: false) { result in
+                    let hit = (result.matches ?? (result.found ? 1 : 0)) > 0
+                    if hit { bar?.show(result) }
+                    found(hit)
+                }
+            }
+            bar.askPanel = panel
         }
         return bar
+    }
+
+    /// Ask on Page: sends the question with the page's text to Kite's built-in Claude.
+    private func askOnPage(_ question: String, bar: FindBar) {
+        // One question at a time: Return waits while an answer is coming.
+        guard let page = shownPage, let panel = bar.askPanel, !panel.claude.isAsking,
+              panel.exchanges.last.map({ $0.answer != nil || $0.failed }) ?? true else { return NSSound.beep() }
+        let history = panel.exchanges
+        let index = panel.begin(question)
+        bar.clearQuery()
+        bar.updatePlaceholder()
+        page.stopFinding()
+        let tab = store.state.selectedTab
+        let url = tab?.url, title = tab?.displayTitle
+        page.evaluateJavaScript("document.body ? document.body.innerText : ''") { [weak panel] result in
+            guard let panel else { return }
+            guard let raw = result as? String else {
+                return panel.answer(AskOnPage.unreadablePageMessage, at: index)
+            }
+            let text = AskOnPage.pageText(raw)
+            let prompt = AskOnPage.prompt(question: question, history: history, url: url, title: title, page: text)
+            panel.claude.ask(prompt) { [weak panel] answer in
+                panel?.answer(answer, at: index, longPage: text.wasTruncated ? text.fractionRead : nil)
+            }
+        }
     }
 
     // MARK: Page

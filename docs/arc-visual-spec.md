@@ -990,6 +990,36 @@ Arc was not opened or driven, so no geometry was measured.
   ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
   deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
 
+## Ask on Page → `AskOnPage` (KiteCore), `FindBar`, `AskOnPagePanel`, `AskOnPageClaude` (Arc 1.171 strings, defaults and disassembly, 1 Nov 2026)
+
+- Setting: `askOnPageEnabled` (plain boolean, `defaults read company.thebrowser.Browser`) is **0** in Gabe's Arc, so
+  Kite's `askOnPageEnabled` defaults off; Kite menu › Ask on Page (⌘F) turns it on, like Link Previews (#92).
+  Preferences copy (arc-strings.txt ~80512): "Press Command + F on any page to ask a question and let Max answer it
+  for you in seconds." So it lives in the ⌘F find bar, not a separate shortcut.
+- Placeholder (disassembly `0x10214f664`, small-string immediates): feature off → "Find in page…"; on, not in a
+  conversation → "Find or ask…"; in a conversation → "Ask a question…" (literal at `0x1039f4420`).
+- Find vs ask (`0x10214f534`): with the feature on, a query that is non-blank after trimming whitespace and whose
+  search finished with `numMatches == 0` is a question; otherwise it is one only while `isInConversation`.
+  AskInPage state field names (arc-strings.txt ~172100): `numMatches activeMatchOrdinal quotesSearched
+  isInConversation hasAnimatedIn messages fractionOfContextUsed startTime loading found notFound`; actions
+  `onQueryUpdated onDidClickFindQuote onDidUpdateChat onDidRequestNextResult onDidRequestPreviousResult
+  onShouldResetToFindInPage onDidAskLLM onDidRequestDismiss`.
+- ⌘F inside the field: Arc's field is `CommandFTextField` with an `onCommandF` closure
+  (`arc_performFindPanelAction:` at `0x100107e7c`). Kite: ⌘F while in a conversation goes back to find (inferred
+  pairing with `onShouldResetToFindInPage`).
+- Answer: `AskInPageConversationView` with `MessageView`, `QuoteView`, `FindQuoteButton`, `PulseModifier` (type
+  names ~42130). Arc's model prompt (AskInPageChat.swift, ~81000) asks for a verbatim quote in `<excerpt>` tags on
+  its own line, then a ≤10-word answer with the key term bold, Markdown, and saying when it's a guess. Kite's prompt
+  is its own wording of that behaviour. UI strings used word for word: "Quote not found. Make sure it’s accurate!"
+  (with `exclamationmark.triangle.fill`, `0x102154a24`), "Sorry, I encountered an error", "Sorry, I can’t read this
+  type of page.", "This page was long, so I read the first …" (interpolated; Kite shows a percentage, inferred
+  from `fractionOfContextUsed`).
+- Inferred or unmeasured: the field clears after a question is sent (the "Ask a question…" placeholder implies it);
+  the panel sits 6pt under the bar at the bar's width, 12pt padding, max 420pt tall, same navy as the bar (Arc's
+  panel was never opened here, so none of its geometry, colours, fonts or animation is measured); Kite doesn't
+  find-as-you-type while in a conversation; one question at a time. Arc's context limit is in tokens (Tiktoken);
+  Kite sends the first 60,000 characters of `document.body.innerText`.
+
 ## Import from Another Browser → `BrowserImport` (KiteCore), `BrowserImportController` (Arc 1.171 menu bar, strings, assets, 1 Nov 2026)
 
 - Menu (menudump, nothing pressed): Arc › Set as Default Browser, separator, **Import from Another Browser…** (no

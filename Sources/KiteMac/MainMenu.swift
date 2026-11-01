@@ -96,6 +96,8 @@ enum MainMenu {
             item("Air Traffic Control…", #selector(AppDelegate.showAirTrafficControl(_:)), toTarget: false, id: "openAirTrafficControl"),
             // Arc Max's "5-Second Previews" (hoverCardsEnabled), off by default as in Arc.
             item("Link Previews (Hold ⇧ over a Link)", #selector(AppDelegate.toggleLinkPreviews(_:)), toTarget: false),
+            // Arc Max's "Ask on Page" (askOnPageEnabled), off by default as in Arc.
+            item("Ask on Page (⌘F)", #selector(AppDelegate.toggleAskOnPage(_:)), toTarget: false),
             // Arc Max's Tidy Tab Titles (renamePinnedTabsEnabled), on as in Gabe's Arc.
             item("Tidy Tab Titles", #selector(AppDelegate.toggleTidyTabTitles(_:)), toTarget: false),
             item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
