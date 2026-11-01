@@ -14,15 +14,19 @@ final class MenuRouter: NSObject, NSMenuItemValidation {
     /// While `ui input` delivers a key to a background window, menu commands go to that window.
     static var deliveringTo: BrowserWindowController?
     /// The same for a Little Kite window.
-    static var deliveringToLittle: LittleKiteWindowController?
+    static var deliveringToLittle: (NSWindowController & NSMenuItemValidation)?
 
     /// A Little Kite window in front takes the commands it has (Back, Reload, Copy URL, Archive Tab
     /// closes it); the rest are off there rather than acting on the main window behind it.
-    var little: LittleKiteWindowController? {
+    /// An installed web app's window in front does the same (WebAppWindowController).
+    var little: (NSWindowController & NSMenuItemValidation)? {
         if Self.deliveringTo != nil { return nil }
-        return Self.deliveringToLittle
-            ?? NSApp.keyWindow?.windowController as? LittleKiteWindowController
-            ?? (NSApp.keyWindow == nil ? NSApp.mainWindow?.windowController as? LittleKiteWindowController : nil)
+        func auxiliary(_ window: NSWindow?) -> (NSWindowController & NSMenuItemValidation)? {
+            let controller = window?.windowController
+            if let little = controller as? LittleKiteWindowController { return little }
+            return controller as? WebAppWindowController
+        }
+        return Self.deliveringToLittle ?? auxiliary(NSApp.keyWindow) ?? (NSApp.keyWindow == nil ? auxiliary(NSApp.mainWindow) : nil)
     }
 
     var current: BrowserWindowController? {

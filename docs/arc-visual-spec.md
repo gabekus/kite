@@ -324,6 +324,28 @@ the springs and eases in Arc's binary (see the vocabulary table above).
 | Sidebar hide (⌘S), card edge | 365 → 236 → 106 → 46 → 20 → 10pt, 1 frame apart (about 80ms). Re-recorded: 365 → 289 → 115.5 → 42 → 10pt | Arc's own 0.08s on (0.25, 0.46, 0.45, 0.94), see above | Same group, 0.08s on that curve. Recorded at 120fps: 0.17 / 0.36 / 0.54 / 0.68 / 0.86 / 0.92 / 0.96 / 0.99 / 1, RMS 0.004 to Arc's curve |
 | Sidebar show | 10 → 145 → 292 → 340 → 362 → 365pt. Re-recorded: 10 → 113.5 → 275.5 → 331 → 362 → 365pt | Same | Same, RMS 0.004 |
 | ⌘T open and close | Instant | — | Instant |
+| New tab row | Rows below slide 41pt down; the new row fades in | 0.12s on (0.25, 0.1, 0.25, 1), RMS 0.018 | Same (`SidebarRowsAnimator`), traced: 0.12s on that curve, plus a 0.12s opacity 0→1 on the new row |
+| Closed tab row | The row fades out in place while the rows below slide 41pt up over it | Same curve, RMS 0.011 | Same, traced: 0.12s slide, 0.12s opacity 1→0 on the closed row |
+
+### Sidebar rows (Arc 1.171, 1 Nov 2026)
+
+- **Mechanism** (the Arc 1.169 binary in the existing Ghidra project, `~/rea-arc/decomp/out6`; recorded on 1.171): the sidebar is an `NSOutlineView` fed by
+  `ARCUI.OutlineViewDiffableDataSource`. `applySnapshot(_:animatingDifferences:)` runs
+  `NSAnimationContext.runAnimationGroup` with `setDuration:` 0.12 and no timing function of its own (so the
+  default, (0.25, 0.1, 0.25, 1)), and inside it `beginUpdates`, the diff, `endUpdates`. Inserts pass
+  `NSTableViewAnimationEffectFade` (1). Removals pass `effectFade | slideUp` (0x11), or `effectFade` alone when a
+  count in the diff is under 2 (what it counts isn't pinned down). Moves use `moveItemAtIndex:` in the same group.
+- **Recording** (Arc incognito window, a ScreenCaptureKit capture of the sidebar at 120Hz, test pages only,
+  frames under `~/rea-arc/recordings/tab-anim`): a tab added by AppleScript at the top pushed the rows below 41pt down
+  in about 0.11s; a selected tab closed by AppleScript faded in place while the next row slid up over it, and the
+  selection pill jumped to the next tab at once and slid with it. Fits: 0.12s on the default curve, RMS 0.018 (insert)
+  and 0.011 (close); easeInEaseOut fits at 0.034 to 0.040.
+- **Not observed:** the × button and ⌘T paths (both go through the same snapshot, but weren't recorded), the
+  `slideUp` case on removal, and a drag reorder.
+- **Kite:** SwiftUI's `List` inserts and removes rows with no animation even inside `withAnimation` (a logging build
+  showed options 0, outside any animation group), so `SidebarRowsAnimator` gives the sidebar's table Arc's group and
+  options after any state change that adds, removes or moves rows. SwiftUI makes a new row's view after the table has
+  animated, so the new row gets its own 0.12s opacity animation on the group's curve.
 
 ## Extensions in the toolbar → `ExtensionsToolbarItems`, `ExtensionsMenu`
 
@@ -1538,3 +1560,52 @@ arc-strings.txt; they were read from the `mov`/`movk` immediates in `~/rea-arc/d
   converting the split. **Not built:** the Split View Controls Menu (needs Arc's pane split button; its Move items are pane
   rearranging), the sidebar plus menu (Kite's + makes a space directly), and the tab context menu's Add Split View / Open in Split
   View (no side items there in Arc).
+
+## Installed web apps (PWAs) → `WebApps`, `WebAppInstallability` (KiteCore), `WebAppsController`, `WebAppInstallDialog` (Kite addition; Chrome as the reference, 1 Nov 2026)
+
+Arc 1.171 has no installed apps. Its File and Window menus (read-only `menudump`) have no install or app
+items, and the only hit in its binary strings is Chromium's permission-request name `web app installation`
+(arc-strings.txt line 63652). Gabe asked for PWAs anyway, copying Chrome's UI and UX. Every Chrome detail
+below comes from one of three sources. Nothing was copied: Kite reimplements it.
+
+- **Strings: CEF's en-US `locale.pak`** (ThirdParty/cef, `Chromium Embedded Framework.framework/Resources/en.lproj`,
+  read with a small pak v5 parser). Install icon tooltip "Install $1" (9438). Dialog title "Install app" (9449),
+  subtitle "Access this site in a dedicated window on your computer" (9450). "Installing app…" (9454),
+  "Successfully installed" (9452), "Open tab in app" (9453), "Learn More" (9767), "Next" (2690),
+  "Show in Finder" (9232). Menu item "&Install page as app…" (9494).
+- **Flow and layout: Chromium source** (chromium.googlesource.com, main, read on 1 Nov 2026).
+  - `chrome/browser/ui/views/web_apps/web_app_install_flow_dialog_delegate.cc`
+    - The steps: intro (Learn More, Cancel, Next) → the Mac installer options (OK says Install) →
+      progress (the buttons and Learn More hidden) → success (Open tab in app, Show in Finder on Mac).
+    - The subtitle and banner are cleared after the intro.
+    - Simple and DIY intros get a banner illustration; the detailed intro doesn't.
+    - The dialog is tab-modal (`ShowWebModalDialogViews`).
+    - Learn More goes to `https://support.google.com/chrome?p=pwa_install` (`chrome/common/url_constants.h`).
+  - `web_app_install_intro_view.cc`: the detailed card has a 16pt inset and an 8pt corner radius, with the
+    icon, name and origin, then the description (secondary), then a full-width carousel.
+  - `web_app_install_options_view.cc` (Mac): the app icon with its host under it, a 64×94 arrow, and the
+    destination folder with its label.
+  - `image_carousel_view.cc`: images 180pt tall (a 50pt throbber plus 65pt above and below), 8pt apart.
+    The 32pt pill scroll buttons sit 8pt in from each edge. Each click scrolls by the images that fit, over 0.5s.
+  - `web_app_icon_name_and_origin_view.cc`: the 32pt icon (`kIconSize`), then the name over the origin.
+  - `chrome/browser/ui/web_applications/pwa_install_page_action.cc`: the icon is shown when the page is
+    promotable, with tooltip "Install <name>".
+  - Installability: `components/webapps/browser/installable/installable_evaluator.cc`. It needs a name or
+    short_name, a window display mode, and an "any" icon of at least 144px.
+  - Screenshots: `installable_data_fetcher.cc`. Desktop shows "wide" screenshots only. It also needs:
+    - at most 8 screenshots;
+    - each between 320 and 3840px;
+    - the same aspect ratio as the first;
+    - a ratio of at most 2.3.
+  - `components/webapps/common/constants.cc`: the description is cut at 300 characters.
+- **Gabe's screenshot of Chrome on reddit.com** (relayed in the brief):
+  - The icon sits at the right end of the URL field.
+  - The detailed dialog has screenshots and a › arrow.
+  - Next is filled blue.
+
+Kite's own choices, not measured against Chrome on screen:
+- Dialog width 448, 20pt padding, 12pt corners, title 15 semibold.
+- Pill buttons 32pt tall. Next uses Chrome's primary blue (#0B57D0 light, #A8C7FA dark).
+- The simple dialog's banner is Kite's own drawing, because Chrome's illustration is an asset.
+- "Open tab in app" opens the app at the tab's page and closes the tab. Chrome moves the live tab instead.
+- The app window's toolbar is 38pt: back, forward, reload, the title, Open in Kite. It is tinted with theme_color.

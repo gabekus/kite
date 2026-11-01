@@ -5,6 +5,12 @@ import Security
 /// Calls TypeSafe's Jev. The key lives in the login Keychain (service `dev.gabek.Kite.typesafe`),
 /// or `TYPESAFE_API_KEY` for test builds. No key, no client: everything Jev speeds up still
 /// works without it.
+///
+/// Only a team-signed Kite on a real profile reads the Keychain. The item trusts Kite by its
+/// designated requirement and team ID, which stay the same across Developer ID updates, so
+/// that Kite is asked at most once. An ad-hoc build gets a new code identity every time it's
+/// compiled, and macOS shows each one a "Kite wants to use…" password prompt that looks just
+/// like the installed app's; "Always Allow" only trusts that one build.
 final class JevClient: Sendable {
     static let keychainService = "dev.gabek.Kite.typesafe"
     static let keychainAccount = "api-key"
@@ -19,7 +25,9 @@ final class JevClient: Sendable {
     }
 
     static func fromKeychain() -> JevClient? {
-        if let key = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"], !key.isEmpty { return JevClient(key: key) }
+        let environment = ProcessInfo.processInfo.environment
+        if let key = environment["TYPESAFE_API_KEY"], !key.isEmpty { return JevClient(key: key) }
+        guard environment["KITE_SUPPORT_PATH"] == nil, signingTeamID() != nil else { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -33,6 +41,18 @@ final class JevClient: Sendable {
             return nil
         }
         return JevClient(key: key)
+    }
+
+    /// The team ID Kite is signed with, or nil for ad-hoc and self-signed builds.
+    static func signingTeamID() -> String? {
+        var code: SecCode?
+        var staticCode: SecStaticCode?
+        var info: CFDictionary?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
+              SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode,
+              SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess
+        else { return nil }
+        return (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String
     }
 
     func ask(state: String, questions: [String: Jev.Question]) async throws -> Jev.Answers {
