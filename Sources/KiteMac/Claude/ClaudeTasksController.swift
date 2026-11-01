@@ -5,7 +5,7 @@ import UserNotifications
 
 /// Claude Tasks: Kite's own Claude. The user gives it a goal; Kite runs Claude Code
 /// headless (`claude -p`) on their Claude login, with Kite's MCP server as its only
-/// tools, and the task works in background tabs in its own folder of the Claude space.
+/// tools, and the task works in background tabs in the Claude folder of the space it was asked from.
 ///
 /// While any task runs, the Mac doesn't idle-sleep and closing the window doesn't quit
 /// Kite. A finished task posts a notification and badges the Dock icon.
@@ -129,10 +129,11 @@ final class ClaudeTasksController {
 
     /// Starts a new task. `tab` attaches the tab the user is looking at ("Ask about this tab").
     /// `directory` runs Claude Code in that folder (the space's route), with its CLAUDE.md and memory.
-    func start(goal: String, tab: BrowserTab?, directory: String? = nil) {
+    func start(goal: String, tab: BrowserTab?, directory: String? = nil, space: UUID? = nil) {
         let goal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !goal.isEmpty else { return }
         var task = ClaudeTask(goal: goal)
+        task.spaceID = space ?? store.state.selectedSpaceID
         if let directory {
             task.directory = directory
             task.append(ClaudeTask.Entry(.note, "Working in \(ClaudeRoute.folderName(directory)), with its CLAUDE.md and memory."))
@@ -230,15 +231,13 @@ final class ClaudeTasksController {
 
     // MARK: Tabs
 
-    /// The task's folder in the Claude space, made the first time it opens a tab.
+    /// The Claude folder of the space the task was asked from (the selected one for older tasks).
+    /// It's shared by that space's tasks, and archives itself once its tabs go stale.
     private func file(_ tab: UUID, under id: UUID) {
         guard let i = index(id) else { return }
-        let title = tasks[i].title
         let existing = tasks[i].folderID.flatMap { folder in store.state.folder(matching: folder.uuidString)?.folder.id }
-        let folder = existing ?? store.mutate { state -> UUID in
-            let space = state.claudeSpace()
-            return state.createFolder(name: title, inSpace: state.space(matching: space.uuidString) ?? 0)
-        }
+        let space = tasks[i].spaceID.flatMap { store.state.spaceIndex($0) != nil ? $0 : nil } ?? store.state.selectedSpaceID
+        guard let folder = existing ?? store.mutate({ $0.claudeFolder(inSpace: space) }) else { return }
         store.mutate { _ = $0.moveTab(tab, toFolder: folder) }
         tasks[i].folderID = folder
         if !tasks[i].tabIDs.contains(tab) { tasks[i].tabIDs.append(tab) }
@@ -257,11 +256,19 @@ final class ClaudeTasksController {
         automation.host?.window?.makeKeyAndOrderFront(nil)
     }
 
-    /// Closes the task's folder and every tab in it.
+    /// Closes the task's tabs in its Claude folder (other tasks' tabs there stay), and the
+    /// folder once it's empty.
     func closeTabs(_ id: UUID) {
         guard let i = index(id) else { return }
-        if let folder = tasks[i].folderID { store.mutate { _ = $0.removeFolder(folder) } }
-        // Tabs the user dragged out of the folder stay.
+        if let folder = tasks[i].folderID {
+            store.mutate { state in
+                let inFolder = Set(state.folder(matching: folder.uuidString)?.folder.items.tabs.map(\.id) ?? [])
+                // Tabs the user dragged out of the folder stay.
+                for tab in tasks[i].tabIDs where inFolder.contains(tab) {
+                    _ = state.removePinnedTab(tab, droppingEmptyFolder: true)
+                }
+            }
+        }
         tasks[i].folderID = nil
         tasks[i].tabIDs = tasks[i].tabIDs.filter { store.state.tab($0) != nil }
         scheduleSave()

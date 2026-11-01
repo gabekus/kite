@@ -64,6 +64,21 @@ extension BrowserState {
 
     /// Adds an empty folder at the end of a space's pinned section.
     @discardableResult
+    /// The space's Claude folder, where Claude's tabs go when asked from that space: made on
+    /// first use, and gone again once its tabs have all archived (`TabFolder.ephemeral`).
+    public mutating func claudeFolder(inSpace id: UUID) -> UUID? {
+        guard let index = spaceIndex(id) else { return nil }
+        if let folder = spaces[index].pinnedItems.compactMap({ item -> TabFolder? in
+            if case .folder(let folder) = item, folder.ephemeral == true { return folder }
+            return nil
+        }).first {
+            return folder.id
+        }
+        let folder = TabFolder(name: Self.claudeSpaceName, ephemeral: true)
+        spaces[index].pinnedItems.append(.folder(folder))
+        return folder.id
+    }
+
     public mutating func createFolder(name: String, inSpace index: Int) -> UUID {
         let folder = TabFolder(name: name)
         spaces[index].pinnedItems.append(.folder(folder))

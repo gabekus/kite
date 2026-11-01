@@ -52,8 +52,10 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
     /// Claude Code's session, so a follow-up resumes the same conversation.
     public var sessionID: String?
     public var entries: [Entry]
-    /// The folder in the Claude space that holds this task's tabs.
+    /// The Claude folder that holds this task's tabs, in the space it was asked from.
     public var folderID: UUID?
+    /// The space the task was asked from, whose Claude folder gets its tabs. nil for older tasks.
+    public var spaceID: UUID?
     /// Tabs this task opened.
     public var tabIDs: [UUID]
     /// The folder Claude Code runs in, when the space routes ⌘J to one (see `ClaudeRoute`).

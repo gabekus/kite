@@ -41,6 +41,38 @@ import Testing
         #expect(state.archived.allSatisfy { $0.archivedAt != nil })
     }
 
+    @Test func claudeFolderArchivesStaleTabsAndGoesWhenEmpty() throws {
+        var state = state()
+        let work = state.spaces[1].id
+        let made = state.claudeFolder(inSpace: work)
+        let folder = try #require(made)
+        let again = state.claudeFolder(inSpace: work)
+        #expect(again == folder)
+        #expect(state.spaces.count == 2)
+        let stale = state.openTab(url: URL(string: "https://jlcpcb.example"), in: work, select: false)
+        let fresh = state.openTab(url: URL(string: "https://eink.example"), in: work, select: false)
+        _ = state.moveTab(stale, toFolder: folder)
+        _ = state.moveTab(fresh, toFolder: folder)
+        state.update(tab: stale) { $0.lastActiveAt = now.addingTimeInterval(-7200) }
+        state.update(tab: fresh) { $0.lastActiveAt = now }
+        // An ordinary folder's stale tabs stay put.
+        let kept = state.createFolder(name: "Parts", inSpace: 1)
+        let old = state.openTab(url: URL(string: "https://kept.example"), in: work, select: false)
+        _ = state.moveTab(old, toFolder: kept)
+        state.update(tab: old) { $0.lastActiveAt = now.addingTimeInterval(-7200) }
+
+        state.archiveStaleTabs(olderThan: 3600, now: now)
+        #expect(state.archived.map(\.tab.id) == [stale])
+        #expect(state.archived.last?.spaceID == work)
+        #expect(state.folder(matching: folder.uuidString)?.folder.items.tabs.map(\.id) == [fresh])
+        #expect(state.tab(old) != nil)
+
+        state.update(tab: fresh) { $0.lastActiveAt = now.addingTimeInterval(-7200) }
+        state.archiveStaleTabs(olderThan: 3600, now: now)
+        #expect(state.folder(matching: folder.uuidString) == nil)
+        #expect(state.folder(matching: kept.uuidString) != nil)
+    }
+
     @Test func sectionsAreNewestFirstInArcsBuckets() {
         var state = state()
         let today = archive(&state, "https://today.example", ago: 3600)

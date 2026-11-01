@@ -49,8 +49,8 @@ public enum ClaudeInvocation {
         use a list or a small table when it helps.
 
         Your only tools are Kite's (mcp__kite__*), acting in the user's real browser, signed in as them. \
-        Open the tabs you need with tabs_create: they open in the background, in this task's folder in the Claude \
-        space, so you never take over the tab the user is looking at. Don't switch_tab or switch_space unless the \
+        Open the tabs you need with tabs_create: they open in the background, in the Claude folder of the space \
+        the user asked from, so you never take over the tab the user is looking at. Don't switch_tab or switch_space unless the \
         user asks. Prefer read_page, find and get_page_text over screenshots, and use batch to save round trips. \
         Close tabs you opened that aren't part of the result. If the user attached a tab, it's theirs: read it, \
         but don't navigate away from it.

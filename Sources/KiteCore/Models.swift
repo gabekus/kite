@@ -44,13 +44,18 @@ public struct TabFolder: Identifiable, Hashable, Codable, Sendable {
     public var items: [PinnedItem]
     /// Set for a live folder (LiveFolders.swift), whose tabs come from a source. Older sessions decode it as nil.
     public var live: LiveFolder?
+    /// A Claude folder: its tabs archive once they go stale, like unpinned tabs, and the folder
+    /// goes when it's empty. nil (older sessions) means an ordinary folder.
+    public var ephemeral: Bool?
 
-    public init(id: UUID = UUID(), name: String, isExpanded: Bool = true, items: [PinnedItem] = [], live: LiveFolder? = nil) {
+    public init(id: UUID = UUID(), name: String, isExpanded: Bool = true, items: [PinnedItem] = [], live: LiveFolder? = nil,
+                ephemeral: Bool? = nil) {
         self.id = id
         self.name = name
         self.isExpanded = isExpanded
         self.items = items
         self.live = live
+        self.ephemeral = ephemeral
     }
 }
 
