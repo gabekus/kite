@@ -1,17 +1,21 @@
 import AppKit
 import KiteCore
 
-/// Ask on Page's conversation, under the find bar (Arc's `AskInPageConversationView`): each
-/// question with Claude's answer, the page's quotes as buttons that find them on the page.
+/// Ask on Page's conversation, in the ask card above its field (Arc's `AskInPageConversationView`):
+/// each question with Claude's answer, the page's quotes as buttons that find them on the page, and
+/// Arc's close button at the top-right, which stops the answer and ends the conversation.
 @MainActor
 final class AskOnPagePanel: NSView {
     enum Metrics {
-        /// Gap between the find bar and the panel. Not measured in Arc (its panel was never opened here).
-        static let gap: CGFloat = 6
-        static let padding: CGFloat = 12
+        /// Arc's conversation view is padded 18pt; its close button sits 9pt from the top-right.
+        static let padding: CGFloat = 18
         static let spacing: CGFloat = 8
-        static let maxHeight: CGFloat = 420
-        static let dim = NSColor(srgbRed: 0x96 / 255, green: 0x9B / 255, blue: 0xA4 / 255, alpha: 1)
+        static let closeInset: CGFloat = 9
+        static let closeSize: CGFloat = 22
+        static let closeRadius: CGFloat = 6
+        /// Below the bar's `bottom ≤ card bottom − 20`, so a long conversation scrolls instead.
+        static let heightPriority = NSLayoutConstraint.Priority(700)
+        static let dim = FindBar.Metrics.icon
         static let quoteBar = NSColor(srgbRed: 0x11 / 255, green: 0x7A / 255, blue: 0xFD / 255, alpha: 1)
         static let warning = NSColor(srgbRed: 0xF5 / 255, green: 0xC2 / 255, blue: 0x4C / 255, alpha: 1)
     }
@@ -21,6 +25,10 @@ final class AskOnPagePanel: NSView {
     private var longPageNote: String?
     /// Searches the page for a quote; reports whether it was found.
     var onFindQuote: ((_ quote: String, _ found: @escaping (Bool) -> Void) -> Void)?
+    /// The conversation started or ended (the card's field changes with it).
+    var onChange: (() -> Void)?
+    /// Arc's close button ("Close"): the answer stops and the card goes back to finding.
+    var onEnd: (() -> Void)?
 
     let claude = AskOnPageClaude()
     private let scrollView = NSScrollView()
@@ -32,16 +40,6 @@ final class AskOnPagePanel: NSView {
 
     init() {
         super.init(frame: .zero)
-        appearance = NSAppearance(named: .darkAqua)
-        wantsLayer = true
-        layer?.backgroundColor = FindBar.Metrics.fill.cgColor
-        layer?.cornerRadius = FindBar.Metrics.cornerRadius
-        layer?.cornerCurve = .circular
-        let shadow = NSShadow()
-        shadow.shadowBlurRadius = 8
-        shadow.shadowOffset = NSSize(width: 0, height: -2)
-        shadow.shadowColor = .black.withAlphaComponent(0.35)
-        self.shadow = shadow
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Ask on Page")
@@ -61,7 +59,15 @@ final class AskOnPagePanel: NSView {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(scrollView)
         heightConstraint = scrollView.heightAnchor.constraint(equalToConstant: 0)
+        heightConstraint.priority = Metrics.heightPriority
+        let close = CloseButton { [weak self] in self?.onEnd?() }
+        close.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(close)
         NSLayoutConstraint.activate([
+            close.topAnchor.constraint(equalTo: topAnchor, constant: Metrics.closeInset),
+            close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Metrics.closeInset),
+            close.widthAnchor.constraint(equalToConstant: Metrics.closeSize),
+            close.heightAnchor.constraint(equalToConstant: Metrics.closeSize),
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -108,9 +114,12 @@ final class AskOnPagePanel: NSView {
 
     private func rebuild() {
         for view in stack.arrangedSubviews { stack.removeArrangedSubview(view); view.removeFromSuperview() }
+        let wasHidden = isHidden
         isHidden = exchanges.isEmpty
+        defer { if wasHidden != isHidden { onChange?() } }
         guard !exchanges.isEmpty else { heightConstraint.constant = 0; return }
-        let width = FindBar.Metrics.size.width - 2 * Metrics.padding
+        // Text stops short of the close button on the first line's side too.
+        let width = CGFloat(FindBarStyle.ask.width) - 2 * Metrics.padding
         if let longPageNote { stack.addArrangedSubview(label(longPageNote, size: 11, color: Metrics.dim, width: width)) }
         for exchange in exchanges {
             stack.addArrangedSubview(label(exchange.question, size: 13, weight: .semibold, color: FindBar.Metrics.counter, width: width))
@@ -134,7 +143,7 @@ final class AskOnPagePanel: NSView {
         }
         stack.layoutSubtreeIfNeeded()
         let height = stack.fittingSize.height
-        heightConstraint.constant = min(height, Metrics.maxHeight)
+        heightConstraint.constant = height
         stack.frame.size.height = height
         DispatchQueue.main.async { [weak self] in
             guard let self, let document = scrollView.documentView else { return }
@@ -259,6 +268,61 @@ private final class QuoteButton: NSView {
     }
 
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+    override func accessibilityPerformPress() -> Bool {
+        action()
+        return true
+    }
+}
+
+/// Arc's conversation close button: `xmark` on a 6pt continuous rounded `ultraThin` material,
+/// tooltip "Close" (`0x102158760`).
+@MainActor
+private final class CloseButton: NSView {
+    private let action: () -> Void
+
+    init(action: @escaping () -> Void) {
+        self.action = action
+        super.init(frame: .zero)
+        let material = NSVisualEffectView()
+        material.material = .hudWindow
+        material.blendingMode = .withinWindow
+        material.state = .active
+        material.wantsLayer = true
+        material.layer?.cornerRadius = AskOnPagePanel.Metrics.closeRadius
+        material.layer?.cornerCurve = .continuous
+        material.layer?.masksToBounds = true
+        let glyph = NSImageView(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: nil) ?? NSImage())
+        glyph.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
+        glyph.contentTintColor = FindBar.Metrics.counter
+        for view in [material, glyph] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            material.leadingAnchor.constraint(equalTo: leadingAnchor),
+            material.trailingAnchor.constraint(equalTo: trailingAnchor),
+            material.topAnchor.constraint(equalTo: topAnchor),
+            material.bottomAnchor.constraint(equalTo: bottomAnchor),
+            glyph.centerXAnchor.constraint(equalTo: centerXAnchor),
+            glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        toolTip = "Close"
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("Close")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
+    // Like the find bar's own buttons, it works on the first click into a background window.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { action() }
+    }
 
     override func accessibilityPerformPress() -> Bool {
         action()

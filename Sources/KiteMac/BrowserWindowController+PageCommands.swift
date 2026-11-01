@@ -10,9 +10,7 @@ extension BrowserWindowController {
         window?.contentView?.subviews.lazy.compactMap { $0 as? FindBar }.first
     }
 
-    private var askPanel: AskOnPagePanel? {
-        window?.contentView?.subviews.lazy.compactMap { $0 as? AskOnPagePanel }.first
-    }
+    private var askPanel: AskOnPagePanel? { findBar?.askPanel }
 
     @objc func showFind(_ sender: Any?) {
         guard shownPage != nil else { return NSSound.beep() }
@@ -26,7 +24,7 @@ extension BrowserWindowController {
         }
         bar.askEnabled = AskOnPage.isEnabled(in: .standard)
         bar.updatePlaceholder()
-        bar.isHidden = false
+        bar.reveal()
         bar.focus()
     }
 
@@ -39,19 +37,23 @@ extension BrowserWindowController {
         page.evaluateJavaScript("String(window.getSelection())") { [weak self] result in
             guard let self, let text = result as? String, !text.isEmpty else { return NSSound.beep() }
             let bar = findBar ?? makeFindBar()
-            bar.isHidden = false
+            bar.askEnabled = AskOnPage.isEnabled(in: .standard)
+            bar.reveal()
             bar.setQuery(text)
         }
     }
 
-    /// Closes the find bar and clears highlights. Called when the shown tab changes too.
-    func hideFindBar() {
+    /// Closes the find bar and clears highlights. Called when the shown tab changes too, where
+    /// Arc drops the ask card at once; closing it (Esc, close) slides it up.
+    func hideFindBar(animated: Bool = false) {
         guard let bar = findBar, !bar.isHidden else { return }
-        bar.isHidden = true
-        askPanel?.reset()
-        bar.clearQuery()
         shownPage?.stopFinding()
         shownPage?.focus()
+        // The conversation and query go once the card is out of sight.
+        bar.conceal(animated: animated) { [weak bar] in
+            bar?.askPanel?.reset()
+            bar?.clearQuery()
+        }
     }
 
     /// The shown tab is changing: a conversation stays with its tab (Arc keeps `askInPageState`
@@ -62,7 +64,7 @@ extension BrowserWindowController {
         askConversations.keep(panel, for: tab)
         panel.removeFromSuperview()
         attach(AskOnPagePanel(), to: bar)
-        bar.isHidden = true
+        bar.conceal(animated: false)
         bar.clearQuery()
         shownPage?.stopFinding()
     }
@@ -73,11 +75,10 @@ extension BrowserWindowController {
         guard let panel = askConversations.take(for: tab) else { return }
         guard shownPage != nil, AskOnPage.isEnabled(in: .standard) else { return panel.reset() }
         let bar = findBar ?? makeFindBar()
-        askPanel?.removeFromSuperview()
         attach(panel, to: bar)
         bar.askEnabled = true
         bar.updatePlaceholder()
-        bar.isHidden = false
+        bar.reveal()
     }
 
     /// Closed tabs take their conversations (and any answer still coming) with them.
@@ -97,39 +98,48 @@ extension BrowserWindowController {
             if text.isEmpty { return page.stopFinding() }
             page.find(text, forward: forward, findNext: findNext) { bar?.show($0) }
         }
-        bar.onClose = { [weak self] in self?.hideFindBar() }
+        bar.onClose = { [weak self] in self?.hideFindBar(animated: true) }
         bar.onAsk = { [weak self, weak bar] question in
             guard let self, let bar else { return }
             askOnPage(question, bar: bar)
         }
         if let root = window?.contentView {
-            // Above the page and the loading glow, pinned to the content card's
-            // top-right corner like Arc's.
+            // Above the page and the loading glow, pinned to the content card's top-right corner
+            // like Arc's: 10pt in for the find bar, 20pt for the ask card.
             bar.translatesAutoresizingMaskIntoConstraints = false
             let glow = root.subviews.first { $0 is GlowView }
             root.addSubview(bar, positioned: .above, relativeTo: glow ?? contentFrame)
-            NSLayoutConstraint.activate([
-                bar.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: FindBar.Metrics.inset),
-                bar.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor, constant: -FindBar.Metrics.inset),
-                // In a card narrower than the bar, it narrows rather than spilling over the sidebar.
-                bar.leadingAnchor.constraint(greaterThanOrEqualTo: contentFrame.leadingAnchor, constant: FindBar.Metrics.inset),
-            ])
+            let top = bar.topAnchor.constraint(equalTo: contentFrame.topAnchor)
+            let trailing = bar.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor)
+            // In a card narrower than the bar, it narrows rather than spilling over the sidebar.
+            let leading = bar.leadingAnchor.constraint(greaterThanOrEqualTo: contentFrame.leadingAnchor)
+            // The ask card is never taller than the content card less 40pt; its conversation scrolls.
+            let bottom = bar.bottomAnchor.constraint(lessThanOrEqualTo: contentFrame.bottomAnchor)
+            NSLayoutConstraint.activate([top, trailing, leading, bottom])
+            bar.onStyleChange = { style in
+                let inset = CGFloat(style.inset)
+                top.constant = inset
+                trailing.constant = -inset
+                leading.constant = inset
+                bottom.constant = -inset
+            }
             attach(AskOnPagePanel(), to: bar)
         }
         return bar
     }
 
-    /// Ask on Page's answers, under the bar and as wide as it.
+    /// Ask on Page's answers, in the ask card above its field.
     private func attach(_ panel: AskOnPagePanel, to bar: FindBar) {
-        guard let root = window?.contentView else { return }
-        panel.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(panel, positioned: .above, relativeTo: bar)
-        NSLayoutConstraint.activate([
-            panel.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: AskOnPagePanel.Metrics.gap),
-            panel.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-            panel.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-            panel.bottomAnchor.constraint(lessThanOrEqualTo: contentFrame.bottomAnchor, constant: -FindBar.Metrics.inset),
-        ])
+        bar.embed(panel)
+        panel.onEnd = { [weak self, weak bar, weak panel] in
+            // Arc's close button cancels the answer and goes back to finding, the card staying open.
+            guard let bar, let panel else { return }
+            panel.reset()
+            bar.clearQuery()
+            bar.updatePlaceholder()
+            self?.shownPage?.stopFinding()
+            bar.focus()
+        }
         panel.onFindQuote = { [weak self, weak bar] quote, found in
             guard let page = self?.shownPage else { return found(false) }
             page.find(quote, forward: true, findNext: false) { result in
@@ -138,7 +148,6 @@ extension BrowserWindowController {
                 found(hit)
             }
         }
-        bar.askPanel = panel
     }
 
     /// Ask on Page: sends the question with the page's text to Kite's built-in Claude.
