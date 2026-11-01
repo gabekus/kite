@@ -967,6 +967,38 @@ read only for its function names, nothing copied).
   `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped
   element again while its cell is hovered), and Arc's selector heuristics (Kite has its own).
 
+## Tab audio button → `TabAudioButton` (KiteCore), `TabAudioButtonView` in `SidebarView` (Arc 1.171 binary, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt`, `otool` disassembly (`decomp/arc.s`) and Ghidra decompilation of
+Arc-arm64 (1.171). Nothing was run in Arc.
+
+- **View:** `TabCellView.audibilityButton` (ivar names from Swift metadata). TabCellState carries `isAudible` and
+  `isMuted` (strings ~149993). The button's accessibility identifier is `sidebarTabCellMuteButton` (~156512).
+- **Size:** width and height constraints both 24 (constant at 0x10380c7a8; the close button uses the same one).
+- **Placement:** added to the cell's horizontal `bodyStack` (spacing 6, centred) with sort key 1; the title stack
+  has key 2 and the close button 7, and Arc sorts the stack's views by key (0x100a0ca44). So the button sits between
+  the favicon and the title, never over the favicon. Custom spacing after it: 2 (0x100363904), so the title moves
+  right by 26. It is not a hover reveal.
+- **Show/hide:** the button lives in a clipping wrapper whose width constraint collapses to 0; shown and hidden in
+  an `NSAnimationContext` with `allowsImplicitAnimation` and duration 0.18 (0x1003692dc). It's driven by one Bool
+  of the cell state; that this Bool is `isAudible || isMuted` is inferred from the state's two fields.
+- **Tooltip:** "Mute this tab" / "Unmute this tab" (small-string immediates at 0x1002b484c and 0x1002b4900, comments
+  "Tooltip; mutes the tab." / "Tooltip; unmutes the tab.").
+- **Context menu:** "Mute" / "Unmute" (immediates at 0x102ec1948 and 0x102eb8518, comments "Context menu action to
+  mute the selected tab" / "... to unmute a tab", `SidebarMenu+PlatformGeneration.swift`). Their position in the menu
+  and when they appear weren't traced.
+- **Icon:** a `TranslucentButton` with ARCUI's animated `SidebarCellSpeakerIconWrapperView`: SF `speaker` at
+  `.system(size: 14, weight: .medium)`, three custom sound waves (`FirstSoundWave`…`ThirdSoundWave`, 8pt-wide frames,
+  staggered springs, response 0.3, damping 0.6) and a `SlashShape` (springs 0.25/0.7 out, 0.3/0.65 in). The speaker
+  shifts 4pt left while the waves show. No speaker asset in any Assets.car.
+- **Menu bar:** no Mute item in Arc's File/Edit/View/Tabs/Archive/Window menus (menudump). The command bar has
+  "Mute all tabs" / "Unmute all tabs" (not built here).
+
+Kite: same size, place, gap, tooltips, menu titles and 0.18s show/hide (SwiftUI ease-in-out with an opacity
+transition rather than Arc's width collapse). The icon is SF `speaker.wave.3` / `speaker.slash` at 14pt medium,
+swapped without Arc's wave and slash animation; its 0.6 opacity copies Kite's close button (Arc's tint unmeasured).
+"Audible" is Kite's media script (playing and not muted by the page), not Chromium's audio-output signal.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

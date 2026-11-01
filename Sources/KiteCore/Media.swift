@@ -138,6 +138,29 @@ public enum AutoPictureInPicture {
     }
 }
 
+/// Arc's sidebar tab audibility button (TabCellView.audibilityButton, Arc 1.171): a 24pt
+/// square speaker between the favicon and the title, shown while the tab is audible or
+/// muted; clicking it toggles the tab's mute. See docs/arc-visual-spec.md.
+public enum TabAudioButton {
+    /// Width and height (Arc: both constraints are 24, the same constant as the close button).
+    public static let side = 24.0
+    /// Arc's custom spacing after the button in the tab's body stack (to the title).
+    public static let spacingAfter = 2.0
+    /// Arc animates the button in and out with an NSAnimationContext of 0.18s.
+    public static let showHideDuration = 0.18
+
+    /// Arc's TabCellState carries `isAudible` and `isMuted`: the button is there for either
+    /// (a muted tab keeps it so it can be unmuted).
+    public static func isShown(isAudible: Bool, isMuted: Bool) -> Bool { isAudible || isMuted }
+
+    /// Arc's hover tooltips ("Tooltip; mutes the tab." / "Tooltip; unmutes the tab.").
+    public static func tooltip(isMuted: Bool) -> String { isMuted ? "Unmute this tab" : "Mute this tab" }
+
+    /// Arc's sidebar context menu items ("Context menu action to mute the selected tab" /
+    /// "... to unmute a tab").
+    public static func menuTitle(isMuted: Bool) -> String { isMuted ? "Unmute" : "Mute" }
+}
+
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }

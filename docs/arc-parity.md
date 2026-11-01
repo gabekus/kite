@@ -177,6 +177,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | 🟡 | Sidebar Mini Player (play/pause, prev/next, tab mute, PiP, close, back to tab); auto PiP on leaving a playing video. No volume slider, mic/camera, marquee, Arc PiP window |
 | Zap (Boosts) | Pick elements on a page; they stay hidden on that site | 🟡 Picker overlay over the page (hover highlight, click → Zap this / Zap all related elements / Cancel), shelf listing the site's zaps with remove; per-site selectors in zaps.json injected at document start (Chromium isolated world, WebKit content world) | No entry point until the Boost editor (gap 21) calls `showZapPicker`; no candidate slider, zap preview images or Copy selector mode; highlight colour/cursor unmeasured. Gap 22 |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
+| Tab audio button | Speaker on a sidebar tab that is playing or muted; click (or context menu Mute/Unmute) to toggle | 🟡 24pt button between favicon and title, Arc's tooltips and menu titles | Arc's animated speaker (waves, slash) is SF Symbols here; Mute/Unmute all tabs (command bar) not built |
 | Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |
 | Developer Mode | Per-site switch and dev reload options (Arc's strings show no console pane or URL change) | 🟡 See the Developer menu row | Gap 16 |
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
