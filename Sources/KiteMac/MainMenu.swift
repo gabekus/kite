@@ -98,6 +98,8 @@ enum MainMenu {
             item("Link Previews (Hold ⇧ over a Link)", #selector(AppDelegate.toggleLinkPreviews(_:)), toTarget: false),
             // Arc: Settings → "Play Arc sound effects" (playUserInterfaceSoundsDisabled), on by default.
             item("Play Kite Sound Effects", #selector(AppDelegate.toggleSoundEffects(_:)), toTarget: false),
+            // Arc Max's "Ask on Page" (askOnPageEnabled), off by default as in Arc.
+            item("Ask on Page (⌘F)", #selector(AppDelegate.toggleAskOnPage(_:)), toTarget: false),
             // Arc Max's Tidy Tab Titles (renamePinnedTabsEnabled), on as in Gabe's Arc.
             item("Tidy Tab Titles", #selector(AppDelegate.toggleTidyTabTitles(_:)), toTarget: false),
             item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
@@ -332,6 +334,8 @@ enum MainMenu {
             // Arc: Open Library… ⇧⌘L, then View Downloads… ⇧⌘J (MainMenu.nib ids viewLibrary, viewDownloads).
             item("Open Library…", #selector(BrowserWindowController.toggleLibrary(_:)), "l", [.command, .shift], id: "viewLibrary"),
             item("View Downloads…", #selector(BrowserWindowController.viewDownloads(_:)), "j", [.command, .shift], id: "viewDownloads"),
+            // Arc: View Media…, no shortcut, after View Easels… (menudump Window).
+            item("View Media…", #selector(BrowserWindowController.viewMedia(_:)), id: "viewMedia"),
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), toTarget: false, id: "bringAllToFront"),
         ])
