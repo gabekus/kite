@@ -805,6 +805,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 write: { [weak self] permission, value, site in
                     self?.pool.loadedPage(id)?.setSitePermission(permission, value, for: site)
                 }))
+        case .searchEngines:
+            return NSHostingView(rootView: SearchEnginesPageView(store: store))
         }
     }
 

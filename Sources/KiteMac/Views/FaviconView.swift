@@ -57,6 +57,7 @@ struct FaviconView: View {
         case .history: symbol = "clock.arrow.circlepath"
         case .archive: symbol = "archivebox"
         case .siteSettings: symbol = "gearshape"
+        case .searchEngines: symbol = "magnifyingglass"
         case nil: break
         }
         if let icon {
