@@ -133,9 +133,10 @@ extension [PinnedItem] {
 
 /// A space is a named set of tabs with its own theme, like a lightweight profile.
 public struct Space: Identifiable, Hashable, Codable, Sendable {
+    public static let symbolPrefix = "symbol:"
     public var id: UUID
     public var name: String
-    /// An emoji, so every platform can render it without an icon set.
+    /// An emoji, `symbol:` and an SF Symbol name (Arc's Icon tab), or empty: Arc shows an icon-less space as a dot.
     public var icon: String
     public var theme: Theme
     public var pinnedItems: [PinnedItem]

@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 
 /// Arc 1.169's window chrome, measured from its accessibility tree and
@@ -102,6 +103,19 @@ enum ArcMetrics {
         // Bottom bar: library button, spaces, new space.
         static let bottomBarHeight: CGFloat = 50
         static let bottomButtonSize: CGFloat = 32
+        /// The space strip's cells, centred between the bar's end buttons (Arc's tree: 36×34 at x 92.5,
+        /// 126.5, 160.5 in a strip from 42 to 247, y 1243 in a bar from 1235).
+        static let spaceCellSize = CGSize(width: 36, height: 34)
+        static let spaceCellPitch: CGFloat = 34
+        /// An inactive space's dot: 8pt, (78,73,89) over a (24,16,42) tint, so white at about 23% (screen
+        /// capture, 1 Nov 2026; Arc draws the strip in its own window, which window captures miss).
+        static let spaceDotSize: CGFloat = 8
+        static let spaceDotOpacity: Double = 0.23
+        /// The current space's icon is about 14pt tall.
+        static let spaceIconFontSize: CGFloat = 14
+        /// The hover pill sits just above the cells. Unmeasured: its delay.
+        static let spaceTipGap: CGFloat = 2
+        static let spaceTipDelay: Double = 0.4
 
         /// A peeking (hover-revealed) sidebar stays out until the pointer is 75pt right of the card's edge.
         static let peekHoverMargin: CGFloat = 75
@@ -161,6 +175,8 @@ enum ArcMetrics {
         /// Space switch: the theme settles like `spring(response: 0.15, dampingFraction: 0.95)`.
         static let spaceSwitchResponse: Double = 0.15
         static let spaceSwitchDamping: Double = 0.95
+        /// Space switch, the pages' slide: a critically damped spring of about this response.
+        static let spacePageResponse: Double = 0.1
         /// Sidebar hide and show: 0.08s on a cubic Bézier through these control points, for both
         /// directions. Arc sets the sidebar's and the content's frames once in an implicit
         /// animation group and lets Core Animation draw the frames between.
@@ -177,6 +193,66 @@ enum ArcMetrics {
     /// Arc's Edit Theme popover (Arc 1.169 accessibility tree and one capture, 31 Oct 2026). Points
     /// from the content's top-left: the popover is 382×534 with its content inset 13, and the dot grid
     /// sits 8 inside that.
+    /// Arc's Create a Space page (+ › New Space), from its accessibility tree and captures on a 289pt
+    /// sidebar, 1 Nov 2026. Vertical numbers run from the top row's bottom (y 39.5) down; rows are 261
+    /// wide, 14 in from the sidebar's edges.
+    enum SpaceCreation {
+        static let illustrationTop: CGFloat = 46.5
+        static let illustrationHeight: CGFloat = 33
+        static let titleTop: CGFloat = 21
+        static let titleFontSize: CGFloat = 17
+        static let subtitleTop: CGFloat = 11
+        static let subtitleFontSize: CGFloat = 14
+        static let subtitleOpacity: Double = 0.85
+        /// The name field's top, under the subtitle (y 237).
+        static let fieldsTop: CGFloat = 32
+        static let profileGap: CGFloat = 6
+        static let themeGap: CGFloat = 8
+        static let inset: CGFloat = 14
+        static let rowHeight: CGFloat = 36
+        static let rowIconX: CGFloat = 22
+        static let rowTextX: CGFloat = 48
+        static let iconSize: CGFloat = 18
+        static let rowFontSize: CGFloat = 15
+        /// White over the tint: #2C2B40 over #131029.
+        static let rowFill: Double = 0.095
+        /// Estimated from the capture.
+        static let cornerRadius: CGFloat = 8
+        /// Create Space: #2C4AFC once there's a name, about half that over the tint before.
+        static let createColor = NSColor(srgbRed: 0x2C / 255, green: 0x4A / 255, blue: 0xFC / 255, alpha: 1)
+        static let createDisabledOpacity: Double = 0.5
+        static let cancelTop: CGFloat = 14.5
+        static let cancelFontSize: CGFloat = 13
+        static let cancelOpacity: Double = 0.68
+        /// From Cancel's bottom (y 1218.5) to the bottom bar (y 1235).
+        static let cancelBottom: CGFloat = 16.5
+    }
+
+    /// Arc's + menu: the popover is 222 wide with its rows inset 14 (so 194 wide) and 40 tall; icons
+    /// around 11 into a row, titles at 39; a 17pt gap with a line between groups.
+    enum NewItemMenu {
+        static let width: CGFloat = 222
+        static let inset: CGFloat = 14
+        static let rowHeight: CGFloat = 40
+        static let iconX: CGFloat = 8
+        static let iconWidth: CGFloat = 22
+        static let textX: CGFloat = 39
+        static let dividerHeight: CGFloat = 17
+        static let dividerInset: CGFloat = 8
+    }
+
+    /// Arc's Change Space Icon popover (captures, 1 Nov 2026).
+    enum SpaceIconPicker {
+        static let width: CGFloat = 272
+        static let inset: CGFloat = 12
+        static let emojiColumns = 7
+        static let emojiPitch: CGFloat = 33.5
+        static let rowPitch: CGFloat = 33
+        static let emojiGridHeight: CGFloat = 165
+        static let iconColumns = 8
+        static let iconPitch: CGFloat = 31
+    }
+
     enum ThemeEditor {
         static let popoverSize = CGSize(width: 382, height: 534)
         static let contentSize = CGSize(width: 356, height: 508)
@@ -197,6 +273,9 @@ enum ArcMetrics {
         /// About 45pt across with a 5pt white ring, from the capture.
         static let handleSize: CGFloat = 45
         static let handleRing: CGFloat = 5
+        /// "Tap to pick a color for this space": centred, its top 162 down the grid (Arc's tree).
+        static let hintFontSize: CGFloat = 13
+        static let hintY: CGFloat = 162
         /// Unmeasured: the most colours Kite lets a theme have in the editor.
         static let maxColors = 3
         /// The preset row's top, from the grid's top: arrows 32×32 at the ends, 24pt swatches 29.5 apart
@@ -312,9 +391,9 @@ enum ArcMetrics {
         static let pillFillLight: Double = 0.06
         static let pillFillLightHovered: Double = 0.10
         static let hostFontSize: CGFloat = 13
-        /// Copy-link button: 16×16, its right edge 7.5pt inside the pill.
+        /// Copy-link button: 16×16, its right edge 7.5pt inside the pill (with the extensions
+        /// button, in `LittleKite.pillButtons`).
         static let pillButtonSize: CGFloat = 16
-        static let pillTrailingInset: CGFloat = 7.5
         static let pillLeadingInset: CGFloat = 14
 
         // "Open in <Space> ⌘O" plus the chevron, in one bordered box.

@@ -86,8 +86,19 @@ import Testing
         var state = makeState()
         state.setSpaceIcon(state.spaces[0].id, to: " 🚀🌙 ")
         #expect(state.spaces[0].icon == "🚀")
+        state.setSpaceIcon(state.spaces[0].id, to: "symbol:star.fill")
+        #expect(state.spaces[0].icon == "symbol:star.fill")
+        // Arc's icon picker can remove the icon, leaving a dot.
         state.setSpaceIcon(state.spaces[0].id, to: "  ")
-        #expect(state.spaces[0].icon == "🚀")
+        #expect(state.spaces[0].icon == "")
+    }
+
+    @Test func aNewSpaceGoesRightAfterTheCurrentOne() {
+        var state = makeState()
+        state.selectSpace(at: 0)
+        let id = state.insertSpace(name: "", icon: "", theme: .arcDefault)
+        #expect(state.spaces.map(\.name) == ["A", "", "B", "C"])
+        #expect(state.selectedSpaceID == id)
     }
 
     @Test func movingASpace() {
