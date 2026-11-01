@@ -579,8 +579,40 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   **[differs]**. Closing back to the source with the close spring is **[inferred]**: the dismiss path wasn't
   decompiled, but the same transform function serves every non-presented state.
 - Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
-  swipe right to dismiss (`minimumDismissTranslation`, `tugRubberbanding`), undo "re-opening a closed Peek",
-  the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`), any scrim behind the card.
+  undo "re-opening a closed Peek", the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
+  any scrim behind the card.
+
+### Peek: swipe to dismiss → `LinkPeek.Swipe` (KiteCore), `LinkPeekSwipeController` (g45; Arc 1.171 binary, 1 Nov 2026)
+
+Decompiled with `SymRefs7.java` / `DumpAt.java` into `~/rea-arc/decomp/out7/g45-tug.txt` and
+`out5/g45-misc*.txt`, `g45-spring*.txt`; enum constants read from the binary's `__TEXT,__const`.
+
+- `ModalV2HostViewController` init (FUN_1017190e8): `scrollRecognizer = ARCUI.ScrollRecognizer(direction 2, 1)`;
+  `minimumDismissTranslation` = 75.0, `minimumDismissTranslationNoVelocity` = 152.0, `tugRubberbanding` = 0.06.
+  Direction constants (`__const` 0x10369abd8…ac00): 0 = none, 2 = the dismiss direction (right); axis 1 =
+  horizontal, 2 = vertical, 3 = auto (FUN_1009da628: horizontal when |y| < |x|).
+- Scroll handler (FUN_10171c0f0), per recogniser state: changed → `contentTugAmount = translation × 0.06` (both
+  x and y), relayout; crossing x ≥ 152 rightward (last translation < 152) plays
+  `NSHapticFeedbackManager` `performFeedbackPattern:0 performanceTime:1` (generic, now). Ended → dismiss
+  (`DismissMechanism` 5, `swipedRightToDismiss`) when x ≥ 75 and the release direction is right, or it's
+  none and x ≥ 152; otherwise animate the tug back (FUN_101717364) starting at release velocity × 0.06.
+  Gesture began → removes all the host's running animations (FUN_101715528).
+- Should-begin (FUN_10171beb4): over the content view it asks the content view controller (when
+  `nativeGesturesEnabled`); outside the content view, or while animating, it begins without asking. Kite asks
+  the page with the swipe back's scrollability script (`HistorySwipe.PageScroll`): a page that can scroll
+  left, or blocks overscroll, keeps the gesture. What Arc's content answers isn't decompiled **[inferred]**.
+- Card while tugged (FUN_1017156ac): translate by (tug.x, tug.y), uniform scale 1 − 0.001 × tug along the
+  main axis, about the card's centre. Border (FUN_101717730): alpha max(0, (1 − |tug| / 44) × 0.25), |tug| the
+  vector length. Buttons (FUN_101716134, inside the transformed view): x − 1.25 × tug.x (horizontal tug) or
+  − 0.25 × tug.y (vertical).
+- Tug spring (`contentTugAnimation`, FUN_101717074 → FUN_100b6274c): response 0.6s, damping ratio 0.9, a
+  display-link value animator (not Core Animation). Kite integrates the same spring on a 120 Hz timer.
+- Dismissed by the swipe: the normal close spring (0.895 / 0.225s) back to the source, from where the tug left
+  the card.
+- Kite **[inferred]**: the "stopped" release (Arc's direction none) is under 50 pt/s over the last 0.1s; the
+  swipe takes priority over the Peek page's own swipe back/forward (Arc's dismiss path doesn't check the page's
+  history); the gesture isn't gated on System Settings › Swipe between pages. The haptic was not felt (no
+  hands-on test).
 ## Pinned URL reset and Reveal Tab (Arc 1.171 menu bar and binary, 1 Nov 2026)
 
 - Tabs menu (AX, read-only, `menudump`): … Next Tab ⌥⌘↓, Previous Tab ⌥⌘↑, Reveal Tab in Sidebar (no key), —,
