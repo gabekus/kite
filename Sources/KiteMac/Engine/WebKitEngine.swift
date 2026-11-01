@@ -16,7 +16,9 @@ final class WebKitEngine: WebEngine {
     private var contentRules: WebKitContentRules?
     /// Incognito pages don't run Boosts.
     private var appliesBoosts = true
-    private(set) var profileDirectory: String? = Profile.defaultDirectory
+    private(set) var profileDirectory: String? = Profile.defaultDirectory {
+        didSet { downloads.profileDirectory = profileDirectory }
+    }
     private var profileEngines: [String: WebKitEngine] = [:]
     private weak var defaultEngine: WebKitEngine?
 
@@ -696,24 +698,45 @@ final class WebKitMailBridge: NSObject, WKScriptMessageHandler {
     }
 }
 
-/// Saves WebKit downloads to ~/Downloads without overwriting existing files, and lists them.
+/// Saves WebKit downloads into the profile's download folder without overwriting existing
+/// files (or where a save panel says, when the profile asks each time), and lists them.
 @MainActor
 final class DownloadCoordinator: NSObject, WKDownloadDelegate {
+    /// The profile whose Download location applies; nil (incognito) uses the default profile's.
+    var profileDirectory: String? = Profile.defaultDirectory
+
     func download(
         _ download: WKDownload,
         decideDestinationUsing response: URLResponse,
         suggestedFilename: String,
         completionHandler: @escaping @MainActor (URL?) -> Void
     ) {
-        var directory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        // Test runs on a throwaway profile save into their own folder, never the user's Downloads.
-        let environment = ProcessInfo.processInfo.environment
-        if let test = environment["KITE_TEST_DOWNLOADS_PATH"], !test.isEmpty, environment["KITE_SUPPORT_PATH"] != nil {
-            directory = URL(fileURLWithPath: test, isDirectory: true)
+        let directory = DownloadLocation.folder(profile: profileDirectory)
+        let proposed = Self.uniqueURL(in: directory, name: suggestedFilename)
+        let start = { (destination: URL?) in
+            // No destination cancels the download.
+            if let destination {
+                DownloadsModel.shared.track(download, destination: destination, sourceTitle: download.webView?.title)
+            }
+            completionHandler(destination)
         }
-        let destination = Self.uniqueURL(in: directory, name: suggestedFilename)
-        DownloadsModel.shared.track(download, destination: destination, sourceTitle: download.webView?.title)
-        completionHandler(destination)
+        guard DownloadLocation.settings(profile: profileDirectory).promptsForDownload else { return start(proposed) }
+        // Ask each time: a save panel in the folder with the name filled in, as Chromium's.
+        let panel = NSSavePanel()
+        panel.directoryURL = directory
+        panel.nameFieldStringValue = proposed.lastPathComponent
+        panel.canCreateDirectories = true
+        let finish = { (response: NSApplication.ModalResponse) in
+            guard response == .OK, let url = panel.url else { return start(nil) }
+            // The panel already asked about replacing a file that's there.
+            try? FileManager.default.removeItem(at: url)
+            start(url)
+        }
+        if let window = download.webView?.window {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            panel.begin(completionHandler: finish)
+        }
     }
 
     func downloadDidFinish(_ download: WKDownload) {

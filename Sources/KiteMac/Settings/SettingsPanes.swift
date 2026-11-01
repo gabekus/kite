@@ -88,7 +88,12 @@ struct ProfilesPane: View {
                         SettingsSeparator()
                         SettingsRow(title: "Manage search") { Button("Search Settings…") {}.disabled(true) }
                         SettingsSeparator()
-                        UnsupportedToggle("Include search engine suggestions")
+                        SettingsRow(title: "Include search engine suggestions") {
+                            SettingsSwitch(isOn: Binding(
+                                get: { model.profileSettings.includesSearchSuggestions },
+                                set: { on in model.updateProfileSettings { $0.includesSearchSuggestions = on } }
+                            ))
+                        }
                     }
                     SettingsSection {
                         SettingsRow(title: "Archive tabs after") {
@@ -105,9 +110,7 @@ struct ProfilesPane: View {
                             Picker("", selection: .constant(0)) { Text("——").tag(0) }.labelsHidden().frame(width: 180).disabled(true)
                         }
                         SettingsSeparator()
-                        SettingsRow(title: "Download location") {
-                            Picker("", selection: .constant(0)) { Text("Downloads").tag(0) }.labelsHidden().frame(width: 180).disabled(true)
-                        }
+                        SettingsRow(title: "Download location") { DownloadLocationPicker() }
                     }
                     SettingsSection(header: "Your Data and Settings") {
                         DataLink("Privacy and Security", SettingsIcon(symbol: "lock.fill", color: .blue))
@@ -123,6 +126,53 @@ struct ProfilesPane: View {
         .padding(.top, SettingsMetrics.topMargin)
         .frame(width: SettingsMetrics.sectionWidth, alignment: .topLeading)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// Arc's Download location pop-up (ProfilePreferencesViewController+Profiles): the folder
+/// with its icon, "Other…" (a folder panel), a divider, and "Ask every time".
+private struct DownloadLocationPicker: View {
+    @EnvironmentObject private var model: SettingsModel
+
+    /// Arc's item identifiers: `arc.folder`, `arc.other`, `arc.promptForDownload`.
+    private enum Choice: Hashable { case folder, other, prompt }
+
+    var body: some View {
+        let _ = model.revision
+        let profile = model.settingsProfile
+        let folder = DownloadLocation.folder(profile: profile)
+        Picker("", selection: Binding<Choice>(
+            get: { model.profileSettings.promptsForDownload ? .prompt : .folder },
+            set: { choice in
+                switch choice {
+                case .folder: DownloadLocation.setPrompts(false, profile: profile)
+                // After the menu has closed, like Arc's modal panel.
+                case .other: DispatchQueue.main.async { DownloadLocation.chooseFolder(profile: profile); model.refresh() }
+                case .prompt: DownloadLocation.setPrompts(true, profile: profile)
+                }
+                model.refresh()
+            }
+        )) {
+            Label {
+                Text(FileManager.default.displayName(atPath: folder.path))
+            } icon: {
+                Image(nsImage: Self.icon(for: folder))
+            }
+            .labelStyle(.titleAndIcon)
+            .tag(Choice.folder)
+            Text("Other…").tag(Choice.other)
+            Divider()
+            Text("Ask every time").tag(Choice.prompt)
+        }
+        .labelsHidden()
+        .frame(width: 180)
+        .accessibilityLabel("Download Location")
+    }
+
+    private static func icon(for folder: URL) -> NSImage {
+        let icon = NSWorkspace.shared.icon(forFile: folder.path)
+        icon.size = NSSize(width: 16, height: 16)
+        return icon
     }
 }
 

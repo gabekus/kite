@@ -150,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             followPasswordManager()
             for controller in browserControllers where !controller.isIncognito { followProfiles(of: controller) }
         }
+        DownloadLocation.installForChromium()
         KCRuntime.extensionDialogAnchor = { [weak self] window in
             MainActor.assumeIsolated {
                 guard let self else { return .zero }
