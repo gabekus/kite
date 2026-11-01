@@ -194,14 +194,17 @@ public enum ArcImport {
             let data = item["data"] as? [String: Any] ?? [:]
             if let tab = data["tab"] as? [String: Any] {
                 tabCount += 1
+                // An item title is the user's rename; it stays when the page's title changes.
                 let customTitle = (item["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-                return [BrowserTab(
+                var imported = BrowserTab(
                     id: uniqueID(item["id"]),
                     url: (tab["savedURL"] as? String).flatMap(URL.init(string:)),
-                    title: customTitle ?? tab["savedTitle"] as? String ?? "",
+                    title: tab["savedTitle"] as? String ?? "",
                     // Arc's timestamps would trip Kite's 12-hour auto-archive right away.
                     lastActiveAt: now
-                )]
+                )
+                imported.customTitle = customTitle
+                return [imported]
             }
             let id = item["id"] as? String ?? ""
             if let split = data["splitView"] as? [String: Any] {
@@ -339,6 +342,7 @@ extension BrowserState {
     /// replaced, so importing again before Arc shuts down picks up changes.
     @discardableResult
     public mutating func merge(imported: [Space], favorites newFavorites: [BrowserTab] = []) -> (added: Int, updated: Int) {
+        defer { syncPinnedURLs() }
         let existing = Set(favorites.compactMap(\.url))
         favorites += newFavorites.filter { $0.url.map { !existing.contains($0) } ?? false }
         var added = 0, updated = 0

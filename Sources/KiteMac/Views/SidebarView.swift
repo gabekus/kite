@@ -17,6 +17,11 @@ struct SidebarActions {
     /// A folder's context menu.
     var renameFolder: (UUID) -> Void
     var deleteFolder: (UUID) -> Void
+    /// A pinned tab that left its pinned page: "Back to Pinned URL" and "Separate From Pinned Tab".
+    var resetTab: (UUID) -> Void = { _ in }
+    var separateFromPinnedTab: (UUID) -> Void = { _ in }
+    /// A tab's Rename…: in place in its row, or Arc's dialog where there's no row.
+    var renameTab: (UUID) -> Void
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -113,20 +118,34 @@ struct SidebarView: View {
 
     /// One space's page: its header, pinned items, new tab and today's tabs.
     private func spaceList(_ space: Space) -> some View {
+        ScrollViewReader { proxy in
+            spaceRows(space)
+                // Tabs › Reveal Tab in Sidebar. Next turn, so a sidebar that was just shown has laid out.
+                .onChange(of: store.revealRequest) { _, request in
+                    guard let request, space.id == store.state.selectedSpaceID else { return }
+                    DispatchQueue.main.async { withAnimation { proxy.scrollTo(request.rowID) } }
+                }
+        }
+    }
+
+    private func spaceRows(_ space: Space) -> some View {
         List {
             Section {
                 // A row rather than a section header: a plain List paints headers with an opaque bar.
                 SpaceHeader(store: store, actions: actions, space: space)
                     .sidebarRow(pill: false)
-                let pinnedGroups = SidebarGroup.group(space.pinnedItems.map(\.id), splits: space.splits)
+                // View → Collapse Pinned Tabs leaves only the selected pinned tab.
+                let collapsed = store.state.isPinnedSectionCollapsed(space.id)
+                let shownPinned = store.state.shownPinnedItems(in: space)
+                let pinnedGroups = SidebarGroup.group(shownPinned.map(\.id), splits: space.splits)
                 ForEach(pinnedGroups) { group in
-                    pinnedGroup(group, in: space.pinnedItems, depth: 0, selectedID: space.selectedTabID)
+                    pinnedGroup(group, in: shownPinned, depth: 0, selectedID: space.selectedTabID)
                         .sidebarRow()
                 }
-                .onMove { from, to in
+                .onMove(perform: collapsed ? nil : { from, to in
                     let (items, target) = SidebarGroup.itemMove(pinnedGroups, from: from, to: to, itemCount: space.pinnedItems.count)
                     store.mutate { $0.moveTabs(inSpace: space.id, pinned: true, fromOffsets: items, toOffset: target) }
-                }
+                })
             }
             Section {
                 if !space.pinnedItems.isEmpty {
@@ -231,10 +250,21 @@ struct SidebarView: View {
             isPinned: pinned,
             isSelected: selected,
             depth: depth,
+            isRenaming: store.renamingTabID == tab.id,
             onSelect: { store.mutate { $0.select(tab: tab.id) } },
             onClose: { actions.closeTab(tab.id) },
             onTogglePin: { store.mutate { $0.togglePin(tab: tab.id) } },
-            onFavorite: { store.mutate { $0.toggleFavorite(tab: tab.id) } }
+            onFavorite: { store.mutate { $0.toggleFavorite(tab: tab.id) } },
+            canReset: pinned && tab.hasLeftPinnedURL,
+            onReset: { actions.resetTab(tab.id) },
+            onSeparate: { actions.separateFromPinnedTab(tab.id) },
+            onRename: { actions.renameTab(tab.id) },
+            onCommitRename: { name in
+                guard store.renamingTabID == tab.id else { return }
+                store.mutate { $0.renameTab(tab.id, to: name) }
+                store.endRenamingTab()
+            },
+            onCancelRename: { store.endRenamingTab() }
         )
     }
 }
@@ -630,22 +660,60 @@ private struct TabRow: View {
     let isPinned: Bool
     let isSelected: Bool
     var depth = 0
+    var isRenaming = false
     let onSelect: () -> Void
     let onClose: () -> Void
     let onTogglePin: () -> Void
     let onFavorite: () -> Void
+    /// A pinned tab away from its pinned page (Arc's TabCellState.canResetTab).
+    var canReset = false
+    var onReset: () -> Void = {}
+    var onSeparate: () -> Void = {}
+    let onRename: () -> Void
+    let onCommitRename: (String) -> Void
+    let onCancelRename: () -> Void
     @State private var hovering = false
+    @State private var draft = ""
+    @FocusState private var fieldFocused: Bool
 
     var body: some View {
         HStack(spacing: M.iconTextGap) {
             FaviconView(tab: tab, size: M.iconSize)
-            Text(tab.displayTitle)
-                .font(.system(size: M.tabFontSize))
-                .opacity(M.tabTextOpacity)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            if isRenaming {
+                // In place, like the space name (Arc: "Double-click to rename").
+                TextField("Keep it short and sweet!", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: M.tabFontSize))
+                    .focused($fieldFocused)
+                    .onSubmit { onCommitRename(draft) }
+                    .onExitCommand(perform: onCancelRename)
+                    .onAppear {
+                        draft = tab.displayTitle
+                        fieldFocused = true
+                    }
+                    .onChange(of: fieldFocused) { _, focused in if !focused { onCommitRename(draft) } }
+            } else {
+                Text(tab.displayTitle)
+                    .font(.system(size: M.tabFontSize))
+                    .opacity(M.tabTextOpacity)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: 0)
-            if hovering {
+            if hovering && canReset && !isRenaming {
+                // Arc's tooltip; its icon and placement are unverified (see arc-visual-spec.md).
+                Button(action: onReset) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(0.6)
+                .help("Back to Pinned URL")
+                .accessibilityLabel("Back to Pinned URL")
+            }
+            if hovering && !isRenaming {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
@@ -664,10 +732,17 @@ private struct TabRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onSelect)
+        // Alongside the single tap so selecting isn't held back waiting for a second click.
+        .simultaneousGesture(TapGesture(count: 2).onEnded(onRename))
         .contextMenu {
             Button("Add to Favorites", action: onFavorite)
             Button(isPinned ? "Unpin Tab" : "Pin Tab", action: onTogglePin)
+            if canReset {
+                Button("Back to Pinned URL", action: onReset)
+                Button("Separate From Pinned Tab", action: onSeparate)
+            }
             Button("Copy Link") { copyLink(tab.url) }
+            Button("Rename…", action: onRename)
             Divider()
             Button(isPinned ? "Unload Tab" : "Close Tab", action: onClose)
         }
@@ -845,6 +920,7 @@ private struct SpaceHeader: View {
     let actions: SidebarActions
     let space: Space
     @State private var draft = ""
+    @State private var hovering = false
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
@@ -877,11 +953,29 @@ private struct SpaceHeader: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
+            // Arc's pinned-tabs expansion toggler (a chevron in the space header): shown on hover,
+            // and always while the pinned tabs are collapsed.
+            if !space.pinnedItems.isEmpty && !renaming {
+                let collapsed = store.state.isPinnedSectionCollapsed(space.id)
+                Button { store.mutate { $0.togglePinnedSection(space.id) } } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .rotationEffect(.degrees(collapsed ? 0 : 90))
+                        .frame(width: M.headerIconSize, height: M.headerIconSize)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(collapsed ? 0.5 : (hovering ? 0.5 : 0))
+                .help(collapsed ? "Expand Pinned Tabs" : "Collapse Pinned Tabs")
+                .accessibilityLabel(collapsed ? "Expand Pinned Tabs" : "Collapse Pinned Tabs")
+                .padding(.trailing, M.iconInset - M.padding)
+            }
         }
         .padding(.leading, M.headerIconX - M.padding)
         .padding(.top, M.headerIconTop)
         .frame(height: M.headerHeight + M.listTopSpacer, alignment: .top)
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .contextMenu { SpaceContextMenu(store: store, actions: actions, space: space) }
     }
 

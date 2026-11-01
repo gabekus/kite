@@ -236,6 +236,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!LittleKite.opensExternalLinks(in: .standard), forKey: LittleKite.opensExternalLinksKey)
     }
 
+    /// Kite menu → Link Previews: Arc Max's ⇧-hover cards, off until turned on (Arc's `hoverCardsEnabled`).
+    @objc func toggleLinkPreviews(_ sender: Any?) {
+        UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
+    }
+
     /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
     @objc func openURLFromExtensionsMenu(_ sender: Any?) {
         guard let url = sender as? URL else { return }
@@ -414,6 +419,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(setArchiveInterval(_:)), let store {
             item.state = ArchiveInterval.allCases.firstIndex(of: store.state.archiveAfter) == item.tag ? .on : .off
+        }
+        if item.action == #selector(toggleLinkPreviews(_:)) {
+            item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleLittleKiteLinks(_:)) {
             item.state = LittleKite.opensExternalLinks(in: .standard) ? .on : .off
