@@ -16,6 +16,7 @@ import Testing
             ("Use code 482 913 to sign in", "482913"),
             ("Your one-time passcode: K7P2QX", "K7P2QX"),
             ("Sign-in code 4829. It expires in 10 minutes.", "4829"),
+            ("Your Solv code is: 1046", "1046"),
             ("Your order #48291344 has shipped", nil),
             ("Receipt for $482913", nil),
             ("Welcome to the 2026 conference", nil),
