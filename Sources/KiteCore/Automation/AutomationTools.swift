@@ -64,7 +64,7 @@ extension AutomationCommand.Tool {
         case .uploadFile:
             "Puts files from this Mac into a file input. Kite shows the user the paths and asks first."
         case .signIn:
-            "When a page needs the user to sign in (a login form, a password or a one-time code), hands the tab to the user: Kite shows it, offers 1Password, and waits (up to 5 minutes) until they've signed in or cancelled. You never see or type the password. Returns where the tab ended up. Never ask the user for a password in chat."
+            "When a page needs the user to sign in (a login form, a password or a one-time code), hands the tab to the user: Kite shows it, offers their password manager, and waits (up to 5 minutes) until they've signed in or cancelled. You never see or type the password. Returns where the tab ended up. Never ask the user for a password in chat."
         case .readConsole:
             "Console messages and uncaught errors logged since Claude started driving the tab. pattern filters by regex; clear empties the log after reading."
         case .readNetwork:

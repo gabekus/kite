@@ -102,7 +102,7 @@ public enum AutomationCommand: Hashable, Sendable {
     case waitFor(tab: String?, condition: WaitCondition, timeout: Double)
     case handleDialog(tab: String?, accept: Bool, promptText: String?)
     case uploadFile(tab: String?, target: AutomationTarget, paths: [String])
-    /// Hands a login page to the user to sign in (with 1Password), and waits. See `SignInHandoff`.
+    /// Hands a login page to the user to sign in (with their password manager), and waits. See `SignInHandoff`.
     case signIn(tab: String?, reason: String?)
 
     // Debugging

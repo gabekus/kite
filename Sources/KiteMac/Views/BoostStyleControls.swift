@@ -6,8 +6,8 @@ import SwiftUI
 // Original Saturation), the font picker ("Aa" buttons in a grid), and the text size and text
 // case buttons. Layout and sizes are Kite's; see docs/arc-visual-spec.md.
 
-/// The simple controls for one Boost. Changes save straight away and show on the next load
-/// of the page (the editor's Refresh this Page).
+/// The simple controls for one Boost. Changes save straight away and show live in the site's
+/// open pages (LiveBoosts).
 struct BoostStyleControls: View {
     let boostID: UUID
     @State private var showingAdvanced = false

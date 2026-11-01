@@ -10,7 +10,7 @@ struct SignInRequest: Equatable {
 }
 
 // sign_in: Claude hands a login page to the user and waits. The password goes from
-// 1Password into the page; Claude only hears whether the user signed in.
+// the password manager into the page; Claude only hears whether the user signed in.
 
 extension AutomationController {
     func signIn(tab string: String?, reason: String?, connection: Int) async throws -> ToolOutput {
@@ -29,7 +29,7 @@ extension AutomationController {
         signIns[tab.id] = SignInRequest(host: start?.host() ?? "this site", reason: reason)
         defer { signIns[tab.id] = nil }
 
-        // Show the tab, and 1Password over it once the tab is in front (it fills the active tab).
+        // Show the tab, and the password manager over it once the tab is in front (it fills the active tab).
         store.mutate { $0.select(tab: tab.id) }
         NSApp.activate(ignoringOtherApps: true)
         host.window?.makeKeyAndOrderFront(nil)
@@ -41,7 +41,7 @@ extension AutomationController {
         let outcome = await waitForSignIn(tab.id, start: start, actions: actions)
         if isRevoked(tab.id) { throw AutomationError.stopped }
         if outcome != .signedIn {
-            // Whatever 1Password (or the user) put in the form stays out of Claude's reach.
+            // Whatever the password manager (or the user) put in the form stays out of Claude's reach.
             _ = try? await actions.run(SignInHandoff.clearScript)
         }
         markControlled(tab.id, connection: connection)
@@ -79,6 +79,7 @@ extension AutomationController {
     }
 
     var canOpenPasswordManager: Bool { host?.canOpenPasswordManager ?? false }
+    var passwordManagerName: String { host?.passwordManagerName ?? "Password manager" }
 
     func openPasswordManager() {
         if host?.openPasswordManager() != true { NSSound.beep() }

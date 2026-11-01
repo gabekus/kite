@@ -132,6 +132,11 @@ public struct BoostLibrary: Codable, Equatable, Sendable {
         return activeBoosts(forDomain: domain).flatMap(\.zaps).filter { seen.insert($0).inserted }
     }
 
+    /// What a site's active Boosts add as style, for updating its open pages live.
+    public func liveStyles(forDomain domain: String) -> BoostLiveStyles {
+        BoostLiveStyles(activeBoosts(forDomain: domain))
+    }
+
     /// The hiding CSS for a site's active zaps (ZapLibrary's rule per selector).
     public func zapCSS(forDomain domain: String) -> String {
         ZapLibrary.css(activeZaps(forDomain: domain))
@@ -226,27 +231,17 @@ public enum BoostScript {
     /// JavaScript doesn't is left out, so one typo can't break the other document-start
     /// scripts it's joined with. Its CSS still applies.
     public static func source(for boosts: [Boost], isValidJS: (String) -> Bool = { _ in true }) -> String? {
-        // A Boost's font and text case rules come before its own CSS, so its CSS wins a tie.
-        let styles: [(Boost, String)] = boosts.compactMap { boost in
-            let css = [BoostStyle.css(for: boost), boost.css]
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .joined(separator: "\n")
-            return css.isEmpty ? nil : (boost, css)
-        }
+        let live = BoostLiveStyles(boosts)
         let scripts = boosts.filter {
             !$0.js.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && isValidJS(wrapped($0.js))
         }
-        var seen = Set<String>()
-        let zapCSS = ZapLibrary.css(boosts.flatMap(\.zaps).filter { seen.insert($0).inserted })
-        // One Boost owns a site's text size and colours, as in Arc (textZoomOwnerMap,
-        // colorSchemeOwnerMap): the newest that sets them.
-        let zoom = boosts.last { $0.textZoom != nil && $0.textZoom != BoostTextZoom.normal }?.textZoom
-        let colors = boosts.last { $0.colors != nil }?.colors
-        let lookCSS = [BoostStyle.zoomCSS(zoom), BoostStyle.colorCSS(colors)].filter { !$0.isEmpty }.joined(separator: "\n")
-        let tables = colors.map(BoostStyle.filterTables)
-        guard !styles.isEmpty || !scripts.isEmpty || !zapCSS.isEmpty || !lookCSS.isEmpty else { return nil }
+        let styles = live.styles
+        let zapCSS = live.zaps
+        let lookCSS = live.look
+        let tables = live.tables
+        guard !live.isEmpty || !scripts.isEmpty else { return nil }
 
-        let styleList = styles.map { "[\(literal("kite-boost-" + $0.0.id.uuidString.lowercased())), \(literal($0.1))]" }
+        let styleList = styles.map { "[\(literal($0.id)), \(literal($0.css))]" }
         let functions = scripts.map { "    () => \(wrapped($0.js))," }
         return """
         (() => {
@@ -255,7 +250,8 @@ public enum BoostScript {
           const styles = [\(styleList.joined(separator: ", "))];
           const zaps = \(literal(zapCSS));
           const look = \(literal(lookCSS));
-          const tables = \(tables.map { "[\(literal($0.r)), \(literal($0.g)), \(literal($0.b))]" } ?? "null");
+          const tables = \(tablesLiteral(tables));
+        \(filterFunction)
           const addStyles = () => {
             const root = document.head || document.documentElement;
             for (const [id, css] of styles) {
@@ -279,24 +275,8 @@ public enum BoostScript {
               style.textContent = look;
               root.append(style);
             }
-            // Built node by node: innerHTML is blocked on pages with Trusted Types.
             if (tables && !document.querySelector('[\(filterAttribute)]')) {
-              const ns = 'http://www.w3.org/2000/svg';
-              const node = (name, attributes, children = []) => {
-                const element = document.createElementNS(ns, name);
-                for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
-                element.append(...children);
-                return element;
-              };
-              const svg = node('svg', {
-                '\(filterAttribute)': '', width: '0', height: '0', 'aria-hidden': 'true',
-                style: 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none'
-              }, [node('filter', { id: '\(BoostStyle.filterID)', 'color-interpolation-filters': 'sRGB' }, [
-                node('feColorMatrix', { type: 'matrix', values: \(literal(BoostStyle.meanMatrix)) }),
-                node('feComponentTransfer', {}, ['feFuncR', 'feFuncG', 'feFuncB'].map((name, i) =>
-                  node(name, { type: 'table', tableValues: tables[i] })))
-              ])]);
-              document.documentElement.append(svg);
+              document.documentElement.append(filterSVG(tables));
             }
           };
           if (document.documentElement) addStyles();
@@ -319,6 +299,85 @@ public enum BoostScript {
     public static let lookAttribute = "data-kite-boost-look"
     /// The attribute on the SVG that holds a site's Boost colour filter.
     public static let filterAttribute = "data-kite-boost-filter"
+    /// The id prefix of each Boost's own `<style>` (its font, text case and CSS).
+    public static let styleIDPrefix = "kite-boost-"
+
+    /// Defines `filterSVG(tables)`: the hidden SVG holding the colour filter, built node by node
+    /// (innerHTML is blocked on pages with Trusted Types).
+    static let filterFunction = """
+          const filterSVG = (tables) => {
+            const ns = 'http://www.w3.org/2000/svg';
+            const node = (name, attributes, children = []) => {
+              const element = document.createElementNS(ns, name);
+              for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
+              element.append(...children);
+              return element;
+            };
+            return node('svg', {
+              '\(filterAttribute)': '', width: '0', height: '0', 'aria-hidden': 'true',
+              style: 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none'
+            }, [node('filter', { id: '\(BoostStyle.filterID)', 'color-interpolation-filters': 'sRGB' }, [
+              node('feColorMatrix', { type: 'matrix', values: \(literal(BoostStyle.meanMatrix)) }),
+              node('feComponentTransfer', {}, ['feFuncR', 'feFuncG', 'feFuncB'].map((name, i) =>
+                node(name, { type: 'table', tableValues: tables[i] })))
+            ])]);
+          };
+        """
+
+    static func tablesLiteral(_ tables: BoostLiveStyles.Tables?) -> String {
+        tables.map { "[\(literal($0.r)), \(literal($0.g)), \(literal($0.b))]" } ?? "null"
+    }
+
+    /// Brings an open page's Boost styles up to date without a reload, as Arc re-registers a
+    /// Boost's stylesheets on every change (BoostsClient.applyToWebContent): each Boost's
+    /// `<style>` is replaced (or removed when it has none), in order, and so are the text size
+    /// and colour style and filter. Zaps keep their own live path (ZapScript.apply). JavaScript
+    /// isn't re-run: it needs a reload (Refresh this Page), as in Arc. Top frame only.
+    public static func applyLive(_ live: BoostLiveStyles) -> String {
+        let styleList = live.styles.map { "[\(literal($0.id)), \(literal($0.css))]" }
+        return """
+        (() => {
+          if (window !== window.top) return;
+          const root = document.head || document.documentElement;
+          if (!root) return;
+          const styles = [\(styleList.joined(separator: ", "))];
+          const look = \(literal(live.look));
+          const tables = \(tablesLiteral(live.tables));
+        \(filterFunction)
+          const wanted = new Set(styles.map(([id]) => id));
+          for (const old of document.querySelectorAll('style[id^="\(styleIDPrefix)"]')) {
+            if (!wanted.has(old.id)) old.remove();
+          }
+          // In order, so a newer Boost's CSS still wins; nodes already in order aren't moved.
+          let previous = null;
+          for (const [id, css] of styles) {
+            let style = document.getElementById(id);
+            if (!style) {
+              style = document.createElement('style');
+              style.id = id;
+            }
+            if (style.textContent !== css) style.textContent = css;
+            if (!style.isConnected || (previous && !(previous.compareDocumentPosition(style) & Node.DOCUMENT_POSITION_FOLLOWING))) {
+              if (previous) previous.after(style); else root.append(style);
+            }
+            previous = style;
+          }
+          let lookStyle = document.querySelector('style[\(lookAttribute)]');
+          if (look) {
+            if (!lookStyle) {
+              lookStyle = document.createElement('style');
+              lookStyle.setAttribute('\(lookAttribute)', '');
+              root.append(lookStyle);
+            }
+            if (lookStyle.textContent !== look) lookStyle.textContent = look;
+          } else if (lookStyle) {
+            lookStyle.remove();
+          }
+          document.querySelector('[\(filterAttribute)]')?.remove();
+          if (tables) document.documentElement.append(filterSVG(tables));
+        })();
+        """
+    }
 
     /// A Boost's JavaScript as a function expression, so `return` works and its names stay local.
     public static func wrapped(_ js: String) -> String {
@@ -333,5 +392,51 @@ public enum BoostScript {
         json.removeLast()
         // JSON allows U+2028/2029 in strings; older JavaScript parsers don't, and "</" in a literal is harmless here.
         return json.replacingOccurrences(of: "\u{2028}", with: "\\u2028").replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+    }
+}
+
+/// Everything a site's Boosts add as style (not JavaScript): each Boost's own font, text case and
+/// CSS, the zaps' hiding rules, the text size and colour rules, and the colour filter's tables.
+/// Equal values mean an open page needs no update.
+public struct BoostLiveStyles: Equatable, Sendable {
+    public struct Style: Equatable, Sendable {
+        /// The `<style>` element's id (`BoostScript.styleIDPrefix` + the Boost's id).
+        public var id: String
+        public var css: String
+    }
+
+    public struct Tables: Equatable, Sendable {
+        public var r: String
+        public var g: String
+        public var b: String
+    }
+
+    /// Oldest Boost first, so a newer one's CSS wins.
+    public var styles: [Style]
+    public var zaps: String
+    public var look: String
+    public var tables: Tables?
+
+    /// `boosts` are a site's active Boosts, oldest first (`BoostLibrary.activeBoosts`).
+    public init(_ boosts: [Boost]) {
+        // A Boost's font and text case rules come before its own CSS, so its CSS wins a tie.
+        styles = boosts.compactMap { boost in
+            let css = [BoostStyle.css(for: boost), boost.css]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+            return css.isEmpty ? nil : Style(id: BoostScript.styleIDPrefix + boost.id.uuidString.lowercased(), css: css)
+        }
+        var seen = Set<String>()
+        zaps = ZapLibrary.css(boosts.flatMap(\.zaps).filter { seen.insert($0).inserted })
+        // One Boost owns a site's text size and colours, as in Arc (textZoomOwnerMap,
+        // colorSchemeOwnerMap): the newest that sets them.
+        let zoom = boosts.last { $0.textZoom != nil && $0.textZoom != BoostTextZoom.normal }?.textZoom
+        let colors = boosts.last { $0.colors != nil }?.colors
+        look = [BoostStyle.zoomCSS(zoom), BoostStyle.colorCSS(colors)].filter { !$0.isEmpty }.joined(separator: "\n")
+        tables = colors.map(BoostStyle.filterTables).map { Tables(r: $0.r, g: $0.g, b: $0.b) }
+    }
+
+    public var isEmpty: Bool {
+        styles.isEmpty && zaps.isEmpty && look.isEmpty && tables == nil
     }
 }

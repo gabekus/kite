@@ -17,10 +17,11 @@ enum ArcSheetMetrics {
     static let buttonHeight: CGFloat = 40
     static let buttonRadius: CGFloat = 10
     static let buttonGap: CGFloat = 8
-    /// Measured in Arc's dark sheets: background, secondary button, primary button.
-    static let background = Color(red: 0x1D / 255, green: 0x26 / 255, blue: 0x3E / 255)
-    static let secondary = Color(red: 0x3F / 255, green: 0x40 / 255, blue: 0x73 / 255)
-    static let primary = Color(red: 0x42 / 255, green: 0x56 / 255, blue: 0xF5 / 255)
+    /// Arc's dark sheet colours, shared with its other dialogs (`ArcDialogMetrics`; measured within a
+    /// unit of these in both): background, secondary button, primary button.
+    static let background = ArcDialogMetrics.background
+    static let secondary = ArcDialogMetrics.secondaryFill
+    static let primary = ArcDialogMetrics.primaryFill
 }
 
 private typealias M = ArcSheetMetrics
@@ -370,33 +371,41 @@ struct ProfilesListView: View {
     }
 }
 
-/// Arc's "Rename your Profile".
+/// Arc's "Rename your Profile", in Arc's dark dialog style (`ArcSheet`, `arcDialogField`).
 private struct RenameProfileView: View {
     let store: BrowserStore
     let profile: Profile
     let done: () -> Void
     @State private var name = ""
     @State private var error: ProfileNameError?
+    @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Rename your Profile").font(.system(size: 15, weight: .semibold))
-            Text("This won’t affect the names of any of the Spaces associated with this Profile.")
-                .foregroundStyle(.secondary)
-            TextField("Personal", text: $name)
-                .textFieldStyle(.roundedBorder)
+        ArcSheet {
+            title(Text("Rename your Profile"))
+            bodyText("This won’t affect the names of any of the Spaces associated with this Profile.")
+                .padding(.top, 8)
+            TextField("", text: $name, prompt: Text("Personal").foregroundStyle(.white.opacity(0.4)))
+                .arcDialogField()
+                .focused($focused)
                 .onSubmit(save)
                 .onChange(of: name) { _, _ in error = nil }
-            if let error { Text(error.message).font(.system(size: 11)).foregroundStyle(.red) }
-            HStack {
-                Spacer()
-                Button("Cancel", action: done).keyboardShortcut(.cancelAction)
-                Button("Rename", action: save).keyboardShortcut(.defaultAction)
+                .padding(.top, 16)
+                .accessibilityLabel("Profile name")
+            if let error {
+                Text(error.message).font(.system(size: 11.5)).foregroundStyle(.red).padding(.top, 8)
             }
+            HStack(spacing: M.buttonGap) {
+                Spacer()
+                ArcSheetButton(title: "Cancel", key: "ESC", action: done).keyboardShortcut(.cancelAction)
+                ArcSheetButton(title: "Rename", key: "↩", primary: true, action: save).keyboardShortcut(.defaultAction)
+            }
+            .padding(.top, 24)
         }
-        .padding(20)
-        .frame(width: 420)
-        .onAppear { name = profile.name }
+        .onAppear {
+            name = profile.name
+            focused = true
+        }
     }
 
     private func save() {
@@ -409,32 +418,40 @@ private struct RenameProfileView: View {
     }
 }
 
-/// Arc's "Delete this Profile", confirmed by typing the profile's name.
+/// Arc's "Delete this Profile", confirmed by typing the profile's name, in Arc's dark dialog style.
 private struct DeleteProfileView: View {
     let store: BrowserStore
     let profile: Profile
     let done: () -> Void
     @State private var typed = ""
+    @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Delete this Profile").font(.system(size: 15, weight: .semibold))
-            Text("Deleting \(profile.name) will permanently remove any cookies, history, preferences, and logins that belong to this Profile.")
-                .fixedSize(horizontal: false, vertical: true)
-            Text("To continue, please type the name of this Profile:").foregroundStyle(.secondary)
-            TextField(profile.name, text: $typed).textFieldStyle(.roundedBorder)
-            HStack {
+        ArcSheet {
+            title(Text("Delete this Profile"))
+            bodyText("Deleting \(profile.name) will permanently remove any cookies, history, preferences, and logins that belong to this Profile.")
+                .padding(.top, 8)
+            bodyText("To continue, please type the name of this Profile:").padding(.top, 12)
+            TextField("", text: $typed, prompt: Text(profile.name).foregroundStyle(.white.opacity(0.4)))
+                .arcDialogField()
+                .focused($focused)
+                .onSubmit(delete)
+                .padding(.top, 12)
+                .accessibilityLabel("Profile name")
+            HStack(spacing: M.buttonGap) {
                 Spacer()
-                Button("Cancel", action: done).keyboardShortcut(.cancelAction)
-                Button("Delete") {
-                    store.deleteProfile(profile.directory)
-                    done()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(typed != profile.name)
+                ArcSheetButton(title: "Cancel", key: "ESC", action: done).keyboardShortcut(.cancelAction)
+                ArcSheetButton(title: "Delete", key: "↩", primary: true, enabled: typed == profile.name, action: delete)
+                    .keyboardShortcut(.defaultAction)
             }
+            .padding(.top, 24)
         }
-        .padding(20)
-        .frame(width: 420)
+        .onAppear { focused = true }
+    }
+
+    private func delete() {
+        guard typed == profile.name else { return NSSound.beep() }
+        store.deleteProfile(profile.directory)
+        done()
     }
 }

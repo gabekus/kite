@@ -14,9 +14,11 @@ protocol AutomationHost: AnyObject {
     /// The tab's page, created in the background if it isn't live.
     func automationPage(for tab: BrowserTab) -> WebPage
     func closeAutomatedTab(_ id: UUID)
-    /// Whether 1Password can fill in this window, for sign_in.
+    /// Whether the password manager (Settings) can fill in this window, for sign_in.
     var canOpenPasswordManager: Bool { get }
-    /// Opens 1Password's popup over the selected tab. False if it couldn't.
+    /// Its name ("1Password", "Bitwarden"), or nil with none chosen.
+    var passwordManagerName: String? { get }
+    /// Opens its popup over the selected tab. False if it couldn't.
     func openPasswordManager() -> Bool
 }
 

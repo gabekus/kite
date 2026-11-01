@@ -55,6 +55,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
     /// Arc's favorites grid, one per profile (Arc's `topAppsContainerIDs` pairs a profile with
     /// its container), by profile folder.
     public var favoritesByProfile: [String: [BrowserTab]]
+    /// Favorites shown as one split-view tile (Arc's `AppTrayItemChildStack`), by profile folder.
+    public var favoriteSplitsByProfile: [String: [SplitView]]
     /// Folders of deleted profiles the shell hasn't removed from disk yet.
     public var retiredProfileDirectories: [String]
     /// The favorites grid of the current space's profile, shown above the pinned tabs.
@@ -62,6 +64,11 @@ public struct BrowserState: Hashable, Codable, Sendable {
         get { favoritesByProfile[selectedProfileDirectory] ?? [] }
         // An empty grid has no entry, so states compare equal however they got there.
         set { favoritesByProfile[selectedProfileDirectory] = newValue.isEmpty ? nil : newValue }
+    }
+    /// The current profile's favorite split views; their members are favorites, next to each other.
+    public var favoriteSplits: [SplitView] {
+        get { favoriteSplitsByProfile[selectedProfileDirectory] ?? [] }
+        set { favoriteSplitsByProfile[selectedProfileDirectory] = newValue.isEmpty ? nil : newValue }
     }
     public var selectedSpaceID: UUID
     public var recentlyClosed: [ClosedTab]
@@ -106,6 +113,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.spaces = spaces
         self.profiles = []
         self.favoritesByProfile = [:]
+        self.favoriteSplitsByProfile = [:]
         self.retiredProfileDirectories = []
         self.selectedSpaceID = selectedSpaceID.flatMap { id in spaces.first { $0.id == id }?.id } ?? spaces[0].id
         self.recentlyClosed = []
@@ -133,7 +141,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter, showsToolbar
         case warnsBeforeQuitting, spacesWithCollapsedPinnedSections
         case developerModeEnabledForHosts, devModeReloadState, allowsJavaScriptFromAppleEvents
-        case profiles, profileFavorites, retiredProfileDirectories
+        case profiles, profileFavorites, retiredProfileDirectories, favoriteSplits
     }
 
     public init(from decoder: Decoder) throws {
@@ -149,6 +157,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         favoritesByProfile = try c.decodeIfPresent([String: [BrowserTab]].self, forKey: .profileFavorites) ?? [:]
         let favorites = try c.decodeIfPresent([BrowserTab].self, forKey: .favorites) ?? []
         if !favorites.isEmpty { favoritesByProfile[Profile.defaultDirectory] = favorites }
+        favoriteSplitsByProfile = try c.decodeIfPresent([String: [SplitView]].self, forKey: .favoriteSplits) ?? [:]
         recentlyClosed = try c.decodeIfPresent([ClosedTab].self, forKey: .recentlyClosed) ?? []
         archived = try c.decodeIfPresent([ClosedTab].self, forKey: .archived) ?? []
         darkPages = try c.decodeIfPresent(DarkPagesMode.self, forKey: .darkPages) ?? .matchSystem
@@ -195,6 +204,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
         let others = favoritesByProfile.filter { $0.key != Profile.defaultDirectory && !$0.value.isEmpty }
         if !others.isEmpty { try c.encode(others, forKey: .profileFavorites) }
         if !retiredProfileDirectories.isEmpty { try c.encode(retiredProfileDirectories, forKey: .retiredProfileDirectories) }
+        let favoriteSplits = favoriteSplitsByProfile.filter { !$0.value.isEmpty }
+        if !favoriteSplits.isEmpty { try c.encode(favoriteSplits, forKey: .favoriteSplits) }
     }
 
     // MARK: Dark pages
@@ -382,9 +393,9 @@ public struct BrowserState: Hashable, Codable, Sendable {
             outcome = .removed
         }
 
-        if location.section != .unpinned, let i = spaces[s].splits.firstIndex(where: { $0.tabIDs.contains(id) }) {
-            // An unloaded pinned pane leaves its split too, or it would come back blank.
-            spaces[s].splits[i].remove(id)
+        if location.section != .unpinned, let split = split(containing: id)?.split {
+            // An unloaded pinned or favorite pane leaves its split too, or it would come back blank.
+            updateSplit(split.id) { $0.remove(id) }
         }
 
         if wasSelected, let splitNeighbor {

@@ -4,7 +4,8 @@
 // - Chrome-style browser windows (tab strip, omnibox) opened for browsers Chromium
 //   created itself never appear; KCDefaultClient sends their pages to Kite tabs.
 // - The "X has been added to Chromium" bubble never appears; Kite says so itself.
-// - The "Add "X"?" install and "Remove "X"?" uninstall dialogs stay Chrome's own: their text, buttons and click
+// - The "Add "X"?" install, "Remove "X"?" uninstall and "X has requested additional
+//   permissions." dialogs stay Chrome's own: their text, buttons and click
 //   protection are untouched (Chrome won't enable its button while the dialog is
 //   hidden, and fades it back in, so it can't be replaced). It becomes a child of the
 //   front Kite window, placed like a sheet at the top of the web area, so it moves
@@ -16,6 +17,7 @@
 
 #include <initializer_list>
 
+NSString* const KCExtensionInstallDialogDidOpenNotification = @"KCExtensionInstallDialogDidOpenNotification";
 NSString* const KCExtensionInstallDialogDidCloseNotification = @"KCExtensionInstallDialogDidCloseNotification";
 
 static NSRect (^gDialogAnchor)(NSWindow*);
@@ -53,10 +55,14 @@ BOOL IsInstalledBubble(NSWindow* window) {
     return IsViewsWindow(window) && [TitleOf(window) hasSuffix:@" has been added to Chromium"];
 }
 
-/// Chrome's "Add "X"?" (install) and "Remove "X"?" (uninstall) dialogs.
+/// Chrome's "Add "X"?" (install), "Remove "X"?" (uninstall) and permission-request dialogs.
 BOOL IsExtensionDialog(NSWindow* window) {
     NSString* title = TitleOf(window);
-    if (!IsViewsWindow(window) || ![title hasSuffix:@"?"]) return NO;
+    if (!IsViewsWindow(window)) return NO;
+    // chrome.permissions.request: ""X" has requested additional permissions." (Bitwarden asks
+    // for native messaging this way, to unlock with Touch ID through its app).
+    if ([title hasSuffix:@" has requested additional permissions."]) return YES;
+    if (![title hasSuffix:@"?"]) return NO;
     for (NSString* verb in @[@"Add", @"Remove"]) {
         if ([title hasPrefix:[verb stringByAppendingString:@" “"]] || [title hasPrefix:[verb stringByAppendingString:@" \""]]) return YES;
     }
@@ -74,7 +80,8 @@ BOOL BlocksViewsWindowsForTests() {
 /// The Kite window in front: key or main, else the frontmost that isn't Chrome's.
 NSWindow* FrontKiteWindow() {
     for (NSWindow* window in @[NSApp.keyWindow ?: (id)NSNull.null, NSApp.mainWindow ?: (id)NSNull.null]) {
-        if ([window isKindOfClass:NSWindow.class] && !IsViewsWindow(window) && window.isVisible) return window;
+        // Not an extension's popover (key while it's open): the dialog hangs off the browser window.
+        if ([window isKindOfClass:NSWindow.class] && !IsViewsWindow(window) && window.isVisible && window.canBecomeMainWindow) return window;
     }
     for (NSWindow* window in NSApp.orderedWindows) {
         if (!IsViewsWindow(window) && window.isVisible && window.canBecomeMainWindow) return window;
@@ -102,6 +109,7 @@ void AttachInstallDialog(NSWindow* dialog) {
     frame.origin.y = round(NSMaxY(area) - 8 - NSHeight(frame));
     [dialog setFrame:frame display:NO];
     [parent addChildWindow:dialog ordered:NSWindowAbove];
+    [NSNotificationCenter.defaultCenter postNotificationName:KCExtensionInstallDialogDidOpenNotification object:nil];
     __block id observer = [NSNotificationCenter.defaultCenter
         addObserverForName:NSWindowWillCloseNotification
                     object:dialog
