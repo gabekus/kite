@@ -2664,3 +2664,32 @@ Read from Arc's compiled `Base.lproj/MainMenu.nib` (control connectors: action, 
   only, in both browsers. Nothing to build.
 - **Substitutions › Data Detectors**, between Smart Links and Text Replacement: `toggleAutomaticDataDetection:` to
   the first responder. Page views don't take it; AppKit text fields do.
+
+## Profile settings › Download location and search suggestions → `ProfileSettings`, `SearchSuggestions` (KiteCore), `DownloadLocation`, `SearchSuggestionFetcher`, `DownloadLocationPicker` (Arc 1.171 strings, disassembly and decompile, Settings AX recording; 1 Nov 2026)
+
+- **Per profile** [str]: Arc's profile preferences state (arc-strings.txt 171378–171395) holds
+  `getNonIncognitoBrowserContext`, `defaultSearchEngine`, `searchSuggestEnabled`, `downloadFilePath`,
+  `promptForDownloadFilePath` with actions `onSetSearchSuggestEnabled`, `onDidChangeFileDownloadPath`,
+  `onDidSetPromptForFileDownloadPath` (the selector `setSearchSuggestEnabled:` is on Arc's browser context). These are
+  the profile's Chromium prefs, so Kite keeps them per profile (`BrowserState.profileSettings`, by the profile's
+  `dataStoreID`); an incognito window uses the default profile's, as Arc reads the non-incognito context.
+- **Rows** [AX, ~/rea-arc/settings/pane-2.txt]: "Include search engine suggestions" is an AXCheckBox/AXToggle at
+  584,244 26×15 (value 1 in Gabe's Arc; Chromium's default is on); "Download location" is an AXPopUpButton
+  "Download Location" 180×20 at 430,370, value "Downloads".
+- **Pop-up items** [dis, ProfilePreferencesViewController+Profiles, Arc-arm64 0x10203ae98–0x10203bcac; Ghidra output in
+  ~/rea-arc/decomp/out-g97]: the items are tagged by an enum whose raw values are `arc.folder`, `arc.other`,
+  `arc.promptForDownload` (in that order). The content is a Label (title + icon, `TitleAndIconLabelStyle`) for the
+  folder, `Text("Other…")`, a `Divider`, `Text("Ask every time")` (small-string immediates at 0x10203bb78 and
+  0x10203bc50). The folder icon's source isn't decoded; Kite uses the folder's Finder icon at 16pt.
+- **Other…** [dec, FUN_10203fa08]: an `NSOpenPanel` with directoryURL the current folder, files off, directories on,
+  create directories on, multiple selection off, prompt "Select" (comment "Button to confirm selection of directory
+  for file downloads"), run modally; OK stores the folder. Kite also turns Ask off then, so the pop-up shows the folder.
+- **Kite**: Chromium's `OnBeforeDownload` asks `KCBrowser.downloadFolderProvider` for the browser's profile (found by
+  its request context) and continues into that folder, with Chromium's Save panel when Ask every time is on; WebKit's
+  `DownloadCoordinator` does the same with an `NSSavePanel` sheet. Suggestions: the command bar asks the engine's
+  suggest URL (Chromium's built-in engines' endpoints; none for Kagi) 80 ms after typing stops, ephemeral session
+  without cookies, and shows up to 4 as search rows right after the typed search. Arc gets them from Chromium's
+  search suggest provider (`chromiumSearchSuggestion` results, strings 68850–68862); its ranking and its
+  "We talk to your search engine to help us suggest results." privacy banner aren't copied.
+- Not verified: the pop-up's open menu (modal), Other… and Ask every time live (they'd open panels over Gabe's
+  work), and the Chromium engine (the test build runs WebKit).

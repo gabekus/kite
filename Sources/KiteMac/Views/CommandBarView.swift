@@ -166,6 +166,8 @@ private struct CommandBarView: View {
     @State private var typed = ""
     /// The field's text while it shows an inline completion.
     @State private var completed: String?
+    /// The search engine's suggestions, and the text they were for.
+    @State private var engineSuggestions: (query: String, items: [String]) = ("", [])
 
     init(store: BrowserStore, mode: CommandBarMode, width: CGFloat, onCommit: @escaping (CommandSuggestion) -> Void) {
         self.store = store
@@ -201,7 +203,11 @@ private struct CommandBarView: View {
         let commands = mode == .newTab ? MenuCommand.search(text, in: NSApp.mainMenu) : []
         let strong = commands.filter { $0.score >= 80 }.map { CommandSuggestion.command($0.command) }
         let weak = commands.filter { $0.score < 80 }.map { CommandSuggestion.command($0.command) }
-        return strong + [search] + tabs + history + weak
+        // The engine's suggestions follow the typed search, while they're for this text.
+        let engine = engineSuggestions.query == text ? engineSuggestions.items.map {
+            CommandSuggestion.search($0, state.searchEngine.searchURL(for: $0))
+        } : []
+        return strong + [search] + engine + tabs + history + weak
     }
 
     /// The site Tab would switch to for what's typed so far.
@@ -312,6 +318,9 @@ private struct CommandBarView: View {
             highlighted = 0
             autocomplete(from: old, to: new)
         }
+        .task(id: SuggestionRequest(text: query.trimmingCharacters(in: .whitespacesAndNewlines), inSiteSearch: site != nil)) {
+            await fetchEngineSuggestions()
+        }
     }
 
     /// Arc completes a Site Search shortcut inline as you type ("you" → "you" + selected
@@ -360,6 +369,26 @@ private struct CommandBarView: View {
             }
             return leave ? nil : event
         }
+    }
+
+    private struct SuggestionRequest: Equatable {
+        var text: String
+        var inSiteSearch: Bool
+    }
+
+    /// Profile settings › "Include search engine suggestions", for the current space's profile.
+    private func fetchEngineSuggestions() async {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let state = store.state
+        guard SearchSuggestions.shouldFetch(text, settings: state.settings(ofProfile: state.selectedProfileDirectory),
+                                            inSiteSearch: site != nil)
+        else { return engineSuggestions = ("", []) }
+        // Wait out fast typing; a newer keystroke cancels this one.
+        try? await Task.sleep(for: .milliseconds(80))
+        guard !Task.isCancelled else { return }
+        let items = await SearchSuggestionFetcher.suggestions(for: text, engine: state.searchEngine)
+        guard !Task.isCancelled else { return }
+        engineSuggestions = (text, items)
     }
 
     private func commit(_ items: [CommandSuggestion]) {

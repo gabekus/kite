@@ -134,13 +134,36 @@ std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>>& DownloadCallbacks() {
     return callbacks;
 }
 
-NSURL* UniqueDownloadURL(NSString* name) {
+/// The on-disk profiles' contexts, by folder name (see contextForProfileDirectory:).
+NSMutableDictionary<NSString*, KCRequestContext*>* ProfileContexts() {
+    static NSMutableDictionary<NSString*, KCRequestContext*>* contexts = [NSMutableDictionary dictionary];
+    return contexts;
+}
+
+NSURL* _Nullable (^gDownloadFolderProvider)(NSString* _Nullable, BOOL*);
+
+/// The folder a download from `browser` saves into, and whether to ask where first: the
+/// app's answer for the browser's profile, else Downloads.
+NSURL* DownloadFolder(CefRefPtr<CefBrowser> browser, BOOL* prompt) {
+    *prompt = NO;
+    if (gDownloadFolderProvider) {
+        CefRefPtr<CefRequestContext> context = browser->GetHost()->GetRequestContext();
+        NSString* profile = nil;
+        for (NSString* directory in ProfileContexts()) {
+            if (ProfileContexts()[directory].cefContext->IsSame(context)) { profile = directory; break; }
+        }
+        if (NSURL* folder = gDownloadFolderProvider(profile, prompt)) return folder;
+    }
     NSURL* directory = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
     // Test runs on a throwaway profile save into their own folder, never the user's Downloads.
     NSString* testDirectory = NSProcessInfo.processInfo.environment[@"KITE_TEST_DOWNLOADS_PATH"];
     if (testDirectory.length && NSProcessInfo.processInfo.environment[@"KITE_SUPPORT_PATH"].length) {
         directory = [NSURL fileURLWithPath:testDirectory isDirectory:YES];
     }
+    return directory;
+}
+
+NSURL* UniqueDownloadURL(NSString* name, NSURL* directory) {
     NSString* base = name.stringByDeletingPathExtension;
     NSString* extension = name.pathExtension;
     NSURL* candidate = [directory URLByAppendingPathComponent:name];
@@ -590,7 +613,10 @@ class KCClient : public CefClient,
             callback->Continue([directory stringByAppendingPathComponent:name].UTF8String, false);
             return true;
         }
-        callback->Continue(UniqueDownloadURL(ToNSString(suggested_name)).path.UTF8String, false);
+        BOOL prompt = NO;
+        NSURL* folder = DownloadFolder(browser, &prompt);
+        // With `prompt`, Chromium's Save panel opens in the folder with the name filled in.
+        callback->Continue(UniqueDownloadURL(ToNSString(suggested_name), folder).path.UTF8String, prompt);
         return true;
     }
 
@@ -799,7 +825,7 @@ class KCClient : public CefClient,
 }
 
 + (instancetype)contextForProfileDirectory:(NSString*)directory {
-    static NSMutableDictionary<NSString*, KCRequestContext*>* contexts = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString*, KCRequestContext*>* contexts = ProfileContexts();
     if (KCRequestContext* existing = contexts[directory]) return existing;
     KCRequestContext* context = [[self alloc] initPrivate];
     CefRequestContextSettings settings;
@@ -1303,6 +1329,14 @@ static cef_content_setting_types_t KCContentSettingType(KCSitePermission permiss
     _closed = YES;
     _delegate = nil;
     if (_browser) _browser->GetHost()->CloseBrowser(true);
+}
+
++ (NSURL* _Nullable (^)(NSString* _Nullable, BOOL*))downloadFolderProvider {
+    return gDownloadFolderProvider;
+}
+
++ (void)setDownloadFolderProvider:(NSURL* _Nullable (^)(NSString* _Nullable, BOOL*))provider {
+    gDownloadFolderProvider = [provider copy];
 }
 
 + (BOOL)cancelDownloadWithID:(NSInteger)downloadID {
