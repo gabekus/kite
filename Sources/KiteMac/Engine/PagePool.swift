@@ -31,6 +31,8 @@ final class PagePool {
     var onPageCreated: ((UUID, WebPage) -> Void)?
     /// Called when a tab's page stops loading.
     var onLoadFinished: ((UUID) -> Void)?
+    /// A link clicked in tab `UUID` opens in Arc's Peek card (`LinkPeek`); nil opens it as a new tab.
+    var onLinkPeek: ((UUID, URL) -> Void)?
 
     func loadedPage(_ id: UUID) -> WebPage? { pages[id] }
     var livePages: [UUID: WebPage] { pages }
@@ -74,12 +76,18 @@ final class PagePool {
         }
     }
 
-    /// A new selected tab showing `page`, which already exists (a popup).
-    func openTab(with page: WebPage) {
+    /// A new selected tab showing `page`, which already exists (a popup, or a Peek's page expanded). `url` is
+    /// what it shows already: WebKit doesn't report a page's URL again until it changes.
+    func openTab(with page: WebPage, url: URL? = nil) {
         // Register before the tab exists so selecting it reuses this page.
         let newID = UUID()
         register(page, id: newID)
-        store.mutate { $0.openTab(id: newID, url: nil) }
+        store.mutate { $0.openTab(id: newID, url: url) }
+    }
+
+    /// Registers `page` (a Peek's) for a tab the caller is about to add with `id`.
+    func register(existing page: WebPage, id: UUID) {
+        register(page, id: id)
     }
 
     func discard(_ id: UUID, keepHistory: Bool) {
@@ -87,6 +95,7 @@ final class PagePool {
         savedState[id] = keepHistory ? page.hibernationState() : nil
         lastShown[id] = nil
         page.onEvent = nil
+        page.linkPeekPolicy = nil
         page.close()
         store.clearPage(id)
     }
@@ -97,6 +106,11 @@ final class PagePool {
         pages[id] = page
         lastShown[id] = Date()
         page.onEvent = { [weak self] event in self?.handle(event, from: id) }
+        page.linkPeekPolicy = { [weak self] url, shift in
+            guard let self, self.onLinkPeek != nil else { return false }
+            let state = self.store.state
+            return LinkPeek.opensInPeek(section: state.location(of: id)?.section, from: state.tab(id)?.url, to: url, shift: shift)
+        }
         onPageCreated?(id, page)
     }
 
@@ -131,6 +145,12 @@ final class PagePool {
             store.mutate { $0.openTab(url: url, select: foreground) }
         case .popup(let page):
             openTab(with: page)
+        case .openInLinkPeek(let url):
+            // Out of the engine's navigation callback before making another page.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if let onLinkPeek { onLinkPeek(id, url) } else { store.mutate { $0.openTab(url: url) } }
+            }
         case .closeRequested:
             store.mutate { $0.close(tab: id) }
         case .blockedCount(let count):

@@ -167,7 +167,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Sidebar | Favorites grid, pinned, unpinned "Today", folders, space switcher | 🟡 | Other session (favorites, folders, resize) |
 | Sidebar hover reveal | Hidden sidebar slides in at the left edge | ❌ | Thread: sidebar left-edge peek |
 | Auto-archive | "Archive tabs after": Never / 1 hour / 6 hours / 12 hours / 24 hours / 7 days / 30 days, per profile | ✅ Kite menu → Archive tabs after (moves to Settings; no profiles yet) | B5 |
-| Peek | Links from pinned tabs/favorites open in an overlay | ❌ | Thread: Peek |
+| Peek | Links from pinned tabs/favorites open in an overlay | 🟡 Links from a pinned tab or favorite to another site, and ⇧-clicked links, open in a card over the page (Arc's size, corner, shadow and spring); close (Esc, ⌘W, button, click outside), Open as Tab, Create/Add to Split View | Not yet: the tween from the link's own frame, the peeked item in the sidebar, swipe right to dismiss, reopen-closed-Peek undo, the Links settings toggles; button look unmeasured |
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | ❌ | Thread: Peek |
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
 | Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | 🟡 Little Kite: own window, toolbar measured from Arc, "Open in <Space>" (⌘O) moves the live page into the main window, ⌘W closes, Kite menu → Open Links from Other Apps in Little Kite (on by default) | No profile indicator, extensions button, downloads tray, searchable space picker, auto-archive or global hotkey yet |
