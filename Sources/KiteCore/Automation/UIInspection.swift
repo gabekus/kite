@@ -40,7 +40,9 @@ public enum UIInputEvent: Hashable, Sendable {
     case keys([KeyChord])
     case text(String)
     case click(UIPoint, button: ComputerAction.Button, count: Int, modifiers: KeyChord.Modifiers)
-    case drag(from: UIPoint, to: UIPoint, steps: Int)
+    /// `hold`: seconds the button stays down at `to` before it's released (the call returns at once,
+    /// so `capture` or `tree` can look mid-drag).
+    case drag(from: UIPoint, to: UIPoint, steps: Int, hold: Double = 0)
     /// Wheel deltas in points; positive dy scrolls content up (like a swipe up on a trackpad).
     case scroll(UIPoint, dx: Double, dy: Double)
     /// A trackpad scroll with gesture phases. `.gesture` sends began, `steps` changed events
@@ -181,6 +183,7 @@ public enum UIInspection: Hashable, Sendable {
                 "save": ["type": "string", "description": "capture: also write the image to this path."],
                 "points": ["type": "array", "items": point, "description": "pointer: points to move through."],
                 "from": point, "to": point,
+                "hold": ["type": "number", "description": "input drag: seconds to keep the button down at \"to\" before releasing (max 10); returns at once."],
                 "steps": ["type": "integer", "minimum": 1, "maximum": .number(Double(maxPointerSteps))],
                 "keys": ["type": "string", "description": "input/trace: keys like \"cmd+s\" or \"cmd+t Escape\"."],
                 "text": ["type": "string", "description": "input: text to type."],
@@ -296,7 +299,8 @@ private struct UIArguments {
             events.append(.click(point, button: button, count: try int("count", in: 1...3) ?? 1, modifiers: try modifiers()))
         }
         if let from = try point("from"), let to = try point("to") {
-            events.append(.drag(from: from, to: to, steps: try int("steps", in: 1...UIInspection.maxPointerSteps) ?? 10))
+            events.append(.drag(from: from, to: to, steps: try int("steps", in: 1...UIInspection.maxPointerSteps) ?? 10,
+                                hold: min(max(try double("hold") ?? 0, 0), 10)))
         }
         if let point = try point("scroll") {
             let dx = try double("dx") ?? 0, dy = try double("dy") ?? 0
