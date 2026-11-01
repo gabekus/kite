@@ -23,14 +23,27 @@ public enum SignInHandoff {
         public var passwords: Int
         /// Visible one-time-code fields (autocomplete="one-time-code", or named like one).
         public var codes: Int
+        /// Visible email or username fields: the first step of an email-first login.
+        public var identities: Int
 
-        public init(passwords: Int, codes: Int) {
+        public init(passwords: Int, codes: Int, identities: Int = 0) {
             self.passwords = passwords
             self.codes = codes
+            self.identities = identities
+        }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            passwords = try c.decode(Int.self, forKey: .passwords)
+            codes = try c.decode(Int.self, forKey: .codes)
+            identities = try c.decodeIfPresent(Int.self, forKey: .identities) ?? 0
         }
 
         /// The page still asks for a secret.
         public var asksForSecret: Bool { passwords > 0 || codes > 0 }
+
+        /// The page still looks like a step of a login: it asks for a secret or an account.
+        public var looksLikeLogin: Bool { asksForSecret || identities > 0 }
 
         public init?(json: String) {
             guard let probe = try? JSONDecoder().decode(Probe.self, from: Data(json.utf8)) else { return nil }
@@ -48,12 +61,27 @@ public enum SignInHandoff {
         case timedOut
     }
 
-    /// The sign-in looks done: the tab has moved on from where it started and no longer
-    /// asks for a password or a code. A page that never asked for one (an email-first
-    /// step) isn't done just because the field isn't there yet: the URL must change too.
+    /// The sign-in looks done: the tab is back on the site it started on, at a different
+    /// page, and that page asks for no password, code, email or username.
+    ///
+    /// Leaving the site never counts: "Continue with Google", Apple or a company login
+    /// goes through another site's pages (an account picker, a passkey prompt) that ask
+    /// for none of those, and only coming back to the starting site means it worked.
+    /// Anything Kite can't tell, the user ends with Done.
     public static func isFinished(start: URL?, now: URL?, probe: Probe) -> Bool {
-        guard !probe.asksForSecret else { return false }
+        guard !probe.looksLikeLogin, let start, let now else { return false }
+        guard let startSite = site(start.host()), startSite == site(now.host()) else { return false }
         return pageKey(start) != pageKey(now)
+    }
+
+    /// A host's site, roughly its registrable domain: the last two labels, or three for
+    /// two-letter country domains with a short second level ("shop.example.co.uk" → "example.co.uk").
+    static func site(_ host: String?) -> String? {
+        guard let host = host?.lowercased(), !host.isEmpty else { return nil }
+        let labels = host.split(separator: ".")
+        guard labels.count > 2 else { return host }
+        let keep = labels.last!.count == 2 && labels[labels.count - 2].count <= 3 ? 3 : 2
+        return labels.suffix(keep).joined(separator: ".")
     }
 
     /// Scheme, host and path: a fragment or query change on the same login page isn't leaving it.
@@ -71,10 +99,13 @@ public enum SignInHandoff {
           };
           const inputs = [...document.querySelectorAll('input')].filter((el) => !el.disabled && shown(el));
           const code = /one-time-code|otp|2fa|mfa|totp|verification/i;
+          const identity = /username|email|login|account|identifier/i;
           return JSON.stringify({
             passwords: inputs.filter((el) => el.type === 'password').length,
             codes: inputs.filter((el) => el.type !== 'password' && el.type !== 'hidden'
               && code.test([el.autocomplete, el.name, el.id].join(' '))).length,
+            identities: inputs.filter((el) => el.type === 'email' || (['text', ''].includes(el.type)
+              && identity.test([el.autocomplete, el.name, el.id].join(' ')))).length,
           });
         })()
         """

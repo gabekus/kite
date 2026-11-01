@@ -47,6 +47,30 @@ import Testing
         #expect(SignInHandoff.isFinished(start: login, now: URL(string: "https://shop.example/orders")!, probe: none))
     }
 
+    @Test func waitsThroughAnotherSitesLogin() {
+        let login = URL(string: "https://github.com/login")!
+        let none = SignInHandoff.Probe(passwords: 0, codes: 0)
+        // "Continue with Google": an account picker or passkey page asks for no password, but it's not done.
+        #expect(!SignInHandoff.isFinished(start: login, now: URL(string: "https://accounts.google.com/v3/signin/accountchooser")!, probe: none))
+        // Back on the starting site afterwards, it is.
+        #expect(SignInHandoff.isFinished(start: login, now: URL(string: "https://github.com/")!, probe: none))
+        // The same site's other hosts count as the site.
+        #expect(SignInHandoff.site("login.shop.example.co.uk") == "example.co.uk")
+        #expect(SignInHandoff.site("www.example.co.uk") == "example.co.uk")
+        #expect(SignInHandoff.site("accounts.example.com") == "example.com")
+        #expect(SignInHandoff.isFinished(start: URL(string: "https://accounts.example.com/signin")!,
+                                         now: URL(string: "https://www.example.com/home")!, probe: none))
+    }
+
+    @Test func waitsThroughEmailFirstSteps() {
+        let login = URL(string: "https://accounts.example.com/signin")!
+        // The next step asks for an email or username: still signing in.
+        #expect(!SignInHandoff.isFinished(start: login, now: URL(string: "https://accounts.example.com/signin/identifier")!,
+                                          probe: .init(passwords: 0, codes: 0, identities: 1)))
+        #expect(SignInHandoff.Probe(json: #"{"passwords":0,"codes":0,"identities":1}"#)?.looksLikeLogin == true)
+        #expect(SignInHandoff.Probe(json: #"{"passwords":0,"codes":0}"#)?.identities == 0)
+    }
+
     @Test func reportsNoSecrets() {
         let id = UUID()
         let url = URL(string: "https://shop.example/orders")!
