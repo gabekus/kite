@@ -1,7 +1,7 @@
 import Foundation
 
-/// `sign_in`: Claude hands a login page to the user, the user signs in (with 1Password,
-/// or by hand), and Claude carries on, signed in. The password goes from 1Password into
+/// `sign_in`: Claude hands a login page to the user, the user signs in (with their password manager,
+/// or by hand), and Claude carries on, signed in. The password goes from the password manager into
 /// the page and never through Claude: the tool's result says only whether the user
 /// signed in and where the tab ended up.
 ///

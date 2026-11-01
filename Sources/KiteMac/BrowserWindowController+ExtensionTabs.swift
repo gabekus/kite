@@ -43,24 +43,30 @@ extension BrowserWindowController: ExtensionTabsHost {
 
 #if canImport(CEFBridge)
 extension BrowserWindowController {
-    /// ⇧⌘X: 1Password's popup over the top right of the page, for the selected tab.
-    @objc func showOnePassword(_ sender: Any?) {
-        if !openOnePasswordPopup() { NSSound.beep() }
+    /// ⇧⌘X: the password manager's popup over the top right of the page, for the selected tab.
+    @objc func showPasswordManager(_ sender: Any?) {
+        if !openPasswordManager() { NSSound.beep() }
     }
 
-    /// 1Password's popup over the top right of the page. False when it can't open here.
+    /// The password manager's popup over the top right of the page. False when it can't open here.
     @discardableResult
-    func openOnePasswordPopup() -> Bool {
+    func openPasswordManager() -> Bool {
         guard !isIncognito else { return false }
         let bounds = contentFrame.bounds
         let anchor = NSRect(x: bounds.maxX - 40, y: contentFrame.isFlipped ? bounds.minY : bounds.maxY - 1, width: 1, height: 1)
-        return OnePasswordIntegration.showPopup(engine: pool.engine, relativeTo: anchor, of: contentFrame)
+        return PasswordManagerIntegration.showPopup(engine: pool.engine, relativeTo: anchor, of: contentFrame)
     }
 
-    /// For Claude's sign_in: whether 1Password can fill in this window.
-    var canOpenPasswordManager: Bool { !isIncognito && OnePasswordIntegration.isExtensionInstalled }
+    /// For Claude's sign_in: whether the password manager can fill in this window.
+    var canOpenPasswordManager: Bool {
+        !isIncognito && PasswordManagerIntegration.isExtensionInstalled(PasswordManagerIntegration.current)
+    }
 
-    func openPasswordManager() -> Bool { openOnePasswordPopup() }
+    /// For Claude's sign_in banner: the password manager's name, or nil without one.
+    var passwordManagerName: String? {
+        let manager = PasswordManagerIntegration.current
+        return manager == .none ? nil : manager.name
+    }
 }
 #else
 import AppKit
@@ -68,9 +74,10 @@ import AppKit
 extension BrowserWindowController {
     /// WebKit-only builds (no CEF) have no extensions, so ⇧⌘X has nothing to open.
     /// The File menu still names this action; validateMenuItem keeps it disabled.
-    @objc func showOnePassword(_ sender: Any?) { NSSound.beep() }
+    @objc func showPasswordManager(_ sender: Any?) { NSSound.beep() }
 
     var canOpenPasswordManager: Bool { false }
+    var passwordManagerName: String? { nil }
     func openPasswordManager() -> Bool { false }
 }
 #endif

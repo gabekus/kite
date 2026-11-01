@@ -51,7 +51,7 @@ struct ClaudeControlBanner: View {
         }
     }
 
-    /// sign_in: Claude waits while the user signs in. 1Password reopens its popup; Done says
+    /// sign_in: Claude waits while the user signs in. The password manager reopens its popup; Done says
     /// they're signed in (for pages Kite can't tell about); Cancel hands the tab back unsigned.
     private func signInBanner(_ request: SignInRequest, tab: UUID) -> some View {
         let accent = Color(red: 0.85, green: 0.47, blue: 0.34)
@@ -64,10 +64,10 @@ struct ClaudeControlBanner: View {
                 .truncationMode(.middle)
                 .help(request.reason.map { "Claude needs you signed in \($0)." } ?? "Claude needs you signed in.")
             if automation.canOpenPasswordManager {
-                Button("1Password") { automation.openPasswordManager() }
+                Button(automation.passwordManagerName) { automation.openPasswordManager() }
                     .buttonStyle(.borderless)
                     .font(.system(size: 12))
-                    .help("Fill this login with 1Password (⇧⌘X). Claude never sees the password.")
+                    .help("Fill this login with \(automation.passwordManagerName) (⇧⌘X). Claude never sees the password.")
             }
             Button("Cancel") { automation.answerSignIn(tab, .cancelled) }
                 .buttonStyle(.borderless)

@@ -242,7 +242,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let extensions = ExtensionsModel.shared(engine: pool.engine)
             toolbar.extensions = extensions
             sidebar.showExtensions = { view in ExtensionsMenu.present(model: extensions, from: view) }
-            sidebar.fieldAccessory = AnyView(OnePasswordFieldButton(model: extensions))
+            sidebar.fieldAccessory = AnyView(PasswordManagerFieldButton(model: extensions))
         }
         #endif
         sidebarHost = NSHostingView(rootView: sidebar)
@@ -1189,9 +1189,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):
             return shownPage?.isLoading ?? false
-        case #selector(showOnePassword(_:)):
+        case #selector(showPasswordManager(_:)):
             #if canImport(CEFBridge)
-            return !isIncognito
+            let manager = PasswordManagerIntegration.current
+            item.title = manager == .none ? "Password Manager…" : "\(manager.name)…"
+            return !isIncognito && manager != .none
             #else
             return false
             #endif

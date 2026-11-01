@@ -131,10 +131,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Once the window is up, so Chrome's "Add 1Password?" dialog has somewhere to hang.
             let engine = windowController.pool.engine
             VerificationCodeService.shared.configure(engine: engine)
-            OnePasswordFieldButton.open = { view in
-                MainActor.assumeIsolated { OnePasswordIntegration.showPopup(engine: engine, relativeTo: view.bounds, of: view) }
+            PasswordManagerFieldButton.open = { view, popup in
+                MainActor.assumeIsolated { PasswordManagerIntegration.showPopup(engine: engine, relativeTo: view.bounds, of: view, popupURL: popup) }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { OnePasswordIntegration.installIfNeeded(engine: engine) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { PasswordManagerIntegration.installIfNeeded(engine: engine) }
+            // Settings changed the password manager: install the new one, and move the key button to it.
+            var manager = PasswordManagerIntegration.current
+            NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    guard PasswordManagerIntegration.current != manager else { return }
+                    manager = PasswordManagerIntegration.current
+                    PasswordManagerIntegration.installIfNeeded(engine: engine)
+                    ExtensionsModel.shared(engine: engine).refresh()
+                }
+            }
         }
         KCRuntime.extensionDialogAnchor = { [weak self] window in
             MainActor.assumeIsolated {

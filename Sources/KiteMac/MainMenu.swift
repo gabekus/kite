@@ -156,8 +156,9 @@ enum MainMenu {
             // "Print", no ellipsis, as in Arc's File menu.
             item("Print", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
             .separator(),
-            // 1Password's own shortcut for its popup.
-            item("1Password…", #selector(BrowserWindowController.showOnePassword(_:)), "x", [.command, .shift], id: "onePassword"),
+            // 1Password's own shortcut for its popup. Titled after the password manager in
+            // Settings when the menu opens; the id stays "onePassword" for saved shortcuts.
+            item("1Password…", #selector(BrowserWindowController.showPasswordManager(_:)), "x", [.command, .shift], id: "onePassword"),
         ])
 
         submenu("Edit", [
