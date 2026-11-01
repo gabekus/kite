@@ -107,7 +107,10 @@ final class UIDiagnostics {
     }
 
     private func windowsReport() -> String {
-        let windows = NSApp.orderedWindows.filter { $0.isVisible || $0.isMiniaturized }
+        var windows = NSApp.orderedWindows.filter { $0.isVisible || $0.isMiniaturized }
+        // Popovers (Site Controls, extensions, downloads) aren't in orderedWindows; list them too
+        // so `{"window": N}` can reach them.
+        windows += NSApp.windows.filter { $0.isVisible && $0.className.contains("Popover") && !windows.contains($0) }
         guard !windows.isEmpty else { return "Kite has no windows open." }
         return windows.map { window in
             var flags: [String] = []
