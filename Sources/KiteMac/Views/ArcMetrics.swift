@@ -118,11 +118,12 @@ enum ArcMetrics {
         static let resizeZoneVerticalInset: CGFloat = 1
     }
 
-    /// Split view. From Arc's binary (`SplitViewDraggerHandleView`, the sidebar's split row);
-    /// values marked unverified still need a live measurement.
+    /// Split view. From Arc's binary (`ARCUI.SplitViewController`, `SplitViewDraggerHandleView`, the sidebar's
+    /// split row) and an incognito capture of Arc 1.171 (docs/arc-visual-spec.md, "Split View: geometry and motion").
     enum Split {
-        /// Gap between two panes. Unverified: the same as the card's inset for now.
-        static let gap: CGFloat = Content.inset
+        /// The gap between two panes is the divider: `draggerHandleWidth` 10, with a hit-target outset of 0,
+        /// so the resize zone is exactly the gap. Measured 10pt in Arc, the same as the card's inset.
+        static let gap: CGFloat = 10
         /// The divider's grip: a 2×24pt pill, corner 1, centred in the gap.
         static let gripSize = CGSize(width: 2, height: 24)
         static let gripCornerRadius: CGFloat = 1
@@ -130,8 +131,13 @@ enum ArcMetrics {
         static let gripOpacity: Double = 0.20
         static let gripHoverOpacity: Double = 0.50
         static let gripFadeDuration: Double = 0.16
-        /// Narrowest a pane can be dragged. Unverified.
-        static let minimumPaneWidth: CGFloat = 200
+        /// Narrowest a pane can be dragged: `minimumPaneWidth` 220.
+        static let minimumPaneWidth: CGFloat = 220
+        /// A dragged divider snaps to the middle of its two panes within this distance.
+        static let centerSnapDistance: Double = 14
+        /// Double-clicking a divider evens out its two panes, animated: 0.2s ease-out.
+        /// Adding and closing panes isn't animated (add: measured; close: not recorded yet).
+        static let equalizeDuration: Double = 0.2
         /// How far in from each outer edge of the content area a dragged link counts as "open in a split".
         /// Not measured: Arc's drop regions aren't traced.
         static let dropEdge: CGFloat = 64

@@ -716,6 +716,38 @@ Arc wasn't driven; nothing here is from a recording.
   12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
   top/bottom one on a top/bottom drop (Kite refuses it).
 
+## Split View: geometry and motion → `ArcMetrics.Split`, `SplitPanesView` (Arc 1.171 incognito capture + 1.169/1.171 decompile, 1 Nov 2026)
+
+Sources: **[cap]** one Arc incognito window (2056×1285pt, dark) on local fixture pages, View › Add Split View pressed through AX,
+recorded with a ScreenCaptureKit stream of that window only (frames every ~17–25ms) plus `screencapture -l`; **[dec]** Ghidra on
+`~/rea-arc/decomp/Arc-arm64` (`ARCUI.SplitViewController`).
+
+- **Gap = divider** [cap + dec]: 10pt between panes (pane 1 ends at x 1163, pane 2 starts at 1173, at 2×). `SplitViewController`'s
+  init sets `draggerHandleWidth` = **10.0** and `draggerHandleHitTargetOutset` = **0** (@100a50820), so the divider's hit area is
+  exactly the 10pt gap. The gap shows the window background (sampled #0d0e11, the same as the sidebar).
+- **Pane cards** [cap]: each pane is its own card, inset 10pt from the window's top, right and bottom and starting at the sidebar's
+  edge, like a single page; all four corners of every pane are rounded, including the corners facing the divider (same radius as
+  the single-page card). Two panes split the width evenly (873.5pt each of 1757).
+- **Grip** [cap + dec]: 2×24pt, centred in the gap (pixels x 2333–2336, y 1261–1308 at 2×), white ~18–20% on the dark window
+  (sampled ≈#373739 on #0d0e11): matches `DragHint` and the decompiled 2×24 / corner 1 pill.
+- **Minimum pane width** [dec]: `minimumPaneWidth` = **220.0** (@100a50820; ARCUI's default, no other writer found).
+- **Centre snap** [dec, pan handler @100a50d3c, 100a51b90–100a51c4c]: while dragging, the divider's offset from the middle of its two
+  panes is `position − pairLength × 0.5`; under **14pt** it snaps to the middle. Entering the snap plays
+  `NSHapticFeedbackManager` alignment feedback (the call also checks the drag's velocity against 120pt/s; Kite plays it on entering the
+  snap regardless).
+- **Double-click on a divider** [dec, @100a51d34 → closure @100a52084]: both panes beside it get half their combined share
+  (`fmul 0.5`), the others are untouched; the layout update runs animated (`@100a49224(1,1,1)`): `NSAnimationContext` duration
+  **0.2s** (0x3fc999999999999a), timing **easeOut**, `allowsImplicitAnimation` (@100a4ffd8).
+- **Dragging** [dec]: the pan handler relayouts with animation off (`@100a49224(0,1,0)`): panes follow the pointer, no easing.
+- **Add Split View** [cap]: no animation. The first frame after the menu press already has the final two-pane layout; the only motion
+  afterwards is the new pane's command bar appearing.
+- **Kite**: gap 10, grip unchanged, minimum pane 220, the 14pt centre snap with an alignment haptic, and double-click to even out a pair
+  animated 0.2s ease-out. Adding and closing panes stay instant.
+- **Not observed / unverified**: closing a pane (View › Close this Split Pane) and adding a third pane were pressed but Arc had lost
+  the front by then and didn't act, so their motion isn't recorded (Kite keeps them instant, like add); a real divider drag (needs the
+  real pointer) and the cursor/hover zone (no pointer sweep on Arc: the hit width is from the decompile only); filling the new pane from
+  its command bar (Arc's bar ignores an AX value + AXConfirm, and the window had lost the front before a Return could reach it).
+
 ## Library: Open Library… ⇧⌘L (Arc 1.171 menu bar, strings, MainMenu.nib, assets, 1 Nov 2026) → `LibraryView`
 
 Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, so no geometry was measured.
