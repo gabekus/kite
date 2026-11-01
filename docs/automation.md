@@ -43,6 +43,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | (none) | `wait_for` | | load, navigation, selector, text, network_idle. Event-driven. |
 | (none) | `handle_dialog` | | alert / confirm / prompt / beforeunload. |
 | (none) | `list_downloads` | | Downloads since control was turned on. |
+| (none) | `sign_in` | `kite call sign_in` | Hands a login page to the user, with 1Password. See below. |
 | (none) | `list_spaces`, `switch_space`, `create_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces` | Kite's own organization. |
 | `gif_creator`, `shortcuts_*`, `switch_browser` | not yet | | |
 
@@ -114,7 +115,7 @@ names the device pixel whose top-left it is, so a point on a rect's top or left 
 | `tree` | Views with frames, `NSVisualEffectView` material and blending, layer fill, corner radius and curve, border, shadow, text colour and font, hidden and alpha; SwiftUI's accessibility elements (role, id, label, frame, selected) inside hosting views; with `layers`, Core Animation sublayers. `root` starts at a node path, `match` lists matching nodes flat, `depth` and `max_nodes` bound it. |
 | `capture` | The window's pixels through ScreenCaptureKit, as on screen, even when covered or in the background, in sRGB. `region` crops at full resolution, `pixels` reads colours as hex, `save` writes a PNG. Without Screen Recording permission it falls back to a view render and says what that misses. |
 | `pointer` | Synthetic mouse moves (`points`, or `from`/`to`/`steps`) sent to the window only. At each point: the view hit, cursor rects, tracking areas (flagged when inactive because Kite is in the background), and the cursor Kite sets. Identical points fold into runs. |
-| `input` | One synthetic event for the window: `keys`, `text`, `click` (with `button`, `count`, `modifiers`), a drag (`from`/`to`) or `scroll` (`dx`, `dy`). With Kite in front keys take AppKit's exact path; in the background they take the same steps by hand (view key equivalents, menu bar, first responder). Says where each key went. |
+| `input` | One synthetic event for the window: `keys`, `text`, `click` (with `button`, `count`, `modifiers`), a drag (`from`/`to`) or `scroll` (`dx`, `dy`; add `phase` for a trackpad scroll with gesture phases: `gesture` sends began, `steps` changed events and ended, or `began`/`changed`/`ended`/`cancelled` one at a time to hold a gesture mid-way. Phased scrolls go through swipe-to-navigate first, as real ones do, and the result says what it decided). With Kite in front keys take AppKit's exact path; in the background they take the same steps by hand (view key equivalents, menu bar, first responder). Says where each key went. |
 | `menu` | Every menu item: path, shortcut, action and target, id, enabled, hidden. Flags shortcuts with no ⌘/⌃/⌥/fn ("FIRES WHILE TYPING", the emoji-on-e bug) and two enabled items on one shortcut. |
 | `key_log` | The last keys pressed in Kite: window, first responder chain, input source, and any menu item each one fired. Plain typing shows only its kind (letter, digit), unless it fired a menu item. |
 | `trace` | Records for `seconds` (default 1.5), after pressing optional `keys`: each Core Animation animation (key path, duration, curve control points or spring, from/to), every layer whose on-screen frame or opacity changed with progress samples, SwiftUI elements matching `match`, and frame intervals with late frames. |
@@ -229,6 +230,19 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   - form values.
 - **Indicator.** A "Claude is controlling this tab" pill floats over the page, with Show and **Stop**. Stop revokes
   the tab: it ends its event collection and fails pending confirmations and waits.
+- **Sign-in handoff (`sign_in`).** Claude never types or sees passwords. When a page needs the user signed in,
+  Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and swaps the
+  pill for "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the
+  page itself, so the password goes from the vault into the form and never through Kite's tools or the model.
+  - While it waits, every other tool on that tab fails ("The user is signing in on this tab"), so nothing can read
+    the filled fields.
+  - It ends when the page has moved to a different URL and shows no visible password or one-time-code field (two
+    checks 0.5 s apart), when the user presses Done or Cancel, on Stop, or after 5 minutes.
+  - On Cancel or timeout, Kite empties the page's password and code fields before handing the tab back.
+  - Claude gets only "signed in / cancelled / timed out" and the tab's new URL and title.
+  - Limits: only the top frame is checked (a login inside an iframe needs Done), and after sign-in Claude can still
+    run `javascript` on the page as usual. This is the same model as 1Password's own agentic autofill: the agent never
+    holds the credential.
 
 ## Events, waits and dialogs
 

@@ -35,11 +35,16 @@ rm -rf "$STAGED"
 mv "$STAGED.tmp" "$STAGED"
 version="$(git rev-parse --short HEAD)"
 
-# Moves the staged build into place, if one is still waiting.
+# Moves the staged build into place, if one is still waiting. Several waiters can wake at
+# once (each install while Kite was open left one), so each first claims the staged build
+# with a single rename: only one of them gets it, and the rest find nothing to do. Checking
+# for it and then deleting Kite.app let a second waiter delete the app the first had just
+# moved in.
 swap() {
-    [[ -d "$STAGED" ]] || return 0
+    local claimed="$DEST_DIR/.Kite.app.swapping.$$"
+    mv "$STAGED" "$claimed" 2>/dev/null || return 0
     rm -rf "$DEST"
-    mv "$STAGED" "$DEST"
+    mv "$claimed" "$DEST"
     # Make Finder, the Dock and Spotlight pick up the new icon now, not after a relaunch.
     /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST"
     touch "$DEST"
@@ -54,13 +59,24 @@ if [[ -z "$pid" ]]; then
 fi
 
 if [[ "$RESTART" == 0 ]]; then
-    # Swap once Kite quits. A later install replaces the staged build, and
-    # whichever waiter runs first moves in the newest one.
+    # Swap once Kite quits. A later install replaces the staged build.
+    # One waiter is enough: an earlier one (from an install while this same Kite was open)
+    # would move in whatever is staged anyway, so it's replaced rather than joined.
+    WAITER="$DEST_DIR/.Kite.app.waiter"
+    if [[ -f "$WAITER" ]]; then
+        read -r old_pid old_kite < "$WAITER" || true
+        if [[ "${old_kite:-}" == "$pid" ]] && kill -0 "${old_pid:-0}" 2>/dev/null \
+            && ps -o command= -p "$old_pid" | grep -q "Kite.app.new"; then
+            kill "$old_pid" 2>/dev/null || true
+        fi
+    fi
     nohup bash -c "
         while kill -0 $pid 2>/dev/null; do sleep 1; done
         $(declare -f swap)
-        DEST='$DEST' STAGED='$STAGED' swap
+        DEST='$DEST' DEST_DIR='$DEST_DIR' STAGED='$STAGED' swap
+        rm -f '$WAITER'
     " >/dev/null 2>&1 &
+    echo "$! $pid" > "$WAITER"
     disown
     echo "Kite is open, so $version is staged and goes in when you quit Kite"
     exit 0
