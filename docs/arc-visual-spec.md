@@ -872,8 +872,8 @@ Arc was not opened or driven, so no geometry was measured.
   `setIsEnabled` and `isEnabled`.
 - Who plays it: `WindowState` holds the `soundEffectClient` dependency, used from WindowState+Capture.swift (its
   unimplemented-dependency stub sits among the capture code, 0x10020b870). So the sound goes with Capture.
-  Which capture paths play it (region, full page) and at what moment wasn't traced: inferred, when a capture is
-  taken.
+  Which capture paths play it (region, full page) and at what moment wasn't traced. Kite plays it, inferred, when
+  either Capture… or Capture Full Page has the image.
 - Kite's capture sound is its own, made in code (`SoundEffects.shutter`): two clicks 70 ms apart, each high-passed
   noise from a fixed-seed generator with a 6 / 9 ms exponential decay over a 210 / 160 Hz sine thump, 0.5 ms
   fade-in, peak 0.9, 48 kHz 16-bit mono, the same 0.634 s as Arc's file. Rendered to a WAV in memory at first use.
