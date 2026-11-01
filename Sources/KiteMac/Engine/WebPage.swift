@@ -88,6 +88,10 @@ protocol WebPage: AnyObject {
     /// Clears one site's cookies or cache (Arc's "Clear … and Refresh"). Reloading is up to the caller.
     func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void)
     func setForceDark(_ enabled: Bool)
+    /// The permission the profile stores for `url`'s site (Chromium content settings); nil
+    /// where the engine keeps none Kite can read (WebKit asks every time, through macOS).
+    func sitePermission(_ permission: SitePermission, for url: URL) -> SitePermissionValue?
+    func setSitePermission(_ permission: SitePermission, _ value: SitePermissionValue, for url: URL)
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void)
     /// Engine-specific state for restoring history after hibernation, if supported.
     func hibernationState() -> Any?

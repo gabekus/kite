@@ -39,6 +39,8 @@ struct SidebarView: View {
     /// Always shown at the address field's right end (1Password's key); hides itself when
     /// there's nothing to show.
     var fieldAccessory: AnyView?
+    /// Opens Site Controls from the address field's hover button.
+    var showSiteControls: ((NSView) -> Void)?
     /// Where a two-finger swipe between spaces has the pages.
     var swipe = SpaceSwipeModel()
     /// The Mini Player's buttons; nil shows no Mini Player.
@@ -89,6 +91,7 @@ struct SidebarView: View {
                     action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
                     toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } },
                     showExtensions: showExtensions,
+                    showSiteControls: SiteControls.applies(to: selectedTab?.url) ? showSiteControls : nil,
                     accessory: fieldAccessory
                 )
                 .padding(.top, M.urlFieldTopGap)
@@ -438,7 +441,9 @@ private struct AddressPill: View {
     let action: () -> Void
     let toggleDark: () -> Void
     var showExtensions: ((NSView) -> Void)?
+    var showSiteControls: ((NSView) -> Void)?
     var accessory: AnyView?
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -461,13 +466,19 @@ private struct AddressPill: View {
                 if let isDark {
                     DarkPageToggle(isDark: isDark, action: toggleDark)
                 }
+                // Arc reveals Site Control Center at the field's right end on hover.
+                if let showSiteControls {
+                    SiteControlsFieldButton(action: showSiteControls)
+                        .opacity(hovering || SiteControlsPopover.isShown ? 1 : 0)
+                }
                 if let showExtensions {
                     ExtensionsFieldButton(action: showExtensions)
                 }
             }
-            .padding(.trailing, isDark != nil || showExtensions != nil ? 4 : 0)
+            .padding(.trailing, isDark != nil || showExtensions != nil || showSiteControls != nil ? 4 : 0)
         }
         .modifier(ChromeFill(strength: M.fieldFill))
+        .onHover { hovering = $0 }
     }
 }
 
@@ -493,6 +504,29 @@ private struct ExtensionsFieldButton: View {
         .onHover { hovering = $0 }
         .help("Extensions")
         .accessibilityLabel("Extensions")
+    }
+}
+
+/// Site Control Center's sliders button in the address field.
+private struct SiteControlsFieldButton: View {
+    let action: (NSView) -> Void
+    @State private var anchor: NSView?
+    @State private var hovering = false
+
+    var body: some View {
+        Button { if let anchor { action(anchor) } } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: ExtensionsFieldButton.size, height: ExtensionsFieldButton.size)
+                .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0, cornerRadius: 6))
+                .background(AnchorView(view: $anchor))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(hovering ? 0.9 : 0.6)
+        .onHover { hovering = $0 }
+        .help("Site Control Center")
+        .accessibilityLabel("Site Control Center")
     }
 }
 

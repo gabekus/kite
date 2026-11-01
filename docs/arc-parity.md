@@ -79,7 +79,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | Appearance: Automatic / Light / Dark (websites) | | 🟡 Dark Pages Off/Match/Always | Have it; the other session owns this |
 | Show Sidebar | ⌘S | ✅ | |
-| Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host and (disabled until built) Site Controls and Split View; the sidebar drops its nav buttons and URL field. "Show full URL" setting not yet | B5 (`topBarURLEnabled`) |
+| Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host, Site Controls and Split View; the sidebar drops its nav buttons and URL field. "Show full URL" setting not yet | B5 (`topBarURLEnabled`) |
 | Collapse Pinned Tabs | | ✅ View › "Collapse Pinned Tabs" ("Expand Pinned Tabs" while collapsed) and a chevron in the space header | B3 |
 | Stop Loading | ⌘. | ✅ | |
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
@@ -188,7 +188,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Share spaces, folders, splits | Public link or collaborator | ❌ | Roadmap: sync + sharing |
 | Profiles | Separate cookies per space | ❌ | Thread: profiles |
 | Incognito | Private window | ✅ | |
-| Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | ❌ | Thread: Site controls (ad blocker thread owns the toggle) |
+| Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | 🟡 Popover from the toolbar's sliders button and the sidebar URL field's hover button: Copy URL, Share, Block Ads & Trackers, camera/mic/location/notifications (Chromium content settings; not on WebKit), Secure/Insecure, Clear Cache / Clear Cookies. No Boosts, capture, extensions section, Developer Mode, All Site Settings | Gap 8 |
 | Native ad blocker | uBlock-style lists | ❌ | Ad blocker thread |
 | Translation | Translate page, "never translate" sites | ❌ | Later (Chromium translate isn't in CEF) |
 | Instant Links | Command bar goes straight to the top result | ❌ | With Claude in the browser |
