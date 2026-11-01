@@ -59,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
         store.archiveStaleTabs()
+        applyPageAppearance()
         // Deleted profiles whose folders are gone (ProfileFolders) free their names.
         let removed = Set(store.state.retiredProfileDirectories.filter { !ProfileFolders.exists($0) })
         if !removed.isEmpty { store.mutate { $0.forgetRetiredProfiles(removed) } }
@@ -477,6 +478,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateNow
     }
 
+    // MARK: View › Appearance
+
+    /// View › Appearance, by Arc's selectors (its AppDelegate's setAutomatic/Light/DarkAppearance:).
+    /// Like Arc, it sets the app's appearance: CEF and WebKit hand it to pages as
+    /// `prefers-color-scheme`. Views with an appearance of their own (the sidebar's, from the space
+    /// theme) keep it.
+    @objc func setAutomaticAppearance(_ sender: Any?) { setPageAppearance(.automatic) }
+    @objc func setLightAppearance(_ sender: Any?) { setPageAppearance(.light) }
+    @objc func setDarkAppearance(_ sender: Any?) { setPageAppearance(.dark) }
+
+    private func setPageAppearance(_ appearance: PageAppearance) {
+        store.mutate { $0.pageAppearance = appearance }
+        applyPageAppearance()
+    }
+
+    private func applyPageAppearance() {
+        NSApp.appearance = store.state.pageAppearance.appearanceName.flatMap { NSAppearance(named: NSAppearance.Name($0)) }
+    }
+
     /// Kite menu → Warn Before Quitting, until there's a Settings window (Arc has it in General).
     @objc func toggleQuitWarning(_ sender: Any?) {
         store.mutate { $0.warnsBeforeQuitting.toggle() }
@@ -590,6 +610,15 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleJavaScriptFromAppleEvents(_:)) {
             item.state = allowsJavaScriptFromAppleEvents ? .on : .off
+        }
+        // Arc checks the item matching NSApp.appearance (none set: Automatic).
+        let appearances: [Selector: PageAppearance] = [
+            #selector(setAutomaticAppearance(_:)): .automatic,
+            #selector(setLightAppearance(_:)): .light,
+            #selector(setDarkAppearance(_:)): .dark,
+        ]
+        if let action = item.action, let appearance = appearances[action] {
+            item.state = PageAppearance(appearanceName: NSApp.appearance?.name.rawValue) == appearance ? .on : .off
         }
         if item.action == #selector(toggleQuitWarning(_:)), let store {
             item.state = store.state.warnsBeforeQuitting ? .on : .off

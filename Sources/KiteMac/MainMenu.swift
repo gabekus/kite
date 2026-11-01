@@ -68,6 +68,12 @@ enum MainMenu {
         let up = String(Character(UnicodeScalar(NSUpArrowFunctionKey)!))
         let down = String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
 
+        func appearanceItem(_ title: String, _ action: Selector, id: String, keywords: [String]) -> NSMenuItem {
+            let menuItem = item(title, action, toTarget: false, id: id)
+            menuItem.representedObject = CommandBarKeywords(keywords)
+            return menuItem
+        }
+
         func darkPagesMenu() -> NSMenuItem {
             let menu = TypingSafeMenu(title: "Dark Pages")
             let titles: [DarkPagesMode: String] = [.off: "Off", .matchSystem: "Match System", .always: "Always"]
@@ -216,6 +222,22 @@ enum MainMenu {
         ])
 
         submenu("View", [
+            // Arc 1.171's View › Appearance (MainMenu.nib): a disabled header, then its items with their
+            // type-travel keywords and command bar titles ("Switch to … Mode").
+            submenuItem("Appearance", [
+                {
+                    let header = NSMenuItem(title: "Websites, Easels, and Notes will use:", action: nil, keyEquivalent: "")
+                    header.isEnabled = false
+                    return header
+                }(),
+                appearanceItem("Automatic", #selector(AppDelegate.setAutomaticAppearance(_:)), id: "automaticMode",
+                               keywords: ["Switch to Automatic Appearance", "Switch Automatic Mode", "Automatic Mode"]),
+                appearanceItem("Light", #selector(AppDelegate.setLightAppearance(_:)), id: "lightMode",
+                               keywords: ["Switch to Light Mode", "Switch Light Mode", "Light Mode"]),
+                appearanceItem("Dark", #selector(AppDelegate.setDarkAppearance(_:)), id: "darkMode",
+                               keywords: ["Switch to Dark Mode", "Switch Dark Mode", "Dark Mode", "Night Mode"]),
+            ]),
+            .separator(),
             item("Toggle Sidebar", #selector(BrowserWindowController.toggleSidebar(_:)), "s", id: "toggleSidebar"),
             // Retitled "Hide Toolbar" while shown.
             item("Show Toolbar", #selector(BrowserWindowController.toggleToolbar(_:)), "d", [.command, .shift], id: "toggleToolbar"),

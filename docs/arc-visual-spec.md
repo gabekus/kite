@@ -2511,3 +2511,27 @@ doing it: a live folder needs a signed-in GitHub session, which an incognito win
   (`hasSeenGithubLiveFolderEducation` → `hasSeenLiveFolderIntro`). Which icon the popover shows is unverified (Kite: folder).
 - **Still unverified (Arc not recorded; Gabe's GitHub Live Folder is off):** the alert's button titles, the "Last fetch"
   date format, whether viewing (not making) a pull request also files it, and whether the popover times out.
+
+## View › Appearance (page colour scheme) → `PageAppearance` (KiteCore), `AppDelegate.setAutomatic/Light/DarkAppearance(_:)`, MainMenu (Arc 1.171 MainMenu.nib, strings, disassembly, defaults key name, 1 Nov 2026)
+
+- Menu (menudump `~/rea-arc/notes/arc-menu-1.171.txt` line 107; MainMenu.nib strings): View opens with an
+  "Appearance" submenu, then a separator. Inside: a disabled header "Websites, Easels, and Notes will use:", then
+  Automatic (id `automaticMode`, SF symbol sparkles), Light (`lightMode`, sun.max), Dark (`darkMode`,
+  moon.stars.fill). No shortcuts. Type-travel keywords: "Switch to Automatic Appearance; Switch Automatic Mode;
+  Automatic Mode", "Switch to Light Mode; Switch Light Mode; Light Mode", "Switch to Dark Mode; Switch Dark Mode;
+  Dark Mode; Night Mode"; command bar titles "Switch to … Mode/Appearance". Kite offers the titles and keywords to
+  its command bar; the SF symbols aren't used (Kite's menu items carry none).
+- Actions: Arc's AppDelegate `setAutomaticAppearance:` / `setLightAppearance:` / `setDarkAppearance:`
+  (`decomp/out7/funcs.txt` 0x100236884 / 0x10023689c / 0x10023699c). Light and Dark load
+  `NSAppearanceNameAqua` / `NSAppearanceNameDarkAqua` and send a store action with it (`arc.s` from 0x10023689c).
+- Check marks (`decomp/out2/objc-setState.txt` ~3850): Automatic is on when `NSApp.appearance` is nil, Light when
+  its name is Aqua, Dark when DarkAqua. So the mechanism is the app's appearance; Chromium (and WebKit) hand it to
+  pages as `prefers-color-scheme`.
+- Storage: Arc's `company.thebrowser.Browser` defaults key `appearance` (a string NSAppearanceName; it sits with
+  app-level keys like `restoreWindowsOnNextLaunch` in the strings). Default Automatic is inferred from the
+  validation (no appearance set) and the key being absent until chosen; not observed on a fresh Arc.
+- Kite: `BrowserState.pageAppearance` (session.json, default `.automatic`) sets `NSApp.appearance`. Views that set
+  their own appearance (sidebar, library, window material from the space theme) keep it; other app-level UI that
+  follows NSApp (command bar, Settings, alerts) follows the choice, as it would in Arc. Dark Pages' "Match System"
+  reads `NSApp.effectiveAppearance`, so it now follows this choice (Light: no forced dark; Dark: forced dark on
+  sites without their own dark theme); "Always" and the per-site toggle work regardless.
