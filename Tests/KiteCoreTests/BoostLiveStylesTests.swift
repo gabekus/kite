@@ -1,15 +1,22 @@
 import Foundation
-import JavaScriptCore
 import Testing
 @testable import KiteCore
+#if canImport(JavaScriptCore)
+import JavaScriptCore
+#endif
 
 struct BoostLiveStylesTests {
+    /// Whether `source` parses as JavaScript (always true where JavaScriptCore isn't available).
     private func parses(_ source: String) -> Bool {
+        #if canImport(JavaScriptCore)
         let context = JSGlobalContextCreate(nil)
         defer { JSGlobalContextRelease(context) }
         let script = JSStringCreateWithUTF8CString(source)
         defer { JSStringRelease(script) }
         return JSCheckScriptSyntax(context, script, nil, 1, nil)
+        #else
+        return true
+        #endif
     }
 
     @Test func stylesFollowCSSAndControlsButNotJavaScript() {
