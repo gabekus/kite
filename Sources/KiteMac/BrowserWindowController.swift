@@ -819,9 +819,31 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     func close(tab id: UUID) {
-        if store.mutate({ $0.close(tab: id) }) == .unloaded {
+        let wasSelected = store.state.selectedTab?.id == id
+        let outcome = store.mutate { $0.close(tab: id) }
+        if outcome == .unloaded {
             pool.discard(id, keepHistory: false)
         }
+        guard outcome != .notFound else { return }
+        // Arc's Edit menu: "Undo Archive Tab" ⌘Z, Redo ⇧⌘Z. AppKit titles the items from the action name.
+        window?.undoManager?.registerUndo(withTarget: self) { controller in
+            controller.undoClose(tab: id, outcome: outcome, reselect: wasSelected)
+        }
+        window?.undoManager?.setActionName("Archive Tab")
+    }
+
+    private func undoClose(tab id: UUID, outcome: CloseOutcome, reselect: Bool) {
+        let restored: Bool
+        if outcome == .removed {
+            restored = store.mutate { $0.reopenClosed(tab: id) } != nil
+        } else {
+            // A pinned tab or favourite stays in the sidebar when archived; undo shows it again.
+            restored = store.state.location(of: id) != nil
+            if restored, reselect { store.mutate { $0.select(tab: id) } }
+        }
+        guard restored else { return }
+        window?.undoManager?.registerUndo(withTarget: self) { controller in controller.close(tab: id) }
+        window?.undoManager?.setActionName("Archive Tab")
     }
 
     @objc func newTab(_ sender: Any?) {

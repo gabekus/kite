@@ -329,7 +329,16 @@ public struct BrowserState: Hashable, Codable, Sendable {
 
     @discardableResult
     public mutating func reopenLastClosed(now: Date = Date()) -> UUID? {
-        guard let closed = recentlyClosed.popLast() else { return nil }
+        guard let closed = recentlyClosed.last else { return nil }
+        return reopenClosed(tab: closed.tab.id, now: now)
+    }
+
+    /// Edit › Undo Archive Tab: puts one archived tab back where it was, selected. Nil when it
+    /// isn't among the recently closed (reopened since, or pushed out).
+    @discardableResult
+    public mutating func reopenClosed(tab id: UUID, now: Date = Date()) -> UUID? {
+        guard let i = recentlyClosed.lastIndex(where: { $0.tab.id == id }) else { return nil }
+        let closed = recentlyClosed.remove(at: i)
         let s = spaceIndex(closed.spaceID) ?? selectedSpaceIndex
         var tab = closed.tab
         tab.lastActiveAt = now
