@@ -31,17 +31,24 @@ public enum AskOnPage {
         return inConversation
     }
 
-    /// Arc's label when a finished search found nothing (disassembly `0x10215ae18`): the same
-    /// slot as the n/N counter, with Ask on Page on or off.
+    /// Arc's label when a finished search found nothing, Ask on Page on (its SwiftUI `AskInPageView`,
+    /// disassembly `0x10215ae18`).
     public static let noMatchesLabel = "No matches"
 
-    /// The text right of the query, as Arc's find view picks it: nothing for an empty query or
-    /// before the search comes back, "No matches" for none, else "active/total". `matches` is nil
-    /// when the engine only says found or not (WebKit), which shows nothing when found.
-    public static func matchLabel(query: String, found: Bool, matches: Int?, activeMatch: Int?) -> String {
+    /// The same with Ask on Page off: Arc's AppKit `FindInPageView` shows its `noResultsView`,
+    /// "Not Found" (`0x1003292e0`) in the `FindInPageError` red, in the counter's place.
+    public static let notFoundLabel = "Not Found"
+
+    /// The text right of the query, as Arc's find views pick it: nothing for an empty query or
+    /// before the search comes back, "No matches" / "Not Found" for none (Ask on Page on / off),
+    /// else "active/total". `matches` is nil when the engine only says found or not (WebKit),
+    /// which shows nothing when found.
+    public static func matchLabel(query: String, found: Bool, matches: Int?, activeMatch: Int?,
+                                  askEnabled: Bool) -> String {
         guard !query.isEmpty else { return "" }
         guard let total = matches ?? (found ? nil : 0) else { return "" }
-        return total < 1 ? noMatchesLabel : "\(activeMatch ?? 0)/\(total)"
+        guard total >= 1 else { return askEnabled ? noMatchesLabel : notFoundLabel }
+        return "\(activeMatch ?? 0)/\(total)"
     }
 
     /// Each tab's conversation while the tab isn't shown, so it's still there when you come back

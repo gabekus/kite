@@ -2166,14 +2166,14 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   type of page.", "This page was long, so I read the first …" (interpolated; Kite shows a percentage, inferred
   from `fractionOfContextUsed`).
 - Inferred or unmeasured: the field clears after a question is sent (the "Ask a question…" placeholder implies it);
-  the panel sits 6pt under the bar at the bar's width, 12pt padding, max 420pt tall, same navy as the bar (Arc's
-  panel was never opened here, so none of its geometry, colours, fonts or animation is measured); Kite doesn't
-  find-as-you-type while in a conversation; one question at a time. Arc's context limit is in tokens (Tiktoken);
-  Kite sends the first 60,000 characters of `document.body.innerText`.
+  Kite doesn't find-as-you-type while in a conversation; one question at a time. Arc's context limit is in tokens
+  (Tiktoken); Kite sends the first 60,000 characters of `document.body.innerText`. The card's geometry is now measured
+  from the binary (g128, below).
 - "No matches" (g62; disassembly of Arc 1.171, `arc.s`): the find view's match slot (function at `0x10215a348`) shows
   nothing while the query is empty or `numMatches` is nil, "No matches" (small-string immediate at `0x10215ae18`)
   when `numMatches < 1`, else an interpolated "n/N" ("/" literal). There's no Ask on Page check on that path, so it
-  shows with the feature on or off. Both texts are `.system(size: 13, weight: .medium, design: .rounded)` with the
+  shows with the feature on or off. **Corrected by g129:** that view is only Arc's ask card; with Ask on Page off Arc
+  shows its AppKit `FindInPageView`, whose empty result is "Not Found" in red (see "Find bar" below). Both texts are `.system(size: 13, weight: .medium, design: .rounded)` with the
   same theme foreground and a 0.5 stored next to it (likely opacity). Kite puts "No matches" in its existing counter
   label (11.5pt medium, `#E8EAEF`, tuned from captures in #108's era), so it matches Kite's n/N, not Arc's 13pt
   rounded: unmeasured in pixels. Arc's older AppKit `FindInPageView` says "Not Found" (`0x100329330`); Kite follows
@@ -2185,9 +2185,13 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   "Ask a question…", with the page keeping the keyboard; an answer that arrives while the tab is away lands in its
   conversation. Esc ends it (as #108); ⌘F ends it only when typed in the field (Arc's `CommandFTextField.onCommandF`
   belongs to the field), and from the page it just focuses the field. Closing the tab drops it.
-- New chat: Arc has one (`askOnPageNewChatButtonImmediateTooltipClickCount`, `askToolNewChatButtonClicked`, ~64046,
-  ~160726), but no symbol or label for it turns up in the AskInPage code (`0x10214e000-0x10216ffff`: only
-  `arrow.forward`, `arrow.up`, `arrow.down`), so its look and place are unknown and Kite doesn't add it.
+- New chat (g128): Arc 1.171's Ask on Page has no new-chat button. The AskInPage views (`0x10214e000-0x10215e900`,
+  decompiled whole) build only these controls: the field, the match slot (n/N or "No matches", `arrow.up` /
+  `arrow.down`), an "Ask" button with tooltip "Submit", the input row's close, and the conversation's `xmark` button with
+  tooltip "Close", which cancels the chat thread's tasks (`AskInPageChatThread.tasks`, `0x10214a570`) and calls back
+  to the parent (inferred: back to finding, `onShouldResetToFindInPage`). `askOnPageNewChatButtonImmediateTooltipClickCount`
+  is only a settings key and `askToolNewChatButtonClicked` an analytics event of the separate "Ask tool"; neither has a
+  view here. Kite builds the "Close" button and adds no new-chat button.
 
 ## Import from Another Browser → `BrowserImport` (KiteCore), `BrowserImportController` (Arc 1.171 menu bar, strings, assets, 1 Nov 2026)
 
@@ -3430,3 +3434,56 @@ Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, Ghidra decompile
 - Kite: the same format, "Kite Data Export.md", the same panel. `KITE_TEST_EXPORT_DATA_PATH` (test builds only) writes without the panel.
 
 **More Settings…**: strings 80409–80410, "Clicking opens arc://settings", Chromium's own settings WebUI, which Kite's Alloy-style tabs can't host. Kite opens its own Chromium settings pages instead (kite://settings/privacy, from g100/g101) in a new tab for the current space's profile. **Reset Translated-site Prompts** stays disabled: Kite has no translation.
+
+## Find bar and Ask on Page card → `FindBarStyle` (KiteCore), `FindBar`, `AskOnPagePanel` (Arc 1.171 decompile and assets, 1 Nov 2026; g128, g129)
+
+Sources: Ghidra decompiles in `~/rea-arc/decomp/out-g128/` (`fipv.txt` FindInPageView, `constraints.txt`
+WindowContentViewController, `region.txt` AskInPage views, `helpers*.txt`), `~/rea-arc/decomp/arc.s`, `assetutil --info`
+on `ARCClients_BaseAssets.bundle` and `ARCUI_ARCUI.bundle`. No Arc pixels were captured for this: Ask on Page is off in
+Gabe's Arc (so its card can't be shown), and the find bar's earlier captures (#108 era, Arc 1.169) already match.
+
+Two views. `WindowContentState` has separate `findInPageState` and `askInPageState`, each shown by its own subscription
+(`0x10040e6cc`): `FindInPageView` (AppKit) for plain find, `AskInPageHostingView` (SwiftUI `AskInPageView`) for Ask on
+Page. Which one ⌘F opens with the feature off isn't traced in the reducer; the earlier captures' 300×32 bar matches
+`FindInPageView` exactly, so Kite shows it with Ask on Page off and the ask card with it on.
+
+**Find bar (g129), `FindInPageView`:**
+- Placement (`0x100423b28`, `0x10040b040`): width 300 at priority 250; left ≥ content + 10 at 750; right = content
+  − 10; top = content + 10, or + 50 when a top bar panel is showing (Kite has none). Height 32 (its init).
+- Look (`updateLayer`, `0x10032ae1c`): corner radius **5** (Kite had 6); background `PopoverBackground` (light
+  #FAFBFF, dark #151C30); NSShadow blur 5, offset (0, −3), `PopoverShadow` (#151C32 at 30% light, 80% dark).
+- Inside (`0x100329c30`): magnifier 26×26 at x 3 (15pt icon-font glyph); text field from x 32 (`leftTitleMargin`) to
+  4pt before the results; close button 3pt from the trailing edge, centred; results stack n, "/", N with 6pt right
+  inset, then previous / next (16pt glyphs, 5pt insets). Separator (`layout`, `0x10032af38`): a 1pt layer at x = close
+  − 1.5, y 7, height = bar − 14 = **18** (Kite had 16), colour `FindInPageSeparator` (black 10%), hidden when there
+  are no results. Text `ForegroundPrimary`, buttons `PopoverInputText`.
+- No match: `noResultsView` "Not Found" (`0x1003292e0`) in `FindInPageError` (P3 0.788, 0.2, 0.2), in the results'
+  place (insets −1, 0, 0, 6). Kite: "Not Found" in that red with Ask on Page off, "No matches" with it on.
+- Motion: shown with `setHidden(false)` (`0x10041ae08`) and hidden with `setHidden(true)` (`0x10041afb8`): no
+  animation either way. Kite: the same.
+- Kite: the colours are Arc's named colours with their light and dark values (Kite's were navy only, tuned from dark
+  captures); the bar follows the window's appearance, so it's light in a light window. **Inferred:** that Arc's bar
+  follows the window's appearance the same way. Fonts are Arc's font tokens, not decoded: Kite keeps 13pt / 11.5pt.
+
+**Ask on Page card (g128), `AskInPageView`:**
+- Placement (`0x10041b35c`): width 400 at priority 250; left ≥ content + 20 at 750; right = content − 20; top = content
+  + 20 (60 with a top bar panel); height ≤ content − 40 (− 80 with one). Popover background, 10pt continuous corners,
+  0.5pt edge (white 20% dark / black 20% light) (`0x10215be44`, `FUN_100a29f24`).
+- Motion: in, a `CASpringAnimation` on `transform` from 300pt above; out, to (20 + height + 40)pt above, then removed;
+  Arc's spring helper (`0x100a05154`) is response 0.28 s, damping fraction 0.63, so stiffness (2π/0.28)² ≈ 503.5 and
+  damping 4π·0.63/0.28 ≈ 28.27 (mass 1), lasting its settling duration. A different tab's content drops it at once
+  (`0x10041c0e4`).
+- Body (`0x102158760`): VStack { conversation, when there is one; input row }. Input row (`0x1021593d8`): HStack aligned
+  on first baselines, spacing 8: the field (`NSFont.systemFont` medium, **16pt**, 14pt in a conversation), the match slot
+  (n/N or "No matches", 13pt medium rounded at 50% opacity, 6pt trailing padding, `arrow.up` / `arrow.down`), the "Ask"
+  button and a close button; padding leading 6, then 12 all round. In a conversation the row sits on a 4pt rounded fill
+  (white 10% dark / black 5% light) 6pt in (`0x10215b518`), and the match slot and close go.
+- "Ask" button (`0x10215b874`, tooltip "Submit"): "Ask" in callout semibold, padding 6 vertical / 12 horizontal, on the
+  theme palette colour (20% in dark, solid in light), white text in dark, half opacity while disabled.
+- Conversation: `ScrollView` of messages, 18pt padding; the close button sits top-trailing, 9pt from the top and
+  trailing edges: `xmark` on a 6pt continuous rounded rectangle of `ultraThin` material, tooltip "Close".
+- Kite: one card (`FindBar` in its `.ask` style) holding the `AskOnPagePanel` above the field. **Inferred or
+  unmeasured:** the material (Kite: `PopoverBackground`, solid), the close button's size (Kite 22pt, 10pt glyph, HUD
+  material), the field's row height (Kite: the field's line + 24), the Ask button's palette colour (Kite: system accent),
+  and the shadow (Kite keeps the find bar's).
+

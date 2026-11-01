@@ -87,12 +87,32 @@ import Testing
     }
 
     @Test func matchLabelFollowsArc() {
-        #expect(AskOnPage.matchLabel(query: "", found: false, matches: 0, activeMatch: nil) == "")
-        #expect(AskOnPage.matchLabel(query: "sky", found: false, matches: 0, activeMatch: nil) == "No matches")
-        #expect(AskOnPage.matchLabel(query: "sky", found: true, matches: 3, activeMatch: 2) == "2/3")
+        for ask in [true, false] {
+            #expect(AskOnPage.matchLabel(query: "", found: false, matches: 0, activeMatch: nil, askEnabled: ask) == "")
+            #expect(AskOnPage.matchLabel(query: "sky", found: true, matches: 3, activeMatch: 2, askEnabled: ask) == "2/3")
+            #expect(AskOnPage.matchLabel(query: "sky", found: true, matches: nil, activeMatch: nil, askEnabled: ask) == "")
+        }
+        // Ask on Page on: the SwiftUI view's "No matches"; off: the AppKit view's "Not Found".
+        #expect(AskOnPage.matchLabel(query: "sky", found: false, matches: 0, activeMatch: nil, askEnabled: true) == "No matches")
+        #expect(AskOnPage.matchLabel(query: "sky", found: false, matches: 0, activeMatch: nil, askEnabled: false) == "Not Found")
         // WebKit only says found or not.
-        #expect(AskOnPage.matchLabel(query: "sky", found: false, matches: nil, activeMatch: nil) == "No matches")
-        #expect(AskOnPage.matchLabel(query: "sky", found: true, matches: nil, activeMatch: nil) == "")
+        #expect(AskOnPage.matchLabel(query: "sky", found: false, matches: nil, activeMatch: nil, askEnabled: true) == "No matches")
+        #expect(AskOnPage.matchLabel(query: "sky", found: false, matches: nil, activeMatch: nil, askEnabled: false) == "Not Found")
+    }
+
+    @Test func findBarStylesFollowArc() {
+        #expect(FindBarStyle(askEnabled: false) == .find)
+        #expect(FindBarStyle.find.width == 300 && FindBarStyle.find.inset == 10 && FindBarStyle.find.cornerRadius == 5)
+        #expect(FindBarStyle.ask.width == 400 && FindBarStyle.ask.inset == 20 && FindBarStyle.ask.cornerRadius == 10)
+        #expect(FindBarStyle.find.slides == false && FindBarStyle.ask.slides)
+        // The find bar's divider: 1pt, 7pt from top and bottom of the 32pt bar, 1.5pt left of the close button.
+        #expect(FindBarStyle.dividerHeight(barHeight: 32) == 18)
+        // The ask card's spring: Arc's (response 0.28 s, damping fraction 0.63) as CASpringAnimation terms.
+        let spring = FindBarStyle.spring
+        #expect(abs(spring.stiffness - 503.5) < 0.5)
+        #expect(abs(spring.damping - 28.27) < 0.01)
+        #expect(spring.mass == 1)
+        #expect(FindBarStyle.askHiddenOffset(height: 44) == 104)
     }
 
     @Test func conversationsAreKeptPerTab() {
