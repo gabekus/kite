@@ -77,6 +77,10 @@ enum ArcMetrics {
         /// Favicon's leading edge inside the pill (x 17 in the window).
         static let iconInset: CGFloat = 9
         static let iconTextGap: CGFloat = 8
+        /// Each folder level indents its rows this much. Arc 1.169's binary: the tab list's
+        /// outline view sets indentationPerLevel 16, and its cell frame override only shifts every
+        /// level by the same constant; tab cells add no depth term of their own.
+        static let nestingIndent: CGFloat = 16
         static let tabFontSize: CGFloat = 14
         static let tabTextOpacity: Double = 0.865
         static let selectedFill: Double = 0.20
@@ -133,6 +137,9 @@ enum ArcMetrics {
         static let rowItemSpacing: CGFloat = 4
         /// An item this narrow or narrower shows only its favicon.
         static let rowCompactWidth: CGFloat = 60
+        /// A title gets 20pt or less after the favicon: hidden, leaving just the favicon
+        /// (`SplitViewCellChildItemView.layout` in Arc 1.169's binary).
+        static let rowTitleMinWidth: CGFloat = 20
         /// Each item's corner is min(width / 2, this).
         static let rowItemMaxCornerRadius: CGFloat = 8
     }

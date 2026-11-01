@@ -556,9 +556,9 @@ private struct FolderRow: View {
     }
 }
 
-/// A favicon plus its gap per level, like Arc's folder nesting.
+/// Arc's folder nesting per level (see `ArcMetrics.Sidebar.nestingIndent`).
 private func indent(_ depth: Int) -> CGFloat {
-    CGFloat(depth) * (M.iconSize + M.iconTextGap)
+    CGFloat(depth) * M.nestingIndent
 }
 
 private func copyLink(_ url: URL?) {
@@ -680,9 +680,15 @@ private struct SplitRow: View {
 
     private func item(_ tab: BrowserTab, width: CGFloat) -> some View {
         let compact = width <= S.rowCompactWidth
+        // Like Arc's SplitViewCellChildItemView: a title with 20pt or less to show is hidden
+        // rather than cut to a letter and an ellipsis.
+        // The HStack's gap comes twice: favicon to title, and title to the spacer after it.
+        let titleWidth = width - 2 * M.iconInset - M.iconSize - 2 * M.iconTextGap
+        let showsTitle = !compact && titleWidth > S.rowTitleMinWidth
         return HStack(spacing: M.iconTextGap) {
             FaviconView(tab: tab, size: M.iconSize)
-            if !compact {
+            if !showsTitle && !compact { Spacer(minLength: 0) }
+            if showsTitle {
                 Text(tab.displayTitle)
                     .font(.system(size: M.tabFontSize))
                     .opacity(M.tabTextOpacity)
@@ -709,6 +715,8 @@ private struct SplitRow: View {
             Button("Close this Split Pane") { onClose(tab.id) }
         }
         .accessibilityElement(children: .combine)
+        // Icon-only items would otherwise read as the favicon's symbol name.
+        .accessibilityLabel(tab.displayTitle)
         .accessibilityAddTraits(tab.id == focusedID ? [.isButton, .isSelected] : .isButton)
     }
 }
