@@ -32,7 +32,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
     private let contentClip = ContentClipView()
     /// View → Show Toolbar's bar across the top of the card.
-    private var toolbarHost: NSHostingView<PageToolbar>!
+    private var toolbarHost: PageToolbarHost!
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
     private var sidebarHost: NSHostingView<SidebarView>!
@@ -282,7 +282,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         #endif
         sidebarHost = NSHostingView(rootView: sidebar)
         SidebarRowsAnimator.register(sidebarHost)
-        toolbarHost = NSHostingView(rootView: toolbar)
+        let toolbarHost = PageToolbarHost(rootView: toolbar)
+        // Arc's right-click menu on the bar (Copy URL … Hide Toolbar).
+        toolbarHost.contextMenu = { [weak self, weak toolbarHost] in
+            guard let toolbarHost else { return nil }
+            return self?.toolbarContextMenu(from: toolbarHost)
+        }
+        self.toolbarHost = toolbarHost
         toolbarHost.sizingOptions = []
         toolbarHost.isHidden = true
         contentClip.toolbar = toolbarHost
@@ -1308,6 +1314,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return store.state.selectedTab != nil
         case #selector(resetTab(_:)):
             return store.state.selectedTab.map { store.state.canReset(tab: $0.id) } ?? false
+        case #selector(replacePinWithCurrentPage(_:)):
+            // Offered once the pinned tab has left its pinned page (on a web page), like Reset Tab.
+            guard let tab = store.state.selectedTab, let url = tab.url else { return false }
+            return store.state.canReset(tab: tab.id) && InternalPage(url) == nil
         case #selector(resetAllTabsInSpace(_:)):
             return store.state.selectedSpace.pinned.contains { $0.hasLeftPinnedURL }
         case #selector(moveTabToToday(_:)), #selector(moveTabToPinned(_:)):

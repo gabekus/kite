@@ -79,7 +79,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | Appearance: Automatic / Light / Dark (websites) | | ✅ View › Appearance ("Websites, Easels, and Notes will use:"), Automatic by default: sets the app appearance as Arc does, so CEF and WebKit pages get that `prefers-color-scheme` live; kept in session.json. Dark Pages (Kite's forced dark) stays separate; its Match System now follows this choice | g82 |
 | Hide Sidebar / Show Sidebar | ⌘S | ✅ titled by state, as Arc's Show/Hide Sidebar (g70) | |
-| Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host, Site Controls and Split View; the sidebar drops its nav buttons and URL field. Kite menu → Show Full URL in Toolbar (Arc's "Show full URL when Toolbar is enabled", off by default) prints the whole address instead of the host. No right-click menu on the toolbar yet (Arc's has Show/Hide Full URL) | B5 (`topBarURLEnabled`) |
+| Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host, Site Controls and Split View; the sidebar drops its nav buttons and URL field. Kite menu → Show Full URL in Toolbar (Arc's "Show full URL when Toolbar is enabled", off by default) prints the whole address instead of the host. Right-click the bar for Arc's menu (g105): Copy URL, Share, Capture…, Capture Full Page, Manage Extensions… (where extensions run), Show/Hide Full URL, Hide Toolbar; Arc's Capture in Portrait Mode and Shared Quotes items are left out (Kite has neither) | B5 (`topBarURLEnabled`) |
 | Collapse Pinned Tabs | | ✅ View › "Collapse Pinned Tabs" ("Expand Pinned Tabs" while collapsed) and a chevron in the space header | B3 |
 | Stop Loading | ⌘. | ✅ | |
 | Refresh the Page / Force Refresh the Page | ⌘R / ⇧⌘R | ✅ Arc 1.171's titles (g71) | |
@@ -127,7 +127,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Reveal Tab in Sidebar | | ✅ shows the sidebar, opens enclosing folders, scrolls to the row | Arc's highlight on reveal unverified |
 | Clear Today (unpinned tabs) | ⇧⌘K | ✅ archives them, with a toast | |
 | Reset all tabs in this Space (pinned back to their saved URL) | | ✅ | |
-| Pinned tab: "back to pinned URL" / reset | | 🟡 hover button, context menu (with Separate From Pinned Tab), hidden `resetTab` command; Edit Pinned Page › Edit… (Edit Pinned URL dialog) and Replace Pinned URL with Current on pinned tabs and favorites | Arc's icon and placement unverified; Arc's command-bar "Replace Pin with Current Page" not built |
+| Pinned tab: "back to pinned URL" / reset | | 🟡 hover button, context menu (with Separate From Pinned Tab), hidden `resetTab` command; Edit Pinned Page › Edit… (Edit Pinned URL dialog) and Replace Pinned URL with Current on pinned tabs and favorites; command bar "Replace Pin with Current Page" (Arc's `replacePinnedTab`, also "Replace Pinned Tab with the Current Site"), offered once the tab has left its pinned page (g106) | Arc's icon and placement unverified; when Arc offers Replace Pin in the command bar is inferred |
 | Duplicate tab, move tab to space | context menu | 🟡 Duplicate Tab in the Tabs menu | Move to space with the sidebar work |
 | Drag tabs between spaces / into folders | gesture | ❌ | Roadmap (other session owns sidebar) |
 

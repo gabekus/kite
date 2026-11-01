@@ -380,6 +380,10 @@ enum MainMenu {
                 reset.allowsKeyEquivalentWhenHidden = true
                 return reset
             }(),
+            // Arc's command-bar action replacePinnedTab ("Replace Pin with Current Page", also found by
+            // "Replace Pinned Tab with the Current Site"): not in its menu bar, so hidden here.
+            commandBarOnly(item("Replace Pin with Current Page", #selector(BrowserWindowController.replacePinWithCurrentPage(_:)), id: "replacePinnedTab"),
+                           keywords: ["Replace Pinned Tab with the Current Site"]),
             // Arc's command-bar actions muteAllTabs / unmuteAllTabs: not in its menu bar, so hidden here.
             commandBarOnly(item(MuteAllTabs.title(mute: true), #selector(BrowserWindowController.muteAllTabs(_:)), id: "muteAllTabs")),
             commandBarOnly(item(MuteAllTabs.title(mute: false), #selector(BrowserWindowController.unmuteAllTabs(_:)), id: "unmuteAllTabs")),
