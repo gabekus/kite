@@ -682,6 +682,44 @@ Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, 
   selected (Kite does). ⇧⌘J still opens Kite's downloads popover, though Arc's copy says it "Opens the Downloads
   section of your Library": follow-up.
 
+## Site Control Center → `SiteControlsView`, `SiteControlsPopover` (Arc 1.169 binary + masked probe, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` 73677–73738 (module `SiteControlCenter`: `SiteControlCenterActionButton`,
+`…BoostsView`, `…ExtensionsView`, `…SettingsView`, `…FooterView`, `SiteSetting+Display.swift`), 63716–63727, and
+62174–62181 / 63025 ("Site Control Center" button label). Short English strings are Swift immediates, decoded from
+`~/rea-arc/decomp/arc.s` at the `NSLocalizedString` calls next to each comment string (e.g. 0x10137d758, 0x1013722f4,
+0x10055d594). Geometry: `~/rea-arc/notes/extensions.md` (masked probe, the 262×486 popover) and
+`~/rea-arc/notes/arc-visual-pass2.md` (toolbar sliders icon). Arc was not driven for this.
+
+- Opened by the "Site Control Center" button: in the toolbar (the sliders icon), and in the sidebar URL row a 30×30
+  button revealed on hover at the row's right end (pitch 28, after a 16-char "Copy Current URL" button).
+- Popover 262 wide, hosting view inset 13, sections 10 further in (216 wide). Top to bottom: four 48.75×32.75 action
+  buttons on a 56 pitch (tooltips: Copy URL, Share, Capture / full-page capture / Portrait Mode, New Boost; assets
+  `copy-url`, `share`, `window-screenshot-icon`, `capture-full-page`); Boosts and Extensions sections; a "Settings"
+  section (header 216×17, hover text "More") of 208×33 rows on a 43 pitch; a footer with an 82×32 security button
+  ("Secure" / "Insecure", `lock.fill` / `lock.slash.fill`) and a 32×32 `ellipsis` menu: Clear Cache, Clear Cookies,
+  Manage Boosts…, New Boost, Manage Extensions…, Add Extension…, All Site Settings….
+- Settings rows (`SiteSetting+Display`): "Block Ads & Trackers" subtitled On / Off; "Developer Mode" On / Off;
+  "Block Pop-ups" (asserts "Popup blocking is not supported in Arc."); "Preview" (sidebar preview) Enabled /
+  Disabled; permissions subtitled "Allowed" / "Blocked". Permission names come from
+  `ArcPermissionRequestType+Utils` ("camera", "microphone", "location", "notifications", … lower case); how the
+  row capitalises them wasn't seen. A row click sends `didChangeSiteSetting`. Symbols in the settings view:
+  `shield.fill`, `hammer.fill`, `filemenu.and.cursorarrow`, `gearshape.fill`.
+- Toolbar placement (probe): popover top 4pt above the bar's bottom (y 38), right edge on the window's right edge.
+
+| | Arc | Kite (measured with `kite ui tree` / `kite probe`) |
+|---|---|---|
+| Popover | 262 wide, hosting inset 13 | 262 wide, hosting 236 at 13 |
+| Action buttons | 48.75×32.75, pitch 56, 23 from the popover's left | 49×33, pitch 56, at 23 |
+| Settings rows | 208×33, pitch 43 | 208×33 (same row view, measured before the Kite-only Zoom row was removed), pitch 43 |
+| Footer | 82×32 left, 32×32 right, both 23 from the edges | Same |
+| From the toolbar | top y 38, right edge = window's | top 38, right edge 1280 of 1280 |
+
+Kite differs: no Boosts, capture, Developer Mode or sidebar preview; extensions stay in their own popover; action row
+has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers plus four permission rows, shown
+always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
+circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
+
 ## Mini Player and auto picture in picture → `MiniPlayerView`, `MediaStateScript` (Arc 1.171 strings, assets, disassembly, 1 Nov 2026)
 
 - Modules (arc-strings.txt 82066-82130): `MediaControlsFeature` (`MiniPlayerFeature.swift`, `MiniPlayerView.swift`,
