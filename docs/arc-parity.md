@@ -155,7 +155,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | View Downloads… | ⇧⌘J | ✅ Window menu, opens the downloads list (Arc opens Library › Downloads) | Follow-up: open Library › Downloads instead, as Arc does |
 | View Easels… | | ❌ | Their threads |
 | View Media… | | 🟡 Window › View Media… opens the Library's Media page, as in Arc: pictures and videos from Documents, Desktop, Downloads and screenshots after Arc's "Your Media in the Library" / Allow Access card, plus Kite's own Captures (now kept in Captures/); Today / Yesterday / Earlier This Week, then by month; search; "Show media from:" toggles; preview on click (Esc closes); Copy, Show in Finder, Open in Preview, Open/Copy Source URL, Delete (Capture), Hide from Kite. Sizes are Kite's | AirDrop / Send via iMessage; Hide Media toggle title |
-| View Boosts… | | 🟡 Window › View Boosts… opens the Library's Boosts page, as in Arc: every Boost by site with an on/off switch, Rename and Delete on hover, click to open the site with its editor; "Nothing Boosted Yet!" with a Boost Gallery link | Sizes and icons unmeasured; no report / shared-Boost subtitle |
+| View Boosts… | | 🟡 Window › View Boosts… opens the Library's Boosts page, as in Arc: every Boost by site with an on/off switch, Rename and Delete on hover, click to open the site with its editor; "Nothing Boosted Yet!" (no Boost Gallery link: it's Arc's site and installs nothing into Kite) | Sizes and icons unmeasured; no report / shared-Boost subtitle |
 
 ### Help
 

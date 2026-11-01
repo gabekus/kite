@@ -337,20 +337,15 @@ struct CodeTextView: NSViewRepresentable {
 /// Arc's Library › Boosts page (`HomeButton.BoostsPage`, BoostsContentView / BoostCell): every Boost
 /// with an on/off switch (a 36 × 24 `Toggle`), click to edit (`onSelectBoost` →
 /// `showBoostsEditorForURL`), Rename and Delete (`showBoostsRenameDialog`,
-/// `showBoostsDeleteConfirmationDialog`), and, empty, "Nothing Boosted Yet!" with a link to the
-/// Boost Gallery (`onBoostsGalleryButtonTapped`). Sizes, colours and the header are Kite's, matching
+/// `showBoostsDeleteConfirmationDialog`), and, empty, "Nothing Boosted Yet!". Arc's empty state also links
+/// to its Boost Gallery, a page on Arc's site that installs nothing into Kite, so Kite leaves it out. Sizes, colours and the header are Kite's, matching
 /// its other Library pages: Arc's page was never on screen.
 struct BoostsListView: View {
     /// Arc's onSelectBoost: the Boost's site with its editor.
     let open: (Boost) -> Void
-    /// Arc's onBoostsGalleryButtonTapped.
-    let openGallery: () -> Void
     /// The window alerts attach to.
     var window: () -> NSWindow? = { nil }
     private var model: BoostsModel { BoostsModel.shared }
-
-    /// Arc's gallery link (arc-strings 63999).
-    static let galleryURL = URL(string: "https://arc.net/boosts?ref=arc-app")!
 
     enum Metrics {
         static let maxWidth: CGFloat = 960
@@ -407,9 +402,8 @@ struct BoostsListView: View {
     }
 
     /// Arc's BoostsEmptyStateView: its BoostLarge picture, "Nothing Boosted Yet!", and "Click
-    /// [paintbrush] in URL bar to make your own, or grab one from the Boost Gallery." with the
-    /// gallery underlined and clickable. Kite has no paintbrush in its URL bar, so the first half
-    /// names Kite's New Boost instead.
+    /// [paintbrush] in URL bar to make your own, or grab one from the Boost Gallery." Kite has no
+    /// paintbrush in its URL bar, so it names Kite's New Boost instead, and leaves out the gallery.
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "paintbrush")
@@ -418,16 +412,11 @@ struct BoostsListView: View {
                 .padding(.bottom, 4)
             Text("Nothing Boosted Yet!")
                 .font(.system(size: 15, weight: .semibold))
-            Text("Choose \(Text("New Boost").bold()) in the command bar to make your own, or grab one from the \(Text("Boost Gallery").underline()).")
+            Text("Choose \(Text("New Boost").bold()) in the command bar to make your own.")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: openGallery)
-                .accessibilityAddTraits(.isLink)
-                .accessibilityAction(named: "Open the Boost Gallery", openGallery)
-                .accessibilityIdentifier("boostsGallery")
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

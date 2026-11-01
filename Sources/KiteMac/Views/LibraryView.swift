@@ -57,7 +57,6 @@ struct LibraryView: View {
     struct BoostActions {
         /// Arc's onSelectBoost: the Boost's site with its editor.
         let open: (Boost) -> Void
-        let openGallery: () -> Void
         /// The window the rename and delete alerts attach to.
         let window: () -> NSWindow?
     }
@@ -124,7 +123,7 @@ struct LibraryView: View {
             case .media:
                 MediaPageView { url in archiveActions.open(url, false) }
             case .boosts:
-                BoostsListView(open: boostActions.open, openGallery: boostActions.openGallery, window: boostActions.window)
+                BoostsListView(open: boostActions.open, window: boostActions.window)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

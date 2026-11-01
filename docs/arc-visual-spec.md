@@ -1389,8 +1389,9 @@ Kite: the Library's Boosts page (`LibraryPage.boosts`, `BoostsListView`); Window
 of Kite's old Boosts window. Inferred or Kite's own: sort by site then oldest first; rows are one card in the style of
 Kite's Archive page (44 pt rows, favicon, name, site); Rename and Delete appear on hover (Arc's placement unknown)
 and the switch's tooltip is Enable / Disable; clicking a row opens `https://<site>/` in a new tab and the Boost's
-editor for that tab. The empty state's first half says "Choose New Boost in the command bar" because Kite has no
-paintbrush in its URL bar; the picture is the SF Symbol, not Arc's asset. No report action and no "by" subtitle.
+editor for that tab. The empty state says "Choose New Boost in the command bar to make your own." because Kite has
+no paintbrush in its URL bar, and drops Arc's Boost Gallery link (Arc's site; nothing there installs into Kite, and
+Arc shuts down on 22 Dec); the picture is the SF Symbol, not Arc's asset. No report action and no "by" subtitle.
 
 ## Sound effects → `SoundEffects` (KiteCore), `SoundEffectPlayer` (Arc 1.171 strings, files, defaults and disassembly, 1 Nov 2026)
 
