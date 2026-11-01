@@ -100,6 +100,9 @@ protocol WebPage: AnyObject {
     func makePrintOperation(_ completion: @escaping (NSPrintOperation?) -> Void)
     /// The page as one file for Save Page As: MHTML on Chromium, a web archive on WebKit.
     func archive(completion: @escaping (_ data: Data?, _ fileExtension: String) -> Void)
+    /// A PNG of the page for Capture: `area` (points from the view's top-left corner) at device
+    /// resolution, or with nil the whole page, beyond the viewport.
+    func captureImage(area: CGRect?, completion: @escaping (Data?) -> Void)
     /// Clears one site's cookies or cache (Arc's "Clear … and Refresh"). Reloading is up to the caller.
     func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void)
     func setForceDark(_ enabled: Bool)

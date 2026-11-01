@@ -75,6 +75,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var webAreaInWindow: NSRect { contentFrame.convert(contentFrame.bounds, to: nil) }
     /// After every sync: tabs, selection or pages may have changed.
     var didSync: (() -> Void)?
+    /// File › Capture…'s overlay over the focused page, and the popover offering the capture.
+    var captureOverlay: CaptureOverlayView?
+    weak var capturePopover: NSPopover?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
     /// Kite's own pages (kite://history, kite://archive) over the panes showing them, by tab.
@@ -470,6 +473,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func show(_ tabs: [BrowserTab], focused: UUID?) {
         hideFindBar()
         let ids = tabs.map(\.id)
+        // Capture… belongs to the page it was started on.
+        if ids != shownTabIDs || focused != shownTabID { cancelCapture() }
         if ids != shownTabIDs {
             tabsChangedOnScreen(left: shownTabIDs.filter { !ids.contains($0) }, arrived: ids.filter { !shownTabIDs.contains($0) })
             for page in shownPages.values { page.view.removeFromSuperview() }
@@ -1056,6 +1061,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             item.state = window?.level == .floating ? .on : .off
         case #selector(setAsDefaultBrowser(_:)):
             item.state = Self.isDefaultBrowser ? .on : .off
+        case #selector(capturePage(_:)), #selector(captureFullPage(_:)):
+            return shownPage != nil && store.state.selectedTab?.url != nil
         case #selector(share(_:)), #selector(savePageAs(_:)), #selector(printPage(_:)),
              #selector(clearCookiesAndRefresh(_:)), #selector(clearCacheAndRefresh(_:)):
             return store.state.selectedTab?.url != nil

@@ -34,6 +34,11 @@ final class ToastView: NSView {
     private let shareButton = NSButton()
     private var labelTrailing: NSLayoutConstraint!
     private var shareURL: URL?
+    /// A text button in the share button's place ("Save" on Capture Full Page's toast).
+    private let actionBackground = NSView()
+    private let actionButton = NSButton()
+    private var action: (() -> Void)?
+    /// With an undo handler the share button is Arc's Undo accessory ("Download renamed!").
     private var undo: (() -> Void)?
     private var hideTask: Task<Void, Never>?
 
@@ -78,7 +83,20 @@ final class ToastView: NSView {
         shareButton.translatesAutoresizingMaskIntoConstraints = false
         shareBackground.addSubview(shareButton)
 
-        for view in [label, shareBackground] {
+        actionButton.isBordered = false
+        actionButton.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        actionButton.contentTintColor = .white
+        actionButton.target = self
+        actionButton.action = #selector(runAction)
+        actionBackground.wantsLayer = true
+        actionBackground.layer?.backgroundColor = Metrics.buttonColor.cgColor
+        actionBackground.layer?.cornerRadius = 6
+        actionBackground.layer?.cornerCurve = .continuous
+        actionButton.translatesAutoresizingMaskIntoConstraints = false
+        actionBackground.addSubview(actionButton)
+        actionBackground.isHidden = true
+
+        for view in [label, shareBackground, actionBackground] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
             view.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
@@ -94,6 +112,11 @@ final class ToastView: NSView {
             shareButton.centerYAnchor.constraint(equalTo: shareBackground.centerYAnchor),
             shareButton.widthAnchor.constraint(equalTo: shareBackground.widthAnchor),
             shareButton.heightAnchor.constraint(equalTo: shareBackground.heightAnchor),
+            actionBackground.heightAnchor.constraint(equalToConstant: Metrics.buttonSize.height),
+            actionBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Metrics.buttonTrailing),
+            actionButton.leadingAnchor.constraint(equalTo: actionBackground.leadingAnchor, constant: 9),
+            actionButton.trailingAnchor.constraint(equalTo: actionBackground.trailingAnchor, constant: -9),
+            actionButton.centerYAnchor.constraint(equalTo: actionBackground.centerYAnchor),
             labelTrailing,
         ])
     }
@@ -112,23 +135,28 @@ final class ToastView: NSView {
     // Only the share button takes clicks; the rest goes to the page underneath.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
-        return hit === shareButton ? hit : nil
+        return hit === shareButton || hit === actionButton ? hit : nil
     }
 
-    /// Shows `message`; with `shareURL`, Arc's share button sits on the right; with `undo`, the
-    /// same button is Arc's Undo accessory (arrow.uturn.backward, as in "Download renamed!").
-    func show(_ message: String, shareURL: URL? = nil, undo: (() -> Void)? = nil, for duration: Duration = Metrics.duration) {
+    /// Shows `message`; with `shareURL`, Arc's share button sits on the right, with `undo` the same
+    /// button is Arc's Undo accessory (arrow.uturn.backward), or with `action` a text button
+    /// (title, handler) does.
+    func show(_ message: String, shareURL: URL? = nil, undo: (() -> Void)? = nil,
+              action: (title: String, run: () -> Void)? = nil, for duration: Duration = Metrics.duration) {
         label.stringValue = message
-        self.shareURL = shareURL
-        self.undo = undo
-        let hasButton = shareURL != nil || undo != nil
-        shareButton.image = undo != nil
+        self.shareURL = action == nil && undo == nil ? shareURL : nil
+        self.undo = action == nil ? undo : nil
+        self.action = action?.run
+        shareButton.image = self.undo != nil
             ? NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "Undo")
             : NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: "Share")
-        shareBackground.isHidden = !hasButton
-        labelTrailing.constant = !hasButton
+        shareBackground.isHidden = self.shareURL == nil && self.undo == nil
+        actionBackground.isHidden = action == nil
+        actionButton.title = action?.title ?? ""
+        let buttonWidth = action == nil ? Metrics.buttonSize.width : actionButton.intrinsicContentSize.width + 18
+        labelTrailing.constant = shareBackground.isHidden && actionBackground.isHidden
             ? -Metrics.trailingPadding
-            : -(Metrics.textToButton + Metrics.buttonSize.width + Metrics.buttonTrailing)
+            : -(Metrics.textToButton + buttonWidth + Metrics.buttonTrailing)
         isHidden = false
         NSAnimationContext.runAnimationGroup { $0.duration = 0.15; animator().alphaValue = 1 }
         hideTask?.cancel()
@@ -141,6 +169,10 @@ final class ToastView: NSView {
                 }
             }
         }
+    }
+
+    @objc private func runAction() {
+        action?()
     }
 
     @objc private func share() {

@@ -125,6 +125,9 @@ enum MainMenu {
             item("Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift], toTarget: false, id: "closeWindow"),
             .separator(),
             item("Share…", #selector(BrowserWindowController.share(_:)), id: "share"),
+            // Arc's File menu: Capture…, Capture Full Page (no shortcuts; ids from Arc's shortcut table).
+            item("Capture…", #selector(BrowserWindowController.capturePage(_:)), id: "capturePage"),
+            item("Capture Full Page", #selector(BrowserWindowController.captureFullPage(_:)), id: "captureFullPage"),
             item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"),
             // "Print", no ellipsis, as in Arc's File menu.
             item("Print", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
