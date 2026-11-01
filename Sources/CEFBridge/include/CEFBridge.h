@@ -95,6 +95,14 @@ typedef NS_ENUM(NSInteger, KCSitePermissionValue) {
     KCSitePermissionValueAsk,
 };
 
+/// How a site's permission prompt was answered. Allow and Block are stored for the site
+/// (Chromium content settings, what Site Controls shows); Dismiss stores nothing.
+typedef NS_ENUM(NSInteger, KCPermissionDecision) {
+    KCPermissionDecisionAllow,
+    KCPermissionDecisionBlock,
+    KCPermissionDecisionDismiss,
+};
+
 /// A Chromium profile for a set of browsers. `incognitoContext` keeps cookies,
 /// cache and storage in memory only; they vanish when the last browser using it closes.
 NS_SWIFT_UI_ACTOR
@@ -139,6 +147,17 @@ NS_SWIFT_UI_ACTOR
     isExtensionPackageWithMIMEType:(NSString *)mimeType
                      suggestedName:(NSString *)suggestedName
                                url:(nullable NSURL *)url;
+/// A site asks for camera, microphone, location or notifications (`permissions` holds
+/// KCSitePermission values) and nothing is stored for it yet. Call `decisionHandler` once.
+/// Without this method Chromium's own default applies (Alloy denies or ignores).
+- (void)browser:(KCBrowser *)browser
+    requestsPermissions:(NSArray<NSNumber *> *)permissions
+                 origin:(NSURL *)origin
+               promptID:(NSInteger)promptID
+        decisionHandler:(void (NS_SWIFT_UI_ACTOR ^)(KCPermissionDecision decision))decisionHandler;
+/// Chromium dropped prompt `promptID` itself (the page navigated or closed); its handler
+/// no longer does anything.
+- (void)browser:(KCBrowser *)browser permissionPromptDidCancel:(NSInteger)promptID;
 @end
 
 /// One Chromium browser (one tab), hosted in `view`.

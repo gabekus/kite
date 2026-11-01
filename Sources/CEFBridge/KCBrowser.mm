@@ -8,6 +8,7 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_keyboard_handler.h"
 #include "include/cef_parser.h"
+#include "include/cef_permission_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
 
@@ -133,6 +134,33 @@ static bool AskLinkPeek(KCBrowser* owner, const CefString& target, bool shift) {
     return [delegate browser:owner opensLinkInPeek:url shift:shift];
 }
 
+/// Asks the delegate about a site's permission request. `done` runs at most once, with the
+/// answer already stored for the site (Allow or Block; Dismiss stores nothing). False when the
+/// delegate doesn't show prompts, so Chromium's default applies.
+static bool AskPermissions(KCBrowser* owner, NSArray<NSNumber*>* permissions, NSURL* origin, NSInteger promptID,
+                           void (^done)(KCPermissionDecision)) {
+    id<KCBrowserDelegate> delegate = owner.delegate;
+    SEL ask = @selector(browser:requestsPermissions:origin:promptID:decisionHandler:);
+    if (!owner || !origin || !permissions.count || ![delegate respondsToSelector:ask]) return false;
+    __weak KCBrowser* weakOwner = owner;
+    __block bool answered = false;
+    [delegate browser:owner requestsPermissions:permissions origin:origin promptID:promptID
+      decisionHandler:^(KCPermissionDecision decision) {
+        if (answered) return;
+        answered = true;
+        KCBrowser* browser = weakOwner;
+        if (browser && decision != KCPermissionDecisionDismiss) {
+            KCSitePermissionValue value = decision == KCPermissionDecisionAllow ? KCSitePermissionValueAllow
+                                                                                : KCSitePermissionValueBlock;
+            for (NSNumber* permission in permissions) {
+                [browser setSitePermission:(KCSitePermission)permission.integerValue value:value forURL:origin];
+            }
+        }
+        done(decision);
+    }];
+    return true;
+}
+
 /// Per-browser CEF client: forwards Chromium callbacks to the Objective-C KCBrowser.
 class KCClient : public CefClient,
                  public CefLifeSpanHandler,
@@ -143,6 +171,7 @@ class KCClient : public CefClient,
                  public CefFindHandler,
                  public CefKeyboardHandler,
                  public CefFocusHandler,
+                 public CefPermissionHandler,
                  public CefDevToolsMessageObserver {
  public:
     explicit KCClient(KCBrowser* owner) : owner_(owner), adblock_(KCAdblockRequestHandler(owner)) {}
@@ -155,6 +184,77 @@ class KCClient : public CefClient,
     CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+    CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+
+    // CefPermissionHandler: Kite's own prompt (Arc's) for camera, microphone, location and
+    // notifications. Anything else keeps Chromium's default.
+
+    /// getUserMedia. A site with a stored answer isn't asked again.
+    bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser,
+                                        CefRefPtr<CefFrame> frame,
+                                        const CefString& requesting_origin,
+                                        uint32_t requested_permissions,
+                                        CefRefPtr<CefMediaAccessCallback> callback) override {
+        const uint32_t audio = CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE;
+        const uint32_t video = CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
+        if (!requested_permissions || (requested_permissions & ~(audio | video))) return false;
+        KCBrowser* owner = owner_;
+        NSURL* origin = ToNSURL(requesting_origin);
+        if (!owner || !origin) return false;
+        NSMutableArray<NSNumber*>* permissions = [NSMutableArray array];
+        if (requested_permissions & video) [permissions addObject:@(KCSitePermissionCamera)];
+        if (requested_permissions & audio) [permissions addObject:@(KCSitePermissionMicrophone)];
+        bool allAllowed = true;
+        for (NSNumber* permission in permissions) {
+            KCSitePermissionValue stored = [owner sitePermission:(KCSitePermission)permission.integerValue forURL:origin];
+            if (stored == KCSitePermissionValueBlock) {
+                callback->Continue(CEF_MEDIA_PERMISSION_NONE);
+                return true;
+            }
+            allAllowed = allAllowed && stored == KCSitePermissionValueAllow;
+        }
+        if (allAllowed) {
+            callback->Continue(requested_permissions);
+            return true;
+        }
+        return AskPermissions(owner, permissions, origin, --media_prompt_id_, ^(KCPermissionDecision decision) {
+            callback->Continue(decision == KCPermissionDecisionAllow ? requested_permissions : CEF_MEDIA_PERMISSION_NONE);
+        });
+    }
+
+    /// Geolocation, notifications (and camera or mic when Chromium routes them here). Chromium
+    /// itself only asks when nothing is stored for the site.
+    bool OnShowPermissionPrompt(CefRefPtr<CefBrowser> browser,
+                                uint64_t prompt_id,
+                                const CefString& requesting_origin,
+                                uint32_t requested_permissions,
+                                CefRefPtr<CefPermissionPromptCallback> callback) override {
+        const uint32_t camera = CEF_PERMISSION_TYPE_CAMERA_STREAM, mic = CEF_PERMISSION_TYPE_MIC_STREAM;
+        const uint32_t location = CEF_PERMISSION_TYPE_GEOLOCATION, notifications = CEF_PERMISSION_TYPE_NOTIFICATIONS;
+        if (!requested_permissions || (requested_permissions & ~(camera | mic | location | notifications))) return false;
+        NSMutableArray<NSNumber*>* permissions = [NSMutableArray array];
+        if (requested_permissions & camera) [permissions addObject:@(KCSitePermissionCamera)];
+        if (requested_permissions & mic) [permissions addObject:@(KCSitePermissionMicrophone)];
+        if (requested_permissions & location) [permissions addObject:@(KCSitePermissionLocation)];
+        if (requested_permissions & notifications) [permissions addObject:@(KCSitePermissionNotifications)];
+        return AskPermissions(owner_, permissions, ToNSURL(requesting_origin), (NSInteger)prompt_id,
+                              ^(KCPermissionDecision decision) {
+            switch (decision) {
+                case KCPermissionDecisionAllow: callback->Continue(CEF_PERMISSION_RESULT_ACCEPT); break;
+                case KCPermissionDecisionBlock: callback->Continue(CEF_PERMISSION_RESULT_DENY); break;
+                case KCPermissionDecisionDismiss: callback->Continue(CEF_PERMISSION_RESULT_DISMISS); break;
+            }
+        });
+    }
+
+    void OnDismissPermissionPrompt(CefRefPtr<CefBrowser> browser,
+                                   uint64_t prompt_id,
+                                   cef_permission_request_result_t result) override {
+        KCBrowser* owner = owner_;
+        if ([owner.delegate respondsToSelector:@selector(browser:permissionPromptDidCancel:)]) {
+            [owner.delegate browser:owner permissionPromptDidCancel:(NSInteger)prompt_id];
+        }
+    }
 
     // CefFocusHandler
 
@@ -411,6 +511,8 @@ class KCClient : public CefClient,
 
  private:
     __weak KCBrowser* owner_;
+    /// Ids for getUserMedia prompts, counting down so they never meet Chromium's prompt ids.
+    NSInteger media_prompt_id_ = 0;
     CefRefPtr<CefRegistration> devtools_registration_;
     CefRefPtr<CefResourceRequestHandler> adblock_;
     IMPLEMENT_REFCOUNTING(KCClient);

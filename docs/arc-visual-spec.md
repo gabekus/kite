@@ -863,6 +863,45 @@ has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers pl
 always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
 circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
 
+## Site permission prompt → `PermissionPromptView`, `PermissionPromptCard` (Arc 1.171 binary, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` 41475–41484 and 79942–79967 (module `PermissionRequests`:
+`PermissionRequestState`, `PermissionRequestAction`, `PermissionRequestDialogView`, `PermissionRequestPopoverView.swift`),
+63660–63713 (`ArcPermissionRequestType+Utils` display names), 171998 / 176424 (`permissionRequest` beside
+`siteControlCenter` and `translateBubble` in the window's state), 194633 (`webContents:willAskForPermission:withRequests:…`).
+Short strings are Swift immediates decoded from `~/rea-arc/decomp/arc.s`; the rest is Ghidra output of the functions
+named below (read-only run of `DumpAround.java`). Arc wasn't driven, and no prompt was open to probe.
+
+- Text (0x101eb9934): one request: "Allow %@ to access your %@?" with the lower-case type name (`camera`, `microphone`,
+  `location`, `notifications`… from 0x10055b8ac–0x10055bd38); notifications alone: "Allow %@ to send you notifications?"
+  (also "…download multiple files?", "…store files on your device?", "…know when you're actively using this device?",
+  "Make %@ your default mail app?"). Several requests use the access sentence with a joined list (the join, 0x101eb9848,
+  wasn't read; Kite writes "camera and microphone"). The site is its title or "this website"; the site part gets its
+  own font and colour (an attributed string, 0x101eba00c).
+- Buttons (0x101eb6c50, 0x101eb6cf0): "Allow" ("Button to allow permission") and "Not Now" ("Button to deny
+  permission"). No "Block", "Don't Allow" or "Remember this decision" strings exist.
+- Footer (0x101eb7acc): "Click the lock to change this any time", with the word "lock" replaced by the `lock.fill`
+  symbol as a text attachment.
+- Icon (0x101eb82b0): the request type's icon (single request), a shared icon for several.
+- Placement, from Little Arc (`LittleWindowViewController.permissionRequestView`, 0x10002b8d4): a
+  `PermissionRequestDialogView` with corner radius 12, content insets 4 on every side, a 5 pt value (read as the
+  shadow radius) and a black shadow at 0.2; pinned leading and top to the page container at static constants + 8 (the
+  constants weren't read). It appears with 0x101cb203c: scale 0.8 → 1 about its left-middle point plus opacity 0 → 1,
+  0.1 s ease in-out. Where the main window puts it wasn't found in the binary; Kite uses the same card at the page's
+  top-leading corner.
+
+| | Arc | Kite (measured with `kite ui tree` / `trace`, Chromium build) |
+|---|---|---|
+| Card | radius 12, inset 4, shadow black 0.2 r5 | radius 12, inset 4, shadow black 0.2 r5 |
+| Position | page container leading/top + (constant + 8) | page top-leading + 8 (card at 352,18 on a page at 344,10) |
+| Appear | scale 0.8 about left-middle + fade, 0.1 s ease in-out | same (trace: 0.1 s, curve 0.42,0,0.58,1, x fixed at 352) |
+
+Kite differs: the card's width (300 + insets), fonts, icon circle and button styles are Kite's (Arc's SwiftUI body
+wasn't read); "Not Now" stores Block for the site (Arc's response type for it wasn't read; its footer says the choice
+can be changed later, so it reads as a stored answer); the site is named by its host (and port), not its title; only
+camera, microphone, location and notifications are handled, other types keep Chromium's default; no prompt over a
+Peek; on WebKit only camera and mic, asked every time.
+
 ## Mini Player and auto picture in picture → `MiniPlayerView`, `MediaStateScript` (Arc 1.171 strings, assets, disassembly, 1 Nov 2026)
 
 - Modules (arc-strings.txt 82066-82130): `MediaControlsFeature` (`MiniPlayerFeature.swift`, `MiniPlayerView.swift`,

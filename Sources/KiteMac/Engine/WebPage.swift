@@ -42,6 +42,20 @@ enum PageEvent {
     case media(MediaState?)
     /// The pointer moved onto a link (nil: off it). Drives ⇧-hover link previews.
     case linkHover(LinkHover?)
+    /// The site asks for the camera, microphone, location or notifications: Arc's prompt.
+    case permissionRequest(PermissionRequest)
+    /// The engine dropped the prompt with this id itself (the page navigated or closed).
+    case permissionRequestCancelled(id: Int)
+}
+
+/// A site's permission request waiting for an answer. `respond(true)` allows and `false` blocks,
+/// both stored for the site where the engine keeps them (Chromium; Site Controls shows them); nil
+/// dismisses without storing anything. Call it once.
+struct PermissionRequest {
+    let id: Int
+    let origin: URL
+    let permissions: [SitePermission]
+    let respond: (Bool?) -> Void
 }
 
 /// The link under the pointer, as the engine reports it.
