@@ -169,6 +169,13 @@ final class DownloadsModel {
         saveSoon(after: .milliseconds(200))
     }
 
+    /// Delete browsing data's download history: the list forgets finished downloads started at
+    /// or after `since`; the files stay.
+    func removeHistory(since: Date?) {
+        list.removeHistory(since: since)
+        saveSoon(after: .milliseconds(200))
+    }
+
     /// The file moved (Tidy Downloads renamed it, or Undo put it back): the list follows.
     func moved(_ id: UUID, to path: String) {
         guard list.setPath(path, for: id) else { return }

@@ -101,6 +101,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var permissionPrompt: PermissionPromptCard?
     /// Kite's own pages (kite://history, kite://archive) over the panes showing them, by tab.
     private var internalPages: [UUID: (url: URL, host: NSView)] = [:]
+    /// A settings page's toast that should show on the page its tab goes to next ("Last hour deleted").
+    private var settingsToasts: [UUID: String] = [:]
     private var commandBarVisible = false
     private var sidebarVisible = true
     /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
@@ -807,6 +809,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return NSHostingView(rootView: ArchivePageView(store: store, open: open) { [weak self] tabID in
                 self?.restoreArchivedTab(tabID)
             })
+        case .settings:
+            // The tab's own profile, as Chromium's settings pages: its (blank) page reads the prefs.
+            let controls = ProfileDataControls(
+                page: { [weak self] in self?.pool.loadedPage(id) },
+                engine: pool.engine(forTab: id),
+                history: store.historyRoot?.forProfile(store.state.profileDirectory(ofTab: id)))
+            return NSHostingView(rootView: SettingsPageView(
+                page: SettingsPage(url) ?? .privacy, controls: controls,
+                navigate: { [weak self] page, toast in self?.showSettingsPage(page, in: id, toast: toast) },
+                toast: settingsToasts.removeValue(forKey: id)))
         case .siteSettings:
             // Chromium keeps permissions per profile, so the tab's own (blank) page reads them.
             return NSHostingView(rootView: SiteSettingsPageView(
@@ -818,6 +830,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         case .searchEngines:
             return NSHostingView(rootView: SearchEnginesPageView(store: store))
         }
+    }
+
+    /// Moves a kite://settings tab to another settings page; the engine page stays blank.
+    private func showSettingsPage(_ page: SettingsPage, in id: UUID, toast: String?) {
+        settingsToasts[id] = toast
+        store.mutate { $0.update(tab: id) { $0.url = page.url; $0.title = page.tabTitle } }
     }
 
     private func openFromInternalPage(_ id: UUID, _ url: URL, newTab: Bool) {

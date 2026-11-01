@@ -276,6 +276,14 @@ NS_SWIFT_UI_ACTOR
 - (KCSitePermissionValue)sitePermission:(KCSitePermission)permission forURL:(NSURL *)url;
 /// Stores a permission for `url`'s site in this browser's profile (Default clears it).
 - (void)setSitePermission:(KCSitePermission)permission value:(KCSitePermissionValue)value forURL:(NSURL *)url;
+/// The permission's default in this browser's profile (what sites get with no setting of their own).
+- (KCSitePermissionValue)defaultSitePermission:(KCSitePermission)permission;
+- (void)setDefaultSitePermission:(KCSitePermission)permission value:(KCSitePermissionValue)value;
+/// A Chromium preference of this browser's profile, as Foundation values (NSDictionary, NSArray,
+/// NSString, NSNumber, NSNull); nil if there's no such preference or no browser yet.
+- (nullable id)preferenceNamed:(NSString *)name;
+/// Sets a preference of this browser's profile; nil restores its default. NO if Chromium refused.
+- (BOOL)setPreferenceNamed:(NSString *)name value:(nullable id)value;
 /// Runs JavaScript in the main frame via the DevTools protocol. `result` is the
 /// JSON-decoded return value, or nil on error.
 - (void)evaluateJavaScript:(NSString *)script completion:(void (NS_SWIFT_UI_ACTOR ^)(id _Nullable result))completion;

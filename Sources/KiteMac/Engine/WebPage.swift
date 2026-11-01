@@ -146,6 +146,15 @@ protocol WebPage: AnyObject {
     /// where the engine keeps none Kite can read (WebKit asks every time, through macOS).
     func sitePermission(_ permission: SitePermission, for url: URL) -> SitePermissionValue?
     func setSitePermission(_ permission: SitePermission, _ value: SitePermissionValue, for url: URL)
+    /// The permission's default in the profile; nil where the engine keeps none (WebKit).
+    func defaultSitePermission(_ permission: SitePermission) -> SitePermissionValue?
+    func setDefaultSitePermission(_ permission: SitePermission, _ value: SitePermissionValue)
+    /// A Chromium preference of the page's profile (`browser.clear_data.cache`, content-settings
+    /// exceptions…); nil on WebKit, which has none.
+    func preference(_ name: String) -> Any?
+    /// nil restores the preference's default. False if the engine refused or has no such preference.
+    @discardableResult
+    func setPreference(_ name: String, _ value: Any?) -> Bool
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void)
     /// Engine-specific state for restoring history after hibernation, if supported.
     func hibernationState() -> Any?
@@ -182,4 +191,10 @@ protocol WebEngine: AnyObject {
     func forProfile(_ profile: Profile) -> WebEngine
     /// The profile folder this engine's pages use; nil for incognito.
     var profileDirectory: String? { get }
+    /// What Delete browsing data can delete in this engine's profile, in Chromium's order.
+    /// Kite's own history and downloads list count: the caller deletes those.
+    var deletableBrowsingData: [BrowsingDataType] { get }
+    /// Deletes the engine's share of `types` in this profile, changed at or after `since` (nil:
+    /// all time). Site settings are the caller's (they're preferences).
+    func deleteBrowsingData(_ types: Set<BrowsingDataType>, since: Date?, completion: @escaping () -> Void)
 }
