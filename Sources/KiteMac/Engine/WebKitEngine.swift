@@ -154,6 +154,9 @@ final class WebKitPage: NSObject, WebPage {
     }
     // No public force-dark API in WebKit.
     func setForceDark(_ enabled: Bool) {}
+    // WKWebView keeps no per-site permissions Kite can read or set.
+    func sitePermission(_ permission: SitePermission, for url: URL) -> SitePermissionValue? { nil }
+    func setSitePermission(_ permission: SitePermission, _ value: SitePermissionValue, for url: URL) {}
 
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
         let configuration = WKFindConfiguration()
