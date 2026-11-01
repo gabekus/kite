@@ -231,6 +231,32 @@ import Testing
         #expect(state.selectedSplit?.normalizedFactors.first.map { abs($0 - 0.7) < 1e-9 } == true)
     }
 
+    @Test func dividerSnapsToTheMiddleWithin14Points() {
+        // Two 400pt panes: the middle is 400 along the pair.
+        #expect(SplitView.dividerFraction(position: 400, pairLength: 800, snapDistance: 14) == (0.5, true))
+        #expect(SplitView.dividerFraction(position: 387, pairLength: 800, snapDistance: 14) == (0.5, true))
+        #expect(SplitView.dividerFraction(position: 413.5, pairLength: 800, snapDistance: 14) == (0.5, true))
+        #expect(SplitView.dividerFraction(position: 386, pairLength: 800, snapDistance: 14) == (386.0 / 800, false))
+        #expect(SplitView.dividerFraction(position: 414, pairLength: 800, snapDistance: 14) == (414.0 / 800, false))
+        #expect(SplitView.dividerFraction(position: -20, pairLength: 800, snapDistance: 14) == (0, false))
+        #expect(SplitView.dividerFraction(position: 900, pairLength: 800, snapDistance: 14) == (1, false))
+    }
+
+    @Test func doubleClickingADividerEvensOutItsPair() throws {
+        var (state, _) = makeState()
+        _ = state.addSplitPane()
+        _ = state.addSplitPane()
+        let split = try #require(state.selectedSplit)
+        state.moveSplitDivider(split.id, index: 0, fraction: 0.2)
+        let before = try #require(state.selectedSplit?.normalizedFactors)
+        // Arc sets both panes to half their combined share and leaves the others alone.
+        state.moveSplitDivider(split.id, index: 0, fraction: 0.5)
+        let after = try #require(state.selectedSplit?.normalizedFactors)
+        #expect(abs(after[0] - after[1]) < 1e-9)
+        #expect(abs(after[0] + after[1] - (before[0] + before[1])) < 1e-9)
+        #expect(after[2] == before[2])
+    }
+
     @Test func splitsSurviveARoundTripAndOldSessionsLoad() throws {
         var (state, _) = makeState()
         _ = state.addSplitPane()
