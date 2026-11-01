@@ -39,6 +39,27 @@ public enum SiteControls {
     public static let settingsTitle = "Settings"
     public static let settingsHoverText = "More"
     public static let allSiteSettingsTitle = "All Site Settings…"
+
+    // MARK: Boosts (Arc's `SiteControlCenterBoostsView`, the New Boost action button and footer items)
+
+    /// The Boosts section's header, and the word shown on it on hover; clicking it manages Boosts.
+    public static let boostsTitle = "Boosts"
+    public static let boostsHoverText = "Manage"
+    /// A Boost row's subtitle.
+    public static func boostSubtitle(_ enabled: Bool) -> String { enabled ? "Enabled" : "Disabled" }
+    /// The New Boost action button's tooltip.
+    public static let newBoostTitle = "New Boost"
+    /// The footer menu's Boost items.
+    public static let manageBoostsMenuTitle = "Manage Boosts…"
+    public static let newBoostMenuTitle = "New Boost…"
+
+    /// Arc's footer menu shows Manage Boosts… and New Boost… only some of the time
+    /// (`includeBoostsInContextMenu`). Kite shows them when the site has no Boosts section to
+    /// offer its own "Manage" header (inferred: the flag's source wasn't traced), and never where
+    /// Boosts can't run.
+    public static func includesBoostsInMenu(siteBoostCount: Int, boostsAvailable: Bool) -> Bool {
+        boostsAvailable && siteBoostCount == 0
+    }
 }
 
 /// A permission the site can be given, as Chromium stores it per site (content settings).

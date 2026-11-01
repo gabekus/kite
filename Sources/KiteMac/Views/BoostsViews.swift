@@ -56,12 +56,18 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
     static func show(_ boostID: UUID, refresh: (() -> Void)?, browser: BrowserWindowController? = nil) {
         if let existing = open[boostID] {
             if let browser { existing.zapTool.browser = browser }
-            existing.showWindow(nil)
+            existing.present()
             return
         }
         let controller = BoostEditorWindowController(boostID: boostID, refresh: refresh, browser: browser)
         open[boostID] = controller
-        controller.showWindow(nil)
+        controller.present()
+    }
+
+    /// A test run (KITE_DIAGNOSTICS=1 on a throwaway profile) opens it behind other windows, like
+    /// its browser windows.
+    private func present() {
+        if UIDiagnostics.enabledByEnvironment { window?.orderBack(nil) } else { showWindow(nil) }
     }
 
     /// Closes the Boost's editor, if open (it was deleted).
