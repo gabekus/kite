@@ -154,7 +154,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         // focuses the new page); the bar takes it back so typing and Esc keep working.
         firstResponderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.keepCommandBarFocused() }
+                MainActor.assumeIsolated { self?.keepCommandBarFocused(after: .responderChanged) }
             }
         }
         sync()
@@ -180,6 +180,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if isIncognito { pool.retain(live: [], restorable: []) }
         // Windows showing a placeholder for one of this window's pages take it back.
         pool.leaveShared()
+    }
+
+    /// `ui input` is about to send this background window keys: what becoming key would do first.
+    func takeKeysInBackground() {
+        keepCommandBarFocused(after: .becameKey)
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
@@ -646,6 +651,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func windowDidBecomeKey(_ notification: Notification) {
         reclaimPages()
+        // Another window's bar may have taken the field editor all windows share.
+        keepCommandBarFocused(after: .becameKey)
     }
 
     /// How far the focused pane's top and trailing edges sit inside the content card (zero without a split).
@@ -848,6 +855,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     private func updateCommandBar() {
         let visible = store.commandBar != nil
+        let opened = visible && !commandBarVisible
         if visible != commandBarVisible {
             commandBarVisible = visible
             commandBarHost.isHidden = !visible
@@ -861,16 +869,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             }
         }
         // Also when ⌘T or ⌘L comes while the bar is already open.
-        keepCommandBarFocused()
+        keepCommandBarFocused(after: opened ? .opened : .stillOpen)
     }
 
     private var commandBarHasFocus: Bool {
         (window?.firstResponder as? NSView)?.isDescendant(of: commandBarHost) == true
     }
 
-    private func keepCommandBarFocused(attempt: Int = 0) {
+    /// The window the user (or `ui input`) is working in.
+    private var isInFront: Bool {
+        window?.isKeyWindow == true || MenuRouter.deliveringTo === self
+    }
+
+    private func keepCommandBarFocused(after trigger: CommandBarFocus.Trigger, attempt: Int = 0) {
         guard commandBarVisible else { return }
-        if !commandBarHasFocus { focusCommandBar(attempt: attempt) }
+        // SwiftUI shares one field editor between windows: two windows with open bars that both took
+        // it back on every responder change would trade it forever (see CommandBarFocus).
+        if !commandBarHasFocus, CommandBarFocus.takesFocus(after: trigger, inFront: isInFront) {
+            focusCommandBar(attempt: attempt)
+        }
         if commandBarHasFocus { releaseHeldKeys(replay: true) }
     }
 
@@ -890,7 +907,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             holdKeys()
             guard attempt < 50 else { return releaseHeldKeys(replay: true) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
-                self?.keepCommandBarFocused(attempt: attempt + 1)
+                self?.keepCommandBarFocused(after: .opened, attempt: attempt + 1)
             }
             return
         }
