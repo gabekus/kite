@@ -1221,7 +1221,40 @@ Nothing in Arc was pressed or run. The only open Arc window had its sidebar hidd
 - **Kite's own, unverified against Arc:** the button's size, icon (SF `wand.and.stars`; Arc's image isn't known),
   colours and hover reveal; the header row's height (25, the divider's), font and close button; the minimum of 3
   tabs (`canAutoOrganizeTodayTabs`'s rule isn't in the strings); showing the divider row with no pinned tabs so the
-  button has somewhere to be. Arc's Clear button on the same row isn't in Kite yet.
+  button has somewhere to be. Clear on the same row: see below.
+
+### Today divider Clear button → `TodayDivider`, `ClearButtonStyle` (Arc 1.171 strings and Ghidra decompile, 1 Nov 2026)
+
+Nothing in Arc was pressed, run or captured; no Arc geometry was measured (the buttons are hidden until hover).
+
+- **Row:** `UnpinnedSectionDividerCellView` holds an `NSStackView` (FUN_1001aa688): `borderView` (the line),
+  `tidyButton`, `clearButton`, in that order, so Clear is at the right end and Tidy just left of it. Stack edge
+  insets 18 left and right; its spacing comes from a theme metric that wasn't resolved.
+- **Clear button:** `SidebarClearButton` (FUN_10030e084): an `NSImageView` whose right edge sits 2 pt left of a
+  stack holding an `NSTextField` (width 27.5, not editable or bezeled); the button is the row's height
+  (FUN_1001ab6f0). Title "Clear" (inline string at `0x1001872c4`, comment "Button Title; Clear unpinned tabs in
+  this space"), tooltip "Clear Today tabs" (`0x1001871e8`, "Tooltip; Clear unpinned tabs in this space").
+  Image: SF Symbol `arrow.down` (inline at `0x1001aacc0`, accessibility "arrow pointing down") at the label
+  font's point size, `NSFontWeightBold` (FUN_1001aac84). No background.
+- **Two modes** (FUN_1001abeac, driven by `clearTabAction`: `clearOthers`, `clearAll`, arc-strings.txt
+  176319–176320): `clearAll` shows the arrow and "Clear Today tabs"; `clearOthers` drops the arrow and uses
+  "Clear unselected Today tabs" ("Tooltip; Clear unselected tabs in this list", `0x100187498`). Which windows use
+  `clearOthers` isn't known from the binary ("this list" suggests a non-main tab list); Kite's main sidebar uses
+  `clearAll`.
+- **Shown state** (FUN_1001abbc8, FUN_1001ac59c): a three-way state, 0 = Clear only, 1 = Tidy and Clear,
+  2 = neither. `tidyAndClear` (176321) is the name of state 1, next to the field `buttons` (176318): it is when
+  both buttons show, not a combined action, setting or long press. Both buttons start hidden at alpha 0
+  (FUN_1001aa7fc, FUN_1001aa8e4) and fade with ease-out over 0.1 s. What drives the state (hover is the natural
+  reading, matching Kite's Tidy) wasn't decoded: the Combine key paths are anonymous.
+- **Press:** mouseDown (FUN_100310258) recolours label and image (a 0.66 factor on the colour) and animates the
+  arrow's centre-Y constraint to 3 over 0.175 s (FUN_10030e6a0); mouseUp animates it back to 0 (FUN_10030e860)
+  and calls `onClick` only if the pointer is still inside the button (FUN_10030e75c).
+- **Action:** `onClick` (FUN_1001aab98) sends the store action for the row; Arc's archive reasons include
+  `clearButton`, and the menu's Clear unpinned tabs action is `didTapClearUnpinnedItems` (176402). Kite runs its
+  Clear Today for the divider's space: archives every Today tab, "Archived N tabs" toast.
+- **Kite's own, unverified against Arc:** label font (11 semibold, Kite's Tidy text) and opacity (0.75, 0.5 while
+  pressed), the gap to Tidy (6), the trailing inset (Kite's divider inset, not 18), showing the row when Today
+  has tabs and there are no pinned tabs, and hiding Clear when Today is empty. Not built: the `clearOthers` mode.
 ## Tidy Downloads → `TidyDownloads` (KiteCore), `DownloadTidier` (Arc 1.171 strings, defaults and disassembly, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 43295, 174650-174675, 160610, 73907,

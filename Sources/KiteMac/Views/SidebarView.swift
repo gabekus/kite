@@ -32,6 +32,8 @@ struct SidebarActions {
     var renameTab: (UUID) -> Void
     /// Tidy Tabs: the Today divider's Tidy button, and a tab group header's context menu.
     var tidyTabs: (UUID) -> Void = { _ in }
+    /// The Today divider's Clear button: Clear Today for that space.
+    var clearToday: (UUID) -> Void = { _ in }
     var removeTabGroupHeader: (UUID) -> Void = { _ in }
     /// A tab row's speaker button and Mute / Unmute menu item.
     var toggleMute: (UUID) -> Void = { _ in }
@@ -187,14 +189,17 @@ struct SidebarView: View {
                 })
             }
             Section {
-                // Arc Max's Tidy button sits on this divider (UnpinnedSectionHeaderCellView).
+                // Arc's Tidy and Clear buttons sit on this divider (UnpinnedSectionDividerCellView).
                 let canTidy = TidyTabs.isEnabled() && store.state.canTidyTabs(inSpace: space.id)
-                if !space.pinnedItems.isEmpty || canTidy {
+                let canClear = !space.tabs.isEmpty
+                if !space.pinnedItems.isEmpty || canTidy || canClear {
                     TodayDivider(
                         showsLine: !space.pinnedItems.isEmpty,
                         canTidy: canTidy,
+                        canClear: canClear,
                         isTidying: store.tidyingSpaceIDs.contains(space.id),
-                        onTidy: { actions.tidyTabs(space.id) })
+                        onTidy: { actions.tidyTabs(space.id) },
+                        onClear: { actions.clearToday(space.id) })
                         .sidebarRow(pill: false)
                 }
                 NewTabRow { store.showCommandBar(.newTab) }
@@ -749,14 +754,17 @@ private struct FavoriteTile: View {
     }
 }
 
-/// The line between pinned and Today tabs, with Arc Max's Tidy button at its right end
-/// ("Tidy", tooltip "Organize Today Tabs"). The button shows while the pointer is on the row,
-/// and its icon turns while Claude works (Arc's SidebarTidyButton rotation animation).
+/// The line between pinned and Today tabs, with Arc's Tidy and Clear buttons at its right end
+/// (UnpinnedSectionDividerCellView: line, Tidy, Clear). Both fade in while the pointer is on the
+/// row (Arc: ease-out 0.1 s alpha). Tidy ("Tidy", tooltip "Organize Today Tabs") turns while
+/// Claude works; Clear ("↓ Clear", tooltip "Clear Today tabs") runs Clear Today for this space.
 private struct TodayDivider: View {
     let showsLine: Bool
     let canTidy: Bool
+    let canClear: Bool
     let isTidying: Bool
     let onTidy: () -> Void
+    let onClear: () -> Void
     @State private var hovering = false
     @State private var turning = false
 
@@ -766,30 +774,25 @@ private struct TodayDivider: View {
                 .fill(.primary.opacity(showsLine ? M.dividerOpacity : 0))
                 .frame(height: M.dividerThickness)
                 .padding(.horizontal, M.dividerInset)
-            if canTidy, hovering || isTidying {
-                Button(action: onTidy) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "wand.and.stars")
-                            .font(.system(size: 10, weight: .semibold))
-                            .rotationEffect(.degrees(turning ? 360 : 0))
-                        Text("Tidy")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .padding(.horizontal, 6)
-                    .frame(height: 18)
-                    .modifier(ChromeFill(strength: M.hoverFill))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            HStack(spacing: 6) {
+                if canTidy, hovering || isTidying {
+                    tidyButton.transition(.opacity)
                 }
-                .buttonStyle(.plain)
-                .opacity(isTidying ? 0.6 : 0.75)
-                .disabled(isTidying)
-                .padding(.trailing, M.dividerInset)
-                .help("Organize Today Tabs")
-                .accessibilityLabel("Tidy")
+                if canClear, hovering {
+                    Button(action: onClear) { EmptyView() }
+                        .buttonStyle(ClearButtonStyle())
+                        .help("Clear Today tabs")
+                        .accessibilityLabel("Clear")
+                        .transition(.opacity)
+                }
             }
+            .padding(.trailing, M.dividerInset)
         }
         .frame(height: M.dividerRowHeight)
         .contentShape(Rectangle())
+        // Keeps a lone button's accessibility frame its own instead of the whole row's.
+        .accessibilityElement(children: .contain)
+        .animation(.easeOut(duration: 0.1), value: hovering)
         .onHover { hovering = $0 }
         .onChange(of: isTidying, initial: true) { _, tidying in
             if tidying {
@@ -798,6 +801,46 @@ private struct TodayDivider: View {
                 withAnimation(.linear(duration: 0)) { turning = false }
             }
         }
+    }
+
+    private var tidyButton: some View {
+        Button(action: onTidy) {
+            HStack(spacing: 3) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 10, weight: .semibold))
+                    .rotationEffect(.degrees(turning ? 360 : 0))
+                Text("Tidy")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .padding(.horizontal, 6)
+            .frame(height: 18)
+            .modifier(ChromeFill(strength: M.hoverFill))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+        .opacity(isTidying ? 0.6 : 0.75)
+        .disabled(isTidying)
+        .help("Organize Today Tabs")
+        .accessibilityLabel("Tidy")
+    }
+}
+
+/// Arc's SidebarClearButton: a bold `arrow.down` 2 pt left of the "Clear" label, no background.
+/// Pressing it dims it and drops the arrow 3 pt (0.175 s); releasing puts the arrow back, and
+/// the click counts only if the pointer is still on the button (an ordinary button release).
+private struct ClearButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 11, weight: .bold))
+                .offset(y: configuration.isPressed ? 3 : 0)
+                .animation(.easeInOut(duration: 0.175), value: configuration.isPressed)
+            Text("Clear")
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .opacity(configuration.isPressed ? 0.5 : 0.75)
     }
 }
 

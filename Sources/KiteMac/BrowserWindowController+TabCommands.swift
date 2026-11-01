@@ -6,7 +6,12 @@ extension BrowserWindowController {
     @objc func selectRecentTab(_ sender: Any?) { store.mutate { $0.selectRecentTab() } }
 
     @objc func clearToday(_ sender: Any?) {
-        let cleared = store.mutate { $0.clearToday() }
+        clearToday(inSpace: store.state.selectedSpace.id)
+    }
+
+    /// Clear Today for one space: ⇧⌘K, and the Clear button on that space's Today divider.
+    func clearToday(inSpace spaceID: UUID) {
+        let cleared = store.mutate { $0.clearToday(inSpace: spaceID) }
         if cleared.isEmpty { return NSSound.beep() }
         showToast(cleared.count == 1 ? "Archived 1 tab" : "Archived \(cleared.count) tabs")
     }
