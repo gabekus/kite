@@ -7,6 +7,11 @@ struct SidebarActions {
     var goForward: () -> Void
     var reload: () -> Void
     var forceReload: () -> Void
+    /// The reload button: on a Developer Mode site it does what `devModeReloadState` says.
+    var reloadButton: () -> Void
+    /// Developer Mode's reload options: remembers the choice for the button, then does it.
+    var developerReload: (DeveloperTabReloadSetting) -> Void
+    var clearCookiesAndRefresh: () -> Void
     var toggleSidebar: () -> Void
     var closeTab: (UUID) -> Void
     var addSplitView: () -> Void
@@ -75,7 +80,9 @@ struct SidebarView: View {
                 }
                 Spacer(minLength: 0)
                 if !state.showsToolbar {
-                    NavigationButtons(layout: header, page: page, hasTab: selectedID != nil, actions: actions)
+                    NavigationButtons(layout: header, page: page, hasTab: selectedID != nil,
+                                  developerReload: state.isInDeveloperMode(selectedTab?.url) ? state.devModeReloadState : nil,
+                                  actions: actions)
                 } else if header.isCompact {
                     NavigationMoreButton(size: header.buttonSize, page: page, hasTab: selectedID != nil, showsReload: false, actions: actions)
                 }
@@ -383,6 +390,8 @@ private struct NavigationButtons: View {
     let layout: HeaderLayout
     let page: PageStatus
     let hasTab: Bool
+    /// The reload setting when the page's site is in Developer Mode, nil otherwise.
+    let developerReload: DeveloperTabReloadSetting?
     let actions: SidebarActions
 
     var body: some View {
@@ -392,9 +401,47 @@ private struct NavigationButtons: View {
             if layout.isCompact {
                 NavigationMoreButton(size: layout.buttonSize, page: page, hasTab: hasTab, showsReload: true, actions: actions)
             } else {
-                ToolbarButton(symbol: page.isLoading ? "xmark" : "arrow.clockwise", help: "Reload", enabled: hasTab, size: layout.buttonSize, action: actions.reload)
+                ToolbarButton(symbol: page.isLoading ? "xmark" : developerReload == .forceReload ? "arrow.clockwise.circle" : "arrow.clockwise",
+                              help: developerReload == .forceReload ? "Refresh (Ignore Cache)" : "Reload",
+                              enabled: hasTab, size: layout.buttonSize, action: actions.reloadButton)
+                if let developerReload {
+                    DeveloperReloadOptionsButton(setting: developerReload, size: layout.buttonSize, hasTab: hasTab, actions: actions)
+                }
             }
         }
+    }
+}
+
+/// Arc's `reloadOptionsButton`, shown beside reload on a Developer Mode site ("A button that
+/// shows a list of reload options"). Items from the strings beside it in Arc's binary; the
+/// layout and the checkmark are Kite's guess.
+private struct DeveloperReloadOptionsButton: View {
+    let setting: DeveloperTabReloadSetting
+    let size: CGFloat
+    let hasTab: Bool
+    let actions: SidebarActions
+
+    var body: some View {
+        Menu {
+            Toggle("Reload this page", isOn: .init(get: { setting == .reload }, set: { _ in actions.developerReload(.reload) }))
+            Toggle("Refresh (Ignore Cache)", isOn: .init(get: { setting == .forceReload }, set: { _ in actions.developerReload(.forceReload) }))
+            Divider()
+            Button("Clear Cookies and Refresh", action: actions.clearCookiesAndRefresh)
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .frame(width: size / 2, height: size)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: size / 2, height: size)
+        .opacity(0.6)
+        .disabled(!hasTab)
+        .help("Refresh options")
+        .accessibilityLabel("Refresh options")
     }
 }
 

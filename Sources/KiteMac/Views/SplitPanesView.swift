@@ -62,7 +62,7 @@ final class SplitPanesView: NSView {
 
     /// The pane under a point in this view's coordinates.
     func pane(at point: NSPoint) -> UUID? {
-        panes.first { $0.card.frame.contains(point) }?.id
+        panes.first { !$0.card.isHidden && $0.card.frame.contains(point) }?.id
     }
 
     func frame(of id: UUID) -> CGRect? {
@@ -84,6 +84,21 @@ final class SplitPanesView: NSView {
     private func layoutPanes() {
         guard !panes.isEmpty else { return }
         let shares = factors.count == panes.count ? factors : Array(repeating: 1 / Double(panes.count), count: panes.count)
+        // Expand Current Split: one pane at 1, the rest at 0. The hidden panes and every divider
+        // go away, so the expanded pane fills the split like a single page.
+        if let expanded = shares.firstIndex(of: 1), shares.filter({ $0 == 0 }).count == panes.count - 1, panes.count > 1 {
+            for (i, pane) in panes.enumerated() {
+                pane.card.isHidden = i != expanded
+                if i == expanded {
+                    pane.card.frame = bounds
+                    pane.card.needsLayout = true
+                }
+            }
+            for divider in dividers { divider.isHidden = true }
+            return
+        }
+        for pane in panes { pane.card.isHidden = false }
+        for divider in dividers { divider.isHidden = false }
         var offset: CGFloat = 0
         for (i, pane) in panes.enumerated() {
             // The last pane takes what's left, so rounding never leaves a sliver.

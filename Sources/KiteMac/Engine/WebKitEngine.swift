@@ -147,6 +147,43 @@ final class WebKitPage: NSObject, WebPage {
         webView.createWebArchiveData { completion(try? $0.get(), "webarchive") }
     }
 
+    func captureImage(area: CGRect?, completion: @escaping (Data?) -> Void) {
+        let deviceScale = webView.window?.backingScaleFactor ?? 2
+        guard let area else {
+            // takeSnapshot stops at the viewport; a PDF of the page (no rect) holds all of it as one page.
+            webView.createPDF(configuration: WKPDFConfiguration()) { result in
+                guard let pdf = try? result.get(), let rep = NSPDFImageRep(data: pdf) else { return completion(nil) }
+                let size = rep.bounds.size
+                let scale = deviceScale * Capture.fullPageScale(contentHeight: size.height, deviceScale: deviceScale)
+                completion(Self.png(size: size, scale: scale) { rep.draw(in: NSRect(origin: .zero, size: size)) })
+            }
+            return
+        }
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = webView.isFlipped ? area
+            : CGRect(x: area.minX, y: webView.bounds.height - area.maxY, width: area.width, height: area.height)
+        configuration.snapshotWidth = NSNumber(value: Double(area.width))
+        webView.takeSnapshot(with: configuration) { image, _ in
+            guard let image else { return completion(nil) }
+            completion(Self.png(size: area.size, scale: deviceScale) { image.draw(in: NSRect(origin: .zero, size: area.size)) })
+        }
+    }
+
+    /// Draws into a bitmap of `size` points at `scale` pixels per point and encodes it.
+    private static func png(size: CGSize, scale: CGFloat, draw: () -> Void) -> Data? {
+        let width = Int((size.width * scale).rounded()), height = Int((size.height * scale).rounded())
+        guard width > 0, height > 0, let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return nil }
+        bitmap.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        draw()
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
     func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void) {
         guard let host = url.host() else { return completion() }
         let store = webView.configuration.websiteDataStore
@@ -160,11 +197,15 @@ final class WebKitPage: NSObject, WebPage {
         }
     }
 
-    func printPage() {
-        guard let window = webView.window else { return }
-        let operation = webView.printOperation(with: .shared)
+    func makePrintOperation(_ completion: @escaping (NSPrintOperation?) -> Void) {
+        let info = NSPrintInfo.printInfoForPage()
+        // Fit the page's width to the paper and run it down the pages, like Safari.
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        let operation = webView.printOperation(with: info)
+        // Without a frame WebKit lays the page out at zero size and prints blank pages.
         operation.view?.frame = webView.bounds
-        operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        completion(operation)
     }
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
