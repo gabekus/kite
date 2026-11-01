@@ -192,7 +192,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Native ad blocker | uBlock-style lists | ❌ | Ad blocker thread |
 | Translation | Translate page, "never translate" sites | ❌ | Later (Chromium translate isn't in CEF) |
 | Instant Links | Command bar goes straight to the top result | ❌ | With Claude in the browser |
-| Ask on Page | ⌘F asks AI about the page | ❌ | With Claude in the browser |
+| Ask on Page | ⌘F asks AI about the page | 🟡 Find bar reads "Find or ask…"; Return on a query with no match asks Kite's Claude (`claude -p`, no tools, page innerText); answer under the bar with clickable quotes. Off by default as in Arc; Kite menu › Ask on Page (⌘F) | Panel geometry and styling not measured in Arc; no hint/upsell, no "No matches" label, no per-tab conversation |
 | ChatGPT/AI in command bar | Ask from the command bar | ❌ | With Claude in the browser |
 | Tidy Tab Titles | Pinned tabs get short AI titles | ❌ | With Claude in the browser |
 | Tidy Downloads | Downloads renamed by AI | ❌ | With Claude in the browser |
