@@ -396,11 +396,11 @@ struct AdvancedPane: View {
                 )
             }
             SettingsSection {
-                UnsupportedToggle("Enable Picture in Picture when you leave a video tab", icon: SettingsIcon(symbol: "play.square", color: .purple))
+                AutoPictureInPictureRow()
                 SettingsSeparator()
                 UnsupportedToggle("Allow websites to get your theme data", icon: SettingsIcon(symbol: "paintpalette.fill", color: .purple))
                 SettingsSeparator()
-                UnsupportedToggle("Enable Boosts on websites you visit", icon: SettingsIcon(symbol: "paintbrush.fill", color: .purple))
+                BoostsEnabledRow()
             }
             HStack(spacing: 8) {
                 Button("More Settings…") {}.disabled(true)
@@ -428,6 +428,29 @@ struct AdvancedPane: View {
                 SettingsSeparator()
                 CommandToggle("Diagnostics for Claude", #selector(AppDelegate.toggleClaudeDiagnostics(_:)))
             }
+        }
+    }
+}
+
+/// Arc's "Enable Picture in Picture when you leave a video tab" (`autoPipGloballyDisabled`, unset:
+/// on). Read each time a tab leaves the screen, so it applies at once.
+private struct AutoPictureInPictureRow: View {
+    @AppStorage(BrowserWindowController.autoPictureInPictureDisabledKey) private var disabled = false
+
+    var body: some View {
+        SettingsRow(title: "Enable Picture in Picture when you leave a video tab", icon: SettingsIcon(symbol: "play.square", color: .purple)) {
+            Toggle("", isOn: Binding(get: { !disabled }, set: { disabled = !$0 }))
+                .toggleStyle(.switch).labelsHidden().controlSize(.mini)
+        }
+    }
+}
+
+/// Arc's "Enable Boosts on websites you visit" (`hasDisabledBoostsInPreferences`, unset: on).
+private struct BoostsEnabledRow: View {
+    var body: some View {
+        SettingsRow(title: "Enable Boosts on websites you visit", icon: SettingsIcon(symbol: "paintbrush.fill", color: .purple)) {
+            Toggle("", isOn: Binding(get: { BoostsModel.shared.isOn }, set: { BoostsModel.shared.setOn($0) }))
+                .toggleStyle(.switch).labelsHidden().controlSize(.mini)
         }
     }
 }
