@@ -37,7 +37,9 @@ final class PagePool {
 
     func page(for tab: BrowserTab) -> WebPage {
         if let existing = pages[tab.id] { return existing }
-        let page = engine.makePage(url: tab.url, restoring: savedState.removeValue(forKey: tab.id))
+        // A tab on one of Kite's own pages gets a blank page; the window draws the page over it.
+        let url = InternalPage(tab.url) == nil ? tab.url : nil
+        let page = engine.makePage(url: url, restoring: savedState.removeValue(forKey: tab.id))
         register(page, id: tab.id)
         return page
     }

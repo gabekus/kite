@@ -17,6 +17,35 @@ public struct HistoryEntry: Codable, Hashable, Sendable {
     public var displayTitle: String { title.isEmpty ? (url.host() ?? url.absoluteString) : title }
 }
 
+/// One day of the history page, newest entry first.
+public struct HistoryDay: Hashable, Sendable {
+    public var start: Date
+    public var entries: [HistoryEntry]
+
+    public init(start: Date, entries: [HistoryEntry]) {
+        self.start = start
+        self.entries = entries
+    }
+
+    /// Chromium's history page headings: "Today - Saturday, October 31, 2026",
+    /// "Yesterday - Friday, October 30, 2026", then the date alone.
+    public func heading(now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = locale
+        formatter.dateStyle = .full
+        formatter.timeStyle = .none
+        let date = formatter.string(from: start)
+        let today = calendar.startOfDay(for: now)
+        if start == today { return "Today - " + date }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: today), start == yesterday {
+            return "Yesterday - " + date
+        }
+        return date
+    }
+}
+
 /// Browsing history, one entry per URL, for the command bar's history results.
 /// Only web pages are kept; incognito windows never record.
 public struct History: Codable, Sendable, Equatable {
@@ -54,6 +83,31 @@ public struct History: Codable, Sendable, Equatable {
 
     public mutating func removeAll() {
         entries.removeAll()
+    }
+
+    /// The history page's Remove from History.
+    public mutating func remove(_ urls: some Sequence<URL>) {
+        for url in urls { entries[url.absoluteString] = nil }
+    }
+
+    /// The history page's list: newest first, grouped by the day of the last visit, keeping
+    /// entries whose title or URL contains `query` (case-insensitive), as Chromium's history
+    /// search does.
+    public func days(matching query: String = "", calendar: Calendar = .current) -> [HistoryDay] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let matching = entries.values.filter {
+            q.isEmpty || $0.title.lowercased().contains(q) || $0.url.absoluteString.lowercased().contains(q)
+        }
+        var days: [HistoryDay] = []
+        for entry in matching.sorted(by: { $0.lastVisit > $1.lastVisit }) {
+            let start = calendar.startOfDay(for: entry.lastVisit)
+            if days.last?.start == start {
+                days[days.count - 1].entries.append(entry)
+            } else {
+                days.append(HistoryDay(start: start, entries: [entry]))
+            }
+        }
+        return days
     }
 
     private mutating func prune(to count: Int) {

@@ -408,6 +408,17 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
 Kite (`DownloadsView.swift`): no Library yet, so the bottom bar's leading button (where Arc's Library button sits)
 shows the progress ring and opens a popover list. Row size, ring size and popover width are Kite's, unmeasured.
 
+## History, ⌘Y (Arc 1.171 menu bar and strings, 1 Nov 2026)
+
+- Menu (read from Arc's menu bar through AX, nothing pressed): **Archive** › Go Back ⌘[, Go Forward ⌘], —,
+  **View History** ⌘Y, View Archive…, Clear Archive.
+- Arc's shortcut list describes ⌘Y as "Opens your History in a new Today tab"; its action id is `viewHistory`.
+  The strings also hold `chrome://history`, so the tab is Chromium's own history page, not an Arc view.
+- Kite's CEF (Alloy style) has no chrome://history, so Kite draws a native page over a blank tab at
+  `kite://history` (`HistoryPageView`), following Chromium's history page: search, day cards headed
+  "Today - Saturday, October 31, 2026", rows with time, icon, title and site, and a per-row menu. Sizes are
+  Kite's; Chromium's page wasn't measured in Arc.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

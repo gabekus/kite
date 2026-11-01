@@ -230,6 +230,8 @@ enum MainMenu {
             // text field still moves its caret.
             alternate(#selector(BrowserWindowController.goBack(_:)), left, .command),
             alternate(#selector(BrowserWindowController.goForward(_:)), right, .command),
+            .separator(),
+            item("View History", #selector(BrowserWindowController.viewHistory(_:)), "y", id: "viewHistory"),
         ])
 
         submenu("Tabs", [

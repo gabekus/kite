@@ -123,7 +123,7 @@ final class BrowserStore {
     // MARK: Page events from web views
 
     func pageTitleChanged(_ id: UUID, _ title: String?) {
-        guard let title, !title.isEmpty else { return }
+        guard let title, !title.isEmpty, !showsInternalPage(id) else { return }
         if let url = recordedURLs[id] { history?.updateTitle(url, title) }
         guard state.tab(id)?.title != title else { return }
         mutate { $0.update(tab: id) { $0.title = title } }
@@ -131,6 +131,8 @@ final class BrowserStore {
 
     func pageURLChanged(_ id: UUID, _ url: URL?) {
         guard let url else { return }
+        // The blank page under kite://history reports about:blank; the tab keeps its own URL.
+        if showsInternalPage(id), !History.records(url) { return }
         // Before the tab check: a typed URL is already on the tab when the page reports it.
         if recordedURLs[id] != url {
             recordedURLs[id] = url
@@ -138,6 +140,10 @@ final class BrowserStore {
         }
         guard state.tab(id)?.url != url else { return }
         mutate { $0.update(tab: id) { $0.url = url } }
+    }
+
+    private func showsInternalPage(_ id: UUID) -> Bool {
+        InternalPage(state.tab(id)?.url) != nil
     }
 
     func faviconChanged(_ id: UUID, _ url: URL?) {
