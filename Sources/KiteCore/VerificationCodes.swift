@@ -112,6 +112,42 @@ public enum VerificationCodes {
         return labels.count >= 2 ? labels[labels.count - 2] : labels.first ?? ""
     }
 
+    // MARK: Messages (iMessage and SMS)
+
+    /// A date in Messages' chat.db: nanoseconds since 2001 (seconds in very old databases).
+    public static func messagesDate(_ value: Int64) -> Date {
+        Date(timeIntervalSinceReferenceDate: value > 1_000_000_000_000 ? Double(value) / 1e9 : Double(value))
+    }
+
+    /// The inverse of `messagesDate`, for querying chat.db.
+    public static func messagesTimestamp(_ date: Date) -> Int64 {
+        Int64(date.timeIntervalSinceReferenceDate * 1e9)
+    }
+
+    /// The text of a message whose `text` column is empty: newer macOS keeps it only in
+    /// `attributedBody`, an archived NSAttributedString (typedstream). Its string is
+    /// the first inline payload after the NSString class name.
+    public static func messagesText(attributedBody data: Data) -> String? {
+        let bytes = [UInt8](data)
+        let marker = Array("NSString".utf8)
+        guard var i = (0...max(0, bytes.count - marker.count)).first(where: { bytes[$0..<min(bytes.count, $0 + marker.count)].elementsEqual(marker) })
+        else { return nil }
+        i += marker.count
+        // Class metadata runs up to the "+" that starts the string.
+        while i < bytes.count, bytes[i] != 0x2B { i += 1 }
+        i += 1
+        guard i < bytes.count else { return nil }
+        // Small lengths are one byte; 0x81 and 0x82 escape to 2 and 4-byte little-endian lengths.
+        let lead = bytes[i]
+        i += 1
+        let size = lead == 0x81 ? 2 : lead == 0x82 ? 4 : 0
+        guard i + size <= bytes.count else { return nil }
+        let length = size == 0 ? Int(lead) : bytes[i..<i + size].reversed().reduce(0) { $0 << 8 | Int($1) }
+        i += size
+        guard i + length <= bytes.count else { return nil }
+        return String(bytes: bytes[i..<i + length], encoding: .utf8)
+    }
+
     // MARK: Gmail's feed
 
     /// Messages in a Gmail Atom feed (`/mail/u/N/feed/atom`: unread mail in the inbox).

@@ -69,4 +69,29 @@ import Testing
         #expect(messages.first?.senderEmail == "auth@fedex.com")
         #expect(messages.first.flatMap(VerificationCodes.code(in:)) == "551204")
     }
+
+    @Test func readsMessagesBodies() {
+        // NSArchiver archives of NSAttributedString(string:), the format of chat.db's attributedBody.
+        let short = "BAtzdHJlYW10eXBlZIHoA4QBQISEhBJOU0F0dHJpYnV0ZWRTdHJpbmcAhIQITlNPYmplY3QAhZKEhIQITlNTdHJpbmcBlIQBKyZTb2x2OiBZb3VyIHZlcmlmaWNhdGlvbiBjb2RlIGlzIDQ4MjkxM4aEAmlJASaShISEDE5TRGljdGlvbmFyeQCUhAFpAIaG"
+        #expect(VerificationCodes.messagesText(attributedBody: Data(base64Encoded: short)!) == "Solv: Your verification code is 482913")
+        // 300 characters: the length is 0x81 and two little-endian bytes.
+        let long = Data(base64Encoded: "BAtzdHJlYW10eXBlZIHoA4QBQISEhBJOU0F0dHJpYnV0ZWRTdHJpbmcAhIQITlNPYmplY3QAhZKEhIQITlNTdHJpbmcBlIQBK4EsAQ==")!
+            + Data(repeating: 0x61, count: 300) + Data([0x86, 0x84])
+        #expect(VerificationCodes.messagesText(attributedBody: long) == String(repeating: "a", count: 300))
+        #expect(VerificationCodes.messagesText(attributedBody: Data("nothing here".utf8)) == nil)
+    }
+
+    @Test func convertsMessagesDates() {
+        #expect(VerificationCodes.messagesDate(VerificationCodes.messagesTimestamp(now)) == now)
+        #expect(VerificationCodes.messagesDate(800_000_000) == Date(timeIntervalSinceReferenceDate: 800_000_000))
+    }
+
+    @Test func findsCodesInTexts() {
+        let texts = [
+            message("Solv: Your verification code is 482913. Do not share it.", from: "Messages", "", ago: 30),
+            message("Your Slack code is 111111", from: "Messages", "", ago: 10),
+        ]
+        #expect(VerificationCodes.best(in: texts, forHost: "www.solvhealth.com", now: now)?.code == "111111")
+        #expect(VerificationCodes.best(in: texts, forHost: "solv.com", now: now)?.code == "482913")
+    }
 }

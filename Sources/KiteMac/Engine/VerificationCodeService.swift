@@ -2,10 +2,11 @@
 import AppKit
 import KiteCore
 
-/// Finds the code a site just emailed you and offers it in the site's code field
-/// (VerificationCodeScript).
+/// Finds the code a site just emailed or texted you and offers it in the site's code
+/// field (VerificationCodeScript).
 ///
-/// Mail comes from Gmail's feed of unread inbox mail, read with your own Gmail sign-in
+/// Texts (iMessage and SMS) come from Messages' database on this Mac
+/// (MessagesCodeReader), when Kite has Full Disk Access. Mail comes from Gmail's feed of unread inbox mail, read with your own Gmail sign-in
 /// in Kite: a hidden page on mail.google.com fetches `/mail/u/N/feed/atom` for each
 /// signed-in account. Kite only looks while a code field is waiting (up to three
 /// minutes), and the code never leaves your Mac.
@@ -27,6 +28,9 @@ final class VerificationCodeService {
     private var mailPageReady = false
     private var timer: Timer?
     private var fetching = false
+    private var readingTexts = false
+    private var mail: [VerificationCodes.Message] = []
+    private var texts: [VerificationCodes.Message] = []
 
     private static let pollInterval: TimeInterval = 3
     private static let waitLimit: TimeInterval = 180
@@ -84,6 +88,7 @@ final class VerificationCodeService {
         let now = Date()
         waiters.removeAll { $0.page == nil || $0.until < now }
         guard !waiters.isEmpty else { return stop() }
+        readTexts()
         guard let page = mailPage ?? makeMailPage() else { return }
         guard mailPageReady, !fetching else { return }
         fetching = true
@@ -92,11 +97,28 @@ final class VerificationCodeService {
             self.fetching = false
             let feeds = ((value as? String)?.data(using: .utf8)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String] } ?? []
             let messages = feeds.flatMap { VerificationCodes.parseGmailFeed(Data($0.utf8)) }
-            self.offer(from: messages)
+            self.mail = messages
+            self.offer()
         }
     }
 
-    private func offer(from messages: [VerificationCodes.Message]) {
+    private func readTexts() {
+        guard !readingTexts else { return }
+        readingTexts = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let texts = MessagesCodeReader.recent()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self.readingTexts = false
+                    self.texts = texts
+                    self.offer()
+                }
+            }
+        }
+    }
+
+    private func offer() {
+        let messages = mail + texts
         for i in waiters.indices {
             guard let page = waiters[i].page,
                   let found = VerificationCodes.best(in: messages, forHost: waiters[i].host),
@@ -126,6 +148,8 @@ final class VerificationCodeService {
         mailPage?.close()
         mailPage = nil
         mailPageReady = false
+        mail = []
+        texts = []
     }
 }
 #endif
