@@ -1,18 +1,8 @@
 import Foundation
 
-/// Arc's tab and space commands that aren't plain selection: recent-tab switching,
-/// Clear Today, duplicate, rename.
+/// Arc's tab and space commands that aren't plain selection: Clear Today, duplicate, rename.
+/// (Recent-tab switching, ⌃Tab, is RecentTabSwitcher.)
 extension BrowserState {
-    /// ⌃Tab: the most recently used other tab in this space (favorites included).
-    public mutating func selectRecentTab(now: Date = Date()) {
-        let current = selectedSpace.selectedTabID
-        guard let recent = sidebarTabs(in: selectedSpaceIndex)
-            .filter({ $0.id != current })
-            .max(by: { $0.lastActiveAt < $1.lastActiveAt })
-        else { return }
-        select(tab: recent.id, now: now)
-    }
-
     /// ⇧⌘K: archives every unpinned tab in the current space, like Arc's Clear Today.
     /// A pinned or favorite selection stays; otherwise the first pinned tab is selected.
     @discardableResult

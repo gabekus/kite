@@ -12,7 +12,7 @@ enum EssentialShortcutsWindow {
     /// Arc's fixed list. `action` is the menu item's ID, so remapped shortcuts show as remapped.
     static let rows: [(action: String, title: String, subtitle: String)] = [
         ("newTab", "Open a New Tab", "Open the Command Bar to create a new tab"),
-        ("nextRecentTabItem", "Switch to a Recent Tab", "Hold this to quickly switch between recent tabs"),
+        ("cycleNextTab", "Switch to a Recent Tab", "Hold this to quickly switch between recent tabs"),
         ("copyCurrentURL", "Copy Page URL", "Copy the current tab's URL without trackers"),
         ("addSplitView", "Add Split View", "View multiple websites side-by-side"),
         ("openLittleArc", "Open Little Arc", "Use a smaller browser window for quick searches"),

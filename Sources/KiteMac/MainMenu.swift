@@ -365,8 +365,12 @@ enum MainMenu {
             .separator(),
             item("Next Tab", #selector(BrowserWindowController.nextTab(_:)), down, [.command, .option], id: "nextTab"),
             item("Previous Tab", #selector(BrowserWindowController.previousTab(_:)), up, [.command, .option], id: "previousTab"),
-            item("Switch to Recent Tab", #selector(BrowserWindowController.selectRecentTab(_:)), "\t", .control, id: "nextRecentTabItem"),
-            alternate(#selector(BrowserWindowController.previousTab(_:)), "\t", [.control, .shift]),
+            // Arc 1.171's MainMenu.nib: "Tab Switcher (forward)" ⌃Tab and "(backward)" ⌃⇧Tab (bindings cycleNextTab,
+            // cyclePreviousTab), in the Tabs menu but hidden; the command bar finds them by these keywords.
+            commandBarOnly(item("Tab Switcher (forward)", #selector(BrowserWindowController.cycleToNextRecentTab(_:)), "\t", .control, id: "cycleNextTab"),
+                           keywords: ["Toggle Tabs", "Switch tabs", "Recent tabs"]),
+            commandBarOnly(item("Tab Switcher (backward)", #selector(BrowserWindowController.cycleToPreviousRecentTab(_:)), "\t", [.control, .shift], id: "cyclePreviousTab"),
+                           keywords: ["Toggle Tabs", "Switch tabs", "Recent tabs"]),
             // Arc 1.171's Tabs menu: no shortcut by default; Arc's binding name.
             item("Reveal Tab in Sidebar", #selector(BrowserWindowController.revealTabInSidebar(_:)), id: "revealTabInSidebar"),
             .separator(),

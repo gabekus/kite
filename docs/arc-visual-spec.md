@@ -2919,3 +2919,31 @@ the priorities read).
   the page seeing it; ⌘S (Use Both, page passes it on) toggled the sidebar with no toast; ⌘Y (website) stayed with
   the page. Chromium: ⌘F with Prefer Kite ran Find before the page. With Kite in the background Chromium's view
   declines key equivalents, so its page-first path couldn't be driven.
+
+## Tab Switcher ⌃Tab / ⌃⇧Tab (g112) → `RecentTabSwitcher` (KiteCore), `RecentTabSwitcherController`, `RecentTabSwitcherView` (Arc 1.171 MainMenu.nib, strings and Ghidra decompile, 1 Nov 2026)
+
+- Menu (MainMenu.nib, Tabs menu, hidden at runtime, key equivalent allowed when hidden): "Tab Switcher (forward)"
+  `\t` ⌃ (mask 262144), binding `cycleNextTab`, action `cycleToNextRecentTab:`, outlet `nextRecentTabItem`;
+  "Tab Switcher (backward)" back-tab ⌃⇧ (393216), `cyclePreviousTab`, `cycleToPreviousRecentTab:`. Command bar keywords
+  "Toggle Tabs; Switch tabs; Recent tabs". Kite's old hidden ⌃⇧Tab → Previous Tab alternate is gone (Arc doesn't have it).
+- `ModalItemSwitcherWindowController` (decompile 0x1024ad594–0x1024ae918): `presentationTimer` fires at
+  `0.1 − elapsed` s after the request, so a quick tap switches without the overlay. While open an event monitor for
+  keyDown | flagsChanged (mask 0x1400) swallows every key: the next/previous shortcuts (and
+  `cyclePreviousTabAlternateShortcut`) cycle; keyCode 123 ← previous, 124 → next, 53 Esc dismisses without switching,
+  13 (W) closes the focused item (`updateModalItemSwitcher(confirmedItemIDsToClose:)`). A flagsChanged with none of
+  the shortcuts' modifiers left held commits. `appDidResignActive` dismisses without switching.
+- Window: borderless transparent child of the browser window (style 0x8000, level 3, no shadow, clear background),
+  framed from the parent window on every resize. Title (not drawn): `NSLocalizedString("Recent Items", comment:
+  "Title for the recent tabs overlay")`.
+- View (`ModalItemSwitcherView`, 0x1024a1000–0x1024a8b18): panel RoundedRectangle continuous r24 with a black 50%
+  shadow; horizontal ScrollView (scrolls to the focused item), HStack, padding 16; each item padding 12; focus highlight
+  r8 sliding with `spring(response 0.15, damping 0.95)`, scroll `easeOut(0.1)`; card r6 with black 6% and 20% radius-2
+  shadows; snapshot clipped r4, stroke 2 at 10%; label HStack spacing 8: favicon 16 (r4) + title medium 14, padding
+  horizontal 2. Items: `id, components (snapshot or title+image per split pane), layoutOrientation, isHidden`.
+- Kite: an overlay view inside the window (not a child window), the current space's tabs (favorites, pinned,
+  unpinned) most recent first; cards show the page as it last looked on screen (captured 1 s after a tab is shown,
+  and when the switcher starts), else the favicon. Keys reach it via `BrowserWindow.keyInterceptor` (sendEvent and
+  performKeyEquivalent) so `ui input` works; `ui input {"flags":"ctrl"}` / `{"flags":"none"}` sends the modifier changes.
+- Inferred / unverified: whether Arc's items span spaces (Kite: current space), `preferredSnapshotWidth` (Kite 180 pt),
+  the highlight and panel colours (Kite: primary at 15%, hudWindow material), split items (Kite: one card per tab),
+  and no pixel comparison with Arc (opening it needs keys sent to Arc).

@@ -413,16 +413,6 @@ import Testing
         return (state, ids.reversed())
     }
 
-    @Test func controlTabTogglesBetweenTheTwoMostRecentTabs() {
-        var (state, ids) = makeState(tabs: 3)
-        state.select(tab: ids[2], now: Date(timeIntervalSince1970: 10))
-        state.select(tab: ids[0], now: Date(timeIntervalSince1970: 11))
-        state.selectRecentTab(now: Date(timeIntervalSince1970: 12))
-        #expect(state.selectedTab?.id == ids[2])
-        state.selectRecentTab(now: Date(timeIntervalSince1970: 13))
-        #expect(state.selectedTab?.id == ids[0])
-    }
-
     @Test func clearTodayArchivesUnpinnedTabsAndKeepsPinned() {
         var (state, ids) = makeState(tabs: 3)
         state.togglePin(tab: ids[2])

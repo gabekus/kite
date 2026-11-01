@@ -48,6 +48,9 @@ public enum UIInputEvent: Hashable, Sendable {
     /// A trackpad scroll with gesture phases. `.gesture` sends began, `steps` changed events
     /// sharing dx/dy, then ended; the other phases send one event (to hold a gesture mid-way).
     case phasedScroll(UIPoint, dx: Double, dy: Double, phase: ScrollPhase, steps: Int)
+    /// A modifier change (flagsChanged): these modifiers are held afterwards, none to let go. Keys sent
+    /// later still name their own modifiers; this is for what watches ⌃ being held and let go (⌃Tab).
+    case flags(KeyChord.Modifiers)
 
     public enum ScrollPhase: String, Hashable, Sendable, CaseIterable {
         case gesture, began, changed, ended, cancelled
@@ -191,6 +194,7 @@ public enum UIInspection: Hashable, Sendable {
                 "button": ["type": "string", "enum": ["left", "right", "middle"]],
                 "count": ["type": "integer", "minimum": 1, "maximum": 3],
                 "modifiers": ["type": "string", "description": "input click, pointer moves: e.g. \"cmd\" or \"shift+alt\"."],
+                "flags": ["type": "string", "description": "input: a modifier change, holding these from now on (e.g. \"ctrl\"); \"none\" lets go of all."],
                 "scroll": point,
                 "dx": ["type": "number"], "dy": ["type": "number"],
                 "phase": ["type": "string", "enum": .array(UIInputEvent.ScrollPhase.allCases.map { .string($0.rawValue) }),
@@ -315,9 +319,20 @@ private struct UIArguments {
                 events.append(.scroll(point, dx: dx, dy: dy))
             }
         }
+        if let text = try string("flags") {
+            let trimmed = text.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed == "none" {
+                events.append(.flags([]))
+            } else {
+                guard let chord = try? KeyChord.parse(trimmed + "+a") else {
+                    throw Invalid("\"flags\" must look like \"ctrl\", \"cmd+shift\" or \"none\".")
+                }
+                events.append(.flags(chord.modifiers))
+            }
+        }
         guard events.count == 1 else {
             throw Invalid(events.isEmpty
-                ? "input needs one of \"keys\", \"text\", \"click\" [x, y], \"from\"+\"to\" (a drag) or \"scroll\" [x, y]."
+                ? "input needs one of \"keys\", \"text\", \"click\" [x, y], \"from\"+\"to\" (a drag), \"scroll\" [x, y] or \"flags\"."
                 : "input takes one event at a time; use batch for several.")
         }
         return events[0]
