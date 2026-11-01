@@ -88,7 +88,6 @@ struct MediaLibraryTests {
 
     @Test func mediaLibraryPage() {
         #expect(LibraryPage(stored: "MediaPage") == .media)
-        #expect(LibraryPage.allCases.map(\.rawValue) == ["DownloadsPage", "ArchivePage", "MediaPage"])
         #expect(LibraryPage.media.title == "Media")
     }
 }

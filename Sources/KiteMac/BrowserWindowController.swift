@@ -821,6 +821,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                     store.mutate { _ = $0.openTab(url: url, select: !newTab) }
                 },
                 restore: { [weak self] id in self?.restoreArchivedTab(id) }
+            ),
+            boostActions: .init(
+                open: { [weak self] boost in self?.openBoostFromLibrary(boost) },
+                window: { [weak self] in self?.window }
             )
         )
     }

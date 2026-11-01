@@ -47,10 +47,18 @@ struct LibraryView: View {
     let store: BrowserStore
     let sidebarWidth: CGFloat
     let archiveActions: ArchiveActions
+    let boostActions: BoostActions
 
     struct ArchiveActions {
         let open: (URL, _ newTab: Bool) -> Void
         let restore: (UUID) -> Void
+    }
+
+    struct BoostActions {
+        /// Arc's onSelectBoost: the Boost's site with its editor.
+        let open: (Boost) -> Void
+        /// The window the rename and delete alerts attach to.
+        let window: () -> NSWindow?
     }
 
     enum Metrics {
@@ -114,6 +122,8 @@ struct LibraryView: View {
                 ArchivePageView(store: store, open: archiveActions.open, restore: archiveActions.restore)
             case .media:
                 MediaPageView { url in archiveActions.open(url, false) }
+            case .boosts:
+                BoostsListView(open: boostActions.open, window: boostActions.window)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -159,6 +169,8 @@ private struct PageRow: View {
         case .archive: "tray.full"
         // Arc's welcome-card symbol for the page.
         case .media: "photo.on.rectangle.angled"
+        // Arc animates its "boosts" Lottie; its empty state draws the paintbrush symbol.
+        case .boosts: "paintbrush"
         }
     }
 }

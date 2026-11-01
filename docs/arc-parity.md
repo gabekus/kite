@@ -151,11 +151,11 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | Minimize / Zoom | ⌘M | ✅ | macOS adds Fill, Center, tiling for free |
 | Stay On Top | | ✅ checkmark in the menu, window floats, no in-window indicator (as in Arc) | |
-| Open Library… | ⇧⌘L | 🟡 Window › Open Library… toggles the window's Library over the sidebar and card: Downloads, Archive and Media pages, last page remembered, "Exit the Library" button; switching tab or space leaves it | Easels, Boosts, Spaces pages (Kite has none of them); sizes, icons and animation unmeasured |
+| Open Library… | ⇧⌘L | 🟡 Window › Open Library… toggles the window's Library over the sidebar and card: Downloads, Archive, Media and Boosts pages, last page remembered, "Exit the Library" button; switching tab or space leaves it | Easels, Spaces pages (Kite has none of them); sizes, icons and animation unmeasured |
 | View Downloads… | ⇧⌘J | ✅ Window menu, opens the Library on its Downloads page, as Arc's `toggleDownloads:` ("Opens the Downloads section of your Library"); again closes it | — |
 | View Easels… | | ❌ | Their threads |
 | View Media… | | 🟡 Window › View Media… opens the Library's Media page, as in Arc: pictures and videos from Documents, Desktop, Downloads and screenshots after Arc's "Your Media in the Library" / Allow Access card, plus Kite's own Captures (now kept in Captures/); Today / Yesterday / Earlier This Week, then by month; search; "Show media from:" toggles; preview on click (Esc closes); Copy, Show in Finder, Open in Preview, Open/Copy Source URL, Delete (Capture), Hide from Kite. Sizes are Kite's | AirDrop / Send via iMessage; Hide Media toggle title |
-| View Boosts… | | 🟡 Window menu, opens a Boosts window (Arc opens Library › Boosts): every Boost with Enable/Disable, rename, delete, double-click to edit | Move into the Library when it exists |
+| View Boosts… | | 🟡 Window › View Boosts… opens the Library's Boosts page, as in Arc: every Boost by site with an on/off switch, Rename and Delete on hover, click to open the site with its editor; "Nothing Boosted Yet!" (no Boost Gallery link: it's Arc's site and installs nothing into Kite) | Sizes and icons unmeasured; no report / shared-Boost subtitle |
 
 ### Help
 
@@ -193,7 +193,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
 | Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
-| Library | Downloads, archive, easels, media, boosts (Arc: in the browser window, not a separate one) | 🟡 Downloads, Archive and Media pages in the window (⇧⌘L). Library button at the bottom bar's leading end (32×32 at 8pt, as Arc's) opens it; Arc's progress badge on it while downloading; Arc's projectile fly-in from the pointer into it when a download starts | Easels & Notes, Boosts, Spaces pages; Arc's DownloadBin (fly-in target when the sidebar is hidden); badge completion animation; Arc's own Library icon |
+| Library | Downloads, archive, easels, media, boosts (Arc: in the browser window, not a separate one) | 🟡 Downloads, Archive, Media and Boosts pages in the window (⇧⌘L). Library button at the bottom bar's leading end (32×32 at 8pt, as Arc's) opens it; Arc's progress badge on it while downloading; Arc's projectile fly-in from the pointer into it when a download starts | Easels & Notes, Spaces pages; Arc's DownloadBin (fly-in target when the sidebar is hidden); badge completion animation; Arc's own Library icon |
 | Capture | Screenshot tool for an area/full page | 🟡 Area (drag) and full page: Copy / Save; no Easels, no Portrait Mode | Thread: Capture |
 | Library | Downloads, archive, easels, media, boosts in one window | ❌ | Thread: Library |
 | Air Traffic Control | Rules to route links from other apps to a space | 🟡 | Kite menu → Air Traffic Control…: URL "Is equal to"/"Contains" routes to a space or Little Kite, plus a default. No profile destination; editor lives in its own window until Settings exists |
