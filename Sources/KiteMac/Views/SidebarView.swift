@@ -409,7 +409,8 @@ struct SidebarView: View {
             isMuted: store.pages[tab.id]?.isAudioMuted ?? false,
             onToggleMute: { actions.toggleMute(tab.id) },
             isUnread: liveFolder?.isUnread(tab) ?? false,
-            icon: liveFolder.flatMap { _ in LiveFolderIcons.pullRequest(tab, dark: colorScheme == .dark) }
+            icon: liveFolder.flatMap { _ in LiveFolderIcons.pullRequest(tab, dark: colorScheme == .dark) },
+            peek: store.linkPeekBadges[tab.id]
         )
     }
 }
@@ -1344,6 +1345,8 @@ private struct TabRow: View {
     var isUnread = false
     /// Shown instead of the page's favicon (a live folder's pull request).
     var icon: URL?
+    /// The page of a Peek open over this tab (Arc's TabCellState `modalIcon`), shown as a badge at the row's end.
+    var peek: LinkPeekBadge?
     @State private var hovering = false
     @State private var draft = ""
     @State private var titleWidth: CGFloat = 0
@@ -1409,6 +1412,7 @@ private struct TabRow: View {
                 .opacity(0.6)
                 .help(isPinned ? "Unload" : "Close Tab")
             }
+            if let peek, !isRenaming { LinkPeekBadgeView(badge: peek) }
         }
         .animation(.easeInOut(duration: TabAudioButton.showHideDuration), value: showsAudio)
         .padding(.leading, M.iconInset + indent(depth))
@@ -1529,6 +1533,27 @@ private struct AIRenameSparks: View {
     }
 
     private static let spill: CGFloat = 60
+}
+
+/// Arc's `ModalV2SidebarBadgeView`: the icon of the Peek open over the tab, on a faint rounded square
+/// (`LinkPeek.Badge`). It takes no clicks of its own: clicking it is clicking the row.
+private struct LinkPeekBadgeView: View {
+    private typealias B = LinkPeek.Badge
+    let badge: LinkPeekBadge
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        FaviconView(page: badge.page, icon: badge.icon, size: B.iconSize)
+            .clipShape(RoundedRectangle(cornerRadius: B.iconCornerRadius, style: .continuous))
+            .frame(width: B.side, height: B.side)
+            .background(
+                RoundedRectangle(cornerRadius: B.cornerRadius, style: .continuous)
+                    .fill(colorScheme == .dark ? Color.white.opacity(B.fillOpacityDark) : Color.black.opacity(B.fillOpacityLight))
+            )
+            .allowsHitTesting(false)
+            .accessibilityElement()
+            .accessibilityIdentifier("sidebarTabCellPeekBadge")
+    }
 }
 
 /// Arc's "Edit Pinned Page" submenu on a pinned tab or favorite (SidebarMenu+TabContextMenu,

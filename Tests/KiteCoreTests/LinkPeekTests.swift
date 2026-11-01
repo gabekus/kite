@@ -135,6 +135,31 @@ import Testing
         #expect(Swipe.controlsOffset(tug: .init(x: 1, y: 8)) == 2)
     }
 
+    @Test func snapshotFadesWithArcsShareOfTheTransition() {
+        let out = LinkPeek.snapshotFadeOut
+        #expect(out.from == 1 && out.to == 0 && out.delay == 0)
+        #expect(out.spring.dampingRatio == 0.95)
+        #expect(abs(out.spring.response - 0.1225) < 1e-9)
+        let back = LinkPeek.snapshotFadeIn
+        #expect(back.from == 0 && back.to == 1)
+        #expect(abs(back.delay - 0.07875) < 1e-9)
+        #expect(abs(back.spring.response - 0.14625) < 1e-9)
+    }
+
+    @Test func snapshotCoversTheSourceUnderTheTween() {
+        let source = LinkPeek.Frame(x: 100, y: 300, width: 200, height: 40)
+        let card = LinkPeek.Frame(x: 50, y: 12, width: 800, height: 600)
+        let frame = LinkPeek.snapshotFrame(source: source, cardWidth: card.width, cardHeight: card.height)!
+        #expect(frame.width == 800 && frame.height == 160 && frame.y == 220)
+        // Scaled by the tween about the card's centre, the snapshot lands on the source.
+        let tween = LinkPeek.sourceTween(source: source, card: card)!
+        let centerY = card.y + card.height / 2
+        let top = centerY + tween.dy + (card.y + frame.y - centerY) * tween.scale
+        #expect(abs(top - source.y) < 1e-9)
+        #expect(abs(frame.height * tween.scale - source.height) < 1e-9)
+        #expect(LinkPeek.snapshotFrame(source: .init(x: 0, y: 0, width: 0, height: 4), cardWidth: 800, cardHeight: 600) == nil)
+    }
+
     @Test func tugSpringSettlesToRest() {
         let spring = Swipe.tugSpring
         let start = spring.settle(value: 9, velocity: 0, after: 0)

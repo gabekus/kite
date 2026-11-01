@@ -728,11 +728,10 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   asks the source page the same way when the Peek opens, and falls back to the link to that URL (focused, else
   first visible) when the pointer isn't on it, then to the old 20%-at-the-pointer growth if the page doesn't
   answer within 0.12s. The value of `sourceCornerRadius` isn't in the script's output; Kite uses 0
-  **[unverified]**. Arc crossfades from `sourceSnapshot`; Kite fades the card in over 0.1s instead
-  **[differs]**. Closing back to the source with the close spring is **[inferred]**: the dismiss path wasn't
+  **[unverified]**. Arc crossfades from `sourceSnapshot`: see "Peek: source snapshot crossfade"
+  below (g119). Closing back to the source with the close spring is **[inferred]**: the dismiss path wasn't
   decompiled, but the same transform function serves every non-presented state.
-- Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
-  the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
+- The Peek's badge in the sidebar: see "Peek: badge in the sidebar" below (g115). Not built yet: the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
   any scrim behind the card.
 
 ### Peek: swipe to dismiss → `LinkPeek.Swipe` (KiteCore), `LinkPeekSwipeController` (g45; Arc 1.171 binary, 1 Nov 2026)
@@ -766,6 +765,69 @@ Decompiled with `SymRefs7.java` / `DumpAt.java` into `~/rea-arc/decomp/out7/g45-
   swipe takes priority over the Peek page's own swipe back/forward (Arc's dismiss path doesn't check the page's
   history); the gesture isn't gated on System Settings › Swipe between pages. The haptic was not felt (no
   hands-on test).
+### Peek: source snapshot crossfade → `LinkPeek.snapshotFadeOut` / `snapshotFadeIn` / `snapshotFrame`, `LinkPeekView` (g119; Arc 1.171 binary, 1 Nov 2026)
+
+Ghidra, `~/rea-arc/decomp/out-g115/snap1.txt` (FUN_101713230, FUN_101716678, FUN_101712254, FUN_1017129ec,
+FUN_10171bad4) and `callers4.txt`. Arc wasn't driven.
+
+- `ModalV2HostView` has a lazy `transitionSourceImageView` (an image view, FUN_101712254) inside the card's
+  `contentContainerView`, above the page: the page view is inserted below it (`addSubview:positioned:-1
+  relativeTo:`, FUN_10171bad4). When the transition configuration changes, its image is set to the
+  `tweenFromSource` case's `sourceSnapshot` (nil for `immediate`) (FUN_1017129ec).
+- At the end of the transition function (FUN_101713230, after `commit`), a `CASpringAnimation` on the image
+  view's layer: damping ratio 0.95 (0x3fee666666666666), response = share × the transition's response
+  (popover 0.245 open / 0.225 close; fullbleed 0.18), `beginTime = CACurrentMediaTime() + delay × response`,
+  fill mode both, final opacity 0 when presenting and 1 when dismissing. Open: share 0.5, delay 0, so
+  1 → 0 with response 0.1225s (stiffness 2630.8, damping 97.45). Close: share 0.65, delay 0.35, so 0 → 1 with
+  response 0.14625s (stiffness 1845.7, damping 81.6) starting 0.07875s in. The from/to values are bridged
+  constants the decompiler hides; 1 → 0 / 0 → 1 is **[inferred]** from the final opacity set on the layer.
+- The card doesn't fade in on open. On close (tweenFromSource or immediate), the card's `transitionView` fades
+  to 0 with the close spring (0.895 / 0.225s), alongside the transform.
+- The snapshot's frame in the card: laid out from the source rect and the card's width (FUN_1017174b8 →
+  FUN_1001acb24). Kite gives it the card's width and the source's height at that width, centred, so under the
+  tween's uniform scale it covers the source exactly **[inferred]**.
+- Kite: when the source page answers with the clicked element's frame (and it's wholly on the page), Kite
+  captures that area (`captureImage`) and opens the card with it on top, fading it out with Arc's spring; the
+  card doesn't fade. Closing fades the card out with the close spring while the snapshot fades back in. If the
+  page or the capture takes over 0.12s, the card opens without the snapshot, fading in over 0.1s as before
+  **[differs]**. `ui trace` (WebKit debug build, 1 Nov 2026): open, `PassThroughImageView opacity` spring
+  stiffness 2630.8 / damping 97.45 from 1 to 0 starting at the link's frame [420,210 162×40]; close, card opacity
+  spring 779.82 / 49.99 1 → 0 and snapshot opacity spring 1845.73 / 81.63 0 → 1 with a delayed begin, ending on
+  the link [420,210 160×40].
+
+### Peek: badge in the sidebar → `LinkPeek.Badge`, `LinkPeekBadgeView` in `SidebarView`, `parkLinkPeek` (g115; Arc 1.171 binary, 1 Nov 2026)
+
+Ghidra, `~/rea-arc/decomp/out-g115/sym1.txt`, `callers1–3.txt`, `sym3.txt`, `at1–4.txt`; colours from
+`assetutil --info` on ARCUI_ARCUI.bundle's Assets.car. Arc wasn't driven.
+
+- `TabCellState` has `modalIcon` (strings ~150009, between `tabHighlightState` and `unreadBadgeType`), and
+  `TabCellView` a lazy `_modalBadgeView`, a `ModalV2SidebarBadgeView`. Its subscriber (FUN_100362bf0) hides the
+  badge when the icon is nil, else sets the icon on the badge's image view and shows it. No other sidebar cell
+  (favorites, folders) has a modal badge in the strings.
+- The badge (FUN_10036798c, FUN_1002d67c4, `layout`): 24×24 (constant 0x10380c7a8), layer corner radius 6,
+  background ARCUI colour `GrayA4` (black 0.071 light, white 0.077 dark); an `NSImageView` centred, 16×16
+  (0x10380c918), corner radius 4 (0x10380c920). It has no mouse handling (its methods: init, `updateLayer`,
+  `layout`), so a click on it is a click on the row.
+- Placed in the cell's `bodyStack` with sort key 8 (the close button's is 7, the title stack's 2), so it's the
+  row's last view. While it (or the unread badge) shows, the row's `tabInfoStackView` right inset is 14 instead
+  of 18 (0x10380c7f0 / 0x10380c7d0).
+- Which tab: the window keeps modals by window content (`modalByWindowContent`, `sourceToWindowContentMap`,
+  `windowContentSidebarItemMap`, strings ~81000, 172140), so a Peek belongs to the tab it was opened over, and
+  that tab's row shows the badge with the Peek page's icon. That the Peek stays (hidden) while another tab is
+  shown, and is back when its tab is selected again, is **[inferred]** from that per-content map; Arc wasn't
+  run. Not to be confused with `isPeeked` / `peekedPinnedSidebarItemID` / `transientPeekedItems`, which sit with
+  `collapsePinnedSectionEnabled` and the outline view's expansion state (a collapsed section or folder
+  showing its current item), not the Peek modal.
+- Kite: `BrowserStore.linkPeekBadges` (tab → the Peek page's URL and favicon) drives `LinkPeekBadgeView` after
+  the hover close button, Arc's size, radii and fill. Showing another tab parks the Peek (`parkLinkPeek`: view
+  removed, page hidden and kept); showing its tab again puts it back as it was, without animation; closing the
+  tab discards it. Kite keeps the row's own trailing padding rather than Arc's 18 → 14 inset **[differs]**.
+  Verified in a WebKit debug build (1 Nov 2026): `ui tree` finds `sidebarTabCellPeekBadge` [282,204.5 24×24] on
+  the pinned source row, the badge shows the Peek page's favicon (`ui capture`), it stays after switching to
+  another tab while the Peek leaves the tree, the Peek is back on switching back, Esc then closes it and the badge
+  goes. The click on the row itself wasn't exercised (`ui input` clicks on sidebar rows are dropped in the
+  background); `switch_tab` runs the same selection.
+
 ### Peek: Undo Close Peek → `closeLinkPeek(undoable:)`, `reopenLinkPeek` (g46; Arc 1.171 binary, 1 Nov 2026)
 
 From `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s` (otool) and Ghidra (`out5/g46-closepeek.txt`).
@@ -786,8 +848,8 @@ Arc wasn't driven.
   `reopenableItemID`) belongs to sidebar items' close options, and nothing ties it to the modal
   **[inferred]**. Kite leaves Reopen Closed Tab alone.
 - Which dismissals register the step isn't decompiled. Kite registers it for the user's own closes (Esc, ⌘W,
-  close button, click outside, swipe right, Redo), not when the Peek is replaced, turned into a tab or pane,
-  or closed by switching tabs **[inferred]**. Undo selects the source tab if another tab is in front, then
+  close button, click outside, swipe right, Redo), not when the Peek is replaced, turned into a tab or pane
+  **[inferred]**. Undo selects the source tab if another tab is in front, then
   opens the Peek with the normal open spring, from the link if it's still on the page.
 
 ## Pinned URL reset and Reveal Tab (Arc 1.171 menu bar and binary, 1 Nov 2026)

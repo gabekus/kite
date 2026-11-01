@@ -110,6 +110,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var sidebarToggles = 0
     /// Arc's Peek over the page, while one is open (BrowserWindowController+LinkPeek).
     var linkPeek: LinkPeekSession?
+    /// Peeks over tabs that aren't shown, by tab (Arc keeps a modal per window content).
+    var parkedLinkPeeks: [UUID: LinkPeekSession] = [:]
     /// Ask on Page conversations of tabs that aren't shown, back when the tab is.
     var askConversations = AskOnPage.Conversations<AskOnPagePanel>()
 
@@ -181,6 +183,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func windowWillClose(_ notification: Notification) {
         closeLinkPeek(animated: false)
+        discardParkedLinkPeeks(keeping: nil)
         if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
         paneClickMonitor = nil
         store.saveNow()
@@ -546,8 +549,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         let selected = state.selectedTab
         let visible = state.visibleTabs
-        // A Peek belongs to the tab it opened over.
-        if let linkPeek, linkPeek.sourceTabID != selected?.id { closeLinkPeek(animated: false) }
+        // A Peek belongs to the tab it opened over: it waits out of sight while another tab is shown.
+        if let linkPeek, linkPeek.sourceTabID != selected?.id { parkLinkPeek() }
         if selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
             // A page coming forward (⌘T, a tab opened from the Archive, another space) leaves the Library.
             if library.isOpen, shownTabID != nil { library.close() }
@@ -558,6 +561,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         updateSplitDropZones()
         let live = state.allTabIDs
+        discardParkedLinkPeeks(keeping: live)
+        unparkLinkPeek(for: selected?.id)
         pruneAskConversations(live: live)
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
         syncProfile()
