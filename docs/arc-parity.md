@@ -133,7 +133,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | Go Back / Go Forward | ⌘[ / ⌘] (also ⌘← / ⌘→ in a page) | ✅ ⌘←/⌘→ as hidden alternates; text fields keep them for caret moves (seen in Arc; not in its binding table) | B3 |
 | View History | ⌘Y | 🟡 History › View History opens kite://history in a new tab (Arc: chrome://history "in a new Today tab"): search, one card per day, Open in New Tab / Copy Link / More from This Site / Remove from History, Clear History…. One row per URL (last visit), not one per visit; Chromium's page sizes not measured | |
-| View Archive… / Clear Archive | | 🟡 History › View Archive… opens kite://archive in a new tab (Arc: its Library window): Today / Yesterday / Earlier This Week, then by month; search; Filter Archived Tabs by space and Auto-Closed / Manually Closed, with removable chips; Restore and Delete on hover and in the context menu; "Tab restored to <space>" toast. Clear Archive asks Arc's "Are you sure you'd like to Clear Archive?" first. Sizes are Kite's | Move into the Library window when it exists |
+| View Archive… / Clear Archive | | 🟡 History › View Archive… opens the Library on its Archive page (kite://archive still works as a tab): Today / Yesterday / Earlier This Week, then by month; search; Filter Archived Tabs by space and Auto-Closed / Manually Closed, with removable chips; Restore and Delete on hover and in the context menu; "Tab restored to <space>" toast. Clear Archive asks Arc's "Are you sure you'd like to Clear Archive?" first. Sizes are Kite's | |
 
 ### Extensions
 
@@ -147,8 +147,8 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | Minimize / Zoom | ⌘M | ✅ | macOS adds Fill, Center, tiling for free |
 | Stay On Top | | ✅ checkmark in the menu, window floats, no in-window indicator (as in Arc) | |
-| Open Library… | ⇧⌘L | ❌ | Thread: Library |
-| View Downloads… | ⇧⌘J | ✅ Window menu, opens the downloads list (Arc opens Library › Downloads) | Thread: Library (downloads page) |
+| Open Library… | ⇧⌘L | 🟡 Window › Open Library… toggles the window's Library over the sidebar and card: Downloads and Archive pages, last page remembered, "Exit the Library" button; switching tab or space leaves it | Easels, Media, Boosts, Spaces pages (Kite has none of them); sizes, icons and animation unmeasured |
+| View Downloads… | ⇧⌘J | ✅ Window menu, opens the downloads list (Arc opens Library › Downloads) | Follow-up: open Library › Downloads instead, as Arc does |
 | View Easels… / Media… / Boosts… | | ❌ | Their threads |
 
 ### Help
@@ -179,7 +179,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
 | Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
-| Library | Downloads, archive, easels, media, boosts in one window | ❌ | Thread: Library |
+| Library | Downloads, archive, easels, media, boosts (Arc: in the browser window, not a separate one) | 🟡 Downloads and Archive pages in the window (⇧⌘L) | Easels & Notes, Media, Boosts, Spaces pages; Library button in the sidebar with download badge and fly-in |
 | Air Traffic Control | Rules to route links from other apps to a space | ❌ | Thread: Little Arc / routing |
 | Live folders | GitHub PRs/issues, RSS etc. as an auto-updating folder | ❌ | Later |
 | Live calendars | Calendar favorite shows the next meeting | ❌ | Later |

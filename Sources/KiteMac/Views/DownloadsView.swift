@@ -126,9 +126,12 @@ private struct DownloadsAnchor: NSViewRepresentable {
 
 /// Recent downloads, newest first: progress while downloading, then open, reveal in Finder,
 /// cancel or hide each one (Arc's Library › Downloads page and its download context menu).
+/// The sidebar's popover and the Library's Downloads page both show it.
 struct DownloadsList: View {
     /// One row's height plus the gap between rows.
     static let rowPitch: CGFloat = 54
+    /// In the Library: fills the page instead of a 320pt popover.
+    var fillsPage = false
     private var downloads: DownloadsModel { .shared }
 
     var body: some View {
@@ -136,7 +139,8 @@ struct DownloadsList: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Downloads")
-                    .font(.system(size: 13, weight: .semibold))
+                    // In the Library, the same title as the Archive page's.
+                    .font(.system(size: fillsPage ? 20 : 13, weight: fillsPage ? .regular : .semibold))
                 Spacer()
                 if items.contains(where: { $0.state != .inProgress }) {
                     Button("Clear") { downloads.clearFinished() }
@@ -154,16 +158,35 @@ struct DownloadsList: View {
                 .focusEffectDisabled()
                 .help("Open Downloads Folder")
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            .padding(.horizontal, fillsPage ? 20 : 14)
+            .padding(.top, fillsPage ? 0 : 12)
+            .padding(.bottom, fillsPage ? 0 : 8)
+            .frame(height: fillsPage ? 56 : nil)
 
-            if items.isEmpty {
+            if fillsPage { Divider() }
+
+            if items.isEmpty && fillsPage {
+                // Arc's Downloads page empty-state subtitle (its title isn't in the strings).
+                Text("Come back after you've found some cool stuff to save.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if items.isEmpty {
                 Text("No downloads yet")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
+            } else if fillsPage {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(items) { item in
+                            DownloadRow(item: item)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 6)
+                }
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
@@ -177,7 +200,8 @@ struct DownloadsList: View {
                 .frame(height: min(CGFloat(items.count) * DownloadsList.rowPitch + 6, 360))
             }
         }
-        .frame(width: 320)
+        .frame(width: fillsPage ? nil : 320)
+        .frame(maxWidth: fillsPage ? .infinity : nil, maxHeight: fillsPage ? .infinity : nil, alignment: .top)
     }
 }
 
