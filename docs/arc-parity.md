@@ -80,7 +80,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Appearance: Automatic / Light / Dark (websites) | | 🟡 Dark Pages Off/Match/Always | Have it; the other session owns this |
 | Show Sidebar | ⌘S | ✅ | |
 | Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host and (disabled until built) Site Controls and Split View; the sidebar drops its nav buttons and URL field. "Show full URL" setting not yet | B5 (`topBarURLEnabled`) |
-| Collapse Pinned Tabs | | ❌ | B3 |
+| Collapse Pinned Tabs | | ✅ View › "Collapse Pinned Tabs" ("Expand Pinned Tabs" while collapsed) and a chevron in the space header | B3 |
 | Stop Loading | ⌘. | ✅ | |
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
 | Clear Cookies and Refresh / Clear Cache and Refresh | | ✅ per site | |
@@ -196,7 +196,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Tidy Downloads | Downloads renamed by AI | ❌ | With Claude in the browser |
 | Tidy Tabs | Groups Today tabs automatically | ❌ | With Claude in the browser |
 | Browse for Me | AI builds a page from search results | ❌ | Skip? |
-| Custom tab names | Rename a pinned tab | 🟡 imported names only | B3 |
+| Custom tab names | Rename a pinned tab | ✅ any tab: Rename… in its menu, double-click, Tabs › Rename Current Tab…; kept when the page title changes, imported from Arc | B3 |
 | Themes | Space colors, grain, light/dark, gradient editor | 🟡 presets + imported | Thread: space theme editor |
 | App icons | Alternate Dock icons | ❌ | Skip? (we draw our own) |
 | Sound effects | Subtle UI sounds | ❌ | Later, our own sounds |
