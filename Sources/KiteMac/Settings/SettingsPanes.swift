@@ -215,7 +215,8 @@ struct MaxPane: View {
         let _ = model.revision
         ScrollView {
             VStack(spacing: 0) {
-                SettingsBanner(color: Color(red: 0.25, green: 0.22, blue: 0.95), symbol: "sparkles", height: 128)
+                // Arc's MaxBannerColor asset (#484FFF in both appearances).
+                SettingsBanner(color: Color(nsColor: SettingsMetrics.srgb(0x484FFF)), symbol: "sparkles", height: 128)
                 VStack(alignment: .leading, spacing: 18) {
                     Text("Let Kite do more for you with Max, so you can do less. Kite’s AI features run on Claude.")
                         .fixedSize(horizontal: false, vertical: true)

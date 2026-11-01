@@ -20,6 +20,12 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate, NSW
             defer: true
         )
         window.toolbarStyle = .preference
+        // Test runs: KITE_SETTINGS_APPEARANCE=light|dark draws this window only in that appearance,
+        // so both can be checked without changing the Mac's.
+        let environment = ProcessInfo.processInfo.environment
+        if environment["KITE_SUPPORT_PATH"] != nil, let forced = environment["KITE_SETTINGS_APPEARANCE"] {
+            window.appearance = NSAppearance(named: forced == "dark" ? .darkAqua : .aqua)
+        }
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("KiteSettings")
         super.init(window: window)

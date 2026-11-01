@@ -145,7 +145,7 @@ final class WebKitPage: NSObject, WebPage {
         }
         WebKitMediaBridge.shared.attach(self)
         WebKitMailBridge.shared.attach(self)
-        if appliesBoosts { LiveZaps.attach(to: self, owner: self) }
+        if appliesBoosts { LiveBoosts.attach(to: self, owner: self) }
     }
 
     var view: NSView { webView }

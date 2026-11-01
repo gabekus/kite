@@ -7,6 +7,11 @@ extension Notification.Name {
     /// The zaps some site hides changed (a zap, an undo, a Boost turned on or off or deleted);
     /// open pages replace their zap CSS live.
     static let kiteZapsChanged = Notification.Name("KiteZapsChanged")
+    /// What some sites' Boosts add as style changed (CSS, font, text case, size or colours, a
+    /// Boost turned on or off or deleted); open pages of those sites (`userInfo["domains"]`, a
+    /// `Set<String>`) replace their Boost styles live, as Arc does. JavaScript isn't announced:
+    /// it runs again only on a reload (the editor's Refresh this Page), as in Arc.
+    static let kiteBoostStylesChanged = Notification.Name("KiteBoostStylesChanged")
 }
 
 /// The profile's Boosts (boosts.json), read by both engines when a page starts loading.
@@ -22,6 +27,9 @@ final class BoostsModel {
     /// Each site's active zap CSS when it was last announced, to post `kiteZapsChanged` only
     /// when it changes (not on every keystroke in the editor).
     @ObservationIgnored private var announcedZaps: [String: String] = [:]
+    /// Each site's Boost styles when they were last announced, to tell open pages only about
+    /// sites whose styles changed.
+    @ObservationIgnored private var announcedStyles: [String: BoostLiveStyles] = [:]
 
     func start(fileURL: URL) {
         self.fileURL = fileURL
@@ -38,6 +46,7 @@ final class BoostsModel {
         }
         migrateZaps(from: fileURL.deletingLastPathComponent().appendingPathComponent("zaps.json"))
         announcedZaps = zapTable()
+        announcedStyles = styleTable()
     }
 
     /// Zap shipped on its own first, in zaps.json. Its zaps move into each site's Boost once;
@@ -131,6 +140,33 @@ final class BoostsModel {
         return table
     }
 
+    /// Brings a live page's Boost styles up to date, when its site is among `domains` (nil: any).
+    func applyStylesLive(to page: WebPage, domains: Set<String>? = nil) {
+        page.evaluateJavaScript(ZapScript.hostScript) { [weak self, weak page] host in
+            guard let self, let page, let domain = ZapLibrary.domain(ofHost: host as? String),
+                  domains?.contains(domain) ?? true else { return }
+            page.evaluateJavaScript(BoostScript.applyLive(self.library.liveStyles(forDomain: domain))) { _ in }
+        }
+    }
+
+    private func styleTable() -> [String: BoostLiveStyles] {
+        var table: [String: BoostLiveStyles] = [:]
+        for domain in Set(library.boosts.map(\.domain)) {
+            var styles = library.liveStyles(forDomain: domain)
+            styles.zaps = ""  // zaps have their own announcement and live path
+            if !styles.isEmpty { table[domain] = styles }
+        }
+        return table
+    }
+
+    private func announceStylesIfChanged() {
+        let table = styleTable()
+        let changed = Set(table.keys).union(announcedStyles.keys).filter { table[$0] != announcedStyles[$0] }
+        announcedStyles = table
+        guard !changed.isEmpty else { return }
+        NotificationCenter.default.post(name: .kiteBoostStylesChanged, object: self, userInfo: ["domains": changed])
+    }
+
     private func announceZapsIfChanged() {
         let table = zapTable()
         guard table != announcedZaps else { return }
@@ -159,6 +195,7 @@ final class BoostsModel {
 
     private func save() {
         announceZapsIfChanged()
+        announceStylesIfChanged()
         guard fileURL != nil else { return }
         saveTask?.cancel()
         let library = library

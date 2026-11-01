@@ -49,8 +49,8 @@ extension BrowserState {
         let hasSplit = units.contains { if case .split = $0 { true } else { false } }
         switch target {
         case .favorites:
-            // Favorites hold tabs, not folders or splits (Arc's tray items are single pages).
-            return !hasFolder && !hasSplit
+            // Favorites hold tabs and split views (Arc's tray items can be a split's panes), not folders.
+            return !hasFolder
         case .unpinned, .space:
             // Folders live in the pinned section only.
             return !hasFolder
@@ -86,7 +86,7 @@ extension BrowserState {
         var target = target
         switch target {
         case .favorites(let before):
-            target = .favorites(before: firstStaying(from: before, in: favorites.map(\.id), moving: Set(movedTabIDs)))
+            target = .favorites(before: firstStaying(from: before.map(rowAnchor), in: favorites.map(\.id), moving: Set(movedTabIDs)))
         case .unpinned(let space, let before):
             let list = spaceIndex(space).map { spaces[$0].tabs.map(\.id) } ?? []
             target = .unpinned(space: space, before: firstStaying(from: before.map(rowAnchor), in: list, moving: Set(movedTabIDs)))
@@ -100,19 +100,21 @@ extension BrowserState {
 
         var extracted: [(unit: DragUnit, tabs: [PinnedItem], split: SplitView?)] = []
         for unit in units {
-            let split = unit.splitID.flatMap { id in spaces.lazy.compactMap { $0.splits.first { $0.id == id } }.first }
+            let split = unit.splitID.flatMap { id in (spaces.flatMap(\.splits) + favoriteSplits).first { $0.id == id } }
             extracted.append((unit, remove(unit), split))
         }
         for s in spaces.indices {
             let gone = Set(extracted.compactMap(\.split?.id))
             spaces[s].splits.removeAll { gone.contains($0.id) }
         }
+        favoriteSplits.removeAll { split in extracted.contains { $0.split?.id == split.id } }
 
         let destinationSpace: Int
         switch target {
         case .favorites(let before):
             let tabs = extracted.flatMap(\.tabs).compactMap { if case .tab(let tab) = $0 { tab } else { nil } }
             favorites.insert(contentsOf: tabs, at: before.flatMap { id in favorites.firstIndex { $0.id == id } } ?? favorites.count)
+            favoriteSplits += extracted.compactMap(\.split)
             destinationSpace = selectedSpaceIndex
         case .unpinned(let space, let before):
             let s = spaceIndex(space)!
@@ -179,7 +181,7 @@ extension BrowserState {
 
     /// A row's first item: a split's row is anchored at its first pane.
     private func rowAnchor(_ id: UUID) -> UUID {
-        for space in spaces { if let split = space.splits.first(where: { $0.id == id }) { return split.tabIDs.first ?? id } }
+        if let split = (spaces.flatMap(\.splits) + favoriteSplits).first(where: { $0.id == id }) { return split.tabIDs.first ?? id }
         return id
     }
 
@@ -212,7 +214,9 @@ extension BrowserState {
             if let split = space.splits.first(where: { $0.id == id }) { return .split(split.id, split.tabIDs) }
             if let folder = space.pinnedItems.folder(id) { return .folder(folder) }
         }
-        if let split = split(containing: id)?.split { return .split(split.id, split.tabIDs) }
+        if let split = favoriteSplits.first(where: { $0.id == id }) ?? split(containing: id)?.split {
+            return .split(split.id, split.tabIDs)
+        }
         return location(of: id) != nil ? .tab(id) : nil
     }
 

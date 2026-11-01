@@ -1137,8 +1137,8 @@ Sources: `~/rea-arc/arc-strings.txt` 73677–73738 (module `SiteControlCenter`: 
 | Footer | 82×32 left, 32×32 right, both 23 from the edges | Same |
 | From the toolbar | top y 38, right edge = window's | top 38, right edge 1280 of 1280 |
 
-Kite differs: no Boosts, capture or sidebar preview; extensions stay in their own popover; action row
-has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers, Developer Mode and four permission rows, shown
+Kite differs: no capture or sidebar preview (Boosts: see g52 below); extensions stay in their own popover; action row
+has only Copy URL, Share and New Boost; the Settings rows are Arc's Block Ads & Trackers, Developer Mode and four permission rows, shown
 always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
 circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
 
@@ -1166,9 +1166,36 @@ circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
   permissions and an Ask (default) / Allow / Block menu per permission, Chromium's site details layout trimmed to
   the four permissions Kite's CEF bridge reads (`KCBrowser sitePermission`). WebKit keeps none, so the page says so.
   Chromium's usage/data section and its other permission types (JavaScript, pop-ups, sound, MIDI…) aren't there.
-- Still missing from Arc's popover: the Capture / full-page / Portrait Mode and New Boost action buttons, the Boosts
-  and Extensions sections, the sidebar Preview row, and the footer menu's Manage Boosts…, New Boost, Manage
-  Extensions… and Add Extension… (`includeBoostsInContextMenu` suggests the Boost items are conditional).
+- Still missing from Arc's popover: the Capture / full-page / Portrait Mode action buttons, the Extensions
+  section, the sidebar Preview row, and the footer menu's Manage Extensions… and Add Extension… (Boosts: g52 below).
+
+### Boosts in the Site Control Center (g52, Arc 1.171 binary, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` 73696–73727 (`SiteControlCenterBoostsView.swift`, `…ActionButton.swift`,
+`…FooterView.swift`) and 164060–164170 (the feature's state, actions and view members); Swift immediates decoded from
+`~/rea-arc/decomp/arc.s` next to each `NSLocalizedString` comment; asset sizes from `assetutil --info` on
+`ARC_SiteControlCenter.bundle/Contents/Resources/Assets.car`. Arc wasn't driven or captured for this.
+
+- New Boost action button: tooltip "New Boost" (0x10137411c, comment "Tooltip for the new Boost button in the site
+  control center."); action `newBoost` / `didClickNewBoost`.
+- Boosts section: title "Boosts" (0x101374bf4), hover text "Manage" (0x101374c64); header click
+  `onManageBoostsClick` → `didClickManageBoosts`. Rows: subtitle "Enabled" (0x101375974, "Subtitle for active
+  Boost") / "Disabled" (0x1013759bc); the row view has `onToggleClick`, `onEditClick` and a hovered state
+  (`didClickToggleBoost`, `didClickEditBoost`); symbol `boost.sparkle.fill`, an 18×18 template image (assets also
+  `boost.sparkle`, `boost.fill`). State fields: `boosts` with `title`, `isActive`.
+- Footer menu order (0x10137d6f4–0x10137de00): Clear Cache, Clear Cookies, **Manage Boosts…**, **New Boost…**
+  (0x10137dac0: "New Boost" + "…"), Manage Extensions…, Add Extension…, All Site Settings…. The two Boost items sit
+  behind a branch on a Bool from the view store (0x10137d940); the footer's state is `isSecure` and
+  `includeBoostsInContextMenu`. What sets the flag wasn't traced.
+- Kite: the New Boost button third in the action row (Arc's Capture button, between Share and New Boost, is left
+  out), opening the editor; the Boosts section between the actions and Settings when the site has Boosts, each row
+  the Boost's name with Enabled / Disabled, a click flips it, a pencil on hover opens the editor (a separate edit
+  control is inferred from `onEditClick` + hover); the header and Manage Boosts… open Library › Boosts
+  (`viewBoosts`). Inferred: the footer shows Manage Boosts… / New Boost… only when the site has no Boosts section
+  (`SiteControls.includesBoostsInMenu`); none of the Boost parts show in incognito (Boosts don't run there). Arc's
+  `boost.sparkle.fill` image isn't copied: Kite uses SF Symbol `wand.and.stars`. Row styling is Kite's existing
+  setting-row style; Arc's pixels weren't read. Toggling doesn't reload the page (CSS/JS apply at the next load;
+  zaps update live).
 
 ## Site permission prompt → `PermissionPromptView`, `PermissionPromptCard` (Arc 1.171 binary, 1 Nov 2026)
 
@@ -1421,7 +1448,33 @@ Nothing in Arc was pressed or watched. Line numbers are `~/rea-arc/arc-strings.t
   saturation 0.5 and a 180° second hue, and the secondary puck being dragged to change the offset.
 - **Left out:** the analogous/complementary control (`ComplementaryColorControl`, Analogous/ComplementaryColorScheme
   assets; its offsets weren't found), theme-driven schemes, `baseAppearance`, the editor menu's Shuffle and Reset
-  all Edits, and applying changes live (g51; changes show after Refresh this Page).
+  all Edits. (Live apply: see the next section.)
+
+## Boosts apply live → `BoostLiveStyles`, `BoostScript.applyLive` (KiteCore), `LiveBoosts` (Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+Nothing in Arc was pressed or watched. Line numbers are `~/rea-arc/arc-strings.txt`; addresses are `decomp/Arc-arm64`.
+
+- **CSS and style re-register on every change.** BoostsClient.applyToWebContent (function 0x10117642c, Ghidra) builds
+  each Boost's stylesheets under fixed identifiers, the Boost id plus `:user` (its CSS), `:font`, `:textTransform`
+  and `:zaps` (inline small strings in that function), and for each one calls the engine either to register it
+  for the host or, when empty, to unregister it (two adjacent witness-table calls, +0x328 / +0x330). The ADK
+  selectors in the strings are `registerStylesheet:withIdentifier:forHostPattern:`, `unregisterStylesheet:`,
+  `registerZoomFactor:forHostPattern:`, `registerColorFilter:forHostPattern:` and their unregisters (190916–194244).
+  So a Boost's style is replaced by identifier, not added to a page once. `BoostsClient.applyToAllWebContents`
+  (71489), the `boostsSubscriptions` state and "Received boosts update when no boostState is set on web contents" /
+  `updateBoosts(for:)` (74539–74541, 0x101505ba0) show updates are pushed to open web contents.
+- **The editor saves as you go.** `saveBoostData(state:interactive:)` and `boostDataBeforeInteractiveUpdates`
+  (73396, 163658) are interactive saves with a pre-edit snapshot; the editor's actions include `editCSS`, `editJS`,
+  `reloadBoost` (163660–163663). No Boost-specific debounce string was found.
+- **JavaScript is not re-run.** The apply function above has no script path, the editor serves JS from
+  `arc://boost/v2/js/` (~73420) and keeps "Refresh this Page" (73397). Inferred: a Boost's JS runs again only on a
+  reload.
+
+Kite: each save posts the sites whose styles changed (`kiteBoostStylesChanged`); every open page of those sites
+replaces its per-Boost `<style id="kite-boost-<id>">` (removed when empty), the text size and colour style and the SVG
+colour filter in place, through `evaluateJavaScript` in the page's world (same path as zaps, both engines). JS edits
+are saved but run only after Refresh this Page. Inferred, not seen in Arc: applying on every keystroke (Arc's
+timing wasn't observed).
 
 ## Library › Boosts → `BoostsListView` (Arc 1.171 strings and disassembly, 1 Nov 2026)
 
@@ -1794,7 +1847,7 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   (`menuForEvent:`) do (Kite has neither); where Arc puts the row when the results will go to a folder.
   No Arc pixels: the row wasn't captured in Arc (it needs a live Arc Max search).
 
-## Zap → `Boost.zaps`, `ZapLibrary.css`, `ZapScript`, `ZapPickerScript` (KiteCore), `BoostsModel`, `LiveZaps`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
+## Zap → `Boost.zaps`, `ZapLibrary.css`, `ZapScript`, `ZapPickerScript` (KiteCore), `BoostsModel`, `LiveBoosts`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, `ARC_BoostsEditor.bundle` (Assets.car, SelectorPicker.js;
 read only for its function names, nothing copied).
@@ -1822,7 +1875,7 @@ read only for its function names, nothing copied).
   page in the window the editor came from. A pick goes to the edited Boost, else the site's newest Boost, else a new
   Boost for the site (as New Boost makes one). The shelf lists and removes that Boost's zaps. The Boost script adds
   the site's zaps (Boosts that are on) as one `style[data-kite-zap]` at document start, top frame, page world; a
-  zap, an undo or a Boost turned on/off or deleted replaces that style live in open pages (`LiveZaps`). Like
+  zap, an undo or a Boost turned on/off or deleted replaces that style live in open pages (`LiveBoosts`). Like
   Boosts, zaps never run in incognito windows, and the picker won't open there. The first Zap release kept zaps
   in `zaps.json`; Kite moves them into each site's Boost on the first launch and renames the file
   `zaps.json.migrated` (kept). Inferred: the Zap button's icon (SF `bolt`; no Zap asset in
@@ -2357,3 +2410,42 @@ an Arc incognito window captured at 2× (1 Nov 2026).
   dragged row's look (Arc draws it in its own window, which a window capture misses; Kite: the pill at 0.6), autoscroll speed, the hover-to-expand
   delay for collapsed folders (Kite doesn't expand), how near a drag must come to reveal the empty tray (Kite: as soon as a
   drag starts), the landing animation (Kite: the 0.12s row animation), and drags out over the page (Kite cancels).
+
+**Part 2 (1 Nov 2026):**
+- **Move commands** [str]: Arc's command bar has "Move to Today in <space>", "Move to Pinned in <space>" and
+  "Move to Top Apps" / "Remove from Top Apps" (Favorites' old name), next to their type-travel descriptions ("Action to
+  move this tab to the Today section of a space"). Kite adds them as command-bar-only menu commands, titled per space.
+  Arc also has "Move to Explore in" (no Kite equivalent) and an " and switch there" suffix whose use isn't known.
+- **Favorite split views** [dec @101d0271c]: a tray item can hold children (`AppTrayItemChildStack`, orientation
+  horizontal or vertical) sharing the tile evenly, 2pt apart, each with its own corners. Kite keeps favorite splits per
+  profile (`favoriteSplitsByProfile`); dropping a split in the tray makes one, and the split's panes, divider and
+  orientation work as in a space. Child corner radius and the selected child's look are unmeasured.
+- **Folders under a drag**: Kite opens a collapsed folder after the system spring-loading delay (0.5s unless changed).
+  Arc's interval (`DraggingTimerState`) wasn't found; unverified.
+## Live Folders (GitHub pull requests) → `KiteCore.LiveFolder`, `LiveFoldersController`, `LiveFolderViews.swift` (Arc 1.171 strings and binary, 1 Nov 2026)
+
+Read from Arc's binary only (its English text is compiled in at each localized call site). Arc wasn't recorded
+doing it: a live folder needs a signed-in GitHub session, which an incognito window doesn't have.
+
+- **Adding it.** The space menu has "Live Folders" ("Menu item to manage which live folders are active in this
+  space") after New Folder. It toggles a data source per space (`toggleLiveFolderActive(dataSource:in:)`); GitHub is
+  the only working one (Bitbucket is stubbed). Arc also offers the folder when you open a pull request
+  (`githubLiveFolderCreatedForOpenedPR`) with an intro popover, "Pull Requests" / "Pull requests from you and your team
+  will show up here automatically". Kite has the menu, not the automatic offer or the popover.
+- **Source.** No API or token: a hidden browser loads github.com with the profile's cookies and reads the HTML
+  (`HTMLClient`, XPath). Searches: `is:pr is:open sort:updated-desc` with `author:@me`, `review-requested:@me`,
+  `user-review-requested:@me`. Kite loads `github.com/pulls?q=…` in a hidden window-sized page and reads each row's
+  title link (`data-testid="listitem-title-link"`, checked on GitHub's list on 1 Nov 2026).
+- **Filter.** Option set 1 "Created by Me", 2 "Review Requests", 4 "Team Review Requests"; any other mix reads "Mixed".
+- **Refresh.** Event-driven (`LiveFolderFetchReason`: app foregrounded, space focused, item selected/unselected,
+  filter change, manual, sign-in). Automatic ones are throttled by `automatic-live-folders-min-refresh-interval-in-seconds`,
+  10. No periodic timer was found. New items arrive unread (`showNewItemsAsUnread`; items carry `isRead`).
+- **Removed rows.** A row the user deletes goes into `hiddenItems` and later refreshes leave it out.
+- **Folder menu.** "Refresh"; a status line "Initializing...", "Last fetch: …" or "Failed to update"; a "Repositories"
+  submenu of per-repo toggles ending "This list is generated based on your currently active pull requests."; the three
+  filters, checked when on; "Delete Live Folder". Order and the "Single Sign-On" submenu are unverified (Kite has no SSO item).
+- **Delete alert.** "Delete your %@ Live Folder?" / "You can restore this folder at any time by right-clicking the
+  sidebar." The folder's title is "Pull Requests".
+- **Errors.** "Not signed in to GitHub", "We're having trouble connecting to GitHub…".
+- **Unverified, Kite's choice:** the folder icon (Kite: SF Symbol `arrow.triangle.pull`; Arc's own art isn't copied),
+  the unread marker (Kite: a 5pt accent dot left of the favicon), the alert's button titles, and the "Last fetch" date format.
