@@ -13,7 +13,10 @@ extension BrowserWindowController: ExtensionTabsHost {
         let pinned = Set(state.favorites.map(\.id) + state.spaces.flatMap { $0.pinned.map(\.id) })
         for tab in state.favorites + state.spaces.flatMap(\.allTabs) where seen.insert(tab.id).inserted {
             guard let page = pool.loadedPage(tab.id) as? ChromiumPage else { continue }
-            tabs.append(ExtensionTab(id: tab.id, page: page, active: tab.id == selected, pinned: pinned.contains(tab.id)))
+            tabs.append(ExtensionTab(
+                id: tab.id, page: page, active: tab.id == selected, pinned: pinned.contains(tab.id),
+                profile: pool.engine(forTab: tab.id).profileDirectory
+            ))
         }
         return tabs
     }
@@ -54,11 +57,11 @@ extension BrowserWindowController {
         guard !isIncognito else { return false }
         let bounds = contentFrame.bounds
         let anchor = NSRect(x: bounds.maxX - 40, y: contentFrame.isFlipped ? bounds.minY : bounds.maxY - 1, width: 1, height: 1)
-        return OnePasswordIntegration.showPopup(engine: pool.engine, relativeTo: anchor, of: contentFrame)
+        return OnePasswordIntegration.showPopup(engine: pool.currentEngine, relativeTo: anchor, of: contentFrame)
     }
 
     /// For Claude's sign_in: whether 1Password can fill in this window.
-    var canOpenPasswordManager: Bool { !isIncognito && OnePasswordIntegration.isExtensionInstalled }
+    var canOpenPasswordManager: Bool { !isIncognito && OnePasswordIntegration.isExtensionInstalled(in: pool.currentEngine) }
 
     func openPasswordManager() -> Bool { openOnePasswordPopup() }
 }
@@ -74,3 +77,18 @@ extension BrowserWindowController {
     func openPasswordManager() -> Bool { false }
 }
 #endif
+
+extension BrowserWindowController {
+    /// Follows the current space's profile: pages left in another profile reload, and the
+    /// extensions shown are the profile's own.
+    func syncProfile() {
+        pool.discardPagesInWrongProfile()
+        let engine = pool.currentEngine
+        guard engine.profileDirectory != shownProfileDirectory else { return }
+        shownProfileDirectory = engine.profileDirectory
+        #if canImport(CEFBridge)
+        if engine is ChromiumEngine { extensionsSelection?.show(ExtensionsModel.shared(engine: engine)) }
+        #endif
+        onProfileChange?(engine)
+    }
+}

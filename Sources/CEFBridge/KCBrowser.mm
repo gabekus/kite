@@ -625,6 +625,20 @@ class KCClient : public CefClient,
     return context;
 }
 
++ (instancetype)contextForProfileDirectory:(NSString*)directory {
+    static NSMutableDictionary<NSString*, KCRequestContext*>* contexts = [NSMutableDictionary dictionary];
+    if (KCRequestContext* existing = contexts[directory]) return existing;
+    KCRequestContext* context = [[self alloc] initPrivate];
+    CefRequestContextSettings settings;
+    settings.persist_session_cookies = true;
+    // A cache_path inside root_cache_path is a full Chromium profile: Chromium keeps one
+    // per folder, with its own extensions, prefs and history.
+    CefString(&settings.cache_path) = [KCRootCachePath() stringByAppendingPathComponent:directory].UTF8String;
+    context->_context = CefRequestContext::CreateContext(settings, KCAdblockContextHandler());
+    contexts[directory] = context;
+    return context;
+}
+
 - (instancetype)initPrivate {
     return [super init];
 }

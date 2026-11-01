@@ -16,9 +16,25 @@ final class ChromiumEngine: WebEngine {
     private let context: KCRequestContext?
     /// Incognito pages don't run Boosts.
     private var appliesBoosts = true
+    let profileDirectory: String?
+    /// The default profile's engine keeps the others, so every window gets the same one.
+    private var profileEngines: [String: ChromiumEngine] = [:]
+    private weak var defaultEngine: ChromiumEngine?
 
-    init(context: KCRequestContext? = nil) {
+    init(context: KCRequestContext? = nil, profileDirectory: String? = Profile.defaultDirectory) {
         self.context = context
+        self.profileDirectory = profileDirectory
+    }
+
+    func forProfile(_ profile: Profile) -> WebEngine {
+        let root = defaultEngine ?? self
+        if profile.isDefault || root.profileDirectory == nil { return root }
+        if let engine = root.profileEngines[profile.directory] { return engine }
+        let engine = ChromiumEngine(context: KCRequestContext(profileDirectory: profile.directory), profileDirectory: profile.directory)
+        engine.adblocker = root.adblocker
+        engine.defaultEngine = root
+        root.profileEngines[profile.directory] = engine
+        return engine
     }
 
     func makePage(url: URL?, restoring state: Any?) -> WebPage {
@@ -32,7 +48,7 @@ final class ChromiumEngine: WebEngine {
 
     /// Shares the ad blocker, whose engine and policy are already wired up process-wide.
     func makeEphemeral() -> WebEngine {
-        let engine = ChromiumEngine(context: .incognito())
+        let engine = ChromiumEngine(context: .incognito(), profileDirectory: nil)
         engine.adblocker = adblocker
         engine.appliesBoosts = false
         return engine

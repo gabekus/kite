@@ -190,8 +190,16 @@ struct UIInputSender {
     /// this window's (in the background there's none, and AppKit finds them disabled). Run the one this key
     /// matches on this window's chain instead, as it would with the window key.
     private func performOnResponderChain(_ event: NSEvent) -> Bool {
-        guard let item = NSApp.mainMenu.flatMap({ Self.menuItem(in: $0, matching: event) }), item.target == nil,
+        guard let item = NSApp.mainMenu.flatMap({ Self.menuItem(in: $0, matching: event) }),
               let action = item.action else { return false }
+        // An item with a target (the MenuRouter) still runs when AppKit's menu bar, inactive in the background,
+        // won't: validated by its target, as the menu bar would.
+        if let target = item.target {
+            if let validator = target as? NSMenuItemValidation, !validator.validateMenuItem(item) { return false }
+            NSApp.sendAction(action, to: target, from: item)
+            NotificationCenter.default.post(name: NSMenu.didSendActionNotification, object: item.menu, userInfo: ["MenuItem": item])
+            return true
+        }
         var responder = window.firstResponder
         while let current = responder, !current.responds(to: action) { responder = current.nextResponder }
         guard let target = responder else { return false }

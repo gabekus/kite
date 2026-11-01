@@ -9,6 +9,8 @@ struct ExtensionTab {
     let page: ChromiumPage
     let active: Bool
     let pinned: Bool
+    /// The profile folder its page is in: extensions only see their own profile's tabs.
+    let profile: String?
 }
 
 /// The window whose tabs extensions see, and what they may ask of it.
@@ -42,6 +44,7 @@ final class ExtensionTabsBridge {
     private weak var host: ExtensionTabsHost?
     private var helper: ChromiumPage?
     private var helperReady = false
+    private var profile: String?
     /// Worker session ids by DevTools target id.
     private var sessions: [String: String] = [:]
     private var nextMessageID = 1
@@ -70,7 +73,13 @@ final class ExtensionTabsBridge {
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 
+    /// The host's tabs in this bridge's profile.
+    private func profileTabs(_ host: ExtensionTabsHost) -> [ExtensionTab] {
+        host.extensionTabs.filter { $0.profile == profile }
+    }
+
     func start(engine: WebEngine) {
+        profile = engine.profileDirectory
         guard helper == nil,
               let url = URL(string: "chrome-extension://\(KiteHelperExtension.id)/\(KiteHelperExtension.pagePath)"),
               let page = engine.makePage(url: url, restoring: nil) as? ChromiumPage else { return }
@@ -215,13 +224,13 @@ final class ExtensionTabsBridge {
             }
         case "activate":
             guard let tabID = args["id"] as? Int,
-                  let tab = host.extensionTabs.first(where: { targetIDs[ObjectIdentifier($0.page)].flatMap { tabIDs[$0] } == tabID }) else {
+                  let tab = profileTabs(host).first(where: { targetIDs[ObjectIdentifier($0.page)].flatMap { tabIDs[$0] } == tabID }) else {
                 return completion(nil, "No tab with id: \(args["id"] ?? "")")
             }
             host.activateTabForExtension(tab.id)
             completion(true, nil)
         case "capture":
-            guard let page = host.extensionTabs.first(where: \.active)?.page else { return completion(nil, "No current window") }
+            guard let page = profileTabs(host).first(where: \.active)?.page else { return completion(nil, "No current window") }
             let format = args["format"] as? String == "png" ? "png" : "jpeg"
             var params: [String: Any] = ["format": format]
             if format == "jpeg" { params["quality"] = args["quality"] as? Int ?? 92 }
@@ -258,7 +267,7 @@ final class ExtensionTabsBridge {
     private func currentState() -> String {
         guard let host else { return #"{"windows":[],"tabs":[]}"# }
         var tabs: [[String: Any]] = []
-        let live = host.extensionTabs
+        let live = profileTabs(host)
         let liveKeys = Set(live.map { ObjectIdentifier($0.page) })
         targetIDs = targetIDs.filter { liveKeys.contains($0.key) }
         for tab in live {

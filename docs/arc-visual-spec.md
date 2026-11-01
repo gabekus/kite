@@ -1647,6 +1647,24 @@ ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-stri
   toolbar context menu yet; until the settings window exists the toggle is Kite menu → Show Full URL in Toolbar
   (command id `toggleToolbarFullURLs`, Arc's action name), not an Arc menu item.
 
+## Profiles (read from Arc's files and binary, 2026-11-01)
+
+- Storage (observed in Arc's data, structure only): each profile is a Chromium profile folder under
+  `User Data` ("Default", "Profile 1", …). `StorableSidebar.json` gives each space `profile`:
+  `{"default": true}` or `{"custom": {"_0": {"directoryBasename": "Profile 1", "machineID": …}}}`, and
+  `topAppsContainerIDs` pairs each profile with its own favorites container (favorites are per profile).
+- Text and buttons (binary: localized keys next to their comments, small-string keys decoded from the
+  instructions before each call): menu bar "New Profile" (`newProfile:`) and "Change Profile"
+  (`changeProfileForCurrentSpace:`), space menu "Set Profile", "New Profile…"; create sheet "Create a new
+  Profile", "What do you want to call this Profile?" (placeholder "Personal"), Next / Back / Create Profile,
+  "Which Spaces should use this Profile?"; change sheet "Change Profile" / "Cancel" with a "New Profile"
+  option; move confirmation "Switch it up"; errors "A Profile with that name already exists.", "Invalid
+  Profile name."; Settings "Your Profiles", "Not used", "%d Spaces", "Only Profiles not assigned to any Spaces
+  can be deleted.", "The Default Profile cannot be deleted.", "Delete this Profile", "To continue, please type
+  the name of this Profile:".
+- Not yet measured: the sheets' layout and chrome (Kite uses macOS sheets), the one-space count string, and
+  which characters Arc rejects as invalid.
+
 ## Split View: Add Left / Right / Top / Bottom Split → `SplitSides.swift` (KiteCore), `BrowserWindowController+SplitSides` (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
 
 Arc wasn't driven; nothing here is from a recording. Titles shorter than 16 bytes are Swift small strings, so they're not in

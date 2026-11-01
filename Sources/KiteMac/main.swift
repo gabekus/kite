@@ -18,6 +18,8 @@ MainActor.assumeIsolated {
         }
     }
     let delegate = AppDelegate()
+    // Folders of profiles deleted last run, before Chromium (or WebKit) opens any profile.
+    ProfileFolders.deletePending()
 
     #if canImport(CEFBridge)
     // CEF requires its NSApplication subclass, so create it before anything touches NSApp.
@@ -69,5 +71,6 @@ MainActor.assumeIsolated {
     #endif
 
     delegate.engine = WebKitEngine()
+    ProfileFolders.usesWebKit = true
     app.run()
 }
