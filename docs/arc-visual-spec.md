@@ -1268,6 +1268,36 @@ swapped without Arc's wave and slash animation; its 0.6 opacity copies Kite's cl
   over the older "End Process"), the window size, the row order, the utility names, and double-click to show a
   tab. Network reads N/A: Kite has no per-tab network counter yet.
 
+## mailto: handling → `MailHandler`, `MailHandlerSettings` (KiteCore), `MailHandlers` (Arc 1.171 strings, Info.plist and settings key names, 1 Nov 2026)
+
+- Arc has no setting or list of web mail services. Its only mailto: prompt is Chromium's protocol-handler
+  permission: arc-strings 79956–79957 "Make %@ your default mail app?" ("Format string asking for
+  `mailto:`-handling permission where the argument is the site's title or a fallback string"), in
+  `PermissionRequests.PermissionRequestDialogView` / `PermissionRequestPopoverView` (79944–79946, 41481–41484),
+  with "Button to deny permission" / "Button to allow permission" (79942–79943) and "Click the lock to change this
+  any time" (79945). Permission types include `registerProtocolHandler` (152243) and "protocol handler request
+  type" (63706–63707); `WebContentPermissionProtocolHandlerType` (31351) has the cases `unknown` and `mailto`
+  (152269–152270), so only mailto gets its own wording.
+- The Gmail and Outlook compose URLs in the binary (`https://mail.google.com/mail/u/`, 61213;
+  `https://outlook.live.com/mail/0/deeplink/compose`, 61233) belong to the hover-preview cards' compose button
+  ("Tooltip for button within a preview that links to a page to compose an email", 61214), not to mailto: links.
+- Arc's Info.plist `CFBundleURLTypes` registers "Email Address URL" (`mailto`) beside https, so Arc can be the
+  system's default mail app.
+- Settings keys (`defaults read company.thebrowser.Browser`): nothing named for mail. `arcAlwaysAllowedLinkToSchemesPerSite`
+  maps sites to schemes (Gabe's has two sites → `mailto`); by its name, the sites allowed to open those schemes in other apps without asking:
+  Arc's "open in another app" permission, which Kite doesn't have.
+- Kite: the page's `navigator.registerProtocolHandler` is replaced (both engines) with HTML's checks (2 arguments,
+  `%s` → SyntaxError, other origin → SecurityError); a valid mailto handler from a secure page asks once in a
+  popover over the page; Allow makes it the one default, Deny is remembered (Chromium keeps ignored handlers).
+  A mailto: link (in the page, target=_blank, or from another app) then loads the handler URL with the whole
+  link in place of the first `%s`, escaped as Chromium's `EscapeQueryParamValue(…, use_plus=true)`
+  (`ProtocolHandler::TranslateUrl`). No handler: the system's mail app, unless that's Kite.
+- Inferred or unobserved: the popover's layout, anchor and button titles ("Deny"/"Allow" from the string
+  comments); the site name (Kite shows the handler's host); that a page's mailto: link replaces that page
+  (Chromium's handler throttle rewrites the navigation in place); turning it off from Site Controls (Arc's
+  "Click the lock" suggests its site control center; Kite shows a Default Mail App row only on the handler's
+  site). Schemes other than mailto aren't registered.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

@@ -179,12 +179,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Air Traffic Control routes each web link: the first route that matches sends it to a
     /// space or Little Kite, else the default route (Little Kite while Kite menu → Open Links from
     /// Other Apps in Little Kite is on, Arc's default). Files and everything else open as tabs
-    /// in the main window.
+    /// in the main window. mailto: links go to the default mail app (MailHandlers).
     private func open(_ urls: [URL]) {
         let little = LittleKite.opensExternalLinks(in: .standard)
         let spaceIDs = Set(store.state.spaces.map(\.id))
         var openedTab = false
         for url in urls {
+            if MailHandler.isMailto(url) {
+                // Kite as the default mail app (it registers for mailto, as Arc does): the default
+                // web mail app's compose page in a new tab, else the system's mail app if that isn't Kite.
+                if let compose = MailHandlers.shared.destination(for: url) {
+                    store.mutate { _ = $0.openTab(url: compose) }
+                    openedTab = true
+                } else {
+                    MailHandlers.shared.openInSystemMailApp(url)
+                }
+                continue
+            }
             switch airTraffic.state.destination(for: url, spaceIDs: spaceIDs, opensExternalLinksInLittleKite: little) {
             case .littleKite:
                 openLittleKiteWindow(url: url)

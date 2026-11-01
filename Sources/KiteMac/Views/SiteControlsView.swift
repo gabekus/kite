@@ -15,10 +15,13 @@ final class SiteControlsModel {
         var clearCache: () -> Void
         var clearCookies: () -> Void
         var setPermission: (SitePermission, SitePermissionValue) -> Void
+        var removeMailHandler: () -> Void
     }
 
     let url: URL
     var blocksAds: Bool?
+    /// True while this site is the default mail app (MailHandlers); nil hides the row.
+    var isMailHandler: Bool?
     /// Nil on WebKit, which keeps no per-site permissions Kite can read.
     var permissions: [SitePermission: SitePermissionValue]?
     @ObservationIgnored var actions: Actions
@@ -85,6 +88,10 @@ struct SiteControlsView: View {
                 if let blocksAds = model.blocksAds {
                     SettingRow(symbol: "shield.fill", title: SiteControls.adblockTitle, subtitle: SiteControls.onOff(blocksAds),
                                isOn: blocksAds) { model.perform(model.actions.toggleAdblock) }
+                }
+                if model.isMailHandler == true {
+                    SettingRow(symbol: "envelope.fill", title: "Default Mail App", subtitle: SiteControls.onOff(true),
+                               isOn: true) { model.perform(model.actions.removeMailHandler) }
                 }
                 if let permissions = model.permissions {
                     ForEach(SitePermission.allCases, id: \.self) { permission in

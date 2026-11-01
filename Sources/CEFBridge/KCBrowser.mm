@@ -127,6 +127,26 @@ class KCDevToolsClient : public CefClient, public CefLifeSpanHandler, public Cef
     IMPLEMENT_REFCOUNTING(KCDevToolsClient);
 };
 
+/// A mailto: navigation goes to the default mail app's compose page when the delegate has one
+/// (Kite's MailHandlers): the frame loads it instead (a subframe's opens as a tab).
+static bool RouteMailto(KCBrowser* owner, CefRefPtr<CefFrame> frame, const CefString& target) {
+    id<KCBrowserDelegate> delegate = owner.delegate;
+    NSURL* url = ToNSURL(target);
+    if (!url || ![url.scheme.lowercaseString isEqualToString:@"mailto"] ||
+        ![delegate respondsToSelector:@selector(browser:mailtoDestinationForURL:)]) return false;
+    NSURL* compose = [delegate browser:owner mailtoDestinationForURL:url];
+    if (!compose) return false;
+    if (frame->IsMain()) {
+        std::string spec = compose.absoluteString.UTF8String;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            frame->LoadURL(spec);
+        });
+    } else {
+        [delegate browser:owner openURLInNewTab:compose foreground:YES];
+    }
+    return true;
+}
+
 /// Whether the delegate opens a clicked link in Arc's Peek card instead (it reports the link itself).
 static bool AskLinkPeek(KCBrowser* owner, const CefString& target, bool shift) {
     id<KCBrowserDelegate> delegate = owner.delegate;
@@ -382,6 +402,7 @@ class KCClient : public CefClient,
                         CefRefPtr<CefRequest> request,
                         bool user_gesture,
                         bool is_redirect) override {
+        if (RouteMailto(owner_, frame, request->GetURL())) return true;
         if (frame->IsMain() && user_gesture && !is_redirect &&
             (request->GetTransitionType() & TT_SOURCE_MASK) == TT_LINK &&
             AskLinkPeek(owner_, request->GetURL(), false)) {

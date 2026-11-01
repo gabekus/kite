@@ -217,6 +217,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | AppleScript dictionary | windows, tabs (URL, title, execute JS), spaces | 🟡 Arc’s sdef: windows, tabs (id, title, URL, loading, location; make, select, close, go back/forward, reload, stop, execute), spaces read only, Little Kite tabs; no `focus` or settable `location` yet | Gap 28 |
 | Sync | Sidebar via CloudKit/Firebase | ❌ | Roadmap: sync |
 | Default browser, handle links | | ✅ | |
+| Web mail for mailto: links | A site registers itself (`navigator.registerProtocolHandler`), "Make %@ your default mail app?"; Arc registers for mailto | 🟡 both engines: the prompt, mailto: links in pages and from other apps open the site's compose page, Site Controls row to turn it off; prompt layout and button titles unobserved; Chromium path and other-app path not run | Gap 39 |
 | PWAs / installed apps | `app_mode_loader` shims | ❌ | Roadmap: PWAs |
 | Sad tab | Crashed-tab page: face, "Tab crashed. Maybe reload the page?", exit code bottom-right | ✅ Chromium; WebKit still reloads on its own | B5 |
 | Download from links, downloads list | | 🟡 Both engines list downloads (downloads.json): progress ring on a bottom-bar button, popover with progress, open, Show in Finder, copy, hide, trash, cancel. No Library page, flying-icon animation or "Downloads in progress" quit alert yet | Thread: Library |
