@@ -2221,8 +2221,8 @@ at +8). Kite runs nothing in Arc; none of this was seen on screen.
   - Otherwise it opens a background tab, or the current tab.
   - `newForegroundTab` (⇧⌘) passes through unchanged.
   - ⇧ alone is Peek (the caller tests shift, `disableShiftClickToOpenLinksInModal`).
-- That Little Arc key isn't in Gabe's defaults or among the `registerDefaults` keys found, so it is probably off by default **[inferred]**. Kite has
-  no ⌥⌘ Little Arc entry point, so in Kite ⌥⌘-click always splits.
+- That Little Arc key isn't in Gabe's defaults, but his Links pane shows it on, so it's on by default. Kite follows it since g88 (see
+  "Settings › Links: Little Arc rows").
 - What the split looks like (which pane, focus, what a full split does) isn't traced. Kite follows Add Split View: a new pane after the
   clicked tab, focused. On a full split Kite does nothing, which matches Gabe's choice for Add Split View; Arc shows "Cannot Add New Pane".
 - No settings text mentions this click. The only Links-pane modifier settings are Peek (⇧) and Little Arc (⌥⌘).
@@ -2647,3 +2647,83 @@ triggers). Kite's menu bar checked the same way (an AX read of the test Kite, pl
   `recentPagesPreviewEnabled`). These are the sidebar hover previews ("Previews" row in arc-parity, not built); the
   ⇧-hover link card is Max's "5-Second Previews" (`hoverCardsEnabled`). Kite has none of these previews, so the
   button stays disabled. Dialog layout and row order not recorded (opening it needs a click in Arc).
+
+## Settings › Links: Little Arc rows → `LittleKite` (KiteCore), `LittleKiteHotkey`, `LinksPane` (Arc 1.171 AX tree, defaults key names, strings and disassembly, 1 Nov 2026)
+
+- **Defaults.** Arc's keys are `globalLittleBrowserHotkeyEnabled`, `optionCommandClickLittleArcEntryPointEnabled` and
+  `autoArchiveLittleArcTimeThreshold` (arc-strings ~64233, ~152501). None of them is in Gabe's Arc defaults, while his
+  Links pane (`~/rea-arc/settings/pane-4.txt`, AX tree) shows both switches on and the pop-up at "6 hours (default)". So
+  the unset values are on, on and 6 hours. This replaces the "probably off" guess for the ⌥⌘ key in the ⌥⌘-click section.
+- **Archive Little Arcs after:** pop-up 200 wide at x 410. Its choices come from a static case list: the function at
+  0x1015aad00 takes a Bool and returns one of two static arrays, [1, 2, 3] or [3, 4, 5, 6]. Its one caller is
+  `ThresholdPreferenceView` (0x10207775c, "PreferencesFeature/ThresholdPreferenceView.swift"). The case order is
+  `twentySeconds, oneHour, sixHours, twelveHours, twentyFourHours, sevenDays, thirtyDays, never` (the label switch at
+  0x1015aad88; the debug-only "20 seconds" is case 0). So Little Arc offers **1 hour, 6 hours, 12 hours**, and tabs
+  12 hours to 30 days, which matches Kite's tab setting. The default reads "6 hours (default)".
+- **What archiving does** isn't traced. Kite closes a Little Kite window once it has gone unused (not key in the active
+  app) for the threshold, checking every minute **[inferred from the name and Arc's tab auto-archive]**. Arc's Library
+  has a "Little Arc" archive filter, which Kite doesn't have yet.
+- **Hotkey.** `GlobalHotkeyListenerClient` / `GlobalHotkeyManager_macOS.swift` with `EventHotKeyID` and "Failed to
+  register hotkey." (arc-strings ~41639, ~80258). That's a Carbon `RegisterEventHotKey`, which needs no Accessibility or
+  Input Monitoring prompt. `registerLittleBrowserShortcut` and `littleArcShortcut`, plus the row title split as
+  "Open Little Arc when I press " + shortcut, show that it follows New Little Arc Window's shortcut. Kite registers the
+  menu item's current shortcut, so a changed shortcut moves the hotkey and a removed one drops it, and shows it in the row
+  ("---" with none). While the hotkey is registered, ⌥⌘N reaches Kite instead of the frontmost app, as in Arc. Arc also
+  reads macOS's symbolic hotkeys (`kHISymbolicHotKey*`, `registeredSystemShortcuts`), probably to avoid system
+  shortcuts; Kite doesn't. Test runs (`KITE_DIAGNOSTICS`) skip the hotkey unless `KITE_TEST_GLOBAL_HOTKEY=1`.
+- **⌥⌘-click.** The policy helper (`out5/g37-policy.txt`) opens Little Arc when the key is on and both ⌥ and ⌘ are
+  held. Otherwise ⌥ splits. Kite does the same. An ⌥-middle-click (Chromium, no ⌘) still splits. Incognito windows always
+  split, because Kite's Little Kite runs on the normal profile **[Kite's choice; Arc not checked]**.
+
+## Edit menu: Find and Replace, Format › Font, AutoFill, Data Detectors → `MainMenu` (Arc 1.171 MainMenu.nib and binary, 1 Nov 2026)
+
+Read from Arc's compiled `Base.lproj/MainMenu.nib` (control connectors: action, item, key, tag) and Arc's decompile.
+
+- **Find › Find and Replace**, ⌥⌘F, between Find… and Find Next. Action `arc_performFindPanelAction:` with tag 12
+  (`NSTextFinder.Action.showReplaceInterface`), to the first responder, like Find… (tag 1), Find Next (2), Find
+  Previous (3), Use Selection to Find (7). `MainWindowController`'s menu validation for that action enables tag 1,
+  tags 2 and 3 while a find is open, tag 7 with a selection, and nothing else, so for a web page tag 12 is off.
+  Only Arc's Notes editor (`TextEditorViewController`) takes it. Kite sends `performTextFinderAction:` tag 12 to
+  the first responder: only an AppKit text view with a find bar takes it, and Kite has none (its field editors
+  have no find bar), so it's off everywhere in Kite, as in Arc on pages and fields.
+- **Format › Font › Bold / Italic / Underline**, ⌘B / ⌘I / ⌘U. Format holds only Font; Font holds only these three.
+  Bold and Italic: `addFontTrait:` tags 2 and 1, target the font manager. Underline: `underline:` to the first
+  responder. Neither ArcCore (Chromium) nor Kite's CEF has a `changeFont:` or `underline:` selector, so the menu
+  items do nothing for a Chromium page; Blink's own editor maps ⌘B/⌘I/⌘U to ToggleBold/Italic/Underline in a text
+  box, and the page gets the key before the menu bar (CEF hands only keys the page leaves to the menu). WKWebView
+  takes `changeFont:` and `underline:`, so on WebKit the menu items bold and underline a text box too.
+- **AutoFill › Contact… / Passwords…** aren't in Arc's nib: AppKit inserts them (with Start Dictation and Emoji &
+  Symbols) after Format, in Arc and in Kite alike (`_handleInsertFromContactsCommand:` /
+  `_handleInsertFromPasswordsCommand:`). Neither Chromium nor WKWebView takes them, so they work in native fields
+  only, in both browsers. Nothing to build.
+- **Substitutions › Data Detectors**, between Smart Links and Text Replacement: `toggleAutomaticDataDetection:` to
+  the first responder. Page views don't take it; AppKit text fields do.
+
+## Profile settings › Download location and search suggestions → `ProfileSettings`, `SearchSuggestions` (KiteCore), `DownloadLocation`, `SearchSuggestionFetcher`, `DownloadLocationPicker` (Arc 1.171 strings, disassembly and decompile, Settings AX recording; 1 Nov 2026)
+
+- **Per profile** [str]: Arc's profile preferences state (arc-strings.txt 171378–171395) holds
+  `getNonIncognitoBrowserContext`, `defaultSearchEngine`, `searchSuggestEnabled`, `downloadFilePath`,
+  `promptForDownloadFilePath` with actions `onSetSearchSuggestEnabled`, `onDidChangeFileDownloadPath`,
+  `onDidSetPromptForFileDownloadPath` (the selector `setSearchSuggestEnabled:` is on Arc's browser context). These are
+  the profile's Chromium prefs, so Kite keeps them per profile (`BrowserState.profileSettings`, by the profile's
+  `dataStoreID`); an incognito window uses the default profile's, as Arc reads the non-incognito context.
+- **Rows** [AX, ~/rea-arc/settings/pane-2.txt]: "Include search engine suggestions" is an AXCheckBox/AXToggle at
+  584,244 26×15 (value 1 in Gabe's Arc; Chromium's default is on); "Download location" is an AXPopUpButton
+  "Download Location" 180×20 at 430,370, value "Downloads".
+- **Pop-up items** [dis, ProfilePreferencesViewController+Profiles, Arc-arm64 0x10203ae98–0x10203bcac; Ghidra output in
+  ~/rea-arc/decomp/out-g97]: the items are tagged by an enum whose raw values are `arc.folder`, `arc.other`,
+  `arc.promptForDownload` (in that order). The content is a Label (title + icon, `TitleAndIconLabelStyle`) for the
+  folder, `Text("Other…")`, a `Divider`, `Text("Ask every time")` (small-string immediates at 0x10203bb78 and
+  0x10203bc50). The folder icon's source isn't decoded; Kite uses the folder's Finder icon at 16pt.
+- **Other…** [dec, FUN_10203fa08]: an `NSOpenPanel` with directoryURL the current folder, files off, directories on,
+  create directories on, multiple selection off, prompt "Select" (comment "Button to confirm selection of directory
+  for file downloads"), run modally; OK stores the folder. Kite also turns Ask off then, so the pop-up shows the folder.
+- **Kite**: Chromium's `OnBeforeDownload` asks `KCBrowser.downloadFolderProvider` for the browser's profile (found by
+  its request context) and continues into that folder, with Chromium's Save panel when Ask every time is on; WebKit's
+  `DownloadCoordinator` does the same with an `NSSavePanel` sheet. Suggestions: the command bar asks the engine's
+  suggest URL (Chromium's built-in engines' endpoints; none for Kagi) 80 ms after typing stops, ephemeral session
+  without cookies, and shows up to 4 as search rows right after the typed search. Arc gets them from Chromium's
+  search suggest provider (`chromiumSearchSuggestion` results, strings 68850–68862); its ranking and its
+  "We talk to your search engine to help us suggest results." privacy banner aren't copied.
+- Not verified: the pop-up's open menu (modal), Other… and Ask every time live (they'd open panels over Gabe's
+  work), and the Chromium engine (the test build runs WebKit).

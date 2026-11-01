@@ -72,6 +72,17 @@ final class SettingsModel: ObservableObject {
 
     var archiveAfter: ArchiveInterval { store?.state.archiveAfter ?? .twelveHours }
 
+    /// The profile whose settings Profiles shows beside its list, which has only Default so far.
+    var settingsProfile: String { Profile.defaultDirectory }
+
+    var profileSettings: ProfileSettings { store?.state.settings(ofProfile: settingsProfile) ?? ProfileSettings() }
+
+    func updateProfileSettings(_ change: @escaping (inout ProfileSettings) -> Void) {
+        let profile = settingsProfile
+        store?.mutate { $0.updateSettings(ofProfile: profile, change) }
+        refresh()
+    }
+
     /// The Spaces using Kite's one profile, for Profiles' list.
     var spaceCount: Int { store?.state.spaces.count ?? 1 }
 

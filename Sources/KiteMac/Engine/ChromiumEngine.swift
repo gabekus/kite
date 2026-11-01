@@ -513,9 +513,15 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     func browser(_ browser: KCBrowser, openURLInNewTab url: URL, foreground: Bool) {
         // CEF reports only the disposition (⌘-click: background, ⇧⌘: foreground); ⌥ is read from the
-        // keyboard, as Arc reads NSEvent.modifierFlags. ⌥⌘-click opens in Split View.
-        if !foreground, LinkClick.commandClickDestination(shift: false, option: NSEvent.modifierFlags.contains(.option)) == .splitView {
-            return onEvent?(.openInSplit(url)) ?? ()
+        // keyboard, as Arc reads NSEvent.modifierFlags. ⌥⌘-click opens in Little Kite or Split View.
+        if !foreground {
+            let flags = NSEvent.modifierFlags
+            switch LinkClick.commandClickDestination(shift: false, option: flags.contains(.option), command: flags.contains(.command),
+                                                     opensLittleKite: LittleKite.opensOnOptionCommandClick(in: .standard)) {
+            case .littleKite: return onEvent?(.openInLittleKite(url)) ?? ()
+            case .splitView: return onEvent?(.openInSplit(url)) ?? ()
+            case .backgroundTab, .foregroundTab: break
+            }
         }
         onEvent?(.openInNewTab(url, foreground: foreground))
     }

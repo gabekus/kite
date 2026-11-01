@@ -101,7 +101,7 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
         root.addSubview(toolbar)
 
         webContainer.wantsLayer = true
-        webContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        webContainer.layer?.backgroundColor = NSColor.pageBackdrop.cgColor
         root.addSubview(webContainer)
 
         trafficLights = TrafficLights(window: window, host: root, center: Metrics.trafficLightCenter,
@@ -210,7 +210,7 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
             self.canGoBack = canGoBack
             self.canGoForward = canGoForward
             updateButtons()
-        case .openInLinkPeek(let url), .openInNewTab(let url, _), .openInSplit(let url):
+        case .openInLinkPeek(let url), .openInNewTab(let url, _), .openInSplit(let url), .openInLittleKite(let url):
             host.openTab(url)
         case let .openLink(url, target):
             let delegate = NSApp.delegate as? AppDelegate

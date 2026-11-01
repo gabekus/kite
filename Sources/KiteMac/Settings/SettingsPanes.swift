@@ -88,7 +88,12 @@ struct ProfilesPane: View {
                         SettingsSeparator()
                         SettingsRow(title: "Manage search") { Button("Search Settings…") { model.openSearchSettings() } }
                         SettingsSeparator()
-                        UnsupportedToggle("Include search engine suggestions")
+                        SettingsRow(title: "Include search engine suggestions") {
+                            SettingsSwitch(isOn: Binding(
+                                get: { model.profileSettings.includesSearchSuggestions },
+                                set: { on in model.updateProfileSettings { $0.includesSearchSuggestions = on } }
+                            ))
+                        }
                     }
                     SettingsSection {
                         SettingsRow(title: "Archive tabs after") {
@@ -105,9 +110,7 @@ struct ProfilesPane: View {
                             Picker("", selection: .constant(0)) { Text("——").tag(0) }.labelsHidden().frame(width: 180).disabled(true)
                         }
                         SettingsSeparator()
-                        SettingsRow(title: "Download location") {
-                            Picker("", selection: .constant(0)) { Text("Downloads").tag(0) }.labelsHidden().frame(width: 180).disabled(true)
-                        }
+                        SettingsRow(title: "Download location") { DownloadLocationPicker() }
                     }
                     SettingsSection(header: "Your Data and Settings") {
                         DataLink("Privacy and Security", SettingsIcon(symbol: "lock.fill", color: .blue))
@@ -123,6 +126,53 @@ struct ProfilesPane: View {
         .padding(.top, SettingsMetrics.topMargin)
         .frame(width: SettingsMetrics.sectionWidth, alignment: .topLeading)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// Arc's Download location pop-up (ProfilePreferencesViewController+Profiles): the folder
+/// with its icon, "Other…" (a folder panel), a divider, and "Ask every time".
+private struct DownloadLocationPicker: View {
+    @EnvironmentObject private var model: SettingsModel
+
+    /// Arc's item identifiers: `arc.folder`, `arc.other`, `arc.promptForDownload`.
+    private enum Choice: Hashable { case folder, other, prompt }
+
+    var body: some View {
+        let _ = model.revision
+        let profile = model.settingsProfile
+        let folder = DownloadLocation.folder(profile: profile)
+        Picker("", selection: Binding<Choice>(
+            get: { model.profileSettings.promptsForDownload ? .prompt : .folder },
+            set: { choice in
+                switch choice {
+                case .folder: DownloadLocation.setPrompts(false, profile: profile)
+                // After the menu has closed, like Arc's modal panel.
+                case .other: DispatchQueue.main.async { DownloadLocation.chooseFolder(profile: profile); model.refresh() }
+                case .prompt: DownloadLocation.setPrompts(true, profile: profile)
+                }
+                model.refresh()
+            }
+        )) {
+            Label {
+                Text(FileManager.default.displayName(atPath: folder.path))
+            } icon: {
+                Image(nsImage: Self.icon(for: folder))
+            }
+            .labelStyle(.titleAndIcon)
+            .tag(Choice.folder)
+            Text("Other…").tag(Choice.other)
+            Divider()
+            Text("Ask every time").tag(Choice.prompt)
+        }
+        .labelsHidden()
+        .frame(width: 180)
+        .accessibilityLabel("Download Location")
+    }
+
+    private static func icon(for folder: URL) -> NSImage {
+        let icon = NSWorkspace.shared.icon(forFile: folder.path)
+        icon.size = NSSize(width: 16, height: 16)
+        return icon
     }
 }
 
@@ -326,6 +376,12 @@ private struct SettingsBanner: View {
 /// Arc: a 135pt Little Arc banner, the Little Arc blurb and section, a rule, the Peek blurb and
 /// section, then Air Traffic Control.
 struct LinksPane: View {
+    @AppStorage(LittleKite.ArchiveThreshold.key) private var littleArchive = LittleKite.ArchiveThreshold.defaultValue
+
+    private var littleKiteShortcut: String {
+        NSApp.mainMenu.flatMap { AppDelegate.menuItem(withID: "newLittleBrowserWindow", in: $0) }?.shortcut?.displayString ?? "---"
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -333,15 +389,18 @@ struct LinksPane: View {
                 VStack(alignment: .leading, spacing: 18) {
                     SettingsBlurb("Little Kite is a smaller, simpler Kite window. It’s perfect for quick lookups and reading funny tweets your friends send you.")
                     SettingsSection {
-                        UnsupportedToggle("Open Little Kite when I press ⌥⌘N in any app")
+                        // Arc names New Little Arc Window's current shortcut here; "---" when it has none.
+                        DefaultsToggle("Open Little Kite when I press \(littleKiteShortcut) in any app", key: LittleKite.globalHotkeyKey)
                         SettingsSeparator()
-                        UnsupportedToggle("Open Little Kite when clicking on links with ⌥⌘ held")
+                        DefaultsToggle("Open Little Kite when clicking on links with ⌥⌘ held", key: LittleKite.optionCommandClickKey)
                         SettingsSeparator()
                         CommandToggle("Links from other apps open in Little Kite", #selector(AppDelegate.toggleLittleKiteLinks(_:)))
                         SettingsSeparator()
                         SettingsRow(title: "Archive Little Kites after:") {
-                            Picker("", selection: .constant(0)) { Text("6 hours (default)").tag(0) }
-                                .labelsHidden().frame(width: 200).disabled(true)
+                            Picker("", selection: $littleArchive) {
+                                ForEach(LittleKite.ArchiveThreshold.allCases, id: \.self) { Text($0.title).tag($0) }
+                            }
+                            .labelsHidden().frame(width: 200)
                         }
                     }
                     SettingsMetrics.line.frame(height: 1).padding(.vertical, 6)

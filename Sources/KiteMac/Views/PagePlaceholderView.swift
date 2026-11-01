@@ -19,7 +19,7 @@ final class PagePlaceholderView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        layer?.backgroundColor = NSColor.pageBackdrop.cgColor
         imageLayer.contentsGravity = .resize
         imageLayer.opacity = 0
         imageLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]

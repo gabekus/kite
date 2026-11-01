@@ -59,6 +59,11 @@ enum MainMenu {
             item.representedObject = CommandBarKeywords(words)
             return item
         }
+        /// Bold and Italic go to the font manager, which hands the first responder changeFont:.
+        func fontTrait(_ item: NSMenuItem) -> NSMenuItem {
+            item.target = NSFontManager.shared
+            return item
+        }
         let boostKeywords = ["Boost", "New Boost", "Create boost", "extension", "Boost the Current Page", "Edit Boost"]
 
         func submenuItem(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
@@ -199,6 +204,11 @@ enum MainMenu {
             .separator(),
             submenuItem("Find", [
                 item("Find…", #selector(BrowserWindowController.showFind(_:)), "f", id: "find"),
+                // Arc's MainMenu.nib: arc_performFindPanelAction: tag 12 (show replace), ⌥⌘F, to the first
+                // responder. Arc enables it only in its own text editor, never for a web page: here only an
+                // AppKit text view with a find bar takes it, so it stays off on pages and in fields, as in Arc.
+                item("Find and Replace", #selector(NSTextView.performTextFinderAction(_:)), "f", [.command, .option],
+                     tag: NSTextFinder.Action.showReplaceInterface.rawValue, toTarget: false, id: "findAndReplace"),
                 item("Find Next", #selector(BrowserWindowController.findNext(_:)), "g", id: "findNext"),
                 item("Find Previous", #selector(BrowserWindowController.findPrevious(_:)), "g", [.command, .shift], id: "findPrevious"),
                 item("Use Selection to Find", #selector(BrowserWindowController.useSelectionForFind(_:)), "e", id: "useSelectionForFind"),
@@ -218,6 +228,9 @@ enum MainMenu {
                 item("Smart Quotes", #selector(NSTextView.toggleAutomaticQuoteSubstitution(_:)), toTarget: false),
                 item("Smart Dashes", #selector(NSTextView.toggleAutomaticDashSubstitution(_:)), toTarget: false),
                 item("Smart Links", #selector(NSTextView.toggleAutomaticLinkDetection(_:)), toTarget: false),
+                // Arc's MainMenu.nib: toggleAutomaticDataDetection: to the first responder. Chromium's and
+                // WebKit's page views don't take it, so it's on only in AppKit text fields.
+                item("Data Detectors", #selector(NSTextView.toggleAutomaticDataDetection(_:)), toTarget: false),
                 item("Text Replacement", #selector(NSTextView.toggleAutomaticTextReplacement(_:)), toTarget: false),
             ]),
             submenuItem("Transformations", [
@@ -228,6 +241,19 @@ enum MainMenu {
             submenuItem("Speech", [
                 item("Start Speaking", #selector(NSTextView.startSpeaking(_:)), toTarget: false),
                 item("Stop Speaking", #selector(NSTextView.stopSpeaking(_:)), toTarget: false),
+            ]),
+            // Arc's MainMenu.nib: Bold and Italic send addFontTrait: (tags 2 and 1) to the font manager,
+            // Underline sends underline: to the first responder. A page sees ⌘B/⌘I/⌘U first (Chromium's
+            // editor bolds a text box itself); keys it leaves land here. WebKit's view takes the font
+            // manager's changeFont: and underline:, Chromium's takes neither, as in Arc.
+            submenuItem("Format", [
+                submenuItem("Font", [
+                    fontTrait(item("Bold", #selector(NSFontManager.addFontTrait(_:)), "b",
+                                   tag: Int(NSFontTraitMask.boldFontMask.rawValue))),
+                    fontTrait(item("Italic", #selector(NSFontManager.addFontTrait(_:)), "i",
+                                   tag: Int(NSFontTraitMask.italicFontMask.rawValue))),
+                    item("Underline", #selector(NSText.underline(_:)), "u", toTarget: false),
+                ]),
             ]),
         ])
 
