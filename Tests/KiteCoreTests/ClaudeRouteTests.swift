@@ -44,6 +44,13 @@ import Testing
     }
 
     @Test func listsRecentClaudeCodeFolders() throws {
+        #expect(ClaudeCodeFolders.transcriptKey("/Users/me/dev/new.app") == "-Users-me-dev-new-app")
+        #expect(ClaudeCodeFolders.isCandidate("/Users/me/dev/kite", home: "/Users/me"))
+        #expect(!ClaudeCodeFolders.isCandidate("/Users/me", home: "/Users/me"))
+        #expect(!ClaudeCodeFolders.isCandidate("/private/tmp/k", home: "/Users/me"))
+        #expect(!ClaudeCodeFolders.isCandidate("/Users/me/dev/kite/.claude/worktrees/a", home: "/Users/me"))
+        // Windows won't set a directory's modification date, and the picker is Mac-only.
+        #if !os(Windows)
         let files = FileManager.default
         let home = files.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let old = home.appendingPathComponent("dev/old"), new = home.appendingPathComponent("dev/new.app")
@@ -59,11 +66,7 @@ import Testing
         }
         // The temporary directory itself is under /var or /private, which `recent` skips, so check the order
         // with that filter out of the way.
-        #expect(ClaudeCodeFolders.transcriptKey("/Users/me/dev/new.app") == "-Users-me-dev-new-app")
-        #expect(ClaudeCodeFolders.isCandidate("/Users/me/dev/kite", home: "/Users/me"))
-        #expect(!ClaudeCodeFolders.isCandidate("/Users/me", home: "/Users/me"))
-        #expect(!ClaudeCodeFolders.isCandidate("/private/tmp/k", home: "/Users/me"))
-        #expect(!ClaudeCodeFolders.isCandidate("/Users/me/dev/kite/.claude/worktrees/a", home: "/Users/me"))
         #expect(ClaudeCodeFolders.recent(home: home, candidate: { _ in true }) == [new.path, old.path])
+        #endif
     }
 }
