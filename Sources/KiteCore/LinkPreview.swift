@@ -53,6 +53,25 @@ public enum LinkPreview {
         public static let edgeMargin: Double = 8
     }
 
+    /// The card's share button (Arc's HoverCardShareButton, HoverCardView; Arc 1.171 binary).
+    public enum Share {
+        /// `Image(systemName: "square.and.arrow.up").frame(width: 32, height: 32)`, then
+        /// `.padding(.bottom, 3).padding(.leading, 0.5)` to centre the glyph optically.
+        public static let size: Double = 32
+        public static let symbol = "square.and.arrow.up"
+        public static let symbolBottomInset: Double = 3
+        public static let symbolLeadingInset: Double = 0.5
+        /// `Font.system(size: 14, weight: .semibold)` on the label.
+        public static let symbolPointSize: Double = 14
+        /// In the card's bottom-trailing corner: `.padding(.all, 7.5).padding(.bottom, 1)`.
+        public static let inset: Double = 7.5
+        public static let extraBottomInset: Double = 1
+        /// Appears with `.offset(x: 0, y: 10)` combined with `.opacity`.
+        public static let slide: Double = 10
+        /// Arc's ShareMenu titles its copy items "Copy as %@".
+        public static func copyTitle(_ kind: String) -> String { "Copy as \(kind)" }
+    }
+
     /// A rectangle in AppKit screen coordinates (origin bottom-left, y up).
     public struct Box: Equatable, Sendable {
         public var x: Double

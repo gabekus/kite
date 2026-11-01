@@ -21,6 +21,8 @@ final class LinkPreviewController {
     private var leaveWork: DispatchWorkItem?
     private var fetch: Task<Void, Never>?
     private var resignObserver: NSObjectProtocol?
+    /// The share button's menu while it's open.
+    private var shareMenu: LinkPreviewShareMenu?
 
     private init() {}
 
@@ -83,7 +85,7 @@ final class LinkPreviewController {
         model.reset(for: hover.url)
         load(hover.url)
 
-        let card = window ?? LinkPreviewWindow(model: model)
+        let card = window ?? LinkPreviewWindow(model: model) { [weak self] in self?.share() }
         if window == nil {
             window = card
             card.onSizeChange = { [weak self] in self?.layout() }
@@ -134,6 +136,21 @@ final class LinkPreviewController {
         }
     }
 
+    // MARK: Sharing
+
+    /// Arc's HoverCardShareButton: renders the card's content as an image
+    /// (HoverCardViewShareSnapshot, through ImageRenderer) and pops Arc's ShareMenu up at the
+    /// pointer: Copy as Image, Copy as Link, then Share ▸ with the system's sharing services.
+    private func share() {
+        guard let url = model.url, shareMenu == nil else { return }
+        let renderer = ImageRenderer(content: LinkPreviewShareSnapshot(model: model))
+        renderer.scale = window?.backingScaleFactor ?? 2
+        let menu = LinkPreviewShareMenu(url: url, image: renderer.nsImage)
+        shareMenu = menu
+        menu.popUpAtPointer()
+        shareMenu = nil
+    }
+
     // MARK: Closing
 
     /// The pointer left the link: close unless it's on its way to the card or on it.
@@ -146,6 +163,8 @@ final class LinkPreviewController {
 
     private func checkLeave() {
         guard shownURL != nil, hovered?.hover.url != shownURL else { return }
+        // The share menu is open over (or past) the card: keep the card until it closes.
+        if shareMenu != nil { return scheduleLeaveCheck() }
         if let window, let link = shownLink {
             let pointer = NSEvent.mouseLocation
             if LinkPreview.isInCorridor(x: pointer.x, y: pointer.y, link: link, card: Self.box(window.cardFrame)) {
@@ -313,8 +332,8 @@ final class LinkPreviewWindow: NSPanel {
     var onSizeChange: (() -> Void)?
     private var lastHeight: CGFloat = 0
 
-    init(model: LinkPreviewModel) {
-        hosting = NSHostingView(rootView: LinkPreviewCardView(model: model, appearance: cardState))
+    init(model: LinkPreviewModel, share: @escaping () -> Void) {
+        hosting = NSHostingView(rootView: LinkPreviewCardView(model: model, appearance: cardState, share: share))
         super.init(contentRect: NSRect(x: 0, y: 0, width: 360, height: 200),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         isOpaque = false
@@ -401,6 +420,7 @@ struct LinkPreviewCardView: View {
 
     @ObservedObject var model: LinkPreviewModel
     @ObservedObject var appearance: LinkPreviewAppearance
+    let share: () -> Void
 
     private var metrics: LinkPreview.Metrics.Type { LinkPreview.Metrics.self }
 
@@ -429,6 +449,39 @@ struct LinkPreviewCardView: View {
     }
 
     private var card: some View {
+        LinkPreviewCardContent(model: model)
+            .background(LinkPreviewMaterial())
+            .clipShape(RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+            )
+            // Arc: the share button sits in the card's bottom-trailing corner once there's
+            // something to share, sliding up 10pt as it fades in.
+            .overlay(alignment: .bottomTrailing) {
+                if model.state == .loaded {
+                    LinkPreviewShareButton(action: share)
+                        .padding(LinkPreview.Share.inset)
+                        .padding(.bottom, LinkPreview.Share.extraBottomInset)
+                        .transition(.offset(y: LinkPreview.Share.slide).combined(with: .opacity))
+                }
+            }
+            .animation(.default, value: model.state == .loaded)
+            // Arc: shadow(color: black 12%, radius: 6, x: 2, y: 2).
+            .shadow(color: .black.opacity(0.12), radius: 6, x: 2, y: 2)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("LinkPreviewCard")
+    }
+}
+
+/// What the card shows: the image, title, description and site. The card and its share snapshot
+/// both draw it.
+struct LinkPreviewCardContent: View {
+    @ObservedObject var model: LinkPreviewModel
+
+    private var metrics: LinkPreview.Metrics.Type { LinkPreview.Metrics.self }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let image = model.image {
                 Image(nsImage: image)
@@ -479,20 +532,12 @@ struct LinkPreviewCardView: View {
                         .truncationMode(.middle)
                 }
                 .padding(.top, 2)
+                // Room for the share button in the corner (Kite's choice; Arc's footer differs).
+                .padding(.trailing, model.state == .loaded ? LinkPreview.Share.size : 0)
             }
             .padding(15)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(LinkPreviewMaterial())
-        .clipShape(RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
-        )
-        // Arc: shadow(color: black 12%, radius: 6, x: 2, y: 2).
-        .shadow(color: .black.opacity(0.12), radius: 6, x: 2, y: 2)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("LinkPreviewCard")
     }
 
     private var host: String {

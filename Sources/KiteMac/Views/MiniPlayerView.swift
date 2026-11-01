@@ -97,10 +97,8 @@ struct MiniPlayerView: View {
         HStack(spacing: Metrics.spacing) {
             artwork
                 .frame(width: Metrics.buttonSize, height: Metrics.buttonSize)
-            Text(title)
-                .font(.system(size: Metrics.titleFontSize, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.tail)
+            // Arc's `usesMarqueeTextView`: a title too long for the row scrolls (MarqueeText).
+            MarqueeText(text: title, font: .system(size: Metrics.titleFontSize, weight: .medium))
                 .frame(maxWidth: .infinity, alignment: .leading)
             if hovering {
                 if media?.hasVideo == true {
