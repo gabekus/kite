@@ -26,11 +26,14 @@ struct ShortcutsPane: View {
         static let headerHeight: CGFloat = 28
         static let rowHeight: CGFloat = 48
         static let keycap = CGSize(width: 64, height: 24)
-        // Captured from Arc (dark): list #222220, search bar #40403E, pill #656068, keycaps and rules #383836.
-        static let listFill = Color(red: 0x22 / 255, green: 0x22 / 255, blue: 0x20 / 255)
-        static let searchFill = Color(red: 0x40 / 255, green: 0x40 / 255, blue: 0x3E / 255)
-        static let pillFill = Color(red: 0x65 / 255, green: 0x60 / 255, blue: 0x68 / 255)
-        static let keycapFill = Color(red: 0x38 / 255, green: 0x38 / 255, blue: 0x36 / 255)
+        // Dark: captured from Arc (list #222220, search bar #40403E, pill #656068, keycaps and rules
+        // #383836). Light: the pill is Arc's MakeDefaultViewBackgroundColor asset (#656068 dark, white
+        // light); the others take the light value of Arc's grey-scale step nearest their dark value
+        // (ARCUI Gray3, Gray7, Gray6). Light mode wasn't captured live.
+        static let listFill = SettingsMetrics.dynamic(dark: 0x222220, light: 0xF3F3F3)
+        static let searchFill = SettingsMetrics.dynamic(dark: 0x40403E, light: 0xDBDBDB)
+        static let pillFill = SettingsMetrics.dynamic(dark: 0x656068, light: 0xFFFFFF)
+        static let keycapFill = SettingsMetrics.dynamic(dark: 0x383836, light: 0xE2E2E2)
     }
 
     var body: some View {
