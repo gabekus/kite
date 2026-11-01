@@ -88,6 +88,16 @@ extension BrowserWindowController {
         downloadsButton.toggle()
     }
 
+    /// History › View History (⌘Y; Arc's Archive › View History): "Opens your History in a new
+    /// Today tab", as Arc's shortcut list puts it.
+    @objc func viewHistory(_ sender: Any?) {
+        let page = InternalPage.history
+        store.mutate { state in
+            let id = state.openTab(url: page.url)
+            state.update(tab: id) { $0.title = page.title }
+        }
+    }
+
     @objc func showKeyboardShortcuts(_ sender: Any?) {
         EssentialShortcutsWindow.show(menu: NSApp.mainMenu, overrides: (NSApp.delegate as? AppDelegate)?.keyBindings.bindings)
     }

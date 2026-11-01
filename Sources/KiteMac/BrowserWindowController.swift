@@ -70,6 +70,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var didSync: (() -> Void)?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
+    /// Kite's own pages (kite://history) over the panes showing them, by tab.
+    private var internalPages: [UUID: NSHostingView<HistoryPageView>] = [:]
     private var commandBarVisible = false
     private var sidebarVisible = true
     /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
@@ -397,6 +399,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         updateCommandBar()
         updateSidebar()
         updateToolbar()
+        updateInternalPages()
         didSync?()
     }
 
@@ -490,6 +493,42 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         // Re-adding brings it above a page shown since.
         contentClip.addSubview(host)
         sadTab = host
+    }
+
+    /// Draws Kite's own pages over the shown tabs on kite:// URLs. Their engine pages stay blank.
+    private func updateInternalPages() {
+        let shown = shownTabIDs.filter { InternalPage(store.state.tab($0)?.url) != nil }
+        for (id, host) in internalPages where !shown.contains(id) {
+            host.removeFromSuperview()
+            internalPages[id] = nil
+        }
+        for id in shown {
+            let view = HistoryPageView(store: store.history) { [weak self] url, newTab in
+                self?.openFromInternalPage(id, url, newTab: newTab)
+            }
+            let host = internalPages[id] ?? NSHostingView(rootView: view)
+            if shownTabIDs.count > 1, let pane = splitPanes.frame(of: id) {
+                host.frame = splitPanes.convert(pane, to: contentClip)
+                host.autoresizingMask = []
+            } else {
+                host.frame = contentClip.bounds
+                host.autoresizingMask = [.width, .height]
+            }
+            if host.superview == nil {
+                host.rootView = view
+                contentClip.addSubview(host, positioned: .below, relativeTo: toolbarHost)
+            }
+            internalPages[id] = host
+        }
+    }
+
+    private func openFromInternalPage(_ id: UUID, _ url: URL, newTab: Bool) {
+        if newTab {
+            store.mutate { _ = $0.openTab(url: url, select: false) }
+        } else {
+            store.mutate { $0.update(tab: id) { $0.url = url; $0.title = "" } }
+            pool.loadedPage(id)?.load(url)
+        }
     }
 
     private func updateToolbar() {
@@ -671,7 +710,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func open(_ url: URL, mode: CommandBarMode) {
         if mode == .editCurrent, let id = store.state.selectedTab?.id {
             store.mutate { $0.update(tab: id) { $0.url = url } }
-            pool.loadedPage(id)?.load(url)
+            // kite:// pages are drawn by the window, never loaded.
+            if InternalPage(url) == nil { pool.loadedPage(id)?.load(url) }
         } else {
             store.mutate { $0.openTab(url: url) }
         }
