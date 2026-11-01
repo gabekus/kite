@@ -17,7 +17,8 @@ public struct SplitView: Identifiable, Hashable, Codable, Sendable {
     public var widthFactors: [Double]
     public var orientation: SplitOrientation
     /// Arc's Expand Current Split: the pane shown full size while the others stay in the split.
-    /// `widthFactors` are kept, so expanding again (or focusing another pane) brings the old widths back.
+    /// `widthFactors` are kept, so the old widths come back when the split is shown again
+    /// (focusing another pane, dragging a divider, adding a pane, closing the expanded one).
     public var expandedTabID: UUID?
 
     /// Arc refuses a fifth pane with a "Cannot Add New Pane" toast.
@@ -200,12 +201,11 @@ extension BrowserState {
     }
 
     /// Arc's Expand Current Split: the focused pane fills the split; the others stay in it, hidden.
-    /// Arc only ever expands; running it again on the expanded pane brings the split back (Kite).
-    public mutating func toggleExpandedSplitPane() {
+    /// It only expands, as Arc's handler does: running it again changes nothing.
+    public mutating func expandSplitPane() {
         guard let focused = selectedSpace.selectedTabID, let s = split(containing: focused)?.space,
               let i = spaces[s].splits.firstIndex(where: { $0.tabIDs.contains(focused) }) else { return }
-        let split = spaces[s].splits[i]
-        spaces[s].splits[i].expandedTabID = split.expandedTabID == focused ? nil : focused
+        spaces[s].splits[i].expandedTabID = focused
     }
 
     /// Focusing a hidden pane of an expanded split shows the whole split again.

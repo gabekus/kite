@@ -665,15 +665,44 @@ user's is copied. Test fixtures are made up.
   split view controller method with `animated: true` and a per-pane closure (FUN_1004859cc) that returns
   width factor **1.0 for the pane whose content ID is the focused one and 0.0 for every other pane**.
 - So the panes all stay in the split (unlike Separate); the focused one fills it. The handler reads no
-  state, so running it again on an expanded split does the same thing (inferred: it's not a toggle in Arc).
-  How Arc brings the other panes back (divider drag, double-click, focusing one) and the animation's
-  duration weren't traced; no string for "Collapse"/"Restore" split exists. `ExpandedCodingKeys` belongs
-  to other types (not split view).
+  state, so running it again does nothing new: it isn't a toggle.
+- Validation (`MainWindowController` menu validation, arc.s ~805743 / Ghidra FUN_102952338): the item is
+  enabled when the window's split has more than one pane (`count > 1`), whether or not it's expanded.
+- How Arc brings the other panes back, and the animation's duration, weren't traced; no string for
+  "Collapse"/"Restore" split exists. `ExpandedCodingKeys` belongs to other types (not split view).
 - Kite: `SplitView.expandedTabID` (per split, saved, decodes as nil from older sessions); the stored
   `widthFactors` are left alone and the layout uses 1/0 (`layoutFactors`). The hidden panes and dividers are
-  hidden. Running it again on the expanded pane, focusing another pane of the split, dragging a divider,
-  adding a pane or closing the expanded pane brings the split back with its old widths: Kite's choices,
-  since Arc's way back is unknown. The change is immediate (Arc animates; duration unknown).
+  hidden. Running it again does nothing, as in Arc. Inferred, so the user is never stuck: focusing another
+  pane of the split, dragging a divider, adding a pane, or closing the expanded pane brings the split back
+  with its old widths. The change is immediate (Arc animates; duration unknown).
+
+## Mini Player and auto picture in picture → `MiniPlayerView`, `MediaStateScript` (Arc 1.171 strings, assets, disassembly, 1 Nov 2026)
+
+- Modules (arc-strings.txt 82066-82130): `MediaControlsFeature` (`MiniPlayerFeature.swift`, `MiniPlayerView.swift`,
+  `MediaControlsView.swift`, `MiniPlayerState+Observations.swift`) and `PictureInPicture` (`PIPWindowController`,
+  `DocumentPiPWindowController`). Mini player media types `AudioVideo` and `Recording` (43012). Actions
+  `toggleMuteStatusRequested`, `backToTabRequested`, `backToPIPRequested`; state `activeMediaControls`,
+  `maxActiveMediaControls`, `miniPlayerMarqueeTitleEnabled` (174040-174130).
+- Strings in `MiniPlayerView.swift`: "Close Mini Player", "Open Picture in Picture", "Back to Tab", "Adjust Tab Volume",
+  "Toggle Microphone", "Toggle Camera", "Previous Track", "Next Track", "Play"/"Pause" (tooltips).
+- Disassembly (`~/rea-arc/decomp/arc.s` 9577000-9600000, the MiniPlayerView/MediaControlsView bodies; constants read off
+  `fmov`/`mov` before each SwiftUI call):
+  - card: `RoundedRectangle(cornerRadius: 8, style: .continuous)`, stroke 0.5 pt, `Color.white.opacity(0.1)` in dark,
+    clear in light; rows `frame(height: 33)` with `padding(.horizontal, 10)` (title row) and `8` (controls row);
+    `GeometryProxy` width compared with 160 and 126 (controls dropped when narrow).
+  - title row: artwork/favicon 16×16 clipped to radius 4 in a 24×24 frame; title Text; `pip` symbol at 12 pt and `xmark`
+    at 14 pt, whose opacity/width switch 0↔1 / 0↔24 (shown on hover).
+  - controls: 24×24 buttons, 16×16 symbol frames, `Font.system(size: 14, weight: .medium)`; symbols `backward.end.fill`,
+    `play.fill`/`pause.fill`, `forward.end.fill`, `speaker.slash.fill`/`speaker.wave.1/2/3.fill` (+ Slider for volume),
+    `mic.fill`/`mic.slash.fill`, `video.fill`/`video.slash.fill`.
+  - `MediaControlsView`: height 33, `Animation.spring(response: 0.25, dampingFraction: 0.9)`.
+  - `PlaybackControlForeground` (ARC_MediaControlsFeature.bundle Assets.car): light black 50%, dark white 66%.
+- Auto PiP settings (key names only): `autoPipGloballyDisabled` (absent from Gabe's defaults, so off: auto PiP on),
+  `autoPipDisabledForHosts`, `autoPipDisabledDeadlines`, `useChromiumAutoPiP`, `useChromiumAutoPiPForGMeetOnly`,
+  `autoPictureInPictureOnWindowOccluded`; PiP window toggle "Open automatically" next to "Picture-in-picture on <host>".
+- Not observed (no Arc mini player was on screen; Arc wasn't driven): its position in the sidebar (Kite puts it above
+  the space bar), the card fill colour (Kite uses the address field's fill), the title font (a CTFont; Kite uses 12 pt
+  medium), button hover fills, which controls drop at 160 / 126, and whether closing the player pauses (Kite pauses).
 
 ## Check for Updates (Arc 1.171 Info.plist, menu bar and strings, 1 Nov 2026)
 

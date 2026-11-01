@@ -98,7 +98,7 @@ import Testing
         guard case .added(let b) = state.addSplitPane() else { return }
         let splitID = try #require(state.selectedSplit?.id)
         state.moveSplitDivider(splitID, index: 0, fraction: 0.25)
-        state.toggleExpandedSplitPane()
+        state.expandSplitPane()
         var split = try #require(state.selectedSplit)
         #expect(split.expandedTabID == b)
         #expect(split.layoutFactors == [0, 1])
@@ -106,8 +106,11 @@ import Testing
         #expect(split.tabIDs == [ids[0], b])
         #expect(state.visibleTabs.map(\.id) == [ids[0], b])
         #expect(split.normalizedFactors == [0.25, 0.75])
-        // Again on the expanded pane: the old widths come back.
-        state.toggleExpandedSplitPane()
+        // Again does nothing, as in Arc.
+        state.expandSplitPane()
+        #expect(state.selectedSplit == split)
+        // Focusing the other pane brings the old widths back.
+        state.focusPane(number: 1)
         split = try #require(state.selectedSplit)
         #expect(split.expandedTabID == nil)
         #expect(split.layoutFactors == [0.25, 0.75])
@@ -116,7 +119,7 @@ import Testing
     @Test func expandingIsPerSplitAndSurvivesCoding() throws {
         var (state, ids) = makeState()
         guard case .added = state.addSplitPane() else { return }
-        state.toggleExpandedSplitPane()
+        state.expandSplitPane()
         state.select(tab: ids[1])
         guard case .added = state.addSplitPane() else { return }
         #expect(state.selectedSplit?.expandedTabID == nil)
@@ -131,11 +134,11 @@ import Testing
     @Test func focusingAHiddenPaneOrChangingTheSplitUnexpands() throws {
         var (state, ids) = makeState()
         guard case .added(let b) = state.addSplitPane() else { return }
-        state.toggleExpandedSplitPane()
+        state.expandSplitPane()
         state.focusPane(number: 1)
         #expect(state.selectedSplit?.expandedTabID == nil)
         // Re-selecting the expanded pane itself keeps it expanded.
-        state.toggleExpandedSplitPane()
+        state.expandSplitPane()
         state.select(tab: ids[0])
         #expect(state.selectedSplit?.expandedTabID == ids[0])
         // A new pane is shown.
@@ -143,16 +146,21 @@ import Testing
         #expect(state.selectedSplit?.expandedTabID == nil)
         // Closing the expanded pane shows the rest.
         state.select(tab: b)
-        state.toggleExpandedSplitPane()
+        state.expandSplitPane()
         state.close(tab: b)
         #expect(state.selectedSplit?.expandedTabID == nil)
         #expect(state.selectedSplit?.layoutFactors.contains(0) == false)
+        // Dragging a divider shows the split too.
+        state.expandSplitPane()
+        let splitID = try #require(state.selectedSplit?.id)
+        state.moveSplitDivider(splitID, index: 0, fraction: 0.5)
+        #expect(state.selectedSplit?.expandedTabID == nil)
     }
 
     @Test func expandingWithoutASplitDoesNothing() {
         var (state, _) = makeState()
         let before = state
-        state.toggleExpandedSplitPane()
+        state.expandSplitPane()
         #expect(state == before)
     }
 

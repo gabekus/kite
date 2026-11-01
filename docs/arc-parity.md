@@ -85,7 +85,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
 | Clear Cookies and Refresh / Clear Cache and Refresh | | ✅ per site | |
 | Add Split View | ⌘L (Gabe) / ⌃⇧= (default) | ✅ `addSplitView`, empty pane + command bar (live check pending) | Thread: Split view |
-| Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | ✅ Expand Current Split (no key, as Arc) fills the split with the focused pane; again restores (Kite) | Thread: Split view |
+| Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | ✅ Expand Current Split (no key, as Arc) fills the split with the focused pane; one-way, as Arc (focusing another pane restores, inferred) | Thread: Split view |
 | Zoom Actual / In / Out | ⌘0 / ⌘+ / ⌘- | ✅ | |
 | Cast | | ❌ | Skip? |
 | Developer → View Source | ⌥⌘U | ✅ Chromium (new `view-source:` tab) | |
@@ -174,7 +174,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
 | Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | 🟡 Little Kite: own window, toolbar measured from Arc, "Open in <Space>" (⌘O) moves the live page into the main window, ⌘W closes, Kite menu → Open Links from Other Apps in Little Kite (on by default) | No profile indicator, extensions button, downloads tray, searchable space picker, auto-archive or global hotkey yet |
 | Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal panes, divider, sidebar row; no vertical layout or drag-to-split yet | Thread: Split view |
-| Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | ❌ | Thread: Mini player |
+| Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | 🟡 | Sidebar Mini Player (play/pause, prev/next, tab mute, PiP, close, back to tab); auto PiP on leaving a playing video. No volume slider, mic/camera, marquee, Arc PiP window |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
 | Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |
 | Developer Mode | Per-site: URL bar shows localhost info, console pane | ❌ | Thread: Developer Mode |

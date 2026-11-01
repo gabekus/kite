@@ -31,10 +31,10 @@ extension BrowserWindowController {
         store.mutate { $0.separateFromSplit(tab: id) }
     }
 
-    /// Arc's Expand Current Split: the focused pane fills the split; again brings the others back.
+    /// Arc's Expand Current Split: the focused pane fills the split. Only expands, as in Arc.
     @objc func expandCurrentSplit(_ sender: Any?) {
         guard store.state.selectedSplit != nil else { return NSSound.beep() }
-        store.mutate { $0.toggleExpandedSplitPane() }
+        store.mutate { $0.expandSplitPane() }
     }
 
     /// Switch to Split View 1…4: tags are the pane number.
