@@ -123,9 +123,15 @@ final class UIDiagnostics {
             if !window.occlusionState.contains(.visible) { flags.append("covered") }
             if !window.isOnActiveSpace { flags.append("other Space") }
             let screen = window.screen.map { "\(FrameClock.maximumRate(of: $0)) Hz" } ?? "no screen"
-            return "- window \(window.windowNumber) [\(flags.joined(separator: ", "))] "
+            var line = "- window \(window.windowNumber) [\(flags.joined(separator: ", "))] "
                 + "\(UIReport.number(window.frame.width))×\(UIReport.number(window.frame.height)) pt, "
                 + "\(UIReport.number(window.backingScaleFactor))×, \(screen)"
+            // orderedWindows leaves out sheets (the print sheet, save panels); pass the number as "window" to read one.
+            if let sheet = window.attachedSheet {
+                line += "\n  - sheet \(sheet.windowNumber) [\(String(describing: type(of: sheet)))\(sheet.isVisible ? "" : ", hidden")] "
+                    + "\(UIReport.number(sheet.frame.width))×\(UIReport.number(sheet.frame.height)) pt"
+            }
+            return line
         }.joined(separator: "\n") + "\nKite is \(NSApp.isActive ? "the active app" : "in the background")."
     }
 }

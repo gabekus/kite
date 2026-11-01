@@ -55,7 +55,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Share… | | ✅ | |
 | Capture… / Full Page / Portrait | | ❌ | Thread: Capture |
 | Save Page As | | ✅ MHTML (Chromium) / web archive (WebKit) | |
-| Print | ⌘P | 🟡 Chromium's print opens its own window, no preview | Later: AppKit print sheet with preview |
+| Print | ⌘P | ✅ "Print": the macOS print sheet with a page preview, both engines (Chromium via a PDF). Arc likely shows Chromium's print preview instead (see arc-visual-spec) | |
 
 ### Edit
 

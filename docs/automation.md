@@ -111,7 +111,7 @@ names the device pixel whose top-left it is, so a point on a rect's top or left 
 
 | Action | What it returns |
 |---|---|
-| `windows` | Each window's number, kind (browser, incognito), size, scale, key/main, full screen, covered, refresh rate. |
+| `windows` | Each window's number, kind (browser, incognito), size, scale, key/main, full screen, covered, refresh rate, and any sheet attached to it (print sheet, save panel), whose number other actions take as `window`. |
 | `tree` | Views with frames, `NSVisualEffectView` material and blending, layer fill, corner radius and curve, border, shadow, text colour and font, hidden and alpha; SwiftUI's accessibility elements (role, id, label, frame, selected) inside hosting views; with `layers`, Core Animation sublayers. `root` starts at a node path, `match` lists matching nodes flat, `depth` and `max_nodes` bound it. |
 | `capture` | The window's pixels through ScreenCaptureKit, as on screen, even when covered or in the background, in sRGB. `region` crops at full resolution, `pixels` reads colours as hex, `save` writes a PNG. Without Screen Recording permission it falls back to a view render and says what that misses. |
 | `pointer` | Synthetic mouse moves (`points`, or `from`/`to`/`steps`) sent to the window only. At each point: the view hit, cursor rects, tracking areas (flagged when inactive because Kite is in the background), and the cursor Kite sets. Identical points fold into runs. |

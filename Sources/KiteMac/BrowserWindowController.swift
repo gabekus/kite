@@ -989,7 +989,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             item.state = window?.level == .floating ? .on : .off
         case #selector(setAsDefaultBrowser(_:)):
             item.state = Self.isDefaultBrowser ? .on : .off
-        case #selector(share(_:)), #selector(savePageAs(_:)),
+        case #selector(share(_:)), #selector(savePageAs(_:)), #selector(printPage(_:)),
              #selector(clearCookiesAndRefresh(_:)), #selector(clearCacheAndRefresh(_:)):
             return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):

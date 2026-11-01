@@ -2,6 +2,7 @@
 import AppKit
 import CEFBridge
 import KiteCore
+import PDFKit
 
 /// Chromium via CEF: Chrome's engine, Chrome DevTools, and an optional CDP port.
 @MainActor
@@ -137,7 +138,24 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         browser.stopFinding()
     }
 
-    func printPage() { browser.print() }
+    /// Chromium's own print path for a child browser is an app-modal panel with no preview, so the
+    /// page is printed to PDF on the sheet's paper and PDFKit prints that, preview included.
+    func makePrintOperation(_ completion: @escaping (NSPrintOperation?) -> Void) {
+        let info = NSPrintInfo.printInfoForPage()
+        let params = PagePrint.pdfParameters(paperWidthPoints: Double(info.paperSize.width),
+                                             paperHeightPoints: Double(info.paperSize.height))
+        browser.executeDevToolsMethod("Page.printToPDF", params: params) { result in
+            guard let encoded = result?["data"] as? String,
+                  let data = Data(base64Encoded: encoded),
+                  let document = PDFDocument(data: data) else { return completion(nil) }
+            // The PDF already carries the margins.
+            info.topMargin = 0
+            info.bottomMargin = 0
+            info.leftMargin = 0
+            info.rightMargin = 0
+            completion(document.printOperation(for: info, scalingMode: .pageScaleDownToFit, autoRotate: true))
+        }
+    }
 
     func archive(completion: @escaping (Data?, String) -> Void) {
         browser.executeDevToolsMethod("Page.captureSnapshot", params: ["format": "mhtml"]) { result in

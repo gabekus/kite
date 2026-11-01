@@ -153,11 +153,15 @@ final class WebKitPage: NSObject, WebPage {
         }
     }
 
-    func printPage() {
-        guard let window = webView.window else { return }
-        let operation = webView.printOperation(with: .shared)
+    func makePrintOperation(_ completion: @escaping (NSPrintOperation?) -> Void) {
+        let info = NSPrintInfo.printInfoForPage()
+        // Fit the page's width to the paper and run it down the pages, like Safari.
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        let operation = webView.printOperation(with: info)
+        // Without a frame WebKit lays the page out at zero size and prints blank pages.
         operation.view?.frame = webView.bounds
-        operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        completion(operation)
     }
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
