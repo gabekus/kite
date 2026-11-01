@@ -38,6 +38,8 @@ extension AutomationController {
                     + "(test builds: launch with KITE_DIAGNOSTICS=1 and a KITE_SUPPORT_PATH profile).")
             }
             return try await UIDiagnostics.shared.run(inspection)
+        case let .signIn(tab, reason):
+            return try await signIn(tab: tab, reason: reason, connection: connection)
         case .batch(let steps):
             return await runBatch(steps, connection: connection)
         default:
