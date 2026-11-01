@@ -38,7 +38,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var sidebarHost: NSHostingView<SidebarView>!
     /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
     let claudeButton = ClaudeButtonModel()
-    let downloadsButton = DownloadsButtonModel()
     /// Window › Open Library… (⇧⌘L): covers the sidebar and the card while open.
     let library = LibraryModel()
     private var libraryHost: NSHostingView<LibraryView>!
@@ -255,7 +254,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             actions: actions,
             supportsDarkPages: pool.engine.supportsDarkPages,
             claude: claudeButton,
-            downloads: downloadsButton,
+            library: library,
             swipe: spaceSwipe.model
         )
         sidebar.miniPlayer = miniPlayerActions
@@ -299,6 +298,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         libraryHost.sizingOptions = []
         libraryHost.isHidden = true
         library.onOpenChange = { [weak self] open in self?.libraryOpened(open) }
+        NotificationCenter.default.addObserver(self, selector: #selector(downloadDidStart(_:)), name: DownloadsModel.didStartDownload, object: nil)
 
         var dragStartWidth: CGFloat = 0
         resizeHandle.onBegin = { [weak self] in

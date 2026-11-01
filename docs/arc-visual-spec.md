@@ -481,8 +481,42 @@ sidebar-only screen captures and the accessibility tree; the space was deleted a
   (0.808, 0.843, 0.906) / dark (0.443, 0.467, 0.510).
 - Quit with downloads running: "Downloads in progress" (see its own section below).
 
-Kite (`DownloadsView.swift`): no Library yet, so the bottom bar's leading button (where Arc's Library button sits)
-shows the progress ring and opens a popover list. Row size, ring size and popover width are Kite's, unmeasured.
+Kite (`DownloadsView.swift`): the Library's Downloads page lists them; the bottom bar's Library button carries the
+progress badge and catches the fly-in (next section). Row sizes are Kite's, unmeasured.
+
+## Library button, download badge and fly-in (Arc 1.171 AX tree; Arc 1.169 binary, decompiled; 1 Nov 2026)
+
+→ `LibrarySidebarButton`, `DownloadProgressBadge` (DownloadsView.swift), `DownloadFlight` (KiteCore),
+`BrowserWindowController+DownloadFlight.swift`. Nothing in Arc was pressed; no Arc pixels were captured.
+
+- Button (`kite probe Arc tree`, roles and frames only, Gabe's window 2056×1285): a 32×32 AXButton in a hosting view at
+  (8, 1244), the bottom bar's leading end, 9pt above the window's bottom edge; the bar's spaces list runs 42–247 and
+  the + button sits at 249. Kite's measures 32×32 at (8, 779) in an 820pt window: the same 8pt and 9pt.
+  Strings: `HomeBadging.HomeButton` ("Title for tooltip on the button to open Library"), action
+  `libraryButtonClicked:`; the menu's toggle titles "open the Library" / "close the Library". Its icon is Arc's own
+  `LibraryIcon` (26×26 template PDF, ARCClients_BaseAssets): not copied, Kite uses `archivebox` (Arc's MainMenu.nib
+  symbol for the Library item). Clicking opens the Library (`toggleLibrary`; the sidebar is hidden while it's open).
+- Badge (`BaseHomeComponents.DownloadProgressBadge`, body FUN_1025d55f4, ring FUN_1025d607c / FUN_1025d64b4; fields
+  from `__swift5_fieldmd`: progress, progressRingOpacity, overallOpacity, overallScale, completionScale,
+  completionOpacity, iconName = "arrow.down", iconSize = 10): a 24pt disc with a 1pt edge (a palette colour at 0.5),
+  a heavy 10pt `arrow.down`, and a 21.5pt ring 2.5pt wide (track at 0.2 under the progress, `easeOut` as it grows),
+  the ring turning `linear(1.5).repeatForever` unless Reduce Motion. Palette colours unresolved (Kite: primary
+  colour, window background disc). Not built: the completion animation (completionScale/Opacity) and an
+  `interpolatingSpring(0.1, 0.5, 1.2, 0.5).repeatForever` on the icon whose property wasn't identified.
+- Fly-in (`DownloadsUI.DownloadToLibrary`, FUN_101cd9ce0 `animateDownload(source:destination:)`, FUN_101cdae38 view
+  model init, FUN_101cdb214 keyframes, lazy vx0/vy0/apexTime/projectileMotionDuration; caller in
+  `WindowViewController`, FUN_1002efce0): a borderless clear child window over the browser window shows a 30pt
+  `arrow.down.circle` (template, palette colours). Start: the source element's rect converted to the screen
+  (falling back to `NSEvent.mouseLocation`), in window points from the bottom-left, + (15, -15); non-finite → (70, 70).
+  Destination (32, 40) when the sidebar shows; with it hidden, (62, 70) into a `DownloadBin` that slides in (spring
+  0.9 / 0.82, x 53 or -80) with a bounce. Gravity 2648.7 pt/s², vy0 = 1600 - 1100 × start.y / window height,
+  landing at the later root, vx constant. Keyframes every 1/60 s until landing + 0.1333 s (sidebar showing): scale
+  (0.8, 1.2) → (1.6, 1.6) linearly up to the apex, then uniform 1.6 → 0.3 at landing (→ 0.7 into the bin), and
+  smaller while it sinks. Kite: the same numbers, a `CAKeyframeAnimation` group (position, scale x/y, linear) on a
+  layer in a click-through view over the window; source = the pointer (Kite's engines don't report the link's rect);
+  no fly-in while the sidebar is hidden (no bin yet).
+- ⇧⌘J: Arc's selector `toggleDownloads:`, "Opens the Downloads section of your Library" → Kite opens the Library on
+  Downloads, or closes it when Downloads is showing. The popover Kite had before is gone: Arc has none.
 
 ## Little Arc → `ArcMetrics.LittleWindow`, `LittleKiteWindowController` (Arc 1.171, 31 Oct 2026)
 
@@ -966,8 +1000,7 @@ Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, 
   0.07–0.20; `LibraryItemOutline` black 0.03 / white 0.08. Not applied yet: Kite's pages keep their own colours.
 - Inferred or unverified: the transition, all sizes, the exit control's look and label (Kite: "Exit Library" with an
   arrow at the bottom of the list), page icons (Kite: SF Symbols), and whether Arc leaves the Library when a tab is
-  selected (Kite does). ⇧⌘J still opens Kite's downloads popover, though Arc's copy says it "Opens the Downloads
-  section of your Library": follow-up.
+  selected (Kite does). ⇧⌘J opens the Library on its Downloads page (see "Library button" below).
 
 ## Expand Current Split (Arc 1.171 menu bar; Arc 1.169 binary, decompiled; 1 Nov 2026)
 

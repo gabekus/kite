@@ -108,7 +108,7 @@ struct LibraryView: View {
         Group {
             switch model.page {
             case .downloads:
-                DownloadsList(fillsPage: true)
+                DownloadsList()
                     .background(Color(nsColor: .windowBackgroundColor))
             case .archive:
                 ArchivePageView(store: store, open: archiveActions.open, restore: archiveActions.restore)
