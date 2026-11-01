@@ -268,7 +268,7 @@ final class ScriptTab: NSObject {
     }
 }
 
-/// A space, read only (the sdef's `space`).
+/// A space (the sdef's `space`): `focus` switches the window to it, and `make new tab` opens one in it.
 @MainActor
 @objc(KiteScriptSpace)
 final class ScriptSpace: NSObject {
@@ -294,6 +294,35 @@ final class ScriptSpace: NSObject {
 
     @objc func valueInAppleScriptTabsWithUniqueID(_ id: String) -> ScriptTab? {
         appleScriptTabs.first { $0.uniqueID == id }
+    }
+
+    /// `make new tab with properties {URL:…} at space …`: as Arc, switches the window to the space
+    /// first, then opens the tab at the top of its unpinned tabs, selected.
+    @objc(insertObject:inAppleScriptTabsAtIndex:)
+    func insertInAppleScriptTabs(_ tab: ScriptTab, at index: Int) {
+        insertInAppleScriptTabs(tab)
+    }
+
+    @objc(insertInAppleScriptTabs:)
+    func insertInAppleScriptTabs(_ tab: ScriptTab) {
+        guard let controller, let url = ScriptTab.requireURL(tab.newURL) else { return }
+        let spaceID = id
+        guard let tabID = controller.store.mutate({ AppleScripting.openTab(url: url, inSpace: spaceID, state: &$0) }) else {
+            return ScriptTab.fail(Int(errAENoSuchObject), "The space is gone.")
+        }
+        tab.attach(controller: controller, id: tabID, container: objectSpecifier, key: "appleScriptTabs")
+    }
+
+    /// `focus space …`: the window shows that space, as choosing it in the sidebar does. Kite
+    /// stays where it is (Arc's handler doesn't activate the app either).
+    @objc func handleFocusScriptCommand(_ command: NSScriptCommand) -> Any? {
+        guard let controller, space != nil else {
+            ScriptTab.fail(Int(errAENoSuchObject), "The space is gone.", command)
+            return nil
+        }
+        let spaceID = id
+        controller.store.mutate { $0.selectSpace(spaceID) }
+        return nil
     }
 
     override var objectSpecifier: NSScriptObjectSpecifier? {

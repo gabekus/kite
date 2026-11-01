@@ -220,7 +220,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | App icons | Alternate Dock icons | ❌ | Skip? (we draw our own) |
 | Sound effects | Subtle UI sounds | 🟡 Kite › Play Kite Sound Effects (on, like Arc); Kite's own capture sound made in code, played at Arc's 0.7 volume when Capture… or Capture Full Page takes an image | Gap 30. Not yet: tab-reorder haptics (tab-drag thread) |
 | Remappable shortcuts | Settings → Shortcuts | 🟡 overrides in keybindings.json, keyed by Arc-style action IDs on every menu item; Import from Arc brings over Arc's StorableKeyBindings.json; the Settings editor is to come | B6 |
-| AppleScript dictionary | windows, tabs (URL, title, execute JS), spaces | 🟡 Arc’s sdef: windows, tabs (id, title, URL, loading, location; make, select, close, go back/forward, reload, stop, execute), spaces read only, Little Kite tabs; no `focus` or settable `location` yet | Gap 28 |
+| AppleScript dictionary | windows, tabs (URL, title, execute JS), spaces | ✅ Arc’s sdef: windows, tabs (id, title, URL (settable), loading, location; make, select, close, go back/forward, reload, stop, execute), spaces (`focus`, `make new tab` in a space), Little Kite tabs. `location` is read only, as in Arc’s binary | Gap 28, g109 |
 | Sync | Sidebar via CloudKit/Firebase | ❌ | Roadmap: sync |
 | Default browser, handle links | | ✅ | |
 | Web mail for mailto: links | A site registers itself (`navigator.registerProtocolHandler`), "Make %@ your default mail app?"; Arc registers for mailto | 🟡 both engines: the prompt, mailto: links in pages and from other apps open the site's compose page, Site Controls row to turn it off; prompt layout and button titles unobserved; Chromium path and other-app path not run | Gap 39 |

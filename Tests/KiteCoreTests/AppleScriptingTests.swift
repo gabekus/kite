@@ -65,4 +65,28 @@ import Testing
         let old = try JSONDecoder().decode(BrowserState.self, from: JSONSerialization.data(withJSONObject: json))
         #expect(!old.allowsJavaScriptFromAppleEvents)
     }
+
+    @Test func makingATabInASpaceSwitchesToIt() {
+        var state = BrowserState.makeDefault(seedURL: nil)
+        let work = state.spaces[1].id
+        #expect(state.selectedSpaceID != work)
+        let id = AppleScripting.openTab(url: URL(string: "https://example.com")!, inSpace: work, state: &state)
+        #expect(state.selectedSpaceID == work)
+        #expect(state.selectedTab?.id == id)
+        #expect(state.spaces[1].tabs.first?.id == id)
+        #expect(AppleScripting.openTab(url: URL(string: "https://example.com")!, inSpace: UUID(), state: &state) == nil)
+    }
+
+    /// Kite.sdef has every command and class code of Arc 1.171's Arc.sdef, so Arc scripts run.
+    @Test func dictionaryHasArcsCodes() throws {
+        let sdef = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Resources/Kite.sdef")
+        let text = try String(contentsOf: sdef, encoding: .utf8)
+        for code in ["corecrel", "corecnte", "coreclos", "CrSelect", "CrSuBack", "CrSuFwd ", "CrSuRlod", "CrSustop",
+                     "CrSuExJa", "SpaFocus", "capp", "WiND", "tAbB", "sPaC", "acTa", "acSp", "inco", "mode", "URL ",
+                     "ldng", "loca", "JvSc"] {
+            #expect(text.contains("code=\"\(code)\""), "missing \(code)")
+        }
+        #expect(text.contains("<cocoa method=\"handleFocusScriptCommand:\"/>"))
+    }
 }
