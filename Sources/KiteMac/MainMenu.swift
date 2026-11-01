@@ -249,6 +249,12 @@ enum MainMenu {
             commandBarOnly(item("Add Vertical Split View", #selector(BrowserWindowController.addVerticalSplitView(_:)), id: "newVerticalSplitView")),
             commandBarOnly(item("Convert to Vertical Split View", #selector(BrowserWindowController.convertToVerticalSplitView(_:)), id: "convertToVerticalSplitView")),
             commandBarOnly(item("Convert to Horizontal Split View", #selector(BrowserWindowController.convertToHorizontalSplitView(_:)), id: "convertToHorizontalSplitView")),
+            // Arc's Add Left/Right/Top/Bottom Split command bar actions (AddLeftSplitCodingKeys…), with its
+            // "New … Split" trigger phrases. Not in its menu bar either.
+            commandBarOnly(item("Add Left Split", #selector(BrowserWindowController.addLeftSplit(_:)), id: "addLeftSplit"), keywords: ["New Left Split"]),
+            commandBarOnly(item("Add Right Split", #selector(BrowserWindowController.addRightSplit(_:)), id: "addRightSplit"), keywords: ["New Right Split"]),
+            commandBarOnly(item("Add Top Split", #selector(BrowserWindowController.addTopSplit(_:)), id: "addTopSplit"), keywords: ["New Top Split"]),
+            commandBarOnly(item("Add Bottom Split", #selector(BrowserWindowController.addBottomSplit(_:)), id: "addBottomSplit"), keywords: ["New Bottom Split"]),
             .separator(),
             item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0", id: "actualSize"),
             item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "=", id: "zoomIn"),

@@ -1504,3 +1504,37 @@ ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-stri
   comment "Title for the 'Hide Full URL' context menu action." 62840) and "Show Full URL" (62841). Kite has no
   toolbar context menu yet; until the settings window exists the toggle is Kite menu → Show Full URL in Toolbar
   (command id `toggleToolbarFullURLs`, Arc's action name), not an Arc menu item.
+
+## Split View: Add Left / Right / Top / Bottom Split → `SplitSides.swift` (KiteCore), `BrowserWindowController+SplitSides` (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
+
+Arc wasn't driven; nothing here is from a recording. Titles shorter than 16 bytes are Swift small strings, so they're not in
+arc-strings.txt; they were read from the `mov`/`movk` immediates in `~/rea-arc/decomp/arc.s` (the 1.169 arm64 slice).
+
+- **Menu bar** [menudump View, Arc 1.171]: only Add Split View (⌘L, Gabe's), Close this Split Pane (⌃⇧-), Separate Page from
+  Split View, Expand Current Split. No side items in the menu bar.
+- **Command bar actions** [str + dis]: coding keys `AddLeftSplitCodingKeys`, `AddRightSplitCodingKeys`, `AddTopSplitCodingKeys`,
+  `AddBottomSplitCodingKeys` (arc-strings.txt 41024–41027) sit with the other command bar actions (`NewVerticalSplitViewPane`,
+  `ConvertTo…SplitView`, `JoinNextMeeting`). Raw IDs `addLeftSplit`, `addRightSplit`, `addTopSplit`, `addBottomSplit`
+  (@101d8dce0 area). Titles "Add Left Split" (@101d87574), "Add Right Split" (@101d86a78), "Add Top Split" (@101d86760),
+  "Add Bottom Split" (cstring, 79400), with comments "Action to add new left/right/top/bottom split". Trigger phrases
+  "New Left/Right/Top/Bottom Split" (@101d897cc, @101d882fc, @101d87a04, cstring 79450).
+- **Split View Controls Menu** [dis, `ContextMenus/SplitScreenButtonMenu.swift`, @102ed2acc–102ed4df0]: the pane's split button
+  menu. Move Left / Move Right / Move Up / Move Down; Add Left Split / Add Right Split (one function) and Add Top Split /
+  Add Bottom Split (another), icons `icon-split-add-{left,right,top,bottom}`; Separate Tab from Split; Share Split View…;
+  Convert to Vertical / Horizontal Split View. Which pair shows when wasn't traced (the split into two functions matches one
+  axis per split, inferred).
+- **Sidebar plus menu** [dis, `ARC_SidebarPlusButton`, @1027c8f00–1027cae34]: New Tab, Note, Easel, Folder, Boost, Space, and
+  "New Right Split" / "New Bottom Split" (icons `split-add-right` / `split-add-bottom`; comments "add a right/bottom split view
+  pane"). A second layout titles both "New Split".
+- **Sidebar tab context menu** [dis, `ContextMenus/SidebarMenu+PlatformGeneration.swift`, @102eba2e0]: "Add Split View" ("Add a
+  new split view") and "Open in Split View" ("Open item in split view"); no side items. A split row's own menu ("Split View
+  Context Menu", @102ec23fc) has Share Split View…, Separate All Tabs, add a tab, Convert to Vertical/Horizontal Split View,
+  and per-tab "Separate from Split View".
+- **Kite:** the four command bar actions, hidden in View like Arc's other command-bar-only split actions, with the "New … Split"
+  phrases as keywords. A single page takes all four sides (left/right → side by side, top/bottom → top/bottom); a split takes the
+  two sides along its axis; four panes take none (validation greys the rest out). The empty pane goes right next to the focused
+  one on that side, takes half its share, and gets the command bar, as Add Split View; Esc takes it away again.
+  **Inferred:** next to the focused pane (not at the split's far end), half its share, and off-axis sides disabled rather than
+  converting the split. **Not built:** the Split View Controls Menu (needs Arc's pane split button; its Move items are pane
+  rearranging), the sidebar plus menu (Kite's + makes a space directly), and the tab context menu's Add Split View / Open in Split
+  View (no side items there in Arc).
