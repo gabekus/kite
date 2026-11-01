@@ -880,10 +880,38 @@ Sources: `~/rea-arc/arc-strings.txt` 73677–73738 (module `SiteControlCenter`: 
 | Footer | 82×32 left, 32×32 right, both 23 from the edges | Same |
 | From the toolbar | top y 38, right edge = window's | top 38, right edge 1280 of 1280 |
 
-Kite differs: no Boosts, capture, Developer Mode or sidebar preview; extensions stay in their own popover; action row
-has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers plus four permission rows, shown
+Kite differs: no Boosts, capture or sidebar preview; extensions stay in their own popover; action row
+has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers, Developer Mode and four permission rows, shown
 always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
 circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
+
+### Developer Mode row, Settings header and All Site Settings… (g59, Arc 1.169 binary, 1 Nov 2026)
+
+- Developer Mode row: title "Developer Mode" (Swift immediate at 0x10055d650 after the comment "Title of developer
+  mode item in site settings view", arc-strings 63725), subtitles "On" (0x1013726a0) / "Off" (0x101372520), next to
+  "Subtitle of developer mode item… when it's on/off" (73687–73688). It comes right after Block Ads & Trackers in
+  `SiteSetting+Display` (0x10055d594 → 0x10055d624). Symbol: `hammer.fill` is one of the settings view's four
+  symbols and the only one that fits (inferred). Kite: the row toggles the same per-host switch as ⌃D
+  (`BrowserState.toggleDeveloperMode`), shown for every site.
+- Settings header: hover text "More" (0x101384e2c, "Text shown on hover of site settings section"); the view has
+  `onSiteSettingsTitleClick` (arc-strings 164087). Kite shows "More" at the header's right on hover; a click opens
+  the site's settings like the menu item. That a header click navigates is inferred: the feature's only settings
+  navigation action is `didClickNavigateToSettings` (164116).
+- Footer menu, last item: "All Site Settings…" with an ellipsis (literal at 0x10137de00), `onAllSiteSettingsClick`
+  → `didClickNavigateToSettings`.
+- What it opens: ADK's settings pages (arc-strings 63370–63380, 151566 `siteSettings`) are built at 0x10052c4fc as
+  "arc://" (or "dia://") + `settings/content/siteDetails?site=` + the URL's `absoluteString`, or
+  `settings/content/siteDetails` without one. That is Chromium's per-site details page (that site's permissions),
+  opened as a web page, not Arc's Settings window. Which settings page the site control centre passes wasn't traced
+  through the reducer (inferred: `siteSettings` with the current URL, the only site-scoped page).
+- Kite: a new tab on its own page `kite://site-settings?site=<origin>` (`InternalPage.siteSettings`,
+  `SiteSettingsPageView`), drawn natively like kite://history: the site, then a Permissions card with Reset
+  permissions and an Ask (default) / Allow / Block menu per permission, Chromium's site details layout trimmed to
+  the four permissions Kite's CEF bridge reads (`KCBrowser sitePermission`). WebKit keeps none, so the page says so.
+  Chromium's usage/data section and its other permission types (JavaScript, pop-ups, sound, MIDI…) aren't there.
+- Still missing from Arc's popover: the Capture / full-page / Portrait Mode and New Boost action buttons, the Boosts
+  and Extensions sections, the sidebar Preview row, and the footer menu's Manage Boosts…, New Boost, Manage
+  Extensions… and Add Extension… (`includeBoostsInContextMenu` suggests the Boost items are conditional).
 
 ## Site permission prompt → `PermissionPromptView`, `PermissionPromptCard` (Arc 1.171 binary, 1 Nov 2026)
 
