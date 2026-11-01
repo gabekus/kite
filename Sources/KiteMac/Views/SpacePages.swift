@@ -42,10 +42,11 @@ struct SpacePages<Page: View>: View {
                         .padding(.horizontal, M.padding)
                         .frame(width: width, height: geometry.size.height)
                         .offset(x: CGFloat(index - selected) * width)
-                        // Off-page rows mustn't take clicks meant for the current page.
-                        .allowsHitTesting(index == selected)
-                        // Nor keyboard focus or VoiceOver while they're off to the side.
-                        .accessibilityHidden(index != selected)
+                        // No per-page hit-testing or accessibility switch: either one wraps a page's list in
+                        // its own view, and flipping it as the selection moves re-parents the list, which
+                        // blanks it for a frame on release. Off-side pages lie outside the sidebar's bounds,
+                        // so its hit test never reaches them at rest; Arc's three pages are all in its
+                        // accessibility tree too.
                 }
             }
             .modifier(PageSlide(swipe: swipe))
