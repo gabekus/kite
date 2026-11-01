@@ -93,6 +93,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if canImport(CEFBridge)
         // Pages extensions open (welcome pages, chrome.windows.create) become background
         // tabs, so installing one doesn't pull you off the page you're on.
+        ExtensionPopover.openTab = { [weak self] tab in
+            guard let controller = self?.windowController else { return }
+            switch tab {
+            case .url(let url): controller.store.mutate { _ = $0.openTab(url: url) }
+            case .page(let page): controller.pool.openTab(with: page)
+            }
+            controller.window?.makeKeyAndOrderFront(nil)
+        }
         NotificationCenter.default.addObserver(forName: .KCRuntimeOpenURL, object: nil, queue: .main) { [weak self] note in
             guard let url = note.userInfo?["url"] as? URL else { return }
             MainActor.assumeIsolated { _ = self?.store.mutate { $0.openTab(url: url, select: false) } }

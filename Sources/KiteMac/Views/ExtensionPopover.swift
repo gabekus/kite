@@ -20,6 +20,15 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
     private var sizePolls = 0
     private static var shown: ExtensionPopover?
 
+    enum NewTab {
+        case url(URL)
+        /// A page the popup opened itself (window.open), to keep as the tab's page.
+        case page(WebPage)
+    }
+
+    /// Opens a tab for the popup's links; set by the app for the main window.
+    static var openTab: ((NewTab) -> Void)?
+
     /// Shows `url` anchored to `rect` in `view`, closing any other extension popup.
     @discardableResult
     static func show(_ url: URL, engine: WebEngine, relativeTo rect: NSRect, of view: NSView) -> ExtensionPopover {
@@ -41,8 +50,19 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
         popover.animates = false
         popover.delegate = self
         page.onEvent = { [weak self] event in
-            if case let .navigationState(isLoading, _, _) = event, !isLoading { self?.fitToPage() }
-            if case .closeRequested = event { self?.popover.close() }
+            switch event {
+            case let .navigationState(isLoading, _, _) where !isLoading: self?.fitToPage()
+            case .closeRequested: self?.popover.close()
+            // Links and window.open in the popup ("Add account", "Open 1Password") open as a
+            // tab in front, and the popup closes, as in Chrome.
+            case let .openInNewTab(url, _):
+                Self.openTab?(.url(url))
+                self?.popover.close()
+            case let .popup(page):
+                Self.openTab?(.page(page))
+                self?.popover.close()
+            default: break
+            }
         }
     }
 
