@@ -518,7 +518,7 @@ spring scale from 0.8. It shows the page's og:image, title, description and site
 no cookies. Closes 0.2 s after the pointer leaves the link unless it's in the link-to-card corridor (24pt slack), on
 a click, scroll, Esc or other key, or when the window resigns key. Inferred, not from Arc: the 8pt gap, left-edge
 alignment, flipping, the popover material and 0.5pt border, fonts (Arc's view uses 11–16pt sizes; which goes where
-is unknown) and the `linkPreviewsEnabled` default (on; Arc's is off until you opt into Max).
+is unknown) and the `linkPreviewsEnabled` default (off, as Arc's `hoverCardsEnabled` and Gabe's Arc; Kite menu › Link Previews turns it on).
 
 ## Still unknown
 

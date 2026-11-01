@@ -60,13 +60,13 @@ import Testing
         #expect(LinkPreview.link(fromStatus: "mailto:a@b.com") == nil)
     }
 
-    @Test func settingDefaultsOn() throws {
+    @Test func settingDefaultsOffAsInArc() throws {
         let suite = "LinkPreviewTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        #expect(LinkPreview.isEnabled(in: defaults))
-        defaults.set(false, forKey: LinkPreview.enabledKey)
         #expect(!LinkPreview.isEnabled(in: defaults))
+        defaults.set(true, forKey: LinkPreview.enabledKey)
+        #expect(LinkPreview.isEnabled(in: defaults))
     }
 
     // Screen coordinates: origin bottom-left, y up. A 1000×800 window at the origin.

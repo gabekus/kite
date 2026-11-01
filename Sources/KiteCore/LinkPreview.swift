@@ -4,12 +4,12 @@ import Foundation
 /// about the linked page appears next to it. Kite's card shows the page's own title, description
 /// and image; Arc's adds an AI summary. Numbers and sources are in docs/arc-visual-spec.md.
 public enum LinkPreview {
-    /// Settings key. Arc's is `hoverCardsEnabled` (an Arc Max feature, off until you opt in);
-    /// Kite has no settings row for it yet, so it defaults on.
+    /// Settings key. Arc's is `hoverCardsEnabled` (an Arc Max feature, off until you opt in, and
+    /// off in Gabe's Arc), so Kite's is off too until turned on from the Kite menu.
     public static let enabledKey = "linkPreviewsEnabled"
 
     public static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: enabledKey) as? Bool ?? true
+        defaults.object(forKey: enabledKey) as? Bool ?? false
     }
 
     /// Only web links get a card.
