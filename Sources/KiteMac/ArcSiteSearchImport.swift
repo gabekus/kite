@@ -30,7 +30,8 @@ enum ArcSiteSearchImport {
         // keep shortcuts the user made (not auto-added from sites they visited).
         let hasIsActive = columns(db, "keywords").contains("is_active")
         let filter = hasIsActive ? "(is_active = 1 OR safe_for_autoreplace = 0)" : "safe_for_autoreplace = 0"
-        let sql = "SELECT short_name, keyword, url FROM keywords WHERE prepopulate_id = 0 AND \(filter) ORDER BY date_created"
+        let activeColumn = hasIsActive ? "is_active" : "1"
+        let sql = "SELECT short_name, keyword, url, \(activeColumn) FROM keywords WHERE prepopulate_id = 0 AND \(filter) ORDER BY date_created"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(statement) }
@@ -38,8 +39,10 @@ enum ArcSiteSearchImport {
         var sites: [SiteSearch] = []
         while sqlite3_step(statement) == SQLITE_ROW {
             guard let name = text(statement, 0), let shortcut = text(statement, 1), let url = text(statement, 2),
-                  let site = SiteSearch(chromiumName: name, keyword: shortcut, url: url)
+                  var site = SiteSearch(chromiumName: name, keyword: shortcut, url: url)
             else { continue }
+            // One the user made and then deactivated lands in "Inactive shortcuts", as in Arc.
+            site.isActive = sqlite3_column_int(statement, 3) != 2
             sites.append(site)
         }
         return sites
