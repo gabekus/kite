@@ -195,6 +195,9 @@ NS_SWIFT_UI_ACTOR
 /// The pid of the renderer showing the main frame, as the renderer last reported it; 0 when
 /// unknown (no page has run yet, or the renderer died).
 @property (nonatomic, readonly) int renderProcessIdentifier;
+/// Bytes the tab's requests have received and sent so far, counted as each request finishes
+/// (for the Task Manager's Network column).
+@property (nonatomic, readonly) uint64_t networkBytes;
 
 - (void)loadURL:(NSURL *)url;
 - (void)goBack;

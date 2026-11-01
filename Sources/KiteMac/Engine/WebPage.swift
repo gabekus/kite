@@ -144,6 +144,9 @@ protocol WebPage: AnyObject {
     var isAudioMuted: Bool { get set }
     /// The pid of the process rendering the page, for the Task Manager; nil when unknown.
     var processIdentifier: pid_t? { get }
+    /// Bytes the page's requests have received and sent so far, for the Task Manager's Network
+    /// column; nil when the engine can't count them.
+    var networkBytes: UInt64? { get }
     func close()
 }
 

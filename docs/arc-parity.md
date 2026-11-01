@@ -162,7 +162,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Arc item | Kite | Plan |
 |---|---|---|
 | Essential Keyboard Shortcuts (cheat sheet) | ✅ Arc's floating 475×458 window: 5 fixed commands with their live shortcuts as blue keycaps; "View All" opens the full list. Split View and Little Arc rows show a shortcut only once remapped or built | |
-| Restore Data, Reveal Data folder, Copy Info, Task Manager, Record Trace | 🟡 Reveal Kite Data, Copy Kite Info, Open Task Manager (Chromium's default columns, End Task; Network reads N/A) | Task manager search and categories, Network column, extension and spare renderer rows; Record Trace |
+| Restore Data, Reveal Data folder, Copy Info, Task Manager, Record Trace | 🟡 Reveal Kite Data, Copy Kite Info, Open Task Manager (Chromium's refreshed task manager: category tabs, search, sorting, column menu with Idle Wake Ups and File Descriptors, End Task; Network per tab on Chromium, N/A on WebKit) | Task manager extension and spare renderer rows, engine-internal columns; Record Trace |
 | Getting Started, Contact, Help Center, Export Arc Notes | ❌ | Skip |
 
 ## Features without a menu item

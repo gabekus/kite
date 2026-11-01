@@ -1492,7 +1492,48 @@ Hibernated tabs aren't touched (they have no page and make no sound).
   `--type` / `--utility-sub-type`.
 - Inferred, not observed (Arc's task manager wasn't opened): the button wording ("End Task", the refreshed UI's,
   over the older "End Process"), the window size, the row order, the utility names, and double-click to show a
-  tab. Network reads N/A: Kite has no per-tab network counter yet.
+  tab.
+
+### Search, categories, sorting, columns, Network (g58)
+
+Arc's task manager wasn't opened (the rules allow no presses in Arc), so this follows Chromium's source for the
+refreshed task manager that ArcCore 156 ships (`task_manager_search_bar_view.cc` and the category strings are in
+it), read from chromium.googlesource.com (main, Nov 2026) and reimplemented:
+
+- Header (`TaskManagerView::CreateHeaderContent`): category tabs with icons on the left, then a spacer and the
+  search field in flex 7:3, over a separator. On the Mac there are three tabs (`GetTabDefinitions`): "Tabs &
+  extensions", "Browser" (the `kSystem` category; "System" is ChromeOS's title), "All tasks"; the default is Tabs &
+  extensions (`kDefaultCategory`), restored from `task_manager.category`. Tabs and extensions (renderers without a
+  subtype, extensions, guests) go under the first; the browser, GPU and utility processes under Browser
+  (`ShouldKeepTaskForTabsAndExtensions` / `ShouldKeepTaskForSystem`). Changing tab clears the selection.
+- Search (locale.pak 930–932, chromium_strings.grd): placeholder "Search", accessible name "Search for any process
+  from the list.", clear button "Clear search" (shown only with text). It filters 50 ms after typing
+  (`kInputChangeCallbackDelay`), case- and accent-insensitively on the Task column's text, and keeps every task of
+  a process that has a match in the shown category (`UpdateMatchedProcessSet`, `ShouldKeepTask`).
+- Sorting (`views::TableView::ToggleSortOrder`): a new column sorts its initial way (ascending for Task and
+  Process ID, descending for the rest, `initial_sort_is_ascending` in task_manager_columns.h); the next click
+  reverses it; the third clears it. With nothing saved it opens sorted by CPU, highest first
+  (`RetrieveSavedColumnsSettingsAndUpdateTable`). A process's rows stay together and processes sort by their
+  first row (`GroupSortHelper`).
+- Columns: right-click the header (or the rows) for a checklist of columns; the last visible one can't be hidden
+  (`IsCommandIdEnabled`). Kite lists the columns it can fill: Chromium's five defaults plus Idle Wake Ups
+  (interrupt wakeups per second, `ri_interrupt_wkups`) and File Descriptors (`PROC_PIDLISTFDS`), both off by
+  default as in Chromium. Saved, with the sort and category, in `TaskManager.json` in Kite's support folder
+  (Chromium: local state). Left out: Profile, the WebCore caches, GPU, SQLite, JavaScript and CppGC memory,
+  Process Priority, Keepalive Count (they need numbers from inside the engine).
+- Chromium turns alternating row colours off on every platform (`SetAlternatingRowColorsEnabled(false)`); End Task
+  is enabled only when every selected task can end (`IsEndProcessButtonEnabled`); opening it selects the active
+  tab's row (`SelectTaskOfActiveTab`).
+- Network: bytes received + sent per second over the last refresh, summed per process and shown on its first row
+  (`Task::Refresh`, `TaskGroup`), written by `ui::FormatSpeed` ("$1 B/s", "$1 KB/s", "$1 MB/s" at 3 KiB / 2 MiB /
+  1 GiB, one decimal under 100, locale.pak 50449–50454), "0" for none. Chromium counts each request's bytes in its
+  network service; Kite's Chromium engine counts them in CEF's `OnResourceLoadComplete` (body bytes received plus
+  in-memory upload bytes), so a request counts when it finishes, not as it streams, and disk-cache hits count
+  too. GPU and utility rows read "0" (Chromium credits the network service's bytes to the tasks that asked).
+  The Browser row reads N/A (Kite's own requests aren't counted), and on WebKit every row reads N/A: WebKit
+  loads in its shared networking process and has no public API for a page's bytes.
+- Inferred: the tab strip's look (accent title and a 2 px underline for the selected tab, SF Symbols for Chromium's
+  tab and list icons, Kite's app icon for Browser), the paddings and the search field's minimum width.
 
 ## mailto: handling → `MailHandler`, `MailHandlerSettings` (KiteCore), `MailHandlers` (Arc 1.171 strings, Info.plist and settings key names, 1 Nov 2026)
 
