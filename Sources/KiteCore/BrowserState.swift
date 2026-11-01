@@ -138,6 +138,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
         archiveAfter = try c.decodeIfPresent(ArchiveInterval.self, forKey: .archiveAfter) ?? .twelveHours
         showsToolbar = try c.decodeIfPresent(Bool.self, forKey: .showsToolbar) ?? false
         warnsBeforeQuitting = try c.decodeIfPresent(Bool.self, forKey: .warnsBeforeQuitting) ?? true
+        // Pinned tabs saved before Kite kept a pinned URL take the page they're on.
+        syncPinnedURLs()
         spacesWithCollapsedPinnedSections = try c.decodeIfPresent(Set<UUID>.self, forKey: .spacesWithCollapsedPinnedSections) ?? []
         developerModeEnabledForHosts = try c.decodeIfPresent(Set<String>.self, forKey: .developerModeEnabledForHosts) ?? []
         devModeReloadState = (try? c.decodeIfPresent(DeveloperTabReloadSetting.self, forKey: .devModeReloadState)) ?? .reload
@@ -367,6 +369,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
 
     public mutating func togglePin(tab id: UUID) {
         guard let location = location(of: id), let s = location.space else { return }
+        defer { syncPinnedURLs() }
         // A split pins and unpins as one item, keeping its panes together and in order.
         if let split = split(containing: id)?.split {
             let members = split.tabIDs.compactMap { member -> BrowserTab? in
@@ -398,7 +401,10 @@ public struct BrowserState: Hashable, Codable, Sendable {
     /// Moves a tab into the favorites, or a favorite back to the current space's unpinned tabs.
     public mutating func toggleFavorite(tab id: UUID) {
         guard let location = location(of: id) else { return }
-        defer { normalizeSplits() }
+        defer {
+            normalizeSplits()
+            syncPinnedURLs()
+        }
         switch location.section {
         case .favorite:
             let tab = favorites.remove(at: location.index)
