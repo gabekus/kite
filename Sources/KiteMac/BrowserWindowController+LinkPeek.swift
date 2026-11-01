@@ -186,6 +186,8 @@ extension BrowserWindowController {
         case .openInSplit(let url):
             // The Peek's page isn't a pane yet: a ⌥⌘-click in it opens a background tab, like ⌘-click.
             store.mutate { $0.openTab(url: url, select: false) }
+        case .openInLittleKite(let url):
+            DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.openLittleKiteWindow(url: url) }
         case .popup(let popup):
             pool.openTab(with: popup)
         case let .openLink(url, target):

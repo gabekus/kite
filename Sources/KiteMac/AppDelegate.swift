@@ -26,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Routes menu commands to whichever browser window is in front.
     private var menuRouter: MenuRouter!
     private var archiveTimer: Timer?
+    /// Settings › Links: the ⌥⌘N hotkey in any app, and "Archive Little Kites after:".
+    private(set) var littleKiteHotkey: LittleKiteHotkey?
+    private var littleArchiveTimer: Timer?
     #if canImport(CEFBridge)
     /// Shows extensions Kite's tabs (tabs.query and friends).
     /// One per Chromium profile in use: its extensions see the tabs in its profile.
@@ -189,6 +192,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         archiveTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.store.archiveStaleTabs() }
         }
+        littleArchiveTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.archiveStaleLittleKites() }
+        }
+        littleKiteHotkey = LittleKiteHotkey(
+            menuItem: { NSApp.mainMenu.flatMap { Self.menuItem(withID: "newLittleBrowserWindow", in: $0) } },
+            onPress: { [weak self] in self?.openLittleKiteWindow(url: nil) }
+        )
+        keyBindings.didApply = { [weak self] in self?.littleKiteHotkey?.update() }
     }
 
     /// Links from other apps and opened HTML files, each in a new tab.
@@ -291,6 +302,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+
+    /// Settings › Links › "Archive Little Kites after:": closes Little Kite windows left unused that long.
+    func archiveStaleLittleKites(now: Date = Date()) {
+        let threshold = LittleKite.ArchiveThreshold.current(in: .standard)
+        for controller in littleControllers { controller.archiveIfStale(threshold, now: now) }
+    }
+
+    static func menuItem(withID id: String, in menu: NSMenu) -> NSMenuItem? {
+        for item in menu.items {
+            if item.identifier?.rawValue == id { return item }
+            if let submenu = item.submenu, let found = menuItem(withID: id, in: submenu) { return found }
+        }
+        return nil
     }
 
     /// Kite menu → Open Links from Other Apps in Little Kite (Arc: Preferences → Links,

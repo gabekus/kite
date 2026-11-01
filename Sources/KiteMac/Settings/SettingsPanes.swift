@@ -328,6 +328,12 @@ private struct SettingsBanner: View {
 /// Arc: a 135pt Little Arc banner, the Little Arc blurb and section, a rule, the Peek blurb and
 /// section, then Air Traffic Control.
 struct LinksPane: View {
+    @AppStorage(LittleKite.ArchiveThreshold.key) private var littleArchive = LittleKite.ArchiveThreshold.defaultValue
+
+    private var littleKiteShortcut: String {
+        NSApp.mainMenu.flatMap { AppDelegate.menuItem(withID: "newLittleBrowserWindow", in: $0) }?.shortcut?.displayString ?? "---"
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -335,15 +341,18 @@ struct LinksPane: View {
                 VStack(alignment: .leading, spacing: 18) {
                     SettingsBlurb("Little Kite is a smaller, simpler Kite window. It’s perfect for quick lookups and reading funny tweets your friends send you.")
                     SettingsSection {
-                        UnsupportedToggle("Open Little Kite when I press ⌥⌘N in any app")
+                        // Arc names New Little Arc Window's current shortcut here; "---" when it has none.
+                        DefaultsToggle("Open Little Kite when I press \(littleKiteShortcut) in any app", key: LittleKite.globalHotkeyKey)
                         SettingsSeparator()
-                        UnsupportedToggle("Open Little Kite when clicking on links with ⌥⌘ held")
+                        DefaultsToggle("Open Little Kite when clicking on links with ⌥⌘ held", key: LittleKite.optionCommandClickKey)
                         SettingsSeparator()
                         CommandToggle("Links from other apps open in Little Kite", #selector(AppDelegate.toggleLittleKiteLinks(_:)))
                         SettingsSeparator()
                         SettingsRow(title: "Archive Little Kites after:") {
-                            Picker("", selection: .constant(0)) { Text("6 hours (default)").tag(0) }
-                                .labelsHidden().frame(width: 200).disabled(true)
+                            Picker("", selection: $littleArchive) {
+                                ForEach(LittleKite.ArchiveThreshold.allCases, id: \.self) { Text($0.title).tag($0) }
+                            }
+                            .labelsHidden().frame(width: 200)
                         }
                     }
                     SettingsMetrics.line.frame(height: 1).padding(.vertical, 6)
