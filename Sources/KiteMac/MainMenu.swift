@@ -339,7 +339,7 @@ enum MainMenu {
         })
 
         submenu("Spaces", [
-            item("New Space", #selector(BrowserWindowController.newSpace(_:)), id: "newSpace"),
+            item("New Space…", #selector(BrowserWindowController.newSpace(_:)), id: "newSpace"),
             item("Edit Theme…", #selector(BrowserWindowController.editTheme(_:)), id: "editTheme"),
             item("Rename Space", #selector(BrowserWindowController.renameSpace(_:)), id: "renameSpace"),
             // Arc's MainMenu.nib: "Change Profile", action changeProfileForCurrentSpace:.

@@ -115,7 +115,9 @@ final class SpaceSwipeController {
             if landing != 0 {
                 // The pages don't move this frame: the new space's page is where the old one's
                 // neighbour was, so the offset shifts by the page the selection moved.
+                selectingBySwipe = true
                 store.mutate { $0.selectSpace(target.id) }
+                selectingBySwipe = false
                 model.offset += CGFloat(landing) * model.pageWidth
             }
         }
@@ -128,8 +130,27 @@ final class SpaceSwipeController {
         }
     }
 
-    /// The release's settle. Unmeasured on Arc's pages: this is the spring its theme switch was
-    /// measured with, so the pages and the colour land together.
-    static let settle = Animation.spring(response: ArcMetrics.Motion.spaceSwitchResponse,
-                                         dampingFraction: ArcMetrics.Motion.spaceSwitchDamping)
+    private var selectingBySwipe = false
+
+    /// A switch from the keyboard, the menu or the strip slides the pages too, as Arc's do: the new page
+    /// comes in from the side it lies on.
+    func spaceChanged(from old: Int, to new: Int) {
+        guard !selectingBySwipe, swipe == nil, old != new, model.pageWidth > 0 else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            model.showsNeighbours = true
+            model.offset = (new > old ? 1 : -1) * model.pageWidth
+        }
+        withAnimation(Self.settle) {
+            model.offset = 0
+        } completion: { [weak self] in
+            guard let self, self.swipe == nil else { return }
+            self.model.showsNeighbours = false
+        }
+    }
+
+    /// Arc's page slide, fitted to a 1px-row recording of Spaces › Previous Space (1 Nov 2026): 97% of
+    /// the way 0.09s in and settled by 0.2s, quicker than the theme's colour, with no overshoot.
+    static let settle = Animation.spring(response: ArcMetrics.Motion.spacePageResponse, dampingFraction: 1)
 }

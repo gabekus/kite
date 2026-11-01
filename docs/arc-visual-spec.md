@@ -405,6 +405,47 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
   Space Icon, Delete Space). Rename edits the header in place: Return or clicking away keeps it, Escape cancels.
   Unverified: whether Arc also starts a rename on double-click.
 
+**New, edit and delete space** (Arc brought forward and driven on a throwaway space, 1 Nov 2026, with Gabe's go;
+sidebar-only screen captures and the accessibility tree; the space was deleted afterwards)
+- **+ in the bottom bar** opens a popover menu (222×308, 40pt rows inset 14, titles at 39): New Space, New
+  Folder | New Easel ⌃⇧E, New Boost | New Split ⌘L, New Tab ⌘T. Kite leaves out Easel and Boost.
+- **Create a Space page** (`SpaceCreationView`, ids `spaceCreation…`), on a 289pt sidebar:
+  - It replaces the URL field, favourites and pages under the top row. The bar keeps only the strip, which
+    already shows the new space as the active dot. The new space goes right after the current one.
+  - A picture of three fanned cards at y 86 to 119, "Create a Space" (y 140, bold), "Separate your tabs for
+    life, / work, projects, and more." (y 171, two lines).
+  - Rows 261×36 at x 14: the name field at y 237 (dashed-plus icon at x 22, "Space name…" at x 48), Profile at
+    279 (smiley, "Profile", a pill with the profile's name and a chevron, an info button at the right), Choose
+    a Theme at 323 (brush icon). Fill #2C2B40 over #131029.
+  - Create Space 261×36 at y 1153: #2C4AFC once there's a name, about half that before. Cancel, a 40×15 text
+    button at y 1203.5.
+  - Choose a Theme opens the theme popover beside the row with an arrow at it. It starts empty: no handle, "Tap
+    to pick a color for this space" at y 162 on the grid, − and + off, the slider without its thumb. The pick
+    applies to the whole window at once.
+  - Kite's picture is its own (three SF Symbol cards); Arc's is an asset.
+- **Theme grid mapping** (dark mode, 25 taps on a 70pt lattice, the handle's fill read back): the HSL hue is the
+  angle round the centre, clockwise from the right (0° red, 90° green, 180° cyan, 270° purple); saturation stays
+  near 0.6; lightness is 0.565 at the centre plus 0.0025 a point; taps outside the 170pt circle are ignored.
+- **The space menu** (right-click the header): Change Space Icon…, Rename Space…, Edit Theme Color…, Set Profile ▸ |
+  New Folder, Live Folders ▸ | Share Space…, Export "name" into Folder ▸ | Manage Spaces… | Delete Space. Kite has
+  the ones it has features for, in that order.
+- **Rename:** Rename Space… or a click on the current space's name turns it into a field (13, 209, 229×18 for a
+  space with no icon) with the name selected, and the header's edit button becomes "Done". Return keeps it.
+- **Icon:** a space has no icon at first; its name starts at x 13 and its strip cell is a dot. Change Space Icon…
+  opens a popover under a dashed 24pt square in the icon's place: Emoji | Icon tabs, a search field, 7 emoji to a
+  row (33.5 apart) with a category bar, or 8 icons to a row (31 apart). A picked icon shows in the theme's
+  colour in the header and the strip, and a bin appears next to the tabs to remove it. Kite's Icon tab uses SF
+  Symbols.
+- **Delete Space** on an empty space deletes it at once, with no question, and goes to the space before it. The
+  binary's "Delete the space and close all tabs within it" alert (for a space with tabs) and its undo weren't
+  seen.
+- **Strip:** the current space's icon in colour, other spaces' icons greyed, icon-less spaces 8pt dots at about
+  23% white. A hovered cell gets a 32pt rounded backing and a pill above it: name, a profile chip, ⌃ and the
+  number. Arc draws the strip in its own child window, which window captures miss; screen captures show it.
+- **Switching** (Spaces › Next/Previous, 1px-row recordings at 80Hz): the theme colour follows the space-switch
+  spring above. The pages slide too, quicker: a feature entering from the left was 97% of the way 0.09s in and
+  settled by 0.2s with no overshoot, so about `spring(response: 0.1, dampingFraction: 1)`.
+
 **Theme editor → `ThemeEditor`, `ArcMetrics.ThemeEditor`** (Spaces → Edit Theme…, tree plus one capture)
 - An `AXPopover`, 382×534, hanging off the sidebar's right edge (x 313). Opened from the menu with the pointer
   away, its bottom sat on the window's bottom (y 751 to 1285); opened the same way a few minutes later it sat

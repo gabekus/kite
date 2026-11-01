@@ -132,28 +132,8 @@ extension BrowserWindowController {
     /// Renames the space in place in its header, like Arc.
     @objc func renameSpace(_ sender: Any?) { store.beginRenaming(space: store.state.selectedSpaceID) }
 
-    /// The space's icon is one emoji; the field opens the emoji picker.
-    func changeIcon(ofSpace id: UUID) {
-        guard let window, let space = store.state.spaces.first(where: { $0.id == id }) else { return }
-        let alert = NSAlert()
-        alert.messageText = "Change Space Icon"
-        alert.informativeText = "Type or pick an emoji."
-        alert.addButton(withTitle: "Change")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(string: space.icon)
-        field.frame = NSRect(x: 0, y: 0, width: 60, height: 24)
-        field.font = .systemFont(ofSize: 15)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            self?.store.mutate { $0.setSpaceIcon(space.id, to: field.stringValue) }
-        }
-        DispatchQueue.main.async {
-            field.currentEditor()?.selectAll(nil)
-            NSApp.orderFrontCharacterPalette(field)
-        }
-    }
+    /// Arc's icon picker, hanging under the space's header icon.
+    func changeIcon(ofSpace id: UUID) { store.requestIconPicker(space: id) }
 
     func renameFolder(_ id: UUID) {
         guard let window, let found = store.state.folder(matching: id.uuidString) else { return }
@@ -192,6 +172,10 @@ extension BrowserWindowController {
         guard let window, store.state.spaces.count > 1, let space = store.state.spaces.first(where: { $0.id == id }) else {
             return NSSound.beep()
         }
+        // Arc deletes an empty space straight away (observed 1 Nov 2026) and asks first only when tabs
+        // would close (its "Delete the space and close all tabs within it" alert, from the binary).
+        if store.spaceCreation?.spaceID == space.id { return store.cancelNewSpace() }
+        if space.allTabs.isEmpty { return store.mutate { $0.deleteSpace(space.id) } }
         let alert = NSAlert()
         alert.messageText = "Delete \u{201C}\(space.name)\u{201D}?"
         alert.informativeText = "Its pinned and unpinned tabs are closed."

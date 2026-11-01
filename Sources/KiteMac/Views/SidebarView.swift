@@ -113,53 +113,58 @@ struct SidebarView: View {
             .padding(.top, M.topRowY)
             .padding(.trailing, M.navTrailing - M.padding)
 
-            if !state.showsToolbar {
-                AddressPill(
-                    text: selectedTab?.url?.host() ?? "Search or enter URL",
-                    isDark: darkPageState(for: selectedTab),
-                    action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
-                    toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } },
-                    showExtensions: showExtensions,
-                    showSiteControls: SiteControls.applies(to: selectedTab?.url) ? showSiteControls : nil,
-                    accessory: fieldAccessory,
-                    installAppName: installApp == nil ? nil : WebAppInstallOffers.shared.offer(for: selectedID)?.name,
-                    installApp: installApp
-                )
-                .padding(.top, M.urlFieldTopGap)
-            }
+            // + › New Space: Arc's Create a Space page takes the place of everything under the top row.
+            if let creation = store.spaceCreation, creation.spaceID == space.id {
+                SpaceCreationView(store: store, actions: actions, creation: creation)
+            } else {
+                if !state.showsToolbar {
+                    AddressPill(
+                        text: selectedTab?.url?.host() ?? "Search or enter URL",
+                        isDark: darkPageState(for: selectedTab),
+                        action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
+                        toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } },
+                        showExtensions: showExtensions,
+                        showSiteControls: SiteControls.applies(to: selectedTab?.url) ? showSiteControls : nil,
+                        accessory: fieldAccessory,
+                        installAppName: installApp == nil ? nil : WebAppInstallOffers.shared.offer(for: selectedID)?.name,
+                        installApp: installApp
+                    )
+                    .padding(.top, M.urlFieldTopGap)
+                }
 
-            // Arc's tray shows while dragging even when there are no favorites (`AppTrayDisplayMode.onDrag`).
-            if !state.favorites.isEmpty || drag.isDragging || !UserDefaults.standard.bool(forKey: "favoritesEmptyStateDismissed") {
-                FavoritesGrid(
-                    store: store,
-                    favorites: state.favorites,
-                    selectedID: selectedID,
-                    onSelect: { id in store.mutate { $0.select(tab: id) } },
-                    onUnload: actions.closeTab,
-                    onRemove: { id in store.mutate { $0.toggleFavorite(tab: id) } },
-                    onEditPinnedURL: actions.editPinnedURL,
-                    onReplacePinnedURL: actions.replacePinnedURL,
-                    onDrop: actions.didDrop
-                )
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.favoritesArea = $0 }
-                .onDisappear { drag.favoritesArea = nil }
-                .padding(.top, M.favoritesTopGap)
-                .padding(.bottom, M.favoritesBottomGap)
-            }
+                // Arc's tray shows while dragging even when there are no favorites (`AppTrayDisplayMode.onDrag`).
+                if !state.favorites.isEmpty || drag.isDragging || !UserDefaults.standard.bool(forKey: "favoritesEmptyStateDismissed") {
+                    FavoritesGrid(
+                        store: store,
+                        favorites: state.favorites,
+                        selectedID: selectedID,
+                        onSelect: { id in store.mutate { $0.select(tab: id) } },
+                        onUnload: actions.closeTab,
+                        onRemove: { id in store.mutate { $0.toggleFavorite(tab: id) } },
+                        onEditPinnedURL: actions.editPinnedURL,
+                        onReplacePinnedURL: actions.replacePinnedURL,
+                        onDrop: actions.didDrop
+                    )
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.favoritesArea = $0 }
+                    .onDisappear { drag.favoritesArea = nil }
+                    .padding(.top, M.favoritesTopGap)
+                    .padding(.bottom, M.favoritesBottomGap)
+                }
 
-            SpacePages(store: store, swipe: swipe) { space in
-                spaceList(space)
-            }
+                SpacePages(store: store, swipe: swipe) { space in
+                    spaceList(space)
+                }
 
-            if let miniPlayer, let id = store.miniPlayerTabID, let tab = state.tab(id), let page = store.pages[id],
-               page.media != nil || page.capturingSince != nil {
-                MiniPlayerView(
-                    tab: tab, media: page.media?.state, isRecording: page.capturingSince != nil, call: page.callControls,
-                    isMuted: page.isAudioMuted, volume: page.tabVolume, actions: miniPlayer
-                )
-                    .id(id)
-                    .padding(.top, M.padding)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                if let miniPlayer, let id = store.miniPlayerTabID, let tab = state.tab(id), let page = store.pages[id],
+                   page.media != nil || page.capturingSince != nil {
+                    MiniPlayerView(
+                        tab: tab, media: page.media?.state, isRecording: page.capturingSince != nil, call: page.callControls,
+                        isMuted: page.isAudioMuted, volume: page.tabVolume, actions: miniPlayer
+                    )
+                        .id(id)
+                        .padding(.top, M.padding)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
             }
 
             SpaceBar(store: store, actions: actions, claude: claude, downloads: downloads)
@@ -1440,9 +1445,13 @@ private struct SpaceBar: View {
 
     var body: some View {
         let state = store.state
+        // On Create a Space Arc leaves only the spaces in the bar.
+        let creating = store.spaceCreation != nil
         HStack(spacing: 4) {
             // Arc's Library button sits at the bar's leading end and carries download progress.
             DownloadsSidebarButton(model: downloads, size: M.bottomButtonSize)
+                .opacity(creating ? 0 : 1)
+                .disabled(creating)
             // Arc centres the spaces in the room between its end buttons. Too many to fit scroll rather
             // than widen the bar: an over-wide bar pushes the whole sidebar off its left edge.
             ViewThatFits(in: .horizontal) {
@@ -1452,18 +1461,22 @@ private struct SpaceBar: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            ClaudeSidebarButton(model: claude, size: M.bottomButtonSize)
-            Button {
-                store.addSpace()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .regular))
-                    .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
-                    .contentShape(Rectangle())
+            Group {
+                ClaudeSidebarButton(model: claude, size: M.bottomButtonSize)
+                // Arc's + opens a menu of new things, not a new space straight away.
+                AnchoredButton { view in
+                    NewItemMenu.present(from: view, store: store, actions: actions)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .regular))
+                        .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
+                        .contentShape(Rectangle())
+                }
+                .opacity(0.7)
+                .help("New…")
             }
-            .buttonStyle(.plain)
-            .opacity(0.7)
-            .help("New Space")
+            .opacity(creating ? 0 : 1)
+            .disabled(creating)
         }
     }
 
@@ -1473,7 +1486,8 @@ private struct SpaceBar: View {
     private func spaceIcons(_ state: BrowserState) -> some View {
         HStack(spacing: M.spaceCellPitch - M.spaceCellSize.width) {
             ForEach(state.spaces) { space in
-                SpaceCell(space: space, selected: space.id == state.selectedSpaceID) {
+                SpaceCell(space: space, selected: space.id == state.selectedSpaceID, number: (state.spaceIndex(space.id) ?? 0) + 1,
+                          profileName: actions.showsProfiles ? state.profile(space.profile).name : nil) {
                     store.mutate { $0.selectSpace(space.id) }
                 }
                 .contextMenu { SpaceContextMenu(store: store, actions: actions, space: space) }
@@ -1484,20 +1498,24 @@ private struct SpaceBar: View {
     }
 }
 
+/// One space in the strip. Arc (1 Nov 2026): the current space shows its icon in colour, other spaces
+/// their icon greyed, and a space without an icon an 8pt dot at about 23% white; under the pointer a cell gets a rounded backing and, after a moment, a
+/// pill above it with the space's name, its profile and its ⌃-number shortcut.
 private struct SpaceCell: View {
     let space: Space
     let selected: Bool
+    let number: Int
+    let profileName: String?
     let action: () -> Void
     @State private var hovering = false
+    @State private var showsTip = false
 
     var body: some View {
         Button(action: action) {
             Group {
-                if selected, !space.icon.isEmpty {
-                    Text(space.icon).font(.system(size: M.spaceIconFontSize))
-                } else if hovering, !space.icon.isEmpty {
-                    // Unmeasured: a dot under the pointer shows its icon, still grey.
-                    Text(space.icon).font(.system(size: M.spaceIconFontSize)).grayscale(1).opacity(M.spaceDotOpacity)
+                if !space.icon.isEmpty {
+                    // Other spaces' icons are greyed until you're in them; icon-less spaces are dots.
+                    SpaceIconView(icon: space.icon, theme: space.theme, size: M.spaceIconFontSize, greyed: !selected)
                 } else {
                     Circle()
                         .fill(.primary.opacity(selected ? 1 : M.spaceDotOpacity))
@@ -1505,11 +1523,79 @@ private struct SpaceCell: View {
                 }
             }
             .frame(width: M.spaceCellSize.width, height: M.spaceCellSize.height)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.primary.opacity(hovering && !selected ? 0.08 : 0))
+                .frame(width: M.bottomButtonSize, height: M.bottomButtonSize))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(space.name)
+        .onHover { inside in
+            hovering = inside
+            if inside {
+                DispatchQueue.main.asyncAfter(deadline: .now() + M.spaceTipDelay) { if hovering { showsTip = true } }
+            } else {
+                showsTip = false
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if showsTip {
+                SpaceTip(space: space, number: number, profileName: profileName)
+                    .fixedSize()
+                    .offset(y: -M.spaceCellSize.height - M.spaceTipGap)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
+        .zIndex(showsTip ? 1 : 0)
+        .accessibilityLabel(space.name)
+    }
+}
+
+/// Arc's space tooltip: a dark pill tinted by the theme with the name, a profile chip and keycaps.
+private struct SpaceTip: View {
+    let space: Space
+    let number: Int
+    let profileName: String?
+
+    var body: some View {
+        let accent = Color(theme: space.theme.accent)
+        HStack(spacing: 8) {
+            Text(space.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            if let profileName {
+                HStack(spacing: 4) {
+                    Image(systemName: "face.smiling").font(.system(size: 11, weight: .semibold))
+                    Text(profileName).font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(accent)
+                .padding(.horizontal, 7)
+                .frame(height: 21)
+                .background(Capsule().fill(.white.opacity(0.9)))
+            }
+            if number <= 9 {
+                HStack(spacing: 3) {
+                    keycap("⌃")
+                    keycap("\(number)")
+                }
+                .foregroundStyle(accent)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(Capsule().fill(Color(theme: tipFill)))
+        .overlay(Capsule().strokeBorder(.white.opacity(0.15), lineWidth: 1))
+    }
+
+    /// The accent darkened to about 30%, like Arc's navy pill over an indigo theme.
+    private var tipFill: ThemeColor {
+        var lab = space.theme.accent.lab
+        lab.x *= 0.45
+        return OKLab.toSRGB(lab)
+    }
+
+    private func keycap(_ key: String) -> some View {
+        Text(key).font(.system(size: 12, weight: .bold))
+            .frame(width: 18, height: 18)
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(.white.opacity(0.85)))
     }
 }
 
@@ -1522,17 +1608,18 @@ private struct SpaceContextMenu: View {
     let actions: SidebarActions
     let space: Space
 
+    // Arc's order and titles, from its menu on 1 Nov 2026. Its Live Folders, Share Space…, Export into
+    // Folder and Manage Spaces… are left out: Kite has none of those.
     var body: some View {
-        Button("Rename Space") { store.beginRenaming(space: space.id) }
+        Button("Change Space Icon…") { actions.changeSpaceIcon(space.id) }
+        Button("Rename Space…") { store.beginRenaming(space: space.id) }
+        Button("Edit Theme Color…") { actions.editTheme(space.id) }
+        if actions.showsProfiles { SetProfileMenu(store: store, actions: actions, space: space) }
+        Divider()
         Button("New Folder") {
             guard let index = store.state.spaceIndex(space.id) else { return }
             store.mutate { _ = $0.createFolder(name: "New Folder", inSpace: index) }
         }
-        Divider()
-        // Arc's binary lists "Set Profile" just before Edit Theme Color.
-        if actions.showsProfiles { SetProfileMenu(store: store, actions: actions, space: space) }
-        Button("Edit Theme Color") { actions.editTheme(space.id) }
-        Button("Change Space Icon") { actions.changeSpaceIcon(space.id) }
         Divider()
         Button("Delete Space") { actions.deleteSpace(space.id) }
             .disabled(store.state.spaces.count < 2)
@@ -1548,19 +1635,33 @@ private struct SpaceHeader: View {
     let space: Space
     @State private var draft = ""
     @State private var hovering = false
+    @State private var iconAnchor: NSView?
+    @State private var pickerOpen = false
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
         let renaming = store.renamingSpaceID == space.id
         HStack(spacing: M.headerTextX - M.headerIconX - M.headerIconSize) {
-            Button { actions.changeSpaceIcon(space.id) } label: {
-                Text(space.icon)
-                    .font(.system(size: 15))
+            // An icon-less space has no icon slot: its name starts at the icon's place (Arc, 1 Nov 2026).
+            // While the picker is open Arc shows a dashed square there for it to hang from.
+            if !space.icon.isEmpty || pickerOpen {
+                Button { openPicker() } label: {
+                    Group {
+                        if space.icon.isEmpty {
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .strokeBorder(.primary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                                .frame(width: 24, height: 24)
+                        } else {
+                            SpaceIconView(icon: space.icon, theme: space.theme)
+                        }
+                    }
                     .frame(width: M.headerIconSize, height: M.headerIconSize)
                     .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(AnchorView(view: $iconAnchor))
+                .help("Change Space Icon")
             }
-            .buttonStyle(.plain)
-            .help("Change Space Icon")
             if renaming {
                 TextField("Space Name", text: $draft)
                     .textFieldStyle(.plain)
@@ -1573,11 +1674,21 @@ private struct SpaceHeader: View {
                         fieldFocused = true
                     }
                     .onChange(of: fieldFocused) { _, focused in if !focused { commit() } }
+                // Arc swaps the header's edit button for Done while renaming.
+                Button("Done") { commit() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: M.headerFontSize - 1, weight: .semibold))
+                    .opacity(0.6)
+                    .padding(.trailing, M.iconInset - M.padding)
             } else {
                 Text(space.name)
                     .font(.system(size: M.headerFontSize, weight: .semibold))
                     .opacity(M.headerTextOpacity)
                     .lineLimit(1)
+                    // A click on the current space's name renames it in place, as in Arc.
+                    .onTapGesture {
+                        if space.id == store.state.selectedSpaceID { store.beginRenaming(space: space.id) }
+                    }
             }
             Spacer(minLength: 0)
             // Arc's pinned-tabs expansion toggler (a chevron in the space header): shown on hover,
@@ -1604,6 +1715,20 @@ private struct SpaceHeader: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .contextMenu { SpaceContextMenu(store: store, actions: actions, space: space) }
+        .onChange(of: store.iconPickerRequest) { _, request in
+            guard request == space.id else { return }
+            store.iconPickerShown()
+            openPicker()
+        }
+    }
+
+    private func openPicker() {
+        pickerOpen = true
+        // Next turn, so the placeholder it hangs from exists.
+        DispatchQueue.main.async {
+            guard let iconAnchor else { return }
+            SpaceIconPicker.present(store: store, spaceID: space.id, from: iconAnchor) { pickerOpen = false }
+        }
     }
 
     private func commit() {
