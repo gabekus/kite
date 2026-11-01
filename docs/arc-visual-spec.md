@@ -364,6 +364,40 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
 Kite (`DownloadsView.swift`): no Library yet, so the bottom bar's leading button (where Arc's Library button sits)
 shows the progress ring and opens a popover list. Row size, ring size and popover width are Kite's, unmeasured.
 
+## Little Arc → `ArcMetrics.LittleWindow`, `LittleKiteWindowController` (Arc 1.171, 31 Oct 2026)
+
+Measured from a Little Arc window Gabe had open: `kite probe Arc tree` (roles and frames only, no `--text`) and a
+background `screencapture -l<window id>` at 2x, toolbar strip only. Nothing in Arc was pressed or focused.
+
+- Window: no sidebar, no content card. A 47pt toolbar, then the page edge to edge (`AXWebArea` at 0,47, full
+  width, to the bottom). The open window was 1784×1245; Arc's defaults hold `LittleBrowserWindow_size` = {1495, 1245}
+  and its binary names `.littleWindowAutosaveFrame`, so the size is remembered across Little Arc windows. Arc's
+  first-run size wasn't found; Kite starts at 1495×1245 (shrunk to the screen) and remembers the last frame.
+- Traffic lights: 16×16 at x 9/29/49, y 15.5 (centre 17, 23.5), 3pt left of and 0.5pt above the main window's.
+  Hover area not swept (needs `cursorprobe`); Kite moves the main window's by the same offset.
+- Back: 16×16 button at 79.5, 15.5. No forward or reload buttons.
+- URL pill (`LittleBrowserCommandBarPlaceholderBackground`): x 107 to 7.5pt short of the Open In box, y 8, 31pt
+  tall, corner about 5pt (antialiased 2x edge, ±1pt). Colour assets in `ARC_LittleBrowser.bundle` (`assetutil`):
+  dark p3 (0.98, 0.984, 1) at 0.10, hovered 0.15; light p3 (0.055, 0.059, 0.063) at 0.06, hovered 0.10. Inside:
+  the profile indicator (14pt image at x 121 + name), the host text (16pt line, centred between the indicator and
+  the trailing buttons), an extensions button (23×19 at 1530.5) and a copy-link button (16×16, right edge 7.5pt in).
+- Open In box: x from pill end + 7.5 to 7pt from the window edge, y 7.5, 30.5pt tall, corner about 6.5pt,
+  0.5pt border. "Open in" dim (#9495A4 on Arc's box), the space name bright and bold, a "⌘O" keycap 15.5pt tall,
+  a divider, then a 16pt chevron 6pt from the right edge ("reveals more 'Open In' destinations"). The box fill was
+  #040832 on a purple space; whether it is derived from the space colour is unverified.
+- Strings: the NUX "Links Open in Little Arc" with "Click Open in … to move this page in a full window, or ⌘W to
+  close"; "Opens your current Little Arc tab in the Space of your choosing"; window title "Little Arc " + page title.
+- Menu: File › "New Little Arc Window" ⌥⌘N, identifier `newLittleBrowserWindow`, action `showLittleArc`
+  (MainMenu.nib); read through AX by Gabe's session.
+- Setting: Preferences → Links, "Links from other apps open in Little Arc", key `openExternalLinksInLittleBrowserEnabled`
+  (in the defaults key table at `FUN_1005a2c1c`). Gabe's value is 1. The registered default wasn't found in the
+  binary; Kite defaults it on, since Arc shows the "Links Open in Little Arc" NUX on the first external link
+  (`littleBrowserNUXPresentationCount`).
+
+Kite's differences: no profile indicator (no profiles) and no extensions button in the pill; the chevron is a plain
+menu of spaces, not Arc's searchable `LittleBrowserMoveMenuWindow`; no downloads tray; no auto-archive of Little
+windows ("Archive Little Arcs after:"); no global hotkey.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

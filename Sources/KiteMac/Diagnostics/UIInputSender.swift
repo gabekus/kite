@@ -169,7 +169,11 @@ struct UIInputSender {
         if isEquivalentCandidate {
             // Menu commands that target the front browser window go to this one instead.
             MenuRouter.deliveringTo = window.windowController as? BrowserWindowController
-            defer { MenuRouter.deliveringTo = nil }
+            MenuRouter.deliveringToLittle = window.windowController as? LittleKiteWindowController
+            defer {
+                MenuRouter.deliveringTo = nil
+                MenuRouter.deliveringToLittle = nil
+            }
             if window.performKeyEquivalent(with: event) { return "claimed as a key equivalent by a view (\(state))" }
             if performOnResponderChain(event) { return "handled by the menu bar on this window's responder chain (\(state))" }
             if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return "handled by the menu bar (\(state))" }
