@@ -112,7 +112,11 @@ extension BrowserWindowController {
             store.mutate { $0.openTab(url: url) }
         case .popup(let popup):
             pool.openTab(with: popup)
-        case .favicon, .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover, .media:
+        case .permissionRequest(let request):
+            // Kite doesn't prompt over a Peek yet (where Arc shows it there wasn't read).
+            request.respond(nil)
+        case .favicon, .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover, .media,
+             .permissionRequestCancelled:
             break
         }
     }

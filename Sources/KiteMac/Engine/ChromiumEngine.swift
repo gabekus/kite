@@ -263,6 +263,16 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         SiteControls.origin(of: url).flatMap(URL.init(string:)) ?? url
     }
 
+    private static func unbridged(_ permission: KCSitePermission) -> SitePermission {
+        switch permission {
+        case .camera: .camera
+        case .microphone: .microphone
+        case .location: .location
+        case .notifications: .notifications
+        @unknown default: .notifications
+        }
+    }
+
     private static func bridged(_ permission: SitePermission) -> KCSitePermission {
         switch permission {
         case .camera: .camera
@@ -416,6 +426,19 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     func browser(_ browser: KCBrowser, mediaAccessDidChange inUse: Bool) { mediaInUse = inUse }
+
+    func browser(_ browser: KCBrowser, requestsPermissions permissions: [NSNumber], origin: URL, promptID: Int,
+                 decisionHandler: @escaping (KCPermissionDecision) -> Void) {
+        let requested = permissions.compactMap { KCSitePermission(rawValue: $0.intValue).map(Self.unbridged) }
+        guard let onEvent, !requested.isEmpty else { return decisionHandler(.dismiss) }
+        onEvent(.permissionRequest(PermissionRequest(id: promptID, origin: origin, permissions: requested) { allow in
+            decisionHandler(allow.map { $0 ? .allow : .block } ?? .dismiss)
+        }))
+    }
+
+    func browser(_ browser: KCBrowser, permissionPromptDidCancel promptID: Int) {
+        onEvent?(.permissionRequestCancelled(id: promptID))
+    }
 
     func browser(_ browser: KCBrowser, openURLInNewTab url: URL, foreground: Bool) {
         onEvent?(.openInNewTab(url, foreground: foreground))

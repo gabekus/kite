@@ -85,6 +85,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     weak var capturePopover: NSPopover?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
+    /// Arc's permission prompt over the focused tab, while its site waits for an answer.
+    var permissionPrompt: PermissionPromptCard?
     /// Kite's own pages (kite://history, kite://archive) over the panes showing them, by tab.
     private var internalPages: [UUID: (page: InternalPage, host: NSView)] = [:]
     private var commandBarVisible = false
@@ -394,6 +396,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         if let window = window as? BrowserWindow { spaceSwipe.install(in: window) }
         pool.onLinkPeek = { [weak self] id, url in self?.openLinkPeek(url, from: id) }
+        pool.onPermissionRequestsChanged = { [weak self] in self?.updatePermissionPrompt() }
     }
 
     /// Puts `view` over the content card, above the page and glow and below ⌘J and the command bar.
@@ -537,6 +540,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         guard let focused else {
             glowView.setLoading(false, progress: 0)
             updateSadTab()
+            updatePermissionPrompt()
             return
         }
         pool.didShow(ids)
@@ -575,6 +579,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let page = store.pages[id] ?? PageStatus()
         glowView.setLoading(page.isLoading, progress: page.progress)
         updateSadTab()
+        updatePermissionPrompt()
     }
 
     private func updateSadTab() {
@@ -597,6 +602,32 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         // Re-adding brings it above a page shown since.
         contentClip.addSubview(host)
         sadTab = host
+    }
+
+    /// Arc's permission prompt for the focused tab's waiting request, at the top-leading corner of
+    /// its page (its pane in a split). Other tabs' requests wait until they're shown.
+    func updatePermissionPrompt() {
+        guard let id = shownTabID, let request = pool.permissionRequests[id] else {
+            permissionPrompt?.removeFromSuperview()
+            permissionPrompt = nil
+            return
+        }
+        var area = CGRect(x: 0, y: 0, width: contentClip.bounds.width, height: contentClip.bounds.height - contentClip.topInset)
+        if shownTabIDs.count > 1, let pane = splitPanes.frame(of: id) {
+            area = splitPanes.convert(pane, to: contentClip)
+        }
+        if let card = permissionPrompt, card.requestID == request.id, card.superview === contentClip {
+            card.place(in: area, of: contentClip)
+            return
+        }
+        permissionPrompt?.removeFromSuperview()
+        let card = PermissionPromptCard(request: request) { [weak self] allow in
+            self?.pool.answerPermissionRequest(id, allow: allow)
+        }
+        card.place(in: area, of: contentClip)
+        contentClip.addSubview(card)
+        permissionPrompt = card
+        card.animateIn()
     }
 
     /// Draws Kite's own pages over the shown tabs on kite:// URLs. Their engine pages stay blank.
