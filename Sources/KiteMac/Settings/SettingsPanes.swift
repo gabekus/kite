@@ -501,15 +501,19 @@ struct AdvancedPane: View {
             SettingsSection {
                 AutoPictureInPictureRow()
                 SettingsSeparator()
-                UnsupportedToggle("Allow websites to get your theme data", icon: SettingsIcon(symbol: "paintpalette.fill", color: .purple))
+                ThemeDataRow()
                 SettingsSeparator()
                 BoostsEnabledRow()
             }
             HStack(spacing: 8) {
-                Button("More Settings…") {}.disabled(true)
+                // Arc opens arc://settings; Kite's Chromium settings pages start at Privacy and security.
+                Button("More Settings…") {
+                    guard let app = NSApp.delegate as? AppDelegate, let store = app.browserStore else { return }
+                    app.openSettingsPage(.privacy, profile: store.state.selectedProfileDirectory)
+                }
                 Button("Reset Translated-site Prompts") {}.disabled(true)
                 Spacer()
-                Button("Export Data") {}.disabled(true)
+                Button("Export Data") { (NSApp.delegate as? AppDelegate)?.exportData(from: NSApp.keyWindow) }
             }
             .padding(.top, 4)
             // Kite's own: a switch for each address field and toolbar button, then settings Arc doesn't have.
@@ -548,6 +552,26 @@ private struct AutoPictureInPictureRow: View {
                 .toggleStyle(.switch).labelsHidden().controlSize(.mini)
         }
     }
+}
+
+/// Arc's "Allow websites to get your theme data" (`themeToCSSSharingAllowed`, unset: on): pages
+/// get the space theme as `--arc-palette-*` CSS properties (`ThemeCSS`), switched live.
+private struct ThemeDataRow: View {
+    @AppStorage(ThemeCSS.allowedKey) private var allowed = true
+
+    var body: some View {
+        SettingsRow(title: "Allow websites to get your theme data", icon: SettingsIcon(symbol: "paintpalette.fill", color: .purple)) {
+            Toggle("", isOn: Binding(get: { allowed }, set: {
+                allowed = $0
+                NotificationCenter.default.post(name: .kiteThemeCSSSharingChanged, object: nil)
+            }))
+            .toggleStyle(.switch).labelsHidden().controlSize(.mini)
+        }
+    }
+}
+
+extension Notification.Name {
+    static let kiteThemeCSSSharingChanged = Notification.Name("KiteThemeCSSSharingChanged")
 }
 
 /// Arc's "Enable Boosts on websites you visit" (`hasDisabledBoostsInPreferences`, unset: on).

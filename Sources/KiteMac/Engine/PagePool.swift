@@ -138,7 +138,38 @@ final class PagePool {
         let page = engine.makePage(url: url, restoring: restoring)
         register(page, id: tab.id)
         pageProfiles[tab.id] = engine.profileDirectory
+        // Before the engine asks for the first document's scripts.
+        page.themeCSS = themeCSS(forTabs: [tab.id])[tab.id] ?? nil
         return page
+    }
+
+    /// Settings › Advanced › "Allow websites to get your theme data": each live page gets its
+    /// space's theme as CSS (favorites, which are in every space, the current space's), or none
+    /// when the switch is off. Pages that already have it are left alone.
+    func updateThemeCSS() {
+        let ids = Set(pages.keys)
+        guard !ids.isEmpty else { return }
+        for (id, css) in themeCSS(forTabs: ids) where pages[id]?.themeCSS != css {
+            pages[id]?.themeCSS = css
+        }
+    }
+
+    private func themeCSS(forTabs ids: Set<UUID>) -> [UUID: String?] {
+        let state = store.state
+        guard ThemeCSS.isAllowed() else { return Dictionary(uniqueKeysWithValues: ids.map { ($0, nil) }) }
+        var themes: [UUID: Theme] = [:]
+        for space in state.spaces {
+            for tab in space.allTabs where ids.contains(tab.id) { themes[tab.id] = space.theme }
+        }
+        var cache: [Theme: String] = [:]
+        func css(_ theme: Theme) -> String {
+            if let known = cache[theme] { return known }
+            let made = ThemeCSS.css(for: theme)
+            cache[theme] = made
+            return made
+        }
+        let current = state.selectedSpace.theme
+        return Dictionary(uniqueKeysWithValues: ids.map { ($0, css(themes[$0] ?? current)) })
     }
 
     /// Pages whose tab now belongs to another profile (its space moved): they're closed, and

@@ -3130,3 +3130,28 @@ the priorities read).
 - Inferred / unverified: whether Arc's items span spaces (Kite: current space), `preferredSnapshotWidth` (Kite 180 pt),
   the highlight and panel colours (Kite: primary at 15%, hudWindow material), split items (Kite: one card per tab),
   and no pixel comparison with Arc (opening it needs keys sent to Arc).
+
+## Settings › Advanced: theme data for websites, Export Data, More Settings… → `ThemeCSS`, `DataExport` (KiteCore), `PagePool.updateThemeCSS()`, `AppDelegate.exportData(from:)` (Arc 1.171 strings, disassembly and decompile, defaults key names, Settings AX recording; 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, Ghidra decompiles in `~/rea-arc/decomp/out-g95/at*.txt`, `~/rea-arc/settings/pane-7.txt`.
+
+**Allow websites to get your theme data** (g95)
+- Label at strings 80415, in Arc's AdvancedPreferences; switch on in the AX recording with the key unset (pane-7: `[584,427]`, Value=1). Defaults key `themeToCSSSharingAllowed` (strings 64195; `allowThemeToCSSSharing` in the view state).
+- `FUN_1000c63c0` builds a `[String: String]` of twelve properties, in this order of string literals (strings 61305–61316): `--arc-palette-foregroundPrimary`, `…Secondary`, `…Tertiary`, `maxContrastColor`, `minContrastColor`, `backgroundExtra`, `background`, `focus`, `hover`, `cutoutColor`, `title`, `subtitle`. Each value comes from a key path into the theme's palette, picking the light or dark variant from `NSAppearance`.
+- Then the backdrop (strings 61317–61319): one-colour themes add `--arc-background-simple-color`; gradients add `--arc-background-gradient-color` + index and `--arc-background-gradient-overlay-color` + index, one per colour.
+- Values: `FUN_1009ac0b8` converts the colour to `displayP3ColorSpace`, takes each component ×255 as an Int (truncated) and formats `#%02X%02X%02X%02X` (RGBA).
+- Text: `FUN_1000c53ac` makes `name: value;` lines, joined with `\n`, wrapped in `:root {\n` … `\n}`.
+- Delivery: `FUN_1000c5ef4` hands that string to a method of the window's web contents (protocol witness +0x328, name not recovered). `FUN_1000c565c` drives it from a Combine `switchToLatest` sink on `WindowContentViewController` (theme + the Bool setting), so it is re-sent whenever the theme, the shown contents or the switch change.
+- Kite: the same names, format and `:root` text. It's a `<style data-kite-theme-css>` in the top frame, added at document start (CEF document-start script, WebKit user script) and replaced live. Every live page gets its own space's theme (favorites take the current space's). Off removes it live.
+- Kite's palette is derived, because Kite's `Theme` has none: ink white or black by `prefersDarkForeground`; secondary, tertiary and subtitle ink at 60 / 40 / 60 %; hover ink at 10 %; background the OKLab mean; backgroundExtra and cutout ±0.06 / ∓0.06 L; focus `Theme.accent`. No overlay colours. Unverified: Arc's real palette values, and whether Arc reaches subframes.
+
+**Export Data** (g96)
+- Button label "Export Data", comment "exports Arc Spaces and tabs as Markdown", default name "Arc Data Export.md" (strings 80441–80442). `ExportDataButton` has one field, `sidebar: () -> SidebarContainer` (field descriptor in `__swift5_fieldmd`).
+- `FUN_101ffefac` opens an `NSSavePanel`: allowed type `UTType(filenameExtension: "md")`, else plain text; name field "Arc Data Export.md"; `canCreateDirectories = true`; `beginSheetModal(for: button's window)`.
+- On OK, `FUN_101fff3d0` starts a Task: `FUN_101fa43fc` makes the Markdown, then `Data.write(to:)`. A thrown error goes to an error presenter.
+- `FUN_101fa43fc` makes one block per space (`FUN_101fa4620`) and joins them with `\n`. A block is `# ` + the space title (whitespace runs folded to one space) and its items, joined with `\n`, plus a trailing `\n`.
+- Items (`FUN_101fa4c7c`, recursive): a tab is `- ` + `URL.absoluteString` (empty without a URL; no title). A folder is `String(repeating: "#", count: depth)` + ` ` + name, then its children at depth + 1. Top-level items are at depth 2.
+- Inferred: the space's containers (pinned, then unpinned) are rendered one after another with an empty line between them.
+- Kite: the same format, "Kite Data Export.md", the same panel. `KITE_TEST_EXPORT_DATA_PATH` (test builds only) writes without the panel.
+
+**More Settings…**: strings 80409–80410, "Clicking opens arc://settings", Chromium's own settings WebUI, which Kite's Alloy-style tabs can't host. Kite opens its own Chromium settings pages instead (kite://settings/privacy, from g100/g101) in a new tab for the current space's profile. **Reset Translated-site Prompts** stays disabled: Kite has no translation.
