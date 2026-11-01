@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// New and blank windows (⌘N, ⌃⌘N), restored on relaunch.
     private var windows: BrowserWindows!
     private var littleControllers: [LittleKiteWindowController] = []
+    /// Installed web apps (File › Install Page as App…, Window › Web Apps, kite-app:// links).
+    private(set) lazy var webApps = WebAppsController(supportDirectory: Self.supportDirectory)
     private lazy var airTraffic = AirTrafficControlStore(fileURL: Self.supportDirectory.appendingPathComponent("LinkRouting.json"))
     /// Routes menu commands to whichever browser window is in front.
     private var menuRouter: MenuRouter!
@@ -84,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             history: history, fileURL: Self.supportDirectory.appendingPathComponent("windows.json")
         )
         windows.restore()
+        setUpWebApps()
 
         automation = AutomationController(store: store, supportDirectory: Self.supportDirectory)
         automation.host = windowController
@@ -187,6 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let spaceIDs = Set(store.state.spaces.map(\.id))
         var openedTab = false
         for url in urls {
+            // A web app's launcher (~/Applications/Kite Apps/<Name>.app) opens kite-app://<id>.
+            if webApps.handleLaunchURL(url) { continue }
             if MailHandler.isMailto(url) {
                 // Kite as the default mail app (it registers for mailto, as Arc does): the default
                 // web mail app's compose page in a new tab, else the system's mail app if that isn't Kite.
@@ -210,6 +215,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         if openedTab { windowController.window?.makeKeyAndOrderFront(nil) }
+    }
+
+    /// Installed apps' windows send links and popups to the main window, like Little Kite's.
+    private func setUpWebApps() {
+        let main = windowController!
+        let store = self.store!
+        webApps.host = WebAppsController.Host(
+            engine: { [weak main] in main?.pool.engine ?? self.engine },
+            openTab: { [weak main] url in
+                store.mutate { _ = $0.openTab(url: url) }
+                if !UIDiagnostics.enabledByEnvironment { main?.window?.makeKeyAndOrderFront(nil) }
+            },
+            adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) },
+            move: { [weak main] page, url, title in main?.adopt(page, url: url, title: title, in: nil) },
+            mainWindow: { [weak main] in main?.window }
+        )
+        WebAppInstallOffers.shared.isInstalled = { [weak webApps] id in webApps?.state.app(id: id) != nil }
+        webApps.menu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu?.item(withTitle: "Web Apps")?.submenu
     }
 
     /// Kite menu → Air Traffic Control… (Arc: Preferences → Links → Air Traffic Control…).

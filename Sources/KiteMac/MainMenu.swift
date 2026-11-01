@@ -151,6 +151,8 @@ enum MainMenu {
             item("Capture…", #selector(BrowserWindowController.capturePage(_:)), id: "capturePage"),
             item("Capture Full Page", #selector(BrowserWindowController.captureFullPage(_:)), id: "captureFullPage"),
             item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"),
+            // A Kite addition (Arc has no installed apps): Chrome's "Install page as app…", for the current site.
+            item("Install Page as App…", #selector(BrowserWindowController.installPageAsApp(_:)), id: "installPageAsApp"),
             // "Print", no ellipsis, as in Arc's File menu.
             item("Print", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
             .separator(),
@@ -355,6 +357,8 @@ enum MainMenu {
             // Arc's MainMenu.nib has these as command-bar actions, out of the menu bar, with these keywords.
             commandBarOnly(item("New Boost", #selector(BrowserWindowController.newBoost(_:)), id: "newBoost"), keywords: boostKeywords),
             commandBarOnly(item("Edit Boost", #selector(BrowserWindowController.editBoost(_:)), id: "editBoost"), keywords: boostKeywords),
+            // Installed web apps (a Kite addition); AppDelegate's WebAppsController fills it in.
+            submenuItem("Web Apps", []),
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), toTarget: false, id: "bringAllToFront"),
         ])
