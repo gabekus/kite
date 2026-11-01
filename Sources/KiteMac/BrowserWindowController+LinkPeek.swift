@@ -3,7 +3,8 @@ import KiteCore
 
 /// Arc's Peek: a link from a pinned tab or favorite to another site (or any ⇧-clicked link) opens in a card
 /// over the page instead of navigating the tab. Esc, ⌘W, the close button, a click outside the card or a
-/// two-finger swipe right close it; the other buttons turn its page into a tab or a split pane. (`setPeeking` is the sidebar's reveal.)
+/// two-finger swipe right close it, and Edit › Undo Close Peek (⌘Z) brings it back; the other buttons turn its page
+/// into a tab or a split pane. (`setPeeking` is the sidebar's reveal.)
 @MainActor
 final class LinkPeekSession {
     let sourceTabID: UUID
@@ -42,17 +43,17 @@ extension BrowserWindowController {
         }
         session.view.onControl = { [weak self] control in
             switch control {
-            case .close: self?.closeLinkPeek(animated: true)
+            case .close: self?.closeLinkPeek(animated: true, undoable: true)
             case .expand: self?.expandLinkPeek()
             case .split: self?.splitLinkPeek()
             }
         }
-        session.view.onBackgroundClick = { [weak self] in self?.closeLinkPeek(animated: true) }
+        session.view.onBackgroundClick = { [weak self] in self?.closeLinkPeek(animated: true, undoable: true) }
         // Esc closes it, as Arc's "Exit the current context. Such as closing a Peek window".
         session.keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] event in
             guard let self, event.window === window, event.keyCode == 53, store.commandBar == nil,
                   event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return event }
-            closeLinkPeek(animated: true)
+            closeLinkPeek(animated: true, undoable: true)
             return nil
         }
         installOverContent(session.view)
@@ -65,7 +66,7 @@ extension BrowserWindowController {
             zoomFactor: { [weak page] in page?.zoomFactor ?? 1 },
             dismiss: { [weak self, weak session] in
                 guard let self, let session, linkPeek === session else { return }
-                closeLinkPeek(animated: true)
+                closeLinkPeek(animated: true, undoable: true)
             }
         )
         let pointerInWindow = window.mouseLocationOutsideOfEventStream
@@ -108,9 +109,19 @@ extension BrowserWindowController {
         }
     }
 
-    func closeLinkPeek(animated: Bool) {
+    /// Closes the Peek. `undoable` is for the user's own dismissals (Esc, ⌘W, the close button, a click outside,
+    /// the swipe, Redo): like Arc, they register "Close Peek" on the window's undo manager, so Edit › Undo Close
+    /// Peek (⌘Z) reopens it. Replacing it, switching tabs or turning it into a tab or pane doesn't.
+    func closeLinkPeek(animated: Bool, undoable: Bool = false) {
         guard let session = linkPeek else { return }
         linkPeek = nil
+        if undoable, let url = session.url, let undoManager = window?.undoManager {
+            let sourceTabID = session.sourceTabID
+            undoManager.registerUndo(withTarget: self) { controller in
+                controller.reopenLinkPeek(url, from: sourceTabID)
+            }
+            undoManager.setActionName(LinkPeek.closeUndoActionName)
+        }
         if let monitor = session.keyMonitor { NSEvent.removeMonitor(monitor) }
         session.swipe?.stop()
         session.page.onEvent = nil
@@ -120,6 +131,20 @@ extension BrowserWindowController {
         }
         if animated { session.view.animateOut(completion: finish) } else { finish() }
         shownPage?.focus()
+    }
+
+    /// Undo Close Peek: the Peek comes back over the tab it was opened from, at the page it was showing. Arc's undo
+    /// step keeps the URL, not the page, so the page loads again. Redo closes it again (Arc's `redoClose`).
+    private func reopenLinkPeek(_ url: URL, from tabID: UUID) {
+        guard store.state.location(of: tabID) != nil else { return }
+        if store.state.selectedTab?.id != tabID { store.mutate { $0.select(tab: tabID) } }
+        openLinkPeek(url, from: tabID)
+        guard let session = linkPeek, session.sourceTabID == tabID, let undoManager = window?.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { [weak session] controller in
+            guard let session, controller.linkPeek === session else { return }
+            controller.closeLinkPeek(animated: true, undoable: true)
+        }
+        undoManager.setActionName(LinkPeek.closeUndoActionName)
     }
 
     /// The Peek's page becomes a new tab (Arc's expand), already loaded.

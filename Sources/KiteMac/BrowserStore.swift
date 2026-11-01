@@ -50,6 +50,17 @@ final class BrowserStore {
     private(set) var commandBar: CommandBarMode?
     /// The space whose header name is being edited in place.
     private(set) var renamingSpaceID: UUID?
+    /// Arc's Create a Space page: the space being made (already in the strip, so its theme shows live),
+    /// the one to go back to on Cancel, and whether a colour has been picked yet.
+    private(set) var spaceCreation: SpaceCreation?
+    /// Change Space Icon…: the space whose header should open the icon picker.
+    private(set) var iconPickerRequest: UUID?
+
+    struct SpaceCreation: Equatable {
+        let spaceID: UUID
+        let returnTo: UUID
+        var themeChosen = false
+    }
     /// The tab whose sidebar title is being edited in place (Arc's Rename… / double-click).
     private(set) var renamingTabID: UUID?
     /// The folder whose name is being edited in place in the sidebar.
@@ -105,6 +116,8 @@ final class BrowserStore {
     @ObservationIgnored weak var link: WindowLink?
     /// After every change: AppDelegate saves the extra windows (windows.json).
     @ObservationIgnored var didChangeState: (() -> Void)?
+    /// Where a sidebar drag that leaves the sidebar can drop: the window's page area (Split View).
+    @ObservationIgnored weak var sidebarDragContent: SidebarDragContentTarget?
     /// Tidy Tab Titles names the tabs pinned here; off in incognito, where nothing leaves the window.
     @ObservationIgnored var tidiesPinnedTabs = true
 
@@ -129,6 +142,8 @@ final class BrowserStore {
             NSLog("Kite: couldn't read session, starting fresh: \(error)")
             state = .makeDefault()
         }
+        // A Create a Space page left open at quit leaves a nameless, empty space behind.
+        for space in state.spaces where space.name.isEmpty && space.allTabs.isEmpty { state.deleteSpace(space.id) }
     }
 
     @discardableResult
@@ -165,6 +180,35 @@ final class BrowserStore {
         mutate { $0.archiveStaleTabs(olderThan: interval) }
     }
 
+    /// + › New Space: a nameless space right after this one, shown as Arc's Create a Space page. It keeps
+    /// this space's theme until a colour is picked.
+    func beginNewSpace() {
+        if let creation = spaceCreation { return mutate { $0.selectSpace(creation.spaceID) } }
+        if !isSidebarVisible { toggleSidebar() }
+        let current = state.selectedSpace
+        let id = mutate { $0.insertSpace(name: "", icon: "", theme: current.theme, profile: current.profile) }
+        spaceCreation = SpaceCreation(spaceID: id, returnTo: current.id)
+    }
+
+    func spaceThemeChosen() { spaceCreation?.themeChosen = true }
+
+    func finishNewSpace(name: String) {
+        guard let creation = spaceCreation else { return }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        mutate { $0.renameSpace(creation.spaceID, to: name) }
+        spaceCreation = nil
+    }
+
+    func cancelNewSpace() {
+        guard let creation = spaceCreation else { return }
+        spaceCreation = nil
+        mutate {
+            $0.deleteSpace(creation.spaceID)
+            $0.selectSpace(creation.returnTo)
+        }
+    }
+
     func addSpace() {
         let n = state.spaces.count
         mutate {
@@ -185,6 +229,14 @@ final class BrowserStore {
     }
 
     func endRenaming() { renamingSpaceID = nil }
+
+    func requestIconPicker(space id: UUID) {
+        if !isSidebarVisible { toggleSidebar() }
+        mutate { $0.selectSpace(id) }
+        iconPickerRequest = id
+    }
+
+    func iconPickerShown() { iconPickerRequest = nil }
 
     func beginRenaming(tab id: UUID) {
         renamingTabID = id

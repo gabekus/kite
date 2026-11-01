@@ -4,8 +4,7 @@ import SwiftUI
 
 // Boosts, Arc's per-site CSS and JavaScript. Arc edits one in its own window
 // (BoostsEditor.BoostsEditorWindowController) and lists them on its Library's Boosts page
-// (Window › View Boosts…). Kite has no Library yet, so the list opens in a window of its own;
-// `BoostsListView` is self-contained so the Library can show it as a page.
+// (Window › View Boosts…), `BoostsListView` here, shown by `LibraryView`.
 
 // MARK: - Alerts
 
@@ -333,105 +332,169 @@ struct CodeTextView: NSViewRepresentable {
     }
 }
 
-// MARK: - List
+// MARK: - Library page
 
-/// Every Boost, newest first, with Arc's row actions: open in the editor, turn on or off,
-/// rename and delete. Empty, it shows Arc's "Nothing Boosted Yet!".
+/// Arc's Library › Boosts page (`HomeButton.BoostsPage`, BoostsContentView / BoostCell): every Boost
+/// with an on/off switch (a 36 × 24 `Toggle`), click to edit (`onSelectBoost` →
+/// `showBoostsEditorForURL`), Rename and Delete (`showBoostsRenameDialog`,
+/// `showBoostsDeleteConfirmationDialog`), and, empty, "Nothing Boosted Yet!". Arc's empty state also links
+/// to its Boost Gallery, a page on Arc's site that installs nothing into Kite, so Kite leaves it out. Sizes, colours and the header are Kite's, matching
+/// its other Library pages: Arc's page was never on screen.
 struct BoostsListView: View {
-    /// Opens a Boost in its editor.
+    /// Arc's onSelectBoost: the Boost's site with its editor.
     let open: (Boost) -> Void
     /// The window alerts attach to.
     var window: () -> NSWindow? = { nil }
     private var model: BoostsModel { BoostsModel.shared }
 
+    enum Metrics {
+        static let maxWidth: CGFloat = 960
+        static let rowHeight: CGFloat = 44
+        static let cardRadius: CGFloat = 8
+    }
+
     var body: some View {
-        let boosts = model.library.boosts
+        VStack(spacing: 0) {
+            Text("Boosts")
+                .font(.system(size: 20, weight: .regular))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .frame(height: 56)
+            Divider()
+            content
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("boostsPage")
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        let boosts = model.library.libraryOrder
         if boosts.isEmpty {
-            VStack(spacing: 6) {
-                Image(systemName: "paintbrush")
-                    .font(.system(size: 28))
-                    .foregroundStyle(.secondary)
-                Text("Nothing Boosted Yet!").font(.headline)
-                Text("Choose New Boost in the command bar on a site to make your own.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityIdentifier("boostsEmpty")
+            emptyState
         } else {
-            List(boosts) { boost in
-                row(boost)
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(boosts) { boost in
+                        BoostRow(
+                            boost: boost,
+                            open: { open(boost) },
+                            rename: { rename(boost) },
+                            delete: { delete(boost) })
+                        if boost.id != boosts.last?.id {
+                            Divider().padding(.leading, 44)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("boostsList")
+                .background(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08)))
+                .frame(maxWidth: Metrics.maxWidth)
+                .padding(20)
+                .frame(maxWidth: .infinity)
             }
-            .accessibilityIdentifier("boostsList")
         }
     }
 
-    private func row(_ boost: Boost) -> some View {
-        HStack(spacing: 10) {
-            FaviconView(page: URL(string: "https://\(boost.domain)/"), size: 16)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(boost.name).lineLimit(1)
-                Text(boost.domain).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer()
-            Button(boost.isEnabled ? "Disable" : "Enable") { model.setEnabled(boost.id, !boost.isEnabled) }
-                .buttonStyle(.borderless)
-            Button {
-                BoostAlerts.rename(boost, in: window()) { model.rename(boost.id, to: $0) }
-            } label: { Image(systemName: "pencil") }
-                .buttonStyle(.borderless)
-                .help("Rename")
-            Button {
-                BoostAlerts.confirmDelete(boost, in: window()) { delete in
-                    guard delete else { return }
-                    BoostEditorWindowController.close(boost.id)
-                    model.delete(boost.id)
-                }
-            } label: { Image(systemName: "trash") }
-                .buttonStyle(.borderless)
-                .help("Delete")
+    /// Arc's BoostsEmptyStateView: its BoostLarge picture, "Nothing Boosted Yet!", and "Click
+    /// [paintbrush] in URL bar to make your own, or grab one from the Boost Gallery." Kite has no
+    /// paintbrush in its URL bar, so it names Kite's New Boost instead, and leaves out the gallery.
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "paintbrush")
+                .font(.system(size: 34))
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 4)
+            Text("Nothing Boosted Yet!")
+                .font(.system(size: 15, weight: .semibold))
+            Text("Choose \(Text("New Boost").bold()) in the command bar to make your own.")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
         }
-        .padding(.vertical, 4)
-        .opacity(boost.isEnabled ? 1 : 0.55)
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { open(boost) }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("boost-\(boost.id.uuidString.lowercased())")
+        .accessibilityIdentifier("boostsEmpty")
+    }
+
+    private func rename(_ boost: Boost) {
+        BoostAlerts.rename(boost, in: window()) { model.rename(boost.id, to: $0) }
+    }
+
+    private func delete(_ boost: Boost) {
+        BoostAlerts.confirmDelete(boost, in: window()) { delete in
+            guard delete else { return }
+            BoostEditorWindowController.close(boost.id)
+            model.delete(boost.id)
+        }
     }
 }
 
-/// Window › View Boosts… until the Library exists (Arc opens Library › Boosts).
-@MainActor
-final class BoostsWindowController: NSWindowController {
-    private static var shared: BoostsWindowController?
+/// One Boost: its site's icon, name and site, Rename and Delete buttons on hover, and the on/off
+/// switch, whose tooltip is Arc's Enable / Disable button title.
+private struct BoostRow: View {
+    let boost: Boost
+    let open: () -> Void
+    let rename: () -> Void
+    let delete: () -> Void
+    @State private var hovered = false
+    private var model: BoostsModel { BoostsModel.shared }
 
-    static func show() {
-        let controller = shared ?? BoostsWindowController()
-        shared = controller
-        controller.showWindow(nil)
+    var body: some View {
+        HStack(spacing: 12) {
+            FaviconView(page: URL(string: "https://\(boost.domain)/"), size: 16)
+            Text(boost.name)
+                .font(.system(size: 13))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(1)
+            Text(boost.domain)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if hovered {
+                accessory("pencil", "Rename", rename)
+                accessory("trash", "Delete", delete)
+            }
+            Toggle("", isOn: Binding(
+                get: { boost.isEnabled },
+                set: { model.setEnabled(boost.id, $0) }))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .frame(width: 36, height: 24)
+                .help(boost.isEnabled ? "Disable" : "Enable")
+                .accessibilityLabel(boost.isEnabled ? "Disable" : "Enable")
+                .accessibilityIdentifier("boostToggle")
+        }
+        .padding(.horizontal, 16)
+        .frame(height: BoostsListView.Metrics.rowHeight)
+        .background(hovered ? Color.primary.opacity(0.05) : .clear)
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 }
+        .onTapGesture(perform: open)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(boost.name)
+        .accessibilityIdentifier("boost-\(boost.id.uuidString.lowercased())")
     }
 
-    private init() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 420),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered,
-            defer: true
-        )
-        window.title = "Boosts"
-        window.minSize = NSSize(width: 320, height: 240)
-        window.isReleasedWhenClosed = false
-        window.setFrameAutosaveName("Boosts")
-        if window.frame.origin == .zero { window.center() }
-        super.init(window: window)
-        window.contentView = NSHostingView(rootView: BoostsListView(
-            open: { BoostEditorWindowController.show($0.id, refresh: nil) },
-            window: { [weak window] in window }
-        ))
+    private func accessory(_ symbol: String, _ label: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(label)
+        .accessibilityLabel(label)
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
 }

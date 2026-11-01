@@ -34,7 +34,7 @@ ADBLOCK_LIB="Sources/KiteAdblock/rust/target/lib/libkite_adblock.a"
 if [[ ! -f "$ADBLOCK_LIB" ]]; then
     scripts/build-adblock.sh
 fi
-links_adblock() { nm build/Kite.app/Contents/MacOS/Kite 2>/dev/null | grep -q ka_engine_; }
+links_adblock() { [[ $(nm build/Kite.app/Contents/MacOS/Kite 2>/dev/null | grep -c ka_engine_) -gt 0 ]]; }
 scripts/bundle-app.sh release
 if ! links_adblock; then
     # SwiftPM can reuse a manifest evaluated before the library existed.
