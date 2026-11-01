@@ -85,6 +85,36 @@ public struct History: Codable, Sendable, Equatable {
         entries.removeAll()
     }
 
+    /// Adds history from another browser (Import from Arc). A page already here keeps the
+    /// later visit and the higher count, so importing twice doesn't double anything.
+    /// Returns how many pages were new.
+    @discardableResult
+    public mutating func merge(_ imported: [HistoryEntry]) -> Int {
+        var added = 0
+        for entry in imported where Self.records(entry.url) {
+            let key = entry.url.absoluteString
+            guard var existing = entries[key] else {
+                entries[key] = entry
+                added += 1
+                continue
+            }
+            existing.visitCount = max(existing.visitCount, entry.visitCount)
+            if entry.lastVisit > existing.lastVisit {
+                existing.lastVisit = entry.lastVisit
+                if !entry.title.isEmpty { existing.title = entry.title }
+            }
+            if existing.title.isEmpty { existing.title = entry.title }
+            entries[key] = existing
+        }
+        if entries.count > Self.maxEntries { prune(to: Self.maxEntries) }
+        return added
+    }
+
+    /// Chromium's history timestamps: microseconds since 1601-01-01 UTC.
+    public static func chromiumDate(_ microseconds: Int64) -> Date {
+        Date(timeIntervalSince1970: Double(microseconds) / 1_000_000 - 11_644_473_600)
+    }
+
     /// The history page's Remove from History.
     public mutating func remove(_ urls: some Sequence<URL>) {
         for url in urls { entries[url.absoluteString] = nil }
