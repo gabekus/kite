@@ -138,6 +138,7 @@ extension BrowserWindowController {
     /// shows Arc's "Folder deleted" toast.
     func deleteFolder(_ id: UUID) {
         guard let window, let found = store.state.folder(matching: id.uuidString) else { return }
+        if let live = found.folder.live { return deleteLiveFolder(id, source: live.source, window: window) }
         let alert = NSAlert()
         alert.messageText = "Delete your \u{201C}\(found.folder.name)\u{201D} folder?"
         alert.informativeText = "Deleting this folder will archive the tabs inside it."
@@ -148,6 +149,24 @@ extension BrowserWindowController {
             guard response == .alertFirstButtonReturn, let self else { return }
             store.mutate { _ = $0.deleteFolder(id) }
             showToast("Folder deleted")
+        }
+    }
+
+    /// Arc's Delete Live Folder alert. Its tabs go without being archived: the next refresh would bring them back.
+    private func deleteLiveFolder(_ id: UUID, source: LiveFolder.Source, window: NSWindow) {
+        let alert = NSAlert()
+        alert.messageText = "Delete your \(source.displayName) Live Folder?"
+        alert.informativeText = "You can restore this folder at any time by right-clicking the sidebar."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons[0].hasDestructiveAction = true
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            if let controller = LiveFoldersController.shared {
+                controller.delete(id)
+            } else {
+                self?.store.mutate { $0.deleteLiveFolder(id) }
+            }
         }
     }
 

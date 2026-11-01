@@ -357,6 +357,12 @@ struct SidebarView: View {
 
     private func row(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int = 0, space: UUID, parent: UUID?) -> some View {
         SplitDropPreview(side: drag.splitSide(for: tab.id)) { tabRow(tab, pinned: pinned, selected: selected, depth: depth) }
+        // A live folder's new pull request, until it's opened.
+        .overlay(alignment: .leading) {
+            if let parent, store.state.folder(matching: parent.uuidString)?.folder.isUnread(tab) == true {
+                LiveUnreadDot().padding(.leading, indent(depth) + M.iconInset - 9)
+            }
+        }
         .modifier(SidebarDragSource(
             store: store,
             row: .init(id: tab.id, kind: .tab, space: space, pinned: pinned, folder: parent, depth: depth, frame: .zero),
@@ -1137,7 +1143,7 @@ private struct FolderRow: View {
 
     var body: some View {
         HStack(spacing: M.iconTextGap) {
-            Image(systemName: folder.isExpanded ? "folder" : "folder.fill")
+            Image(systemName: folder.live != nil ? "arrow.triangle.pull" : folder.isExpanded ? "folder" : "folder.fill")
                 .font(.system(size: 14))
                 .frame(width: M.iconSize, height: M.iconSize)
                 .opacity(0.75)
@@ -1176,12 +1182,16 @@ private struct FolderRow: View {
         .onTapGesture { if !isRenaming { onToggle() } }
         // Arc's folder menu (SidebarMenu+ListContextMenu), in its order, with the items Kite has.
         .contextMenu {
-            Button("Delete", action: onDelete)
-            Divider()
-            Button("Copy All Links") { copyLinks(folder.items.tabs.compactMap(\.url)) }
-                .disabled(folder.items.tabs.allSatisfy { $0.url == nil })
-            Divider()
-            Button("Rename…", action: onRename)
+            if let live = folder.live {
+                LiveFolderMenu(folder: folder, live: live, onDelete: onDelete)
+            } else {
+                Button("Delete", action: onDelete)
+                Divider()
+                Button("Copy All Links") { copyLinks(folder.items.tabs.compactMap(\.url)) }
+                    .disabled(folder.items.tabs.allSatisfy { $0.url == nil })
+                Divider()
+                Button("Rename…", action: onRename)
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
@@ -1648,6 +1658,8 @@ private struct SpaceContextMenu: View {
             guard let index = store.state.spaceIndex(space.id) else { return }
             store.mutate { _ = $0.createFolder(name: "New Folder", inSpace: index) }
         }
+        // Arc's binary lists Live Folders right after New Folder.
+        LiveFoldersSpaceMenu(store: store, space: space)
         Divider()
         Button("Delete Space") { actions.deleteSpace(space.id) }
             .disabled(store.state.spaces.count < 2)

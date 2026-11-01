@@ -42,12 +42,15 @@ public struct TabFolder: Identifiable, Hashable, Codable, Sendable {
     public var name: String
     public var isExpanded: Bool
     public var items: [PinnedItem]
+    /// Set for a live folder (LiveFolders.swift), whose tabs come from a source. Older sessions decode it as nil.
+    public var live: LiveFolder?
 
-    public init(id: UUID = UUID(), name: String, isExpanded: Bool = true, items: [PinnedItem] = []) {
+    public init(id: UUID = UUID(), name: String, isExpanded: Bool = true, items: [PinnedItem] = [], live: LiveFolder? = nil) {
         self.id = id
         self.name = name
         self.isExpanded = isExpanded
         self.items = items
+        self.live = live
     }
 }
 

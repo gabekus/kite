@@ -344,6 +344,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         selectedSpaceID = spaces[s].id
         self[location].lastActiveAt = now
         collapseExpandedSplit(toShow: id)
+        markLiveItemRead(id)
     }
 
     public mutating func update(tab id: UUID, _ body: (inout BrowserTab) -> Void) {
