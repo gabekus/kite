@@ -142,6 +142,8 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) BOOL canGoForward;
 /// 1.0 = 100%.
 @property (nonatomic) double zoomFactor;
+/// Mutes the tab's audio in the browser (Chromium's tab mute); the page isn't told.
+@property (nonatomic) BOOL audioMuted;
 /// Requests the ad blocker stopped since the page started loading.
 @property (nonatomic, readonly) NSInteger blockedCount;
 
