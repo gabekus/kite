@@ -1024,6 +1024,34 @@ Nothing in Arc was pressed or run. The only open Arc window had its sidebar hidd
   colours and hover reveal; the header row's height (25, the divider's), font and close button; the minimum of 3
   tabs (`canAutoOrganizeTodayTabs`'s rule isn't in the strings); showing the divider row with no pinned tabs so the
   button has somewhere to be. Arc's Clear button on the same row isn't in Kite yet.
+## Tidy Downloads → `TidyDownloads` (KiteCore), `DownloadTidier` (Arc 1.171 strings, defaults and disassembly, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 43295, 174650-174675, 160610, 73907,
+75911; `~/rea-arc/decomp/arc.s` 738300-739230 (the request builder, in `AppState+OnDeterminingFilename.swift`);
+`defaults read company.thebrowser.Browser` (key names and booleans only).
+
+- Setting: `renameDownloadsEnabled` (Arc Max, "Auto-Renamed Tabs and Downloads"); **1 in Gabe's Arc**, so Kite's
+  `tidyDownloadsEnabled` defaults on. Kite menu › Tidy Downloads (Rename with Claude) turns it off until there's a
+  Settings window. Feature flag `rename-downloads-using-ai`.
+- Request: `beginRename(browserContextID:downloadID:defaultFilename:sourceUrl:webContentsTitle:referrerTitle:)`
+  sends the original filename, the source tab title and the source domain, asks for a "helpful, concise and
+  readable" name of 2-4 words (keep informative names, drop IDs and "(1)"/"(copy)" cruft, shorten dates and drop
+  seconds, fix casing and spacing, add context from the tab title when the name says nothing), answers as JSON
+  `{newName}` in the user's language. Kite's prompt follows those rules in its own words and examples.
+- Guard: Arc refuses an empty name or one starting with "." ("Tried to auto-rename file to empty filename or
+  filename starting with '.'"). Kite also keeps the original extension exactly (tar.gz as one), strips `/ : \`,
+  caps the name at 120 characters, and renames with `renamex_np(RENAME_EXCL)` to a free "Name 2.ext", so nothing
+  is ever overwritten.
+- Feedback: toast "Download renamed!" with an Undo accessory (`arrow.uturn.backward`,
+  `DownloadRenamedToastContentOptions`); Undo shows "Download name reverted!". Kite reuses its toast with that
+  symbol in the share button's place.
+- When: Arc builds the request while Chromium determines the filename (`AppState+OnDeterminingFilename`), so the
+  file lands under the new name. **Kite renames after the download completes** (the engines pick the path
+  synchronously today), then shows the toast. Inferred, not verified: that Arc holds the download for the answer.
+- Not built: Arc's sidebar banner for renamed downloads (`DownloadRenameItemState`, `didClickUndoDownloadRename`,
+  `didDismissDownloadRenameBanner`), the `DownloadRenamePreview` settings illustration, rename analytics.
+  Arc's model runs on its server; Kite's is Claude Code on the fast model (`claude -p --model haiku`, no tools, no
+  MCP servers, 30 s limit).
 ## AppleScript dictionary → `Resources/Kite.sdef`, `AppleScript.swift` (Arc 1.171 sdef, Info.plist, nib, strings, 1 Nov 2026)
 
 - `Arc.app/Contents/Info.plist`: `NSAppleScriptEnabled` 1, `OSAScriptingDefinition` `Arc.sdef` (read with
@@ -1301,6 +1329,30 @@ swapped without Arc's wave and slash animation; its 0.6 opacity copies Kite's cl
 - Inferred, not observed (Arc's task manager wasn't opened): the button wording ("End Task", the refreshed UI's,
   over the older "End Process"), the window size, the row order, the utility names, and double-click to show a
   tab. Network reads N/A: Kite has no per-tab network counter yet.
+
+## ⌥⌘-click opens a link in Split View → `LinkClick` (KiteCore) (Arc 1.169 decomp, 1.171 strings, 1 Nov 2026)
+
+- The routing is in `decidePolicyForWebContentFrameNavigation(windowID:windowContentID:action:disposition:modifierFlags:response:)`
+  (arc-strings ~83229, `WindowsData+WebContentFrame.swift`). The helper is FUN_102add204 (`~/rea-arc/decomp/out5/g37-policy.txt`) and
+  its caller is FUN_102ad9450 (`out5/g37-caller.txt`).
+- The disposition is a single-payload Swift enum: `littleWindow(…)`, then the empty cases `ignoreAction, currentTab, newBackgroundTab,
+  newForegroundTab, newWindow, popup, splitView, incognito, newPictureInPicture`. These come from the `__swift5_fieldmd` record.
+  Their tags are 2…10 **[inferred]**: that numbering puts the "opening a new window should be handled separately" log on tag 6 (newWindow), and the
+  caller's `0x5bc` mask leaves out exactly newWindow and incognito.
+- Modifiers are Arc's own option set, mapped from NSEvent at 0x1009a223c: shift 1, control 2, option 4, command 8. The constants are at
+  0x103698b10…b48.
+- `newBackgroundTab` (Chromium's ⌘-click or middle-click) at 0x102add4a8:
+  - If `optionCommandClickLittleArcEntryPointEnabled` (settings key index 0x3f) is on and ⌥⌘ are held, the link opens in Little Arc
+    ("Open Little Arc when clicking on links with ⌥⌘ held").
+  - Otherwise, if ⌥ is held, the disposition becomes `splitView` (tag 8).
+  - Otherwise it opens a background tab, or the current tab.
+  - `newForegroundTab` (⇧⌘) passes through unchanged.
+  - ⇧ alone is Peek (the caller tests shift, `disableShiftClickToOpenLinksInModal`).
+- That Little Arc key isn't in Gabe's defaults or among the `registerDefaults` keys found, so it is probably off by default **[inferred]**. Kite has
+  no ⌥⌘ Little Arc entry point, so in Kite ⌥⌘-click always splits.
+- What the split looks like (which pane, focus, what a full split does) isn't traced. Kite follows Add Split View: a new pane after the
+  clicked tab, focused. On a full split Kite does nothing, which matches Gabe's choice for Add Split View; Arc shows "Cannot Add New Pane".
+- No settings text mentions this click. The only Links-pane modifier settings are Peek (⇧) and Little Arc (⌥⌘).
 
 ## Still unknown
 

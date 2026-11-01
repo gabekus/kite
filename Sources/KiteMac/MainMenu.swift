@@ -100,6 +100,8 @@ enum MainMenu {
             item("Link Previews (Hold ⇧ over a Link)", #selector(AppDelegate.toggleLinkPreviews(_:)), toTarget: false),
             // Arc Max's Tidy Tabs (tidyTabsEnabled), on by default as in Gabe's Arc.
             item("Tidy Tabs", #selector(AppDelegate.toggleTidyTabs(_:)), toTarget: false),
+            // Arc Max's Tidy Downloads (renameDownloadsEnabled), on as in Gabe's Arc.
+            item("Tidy Downloads (Rename with Claude)", #selector(AppDelegate.toggleTidyDownloads(_:)), toTarget: false),
             // Arc Max's "Ask on Page" (askOnPageEnabled), off by default as in Arc.
             item("Ask on Page (⌘F)", #selector(AppDelegate.toggleAskOnPage(_:)), toTarget: false),
             // Arc Max's Tidy Tab Titles (renamePinnedTabsEnabled), on as in Gabe's Arc.
