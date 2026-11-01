@@ -15,7 +15,7 @@ import Testing
 
     @Test func isListedForClaude() async throws {
         let tool = try #require(MCPServer(version: "1").tools.arrayValue?.first { $0["name"]?.stringValue == "sign_in" })
-        #expect(tool["description"]?.stringValue?.contains("1Password") == true)
+        #expect(tool["description"]?.stringValue?.contains("password manager") == true)
         #expect(tool["inputSchema"]?["properties"]?["reason"] != nil)
         #expect(AutomationCommand.Tool.signIn.takesTab)
         #expect(!AutomationCommand.Tool.signIn.isReadOnly)

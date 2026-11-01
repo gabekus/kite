@@ -211,20 +211,21 @@ private struct ExtensionIcon: View {
     }
 }
 
-/// 1Password's key in the sidebar's address field: part of Kite, always shown while
-/// 1Password is installed and on. Sized like Arc's buttons at the field's right end (30pt).
-struct OnePasswordFieldButton: View {
+/// The password manager's key in the sidebar's address field (1Password or Bitwarden,
+/// chosen in Settings): part of Kite, always shown while it's installed and on. Sized like
+/// Arc's buttons at the field's right end (30pt).
+struct PasswordManagerFieldButton: View {
     @ObservedObject var model: ExtensionsModel
     @State private var anchor: NSView?
     @State private var hovering = false
 
-    /// Set by the 1Password integration to open 1Password its own way; returns false to
-    /// fall back to the extension's popup.
-    static var open: ((NSView) -> Bool)?
+    /// Set by the password manager integration to open it its own way, given the popup
+    /// its manifest names; returns false to fall back to ExtensionPopover.
+    static var open: ((NSView, URL?) -> Bool)?
 
     var body: some View {
-        if let onePassword = model.onePassword {
-            Button { open(onePassword) } label: {
+        if let manager = model.passwordManager {
+            Button { open(manager) } label: {
                 Image(systemName: "key.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .frame(width: 30, height: 30)
@@ -235,15 +236,15 @@ struct OnePasswordFieldButton: View {
             .buttonStyle(.plain)
             .opacity(hovering ? 0.9 : 0.6)
             .onHover { hovering = $0 }
-            .help("1Password")
-            .accessibilityLabel("1Password")
+            .help(manager.name)
+            .accessibilityLabel(manager.name)
         }
     }
 
-    private func open(_ onePassword: InstalledExtension) {
+    private func open(_ manager: InstalledExtension) {
         guard let anchor else { return }
-        if Self.open?(anchor) == true { return }
-        if let popup = onePassword.popupURL {
+        if Self.open?(anchor, manager.popupURL) == true { return }
+        if let popup = manager.popupURL {
             ExtensionPopover.show(popup, engine: model.engine, relativeTo: anchor.bounds, of: anchor)
         }
     }

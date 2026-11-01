@@ -61,7 +61,7 @@ struct SidebarView: View {
     /// Opens the extensions popover from the address field's hover button; nil where
     /// extensions don't run (incognito, WebKit).
     var showExtensions: ((NSView) -> Void)?
-    /// Always shown at the address field's right end (1Password's key); hides itself when
+    /// Always shown at the address field's right end (the password manager's key); hides itself when
     /// there's nothing to show.
     var fieldAccessory: AnyView?
     /// Opens Site Controls from the address field's hover button.

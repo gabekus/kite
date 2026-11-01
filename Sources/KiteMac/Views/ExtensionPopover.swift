@@ -1,5 +1,6 @@
 #if canImport(CEFBridge)
 import AppKit
+import CEFBridge
 import KiteCore
 
 /// An extension's toolbar popup (chrome-extension://<id>/<default_popup>) in a Kite
@@ -15,6 +16,7 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
     private let page: WebPage
     private var sizePolls = 0
+    private var observers: [NSObjectProtocol] = []
     private static var shown: ExtensionPopover?
 
     enum NewTab {
@@ -67,6 +69,15 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
         popover.behavior = .transient
         popover.animates = false
         popover.delegate = self
+        // A permission prompt the popup asked for (Bitwarden's "Unlock with biometrics")
+        // belongs to the popup's page: clicking it mustn't close the popup and so cancel it,
+        // and the popup mustn't cover it. The popup steps aside until it's answered.
+        for (name, prompting) in [(Notification.Name.KCExtensionInstallDialogDidOpen, true),
+                                  (.KCExtensionInstallDialogDidClose, false)] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setPrompting(prompting) }
+            })
+        }
         page.onEvent = { [weak self] event in
             switch event {
             case let .navigationState(isLoading, _, _) where !isLoading: self?.fitToPage()
@@ -110,7 +121,15 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
                height: min(max(size.height, minimumSize.height), maximumSize.height))
     }
 
+    private func setPrompting(_ prompting: Bool) {
+        guard popover.isShown, let window = popover.contentViewController?.view.window else { return }
+        popover.behavior = prompting ? .applicationDefined : .transient
+        if prompting { window.orderOut(nil) } else { window.orderFront(nil) }
+    }
+
     func popoverDidClose(_ notification: Notification) {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
         page.onEvent = nil
         page.close()
         if Self.shown === self { Self.shown = nil }

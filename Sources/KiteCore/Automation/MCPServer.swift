@@ -30,7 +30,7 @@ public struct MCPServer: Sendable {
         Kite asks the user before anything that submits a form, sends, posts, pays, buys or deletes, and before typing \
         into password or payment fields; if they decline, the tool returns an error. \
         Don't retry a declined action. \
-        When a page needs the user signed in, call sign_in: the user signs in (with 1Password) while you wait, and \
+        When a page needs the user signed in, call sign_in: the user signs in (with their password manager) while you wait, and \
         you never see the password. Never ask for a password or type one yourself. \
         To check Kite's own interface (sidebar, command bar, menus, cursors, animations), use the ui tool, not \
         screenshots of the screen or the user's mouse. \

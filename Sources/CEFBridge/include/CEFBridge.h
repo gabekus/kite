@@ -68,6 +68,8 @@ extern NSString * const KCRuntimeOpenURLNotification;
 
 /// Posted on the main thread when Chrome's extension install dialog closes, whether
 /// the extension was added or not.
+/// Chrome's install, uninstall or permission dialog for an extension was attached to a Kite window.
+extern NSString * const KCExtensionInstallDialogDidOpenNotification;
 extern NSString * const KCExtensionInstallDialogDidCloseNotification;
 
 @interface KCRuntime (ExtensionWindows)
