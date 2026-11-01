@@ -206,6 +206,37 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
     func setForceDark(_ enabled: Bool) { browser.setForceDark(enabled) }
 
+    func sitePermission(_ permission: SitePermission, for url: URL) -> SitePermissionValue? {
+        switch browser.sitePermission(Self.bridged(permission), for: Self.site(url)) {
+        case .allow: .allow
+        case .block: .block
+        default: .ask
+        }
+    }
+
+    func setSitePermission(_ permission: SitePermission, _ value: SitePermissionValue, for url: URL) {
+        let bridged: KCSitePermissionValue = switch value {
+        case .allow: .allow
+        case .block: .block
+        case .ask: .default
+        }
+        browser.setSitePermission(Self.bridged(permission), value: bridged, for: Self.site(url))
+    }
+
+    /// Content settings are per origin.
+    private static func site(_ url: URL) -> URL {
+        SiteControls.origin(of: url).flatMap(URL.init(string:)) ?? url
+    }
+
+    private static func bridged(_ permission: SitePermission) -> KCSitePermission {
+        switch permission {
+        case .camera: .camera
+        case .microphone: .microphone
+        case .location: .location
+        case .notifications: .notifications
+        }
+    }
+
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
         browser.evaluateJavaScript(script, completion: completion)
     }
