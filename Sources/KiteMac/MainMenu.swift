@@ -92,6 +92,8 @@ enum MainMenu {
             submenuItem("Archive tabs after", ArchiveInterval.allCases.enumerated().map { i, interval in
                 item(interval.title, #selector(AppDelegate.setArchiveInterval(_:)), tag: i, toTarget: false)
             }),
+            // Arc's Arc menu: "Check for Updates…", no shortcut, last item before Services (read from its menu bar).
+            item("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)), toTarget: false, id: "checkForUpdates"),
             .separator(),
             item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false, id: "hideKite"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false, id: "hideOthers"),
