@@ -72,4 +72,42 @@ public struct SpaceSwipe: Equatable, Sendable {
         if towards < -Self.flickVelocity { return 0 }
         return abs(offset) >= pageWidth / 2 ? d : 0
     }
+
+    /// Where the pages sit `elapsed` seconds into a settle that started `from` points off rest: a critically
+    /// damped spring with this response, as SwiftUI's `.spring(response:dampingFraction: 1)` draws it. The
+    /// controller steps it once a frame, so a swipe that catches the pages mid-settle starts from where
+    /// they really are.
+    public static func settle(from: Double, elapsed: Double, response: Double) -> Double {
+        guard elapsed > 0 else { return from }
+        let omega = 2 * Double.pi / max(response, 0.001)
+        let x = from * (1 + omega * elapsed) * exp(-omega * elapsed)
+        // Under a tenth of a point is on screen as at rest.
+        return abs(x) < 0.1 ? 0 : x
+    }
+
+    /// The spaces whose pages are built, by index: the selected one and its neighbours, so a swipe has
+    /// both sides ready the moment it starts (Arc's collection view keeps them too: its list is three
+    /// pages wide). While the pages settle after a switch they stay those of `anchor`, the space the
+    /// switch left, plus the new one, so no page is built mid-slide; a far jump shows just the two.
+    public static func builtPages(selected: Int, anchor: Int?, count: Int) -> [Int] {
+        guard count > 0 else { return [] }
+        let centre = anchor ?? selected
+        var pages = Array(max(centre - 1, 0)...min(centre + 1, count - 1))
+        if !pages.contains(selected) { pages.append(selected) }
+        return pages.sorted()
+    }
+
+    /// How lit space `index`'s icon in the bar is, 0...1, with the pages `offset` points from rest: each built
+    /// page counts by how much of the sidebar it covers, shared out so the lit amounts add up to one. The
+    /// selected space's icon hands over to the neighbour's as the pages slide, in a swipe, its settle and a
+    /// switch from the keyboard alike; rubber-banding past the last space leaves it fully lit.
+    public static func highlight(of index: Int, selected: Int, built: [Int], offset: Double, pageWidth: Double) -> Double {
+        guard pageWidth > 0 else { return index == selected ? 1 : 0 }
+        func cover(_ i: Int) -> Double {
+            max(0, 1 - abs(Double(i - selected) * pageWidth + offset) / pageWidth)
+        }
+        let total = built.reduce(0) { $0 + cover($1) }
+        guard total > 0 else { return index == selected ? 1 : 0 }
+        return built.contains(index) ? cover(index) / total : 0
+    }
 }
