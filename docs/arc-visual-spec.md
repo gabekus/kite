@@ -681,6 +681,28 @@ user's is copied. Test fixtures are made up.
   the space bar), the card fill colour (Kite uses the address field's fill), the title font (a CTFont; Kite uses 12 pt
   medium), button hover fills, which controls drop at 160 / 126, and whether closing the player pauses (Kite pauses).
 
+## Check for Updates (Arc 1.171 Info.plist, menu bar and strings, 1 Nov 2026)
+
+- Menu (read through AX, nothing pressed): Arc › … Import from Another Browser…, **Check for Updates…** (no
+  shortcut, enabled), then a separator and Services.
+- Mechanism: Sparkle (`Contents/Frameworks/Sparkle.framework`; `SPUUpdater`, `SPUUpdaterDelegate` in the strings).
+  Info.plist: `SUFeedURL` = an appcast on releases.arc.net, `SUPublicEDKey` (EdDSA-signed updates),
+  `SUEnableAutomaticChecks` = 1, `SUAutomaticallyUpdate` = 1, `SUScheduledCheckInterval` = 28800 (8 hours).
+- Arc draws its own Sparkle UI (`SoftwareUpdaterClient.CustomUserDriver`, `UpdaterWindowView`, `UpdaterStatusView`,
+  `ReleaseNotesView`; arc-strings.txt around lines 80110-80250): "Checking for updates..." with a cancel button;
+  "Your browser is up to date"; "A new version is available" (fallback title) with release notes and buttons to
+  install, download, or "remind me to download and install the update later"; on an error, "Download manually";
+  "Ready to Install" / "Install and Relaunch".
+- Sidebar banner: `SidebarBanner` cases `UpdateAvailableBanner` / `UpdateCompleteBanner`
+  (`SoftwareUpdateBannerUpdateAvailableView`, `…V2View`, `…UpdateSummaryView`), "Update available",
+  settings keys `autoUpdateBannerDismissalCount`, `canShowUpdateBanner`, `currentUpdateAvailableSince`. A dialog
+  "Arc is ready to update!" / "Restart required." also exists (lines ~61403-61407). Not observed on screen.
+- Kite: no release pipeline, notarisation or appcast yet, and gabekus/kite has no GitHub releases (1 Nov 2026), so
+  Kite › Check for Updates… asks `api.github.com/repos/gabekus/kite/releases/latest`, compares the tag with
+  CFBundleShortVersionString (`AppVersion` in KiteCore) and shows Arc's states in a small window
+  (`UpdaterWindow`): checking, up to date, no releases yet, a new version (notes, Remind Me Later, View Release,
+  Download when a .dmg/.zip is attached, opened in a Kite tab), and errors (Download manually, Try Again). Window
+  size and layout are Kite's; Arc's updater window wasn't measured. No background checks or banner yet.
 ## Air Traffic Control → `AirTrafficControl` (KiteCore), `AirTrafficControlWindow` (Arc 1.171 binary strings and disassembly, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt` and `~/rea-arc/decomp/arc.s` (short SwiftUI string literals decoded from the
