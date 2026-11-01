@@ -35,12 +35,43 @@ extension BrowserState {
         guard let location = location(of: id) else { return nil }
         let s = location.space ?? selectedSpaceIndex
         let original = self[location]
-        let copy = BrowserTab(url: original.url, title: original.title, faviconURL: original.faviconURL, lastActiveAt: now)
+        var copy = BrowserTab(url: original.url, title: original.title, faviconURL: original.faviconURL, lastActiveAt: now)
+        copy.customTitle = original.customTitle
         let index = location.section == .unpinned ? location.index + 1 : 0
         spaces[s].tabs.insert(copy, at: min(index, spaces[s].tabs.count))
         spaces[s].selectedTabID = copy.id
         selectedSpaceID = spaces[s].id
         return copy.id
+    }
+
+    /// Arc's Rename for a tab (pinned, unpinned or favorite). The name stays when the page's title
+    /// changes; an empty name goes back to showing the page's title.
+    public mutating func renameTab(_ id: UUID, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        update(tab: id) { $0.customTitle = name.isEmpty ? nil : name }
+    }
+
+    // MARK: Collapse Pinned Tabs
+
+    public func isPinnedSectionCollapsed(_ spaceID: UUID) -> Bool {
+        spacesWithCollapsedPinnedSections.contains(spaceID)
+    }
+
+    /// View → Collapse / Expand Pinned Tabs, and the chevron in the space's header.
+    public mutating func togglePinnedSection(_ spaceID: UUID) {
+        guard spaceIndex(spaceID) != nil else { return }
+        if spacesWithCollapsedPinnedSections.contains(spaceID) {
+            spacesWithCollapsedPinnedSections.remove(spaceID)
+        } else {
+            spacesWithCollapsedPinnedSections.insert(spaceID)
+        }
+    }
+
+    /// The pinned items the sidebar lists for a space. Collapsed, only the selected pinned tab
+    /// stays (lifted out of its folder), the way a collapsed folder keeps its selected tab.
+    public func shownPinnedItems(in space: Space) -> [PinnedItem] {
+        guard isPinnedSectionCollapsed(space.id) else { return space.pinnedItems }
+        return space.pinnedItems.tabs.filter { $0.id == space.selectedTabID }.map(PinnedItem.tab)
     }
 
     public mutating func renameSpace(_ id: UUID, to name: String) {

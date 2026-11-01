@@ -182,7 +182,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             changeSpaceIcon: { [weak self] id in self?.changeIcon(ofSpace: id) },
             deleteSpace: { [weak self] id in self?.deleteSpace(id) },
             renameFolder: { [weak self] id in self?.renameFolder(id) },
-            deleteFolder: { [weak self] id in self?.deleteFolder(id) }
+            deleteFolder: { [weak self] id in self?.deleteFolder(id) },
+            renameTab: { [weak self] id in self?.renameTab(id) }
         )
         spaceSwipe = SpaceSwipeController(
             store: store,
@@ -965,6 +966,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         case #selector(toggleToolbar(_:)):
             item.title = store.state.showsToolbar ? "Hide Toolbar" : "Show Toolbar"
             return store.state.selectedSplit == nil
+        case #selector(togglePinnedSection(_:)):
+            // Arc's two items, collapsePinnedSection and expandPinnedSection, as one retitled item.
+            let space = store.state.selectedSpace
+            item.title = store.state.isPinnedSectionCollapsed(space.id) ? "Expand Pinned Tabs" : "Collapse Pinned Tabs"
+            return !space.pinnedItems.isEmpty
+        case #selector(renameCurrentTab(_:)):
+            return store.state.selectedTab != nil
         case #selector(toggleStayOnTop(_:)):
             item.state = window?.level == .floating ? .on : .off
         case #selector(setAsDefaultBrowser(_:)):

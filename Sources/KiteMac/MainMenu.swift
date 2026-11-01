@@ -178,6 +178,8 @@ enum MainMenu {
             item("Toggle Sidebar", #selector(BrowserWindowController.toggleSidebar(_:)), "s", id: "toggleSidebar"),
             // Retitled "Hide Toolbar" while shown.
             item("Show Toolbar", #selector(BrowserWindowController.toggleToolbar(_:)), "d", [.command, .shift], id: "toggleToolbar"),
+            // Arc 1.171's View menu, no shortcut; retitled "Expand Pinned Tabs" while collapsed.
+            item("Collapse Pinned Tabs", #selector(BrowserWindowController.togglePinnedSection(_:)), id: "collapsePinnedSection"),
             .separator(),
             item("Stop Loading", #selector(BrowserWindowController.stopLoading(_:)), ".", id: "stopLoading"),
             item("Reload Page", #selector(BrowserWindowController.reload(_:)), "r", id: "reloadPage"),
@@ -244,6 +246,9 @@ enum MainMenu {
         submenu("Tabs", [
             item("Pin / Unpin Tab", #selector(BrowserWindowController.togglePin(_:)), "d", id: "pinTab"),
             item("Duplicate Tab", #selector(BrowserWindowController.duplicateTab(_:)), id: "duplicate"),
+            // Arc's command-bar action (no menu bar item or default shortcut there); here so the
+            // command bar and shortcut overrides find it.
+            item("Rename Current Tab…", #selector(BrowserWindowController.renameCurrentTab(_:)), id: "renameCurrentTab"),
             .separator(),
             item("Next Tab", #selector(BrowserWindowController.nextTab(_:)), down, [.command, .option], id: "nextTab"),
             item("Previous Tab", #selector(BrowserWindowController.previousTab(_:)), up, [.command, .option], id: "previousTab"),

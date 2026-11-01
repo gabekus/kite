@@ -95,7 +95,8 @@ import Testing
             return
         }
         #expect(result.favorites.map(\.title) == ["Site 300"])
-        #expect(renamed.title == "Renamed")
+        #expect(renamed.customTitle == "Renamed")
+        #expect(renamed.displayTitle == "Renamed")
         #expect(folder.name == "Folder")
         #expect(folder.items.tabs.map(\.title) == ["Site 102", "Site 105"])
         guard case .folder(let nested) = folder.items[1] else {

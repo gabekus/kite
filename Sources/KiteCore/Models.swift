@@ -6,6 +6,9 @@ public struct BrowserTab: Identifiable, Hashable, Codable, Sendable {
     public var title: String
     public var faviconURL: URL?
     public var lastActiveAt: Date
+    /// A name the user gave the tab (Arc's Rename), shown instead of the page's title and kept
+    /// when the page's title changes. nil shows the page's title. Older sessions decode it as nil.
+    public var customTitle: String?
 
     public init(
         id: UUID = UUID(),
@@ -22,6 +25,7 @@ public struct BrowserTab: Identifiable, Hashable, Codable, Sendable {
     }
 
     public var displayTitle: String {
+        if let customTitle, !customTitle.isEmpty { return customTitle }
         if !title.isEmpty { return title }
         if let host = url?.host(), !host.isEmpty { return host }
         return url?.absoluteString ?? "New Tab"
