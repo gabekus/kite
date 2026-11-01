@@ -253,6 +253,12 @@ enum MainMenu {
             submenuItem("Developer", [
                 item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option], id: "viewSource"),
                 item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option], id: "developerTools"),
+                // Both open DevTools for now; picking the element or panel needs the DevTools frontend.
+                item("Inspect Elements", #selector(BrowserWindowController.showDevTools(_:)), "c", [.command, .option], id: "inspectElements"),
+                item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option], id: "javaScriptConsole"),
+                // Arc 1.171: after Network Inspector, no shortcut and no identifier in its MainMenu.nib.
+                // Lets AppleScript's `execute` run JavaScript in tabs; off by default.
+                item("Allow JavaScript from Apple Events", #selector(AppDelegate.toggleJavaScriptFromAppleEvents(_:)), toTarget: false),
                 item("Inspect Elements", #selector(BrowserWindowController.inspectElements(_:)), "c", [.command, .option], id: "inspectElements"),
                 item("JavaScript Console", #selector(BrowserWindowController.showJavaScriptConsole(_:)), "j", [.command, .option], id: "javaScriptConsole"),
                 item("Network Inspector", #selector(BrowserWindowController.showNetworkInspector(_:)), id: "networkInspector"),
