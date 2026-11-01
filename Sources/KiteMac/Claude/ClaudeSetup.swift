@@ -3,7 +3,7 @@ import KiteCore
 
 /// One click on the sidebar's Claude button sets Claude up: Kite's tools on, Claude Code
 /// installed (Anthropic's installer, after asking) and signed in, and Kite's MCP server
-/// added to Claude Code so it can use Kite from a terminal too.
+/// added to Claude Code and the Claude desktop app so both can use Kite too.
 extension ClaudeTasksController {
     /// Returns true once everything is ready. Anything the user has to do (install, sign in)
     /// is asked for here; until it's done the button keeps its yellow dot.
@@ -42,7 +42,21 @@ extension ClaudeTasksController {
         }
 
         let cli = automation.cliPath, profile = automation.profileOverride, directory = ClaudeConnect.linkDirectory
-        _ = await Task.detached { ClaudeConnect.register(cli: cli, profile: profile, linkDirectory: directory) }.value
+        let desktop = ClaudeDesktop.isInstalled
+        let linked = await Task.detached { () -> ClaudeDesktopLinkResult? in
+            _ = ClaudeConnect.register(cli: cli, profile: profile, linkDirectory: directory)
+            // The Claude app gets Kite's tools too, so ⌘J can hand requests to it.
+            return desktop ? ClaudeDesktop.link(cli: cli, profile: profile) : nil
+        }.value
+        if linked == .added, ClaudeDesktop.isRunning {
+            // Quitting Claude would cut off whatever it's doing, so ask.
+            if ask("Reopen the Claude app?",
+                   "Kite added its tools to the Claude desktop app, so ⌘J can hand requests to it and its chats can use "
+                   + "your browser. Claude loads them when it next opens.",
+                   confirm: "Reopen Claude") {
+                ClaudeDesktop.relaunch()
+            }
+        }
         markSetUp(true)
         return true
     }

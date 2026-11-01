@@ -147,3 +147,65 @@ import Testing
         #expect(state.spaces[index].icon == "✴️" && state.spaces[index].theme == .claude)
     }
 }
+
+@Suite struct ClaudeDesktopLinkTests {
+    private func object(_ data: Data?) throws -> [String: Any] {
+        let data = try #require(data)
+        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    @Test func addsKiteAndKeepsTheRestOfTheConfig() throws {
+        let existing = Data(#"{"globalShortcut":"Alt+Space","mcpServers":{"notes":{"command":"/bin/notes","args":[]}}}"#.utf8)
+        let server = ClaudeDesktopLink.server(kiteCLI: "/Applications/Kite.app/Contents/Helpers/kite", profile: nil)
+        let merged = try object(try ClaudeDesktopLink.merged(existing, server: server))
+        #expect(merged["globalShortcut"] as? String == "Alt+Space")
+        let servers = try #require(merged["mcpServers"] as? [String: Any])
+        #expect(servers["notes"] != nil)
+        let kite = try #require(servers["kite"] as? [String: Any])
+        #expect(kite["command"] as? String == "/Applications/Kite.app/Contents/Helpers/kite")
+        #expect(kite["args"] as? [String] == ["mcp"])
+        #expect(kite["env"] == nil)
+        #expect(ClaudeDesktopLink.isLinked(try ClaudeDesktopLink.merged(existing, server: server)))
+        #expect(!ClaudeDesktopLink.isLinked(existing))
+    }
+
+    @Test func startsAFileAndLeavesAnUpToDateOneAlone() throws {
+        let server = ClaudeDesktopLink.server(kiteCLI: "/k", profile: "/tmp/k.1")
+        let fresh = try #require(try ClaudeDesktopLink.merged(nil, server: server))
+        let kite = try #require((try object(fresh)["mcpServers"] as? [String: Any])?["kite"] as? [String: Any])
+        #expect(kite["env"] as? [String: String] == ["KITE_SUPPORT_PATH": "/tmp/k.1"])
+        #expect(try ClaudeDesktopLink.merged(Data("  \n".utf8), server: server) != nil)
+        #expect(try ClaudeDesktopLink.merged(fresh, server: server) == nil)
+        // A different Kite (moved app, other profile) replaces the old entry.
+        #expect(try ClaudeDesktopLink.merged(fresh, server: ClaudeDesktopLink.server(kiteCLI: "/k", profile: nil)) != nil)
+    }
+
+    @Test func refusesConfigsItCantMergeSafely() {
+        let server = ClaudeDesktopLink.server(kiteCLI: "/k", profile: nil)
+        #expect(throws: ClaudeDesktopLink.ConfigError.notAnObject) { try ClaudeDesktopLink.merged(Data("[]".utf8), server: server) }
+        #expect(throws: ClaudeDesktopLink.ConfigError.mcpServersNotAnObject) {
+            try ClaudeDesktopLink.merged(Data(#"{"mcpServers":[]}"#.utf8), server: server)
+        }
+        #expect(throws: (any Error).self) { try ClaudeDesktopLink.merged(Data("{not json".utf8), server: server) }
+    }
+
+    @Test func handsTheRequestToADesktopChat() throws {
+        let url = ClaudeDesktopLink.chatURL(prompt: "Compare A & B = 100% + tax? #1")
+        #expect(url.scheme == "claude")
+        #expect(url.absoluteString.hasPrefix("claude://claude.ai/new?q="))
+        let query = try #require(url.absoluteString.split(separator: "?", maxSplits: 1).last)
+        #expect(!query.dropFirst(2).contains("&") && !query.contains("#") && !query.dropFirst(2).contains("="))
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        #expect(items?.first?.value == "Compare A & B = 100% + tax? #1")
+        let long = ClaudeDesktopLink.chatURL(prompt: String(repeating: "a", count: 20_000))
+        #expect(URLComponents(url: long, resolvingAgainstBaseURL: false)?.queryItems?.first?.value?.count == ClaudeDesktopLink.promptLimit)
+
+        let tab = ClaudeInvocation.TabContext(id: UUID(uuidString: "3F2A0000-0000-0000-0000-000000000000")!,
+                                              title: "Orders", url: "https://example.com/orders")
+        let prompt = ClaudeDesktopLink.prompt(goal: "Summarise this", tab: tab)
+        #expect(prompt.hasPrefix("Summarise this\n"))
+        #expect(prompt.contains("https://example.com/orders") && prompt.contains("3F2A0000-0000-0000-0000-000000000000"))
+        #expect(ClaudeDesktopLink.prompt(goal: "Hi", tab: nil) == "Hi")
+        #expect(ClaudeDesktopLink.resumeInDesktopArguments(sessionID: "s1") == ["--desktop", "--resume", "s1"])
+    }
+}

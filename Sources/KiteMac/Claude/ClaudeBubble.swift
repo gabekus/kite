@@ -3,7 +3,8 @@ import Observation
 import SwiftUI
 
 /// Claude in the browser: ⌘J or the sidebar's Claude button opens the Claude bar, which
-/// sits where ⌘T's bar does. Type a goal, Return starts a task, and the bar follows that
+/// sits where ⌘T's bar does. Type a goal and Return hands it to the Claude desktop app
+/// (one Claude, with Kite's tools), or starts a task here in Kite, and the bar follows that
 /// task as it works. Esc hides it; the task keeps going.
 @MainActor
 @Observable
@@ -42,7 +43,15 @@ final class ClaudeBubbleModel {
         guard let tasks else { return }
         let goal = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !goal.isEmpty else { return }
-        tasks.start(goal: goal, tab: attachTab ? frontTab : nil)
+        let tab = attachTab ? frontTab : nil
+        // In the Claude app it's the same Claude as the user's other chats, with its memory.
+        if tasks.runsIn == .desktop, tasks.handOffToDesktop(goal: goal, tab: tab) {
+            draft = ""
+            attachTab = false
+            close()
+            return
+        }
+        tasks.start(goal: goal, tab: tab)
         taskID = tasks.selectedID
         draft = ""
         attachTab = false
@@ -147,6 +156,12 @@ struct ClaudeBubble: View {
                 .onSubmit { task == nil ? model.start(frontTab: frontTab) : model.followUp() }
                 .onExitCommand { model.close() }
             HStack(spacing: Metrics.buttonGap) {
+                if task == nil, ClaudeDesktop.isInstalled {
+                    let desktop = tasks.runsIn == .desktop
+                    barButton(desktop ? "Opens in the Claude app (click to run here in Kite)" : "Runs here in Kite (click to open in the Claude app)",
+                              symbol: desktop ? "arrow.up.forward.app.fill" : "arrow.up.forward.app",
+                              active: desktop) { tasks.runsIn = desktop ? .kite : .desktop }
+                }
                 if task == nil, let frontTab {
                     barButton(model.attachTab ? "Attached “\(frontTab.displayTitle)”" : "Attach this tab",
                               symbol: model.attachTab ? "paperclip.circle.fill" : "paperclip",
@@ -158,6 +173,9 @@ struct ClaudeBubble: View {
                     }
                     if isRunning {
                         barButton("Stop", symbol: "stop.circle") { tasks.stop(task.id) }
+                    }
+                    if tasks.canOpenInDesktop(task.id) {
+                        barButton("Continue in the Claude App", symbol: "arrow.up.forward.app") { tasks.openInDesktop(task.id) }
                     }
                 }
                 recentTasks(tasks)
@@ -242,7 +260,10 @@ struct ClaudeBubble: View {
     }
 
     private func placeholder(task: ClaudeTask?, isRunning: Bool) -> String {
-        guard task != nil else { return "Ask Claude to do something in your browser…" }
+        guard task != nil else {
+            return model.tasks?.runsIn == .desktop && ClaudeDesktop.isInstalled
+                ? "Ask Claude… (opens in the Claude app)" : "Ask Claude to do something in your browser…"
+        }
         return isRunning ? "Claude is working… (Esc to hide; it keeps going)" : "Follow up"
     }
 }
