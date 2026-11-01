@@ -61,6 +61,14 @@
 		</dict>
 		<dict>
 			<key>CFBundleURLName</key>
+			<string>Kite web app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>kite-app</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
 			<string>Web site URL</string>
 			<key>CFBundleURLSchemes</key>
 			<array>

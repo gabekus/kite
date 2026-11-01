@@ -27,6 +27,25 @@ extension BrowserWindowController {
         }
     }
 
+    /// File › Install Page as App… (a Kite addition, after Chrome's): the current site as an app with its
+    /// own window and launcher. Not from incognito, whose profile goes away with the window.
+    @objc func installPageAsApp(_ sender: Any?) {
+        guard !isIncognito, let page = shownPage else { return NSSound.beep() }
+        (NSApp.delegate as? AppDelegate)?.webApps.install(from: page, over: window)
+    }
+
+    /// The address field's install icon: Chrome's install dialog over the tab.
+    func showInstallAppDialog() {
+        guard !isIncognito, let id = store.state.selectedTab?.id, let page = shownPage else { return NSSound.beep() }
+        (NSApp.delegate as? AppDelegate)?.webApps.showInstallDialog(tab: id, page: page, in: self)
+    }
+
+    /// The tab shows a web page (WebKit doesn't report a tab's first URL, so an unknown one counts).
+    var canInstallPageAsApp: Bool {
+        guard !isIncognito, shownPage != nil else { return false }
+        return store.state.selectedTab?.url.map(WebApps.isWeb) ?? true
+    }
+
     @objc func clearCookiesAndRefresh(_ sender: Any?) { clearSiteData(.cookies) }
     @objc func clearCacheAndRefresh(_ sender: Any?) { clearSiteData(.cache) }
 

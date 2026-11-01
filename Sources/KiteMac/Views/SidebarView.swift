@@ -51,6 +51,8 @@ struct SidebarView: View {
     var fieldAccessory: AnyView?
     /// Opens Site Controls from the address field's hover button.
     var showSiteControls: ((NSView) -> Void)?
+    /// Chrome's install icon, shown while the tab's page has an installable manifest; nil in incognito.
+    var installApp: ((NSView) -> Void)?
     /// Where a two-finger swipe between spaces has the pages.
     var swipe = SpaceSwipeModel()
     /// The Mini Player's buttons; nil shows no Mini Player.
@@ -104,7 +106,9 @@ struct SidebarView: View {
                     toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } },
                     showExtensions: showExtensions,
                     showSiteControls: SiteControls.applies(to: selectedTab?.url) ? showSiteControls : nil,
-                    accessory: fieldAccessory
+                    accessory: fieldAccessory,
+                    installAppName: installApp == nil ? nil : WebAppInstallOffers.shared.offer(for: selectedID)?.name,
+                    installApp: installApp
                 )
                 .padding(.top, M.urlFieldTopGap)
             }
@@ -516,6 +520,9 @@ private struct AddressPill: View {
     var showExtensions: ((NSView) -> Void)?
     var showSiteControls: ((NSView) -> Void)?
     var accessory: AnyView?
+    /// The installable app's name; nil hides the install icon.
+    var installAppName: String?
+    var installApp: ((NSView) -> Void)?
     @State private var hovering = false
 
     var body: some View {
@@ -544,11 +551,15 @@ private struct AddressPill: View {
                     SiteControlsFieldButton(action: showSiteControls)
                         .opacity(hovering || SiteControlsPopover.isShown ? 1 : 0)
                 }
+                // Chrome's install icon sits at the field's right end; the extensions button stays rightmost.
+                if let installAppName, let installApp {
+                    InstallAppFieldButton(appName: installAppName, size: ExtensionsFieldButton.size, action: installApp)
+                }
                 if let showExtensions {
                     ExtensionsFieldButton(action: showExtensions)
                 }
             }
-            .padding(.trailing, isDark != nil || showExtensions != nil || showSiteControls != nil ? 4 : 0)
+            .padding(.trailing, isDark != nil || showExtensions != nil || showSiteControls != nil || installAppName != nil ? 4 : 0)
         }
         .modifier(ChromeFill(strength: M.fieldFill))
         .onHover { hovering = $0 }
@@ -577,6 +588,33 @@ private struct ExtensionsFieldButton: View {
         .onHover { hovering = $0 }
         .help("Extensions")
         .accessibilityLabel("Extensions")
+    }
+}
+
+/// Chrome's install icon (a monitor with a down arrow, kInstallDesktopIcon), tooltip "Install <app>"
+/// (IDS_OMNIBOX_PWA_INSTALL_ICON_TOOLTIP). The address field's other buttons' size and hover.
+struct InstallAppFieldButton: View {
+    let appName: String
+    var size: CGFloat = 30
+    var opacity: (normal: Double, hovered: Double) = (0.6, 0.9)
+    let action: (NSView) -> Void
+    @State private var anchor: NSView?
+    @State private var hovering = false
+
+    var body: some View {
+        Button { if let anchor { action(anchor) } } label: {
+            Image(systemName: "desktopcomputer.and.arrow.down")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: size, height: size)
+                .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0, cornerRadius: 6))
+                .background(AnchorView(view: $anchor))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(hovering ? opacity.hovered : opacity.normal)
+        .onHover { hovering = $0 }
+        .help("Install \(appName)")
+        .accessibilityLabel("Install \(appName)")
     }
 }
 
