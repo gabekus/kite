@@ -35,6 +35,8 @@ final class PagePool {
     var onPageCreated: ((UUID, WebPage) -> Void)?
     /// Called when a tab's page stops loading.
     var onLoadFinished: ((UUID) -> Void)?
+    /// A tab's page started (true) or finished (false) loading (the install icon checks the page).
+    var onLoadingChanged: ((UUID, WebPage, Bool) -> Void)?
     /// A link clicked in tab `UUID` opens in Arc's Peek card (`LinkPeek`); nil opens it as a new tab.
     var onLinkPeek: ((UUID, URL) -> Void)?
     /// The page menu's Open Link in New Window, Split View, Little Kite and Incognito Window.
@@ -196,6 +198,7 @@ final class PagePool {
                 markInstalledExtensions(in: id)
                 onLoadFinished?(id)
             }
+            if let page = pages[id] { onLoadingChanged?(id, page, isLoading) }
         case .addExtension(let extensionID):
             guard extensionInstalls[extensionID] == nil, let source = pages[id],
                   let storeURL = ChromeWebStore.detailURL(for: extensionID) else { return }

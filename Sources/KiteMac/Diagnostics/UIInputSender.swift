@@ -169,7 +169,11 @@ struct UIInputSender {
         if isEquivalentCandidate {
             // Menu commands that target the front browser window go to this one instead.
             MenuRouter.deliveringTo = window.windowController as? BrowserWindowController
-            MenuRouter.deliveringToLittle = window.windowController as? LittleKiteWindowController
+            if let little = window.windowController as? LittleKiteWindowController {
+                MenuRouter.deliveringToLittle = little
+            } else {
+                MenuRouter.deliveringToLittle = window.windowController as? WebAppWindowController
+            }
             defer {
                 MenuRouter.deliveringTo = nil
                 MenuRouter.deliveringToLittle = nil

@@ -241,6 +241,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sidebar.miniPlayer = miniPlayerActions
         var toolbar = PageToolbar(store: store, actions: actions)
         toolbar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view, overlap: 4) }
+        if !isIncognito {
+            toolbar.installApp = { [weak self] _ in self?.showInstallAppDialog() }
+            sidebar.installApp = { [weak self] _ in self?.showInstallAppDialog() }
+        }
         sidebar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view) }
         #if canImport(CEFBridge)
         // Extensions run in the persistent Chromium profiles only, each profile its own.
@@ -253,6 +257,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         #endif
         sidebarHost = NSHostingView(rootView: sidebar)
+        SidebarRowsAnimator.register(sidebarHost)
         toolbarHost = NSHostingView(rootView: toolbar)
         toolbarHost.sizingOptions = []
         toolbarHost.isHidden = true
@@ -411,6 +416,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         pool.onLinkPeek = { [weak self] id, url in self?.openLinkPeek(url, from: id) }
         installPageMenu()
         pool.onPermissionRequestsChanged = { [weak self] in self?.updatePermissionPrompt() }
+        // Chrome's install icon in the address field, for pages with an installable manifest.
+        if !isIncognito {
+            pool.onLoadingChanged = { id, page, isLoading in
+                if isLoading { WebAppInstallOffers.shared.clear(tab: id) } else { WebAppInstallOffers.shared.check(tab: id, page: page) }
+            }
+        }
     }
 
     /// Puts `view` over the content card, above the page and glow and below ⌘J and the command bar.
@@ -1126,6 +1137,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let tab = store.state.selectedTab
             item.state = store.state.wantsDarkPage(for: tab?.url, systemIsDark: store.systemIsDark) ? .on : .off
             return pool.engine.supportsDarkPages && tab?.url?.host() != nil
+        case #selector(installPageAsApp(_:)):
+            return canInstallPageAsApp
         case #selector(toggleDeveloperMode(_:)):
             let url = store.state.selectedTab?.url
             item.title = store.state.developerModeMenuTitle(for: url)
