@@ -17,6 +17,10 @@ struct PageStatus: Equatable {
     var isAudioMuted = false
     /// The tab volume from the Mini Player (TabVolume, 0...1); it lives with the page, like the mute.
     var tabVolume: Double = 1
+    /// Since when the page has used the camera or microphone (Arc's Mini Player `Recording`); nil when it doesn't.
+    var capturingSince: Date?
+    /// The page's Media Session call controls (Mini Player's Toggle Microphone / Toggle Camera).
+    var callControls = CallControls()
 
     /// Whether the tab is playing media now (muted or not): the base for audio indicators.
     var isPlayingAudio: Bool { media?.state.isPlaying == true }
@@ -308,6 +312,12 @@ final class BrowserStore {
         if state?.isPlaying == true, !wasPlaying { miniPlayerDismissed.remove(id) }
     }
 
+    func captureChanged(_ id: UUID, _ capturing: Bool) {
+        guard capturing != (pages[id]?.capturingSince != nil) else { return }
+        updatePage(id) { $0.capturingSince = capturing ? Date() : nil }
+        if capturing { miniPlayerDismissed.remove(id) }
+    }
+
     func tabsLeftScreen(_ ids: some Sequence<UUID>, at date: Date = Date()) {
         for id in ids { hiddenAt[id] = date }
     }
@@ -319,9 +329,11 @@ final class BrowserStore {
     /// The tab whose media the sidebar's Mini Player shows, if any.
     var miniPlayerTabID: UUID? {
         let media = pages.compactMapValues(\.media).filter { state.tab($0.key) != nil }
-        guard !media.isEmpty else { return nil }
+        let capturing = pages.compactMapValues(\.capturingSince).filter { state.tab($0.key) != nil }
+        guard !media.isEmpty || !capturing.isEmpty else { return nil }
         return MiniPlayer.tab(
             media: media,
+            capturing: capturing,
             visible: Set(state.visibleTabs.map(\.id)),
             hiddenAt: hiddenAt,
             dismissed: miniPlayerDismissed

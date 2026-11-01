@@ -42,6 +42,10 @@ enum PageEvent {
     case addExtension(id: String)
     /// What the page is playing changed (MediaStateScript); nil when it has no media.
     case media(MediaState?)
+    /// The page's call controls changed (MediaStateScript's Media Session report).
+    case callControls(CallControls)
+    /// The page started or stopped using the camera or microphone (the engine's capture state).
+    case capturing(Bool)
     /// The pointer moved onto a link (nil: off it). Drives ⇧-hover link previews.
     case linkHover(LinkHover?)
     /// An "Open Link in …" item of the page's right-click menu (Arc's link items).

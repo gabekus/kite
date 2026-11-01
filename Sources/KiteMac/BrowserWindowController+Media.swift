@@ -16,7 +16,8 @@ extension BrowserWindowController {
             setVolume: { [weak self] id, level in self?.setTabVolume(id, level) },
             close: { [weak self] id in
                 // Closing the player stops what it was playing (it'd otherwise play on with no controls).
-                self?.pool.loadedPage(id)?.runMediaCommand(.pause)
+                // A call goes on: only its player closes.
+                if self?.store.pages[id]?.capturingSince == nil { self?.pool.loadedPage(id)?.runMediaCommand(.pause) }
                 self?.store.dismissMiniPlayer(id)
             }
         )

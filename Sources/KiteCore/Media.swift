@@ -86,6 +86,9 @@ public enum MediaCommand: Equatable, Sendable {
     case exitPictureInPicture
     /// Scales every media element on the page to this tab volume (0...1); see TabVolume.
     case setVolume(Double)
+    /// Runs the page's own Media Session `togglemicrophone` / `togglecamera` handler (CallControls).
+    case toggleMicrophone
+    case toggleCamera
 
     /// Runs the command in the media script's world.
     public var script: String {
@@ -96,6 +99,8 @@ public enum MediaCommand: Equatable, Sendable {
         case .nextTrack: return run("nexttrack")
         case .enterPictureInPicture: return run("enterpip")
         case .exitPictureInPicture: return run("exitpip")
+        case .toggleMicrophone: return run(CallControls.toggleMicrophoneAction)
+        case .toggleCamera: return run(CallControls.toggleCameraAction)
         case .setVolume(let level):
             // A plain number literal: never NaN or infinity, which aren't valid JavaScript here.
             let value = TabVolume.clamp(level)
@@ -104,6 +109,52 @@ public enum MediaCommand: Equatable, Sendable {
     }
 
     private func run(_ name: String) -> String { "globalThis.__kiteMedia?.run('\(name)')" }
+}
+
+/// A call's microphone and camera buttons in the Mini Player (Arc 1.171 MiniPlayerView: "Toggle
+/// Microphone" / "Toggle Camera", state `canToggleMicrophone`, `canToggleCamera`, `isMicrophoneOn`,
+/// `isCameraOn`). Arc takes them from Chromium's Media Session: the page's `togglemicrophone` /
+/// `togglecamera` action handlers and its `setMicrophoneActive` / `setCameraActive` calls (Google
+/// Meet makes both), and a click runs the page's handler (ADKClient.toggleMicrophone). Kite's media
+/// script reports the same from the page. See docs/arc-visual-spec.md.
+public struct CallControls: Equatable, Sendable {
+    public static let toggleMicrophoneAction = "togglemicrophone"
+    public static let toggleCameraAction = "togglecamera"
+
+    public var canToggleMicrophone: Bool
+    public var canToggleCamera: Bool
+    /// What the page last told `setMicrophoneActive` / `setCameraActive` (off until it says).
+    public var isMicrophoneOn: Bool
+    public var isCameraOn: Bool
+
+    public init(canToggleMicrophone: Bool = false, canToggleCamera: Bool = false, isMicrophoneOn: Bool = false, isCameraOn: Bool = false) {
+        self.canToggleMicrophone = canToggleMicrophone
+        self.canToggleCamera = canToggleCamera
+        self.isMicrophoneOn = isMicrophoneOn
+        self.isCameraOn = isCameraOn
+    }
+
+    /// Parses the media script's call report (`{"call": {"actions": [...], "mic": bool, "cam": bool}}`).
+    /// nil for any other payload, so it can share the media report's channel.
+    public static func parse(_ payload: String) -> CallControls? {
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let call = object["call"] as? [String: Any] else { return nil }
+        let actions = Set(call["actions"] as? [String] ?? [])
+        return CallControls(
+            canToggleMicrophone: actions.contains(toggleMicrophoneAction),
+            canToggleCamera: actions.contains(toggleCameraAction),
+            isMicrophoneOn: call["mic"] as? Bool ?? false,
+            isCameraOn: call["cam"] as? Bool ?? false
+        )
+    }
+
+    /// Arc slashes the symbol only when the page can toggle it and says it's off.
+    public var microphoneSymbol: String { canToggleMicrophone && !isMicrophoneOn ? "mic.slash.fill" : "mic.fill" }
+    public var cameraSymbol: String { canToggleCamera && !isCameraOn ? "video.slash.fill" : "video.fill" }
+
+    public static let microphoneHelp = "Toggle Microphone"
+    public static let cameraHelp = "Toggle Camera"
 }
 
 /// Arc's per-tab volume (Mini Player "Adjust Tab Volume", MediaControlsFeature, Arc 1.171):
@@ -175,13 +226,19 @@ public enum MiniPlayer {
     /// - Parameters:
     ///   - visible: the tabs on screen (the selected tab, or its split's panes).
     ///   - hiddenAt: when each tab last left the screen.
-    public static func tab(media: [UUID: MediaActivity], visible: Set<UUID>, hiddenAt: [UUID: Date], dismissed: Set<UUID>) -> UUID? {
-        media
-            .filter { id, activity in
-                guard !visible.contains(id), !dismissed.contains(id) else { return false }
-                return activity.state.isPlaying || (activity.stoppedAt ?? .distantPast) > (hiddenAt[id] ?? .distantPast)
-            }
-            .max { $0.value.startedAt < $1.value.startedAt }?
+    ///   - capturing: tabs using the camera or microphone now (Arc's `Recording` media type), with
+    ///     when they started; they count as playing from then.
+    public static func tab(
+        media: [UUID: MediaActivity], capturing: [UUID: Date] = [:], visible: Set<UUID>, hiddenAt: [UUID: Date], dismissed: Set<UUID>
+    ) -> UUID? {
+        var started: [UUID: Date] = [:]
+        for (id, activity) in media where activity.state.isPlaying || (activity.stoppedAt ?? .distantPast) > (hiddenAt[id] ?? .distantPast) {
+            started[id] = activity.startedAt
+        }
+        for (id, date) in capturing { started[id] = max(started[id] ?? .distantPast, date) }
+        return started
+            .filter { !visible.contains($0.key) && !dismissed.contains($0.key) }
+            .max { $0.value < $1.value }?
             .key
     }
 }

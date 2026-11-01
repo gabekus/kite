@@ -139,3 +139,47 @@ import Testing
         #expect(MuteAllTabs.pagesToChange([String: Bool](), mute: true).isEmpty)
     }
 }
+
+@Suite struct CallControlsTests {
+    @Test func parsesTheCallReport() throws {
+        let call = try #require(CallControls.parse(#"{"call":{"actions":["togglemicrophone"],"mic":true,"cam":false}}"#))
+        #expect(call == CallControls(canToggleMicrophone: true, canToggleCamera: false, isMicrophoneOn: true, isCameraOn: false))
+        #expect(CallControls.parse(#"{"call":{"actions":[]}}"#) == CallControls())
+    }
+
+    @Test func otherPayloadsArentCallReports() {
+        #expect(CallControls.parse("null") == nil)
+        #expect(CallControls.parse(#"{"playing":true}"#) == nil)
+        #expect(CallControls.parse("nope") == nil)
+        // The media report ignores the call report.
+        #expect(MediaState.parse(#"{"call":{"actions":[]}}"#) == nil)
+    }
+
+    @Test func arcsSymbolsAndTooltips() {
+        var call = CallControls(canToggleMicrophone: true, canToggleCamera: true, isMicrophoneOn: true, isCameraOn: true)
+        #expect(call.microphoneSymbol == "mic.fill" && call.cameraSymbol == "video.fill")
+        call.isMicrophoneOn = false
+        call.isCameraOn = false
+        #expect(call.microphoneSymbol == "mic.slash.fill" && call.cameraSymbol == "video.slash.fill")
+        // Slashed only when the page can toggle it.
+        #expect(CallControls().microphoneSymbol == "mic.fill" && CallControls().cameraSymbol == "video.fill")
+        #expect(CallControls.microphoneHelp == "Toggle Microphone" && CallControls.cameraHelp == "Toggle Camera")
+    }
+
+    @Test func toggleCommandsRunThePagesHandlers() {
+        #expect(MediaCommand.toggleMicrophone.script == "globalThis.__kiteMedia?.run('togglemicrophone')")
+        #expect(MediaCommand.toggleCamera.script == "globalThis.__kiteMedia?.run('togglecamera')")
+    }
+
+    @Test func aTabInACallYouLeftGetsTheMiniPlayer() {
+        let call = UUID(), music = UUID()
+        let t0 = Date(timeIntervalSince1970: 1000)
+        let media = [music: MediaActivity(state: MediaState(isPlaying: true), startedAt: t0)]
+        let capturing = [call: t0 + 10]
+        #expect(MiniPlayer.tab(media: media, capturing: capturing, visible: [], hiddenAt: [:], dismissed: []) == call)
+        #expect(MiniPlayer.tab(media: media, capturing: capturing, visible: [call], hiddenAt: [:], dismissed: []) == music)
+        #expect(MiniPlayer.tab(media: [:], capturing: capturing, visible: [], hiddenAt: [:], dismissed: [call]) == nil)
+        // A call that started earlier than the music loses to it, as playing tabs do.
+        #expect(MiniPlayer.tab(media: media, capturing: [call: t0 - 10], visible: [], hiddenAt: [:], dismissed: []) == music)
+    }
+}
