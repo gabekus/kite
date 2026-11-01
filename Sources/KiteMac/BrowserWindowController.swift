@@ -182,7 +182,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             changeSpaceIcon: { [weak self] id in self?.changeIcon(ofSpace: id) },
             deleteSpace: { [weak self] id in self?.deleteSpace(id) },
             renameFolder: { [weak self] id in self?.renameFolder(id) },
-            deleteFolder: { [weak self] id in self?.deleteFolder(id) }
+            deleteFolder: { [weak self] id in self?.deleteFolder(id) },
+            resetTab: { [weak self] id in self?.backToPinnedURL(id) },
+            separateFromPinnedTab: { [weak self] id in self?.separateFromPinnedTab(id) }
         )
         spaceSwipe = SpaceSwipeController(
             store: store,
@@ -951,6 +953,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let pinned = store.state.selectedTab.flatMap { store.state.location(of: $0.id) }?.section == .pinned
             item.title = pinned ? "Unpin Tab" : "Pin Tab"
             return store.state.selectedTab != nil
+        case #selector(revealTabInSidebar(_:)):
+            return store.state.selectedTab != nil
+        case #selector(resetTab(_:)):
+            return store.state.selectedTab.map { store.state.canReset(tab: $0.id) } ?? false
+        case #selector(resetAllTabsInSpace(_:)):
+            return store.state.selectedSpace.pinned.contains { $0.hasLeftPinnedURL }
         case #selector(selectSpaceNumber(_:)):
             // Arc lists only the spaces that exist, by name.
             let spaces = store.state.spaces

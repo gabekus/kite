@@ -283,6 +283,7 @@ extension BrowserState {
     /// replaced, so importing again before Arc shuts down picks up changes.
     @discardableResult
     public mutating func merge(imported: [Space], favorites newFavorites: [BrowserTab] = []) -> (added: Int, updated: Int) {
+        defer { syncPinnedURLs() }
         let existing = Set(favorites.compactMap(\.url))
         favorites += newFavorites.filter { $0.url.map { !existing.contains($0) } ?? false }
         var added = 0, updated = 0

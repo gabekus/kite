@@ -483,6 +483,32 @@ windows ("Archive Little Arcs after:"); no global hotkey.
   the command bar (`showCommandBar` is among `initialAppearanceActions`), the blank window's look, and what
   Arc does when two windows select the same tab (`ContentPlaceholderSourceData` hints at a placeholder).
 
+## Pinned URL reset and Reveal Tab (Arc 1.171 menu bar and binary, 1 Nov 2026)
+
+- Tabs menu (AX, read-only, `menudump`): … Next Tab ⌥⌘↓, Previous Tab ⌥⌘↑, Reveal Tab in Sidebar (no key), —,
+  Item 1/2/3, Clear Today ⇧⌘K, Reset all tabs in this Space (no key). No "reset tab" item in any menu.
+- Binding names and descriptions (`arc-strings.txt`): `resetTab` 34996, "Reset tab to original URL." 80755;
+  `resetSpace` 34981, "Resets all your pinned tabs in the current Space." ~80729; `revealTabInSidebar` 67594,
+  "Reveals the current tab in your Sidebar." 80697. Menu title comment: "Title to reset Pinned Tabs while on a
+  focused list" 62244.
+- Model: `savedURL` (66907), `TabNavigatedAwayFromSavedURLHeuristic` (44184), `copySavedURLFromOriginalTab`.
+- Row state (`Browser/Sidebar/SidebarCells/TabCellState.swift`, fields at 149996): `canResetTab`,
+  `resetTabTitle`, `resetTabIcon`, `resetItemShortcut`. In the disassembly (`decomp/arc.s` 707906 and 888387)
+  the two `resetTabTitle` values sit side by side with one comment ("String that describes the action of
+  going back to a website"): "Back to Pinned URL" and "Separate From Pinned Tab". The same file has the
+  fallback title "Pinned URL" ("Fallback title for a page's pinned URL title").
+- Context menu strings (`SidebarMenu+MoveMenu.swift` area, 84933): Edit Pinned Page / "Edit the pinned URL",
+  "Replace Pinned URL with Current" (not built here).
+- Kite: `BrowserTab.pinnedURL` (set when a tab is pinned or favorited, cleared when unpinned; old sessions take
+  the current page), `BrowserState.resetTab`, `resetPinnedTabs`, `separateFromPinnedTab`, `revealTab`
+  (`KiteCore/PinnedURL.swift`).
+- Inferred, not observed: the navigated-away rule (Kite ignores fragment, trailing slash, `www.` and
+  http/https); the reset icon (`arrow.uturn.backward`) and its place left of the close button on hover;
+  "Separate From Pinned Tab" as a context-menu item (in Arc it is an alternate title of the same button, the
+  trigger unknown); Reveal opening enclosing folders and showing a hidden sidebar; no highlight on reveal
+  (TabCellState has `shouldPerformUserAttentionAnimation` and `tabHighlightState`, use unknown). Arc had no
+  window open, so none of this was seen on screen.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

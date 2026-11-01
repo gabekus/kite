@@ -120,10 +120,10 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Next / Previous Tab | ⌥⌘↓ / ⌥⌘↑ | ✅ (⌃⇧Tab also goes to the previous tab) | |
 | Toggle recent tabs (MRU) | ⌃Tab | ✅ toggles the two most recent | Hold-⌃ cycling deeper later |
 | Tab 1…8, last tab | ⌘1…⌘9 | ✅ | |
-| Reveal Tab in Sidebar | | ❌ | B3 |
+| Reveal Tab in Sidebar | | ✅ shows the sidebar, opens enclosing folders, scrolls to the row | Arc's highlight on reveal unverified |
 | Clear Today (unpinned tabs) | ⇧⌘K | ✅ archives them, with a toast | |
-| Reset all tabs in this Space (pinned back to their saved URL) | | ❌ | B3 |
-| Pinned tab: "back to pinned URL" / reset | | ❌ | B3 |
+| Reset all tabs in this Space (pinned back to their saved URL) | | ✅ | |
+| Pinned tab: "back to pinned URL" / reset | | 🟡 hover button, context menu (with Separate From Pinned Tab), hidden `resetTab` command | Arc's icon and placement unverified; Edit / Replace Pinned URL later |
 | Duplicate tab, move tab to space | context menu | 🟡 Duplicate Tab in the Tabs menu | Move to space with the sidebar work |
 | Drag tabs between spaces / into folders | gesture | ❌ | Roadmap (other session owns sidebar) |
 

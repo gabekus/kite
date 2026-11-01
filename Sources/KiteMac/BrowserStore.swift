@@ -13,6 +13,13 @@ struct PageStatus: Equatable {
     var crashCode: Int?
 }
 
+/// Tabs › Reveal Tab in Sidebar: the sidebar row to scroll into view. `serial` changes on
+/// every request, so revealing the same row twice scrolls twice.
+struct RevealRequest: Equatable {
+    var rowID: UUID
+    var serial: Int
+}
+
 enum CommandBarMode: Equatable {
     case newTab
     case editCurrent
@@ -29,6 +36,7 @@ final class BrowserStore {
     /// The space whose header name is being edited in place.
     private(set) var renamingSpaceID: UUID?
     private(set) var isSidebarVisible = true
+    private(set) var revealRequest: RevealRequest?
     /// macOS light/dark, which dark pages follow in `.matchSystem`.
     private(set) var systemIsDark = false
 
@@ -94,6 +102,8 @@ final class BrowserStore {
     @discardableResult
     func mutate<R>(_ body: (inout BrowserState) -> R) -> R {
         let result = body(&state)
+        // A tab pinned by any path (menu, drag into a folder, automation) remembers its page.
+        state.syncPinnedURLs()
         scheduleSave()
         onChange?()
         link?.propagate(from: self)
@@ -153,6 +163,11 @@ final class BrowserStore {
     func setSystemIsDark(_ dark: Bool) {
         guard dark != systemIsDark else { return }
         systemIsDark = dark
+        onChange?()
+    }
+
+    func reveal(row id: UUID) {
+        revealRequest = RevealRequest(rowID: id, serial: (revealRequest?.serial ?? 0) + 1)
         onChange?()
     }
 

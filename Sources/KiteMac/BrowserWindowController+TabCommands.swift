@@ -11,6 +11,47 @@ extension BrowserWindowController {
         showToast(cleared.count == 1 ? "Archived 1 tab" : "Archived \(cleared.count) tabs")
     }
 
+    /// Tabs › Reveal Tab in Sidebar: shows the sidebar, opens the folders the tab is in and
+    /// scrolls its row into view.
+    @objc func revealTabInSidebar(_ sender: Any?) {
+        guard let id = store.state.selectedTab?.id else { return NSSound.beep() }
+        if !store.isSidebarVisible { store.toggleSidebar() }
+        if let row = store.mutate({ $0.revealTab(id) }) { store.reveal(row: row) }
+    }
+
+    /// Arc's `resetTab` binding ("Reset tab to original URL."): the selected pinned tab or
+    /// favorite goes back to its pinned page.
+    @objc func resetTab(_ sender: Any?) {
+        guard let id = store.state.selectedTab?.id, store.state.canReset(tab: id) else { return NSSound.beep() }
+        backToPinnedURL(id)
+    }
+
+    /// "Back to Pinned URL" on a pinned tab's row.
+    func backToPinnedURL(_ id: UUID) {
+        guard let url = store.mutate({ $0.resetTab(id) }) else { return }
+        load(url, in: id)
+    }
+
+    /// "Separate From Pinned Tab": the page moves to a new unpinned tab and the pinned tab goes home.
+    func separateFromPinnedTab(_ id: UUID) {
+        guard let home = store.state.tab(id)?.pinnedURL,
+              store.mutate({ $0.separateFromPinnedTab(id) }) != nil else { return }
+        load(home, in: id)
+    }
+
+    /// Tabs › Reset all tabs in this Space.
+    @objc func resetAllTabsInSpace(_ sender: Any?) {
+        let reset = store.mutate { $0.resetPinnedTabs() }
+        if reset.isEmpty { return NSSound.beep() }
+        for (id, url) in reset { load(url, in: id) }
+    }
+
+    /// Loads a URL already set on the tab, if its page is loaded; an unloaded pinned tab
+    /// picks it up when it's next opened.
+    private func load(_ url: URL, in id: UUID) {
+        if InternalPage(url) == nil { pool.loadedPage(id)?.load(url) }
+    }
+
     @objc func duplicateTab(_ sender: Any?) {
         guard let id = store.state.selectedTab?.id else { return NSSound.beep() }
         store.mutate { _ = $0.duplicate(tab: id) }
