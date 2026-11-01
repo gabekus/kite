@@ -77,6 +77,11 @@ public struct BrowserState: Hashable, Codable, Sendable {
     /// Spaces whose pinned tabs are folded away (View → Collapse Pinned Tabs), by Arc's name
     /// for the same state, `spacesWithCollapsedPinnedSections`.
     public var spacesWithCollapsedPinnedSections: Set<UUID>
+    /// Hosts in Developer Mode (View › Developer › Turn on Developer Mode for this site), by
+    /// Arc's name for the same list.
+    public var developerModeEnabledForHosts: Set<String>
+    /// What the reload button does on a Developer Mode site, by Arc's `devModeReloadState`.
+    public var devModeReloadState: DeveloperTabReloadSetting
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -99,6 +104,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.showsToolbar = false
         self.warnsBeforeQuitting = true
         self.spacesWithCollapsedPinnedSections = []
+        self.developerModeEnabledForHosts = []
+        self.devModeReloadState = .reload
         seedDefaultSiteSearches()
     }
 
@@ -107,6 +114,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         case spaces, favorites, selectedSpaceID, recentlyClosed, archived, searchEngine, darkPages, darkPageHosts
         case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter, showsToolbar
         case warnsBeforeQuitting, spacesWithCollapsedPinnedSections
+        case developerModeEnabledForHosts, devModeReloadState
     }
 
     public init(from decoder: Decoder) throws {
@@ -133,6 +141,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
         // Pinned tabs saved before Kite kept a pinned URL take the page they're on.
         syncPinnedURLs()
         spacesWithCollapsedPinnedSections = try c.decodeIfPresent(Set<UUID>.self, forKey: .spacesWithCollapsedPinnedSections) ?? []
+        developerModeEnabledForHosts = try c.decodeIfPresent(Set<String>.self, forKey: .developerModeEnabledForHosts) ?? []
+        devModeReloadState = (try? c.decodeIfPresent(DeveloperTabReloadSetting.self, forKey: .devModeReloadState)) ?? .reload
     }
 
     // MARK: Dark pages
@@ -280,6 +290,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         spaces[s].selectedTabID = id
         selectedSpaceID = spaces[s].id
         self[location].lastActiveAt = now
+        collapseExpandedSplit(toShow: id)
     }
 
     public mutating func update(tab id: UUID, _ body: (inout BrowserTab) -> Void) {

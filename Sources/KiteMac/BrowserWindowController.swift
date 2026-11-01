@@ -32,6 +32,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
     let claudeButton = ClaudeButtonModel()
     let downloadsButton = DownloadsButtonModel()
+    /// Window › Open Library… (⇧⌘L): covers the sidebar and the card while open.
+    let library = LibraryModel()
+    private var libraryHost: NSHostingView<LibraryView>!
     /// Claude's chat bubble over the page; AppDelegate connects it to Claude Tasks.
     let claudeBubble = ClaudeBubbleModel()
     private var claudeBubbleHost: NSHostingView<ClaudeBubble>!
@@ -70,12 +73,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Tabs Kite put into picture in picture when you left them; it ends when you come back.
     var autoPictureInPictureTabs: Set<UUID> = []
     private let splitPanes = SplitPanesView()
+    private let splitDropZones = SplitDropZonesView()
     private var paneClickMonitor: Any?
     private var spaceSwipe: SpaceSwipeController!
     /// The page card, in window coordinates: where Chrome's extension install dialog hangs.
     var webAreaInWindow: NSRect { contentFrame.convert(contentFrame.bounds, to: nil) }
     /// After every sync: tabs, selection or pages may have changed.
     var didSync: (() -> Void)?
+    /// File › Capture…'s overlay over the focused page, and the popover offering the capture.
+    var captureOverlay: CaptureOverlayView?
+    weak var capturePopover: NSPopover?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
     /// Kite's own pages (kite://history, kite://archive) over the panes showing them, by tab.
@@ -181,6 +188,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             goForward: { [weak self] in self?.goForward(nil) },
             reload: { [weak self] in self?.reload(nil) },
             forceReload: { [weak self] in self?.forceReload(nil) },
+            reloadButton: { [weak self] in self?.reloadFromButton() },
+            developerReload: { [weak self] setting in self?.developerReload(setting) },
+            clearCookiesAndRefresh: { [weak self] in self?.clearCookiesAndRefresh(nil) },
             toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
             closeTab: { [weak self] id in self?.close(tab: id) },
             addSplitView: { [weak self] in self?.addSplitView(nil) },
@@ -243,6 +253,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         claudeBubbleHost.sizingOptions = []
         claudeBubbleHost.isHidden = true
         claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
+        libraryHost = NSHostingView(rootView: makeLibraryView())
+        libraryHost.sizingOptions = []
+        libraryHost.isHidden = true
+        library.onOpenChange = { [weak self] open in self?.libraryOpened(open) }
 
         var dragStartWidth: CGFloat = 0
         resizeHandle.onBegin = { [weak self] in
@@ -262,7 +276,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         materialView.blendingMode = .behindWindow
         materialView.state = .followsWindowActiveState
 
-        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, claudeBubbleHost!, commandBarHost!, peekEdge, peekZone] as [NSView] {
+        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, libraryHost!, claudeBubbleHost!, commandBarHost!, peekEdge, peekZone] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -342,6 +356,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             claudeBubbleHost.topAnchor.constraint(equalTo: rootView.topAnchor),
             claudeBubbleHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
+            libraryHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            libraryHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            libraryHost.topAnchor.constraint(equalTo: rootView.topAnchor),
+            libraryHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+
             commandBarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             commandBarHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             commandBarHost.topAnchor.constraint(equalTo: rootView.topAnchor),
@@ -351,9 +370,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         // The peeking sidebar draws over the page; its views are raised by z-position rather
         // than reordered, which would drop their constraints.
-        for view in [peekCard, sidebarHost!, resizeHandle, claudeBubbleHost!, commandBarHost!] as [NSView] { view.wantsLayer = true }
+        for view in [peekCard, sidebarHost!, resizeHandle, libraryHost!, claudeBubbleHost!, commandBarHost!] as [NSView] { view.wantsLayer = true }
         commandBarHost.layer?.zPosition = 20
         claudeBubbleHost.layer?.zPosition = 15
+        libraryHost.layer?.zPosition = 13
         peekCard.isHidden = true
         peekEdge.onHover = { [weak self] inside in self?.edgeHovered(inside) }
         peekZone.onHover = { [weak self] inside in
@@ -361,6 +381,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             setPeeking(false)
         }
 
+        splitDropZones.onDrop = { [weak self] url, edge in self?.openDroppedLink(url, on: edge) }
         splitPanes.onDividerDrag = { [weak self] index, fraction, minimum in
             guard let self, let split = store.state.selectedSplit else { return }
             store.mutate { $0.moveSplitDivider(split.id, index: index, fraction: fraction, minimum: minimum) }
@@ -430,6 +451,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         glowView.setTheme(space.theme)
         let appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
         sidebarHost.appearance = appearance
+        libraryHost.appearance = appearance
         materialView.appearance = appearance
         peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil)
         peekCard.material.appearance = appearance
@@ -447,11 +469,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         // A Peek belongs to the tab it opened over.
         if let linkPeek, linkPeek.sourceTabID != selected?.id { closeLinkPeek(animated: false) }
         if selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
+            // A page coming forward (⌘T, a tab opened from the Archive, another space) leaves the Library.
+            if library.isOpen, shownTabID != nil { library.close() }
             show(visible, focused: selected?.id)
         }
         if let split = state.selectedSplit {
-            splitPanes.setLayout(factors: split.normalizedFactors, orientation: split.orientation)
+            splitPanes.setLayout(factors: split.layoutFactors, orientation: split.orientation)
         }
+        updateSplitDropZones()
         let live = state.allTabIDs
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
         applyDarkPage()
@@ -464,12 +489,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         didSync?()
     }
 
+    /// The edge strips for dropping a link into a split: over everything in the content card, but they
+    /// take nothing except a drag.
+    private func updateSplitDropZones() {
+        let state = store.state
+        splitDropZones.edges = state.splitDropEdges
+        splitDropZones.paneCount = max(state.visibleTabs.count, 1)
+        if contentClip.subviews.last !== splitDropZones {
+            splitDropZones.frame = contentClip.bounds
+            splitDropZones.autoresizingMask = [.width, .height]
+            contentClip.addSubview(splitDropZones)
+        }
+    }
+
     /// Puts `tabs` on screen, side by side when there are several, and focuses `focused`.
     private func show(_ tabs: [BrowserTab], focused: UUID?) {
         hideFindBar()
         let ids = tabs.map(\.id)
+        // Capture… belongs to the page it was started on.
+        if ids != shownTabIDs || focused != shownTabID { cancelCapture() }
         if ids != shownTabIDs {
             tabsChangedOnScreen(left: shownTabIDs.filter { !ids.contains($0) }, arrived: ids.filter { !shownTabIDs.contains($0) })
+            hideZapPicker()
             for page in shownPages.values { page.view.removeFromSuperview() }
             splitPanes.setPanes([])
             splitPanes.removeFromSuperview()
@@ -608,6 +649,39 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let visible = store.state.showsToolbar && shownTabIDs.count <= 1
         toolbarHost.isHidden = !visible
         contentClip.topInset = visible ? PageToolbar.Metrics.inset : 0
+    }
+
+    private func makeLibraryView() -> LibraryView {
+        LibraryView(
+            model: library,
+            store: store,
+            sidebarWidth: sidebarWidth,
+            archiveActions: .init(
+                open: { [weak self] url, newTab in
+                    guard let self else { return }
+                    store.mutate { _ = $0.openTab(url: url, select: !newTab) }
+                },
+                restore: { [weak self] id in self?.restoreArchivedTab(id) }
+            )
+        )
+    }
+
+    /// The Library covers the sidebar and the card: they fade out under it, so the window's material
+    /// and the space's tint show around the Library's card, and the peeking sidebar stays away.
+    private func libraryOpened(_ open: Bool) {
+        if open {
+            setPeeking(false)
+            libraryHost.rootView = makeLibraryView()
+        }
+        libraryHost.isHidden = !open
+        for view in [sidebarHost!, contentFrame, glowView, resizeHandle, peekCard] as [NSView] {
+            view.alphaValue = open ? 0 : 1
+        }
+        if open {
+            window?.makeFirstResponder(libraryHost)
+        } else {
+            shownPage?.focus()
+        }
     }
 
     /// ⌘J: Claude's chat bubble.
@@ -762,7 +836,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     private func edgeHovered(_ inside: Bool) {
         peekTimer?.cancel()
-        guard inside, !sidebarVisible, !peeking else { return }
+        guard inside, !sidebarVisible, !peeking, !library.isOpen else { return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.setPeeking(true) }
         }
@@ -930,6 +1004,29 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
     }
 
+    /// The sidebar's and toolbar's reload button. On a Developer Mode site it reloads the way
+    /// the reload options last chose (Arc's `devModeReloadState`).
+    func reloadFromButton() {
+        guard let page = shownPage else { return }
+        if !page.isLoading, store.state.reloadSetting(for: store.state.selectedTab?.url) == .forceReload {
+            page.reloadIgnoringCache()
+        } else {
+            reload(nil)
+        }
+    }
+
+    func developerReload(_ setting: DeveloperTabReloadSetting) {
+        store.mutate { $0.devModeReloadState = setting }
+        guard let page = shownPage else { return }
+        setting == .forceReload ? page.reloadIgnoringCache() : page.reload()
+    }
+
+    /// View › Developer › Turn on / Turn off Developer Mode for this site (⌃D, as in Arc).
+    @objc func toggleDeveloperMode(_ sender: Any?) {
+        guard let url = store.state.selectedTab?.url, url.host() != nil else { return NSSound.beep() }
+        store.mutate { $0.toggleDeveloperMode(for: url) }
+    }
+
     @objc func goBack(_ sender: Any?) { shownPage?.goBack() }
     @objc func goForward(_ sender: Any?) { shownPage?.goForward() }
 
@@ -972,6 +1069,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if let valid = validateSplitItem(item) { return valid }
+        if let valid = validateSplitLayoutItem(item) { return valid }
         switch item.action {
         case #selector(setDarkPagesMode(_:)):
             let modes = DarkPagesMode.allCases
@@ -980,6 +1078,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let tab = store.state.selectedTab
             item.state = store.state.wantsDarkPage(for: tab?.url, systemIsDark: store.systemIsDark) ? .on : .off
             return pool.engine.supportsDarkPages && tab?.url?.host() != nil
+        case #selector(toggleDeveloperMode(_:)):
+            let url = store.state.selectedTab?.url
+            item.title = store.state.developerModeMenuTitle(for: url)
+            return url?.host() != nil
         case #selector(toggleAdblock(_:)):
             item.state = store.state.blocksAds ? .on : .off
             return Adblocker.isAvailable
@@ -1029,7 +1131,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             item.state = window?.level == .floating ? .on : .off
         case #selector(setAsDefaultBrowser(_:)):
             item.state = Self.isDefaultBrowser ? .on : .off
-        case #selector(share(_:)), #selector(savePageAs(_:)),
+        case #selector(capturePage(_:)), #selector(captureFullPage(_:)):
+            return shownPage != nil && store.state.selectedTab?.url != nil
+        case #selector(share(_:)), #selector(savePageAs(_:)), #selector(printPage(_:)),
              #selector(clearCookiesAndRefresh(_:)), #selector(clearCacheAndRefresh(_:)):
             return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):

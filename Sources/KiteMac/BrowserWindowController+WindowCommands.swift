@@ -98,14 +98,16 @@ extension BrowserWindowController {
         }
     }
 
-    /// Archive › View Archive… (Arc: "Opens the Archive, where all your closed tabs live."). Arc shows
-    /// it in its Library window; Kite opens kite://archive in a new tab, as ⌘Y does for History.
+    /// Archive › View Archive… (Arc: "Opens the Archive, where all your closed tabs live."): the
+    /// Library's Archive page, which Arc's `viewArchive` shows with the Library's other pages.
     @objc func viewArchive(_ sender: Any?) {
-        let page = InternalPage.archive
-        store.mutate { state in
-            let id = state.openTab(url: page.url)
-            state.update(tab: id) { $0.title = page.title }
-        }
+        library.open(.archive)
+    }
+
+    /// Window › Open Library… (⇧⌘L; Arc's `toggleLibrary:`): opens the Library on the last page
+    /// shown, or closes it.
+    @objc func toggleLibrary(_ sender: Any?) {
+        library.toggle()
     }
 
     /// Archive › Clear Archive ("Clears all tabs in the Archive."), after Arc's confirmation.

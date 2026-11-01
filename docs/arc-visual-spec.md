@@ -653,6 +653,163 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Kite has no link routing yet, so it isn't imported.
 
+## Split View: top/bottom layout and drop-to-split → `SplitLayout.swift` (KiteCore), `SplitDropZonesView` (Arc strings and 1.169 decompile, 1 Nov 2026)
+
+Arc wasn't driven; nothing here is from a recording.
+
+- **Orientation** [str]: `SplitViewLayoutOrientation` is `horizontal` / `vertical` (arc-strings.txt ~156440); one split is one row or
+  one column. Kite already stored and rendered both (`SplitView.orientation`, `SplitPanesView`); this adds ways to get a vertical one.
+- **Command bar actions** [str, arc-strings.txt 68850–68852 and 79417–79456]: IDs `newVerticalSplitView`, `convertToVerticalSplitView`,
+  `convertToHorizontalSplitView`; titles "Add Vertical Split View", "Convert to Vertical Split View", "Convert to Horizontal Split
+  View"; trigger phrases "New Vertical Split View", "Flip to vertical/horizontal split view". They aren't in MainMenu.nib's View menu, so
+  Kite keeps them as hidden menu items the command bar still finds (`MenuCommand.commandBarOnly`). Kite matches titles only, not the
+  trigger phrases. **Inferred:** Add Vertical Split View on a side-by-side split turns it top/bottom (a split has one orientation).
+- **Drop a link on the content** [str + dec]: the window-contents split delegate has `onDropURL`, `onDropSidebarItem`,
+  `onDidUpdateSplitViewProposedDropTarget` and `onDidAdjustLayoutOrientation` (arc-strings.txt ~176689). `ARCUI.SplitViewController`
+  registers its view (a `DraggingDestinationForwardingView`) for two pasteboard types (@100a496f8). Its `draggingEntered:` (@100a54404)
+  runs only with `allowInteractivePaneInsertion` on, asks the delegate whether to take an outside drag, and sizes the proposed pane
+  as **width / (panes + 1)** by full height. Fields `dropRegion`, `dropRegionInsertionIndex`, `insertContent` / `replaceContent`,
+  `verticalLayoutOrientationFromDragAllowed`, `shouldDisplayDraggerPaneForSecondaryAxis` (~155594). The placeholder is
+  `SplitViewContentPlaceholderView.BorderView`: border **2**, corner **6** (@1001da6d0; colour set by the caller, not traced).
+- **Kite:** four 64pt strips along the content card's edges take a dragged http(s) link (not files). A single page takes all four edges
+  (left/right → side by side, top/bottom → top/bottom); a split takes only the two ends of its own axis; four panes take none. The
+  new pane gets an equal 1/(n+1) share and focus. The strips answer hit tests only while the mouse button is held after the click,
+  so clicks and hovers reach the page (checked with `ui pointer` / `ui input`).
+- **Unverified / guessed:** the strip width (Arc's drop regions weren't traced), the placeholder colour (Kite uses the accent colour,
+  12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
+  top/bottom one on a top/bottom drop (Kite refuses it).
+
+## Library: Open Library… ⇧⌘L (Arc 1.171 menu bar, strings, MainMenu.nib, assets, 1 Nov 2026) → `LibraryView`
+
+Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, so no geometry was measured.
+- Menu (AX, read-only): Window › … Remove Window from Set, —, **Open Library…** ⇧⌘L, **View Downloads…** ⇧⌘J,
+  **View Easels…**, **View Media…**, **View Boosts…**, —, Bring All to Front. Archive › View Archive… (no shortcut).
+- MainMenu.nib (`strings`): item "View Library", ids `openLibrary` / `viewLibrary`, SF Symbol `archivebox`, search
+  title "Library"; the downloads item `openDownloads` / `viewDownloads` with `arrow.down.circle`; the actions are
+  `toggleLibrary:`, `toggleDownloads:`, `viewArchive`, `viewEaselsAndNotes:`, `viewScreenshotsAndCaptures:`, `viewBoosts`.
+- In the browser window, not a window of its own: `Arc/WindowState+Library.swift` (arc-strings.txt ~61918); the main
+  window controller holds `homeViewComponent`, `homeWidth`, `$__lazy_storage_$_homeSidebarMenuController` next to
+  `sidebar`, `windowContentsContainer` and the paging controller (~149539–149560, ~150100–150113); window action
+  `preloadHome` (~176459). The Library has its own page list (`HomeButton._AnimatedPageSidebarItemView`,
+  `PageSidebarItem.swift`, ~82466) and an exit control ("Button; Exit the Library", "Menu item title to exit the
+  Library", ~62220, ~82547). Kite draws it over the window's sidebar and card, which fade out under it.
+- Pages (`HomePageID`, ~82334–82342): `EaselsAndNotesPage`, `DownloadsPage`, `ArchivePage`, `MediaPage`, `BoostsPage`,
+  `SpacesPage`; Lottie icons in ARC_HomeButton.bundle: easels, downloads, archive, screenshots, boosts, spaces
+  (128×128, 60 fps). No History page: Arc's history is ⌘Y, chrome://history in a tab. Kite lists Downloads, then
+  Archive, in that enum order; the on-screen order of Arc's list is inferred from the enum.
+- Remembered page: `lastSelectedHomePage` in StorableHome.json (`HomePreferencesClient`); Gabe's value is
+  `DownloadsPage`. Kite keeps `LibraryLastPage` in its defaults with Arc's raw values.
+- Downloads page copy: empty state subtitle "Come back after you've found some cool stuff to save." (title value not in
+  the strings), "Filter Downloads" with a profiles section (Kite has no profiles, so no filter).
+- Colours (ARC_HomeButton Assets.car): Foreground / 2 / 3 black or white at 1, 0.6, 0.45; Background / 2 / 3 at
+  0.07–0.20; `LibraryItemOutline` black 0.03 / white 0.08. Not applied yet: Kite's pages keep their own colours.
+- Inferred or unverified: the transition, all sizes, the exit control's look and label (Kite: "Exit Library" with an
+  arrow at the bottom of the list), page icons (Kite: SF Symbols), and whether Arc leaves the Library when a tab is
+  selected (Kite does). ⇧⌘J still opens Kite's downloads popover, though Arc's copy says it "Opens the Downloads
+  section of your Library": follow-up.
+
+## Expand Current Split (Arc 1.171 menu bar; Arc 1.169 binary, decompiled; 1 Nov 2026)
+
+- View menu (AX via `menudump`, nothing pressed): Add Split View, Close this Split Pane, Separate Page from
+  Split View, **Expand Current Split**: no shortcut. MainMenu.nib: selector `maximizeCurrentSplitViewPane:`,
+  no key-binding ID; the command bar's ID is `expandSplitViewPane`, icon `arrow.up.left.and.arrow.down.right`,
+  search terms "Expand; Expand Split View; Maximize" (`~/rea-arc/notes/split-view.md` §2).
+- Mechanism (Ghidra, `~/rea-arc/decomp/ghidra`): `MainWindowController.maximizeCurrentSplitViewPane:`
+  (@10031b87c) only posts a notification. The window contents controller observes it
+  (`maximizeFocusedSplitViewNotificationToken`; registered in FUN_1004842f4, handler FUN_1004856b8) and calls a
+  split view controller method with `animated: true` and a per-pane closure (FUN_1004859cc) that returns
+  width factor **1.0 for the pane whose content ID is the focused one and 0.0 for every other pane**.
+- So the panes all stay in the split (unlike Separate); the focused one fills it. The handler reads no
+  state, so running it again does nothing new: it isn't a toggle.
+- Validation (`MainWindowController` menu validation, arc.s ~805743 / Ghidra FUN_102952338): the item is
+  enabled when the window's split has more than one pane (`count > 1`), whether or not it's expanded.
+- How Arc brings the other panes back, and the animation's duration, weren't traced; no string for
+  "Collapse"/"Restore" split exists. `ExpandedCodingKeys` belongs to other types (not split view).
+- Kite: `SplitView.expandedTabID` (per split, saved, decodes as nil from older sessions); the stored
+  `widthFactors` are left alone and the layout uses 1/0 (`layoutFactors`). The hidden panes and dividers are
+  hidden. Running it again does nothing, as in Arc. Inferred, so the user is never stuck: focusing another
+  pane of the split, dragging a divider, adding a pane, or closing the expanded pane brings the split back
+  with its old widths. The change is immediate (Arc animates; duration unknown).
+## Capture → `CaptureOverlayView`, `BrowserWindowController+Capture`, `KiteCore/Capture` (Arc 1.171, 1 Nov 2026)
+
+Nothing in Arc was pressed or watched: menu bar read through AX, the rest from the binary, its strings and
+ARC_Capture.bundle's asset catalog. Line numbers are `~/rea-arc/arc-strings.txt`; addresses are Arc-arm64.
+
+- Menu: File › Share…, Capture…, Capture Full Page, Capture in Portrait Mode, Save Page As, Print, no
+  shortcuts (menudump). Shortcut ids `capturePage`, `captureFullPage` (34939, 34995, in the shortcut-id list
+  beside `addSplitView`, `archiveTab`); descriptions "Capture a part of the page, then save it or add it to an
+  Easel.", "Capture full page.", "Capture in Portrait Mode." (80669–80754). Also "Hold Command and Shift to
+  start a Capture." (80630, setting `dragToCaptureDisabled`).
+- Area: tooltips "Click or drag to capture a portion of this page" / "Drag to capture a portion of this page"
+  (79199–79202) in `ContentCaptureOverlayBubble`; views `ContentCaptureView`, `DimmedBackgroundView`; cursor
+  image `camera-cross-cursor` (53×50 pt). Colour assets (ARC_Capture.bundle): BlurredBackground light white
+  33%, dark black 25%; OverlayBubbleBlue P3 (0, 0.278, 1, 0.5); OverlayBubblePink P3 (1, 0.6, 0.6, 0.5);
+  OverlayBubbleText P3 (0.204, 0.021, 0.58); ImageViewBackground white / sRGB (0.082, 0.11, 0.188);
+  Background white / (0.071, 0.059, 0.18). Clicking captures a hovered element
+  (`WebContentState+HoveredCapture.swift`).
+- After an area capture Arc shows `contentCapturePopover` (`ContentCaptureViewController`: `CapturedImageView`,
+  `CapturedImageActionsView`, `CaptureImageMenuView` for Easels). Action descriptions: copy, save as a file,
+  send via iMessage, retake, edit (62280–62287). Copy toast "Copied Image" (immediate string at 0x1018e4b10,
+  case `captureCopied`).
+- Save (FUN_100421970): `NSSavePanel` sheet, PNG only, title "Save Capture Image", name "Capture-" +
+  `yyyy-MM-dd-HHmmss` + ".png".
+- Full page (`handleCaptureAction(_:)` in WindowState+Capture.swift, from 0x1001ffbec): toast "Capture in
+  Progress", a Combine delay `FullPageCaptureDelay` of 0.5 s (0x100201f54), the PNG written to
+  `NSFileManager.temporaryDirectory` + a name built from the title with `[^a-zA-Z0-9\-_ ]` removed and the
+  date format `'·' h.mma '·' MM-dd`, then toast "Screenshot Copied to Clipboard" with a button "to save the
+  screenshot copied to a file" (76207–76209); failures "Failed to Save" (`failedToSaveCaptureToDisk`).
+- Portrait Mode: settings `portraitCaptureBackground` ("Use Website Color" / "Use Desktop Wallpaper"),
+  `portraitCaptureColorPercentage`, `portraitCaptureHidesWatermark`, image `ArcCaptureWatermark`; its frame,
+  padding and output size weren't found, so Kite doesn't have it yet.
+- Inferred, not seen: how the title and date join in the full-page name (Kite: "Title · 3.45PM · 11-01.png"),
+  the Save button's title (Kite: "Save"), that the clipboard gets the image and the file, the popover's layout and
+  button styles, the selection outline (Kite: 1 pt white 90%), where the hint bubble sits, and what the 0.5 s
+  delay is for.
+
+## Developer Mode for a site, ⌃D (Arc 1.171 menu bar, strings, assets and defaults key names, 1 Nov 2026)
+
+- Menu: View › Developer › "Turn on Developer Mode for this site", AXMenuItemCmdModifiers 12 (⌃, no ⌘) on D,
+  last in the submenu after Allow JavaScript from Apple Events (`menudump View`). The off title is "Turn off
+  Developer Mode for this site" (arc-strings.txt 62211–62214). Command name `toggleDeveloperMode` (67583).
+- State: per host. `DeveloperModeClient.setDeveloperModeStatusForHost` (73577), stored in
+  `StorableDeveloperModeState.json` as `state.enabledHosts[]` (key paths only read), app state
+  `developerModeEnabledForHosts` (64267). Kite keys by the URL's lowercased host without the port (inferred
+  from "ForHost"; Arc's port handling not checked).
+- What it changes, from the strings: `BrowserNavigationButtons` has `isInDeveloperMode` and `reloadState`
+  (150804) and buttons `reloadButton`, `thinReloadButton`, `forceReloadButton`, `reloadOptionsButton`
+  (150778–150781). Its strings (62987–62994): "Refresh options button" / "A button that shows a list of reload
+  options.", "Refresh (Ignore Cache)", "Clear Cookies and Refresh", `devModeReloadState`, "Reload this page".
+  `DeveloperTabReloadSetting` lives in `BrowserNavigationButtonsFeature.swift` with cases `reload`,
+  `forceReload` (82636–82638, 176095–176096); persisted as the user default `devModeReloadState`.
+  Assets: `icon-browser-navigation-reload` 26×26, `icon-browser-navigation-force-reload` 22×15 (a loop ending
+  in an arrow down to a bar). Site Controls also has a Developer Mode row with on/off subtitles (63725,
+  73687–73688); the subtitle text isn't in the strings dump.
+- Not found: nothing ties Developer Mode to a console pane, an error indicator or a full-URL/port display
+  (the full URL is the separate toolbar setting `toolbarShowFullURLsEnabledPreference`). Kite builds only what
+  the strings show.
+- Inferred, not seen: the options button sits right of reload as a chevron (Kite: 16×32 menu button, reload
+  shifts left); picking Reload or Refresh (Ignore Cache) both does it and makes it the button's action, with a
+  checkmark on the current one; Clear Cookies and Refresh is one-shot. Arc's geometry in Developer Mode was not
+  measured (no Arc window was in Developer Mode, and Arc isn't driven).
+## Print ⌘P (Arc 1.171 menu bar, strings and ArcCore, 1 Nov 2026)
+
+- Menu bar (`menudump File`): the last item of the File group is **Print**, no ellipsis, ⌘P (mods=0).
+  Kite's item is now "Print" too (it was "Print…").
+- `arc-strings.txt` 34978 `printPage` (key binding name), 80726 its description "Prints the current page, or save
+  it as a PDF.", 176531 `printCurrentTab` (command), 190604 `printPage:` (the menu action; `decomp/arc.s`
+  805358 only checks it in menu validation). No `printOperation`, `NSPrintOperation`, `NSPrintPanel`, `PDFKit`
+  or `PrintPreview` in Arc's own binary: Arc doesn't build its own print sheet.
+- ArcCore (Arc's Chromium) has Chromium's print stack, including its print preview: `PrintPreviewUI`,
+  `chrome://print`, `printing.print_preview_disabled`, `runModalWithPrintInfo:` (the system dialog), and
+  locale.pak has the preview's strings ("Save as PDF", "Pages per sheet", "Print using system dialog").
+  So Arc's ⌘P most likely opens Chromium's print preview (a dialog over the page, with "Save as PDF").
+  Not observed: Arc wasn't driven.
+- Kite (`printPage(_:)`, `makePrintOperation`): the standard macOS print sheet on the window, with a page
+  preview, on both engines. WebKit gives `WKWebView.printOperation(with:)`, paged to the paper's width like
+  Safari. Chromium prints the page to PDF over DevTools (`Page.printToPDF`, the sheet's paper size, Chrome's
+  0.4 in margins, no backgrounds or header/footer) and PDFKit prints that. CEF's own `Print()` for a child
+  browser opens an app-modal panel with no preview, which is what Kite had before.
+
 ## Site Control Center → `SiteControlsView`, `SiteControlsPopover` (Arc 1.169 binary + masked probe, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt` 73677–73738 (module `SiteControlCenter`: `SiteControlCenterActionButton`,
@@ -690,6 +847,7 @@ Kite differs: no Boosts, capture, Developer Mode or sidebar preview; extensions 
 has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers plus four permission rows, shown
 always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
 circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
+
 ## Mini Player and auto picture in picture → `MiniPlayerView`, `MediaStateScript` (Arc 1.171 strings, assets, disassembly, 1 Nov 2026)
 
 - Modules (arc-strings.txt 82066-82130): `MediaControlsFeature` (`MiniPlayerFeature.swift`, `MiniPlayerView.swift`,
@@ -718,6 +876,7 @@ circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
   the space bar), the card fill colour (Kite uses the address field's fill), the title font (a CTFont; Kite uses 12 pt
   medium), button hover fills, which controls drop at 160 / 126, and whether closing the player pauses (Kite pauses).
 
+
 ## Check for Updates (Arc 1.171 Info.plist, menu bar and strings, 1 Nov 2026)
 
 - Menu (read through AX, nothing pressed): Arc › … Import from Another Browser…, **Check for Updates…** (no
@@ -740,6 +899,7 @@ circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
   (`UpdaterWindow`): checking, up to date, no releases yet, a new version (notes, Remind Me Later, View Release,
   Download when a .dmg/.zip is attached, opened in a Kite tab), and errors (Download manually, Try Again). Window
   size and layout are Kite's; Arc's updater window wasn't measured. No background checks or banner yet.
+
 ## Air Traffic Control → `AirTrafficControl` (KiteCore), `AirTrafficControlWindow` (Arc 1.171 binary strings and disassembly, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt` and `~/rea-arc/decomp/arc.s` (short SwiftUI string literals decoded from the
@@ -805,6 +965,36 @@ Arc was not opened or driven, so no geometry was measured.
   `instantLinks` item container. Which flags Arc's server turns on is unknown.
 - **Inferred:** ⇧⏎ only for a search (a typed URL opens as usual) and not in Site Search; results open in
   query order with the first selected; what Arc shows while it works (probably the sidebar cell) is unverified.
+## Zap → `ZapLibrary`, `ZapScript`, `ZapPickerScript` (KiteCore), `ZapsModel`, `ZapInjection`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, `ARC_BoostsEditor.bundle` (Assets.car, SelectorPicker.js;
+read only for its function names, nothing copied).
+
+- **Where it lives.** Zap is a tool inside Arc's Boost editor (`BoostsEditor` module: `SelectorPicker`,
+  `SelectorPickerMode`, `HoveredElementTracker`, `PostClickOverlay`, `SelectorPreview`, `SelectorSpotlight`,
+  `SelectorVisualizer`, `HighlightRect`, `PinToRectView`, `BoostsEditorShelfView`, `IndividualZapCell`; strings
+  37721–37814). Editor actions include `showSelectorPicker`, `hideSelectorPicker`, `appendZap`, `removeZap`,
+  `setZapToPreview` (163640–163700). The editor opens from the site control center's New Boost button and the page
+  context menu's "Customize Page" › "Create a new boost" (73700–73727, 84896). No menu bar item or command bar
+  action for Zap (menudump: only Window › View Boosts…, disabled).
+- **Picker mechanism.** Native overlay over the web contents; page JS only answers geometry:
+  `getHoveredElement({x: …})`, `getSelectorCandidates({x: …})`, `rectsForSelector(…)` (JS.swift strings, 73424–73428;
+  the bundle's SelectorPicker.js defines these three window functions). Candidates are capped at 100 matches.
+- **Text.** Shelf: "Click elements on the page to " + bold "Zap" + " them" (arc.s 0x1012eef9c: literal, then inline
+  small strings `Zap` with `Text.bold()`, then ` them`). Post-click buttons: "Zap this" (inline small string at
+  0x1012d8d04), "Zap all related elements", "Cancel" (0x1012d8d6c); in copy mode "Copy selector for this" /
+  "Copy selector for related". Error: "Failed to run Zap JS". Editor button: "Hide Selector Picker".
+- **Sizes and colours.** Post-click overlay `.frame(width: 250)` (0x1012d8960, 250.0). `ZapPreviewBackground`
+  sRGB 0.851 grey (#D9D9D9) for zap cells; Boosts palette `BoostsRed` sRGB (1, 0.055, 0.055).
+- **Storage and CSS.** Zaps are part of a Boost's data (`BoostData`, stored locally and in Firestore); applied as
+  `<selector> { display: none !important; }` (BoostsClient string at 71515).
+- **Kite.** Per-site selectors in `zaps.json` (domain = host without `www.`, Boosts' rule); a document-start script
+  in an isolated world (Chromium `Page.addScriptToEvaluateOnNewDocument` with `worldName`, WebKit `WKUserScript` in a
+  `WKContentWorld`) adds one style element; a zap or removal replaces the CSS live in open pages.
+- **Unverified / not measured:** the highlight's colour, fill and stroke (Kite uses BoostsRed at 15% fill with a
+  2pt stroke), the cursor during picking, the shelf's position and look, the candidate slider in
+  `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped
+  element again while its cell is hovered), and Arc's selector heuristics (Kite has its own).
 
 ## Still unknown
 
