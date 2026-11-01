@@ -255,6 +255,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!TidyTabs.isEnabled(in: .standard), forKey: TidyTabs.enabledKey)
         // The sidebar reads the setting when it redraws.
         store.mutate { _ in }
+    }
+
     /// Kite menu → Ask on Page: Arc Max's find-bar questions, off until turned on (Arc's `askOnPageEnabled`).
     @objc func toggleAskOnPage(_ sender: Any?) {
         UserDefaults.standard.set(!AskOnPage.isEnabled(in: .standard), forKey: AskOnPage.enabledKey)
@@ -478,6 +480,7 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleTidyTabs(_:)) {
             item.state = TidyTabs.isEnabled(in: .standard) ? .on : .off
+        }
         if item.action == #selector(toggleAskOnPage(_:)) {
             item.state = AskOnPage.isEnabled(in: .standard) ? .on : .off
         }
