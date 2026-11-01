@@ -104,6 +104,38 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
             params: ["source": VerificationCodeScript.source, "worldName": VerificationCodeScript.worldName],
             completion: nil
         )
+        prepareMediaState()
+    }
+
+    /// The media script reports what the page plays (MediaStateScript) from its own world;
+    /// the page hook runs in the page's world to reach its Media Session handlers.
+    private func prepareMediaState() {
+        browser.executeDevToolsMethod(
+            "Runtime.addBinding",
+            params: ["name": MediaStateScript.bindingName, "executionContextName": MediaStateScript.worldName],
+            completion: nil
+        )
+        browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: ["source": MediaStateScript.pageHook], completion: nil)
+        browser.executeDevToolsMethod(
+            "Page.addScriptToEvaluateOnNewDocument",
+            params: ["source": MediaStateScript.source, "worldName": MediaStateScript.worldName],
+            completion: nil
+        )
+    }
+
+    /// The media script's execution context, from its latest report; commands run there.
+    private var mediaContext: Int?
+
+    func runMediaCommand(_ command: MediaCommand) {
+        guard let mediaContext else { return }
+        // As if you'd clicked: play() and requestPictureInPicture() need a user gesture.
+        let params: [String: Any] = ["expression": command.script, "contextId": mediaContext, "userGesture": true]
+        browser.callDevToolsMethod("Runtime.evaluate", params: params) { _, _ in }
+    }
+
+    var isAudioMuted: Bool {
+        get { browser.audioMuted }
+        set { browser.audioMuted = newValue }
     }
 
     var view: NSView { browser.view }
@@ -251,6 +283,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
             if let id = params["executionContextId"] as? Int { kiteContexts[id] = nil }
         case "Runtime.executionContextsCleared":
             kiteContexts.removeAll()
+        case "Runtime.bindingCalled" where params["name"] as? String == MediaStateScript.bindingName:
+            guard let context = params["executionContextId"] as? Int,
+                  let report = MediaState.parse(params["payload"] as? String ?? "") else { return }
+            mediaContext = context
+            onEvent?(.media(report))
         case "Runtime.bindingCalled" where params["name"] as? String == VerificationCodeScript.bindingName:
             guard let context = params["executionContextId"] as? Int,
                   let payload = (params["payload"] as? String)?.data(using: .utf8),
