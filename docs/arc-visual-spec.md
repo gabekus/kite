@@ -1074,13 +1074,77 @@ ARC_Capture.bundle's asset catalog. Line numbers are `~/rea-arc/arc-strings.txt`
   `NSFileManager.temporaryDirectory` + a name built from the title with `[^a-zA-Z0-9\-_ ]` removed and the
   date format `'·' h.mma '·' MM-dd`, then toast "Screenshot Copied to Clipboard" with a button "to save the
   screenshot copied to a file" (76207–76209); failures "Failed to Save" (`failedToSaveCaptureToDisk`).
-- Portrait Mode: settings `portraitCaptureBackground` ("Use Website Color" / "Use Desktop Wallpaper"),
-  `portraitCaptureColorPercentage`, `portraitCaptureHidesWatermark`, image `ArcCaptureWatermark`; its frame,
-  padding and output size weren't found, so Kite doesn't have it yet.
+- Portrait Mode: see "Capture in Portrait Mode" below (g83).
 - Inferred, not seen: how the title and date join in the full-page name (Kite: "Title · 3.45PM · 11-01.png"),
   the Save button's title (Kite: "Save"), that the clipboard gets the image and the file, the popover's layout and
   button styles, the selection outline (Kite: 1 pt white 90%), where the hint bubble sits, and what the 0.5 s
   delay is for.
+
+## Capture in Portrait Mode → `BrowserWindowController+PortraitCapture`, `PortraitCaptureView`, `KiteCore/PortraitCapture` (Arc 1.171, g83, 1 Nov 2026)
+
+Nothing in Arc was pressed or captured: strings, Ghidra (read-only project, output in
+`~/rea-arc/decomp/out-g83/`), and asset catalogs. Line numbers are `~/rea-arc/arc-strings.txt`.
+
+- Menu: File › Capture in Portrait Mode, no shortcut, after Capture Full Page (menudump). Command id
+  `capturePortraitMode` (164100, 172028), selector `capturePrettyScreenshot:` on MainWindowController
+  (0x10031d178), description "Capture in Portrait Mode." (80671). The site control center has the same action
+  ("Tooltip for the capture in Portrait Mode button", 73694).
+- UI types (ContentPanel module, 38027–38033): `WindowScreenshotPopoverContent`, `WindowScreenshotPreviewImage`,
+  `WindowScreenshotColorSlider`, `CircularSelectionButton`, `WindowScreenshotWatermarkToggle`; view model
+  `WindowScreenshotViewModel` with `currentColor`, `sliderPercentage`, `showWatermark`, `background`,
+  `webContentTintColor`, `wallpaperImage`, `snapshotImage`, `onTakeScreenshot`. Buttons "Use Website Color" /
+  "Use Desktop Wallpaper" and "Portrait Capture Watermark Toggle" (73764–73768).
+- Settings (user defaults, 64159–64161): `portraitCaptureBackground` (an optional Bool: false = slider colour,
+  true = website colour, unset = desktop wallpaper, so the wallpaper is the default; view-model init
+  FUN_1013a7334), `portraitCaptureColorPercentage` (Double, written through a 0.05 s throttle),
+  `portraitCaptureHidesWatermark` (Bool; the watermark shows by default).
+- Colour (FUN_1013a7940, FUN_1013aea84): slider → nine colours `ColorPickerBrand1…9` (ARCClients_BaseAssets
+  Assets.car: sRGB (0.95, 0.918, 0.894), (0.95, 0.608, 0.733), (0.651, 0.447, 0.616), (0.949, 0.369, 0.42);
+  extended linear sRGB (1, 0.235, 0.097); P3 (0.95, 0.84, 0.428), (0.451, 0.897, 0.612), (0.496, 0.721, 0.838),
+  (0.401, 0.404, 0.527)); index ⌊p·8⌋, blended with the next by the remainder. Website: the page's tint, else
+  the slider colour at 0.95. Wallpaper: black under the wallpaper image.
+- Preview (FUN_1013aaf20, FUN_1013abe34): the backdrop is the colour with the colour turned +30° and −30° in
+  hue (FUN_1009a4820 rotates hue by degrees/360), 8 pt corners; the snapshot is resizable at its own aspect
+  ratio, clipped to a continuous rounded rectangle, stroked white 40%, shadowed black 15% radius 4. The
+  watermark toggle (FUN_1013aab28): 6 pt continuous corners, ultra-thin material, image
+  `window-screenshot-watermark-on/off` (24×24), opacity 1 hovered / 0.2. Watermark art `ArcCaptureWatermark`
+  254×32 SVG (Arc's main Assets.car).
+- After the shot: "Screenshot Copied to Clipboard" with a save button (76207–76209), as Capture Full Page.
+- Kite: the visible page (the page's own capture, both engines) with a margin of 6% of its longer side,
+  corner radius ¼ of the margin, the same white 40% edge and black 15% shadow, Kite's own "Kite" wordmark in
+  the bottom margin (Arc's art is not copied), Copy in the popover (Arc's `onTakeScreenshot`), PNG + file on
+  the clipboard, toast with Save (sheet "Save Capture Image"). The website colour is measured from the top rows
+  of the snapshot (Arc's `webContentTintColor` source wasn't traced).
+- Not found / Kite's choice: the output's margin, corner radius and size; whether Arc captures the web content
+  or the whole window (the type names say "window", `snapshotImage` lives in the content panel; Kite takes
+  the page); the direction of the two hue gradients; the slider's look (Arc has a `StripesConfig`, −45°,
+  15/15, colour at 30% alpha, meaning untraced); the popover's layout and the Copy button's title.
+
+## Record Trace → `TraceRecorderWindow`, `KCRuntime (Tracing)`, `KiteCore/TraceRecording` (Arc 1.171, g84, 1 Nov 2026)
+
+Strings, disassembly (`~/rea-arc/decomp/arc.s`) and Ghidra (out-g83/trace.txt); Arc wasn't touched.
+
+- Menu: Help › Troubleshooting › Record Trace, first, no shortcut, enabled (menudump).
+- Window (TracingWindowController init, decompiled in out-g83/trace.txt): `NSWindow(contentRect: 0,0,360,400, styleMask 0x800f` =
+  titled, closable, miniaturizable, resizable, full-size content view), title "Record Trace" (localized, small
+  string), not opaque, centred, frame autosaved as ".tracingWindowAutosaveFrame".
+- Editor (TraceConfigurationEditor.swift): "What's the issue you've been seeing?", "How long should the trace
+  last?" with four durations "5 seconds", "15 seconds", "30 seconds", "1 minute" (FUN_102d9677c), button
+  "Start Tracing" (FUN_102d9c7fc), and "Before starting, be sure to close out of any tabs with URLs you aren't
+  comfortable sharing with our team." Countdown labels " second remaining" / " seconds remaining" (76359–76363).
+- Recording (ADK/TracingControllerChromium.swift, 63386–63396): `start(traceDir:tracingDuration:additionalSample
+  PIDs:privacyFilteringEnabled:compressIntoZip:)`, file `trace_log.perfetto-trace.gz`, `sample` run on PIDs,
+  `heap` into heap.txt, the folder `arc_trace_bundle_` + `yyy-MM-dd_HH-mm-ss` zipped, then uploaded to
+  Filestack (84668, 84682–84684) with toasts "We've received the trace…", "We've cancelled your trace.",
+  "Trace upload failed…" (76194–76202).
+- Kite: the same window, prompts, durations and button; Chromium's own tracing (CefBeginTracing with its
+  default categories, CefEndTracing to `trace.json`), `/usr/bin/sample` of Kite's process for the duration,
+  and `description.txt` (the issue, duration, versions), in Kite Data/Traces/kite_trace_bundle_<date>.
+  Nothing is uploaded: the window ends on "Saved to …" with Show in Finder, and the warning says the trace
+  stays on the Mac. Cancel (and closing the window mid-trace) discards it. Disabled on WebKit (no tracing API).
+- Not found / Kite's choice: the default duration (Kite: 15 seconds), the window's layout and what it shows while
+  tracing (Kite: countdown, progress bar, Cancel), Arc's trace categories and privacy filter, the heap capture
+  and zip (Kite leaves them out; nothing is uploaded, so there's nothing to zip).
 
 ## Developer Mode for a site, ⌃D (Arc 1.171 menu bar, strings, assets and defaults key names, 1 Nov 2026)
 

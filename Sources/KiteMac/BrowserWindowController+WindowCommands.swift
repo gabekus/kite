@@ -86,6 +86,12 @@ extension BrowserWindowController {
         }
     }
 
+    /// Help › Troubleshooting › Record Trace: Arc's Record Trace window, on Chromium only.
+    @objc func recordTrace(_ sender: Any?) {
+        guard TraceRecorderWindow.isAvailable else { return NSSound.beep() }
+        TraceRecorderWindow.show()
+    }
+
     @objc func revealDataFolder(_ sender: Any?) {
         NSWorkspace.shared.activateFileViewerSelecting([AppDelegate.supportDirectory])
     }

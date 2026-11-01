@@ -53,7 +53,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Close Window | ⇧⌘W | ✅ | |
 | Archive Tab | ⌘W | ✅ "Archive Tab" (`archiveTab`); closed unpinned tabs go to the archive. "Undo Archive Tab" (⌘Z) still to do | B3 |
 | Share… | | ✅ | |
-| Capture… / Full Page / Portrait | (none) | 🟡 Capture… (`capturePage`) and Capture Full Page (`captureFullPage`); Portrait Mode, click-to-capture an element and ⌘⇧-drag still to do | Thread: Capture |
+| Capture… / Full Page / Portrait | (none) | 🟡 Capture… (`capturePage`), Capture Full Page (`captureFullPage`) and Capture in Portrait Mode (`capturePortraitMode`, g83: the visible page on a slider colour from Arc's nine brand colours, the website's colour or the desktop wallpaper, watermark toggle, copied with Save in the toast); click-to-capture an element and ⌘⇧-drag still to do | Thread: Capture. Portrait: frame sizes and Arc's watermark art are Kite's |
 | Save Page As | | ✅ "Save Page As", no ellipsis (g74): MHTML (Chromium) / web archive (WebKit) | |
 | Print | ⌘P | ✅ "Print": the macOS print sheet with a page preview, both engines (Chromium via a PDF). Arc likely shows Chromium's print preview instead (see arc-visual-spec) | |
 
@@ -162,7 +162,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Arc item | Kite | Plan |
 |---|---|---|
 | Essential Keyboard Shortcuts (cheat sheet) | ✅ Arc's floating 475×458 window: 5 fixed commands with their live shortcuts as blue keycaps; "View All" opens the full list. Split View and Little Arc rows show a shortcut only once remapped or built | |
-| Restore Data, Reveal Data folder, Copy Info, Task Manager, Record Trace | 🟡 Reveal Kite Data, Copy Kite Info, Open Task Manager (Chromium's refreshed task manager: category tabs, search, sorting, column menu with Idle Wake Ups and File Descriptors, End Task; Network per tab on Chromium, N/A on WebKit) | Task manager extension and spare renderer rows, engine-internal columns; Record Trace |
+| Restore Data, Reveal Data folder, Copy Info, Task Manager, Record Trace | 🟡 Reveal Kite Data, Copy Kite Info, Open Task Manager (Chromium's refreshed task manager: category tabs, search, sorting, column menu with Idle Wake Ups and File Descriptors, End Task; Network per tab on Chromium, N/A on WebKit), Record Trace (g84: Arc's 360×400 window, issue field, 5 s / 15 s / 30 s / 1 min, Start Tracing, countdown and Cancel; a Chromium trace plus a `sample` of Kite into Kite Data/Traces, never uploaded; disabled on WebKit) | Task manager extension and spare renderer rows, engine-internal columns; Record Trace's heap capture and zip, Arc's privacy filtering |
 | Getting Started, Contact, Help Center, Export Arc Notes | ❌ | Skip |
 
 ## Features without a menu item
@@ -194,7 +194,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
 | Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
 | Library | Downloads, archive, easels, media, boosts (Arc: in the browser window, not a separate one) | 🟡 Downloads, Archive, Media and Boosts pages in the window (⇧⌘L). Library button at the bottom bar's leading end (32×32 at 8pt, as Arc's) opens it; Arc's progress badge on it while downloading; Arc's projectile fly-in from the pointer into it when a download starts | Easels & Notes, Spaces pages; Arc's DownloadBin (fly-in target when the sidebar is hidden); badge completion animation; Arc's own Library icon |
-| Capture | Screenshot tool for an area/full page | 🟡 Area (drag) and full page: Copy / Save; no Easels, no Portrait Mode | Thread: Capture |
+| Capture | Screenshot tool for an area/full page | 🟡 Area (drag), full page and Portrait Mode: Copy / Save; no Easels | Thread: Capture |
 | Library | Downloads, archive, easels, media, boosts in one window | ❌ | Thread: Library |
 | Air Traffic Control | Rules to route links from other apps to a space | 🟡 | Kite menu → Air Traffic Control…: URL "Is equal to"/"Contains" routes to a space or Little Kite, plus a default. No profile destination; editor lives in its own window until Settings exists |
 | Live folders | GitHub PRs/issues, RSS etc. as an auto-updating folder | 🟡 | Space menu → Live Folders → GitHub: a Pull Requests folder read from github.com with the space's session; filters, Repositories, Refresh, unread dots, GitHub icons; a PR you make or review files itself there (making the folder, with Arc's intro popover). No SSO menu |
