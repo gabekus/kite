@@ -76,6 +76,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var webAreaInWindow: NSRect { contentFrame.convert(contentFrame.bounds, to: nil) }
     /// After every sync: tabs, selection or pages may have changed.
     var didSync: (() -> Void)?
+    /// File › Capture…'s overlay over the focused page, and the popover offering the capture.
+    var captureOverlay: CaptureOverlayView?
+    weak var capturePopover: NSPopover?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
     /// Kite's own pages (kite://history, kite://archive) over the panes showing them, by tab.
@@ -181,6 +184,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             goForward: { [weak self] in self?.goForward(nil) },
             reload: { [weak self] in self?.reload(nil) },
             forceReload: { [weak self] in self?.forceReload(nil) },
+            reloadButton: { [weak self] in self?.reloadFromButton() },
+            developerReload: { [weak self] setting in self?.developerReload(setting) },
+            clearCookiesAndRefresh: { [weak self] in self?.clearCookiesAndRefresh(nil) },
             toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
             closeTab: { [weak self] id in self?.close(tab: id) },
             addSplitView: { [weak self] in self?.addSplitView(nil) },
@@ -451,7 +457,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             show(visible, focused: selected?.id)
         }
         if let split = state.selectedSplit {
-            splitPanes.setLayout(factors: split.normalizedFactors, orientation: split.orientation)
+            splitPanes.setLayout(factors: split.layoutFactors, orientation: split.orientation)
         }
         updateSplitDropZones()
         let live = state.allTabIDs
@@ -483,6 +489,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func show(_ tabs: [BrowserTab], focused: UUID?) {
         hideFindBar()
         let ids = tabs.map(\.id)
+        // Capture… belongs to the page it was started on.
+        if ids != shownTabIDs || focused != shownTabID { cancelCapture() }
         if ids != shownTabIDs {
             tabsChangedOnScreen(left: shownTabIDs.filter { !ids.contains($0) }, arrived: ids.filter { !shownTabIDs.contains($0) })
             for page in shownPages.values { page.view.removeFromSuperview() }
@@ -943,6 +951,29 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
     }
 
+    /// The sidebar's and toolbar's reload button. On a Developer Mode site it reloads the way
+    /// the reload options last chose (Arc's `devModeReloadState`).
+    func reloadFromButton() {
+        guard let page = shownPage else { return }
+        if !page.isLoading, store.state.reloadSetting(for: store.state.selectedTab?.url) == .forceReload {
+            page.reloadIgnoringCache()
+        } else {
+            reload(nil)
+        }
+    }
+
+    func developerReload(_ setting: DeveloperTabReloadSetting) {
+        store.mutate { $0.devModeReloadState = setting }
+        guard let page = shownPage else { return }
+        setting == .forceReload ? page.reloadIgnoringCache() : page.reload()
+    }
+
+    /// View › Developer › Turn on / Turn off Developer Mode for this site (⌃D, as in Arc).
+    @objc func toggleDeveloperMode(_ sender: Any?) {
+        guard let url = store.state.selectedTab?.url, url.host() != nil else { return NSSound.beep() }
+        store.mutate { $0.toggleDeveloperMode(for: url) }
+    }
+
     @objc func goBack(_ sender: Any?) { shownPage?.goBack() }
     @objc func goForward(_ sender: Any?) { shownPage?.goForward() }
 
@@ -994,6 +1025,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let tab = store.state.selectedTab
             item.state = store.state.wantsDarkPage(for: tab?.url, systemIsDark: store.systemIsDark) ? .on : .off
             return pool.engine.supportsDarkPages && tab?.url?.host() != nil
+        case #selector(toggleDeveloperMode(_:)):
+            let url = store.state.selectedTab?.url
+            item.title = store.state.developerModeMenuTitle(for: url)
+            return url?.host() != nil
         case #selector(toggleAdblock(_:)):
             item.state = store.state.blocksAds ? .on : .off
             return Adblocker.isAvailable
@@ -1043,7 +1078,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             item.state = window?.level == .floating ? .on : .off
         case #selector(setAsDefaultBrowser(_:)):
             item.state = Self.isDefaultBrowser ? .on : .off
-        case #selector(share(_:)), #selector(savePageAs(_:)),
+        case #selector(capturePage(_:)), #selector(captureFullPage(_:)):
+            return shownPage != nil && store.state.selectedTab?.url != nil
+        case #selector(share(_:)), #selector(savePageAs(_:)), #selector(printPage(_:)),
              #selector(clearCookiesAndRefresh(_:)), #selector(clearCacheAndRefresh(_:)):
             return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):
