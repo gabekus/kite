@@ -86,6 +86,8 @@ enum MainMenu {
             // Until there's a Settings window.
             item("Open Links from Other Apps in Little Kite", #selector(AppDelegate.toggleLittleKiteLinks(_:)), toTarget: false),
             item("Air Traffic Control…", #selector(AppDelegate.showAirTrafficControl(_:)), toTarget: false, id: "openAirTrafficControl"),
+            // Arc's "Show full URL when Toolbar is enabled" (toolbarShowFullURLsEnabledPreference), off as in Gabe's Arc.
+            item("Show Full URL in Toolbar", #selector(AppDelegate.toggleToolbarFullURLs(_:)), toTarget: false, id: "toggleToolbarFullURLs"),
             // Arc Max's "5-Second Previews" (hoverCardsEnabled), off by default as in Arc.
             item("Link Previews (Hold ⇧ over a Link)", #selector(AppDelegate.toggleLinkPreviews(_:)), toTarget: false),
             item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),

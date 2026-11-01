@@ -241,6 +241,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
     }
 
+    /// Kite menu → Show Full URL in Toolbar: the toolbar prints the whole address instead of the
+    /// host (Arc: "Show full URL when Toolbar is enabled").
+    @objc func toggleToolbarFullURLs(_ sender: Any?) {
+        UserDefaults.standard.set(!ToolbarURL.showsFullURL(in: .standard), forKey: ToolbarURL.showsFullURLKey)
+    }
+
     /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
     @objc func openURLFromExtensionsMenu(_ sender: Any?) {
         guard let url = sender as? URL else { return }
@@ -428,6 +434,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleToolbarFullURLs(_:)) {
+            item.state = ToolbarURL.showsFullURL(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleLittleKiteLinks(_:)) {
             item.state = LittleKite.opensExternalLinks(in: .standard) ? .on : .off

@@ -915,3 +915,24 @@ Arc was not opened or driven, so no geometry was measured.
 - The ⌘T panel's exact shadow parameters (only its effect was measured).
 - Arc's default sidebar width, light-theme fill opacities, and the space-switch animation timing.
 - The space swipe's physics and settle, and what Arc's space strip shows (see *Spaces*).
+
+## Show full URL in the toolbar → `ToolbarURL`, `PageToolbar` (Arc 1.171 strings and binary, 1 Nov 2026)
+
+- Setting text "Show full URL when Toolbar is enabled" (`~/rea-arc/arc-strings.txt` 80422), in the preferences list
+  next to window dragging and Shared Quotes. Key `toolbarShowFullURLsEnabledPreference` (64221, 148552, 171077;
+  `onToggleToolbarShowFullURLsEnabledPreference` 171281, `toolbarShowFullURLsEnabledPreferenceDidChange` 176743).
+- Gabe's value: the key is absent from `defaults read company.thebrowser.Browser` (his `topBarURLEnabled` is 0,
+  toolbar off). Arc reads settings through `UserDefaultsClient.boolForSetting` (arc.s 100d80e34); the key's only
+  two references in arc.s are its raw-value switch (1005a1c50) and the key table (1005a3054), with no registered
+  default found, so a missing key reads as false. Kite defaults to off. Inferred from that, not seen in Arc's UI.
+- What it switches: the toolbar's view state holds `displayTitleShort` and `displayTitleLong` next to
+  `shouldToolbarShowFullURLs` and an `urlDomainWidth` frame (150859–150955). The exact text of each title was not
+  found in the binary (no symbols; the function that builds them wasn't located). Kite's short form stays the host
+  it already showed; the long form is the whole address (scheme, host, port, path, query, fragment), truncated at
+  the tail before the buttons. Whether Arc's long form drops the scheme or "www.", and what `urlDomainWidth` is
+  used for (keeping the domain visible or styling it), is unverified.
+- Arc also toggles it from the toolbar's right-click menu: `toggleToolbarFullURLs` in
+  `commandBarToolbarContextMenuActions` (172024), titled "Hide Full URL" (immediate string at arc.s 1003a7a08,
+  comment "Title for the 'Hide Full URL' context menu action." 62840) and "Show Full URL" (62841). Kite has no
+  toolbar context menu yet; until the settings window exists the toggle is Kite menu → Show Full URL in Toolbar
+  (command id `toggleToolbarFullURLs`, Arc's action name), not an Arc menu item.
