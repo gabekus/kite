@@ -1000,7 +1000,7 @@ Binary and assets only; Arc wasn't driven (its cards are off in Gabe's Arc).
   are inferred. Kite's snapshot is the card's content (image, title, description, site) on the window background;
   Arc's snapshot view layout wasn't decoded. Kite also keeps 32pt clear at the end of the card's site row.
 - Verified on a test build (temporary hook, removed, that sent a ⇧ hover for a 127.0.0.1 link): `ui tree` on the card
-  window showed the button at the card's bottom-right, 8pt in from the right and 8.5pt up, face #3139FB, radius 10;
+  window showed the button at the card's bottom-right, 7.5pt in from the right and 8.5pt up, face #3139FB, radius 10;
   `ui input` clicking it built the menu "Copy as Image", "Copy as Link", "Share" (6 services), and Copy as Image /
   Copy as Link put a 300×120 image / the link on a test pasteboard (`KITE_TEST_PASTEBOARD`).
 
