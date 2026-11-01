@@ -1069,6 +1069,35 @@ read only for its function names, nothing copied).
   `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped
   element again while its cell is hovered), and Arc's selector heuristics (Kite has its own).
 
+## Task Manager → `TaskManager` (KiteCore), `TaskManagerWindow` (Arc 1.171 menu bar, strings and ArcCore, 1 Nov 2026)
+
+- Menu (`menudump Help`): Help › Troubleshooting holds Record Trace, Open Task Manager, a separator, Reveal Arc
+  Data, Copy Arc Info. No shortcuts. Open Task Manager was disabled with Arc in the background (not read further).
+- Selectors: `openTaskManager` / `recordTrace` / `cancelTrace` (arc-strings 176564–176566), menu outlets
+  `openTaskManagerMenuItem`, `recordTraceMenuItem`, `cancelTraceMenuItem` (149687–149689), and
+  `$__lazy_storage_$_supportsTaskManager`; ArcCore exports `showTaskManager`.
+- It is Chromium's task manager, not an Arc window: ArcCore (CEF/Chromium 156.0.8078.74) contains
+  `TaskManagerView`, `task_manager_view.h`, `task_manager_search_bar_view.cc`, prefs `task_manager.column_visibility`,
+  `task_manager.category`, `task_manager.end_process_enabled`, and every `IDS_TASK_MANAGER_*_COLUMN`. No
+  `TaskManagerMac` (the old Cocoa one is gone).
+- Its English strings (ArcCore en.lproj/locale.pak): columns "Task", "Memory Footprint", "CPU", "Network",
+  "Process ID" (plus optional ones: Profile, Swapped Memory, Start Time, CPU Time, GPU Memory, JavaScript Memory,
+  Idle Wake Ups, …); buttons "End Process" and "End Task"; refreshed-UI strings "Search", "Search for any process
+  from the list.", "Ends the highlighted task.", "Task(s) ended.", categories "Tabs & extensions", "Browser",
+  "System", "All tasks"; row titles "Tab: $1", "Incognito Tab: $1", "Utility: $1", "GPU Process", "Subframe: $1";
+  "N/A".
+- Kite: CEF only runs Chrome commands (IDC_TASK_MANAGER) for Chrome-style browsers, and Kite's are Alloy style
+  (hosted in its own views), so Kite draws the table itself: Chromium's five default columns, its row titles, the
+  browser then GPU/utility processes then tabs, a process's numbers on its first row only, 1 s refresh, End Task.
+  Memory is the process's physical footprint (proc_pid_rusage, "145,268K"); CPU is % of one core.
+- Process ids: Chromium tabs' renderers report their pid to the browser (KiteHelper's render process handler,
+  `kite.rendererPID`, on each main-frame script context); WebKit tabs use WKWebView's private
+  `_webProcessIdentifier` (guarded). Chromium's GPU and utility processes are Kite's children, named from
+  `--type` / `--utility-sub-type`.
+- Inferred, not observed (Arc's task manager wasn't opened): the button wording ("End Task", the refreshed UI's,
+  over the older "End Process"), the window size, the row order, the utility names, and double-click to show a
+  tab. Network reads N/A: Kite has no per-tab network counter yet.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

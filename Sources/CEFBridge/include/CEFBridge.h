@@ -162,6 +162,9 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic) BOOL audioMuted;
 /// Requests the ad blocker stopped since the page started loading.
 @property (nonatomic, readonly) NSInteger blockedCount;
+/// The pid of the renderer showing the main frame, as the renderer last reported it; 0 when
+/// unknown (no page has run yet, or the renderer died).
+@property (nonatomic, readonly) int renderProcessIdentifier;
 
 - (void)loadURL:(NSURL *)url;
 - (void)goBack;

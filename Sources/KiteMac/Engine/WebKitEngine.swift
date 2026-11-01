@@ -254,6 +254,16 @@ final class WebKitPage: NSObject, WebPage {
     }
 
     /// WebKit's page mute (`_setPageMuted:`, private: there's no public API). Without it, does nothing.
+    /// WKWebView's private `_webProcessIdentifier` (WebKit has no public API for it); nil if a
+    /// macOS release drops it, or before the web process starts.
+    var processIdentifier: pid_t? {
+        let selector = NSSelectorFromString("_webProcessIdentifier")
+        guard webView.responds(to: selector),
+              let pid = (webView.value(forKey: "_webProcessIdentifier") as? NSNumber)?.int32Value, pid > 0
+        else { return nil }
+        return pid
+    }
+
     var isAudioMuted = false {
         didSet {
             let selector = NSSelectorFromString("_setPageMuted:")
