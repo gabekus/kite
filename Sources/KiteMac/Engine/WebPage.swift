@@ -18,6 +18,17 @@ enum PageEvent {
     /// Kite's own "Add to Kite" button on a Google result was clicked (checked by the
     /// engine): install that Chrome Web Store extension without leaving the page.
     case addExtension(id: String)
+    /// The pointer moved onto a link (nil: off it). Drives ⇧-hover link previews.
+    case linkHover(LinkHover?)
+}
+
+/// The link under the pointer, as the engine reports it.
+struct LinkHover {
+    var url: URL
+    /// The link's box in screen coordinates, when the engine knows it (WebKit).
+    var screenRect: NSRect?
+    /// The modifier keys of the move that reported it, when the engine knows them (WebKit).
+    var modifiers: NSEvent.ModifierFlags?
 }
 
 /// Find-in-page progress. Counts are nil when the engine can't report them (WebKit).

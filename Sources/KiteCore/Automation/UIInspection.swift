@@ -66,7 +66,8 @@ public enum UIInspection: Hashable, Sendable {
     case capture(window: Int?, region: UIRect?, format: ImageFormat, pixels: [UIPoint], image: Bool, save: String?)
     /// Synthetic pointer moves through the points: at each, the view hit, cursor rects, tracking
     /// areas and the cursor Kite sets.
-    case pointer(window: Int?, points: [UIPoint])
+    /// `modifiers` are held through the moves (⇧ for link previews).
+    case pointer(window: Int?, points: [UIPoint], modifiers: KeyChord.Modifiers = [])
     case input(window: Int?, event: UIInputEvent)
     /// The menu bar: every item's path, shortcut, action, target, enabled and hidden state.
     case menu(match: String?)
@@ -131,7 +132,7 @@ public enum UIInspection: Hashable, Sendable {
                 throw Invalid("Pass \"points\" [[x, y], …], or \"from\" (and \"to\" and \"steps\") for a sweep.")
             }
             guard points.count <= Self.maxPointerSteps + 1 else { throw Invalid("At most \(Self.maxPointerSteps + 1) points.") }
-            self = .pointer(window: window, points: points)
+            self = .pointer(window: window, points: points, modifiers: try a.modifiers())
         case "input":
             self = .input(window: window, event: try a.inputEvent())
         case "menu":
@@ -186,7 +187,7 @@ public enum UIInspection: Hashable, Sendable {
                 "click": point,
                 "button": ["type": "string", "enum": ["left", "right", "middle"]],
                 "count": ["type": "integer", "minimum": 1, "maximum": 3],
-                "modifiers": ["type": "string", "description": "input click: e.g. \"cmd\" or \"shift+alt\"."],
+                "modifiers": ["type": "string", "description": "input click, pointer moves: e.g. \"cmd\" or \"shift+alt\"."],
                 "scroll": point,
                 "dx": ["type": "number"], "dy": ["type": "number"],
                 "phase": ["type": "string", "enum": .array(UIInputEvent.ScrollPhase.allCases.map { .string($0.rawValue) }),
