@@ -158,6 +158,8 @@ enum ArcMetrics {
 
     enum CommandBar {
         static let width: CGFloat = 765
+        /// Kite's own: in a window too narrow for 765, the bar keeps this much from each edge.
+        static let minimumWindowMargin: CGFloat = 20
         /// Top edge as a share of the window's height, centred horizontally on the window.
         static let topFraction: CGFloat = 0.369
         /// Arc's command bar layer uses a 12pt circular corner (it sets no corner curve).
