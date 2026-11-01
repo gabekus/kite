@@ -9,10 +9,11 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate, NSW
     static let shared = SettingsWindowController()
 
     private let model = SettingsModel()
-    private var selected: SettingsPane = .general
+    /// Arc (sindresorhus/Settings) opens on the first tab, then on whichever was last shown.
+    private var selected: SettingsPane = .account
 
     private init() {
-        let window = NSWindow(
+        let window = SettingsWindow(
             contentRect: NSRect(origin: .zero, size: NSSize(width: SettingsMetrics.width, height: 400)),
             styleMask: [.titled, .closable],
             backing: .buffered,
@@ -36,7 +37,8 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate, NSW
         guard let window else { return }
         select(pane ?? selected, animate: window.isVisible)
         if !window.isVisible { window.center() }
-        window.makeKeyAndOrderFront(nil)
+        // Test runs stay behind the user's windows.
+        if UIDiagnostics.enabledByEnvironment { window.orderBack(nil) } else { window.makeKeyAndOrderFront(nil) }
     }
 
     private func select(_ pane: SettingsPane, animate: Bool) {
@@ -88,5 +90,17 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate, NSW
         item.target = self
         item.action = #selector(toolbarItemSelected(_:))
         return item
+    }
+}
+
+/// Hands key presses to a shortcut being recorded (see ShortcutRecording).
+private final class SettingsWindow: NSWindow {
+    override func sendEvent(_ event: NSEvent) {
+        if ShortcutRecording.take(event) { return }
+        super.sendEvent(event)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        ShortcutRecording.take(event) || super.performKeyEquivalent(with: event)
     }
 }

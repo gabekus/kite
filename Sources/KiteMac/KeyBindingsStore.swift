@@ -55,7 +55,8 @@ final class KeyBindingsStore {
         func walk(_ menu: NSMenu, _ path: [String]) -> [ShortcutEntry] {
             menu.items.flatMap { item -> [ShortcutEntry] in
                 if let submenu = item.submenu { return walk(submenu, path + [item.title]) }
-                guard let id = item.identifier?.rawValue, !item.title.isEmpty, item.hasDescribableShortcut,
+                // AppKit names items without an ID after their action ("toggleClaudeSpace:"); Kite's IDs have no colon.
+                guard let id = item.identifier?.rawValue, !id.contains(":"), !item.title.isEmpty, item.hasDescribableShortcut,
                       seen.insert(id).inserted
                 else { return [] }
                 let original = defaults[ObjectIdentifier(item)] ?? item.shortcut

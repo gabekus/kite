@@ -135,7 +135,6 @@ private struct ShortcutRecorder: View {
     let isRecording: Bool
     let start: () -> Void
     let finish: (KeyShortcut?) -> Void
-    @State private var monitor: Any?
 
     var body: some View {
         Button(action: start) {
@@ -153,22 +152,54 @@ private struct ShortcutRecorder: View {
 
     private func install() {
         remove()
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        ShortcutRecording.begin { event in
             if event.keyCode == 53 && event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function]).isEmpty {
                 remove()
                 finish(nil)
-                return nil
+                return
             }
-            guard let shortcut = KeyShortcut(event: event), shortcut.isSafeKeyEquivalent else { return nil }
+            guard let shortcut = KeyShortcut(event: event), shortcut.isSafeKeyEquivalent else { return }
             remove()
             finish(shortcut)
-            return nil
         }
     }
 
     private func remove() {
+        ShortcutRecording.end()
+    }
+}
+
+/// While a shortcut is being recorded, every key press goes to the recorder instead of the menu
+/// bar. Real presses arrive through a local monitor (before menu key equivalents); presses from
+/// `kite ui input` arrive through SettingsWindow.sendEvent, which monitors never see.
+@MainActor
+enum ShortcutRecording {
+    private static var handler: ((NSEvent) -> Void)?
+    private static var monitor: Any?
+
+    static var isActive: Bool { handler != nil }
+
+    static func begin(_ handle: @escaping (NSEvent) -> Void) {
+        end()
+        handler = handle
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard isActive else { return event }
+            handle(event)
+            return nil
+        }
+    }
+
+    static func end() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        handler = nil
+    }
+
+    /// Returns true if the recorder took the key.
+    static func take(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown, let handler else { return false }
+        handler(event)
+        return true
     }
 }
 
