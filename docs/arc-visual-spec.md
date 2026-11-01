@@ -2388,7 +2388,52 @@ through `DialogsClient` (`SharedWindowFeature/WindowData+Dialogs.swift`, `ARCCli
   `commandBarToolbarContextMenuActions` (172024), titled "Hide Full URL" (immediate string at arc.s 1003a7a08,
   comment "Title for the 'Hide Full URL' context menu action." 62840) and "Show Full URL" (62841). Kite has no
   toolbar context menu yet; until the settings window exists the toggle is Kite menu → Show Full URL in Toolbar
-  (command id `toggleToolbarFullURLs`, Arc's action name), not an Arc menu item.
+  (command id `toggleToolbarFullURLs`, Arc's action name), not an Arc menu item. The right-click menu is built
+  now (g105, next section).
+
+## Toolbar right-click menu → `ToolbarMenu` (KiteCore), `PageToolbarHost`, `BrowserWindowController+ToolbarMenu` (Arc 1.171 disassembly and strings, 1 Nov 2026, g105)
+
+All from `~/rea-arc/decomp/arc.s` (Arc 1.171) and `~/rea-arc/arc-strings.txt`; nothing in Arc was opened or
+pressed, so none of it was seen on screen.
+
+- The menu's items are one enum, `CommandBarContextMenuAction` (strings 42074). Its title switch is arc.s
+  1003a7600 (jump table at 1003a7af0): tag 0 "Copy URL", 1 "Share", 2 "Show as Toolbar" / "Hide Toolbar" (bool
+  payload: true shows), 3 "Show Full URL" / "Hide Full URL", 4 "Enable Shared Quotes" / "Disable Shared Quotes",
+  5 "Capture…", 6 "Capture Full Page", 7 "Capture in Portrait Mode", 8 "Manage Extensions…", 9 a separator. The
+  short titles are Swift immediates in that function (e.g. "Copy URL" at 1003a76d8); the localizer comments
+  ("Title for the 'Show Full URL' context menu action.") are strings 62838–62851.
+- One builder makes both the sidebar address field's list (`commandBarPlaceholderContextMenuActions`) and the
+  toolbar's (`commandBarToolbarContextMenuActions`): arc.s 10007204c (file WindowState+CommandBarPlaceholder.swift).
+  Its callers (10002a72c/10002a744, 1000f3b5c/1000f3b74) call it twice in a row, placeholder flag 1 then 0, in the
+  order of the two state fields (strings 148549–148550). With the flag 0 (the toolbar), in order:
+  1. No URL: no items (and `WindowContentViewController`'s menu closure, 10041fda0, returns no menu for an empty list).
+  2. Copy URL, always; its payload carries a flag that is set only when the tab's content is a web page (the
+     enum check at 100072440), which Kite reads as enabled.
+  3. Web page only: Share, Capture…, Capture Full Page, Capture in Portrait Mode.
+  4. If extensions apply (third argument, 1 for main windows, and a check at 10039153c): separator, Manage Extensions….
+  5. A second group: Show/Hide Full URL (web page only, toolbar list only; payload = the opposite of setting 0x51),
+     Show as Toolbar / Hide Toolbar (payload = the opposite of the window's toolbar state, unless a check at
+     102a03b78 says no), Enable/Disable Shared Quotes (web page only, setting 0x84). If the group isn't empty, a
+     separator and then the group.
+- The menu is built in `WindowContentViewController` (strings around arc.s 100420974), which also hosts the top
+  bar; which part of the bar opens it isn't shown by the code. Kite opens it from a right-click anywhere on the bar
+  that isn't a button.
+- Kite leaves out Capture in Portrait Mode and Enable/Disable Shared Quotes (Kite has neither feature). Manage
+  Extensions… shows where extensions run (Chromium windows, not incognito) and opens the extensions popover from the
+  bar's right end. Share uses File › Share…'s picker. Whether Arc's items have icons wasn't checked.
+- Kite's own pages (kite://) count as "not a web page": Copy URL disabled, then Hide Toolbar.
+
+## Command bar: Replace Pin with Current Page → `replacePinWithCurrentPage(_:)` (Arc 1.171 strings, 1 Nov 2026, g106)
+
+- Arc's command-bar action `replacePinnedTab` (strings 68847, 161126, 169663; `ReplacePinnedTabCodingKeys` 41021),
+  title "Replace Pin with Current Page" (79423, comment "Action to replace a pinned tab with a different url"),
+  also matched by "Replace Pinned Tab with the Current Site" (79443, "Action to pin current tab to a new URL.").
+  Neither is in Arc's menu bar (arc-menu-1.171.txt). The sidebar's own item is a different action,
+  `replacePinnedTabWithCurrentPage` (176631), "Replace Pinned URL with Current" (84935).
+- Kite: a hidden Tabs item with Arc's id `replacePinnedTab`, found by the command bar under both phrases, running
+  the same `replacePinnedURLWithCurrent` as Edit Pinned Page. It's offered only while the selected pinned tab or
+  favorite is on a web page other than its pinned one (Kite's Reset Tab test). Arc's own availability rule for the
+  command bar wasn't found; that condition is inferred.
 
 ## Profiles (read from Arc's files and binary, 2026-11-01)
 
@@ -2872,3 +2917,45 @@ defaults via CEF content settings with empty URLs. WebKit: `WKWebsiteDataStore.r
 site data and cache, Kite's history and downloads; no permission pages. Passwords / Credit Cards: Kite's Chromium
 tabs have no Chrome password manager or card autofill, so both rows open the password manager's popup (disabled
 without one, and on WebKit).
+
+## Shortcut priority and Extension Shortcuts → `ShortcutPriorityRouter`, `KeyShortcutPriority`, `ShortcutsPane` (Arc 1.171, 1 Nov 2026)
+
+Sources: `Base.lproj/MainMenu.nib` (user-defined runtime attributes, parsed in scratch), `arc-strings.txt`, Arc's
+disassembly (`~/rea-arc/decomp/arc.s`), and the key names in Gabe's `StorableKeyBindings.json` (no values beyond
+the priorities read).
+
+- **Three priorities [str, json]** (`KeyboardShortcutPriority`, raw values in `StorableKeyBindings.json` as each
+  override's `priority` and `default.priority`): `overrideWebView`, `promptAfterConsumedByWebView`, `low`.
+  `KeyBindingsClient.setPriorityForAction` sets one; analytics `keyboard_shortcut_priority_changed`.
+- **Picker labels [dis]**: `PriorityPicker` builds them as inline Swift literals next to the comments "Priority for
+  preferring Arc." / "…websites first, then Arc on another invocation." / "…websites." (arc.s 0x10205f9d8–fa88):
+  "Prefer Arc", "Use Both", "Prefer Websites". Enum order: 0 websites (`low`), 1 both, 2 Arc. Subtitles [str]:
+  "When shortcuts conflict, Arc wins." / "Press this shortcut once to use the website’s shortcut. Press it twice to
+  use Arc’s shortcut." / "When shortcuts conflict, the website wins." Kite says Kite. Where the picker sits in the
+  pane wasn't observed (row detail needs a click); Kite shows it under a row when you click the row's name, as a
+  segmented control with the subtitle under it **[guess]**.
+- **Defaults [nib]** (`arcKeyBindingPriority` on each menu item; items without one default to `low`, which matches
+  `default.priority` for `capturePage`, `savePageAs`, `focusNextSpace` in the json): Arc wins for Open Command Bar,
+  Archive Tab, Close Window, Copy URL (+ as Quote, as Markdown), Tab Switcher, Cycle Tab, Go Back/Forward, Hide,
+  Minimize, New Incognito Window, New Tab, New Window, Quit, Restore Last Closed Tab, Next/Previous Tab, New Little
+  Arc Window. Use Both for Add Split View, Close this Split Pane, Developer Tools, Inspect Elements, View Source,
+  Toggle Developer Mode, Enter Full Screen, Pin Tab, Print, Show/Hide Sidebar, Show/Hide Toolbar (and Arc-only
+  Exit, Reveal Current Tab, Join Meeting, New Note, Open Little Arc or Peek in…, Peek Email). Everything else
+  the website.
+- **Use Both [str]**: Chromium tells Arc a page used a key (`webContents:didConsumeKey:withModifierFlags:…`,
+  `onDidConsumeModifiedKeydownEvent`), then a toast "Toast indicating that the user can press the same hotkey
+  again to run the browser action" (format "Take an action again, '<do something> again to <do action>'") with
+  the accessory "Edit the shortcut". Kite's toast reads "Press ⌘D again to Pin Tab" **[wording inferred from the
+  comment]**; the accessory opens Settings › Shortcuts. Neither of Kite's engines reports a used key, only an
+  unused one (it reaches the menu bar), so Kite counts a key as used when 0.35 s pass without its command running.
+  The second press counts while the toast is up (4.6 s, Kite's toast time) **[Arc's window unobserved]**.
+- **Extension Shortcuts… [str]**: "Menu item to view shortcuts registered by extensions"; Arc's ADK opens
+  Chromium's `extensions/shortcuts` WebUI (listed with `settings/…` pages in ADK/BrowserChromium.swift's strings).
+  Kite can't: its Alloy tabs don't open chrome:// pages, and it has no extension-commands runtime, so the item
+  stays disabled.
+- Verified in a test Kite (WebKit, `ui input` + `ui key_log` + page text on a 127.0.0.1 fixture that
+  preventDefaults some keys): ⌘T and ⌘F (set to Prefer Kite in keybindings.json) ran Kite's command and the page
+  never saw them; ⌘D (Use Both) went to the page, the toast appeared, and the second press pinned the tab without
+  the page seeing it; ⌘S (Use Both, page passes it on) toggled the sidebar with no toast; ⌘Y (website) stayed with
+  the page. Chromium: ⌘F with Prefer Kite ran Find before the page. With Kite in the background Chromium's view
+  declines key equivalents, so its page-first path couldn't be driven.

@@ -67,6 +67,13 @@ extension BrowserWindowController {
         if !store.mutate({ $0.replacePinnedURLWithCurrent(id) }) { NSSound.beep() }
     }
 
+    /// Arc's command-bar action `replacePinnedTab`, "Replace Pin with Current Page": the selected pinned
+    /// tab's (or favorite's) page becomes its pinned URL, as Edit Pinned Page › Replace Pinned URL with Current.
+    @objc func replacePinWithCurrentPage(_ sender: Any?) {
+        guard let id = store.state.selectedTab?.id else { return NSSound.beep() }
+        replacePinnedURLWithCurrent(id)
+    }
+
     /// Tabs › Reset all tabs in this Space.
     @objc func resetAllTabsInSpace(_ sender: Any?) {
         let reset = store.mutate { $0.resetPinnedTabs() }

@@ -29,6 +29,9 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate, NSW
             case "dark": window.appearance = NSAppearance(named: .darkAqua)
             default: break
             }
+            // KITE_SETTINGS_PANE=shortcuts (a SettingsPane name) opens on that pane, since the toolbar
+            // can't be clicked while a test Kite stays in the background.
+            if let pane = environment["KITE_SETTINGS_PANE"].flatMap(SettingsPane.init(rawValue:)) { selected = pane }
         }
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("KiteSettings")
