@@ -2595,7 +2595,8 @@ pressed, so none of it was seen on screen.
 - The menu is built in `WindowContentViewController` (strings around arc.s 100420974), which also hosts the top
   bar; which part of the bar opens it isn't shown by the code. Kite opens it from a right-click anywhere on the bar
   that isn't a button.
-- Kite leaves out Capture in Portrait Mode and Enable/Disable Shared Quotes (Kite has neither feature). Manage
+- Kite leaves out Enable/Disable Shared Quotes (Kite doesn't have it); Capture in Portrait Mode follows Capture Full
+  Page since g83 added the feature. Manage
   Extensions… shows where extensions run (Chromium windows, not incognito) and opens the extensions popover from the
   bar's right end. Share uses File › Share…'s picker. Whether Arc's items have icons wasn't checked.
 - Kite's own pages (kite://) count as "not a web page": Copy URL disabled, then Hide Toolbar.

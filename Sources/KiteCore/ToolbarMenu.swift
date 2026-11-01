@@ -10,6 +10,7 @@ public enum ToolbarMenuItem: Equatable, Sendable {
     case share
     case capture
     case captureFullPage
+    case capturePortraitMode
     case manageExtensions
     /// Shows the whole address (true) or the host only (false): "Show Full URL" / "Hide Full URL".
     case fullURL(show: Bool)
@@ -24,6 +25,7 @@ public enum ToolbarMenuItem: Equatable, Sendable {
         case .share: "Share"
         case .capture: "Capture…"
         case .captureFullPage: "Capture Full Page"
+        case .capturePortraitMode: "Capture in Portrait Mode"
         case .manageExtensions: "Manage Extensions…"
         case .fullURL(let show): show ? "Show Full URL" : "Hide Full URL"
         case .toolbar(let show): show ? "Show as Toolbar" : "Hide Toolbar"
@@ -45,13 +47,12 @@ public enum ToolbarMenu {
     ///   - showsFullURL: Settings' "Show full URL when Toolbar is enabled".
     ///   - showsToolbar: View › Show Toolbar is on (always, for the bar's own menu).
     ///
-    /// Arc also has Capture in Portrait Mode after Capture Full Page and Enable/Disable Shared Quotes
-    /// last; Kite has neither feature, so they're left out.
+    /// Arc also has Enable/Disable Shared Quotes last; Kite doesn't have the feature, so it's left out.
     public static func items(hasURL: Bool, isWebPage: Bool, extensionsAvailable: Bool,
                              showsFullURL: Bool, showsToolbar: Bool = true) -> [ToolbarMenuItem] {
         guard hasURL else { return [] }
         var items: [ToolbarMenuItem] = [.copyURL(enabled: isWebPage)]
-        if isWebPage { items += [.share, .capture, .captureFullPage] }
+        if isWebPage { items += [.share, .capture, .captureFullPage, .capturePortraitMode] }
         if extensionsAvailable { items += [.separator, .manageExtensions] }
         var toggles: [ToolbarMenuItem] = []
         if isWebPage { toggles.append(.fullURL(show: !showsFullURL)) }
