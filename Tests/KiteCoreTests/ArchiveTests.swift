@@ -125,15 +125,15 @@ import Testing
 
 @Suite struct LibraryPageTests {
     @Test func pagesFollowArcsOrderAndNames() {
-        #expect(LibraryPage.allCases == [.downloads, .archive])
-        #expect(LibraryPage.allCases.map(\.rawValue) == ["DownloadsPage", "ArchivePage"])
-        #expect(LibraryPage.allCases.map(\.title) == ["Downloads", "Archive"])
+        #expect(LibraryPage.allCases == [.downloads, .archive, .media])
+        #expect(LibraryPage.allCases.map(\.rawValue) == ["DownloadsPage", "ArchivePage", "MediaPage"])
+        #expect(LibraryPage.allCases.map(\.title) == ["Downloads", "Archive", "Media"])
     }
 
     @Test func remembersTheLastPage() {
         #expect(LibraryPage(stored: "ArchivePage") == .archive)
         #expect(LibraryPage(stored: nil) == .downloads)
         // A page Arc has and Kite doesn't yet.
-        #expect(LibraryPage(stored: "MediaPage") == .downloads)
+        #expect(LibraryPage(stored: "BoostsPage") == .downloads)
     }
 }

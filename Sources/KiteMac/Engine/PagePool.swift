@@ -33,6 +33,17 @@ final class PagePool {
     var onLoadFinished: ((UUID) -> Void)?
     /// A link clicked in tab `UUID` opens in Arc's Peek card (`LinkPeek`); nil opens it as a new tab.
     var onLinkPeek: ((UUID, URL) -> Void)?
+    /// Each tab's unanswered permission request (one at a time: a newer one dismisses the older).
+    private(set) var permissionRequests: [UUID: PermissionRequest] = [:]
+    /// A tab's permission request arrived, was answered or went away.
+    var onPermissionRequestsChanged: (() -> Void)?
+
+    /// Answers tab `id`'s permission request: true allows, false blocks ("Not Now"), nil dismisses.
+    func answerPermissionRequest(_ id: UUID, allow: Bool?) {
+        guard let request = permissionRequests.removeValue(forKey: id) else { return }
+        request.respond(allow)
+        onPermissionRequestsChanged?()
+    }
 
     func loadedPage(_ id: UUID) -> WebPage? { pages[id] }
     var livePages: [UUID: WebPage] { pages }
@@ -96,6 +107,7 @@ final class PagePool {
         lastShown[id] = nil
         page.onEvent = nil
         page.linkPeekPolicy = nil
+        answerPermissionRequest(id, allow: nil)
         page.close()
         store.clearPage(id)
     }
@@ -120,6 +132,11 @@ final class PagePool {
             store.pageTitleChanged(id, title)
         case .url(let url):
             store.pageURLChanged(id, url)
+            // A prompt belongs to the site that asked; leaving it drops the prompt (as Chromium does).
+            if let request = permissionRequests[id], let url,
+               SiteControls.origin(of: url) != SiteControls.origin(of: request.origin) {
+                answerPermissionRequest(id, allow: nil)
+            }
         case .favicon(let url):
             store.faviconChanged(id, url)
         case .progress(let progress):
@@ -165,6 +182,15 @@ final class PagePool {
                 $0.crashCode = code
                 $0.isLoading = false
             }
+            answerPermissionRequest(id, allow: nil)
+        case .permissionRequest(let request):
+            permissionRequests.removeValue(forKey: id)?.respond(nil)
+            permissionRequests[id] = request
+            onPermissionRequestsChanged?()
+        case .permissionRequestCancelled(let requestID):
+            guard permissionRequests[id]?.id == requestID else { return }
+            permissionRequests[id] = nil
+            onPermissionRequestsChanged?()
         }
     }
 

@@ -90,6 +90,10 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Cast | | ❌ | Skip? |
 | Developer → View Source | ⌥⌘U | ✅ Chromium (new `view-source:` tab) | |
 | Developer → Developer Tools | ⌥⌘I | ✅ | |
+| Developer → Inspect Elements | ⌥⌘C | 🟡 opens DevTools, no picker yet | Later |
+| Developer → JavaScript Console | ⌥⌘J | 🟡 opens DevTools, not on Console | Later |
+| Developer → Network Inspector | | ❌ | Later, with the two above |
+| Developer → Allow JavaScript from Apple Events | | ✅ off by default, per profile; gates AppleScript `execute` | |
 | Developer → Inspect Elements | ⌥⌘C | ✅ Chromium: DevTools with the element picker on (WebKit: Web Inspector's element selection) | |
 | Developer → JavaScript Console | ⌥⌘J | ✅ DevTools on Console | |
 | Developer → Network Inspector | | ✅ Chromium: DevTools on Network (WebKit: opens Web Inspector as it was) | |
@@ -147,9 +151,10 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | Minimize / Zoom | ⌘M | ✅ | macOS adds Fill, Center, tiling for free |
 | Stay On Top | | ✅ checkmark in the menu, window floats, no in-window indicator (as in Arc) | |
-| Open Library… | ⇧⌘L | 🟡 Window › Open Library… toggles the window's Library over the sidebar and card: Downloads and Archive pages, last page remembered, "Exit the Library" button; switching tab or space leaves it | Easels, Media, Boosts, Spaces pages (Kite has none of them); sizes, icons and animation unmeasured |
+| Open Library… | ⇧⌘L | 🟡 Window › Open Library… toggles the window's Library over the sidebar and card: Downloads, Archive and Media pages, last page remembered, "Exit the Library" button; switching tab or space leaves it | Easels, Boosts, Spaces pages (Kite has none of them); sizes, icons and animation unmeasured |
 | View Downloads… | ⇧⌘J | ✅ Window menu, opens the downloads list (Arc opens Library › Downloads) | Follow-up: open Library › Downloads instead, as Arc does |
-| View Easels… / Media… / Boosts… | | ❌ | Their threads |
+| View Easels… / Boosts… | | ❌ | Their threads |
+| View Media… | | 🟡 Window › View Media… opens the Library's Media page, as in Arc: pictures and videos from Documents, Desktop, Downloads and screenshots after Arc's "Your Media in the Library" / Allow Access card, plus Kite's own Captures (now kept in Captures/); Today / Yesterday / Earlier This Week, then by month; search; "Show media from:" toggles; preview on click (Esc closes); Copy, Show in Finder, Open in Preview, Open/Copy Source URL, Delete (Capture), Hide from Kite. Sizes are Kite's | AirDrop / Send via iMessage; Hide Media toggle title |
 
 ### Help
 
@@ -176,13 +181,15 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal and top/bottom panes, divider, sidebar row; command bar Add Vertical Split View and Convert to Horizontal/Vertical; drop a page link on a content edge to open it in a new pane (real drag pending a hands-on check). Not yet: Add Top/Bottom/Left/Right menu items, dragging sidebar tabs into a split, moving panes | Thread: Split view |
 | Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | 🟡 | Sidebar Mini Player (play/pause, prev/next, tab mute, PiP, close, back to tab); auto PiP on leaving a playing video. No volume slider, mic/camera, marquee, Arc PiP window |
 | Zap (Boosts) | Pick elements on a page; they stay hidden on that site | 🟡 Picker overlay over the page (hover highlight, click → Zap this / Zap all related elements / Cancel), shelf listing the site's zaps with remove; per-site selectors in zaps.json injected at document start (Chromium isolated world, WebKit content world) | No entry point until the Boost editor (gap 21) calls `showZapPicker`; no candidate slider, zap preview images or Copy selector mode; highlight colour/cursor unmeasured. Gap 22 |
+| Media pane | All tabs playing media | ✅ n/a: Arc has no such pane: its "Media" is the Library's gallery of pictures, videos and Captures (see View Media…) | — |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
+| Tab audio button | Speaker on a sidebar tab that is playing or muted; click (or context menu Mute/Unmute) to toggle | 🟡 24pt button between favicon and title, Arc's tooltips and menu titles | Arc's animated speaker (waves, slash) is SF Symbols here; Mute/Unmute all tabs (command bar) not built |
 | Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |
 | Developer Mode | Per-site switch and dev reload options (Arc's strings show no console pane or URL change) | 🟡 See the Developer menu row | Gap 16 |
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
 | Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
-| Library | Downloads, archive, easels, media, boosts (Arc: in the browser window, not a separate one) | 🟡 Downloads and Archive pages in the window (⇧⌘L) | Easels & Notes, Media, Boosts, Spaces pages; Library button in the sidebar with download badge and fly-in |
+| Library | Downloads, archive, easels, media, boosts (Arc: in the browser window, not a separate one) | 🟡 Downloads, Archive and Media pages in the window (⇧⌘L) | Easels & Notes, Boosts, Spaces pages; Library button in the sidebar with download badge and fly-in |
 | Capture | Screenshot tool for an area/full page | 🟡 Area (drag) and full page: Copy / Save; no Easels, no Portrait Mode | Thread: Capture |
 | Library | Downloads, archive, easels, media, boosts in one window | ❌ | Thread: Library |
 | Air Traffic Control | Rules to route links from other apps to a space | 🟡 | Kite menu → Air Traffic Control…: URL "Is equal to"/"Contains" routes to a space or Little Kite, plus a default. No profile destination; editor lives in its own window until Settings exists |
@@ -192,10 +199,11 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Profiles | Separate cookies per space | ❌ | Thread: profiles |
 | Incognito | Private window | ✅ | |
 | Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | 🟡 Popover from the toolbar's sliders button and the sidebar URL field's hover button: Copy URL, Share, Block Ads & Trackers, camera/mic/location/notifications (Chromium content settings; not on WebKit), Secure/Insecure, Clear Cache / Clear Cookies. No Boosts, capture, extensions section, Developer Mode, All Site Settings | Gap 8 |
+| Site permission prompts | A site asks for camera, mic, location or notifications | 🟡 Arc's card at the page's top-leading corner: the permission's icon, "Allow <site> to access your camera?" / "…to send you notifications?", Not Now / Allow, "Click the lock 🔒 to change this any time"; pops in like Arc's. Chromium stores the answer per site (Site Controls shows it); WebKit asks each time, camera and mic only. Not over a Peek; other permission types (MIDI, downloads, storage…) keep Chromium's default | Gap 35 |
 | Native ad blocker | uBlock-style lists | ❌ | Ad blocker thread |
 | Translation | Translate page, "never translate" sites | ❌ | Later (Chromium translate isn't in CEF) |
 | Instant Links | Command bar goes straight to the top result | 🟡 ⇧⏎ on a search: Kite's Claude splits it into Google queries (Arc's V1 schema: title, queries, tab/folder/split), a hidden web view opens each top result; tabs, a split or a folder. Falls back to the input as the query without Claude Code, and to the results page on a captcha | No loading cell in the sidebar (Arc's `InstantLinksCellView`), no V2 typed actions (images, maps, news, counts), no intent suggestion row, no settings toggle |
-| Ask on Page | ⌘F asks AI about the page | ❌ | With Claude in the browser |
+| Ask on Page | ⌘F asks AI about the page | 🟡 Find bar reads "Find or ask…"; Return on a query with no match asks Kite's Claude (`claude -p`, no tools, page innerText); answer under the bar with clickable quotes. Off by default as in Arc; Kite menu › Ask on Page (⌘F) | Panel geometry and styling not measured in Arc; no hint/upsell, no "No matches" label, no per-tab conversation |
 | ChatGPT/AI in command bar | Ask from the command bar | ❌ | With Claude in the browser |
 | Tidy Tab Titles | Pinned tabs get short AI titles | 🟡 pinning a tab (any path) asks Kite's Claude (`claude -p`, haiku, no tools) for a 1–3 word name, set as the tab's custom name; renaming or unpinning first wins; on by default as in Gabe's Arc, Kite menu › Tidy Tab Titles; `TidyTabTitles`, `TidyTabTitlesController` | No title animation (Arc's isAnimatingAiRename), no per-site rules (Arc's TidyTitleConfiguration), no feedback report, no settings row |
 | Tidy Downloads | Downloads renamed by AI | 🟡 A finished download is renamed by Kite's Claude (`claude -p`, fast model), extension kept, never overwrites; "Download renamed!" toast with Undo. On by default (Gabe's `renameDownloadsEnabled`); Kite menu › Tidy Downloads | Renames after completion (Arc names it before it lands), no sidebar rename banner, no Settings row |
@@ -206,7 +214,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | App icons | Alternate Dock icons | ❌ | Skip? (we draw our own) |
 | Sound effects | Subtle UI sounds | ❌ | Later, our own sounds |
 | Remappable shortcuts | Settings → Shortcuts | 🟡 overrides in keybindings.json, keyed by Arc-style action IDs on every menu item; Import from Arc brings over Arc's StorableKeyBindings.json; the Settings editor is to come | B6 |
-| AppleScript dictionary | windows, tabs (URL, title, execute JS), spaces | ❌ | With MCP/CLI thread; worth matching |
+| AppleScript dictionary | windows, tabs (URL, title, execute JS), spaces | 🟡 Arc’s sdef: windows, tabs (id, title, URL, loading, location; make, select, close, go back/forward, reload, stop, execute), spaces read only, Little Kite tabs; no `focus` or settable `location` yet | Gap 28 |
 | Sync | Sidebar via CloudKit/Firebase | ❌ | Roadmap: sync |
 | Default browser, handle links | | ✅ | |
 | PWAs / installed apps | `app_mode_loader` shims | ❌ | Roadmap: PWAs |

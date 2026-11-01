@@ -18,6 +18,8 @@ struct PageStatus: Equatable {
 
     /// Whether the tab is playing media now (muted or not): the base for audio indicators.
     var isPlayingAudio: Bool { media?.state.isPlaying == true }
+    /// Whether you'd hear it if the tab weren't muted (Arc's TabCellState.isAudible).
+    var isAudible: Bool { media?.state.isAudible == true }
 }
 
 /// Tabs › Reveal Tab in Sidebar: the sidebar row to scroll into view. `serial` changes on

@@ -253,6 +253,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Kite menu → Tidy Downloads: Arc Max's AI rename of finished downloads (Arc's `renameDownloadsEnabled`).
     @objc func toggleTidyDownloads(_ sender: Any?) {
         UserDefaults.standard.set(!TidyDownloads.isEnabled(in: .standard), forKey: TidyDownloads.enabledKey)
+    /// Kite menu → Ask on Page: Arc Max's find-bar questions, off until turned on (Arc's `askOnPageEnabled`).
+    @objc func toggleAskOnPage(_ sender: Any?) {
+        UserDefaults.standard.set(!AskOnPage.isEnabled(in: .standard), forKey: AskOnPage.enabledKey)
     }
 
     /// Kite menu → Tidy Tab Titles: Arc Max's AI names for tabs you pin (Arc's `renamePinnedTabsEnabled`).
@@ -279,7 +282,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func openBlankWindow() { windows.openBlankWindow() }
 
     /// ⇧⌘N. Each incognito window gets its own in-memory profile, gone when it closes.
-    func openIncognitoWindow() {
+    @discardableResult
+    func openIncognitoWindow() -> BrowserWindowController {
         let controller = BrowserWindowController(
             store: .incognito(), engine: engine.makeEphemeral(), adblocker: adblocker, incognito: true
         )
@@ -297,6 +301,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.window?.setFrameTopLeftPoint(NSPoint(x: front.frame.minX + 28, y: front.frame.maxY - 28))
         }
         controller.newTab(nil)
+        return controller
+    }
+
+    // MARK: AppleScript (AppleScript.swift)
+
+    /// The browser windows AppleScript's `windows` lists, front to back.
+    var scriptControllers: [BrowserWindowController] {
+        guard let windowController else { return [] }
+        let all = [windowController] + windows.all + incognitoControllers
+        return NSApp.orderedWindows.compactMap { window in all.first { $0.window === window } }
+    }
+
+    /// `make new window`: File › New Window, or New Incognito Window.
+    func openScriptWindow(incognito: Bool) -> BrowserWindowController {
+        incognito ? openIncognitoWindow() : windows.openNewWindow()
+    }
+
+    var allowsJavaScriptFromAppleEvents: Bool { store?.state.allowsJavaScriptFromAppleEvents ?? false }
+
+    /// View › Developer › Allow JavaScript from Apple Events (Arc's item, off by default).
+    @objc func toggleJavaScriptFromAppleEvents(_ sender: Any?) {
+        store.mutate { $0.allowsJavaScriptFromAppleEvents.toggle() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -451,11 +477,17 @@ extension AppDelegate: NSMenuItemValidation {
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
         }
+        if item.action == #selector(toggleAskOnPage(_:)) {
+            item.state = AskOnPage.isEnabled(in: .standard) ? .on : .off
+        }
         if item.action == #selector(toggleTidyTabTitles(_:)) {
             item.state = TidyTabTitles.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleLittleKiteLinks(_:)) {
             item.state = LittleKite.opensExternalLinks(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleJavaScriptFromAppleEvents(_:)) {
+            item.state = allowsJavaScriptFromAppleEvents ? .on : .off
         }
         if item.action == #selector(toggleQuitWarning(_:)), let store {
             item.state = store.state.warnsBeforeQuitting ? .on : .off
