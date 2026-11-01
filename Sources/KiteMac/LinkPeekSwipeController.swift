@@ -154,8 +154,9 @@ final class LinkPeekSwipeController: ScrollGestureClaimer {
     private func move(by dx: CGFloat, _ dy: CGFloat) {
         let previous = translation.x
         translation = .init(x: translation.x + Double(dx), y: translation.y + Double(dy))
-        samples.append((ProcessInfo.processInfo.systemUptime, Double(dx), Double(dy)))
-        samples.removeAll { samples.last!.time - $0.time > 0.5 }
+        let now = ProcessInfo.processInfo.systemUptime
+        samples.removeAll { now - $0.time > 0.5 }
+        samples.append((now, Double(dx), Double(dy)))
         if LinkPeek.Swipe.crossesHapticThreshold(from: previous, to: translation.x) {
             NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
         }

@@ -117,6 +117,7 @@ final class LinkPeekView: NSView {
 
     /// How far the card follows a swipe right (`LinkPeek.Swipe`), in this view's points.
     private(set) var tug = LinkPeek.Swipe.Vector.zero
+    private var tugTransform = CATransform3DIdentity
     private var tugSpring: Timer?
     /// The Peek is animating closed; a new swipe leaves it alone.
     private(set) var isClosing = false
@@ -143,10 +144,13 @@ final class LinkPeekView: NSView {
         let center = NSPoint(x: rect.midX, y: rect.midY)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer.transform = tug == .zero ? CATransform3DIdentity : Self.transform(
+        // AppKit owns a view's layer transform (it puts a model value back), but not the transform it applies
+        // to the layer's sublayers: the card, its hairline and the buttons.
+        tugTransform = tug == .zero ? CATransform3DIdentity : Self.transform(
             scale: LinkPeek.Swipe.scale(tug: tug), around: center,
             to: NSPoint(x: center.x + tug.x, y: center.y + tug.y), in: bounds, flipped: layerSpaceIsBottomUp
         )
+        layer.sublayerTransform = tugTransform
         cardShadow.layer?.borderColor = NSColor.black.withAlphaComponent(LinkPeek.Swipe.borderOpacity(tug: tug)).cgColor
         controls.frame = controlsRect
         CATransaction.commit()
@@ -236,7 +240,11 @@ final class LinkPeekView: NSView {
         isClosing = true
         guard let layer = motion.layer else { return completion() }
         // A swipe closes it from wherever the tug left the card.
-        let start = layer.transform
+        let start = tugTransform
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.sublayerTransform = CATransform3DIdentity
+        CATransaction.commit()
         let rect = cardFrame
         let center = NSPoint(x: rect.midX, y: rect.midY)
         CATransaction.begin()
