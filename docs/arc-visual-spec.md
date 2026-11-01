@@ -398,6 +398,15 @@ are in each tile's right-click menu instead.
   swipes is pending), whether a keyboard or strip switch slides the pages, and the settle animation. Kite's
   pages follow the fingers 1:1, rubber-band past the ends with AppKit's constant (0.55), land on the neighbour
   past half a page or on a flick over 300pt/s, and settle with the space-switch spring below.
+- **Kite's mechanism** (1 Nov 2026), after Arc's single clip view: the pages are one strip moved by one
+  offset, which only a leaf modifier reads, so a frame of a swipe rebuilds no page. The selected space's
+  neighbours stay built with their rows (Arc's list is three pages wide too), and the sidebar clips with a
+  layer mask: a SwiftUI clip or `clipsToBounds` bounds each tab list's visible rect, and the list then builds
+  every row on the first frame of a swipe. The settle is stepped once a display frame. Measured in a test
+  build (main-thread CPU from a scroll event to the end of its run-loop pass, 20-event synthetic swipes, a
+  busy Mac): 12ms per move before, about 2.5 to 4ms after.
+- The space icons in the bar hand over with the slide: each icon is lit by how much of the sidebar its
+  page covers. Arc's own strip wasn't seen doing it (it draws nothing in Gabe's window, below).
 
 **Space strip**
 - In the accessibility tree it is an `AXCollectionList` in a 229×50 scroll area at (42, 1235), between the two

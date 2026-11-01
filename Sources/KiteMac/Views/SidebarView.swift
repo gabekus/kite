@@ -180,7 +180,7 @@ struct SidebarView: View {
                 }
             }
 
-            SpaceBar(store: store, actions: actions, claude: claude, library: library)
+            SpaceBar(store: store, actions: actions, claude: claude, library: library, swipe: swipe)
                 .frame(height: M.bottomBarHeight)
         }
         .padding(.horizontal, M.padding)
@@ -1677,6 +1677,8 @@ private struct SpaceBar: View {
     let actions: SidebarActions
     let claude: ClaudeButtonModel
     let library: LibraryModel
+    let swipe: SpaceSwipeModel
+    @State private var iconRoom: CGFloat = .infinity
 
     var body: some View {
         let state = store.state
@@ -1688,14 +1690,21 @@ private struct SpaceBar: View {
                 .opacity(creating ? 0 : 1)
                 .disabled(creating)
             // Arc centres the spaces in the room between its end buttons. Too many to fit scroll rather
-            // than widen the bar: an over-wide bar pushes the whole sidebar off its left edge.
-            ViewThatFits(in: .horizontal) {
-                spaceIcons(state)
-                ScrollView(.horizontal, showsIndicators: false) {
+            // than widen the bar: an over-wide bar pushes the whole sidebar off its left edge. Worked out
+            // from the room rather than with `ViewThatFits`, which measures both again whenever an icon's
+            // highlight changes, every frame of a swipe.
+            let iconsWidth = CGFloat(state.spaces.count) * M.spaceCellPitch + M.spaceCellSize.width - M.spaceCellPitch
+            Group {
+                if iconsWidth <= iconRoom {
                     spaceIcons(state)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        spaceIcons(state)
+                    }
                 }
             }
             .frame(maxWidth: .infinity)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { iconRoom = $0 }
             Group {
                 ClaudeSidebarButton(model: claude, size: M.bottomButtonSize)
                 // Arc's + opens a menu of new things, not a new space straight away.
@@ -1721,7 +1730,8 @@ private struct SpaceBar: View {
     private func spaceIcons(_ state: BrowserState) -> some View {
         HStack(spacing: M.spaceCellPitch - M.spaceCellSize.width) {
             ForEach(state.spaces) { space in
-                SpaceCell(space: space, selected: space.id == state.selectedSpaceID, number: (state.spaceIndex(space.id) ?? 0) + 1,
+                SpaceCell(space: space, highlight: SpaceCellHighlight(store: store, swipe: swipe, spaceID: space.id),
+                          number: (state.spaceIndex(space.id) ?? 0) + 1,
                           profileName: actions.showsProfiles ? state.profile(space.profile).name : nil) {
                     store.mutate { $0.selectSpace(space.id) }
                 }
@@ -1736,9 +1746,28 @@ private struct SpaceBar: View {
 /// One space in the strip. Arc (1 Nov 2026): the current space shows its icon in colour, other spaces
 /// their icon greyed, and a space without an icon an 8pt dot at about 23% white; under the pointer a cell gets a rounded backing and, after a moment, a
 /// pill above it with the space's name, its profile and its ⌃-number shortcut.
+/// How lit a space's icon in the bar is: its share of the sidebar while the pages slide
+/// (`SpaceSwipe.highlight`), so the icons hand over with the swipe as the theme does. Read in the cell's
+/// icon only, so a frame of a swipe redraws the icons and nothing else of the bar.
+@MainActor
+private struct SpaceCellHighlight {
+    let store: BrowserStore
+    let swipe: SpaceSwipeModel
+    let spaceID: UUID
+
+    var value: Double {
+        let state = store.state
+        guard let index = state.spaceIndex(spaceID) else { return 0 }
+        let selected = state.selectedSpaceIndex
+        let built = SpaceSwipe.builtPages(selected: selected, anchor: swipe.anchor.flatMap(state.spaceIndex), count: state.spaces.count)
+        return SpaceSwipe.highlight(of: index, selected: selected, built: built, offset: Double(swipe.offset),
+                                    pageWidth: Double(swipe.pageWidth))
+    }
+}
+
 private struct SpaceCell: View {
     let space: Space
-    let selected: Bool
+    let highlight: SpaceCellHighlight
     let number: Int
     let profileName: String?
     let action: () -> Void
@@ -1747,19 +1776,10 @@ private struct SpaceCell: View {
 
     var body: some View {
         Button(action: action) {
-            Group {
-                if !space.icon.isEmpty {
-                    // Other spaces' icons are greyed until you're in them; icon-less spaces are dots.
-                    SpaceIconView(icon: space.icon, theme: space.theme, size: M.spaceIconFontSize, greyed: !selected)
-                } else {
-                    Circle()
-                        .fill(.primary.opacity(selected ? 1 : M.spaceDotOpacity))
-                        .frame(width: M.spaceDotSize, height: M.spaceDotSize)
-                }
-            }
+            SpaceCellIcon(space: space, highlight: highlight)
             .frame(width: M.spaceCellSize.width, height: M.spaceCellSize.height)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.primary.opacity(hovering && !selected ? 0.08 : 0))
+                .fill(.primary.opacity(hovering && space.id != highlight.store.state.selectedSpaceID ? 0.08 : 0))
                 .frame(width: M.bottomButtonSize, height: M.bottomButtonSize))
             .contentShape(Rectangle())
         }
@@ -1783,6 +1803,30 @@ private struct SpaceCell: View {
         }
         .zIndex(showsTip ? 1 : 0)
         .accessibilityLabel(space.name)
+    }
+}
+
+/// A space's icon in the bar, crossfading from grey to colour as its space comes in. Other spaces' icons are
+/// greyed until you're in them; icon-less spaces are dots.
+private struct SpaceCellIcon: View {
+    private typealias M = ArcMetrics.Sidebar
+    let space: Space
+    let highlight: SpaceCellHighlight
+
+    var body: some View {
+        let lit = highlight.value
+        if !space.icon.isEmpty {
+            ZStack {
+                SpaceIconView(icon: space.icon, theme: space.theme, size: M.spaceIconFontSize, greyed: true)
+                    .opacity(1 - lit)
+                SpaceIconView(icon: space.icon, theme: space.theme, size: M.spaceIconFontSize, greyed: false)
+                    .opacity(lit)
+            }
+        } else {
+            Circle()
+                .fill(.primary.opacity(M.spaceDotOpacity + (1 - M.spaceDotOpacity) * lit))
+                .frame(width: M.spaceDotSize, height: M.spaceDotSize)
+        }
     }
 }
 
