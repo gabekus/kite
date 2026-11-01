@@ -127,7 +127,7 @@ struct SidebarView: View {
                     onRemove: { id in store.mutate { $0.toggleFavorite(tab: id) } },
                     onDrop: actions.didDrop
                 )
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SidebarDragModel.space)) } action: { drag.favoritesArea = $0 }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.favoritesArea = $0 }
                 .onDisappear { drag.favoritesArea = nil }
                 .padding(.top, M.favoritesTopGap)
                 .padding(.bottom, M.favoritesBottomGap)
@@ -152,8 +152,7 @@ struct SidebarView: View {
         .foregroundStyle(.primary)
         .overlay { SidebarDragOverlay(drag: drag) }
         .onAppear { drag.store = store }
-        .coordinateSpace(.named(SidebarDragModel.space))
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SidebarDragModel.space)) } action: { drag.bounds = $0 }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.bounds = $0 }
         .environment(\.sidebarDrag, drag)
     }
 
@@ -318,6 +317,14 @@ struct SidebarView: View {
     }
 
     private func row(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int = 0, space: UUID, parent: UUID?) -> some View {
+        SplitDropPreview(side: drag.splitSide(for: tab.id)) { tabRow(tab, pinned: pinned, selected: selected, depth: depth) }
+        .modifier(SidebarDragSource(
+            store: store,
+            row: .init(id: tab.id, kind: .tab, space: space, pinned: pinned, folder: parent, depth: depth, frame: .zero),
+            onDrop: actions.didDrop) { DragGhost(icon: .tabs([tab]), title: tab.displayTitle, depth: depth) })
+    }
+
+    private func tabRow(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int) -> some View {
         TabRow(
             tab: tab,
             isPinned: pinned,
@@ -342,10 +349,6 @@ struct SidebarView: View {
             isMuted: store.pages[tab.id]?.isAudioMuted ?? false,
             onToggleMute: { actions.toggleMute(tab.id) }
         )
-        .modifier(SidebarDragSource(
-            store: store,
-            row: .init(id: tab.id, kind: .tab, space: space, pinned: pinned, folder: parent, depth: depth, frame: .zero),
-            onDrop: actions.didDrop) { DragGhost(icon: .tabs([tab]), title: tab.displayTitle, depth: depth) })
     }
 }
 
@@ -723,7 +726,7 @@ private struct FavoritesGrid: View {
     private var slots: [Slot] {
         var slots = favorites.map(Slot.tile)
         // Arc's tray counts one more item while a drag aims at it and leaves `dropGapFrame` empty.
-        if case .favorites(let before)? = drag?.session?.target {
+        if !favorites.isEmpty, case .favorites(let before)? = drag?.session?.target {
             let at = before.flatMap { id in favorites.firstIndex { $0.id == id } } ?? favorites.count
             slots.insert(.gap, at: at)
         }
@@ -742,7 +745,7 @@ private struct FavoritesGrid: View {
                     switch slot {
                     case .gap:
                         Color.clear
-                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SidebarDragModel.space)) } action: { drag?.dropGap = $0 }
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag?.dropGap = $0 }
                             .onDisappear { drag?.dropGap = nil }
                     case .tile(let tab):
                         tile(tab)
@@ -763,9 +766,9 @@ private struct FavoritesGrid: View {
         )
         // Tiles being dragged out of the tray keep their place, invisible (Arc: alpha 0).
         .opacity(drag?.session?.ids.contains(tab.id) == true ? 0 : 1)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SidebarDragModel.space)) } action: { drag?.reportTile(tab.id, frame: $0) }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag?.reportTile(tab.id, frame: $0) }
         .onDisappear { drag?.reportTile(tab.id, frame: nil) }
-        .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named(SidebarDragModel.space))
+        .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .onChanged { value in
                 guard let drag else { return }
                 if !drag.isDragging {
@@ -1380,7 +1383,7 @@ private struct SpaceBar: View {
                 .buttonStyle(.plain)
                 .help(space.name)
                 .contextMenu { SpaceContextMenu(store: store, actions: actions, space: space) }
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SidebarDragModel.space)) } action: { drag?.reportSpaceIcon(space.id, frame: $0) }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag?.reportSpaceIcon(space.id, frame: $0) }
                 .onDisappear { drag?.reportSpaceIcon(space.id, frame: nil) }
             }
         }

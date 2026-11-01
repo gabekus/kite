@@ -13,7 +13,6 @@ import SwiftUI
 @MainActor
 @Observable
 final class SidebarDragModel {
-    static let space = "kite.sidebar"
 
     struct Row: Equatable {
         enum Kind: Equatable {
@@ -166,8 +165,10 @@ final class SidebarDragModel {
 
     /// The tab list's frame in sidebar points.
     var listFrame: CGRect? {
-        guard let scrollView, let host = scrollView.window?.contentView, let sidebar = sidebarView else { return nil }
-        return sidebar.convert(scrollView.convert(scrollView.bounds, to: host), from: host)
+        guard let scrollView, let content = scrollView.window?.contentView else { return nil }
+        // SwiftUI's global space: window points from the content view's top-left.
+        let r = scrollView.convert(scrollView.bounds, to: nil)
+        return CGRect(x: r.minX, y: content.bounds.height - r.maxY, width: r.width, height: r.height)
     }
 
     // MARK: Scrolling the list while dragging
@@ -182,11 +183,7 @@ final class SidebarDragModel {
     static let autoscrollSpeed: CGFloat = 600
 
     private func autoscrollStep() -> CGFloat {
-        guard let session, let scrollView, let host = scrollView.window?.contentView,
-              let sidebar = sidebarView else { return 0 }
-        // The list's frame in sidebar points.
-        let inWindow = scrollView.convert(scrollView.bounds, to: host)
-        let frame = sidebar.convert(inWindow, from: host)
+        guard let session, let frame = listFrame else { return 0 }
         let y = session.location.y
         guard session.location.x >= frame.minX, session.location.x <= frame.maxX else { return 0 }
         let top = frame.minY + Self.autoscrollZone - y, bottom = y - (frame.maxY - Self.autoscrollZone)
@@ -286,7 +283,7 @@ final class SidebarDragModel {
             }
             return .folder(row.id)
         case .tab, .split:
-            if row.kind == .tab, fraction > 0.2, fraction < 0.8, !session.ids.contains(row.id) {
+            if row.kind == .tab, fraction >= 0.25, fraction <= 0.75, !session.ids.contains(row.id) {
                 if session.hover?.id != row.id { session.hover = (row.id, Date()) }
                 if let hover = session.hover, Date().timeIntervalSince(hover.since) >= Self.splitDelay {
                     return .split(with: row.id, side: p.x < row.frame.midX ? .left : .right)
@@ -351,19 +348,19 @@ final class SidebarDragModel {
         func line(before anchor: UUID?, space: UUID, pinned: Bool, folder: UUID?) -> (CGFloat, CGFloat, CGFloat)? {
             let level = rows.values.filter { $0.space == space && $0.pinned == pinned && $0.folder == folder && ($0.kind == .tab || $0.kind == .split || isFolder($0.kind)) }
             if let anchor, let row = row(anchor) {
-                return (row.frame.minY - gap, row.frame.minX + indent(row.depth), row.frame.width - indent(row.depth))
+                return (row.frame.minY - gap, row.frame.minX + Self.lineInset + indent(row.depth), row.frame.width - Self.lineInset - Self.lineEndInset - indent(row.depth))
             }
             // The end of a level: under its last row, or under the folder's row when it's empty.
             if let last = level.max(by: { $0.frame.maxY < $1.frame.maxY }) {
                 let bottom = folder.flatMap { f in rows.values.filter { descends($0, from: f) }.map(\.frame.maxY).max() } ?? last.frame.maxY
-                return (max(bottom, last.frame.maxY) + gap, last.frame.minX + indent(last.depth), last.frame.width - indent(last.depth))
+                return (max(bottom, last.frame.maxY) + gap, last.frame.minX + Self.lineInset + indent(last.depth), last.frame.width - Self.lineInset - Self.lineEndInset - indent(last.depth))
             }
             if let folder, let row = row(folder) {
-                return (row.frame.maxY + gap, row.frame.minX + indent(row.depth + 1), row.frame.width - indent(row.depth + 1))
+                return (row.frame.maxY + gap, row.frame.minX + Self.lineInset + indent(row.depth + 1), row.frame.width - Self.lineInset - Self.lineEndInset - indent(row.depth + 1))
             }
             // An empty section: at the divider (pinned) or under New Tab (Today).
             let marker = rows.values.first { $0.space == space && $0.kind == (pinned ? .divider : .newTab) }
-            return marker.map { (pinned ? $0.frame.midY : $0.frame.maxY + gap, $0.frame.minX, $0.frame.width) }
+            return marker.map { (pinned ? $0.frame.midY : $0.frame.maxY + gap, $0.frame.minX + Self.lineInset, $0.frame.width - Self.lineInset - Self.lineEndInset) }
         }
         let result: (CGFloat, CGFloat, CGFloat)?
         switch target {
@@ -384,10 +381,15 @@ final class SidebarDragModel {
         }
     }
 
-    var splitPreview: (frame: CGRect, side: SplitDropSide)? {
-        guard let session, case .split(let id, let side) = session.target, let row = row(id) else { return nil }
-        return (row.frame, side)
+    /// The side a drop would split this tab on, while it would.
+    func splitSide(for id: UUID) -> SplitDropSide? {
+        guard let session, case .split(let target, let side) = session.target, target == id else { return nil }
+        return side
     }
+
+    /// Arc's line starts 8pt inside the row and stops 3.5pt short of its end.
+    static let lineInset: CGFloat = 8
+    static let lineEndInset: CGFloat = 3.5
 
     private func isFolder(_ kind: Row.Kind) -> Bool {
         if case .folder = kind { true } else { false }
@@ -421,7 +423,7 @@ struct SidebarDragSource<Ghost: View>: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SidebarDragModel.space)) } action: { frame in
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
                 var row = row
                 row.frame = frame
                 drag?.report(row)
@@ -431,7 +433,7 @@ struct SidebarDragSource<Ghost: View>: ViewModifier {
     }
 
     private var gesture: some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .named(SidebarDragModel.space))
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .onChanged { value in
                 guard let drag else { return }
                 if !drag.isDragging {
@@ -470,9 +472,6 @@ struct SidebarDragOverlay: View {
                         .frame(width: rect.width, height: rect.height)
                         .offset(x: rect.minX, y: rect.minY)
                 }
-                if let (frame, side) = drag.splitPreview {
-                    SplitDropPreview(frame: frame, side: side)
-                }
                 if let line = drag.insertionLine {
                     InsertionLine(width: line.width)
                         .offset(x: line.x, y: line.y - InsertionLine.thickness / 2)
@@ -487,6 +486,8 @@ struct SidebarDragOverlay: View {
                 }
             }
         }
+        // Everything above is in window points; the overlay sits on the sidebar's column.
+        .offset(x: -drag.bounds.minX, y: -drag.bounds.minY)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .allowsHitTesting(false)
     }
@@ -495,19 +496,22 @@ struct SidebarDragOverlay: View {
     static let ghostOpacity = 0.6
 }
 
-/// NSTableView's insertion mark, which Arc's tab list keeps: a line with a small ring at its start.
+/// Arc's insertion mark (an incognito window, 1 Nov 2026, 2× capture): a 2pt line in (239,241,254)
+/// centred on the gap between rows, from 8pt inside the row to 3.5pt short of its end, starting
+/// with an 8pt ring of the same 2pt stroke.
 private struct InsertionLine: View {
     static let thickness: CGFloat = 2
-    static let ring: CGFloat = 6
+    static let ring: CGFloat = 8
+    static let color = Color(red: 239 / 255, green: 241 / 255, blue: 254 / 255)
     let width: CGFloat
 
     var body: some View {
         HStack(spacing: 0) {
             Circle()
-                .strokeBorder(Color.white, lineWidth: Self.thickness)
+                .strokeBorder(Self.color, lineWidth: Self.thickness)
                 .frame(width: Self.ring, height: Self.ring)
             Rectangle()
-                .fill(Color.white)
+                .fill(Self.color)
                 .frame(height: Self.thickness)
         }
         .frame(width: max(width, Self.ring), height: Self.ring)
@@ -515,18 +519,34 @@ private struct InsertionLine: View {
     }
 }
 
-/// Over a tab that will split: the half the dragged tab takes, outlined.
-private struct SplitDropPreview: View {
-    let frame: CGRect
-    let side: SplitDropSide
+/// A tab row while a drag offers to split it (Arc, incognito capture): the row keeps its own half
+/// and the other half is a plain pill, white at about 53% over the sidebar, 12pt apart.
+struct SplitDropPreview<Content: View>: View {
+    static var gap: CGFloat { 12 }
+    static var fill: Double { 0.53 }
+    let side: SplitDropSide?
+    @ViewBuilder let content: Content
 
     var body: some View {
-        let half = (frame.width - ArcMetrics.Split.rowItemSpacing) / 2
+        if let side {
+            GeometryReader { geometry in
+                let half = (geometry.size.width - Self.gap) / 2
+                HStack(spacing: Self.gap) {
+                    if side == .left { pill(half) }
+                    content.frame(width: half)
+                    if side == .right { pill(half) }
+                }
+            }
+            .frame(height: ArcMetrics.Sidebar.pillHeight)
+        } else {
+            content
+        }
+    }
+
+    private func pill(_ width: CGFloat) -> some View {
         RoundedRectangle(cornerRadius: ArcMetrics.Sidebar.cornerRadius, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-            .background(RoundedRectangle(cornerRadius: ArcMetrics.Sidebar.cornerRadius, style: .continuous).fill(Color.white.opacity(0.08)))
-            .frame(width: half, height: frame.height)
-            .offset(x: side == .left ? frame.minX : frame.maxX - half, y: frame.minY)
+            .fill(Color(red: 0.98, green: 0.984, blue: 1).opacity(Self.fill))
+            .frame(width: width, height: ArcMetrics.Sidebar.pillHeight)
     }
 }
 
