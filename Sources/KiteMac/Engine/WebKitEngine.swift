@@ -302,6 +302,10 @@ final class WebKitPage: NSObject, WebPage {
         return pid
     }
 
+    /// WebKit loads in its shared networking process and has no public API for a page's bytes,
+    /// so the Network column reads N/A.
+    var networkBytes: UInt64? { nil }
+
     var isAudioMuted = false {
         didSet {
             let selector = NSSelectorFromString("_setPageMuted:")

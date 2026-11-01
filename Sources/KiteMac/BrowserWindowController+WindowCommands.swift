@@ -81,7 +81,7 @@ extension BrowserWindowController {
 
     /// Help › Troubleshooting › Open Task Manager (Arc opens Chromium's task manager).
     @objc func openTaskManager(_ sender: Any?) {
-        TaskManagerWindow.show { [weak self] in
+        TaskManagerWindow.show(activeTab: store.state.selectedTab?.id) { [weak self] in
             (NSApp.delegate as? AppDelegate)?.browserControllers ?? self.map { [$0] } ?? []
         }
     }

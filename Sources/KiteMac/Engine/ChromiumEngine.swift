@@ -176,6 +176,9 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         return pid > 0 ? pid : nil
     }
 
+    /// Counted in the bridge as each request finishes (KCBrowser's NetworkCountingHandler).
+    var networkBytes: UInt64? { browser.networkBytes }
+
     var isAudioMuted: Bool {
         get { browser.audioMuted }
         set { browser.audioMuted = newValue }

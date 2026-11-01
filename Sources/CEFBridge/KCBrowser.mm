@@ -1,6 +1,7 @@
 #import "CEFBridge.h"
 #import "KCInternal.h"
 
+#include <atomic>
 #include <cmath>
 #include <map>
 
@@ -33,6 +34,7 @@
 - (void)devToolsFrontendDidLoad;
 - (void)devToolsFrontendDidClose;
 - (BOOL)deliverSessionMessage:(NSData *)data;
+- (void)addNetworkBytes:(uint64_t)bytes;
 @property (nonatomic, readwrite) BOOL isLoading;
 @property (nonatomic, readwrite) BOOL canGoBack;
 @property (nonatomic, readwrite) BOOL canGoForward;
@@ -51,6 +53,73 @@ NSURL* ToNSURL(const CefString& string) {
     if (string.empty()) return nil;
     return [NSURL URLWithString:ToNSString(string)];
 }
+
+/// Counts each tab's network bytes for the Task Manager's Network column, and passes everything
+/// else to the tab's ad blocker (null when Kite is built without one). Chromium's task manager
+/// gets these numbers from its network service; CEF only reports a request's bytes when it
+/// finishes, so a long download or stream counts at its end.
+class NetworkCountingHandler : public CefResourceRequestHandler {
+ public:
+    NetworkCountingHandler(KCBrowser* owner, CefRefPtr<CefResourceRequestHandler> inner) : owner_(owner), inner_(inner) {}
+
+    CefRefPtr<CefCookieAccessFilter> GetCookieAccessFilter(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                                                           CefRefPtr<CefRequest> request) override {
+        return inner_ ? inner_->GetCookieAccessFilter(browser, frame, request) : nullptr;
+    }
+
+    ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                                     CefRefPtr<CefRequest> request, CefRefPtr<CefCallback> callback) override {
+        return inner_ ? inner_->OnBeforeResourceLoad(browser, frame, request, callback) : RV_CONTINUE;
+    }
+
+    CefRefPtr<CefResourceHandler> GetResourceHandler(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                                                     CefRefPtr<CefRequest> request) override {
+        return inner_ ? inner_->GetResourceHandler(browser, frame, request) : nullptr;
+    }
+
+    void OnResourceRedirect(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                            CefRefPtr<CefResponse> response, CefString& new_url) override {
+        if (inner_) inner_->OnResourceRedirect(browser, frame, request, response, new_url);
+    }
+
+    bool OnResourceResponse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                            CefRefPtr<CefResponse> response) override {
+        return inner_ ? inner_->OnResourceResponse(browser, frame, request, response) : false;
+    }
+
+    CefRefPtr<CefResponseFilter> GetResourceResponseFilter(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                                                           CefRefPtr<CefRequest> request,
+                                                           CefRefPtr<CefResponse> response) override {
+        return inner_ ? inner_->GetResourceResponseFilter(browser, frame, request, response) : nullptr;
+    }
+
+    void OnResourceLoadComplete(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                                CefRefPtr<CefResponse> response, URLRequestStatus status,
+                                int64_t received_content_length) override {
+        if (inner_) inner_->OnResourceLoadComplete(browser, frame, request, response, status, received_content_length);
+        // Received and sent, as Chromium counts them; uploads are their in-memory bytes.
+        uint64_t bytes = received_content_length > 0 ? (uint64_t)received_content_length : 0;
+        if (CefRefPtr<CefPostData> post = request ? request->GetPostData() : nullptr) {
+            CefPostData::ElementVector elements;
+            post->GetElements(elements);
+            for (const auto& element : elements) {
+                if (element->GetType() == PDE_TYPE_BYTES) bytes += element->GetBytesCount();
+            }
+        }
+        KCBrowser* owner = owner_;
+        if (bytes && owner) [owner addNetworkBytes:bytes];
+    }
+
+    void OnProtocolExecution(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                             bool& allow_os_execution) override {
+        if (inner_) inner_->OnProtocolExecution(browser, frame, request, allow_os_execution);
+    }
+
+ private:
+    __weak KCBrowser* owner_;
+    CefRefPtr<CefResourceRequestHandler> inner_;
+    IMPLEMENT_REFCOUNTING(NetworkCountingHandler);
+};
 
 // Live downloads' callbacks, by Chromium's download id, so the downloads list can cancel them.
 // Download callbacks run on the main (UI) thread.
@@ -197,7 +266,7 @@ class KCClient : public CefClient,
                  public CefPermissionHandler,
                  public CefDevToolsMessageObserver {
  public:
-    explicit KCClient(KCBrowser* owner) : owner_(owner), adblock_(KCAdblockRequestHandler(owner)) {}
+    explicit KCClient(KCBrowser* owner) : owner_(owner), requests_(new NetworkCountingHandler(owner, KCAdblockRequestHandler(owner))) {}
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -433,7 +502,7 @@ class KCClient : public CefClient,
                                                                    bool is_download,
                                                                    const CefString& request_initiator,
                                                                    bool& disable_default_handling) override {
-        return is_download ? nullptr : adblock_;
+        return is_download ? nullptr : requests_;
     }
 
     bool OnOpenURLFromTab(CefRefPtr<CefBrowser> browser,
@@ -654,7 +723,7 @@ class KCClient : public CefClient,
     /// Ids for getUserMedia prompts, counting down so they never meet Chromium's prompt ids.
     NSInteger media_prompt_id_ = 0;
     CefRefPtr<CefRegistration> devtools_registration_;
-    CefRefPtr<CefResourceRequestHandler> adblock_;
+    CefRefPtr<CefResourceRequestHandler> requests_;
     IMPLEMENT_REFCOUNTING(KCClient);
 };
 
@@ -713,6 +782,8 @@ class KCClient : public CefClient,
     std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
     NSInteger _blockedCount;
     BOOL _blockedCountPending;
+    /// Network bytes so far (NetworkCountingHandler adds to it on Chromium's IO thread).
+    std::atomic<uint64_t> _networkBytes;
     /// Page.addScriptToEvaluateOnNewDocument identifiers to remove when the script changes.
     NSMutableArray<NSString*>* _documentScripts;
     NSUInteger _navigationCount;
@@ -1070,6 +1141,14 @@ static cef_content_setting_types_t KCContentSettingType(KCSitePermission permiss
         NSString* message = [object[@"message"] isKindOfClass:NSString.class] ? object[@"message"] : @"DevTools method failed.";
         completion(nil, message);
     }
+}
+
+- (uint64_t)networkBytes {
+    return _networkBytes.load(std::memory_order_relaxed);
+}
+
+- (void)addNetworkBytes:(uint64_t)bytes {
+    _networkBytes.fetch_add(bytes, std::memory_order_relaxed);
 }
 
 - (NSInteger)blockedCount {
