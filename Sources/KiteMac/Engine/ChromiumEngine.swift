@@ -249,6 +249,17 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         }
     }
 
+    /// The extension whose origin this page's requests carry (ExtensionOrigin), if any.
+    private var extensionOrigin: String?
+
+    private func setExtensionOrigin(for url: URL) {
+        let origin = ExtensionOrigin.origin(of: url)
+        guard origin != extensionOrigin else { return }
+        extensionOrigin = origin
+        if origin != nil { browser.executeDevToolsMethod("Network.enable", params: nil, completion: nil) }
+        browser.executeDevToolsMethod("Network.setExtraHTTPHeaders", params: ["headers": origin.map { ["Origin": $0] } ?? [:]], completion: nil)
+    }
+
     // MARK: KCBrowserDelegate
 
     func browser(_ browser: KCBrowser, titleDidChange title: String) { onEvent?(.title(title)) }
@@ -307,6 +318,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     @objc(browser:documentStartScriptForURL:)
     func browser(_ browser: KCBrowser, documentStartScriptFor url: URL) -> String? {
+        setExtensionOrigin(for: url)
         let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url), ExtensionTabsScript.script(for: url)]
             .compactMap { $0 }
         return scripts.isEmpty ? nil : scripts.joined(separator: "\n")
