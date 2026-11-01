@@ -108,7 +108,19 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
             completion: nil
         )
         prepareMediaState()
+        prepareMailHandler()
     }
+
+    /// The page's registerProtocolHandler reports to a main-world binding (MailHandlers.script),
+    /// which the script takes off the page's global object.
+    private func prepareMailHandler() {
+        browser.executeDevToolsMethod("Runtime.addBinding", params: ["name": Self.mailBindingName], completion: nil)
+        let send = "(() => { const b = globalThis.\(Self.mailBindingName); try { delete globalThis.\(Self.mailBindingName); } catch (e) {} "
+            + "return typeof b === 'function' ? (s) => b(s) : null; })()"
+        browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: ["source": MailHandlers.script(send: send)], completion: nil)
+    }
+
+    private static let mailBindingName = "kiteMailHandler"
 
     /// The media script reports what the page plays (MediaStateScript) from its own world;
     /// the page hook runs in the page's world to reach its Media Session handlers.
@@ -355,6 +367,10 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
                   let report = MediaState.parse(params["payload"] as? String ?? "") else { return }
             mediaContext = context
             onEvent?(.media(report))
+        case "Runtime.bindingCalled" where params["name"] as? String == Self.mailBindingName:
+            // MailHandlers checks the handler is on the main frame's origin.
+            guard let call = MailHandlers.parse(params["payload"] as? String ?? "") else { return }
+            MailHandlers.shared.request(scheme: call.scheme, url: call.url, pageURL: address, from: browser.view)
         case "Runtime.bindingCalled" where params["name"] as? String == VerificationCodeScript.bindingName:
             guard let context = params["executionContextId"] as? Int,
                   let payload = (params["payload"] as? String)?.data(using: .utf8),
@@ -461,6 +477,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         guard linkPeekPolicy?(url, shift) == true else { return false }
         onEvent?(.openInLinkPeek(url))
         return true
+    }
+
+    @objc(browser:mailtoDestinationForURL:)
+    func browser(_ browser: KCBrowser, mailtoDestinationFor url: URL) -> URL? {
+        MailHandlers.shared.destination(for: url)
     }
 
     @objc(browser:renderProcessDidTerminateWithCode:)

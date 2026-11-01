@@ -117,6 +117,7 @@ final class WebKitPage: NSObject, WebPage {
             unsafeBitCast(webView.method(for: setOcclusion), to: Setter.self)(webView, setOcclusion, false)
         }
         WebKitMediaBridge.shared.attach(self)
+        WebKitMailBridge.shared.attach(self)
         ZapInjection.attach(to: self)
     }
 
@@ -322,8 +323,21 @@ extension WebKitPage: WKNavigationDelegate {
     ) {
         guard let url = navigationAction.request.url else { return decisionHandler(.allow) }
 
+        if MailHandler.isMailto(url) {
+            decisionHandler(.cancel)
+            // The default mail app's compose page (MailHandlers), in this page, else the system's mail app.
+            guard let compose = MailHandlers.shared.destination(for: url) else {
+                return MailHandlers.shared.openInSystemMailApp(url)
+            }
+            if navigationAction.targetFrame?.isMainFrame == true {
+                webView.load(URLRequest(url: compose))
+            } else {
+                onEvent?(.openInNewTab(compose, foreground: true))
+            }
+            return
+        }
         if let scheme = url.scheme?.lowercased(), !Self.inPageSchemes.contains(scheme) {
-            // mailto:, zoommtg:, etc. belong to other apps.
+            // zoommtg:, etc. belong to other apps.
             NSWorkspace.shared.open(url)
             return decisionHandler(.cancel)
         }
@@ -610,6 +624,32 @@ final class WebKitMediaBridge: NSObject, WKScriptMessageHandler {
         guard message.frameInfo.isMainFrame, let webView = message.webView, let page = pages.object(forKey: webView),
               let report = MediaState.parse(message.body as? String ?? "") else { return }
         page.onEvent?(.media(report))
+    }
+}
+
+/// Reports the page's registerProtocolHandler calls (MailHandlers.script) to MailHandlers, from
+/// the main frame only. One handler per content controller, as for WebKitMediaBridge.
+@MainActor
+final class WebKitMailBridge: NSObject, WKScriptMessageHandler {
+    static let shared = WebKitMailBridge()
+    static let name = "kiteMailHandler"
+    private let controllers = NSHashTable<WKUserContentController>.weakObjects()
+
+    func attach(_ page: WebKitPage) {
+        let controller = page.webView.configuration.userContentController
+        guard !controllers.contains(controller) else { return }
+        controllers.add(controller)
+        let send = "(() => { const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.\(Self.name); "
+            + "return h ? (s) => h.postMessage(s) : null; })()"
+        controller.addUserScript(WKUserScript(source: MailHandlers.script(send: send), injectionTime: .atDocumentStart,
+                                              forMainFrameOnly: true, in: .page))
+        controller.add(self, contentWorld: .page, name: Self.name)
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, let webView = message.webView,
+              let call = MailHandlers.parse(message.body as? String ?? "") else { return }
+        MailHandlers.shared.request(scheme: call.scheme, url: call.url, pageURL: webView.url, from: webView)
     }
 }
 
