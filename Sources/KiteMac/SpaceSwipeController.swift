@@ -25,8 +25,10 @@ final class SpaceSwipeController {
     private var swallowingMomentum = false
     /// A gesture that started vertically scrolls the tab list for its whole length.
     private var verticalGesture = false
-    /// The settle under way: where it started and when.
-    private var settling: (from: CGFloat, start: CFTimeInterval)?
+    /// The settle under way: where it started, where it ends and when.
+    private var settling: (from: CGFloat, to: CGFloat, start: CFTimeInterval)?
+    /// A swipe that lands on a neighbour selects it once the pages are at rest (`commitLanding`).
+    private var pendingLanding: (space: UUID, landing: Int)?
     private var clock: FrameClock?
 
     init(store: BrowserStore, sidebar: @escaping () -> NSView?,
@@ -90,11 +92,12 @@ final class SpaceSwipeController {
     }
 
     private func begin() {
-        let state = store.state
-        let index = state.selectedSpaceIndex
         // Caught mid-settle: carry on from where the pages are, with the selected space's neighbours.
         stopSettling()
+        commitLanding()
         if model.anchor != nil { set { $0.anchor = nil } }
+        let state = store.state
+        let index = state.selectedSpaceIndex
         swipe = SpaceSwipe(pageWidth: Double(model.pageWidth), hasPrevious: index > 0,
                            hasNext: index < state.spaces.count - 1, travel: Double(model.offset))
     }
@@ -115,20 +118,28 @@ final class SpaceSwipeController {
         let landing = cancelled ? 0 : swipe.landing
         let state = store.state
         let target = state.spaces[state.selectedSpaceIndex + landing]
-        set { model in
-            if landing != 0 {
-                // The pages don't move this frame: the new space's page is where the old one's
-                // neighbour was, so the offset shifts by the page the selection moved, and the old
-                // space's pages stay built until the strip is at rest.
-                model.anchor = state.selectedSpace.id
-                selectingBySwipe = true
-                store.mutate { $0.selectSpace(target.id) }
-                selectingBySwipe = false
-                model.offset += CGFloat(landing) * model.pageWidth
-            }
-        }
         settleTheme(target.theme)
-        settle()
+        // The pages slide on to the neighbour's page before the space is selected: selecting it redraws the
+        // sidebar and swaps the web page, 30-50ms of work that would stall the first frames of the slide.
+        if landing != 0 { pendingLanding = (target.id, landing) }
+        settle(to: -CGFloat(landing) * model.pageWidth)
+    }
+
+    /// Selects the space a swipe landed on. The pages don't move: the new space's page is where the old
+    /// one's neighbour was, so the offset shifts by the page the selection moved, and the old space's
+    /// pages stay built until the strip is at rest.
+    private func commitLanding() {
+        guard let landing = pendingLanding else { return }
+        pendingLanding = nil
+        let state = store.state
+        guard state.spaceIndex(landing.space) != nil else { return }
+        set { model in
+            model.anchor = state.selectedSpace.id
+            selectingBySwipe = true
+            store.mutate { $0.selectSpace(landing.space) }
+            selectingBySwipe = false
+            model.offset += CGFloat(landing.landing) * model.pageWidth
+        }
     }
 
     private var selectingBySwipe = false
@@ -137,6 +148,9 @@ final class SpaceSwipeController {
     /// comes in from the side it lies on.
     func spaceChanged(from old: Int, to new: Int) {
         guard !selectingBySwipe, swipe == nil, old != new, model.pageWidth > 0 else { return }
+        // A swipe's landing still to come is overtaken by this switch.
+        pendingLanding = nil
+        stopSettling()
         let state = store.state
         set { model in
             if old < state.spaces.count { model.anchor = state.spaces[old].id }
@@ -150,12 +164,12 @@ final class SpaceSwipeController {
     /// critically damped spring of this response, stepped once a frame (`SpaceSwipe.settle`).
     static let settleResponse = ArcMetrics.Motion.spacePageResponse
 
-    private func settle() {
-        guard model.offset != 0 else { return finishSettling() }
-        settling = (model.offset, CACurrentMediaTime())
+    private func settle(to target: CGFloat = 0) {
+        guard model.offset != target else { return finishSettling() }
+        settling = (model.offset, target, CACurrentMediaTime())
         guard let view = sidebar(), view.window != nil, !view.isHiddenOrHasHiddenAncestor else {
             // No sidebar on screen to time frames from: just land.
-            set { $0.offset = 0 }
+            set { $0.offset = target }
             return finishSettling()
         }
         if clock == nil { clock = FrameClock(view: view) { [weak self] in self?.stepSettle() } }
@@ -166,15 +180,21 @@ final class SpaceSwipeController {
         guard let settling else { return stopSettling() }
         // Drawn for the frame being made, so the strip is where the spring is when it reaches the screen.
         let now = clock?.targetTimestamp ?? CACurrentMediaTime()
-        let offset = SpaceSwipe.settle(from: Double(settling.from), elapsed: now - settling.start, response: Self.settleResponse)
-        set { $0.offset = CGFloat(offset) }
-        if offset == 0 { finishSettling() }
+        let left = SpaceSwipe.settle(from: Double(settling.from - settling.to), elapsed: now - settling.start,
+                                     response: Self.settleResponse)
+        set { $0.offset = settling.to + CGFloat(left) }
+        if left == 0 { finishSettling() }
     }
 
     private func finishSettling() {
         stopSettling()
-        // At rest: build the new space's neighbours now, between frames of nothing.
-        if model.anchor != nil { set { $0.anchor = nil } }
+        commitLanding()
+        // At rest: build the new space's neighbours on the next pass, so it doesn't add to the selection's.
+        guard model.anchor != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.swipe == nil, self.settling == nil, self.model.anchor != nil else { return }
+            self.set { $0.anchor = nil }
+        }
     }
 
     private func stopSettling() {
