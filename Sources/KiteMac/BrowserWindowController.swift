@@ -196,7 +196,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             deleteFolder: { [weak self] id in self?.deleteFolder(id) },
             resetTab: { [weak self] id in self?.backToPinnedURL(id) },
             separateFromPinnedTab: { [weak self] id in self?.separateFromPinnedTab(id) },
-            renameTab: { [weak self] id in self?.renameTab(id) }
+            renameTab: { [weak self] id in self?.renameTab(id) },
+            tidyTabs: { [weak self] id in self?.tidyTabs(inSpace: id) },
+            removeTabGroupHeader: { [weak self] id in self?.removeTabGroupHeader(id) }
         )
         spaceSwipe = SpaceSwipeController(
             store: store,

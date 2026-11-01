@@ -241,6 +241,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
     }
 
+    /// Kite menu → Tidy Tabs: Arc Max's Tidy button on the Today divider (Arc's `tidyTabsEnabled`,
+    /// on in Gabe's Arc, so on by default).
+    @objc func toggleTidyTabs(_ sender: Any?) {
+        UserDefaults.standard.set(!TidyTabs.isEnabled(in: .standard), forKey: TidyTabs.enabledKey)
+        // The sidebar reads the setting when it redraws.
+        store.mutate { _ in }
+    }
+
     /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
     @objc func openURLFromExtensionsMenu(_ sender: Any?) {
         guard let url = sender as? URL else { return }
@@ -428,6 +436,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleTidyTabs(_:)) {
+            item.state = TidyTabs.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleLittleKiteLinks(_:)) {
             item.state = LittleKite.opensExternalLinks(in: .standard) ? .on : .off

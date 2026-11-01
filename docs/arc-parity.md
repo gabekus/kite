@@ -196,7 +196,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | ChatGPT/AI in command bar | Ask from the command bar | ❌ | With Claude in the browser |
 | Tidy Tab Titles | Pinned tabs get short AI titles | ❌ | With Claude in the browser |
 | Tidy Downloads | Downloads renamed by AI | ❌ | With Claude in the browser |
-| Tidy Tabs | Groups Today tabs automatically | ❌ | With Claude in the browser |
+| Tidy Tabs | Groups Today tabs automatically | 🟡 Tidy button on the Today divider (on hover) asks Kite's Claude, then shows each group under a header with Close tab group and Remove header; Undo Tidy Tabs; Kite menu toggle (on, like Gabe's Arc). Button and header sizes are Kite's | Gap 27: measure Arc's divider buttons; Clear button; tidyAndClear |
 | Browse for Me | AI builds a page from search results | ❌ | Skip? |
 | Custom tab names | Rename a pinned tab | ✅ any tab: Rename… in its menu, double-click, Tabs › Rename Current Tab…; kept when the page title changes, imported from Arc | B3 |
 | Themes | Space colors, grain, light/dark, gradient editor | 🟡 presets + imported | Thread: space theme editor |

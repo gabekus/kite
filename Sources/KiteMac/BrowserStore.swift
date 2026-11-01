@@ -48,6 +48,8 @@ final class BrowserStore {
     private(set) var revealRequest: RevealRequest?
     /// macOS light/dark, which dark pages follow in `.matchSystem`.
     private(set) var systemIsDark = false
+    /// Spaces whose Tidy Tabs request is out with Claude (the Tidy button spins).
+    var tidyingSpaceIDs: Set<UUID> = []
 
     @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored var onPageChange: ((UUID) -> Void)?
@@ -113,6 +115,8 @@ final class BrowserStore {
         let result = body(&state)
         // A tab pinned by any path (menu, drag into a folder, automation) remembers its page.
         state.syncPinnedURLs()
+        // Tidy Tabs' headers lose tabs that left Today, and go when they have none.
+        state.pruneTabGroups()
         scheduleSave()
         onChange?()
         link?.propagate(from: self)

@@ -857,6 +857,41 @@ Arc was not opened or driven, so no geometry was measured.
   ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
   deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
 
+## Tidy Tabs → `TidyTabs`, `TodayTabGroup` (KiteCore), `TodayDivider`, `TabGroupHeaderRow` (Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+Nothing in Arc was pressed or run. The only open Arc window had its sidebar hidden, so no Arc geometry was measured.
+
+- **Setting:** `tidyTabsEnabled` (arc-strings.txt 64303), toggled by `onToggleTidyTabsEnabled` (69096), feature id
+  `tidy_tabs` (69679). Gabe's Arc: `tidyTabsEnabled = 1`, so Kite defaults it on (Kite menu → Tidy Tabs).
+- **Button:** `SidebarTidyButton` with a `TidyTabsButtonImageView` (30863) in `UnpinnedSectionHeaderCellView`, the
+  Today divider row, next to `SidebarClearButton`. Title "Tidy" (inline string at `0x100187624`, comment "Button
+  Title; Tidy unpinned tabs in this space"), tooltip "Organize Today Tabs" ("Tooltip; Use LLM to organize unpinned
+  tabs in this space", `0x100187548`). The button runs `rotationAnimation` / `rotationBackAnimation` on
+  `transform.rotation.z` (`0x10030f9c4`). State: `canAutoOrganizeTodayTabs`, `shouldShowAutoOrgButton`,
+  `autoOrgTabsEnabled` (176294–176317); action `onDidClickAutoOrganize` (176650). Clear Today's button option list
+  includes `tidyAndClear` (176321).
+- **Mechanism:** `WindowData+TabGroups.swift` `createUnpinnedTabGroups()` (`0x1029f13c8`) builds a prompt with
+  "Here are my tabs, in the format 'id: title':" (`0x1029f15a0`) and asks for "Your array of group assignments, as
+  valid JSON within a ```code block```:" (`0x1029f1678`). The rest of the prompt is an obfuscated string ("Failed
+  to decode obfuscated string.") and wasn't decoded; Kite's prompt is its own. Leftover tabs go to a group named
+  "Other" (inline `0x1029f2f6c`, comment "Tab group of miscellaneous tabs"). Error type `TabGroupingWithAIError`.
+- **Result: headers, not folders.** Groups show as `TabGroupHeaderCellView` rows (sidebar item kind
+  `tabGroupHeader`, 161196) in Today. Header menu "Remove header" (`0x102ecb8e0`, menu "Tab Group Context Menu"),
+  undo "Remove Header" (`0x102a07b90`); a close button with tooltip "Close tab group" (`0x100048650`, "Tooltip for
+  the button to close a group of tabs in the sidebar.", action `clearTabGroup`). Undo of a tidy is "Tidy Tabs"
+  (`0x102a07ac4`, "Undo prompt for tidying explore tabs"). Toast "No tab groups found" (`0x1018e5af8`) when the
+  model returns none. Analytics `auto_organize_tab_groups_completed`, `remove_tab_group_header_tapped`.
+- **Kite:** the divider row shows a "Tidy" button while the pointer is on it (and spins while Claude works). It
+  sends the unpinned tabs that aren't under a header (title and host, numbered, wrapped as untrusted) to Kite's
+  built-in Claude (`claude -p --model haiku`, no tools, no session kept), then moves each group's tabs together,
+  in the model's order, under a header. Tabs opened meanwhile stay on top. A header's tabs are members by id; the
+  header sits above the first member and goes when its last tab leaves Today. Edit › Undo Tidy Tabs and Undo
+  Remove Header restore the order and headers.
+- **Kite's own, unverified against Arc:** the button's size, icon (SF `wand.and.stars`; Arc's image isn't known),
+  colours and hover reveal; the header row's height (25, the divider's), font and close button; the minimum of 3
+  tabs (`canAutoOrganizeTodayTabs`'s rule isn't in the strings); showing the divider row with no pinned tabs so the
+  button has somewhere to be. Arc's Clear button on the same row isn't in Kite yet.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

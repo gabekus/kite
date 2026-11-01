@@ -27,6 +27,9 @@ struct SidebarActions {
     var separateFromPinnedTab: (UUID) -> Void = { _ in }
     /// A tab's Rename…: in place in its row, or Arc's dialog where there's no row.
     var renameTab: (UUID) -> Void
+    /// Tidy Tabs: the Today divider's Tidy button, and a tab group header's context menu.
+    var tidyTabs: (UUID) -> Void = { _ in }
+    var removeTabGroupHeader: (UUID) -> Void = { _ in }
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -167,12 +170,14 @@ struct SidebarView: View {
                 })
             }
             Section {
-                if !space.pinnedItems.isEmpty {
-                    Rectangle()
-                        .fill(.primary.opacity(M.dividerOpacity))
-                        .frame(height: M.dividerThickness)
-                        .padding(.horizontal, M.dividerInset)
-                        .frame(height: M.dividerRowHeight)
+                // Arc Max's Tidy button sits on this divider (UnpinnedSectionHeaderCellView).
+                let canTidy = TidyTabs.isEnabled() && store.state.canTidyTabs(inSpace: space.id)
+                if !space.pinnedItems.isEmpty || canTidy {
+                    TodayDivider(
+                        showsLine: !space.pinnedItems.isEmpty,
+                        canTidy: canTidy,
+                        isTidying: store.tidyingSpaceIDs.contains(space.id),
+                        onTidy: { actions.tidyTabs(space.id) })
                         .sidebarRow(pill: false)
                 }
                 NewTabRow { store.showCommandBar(.newTab) }
@@ -227,6 +232,22 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func unpinnedGroup(_ group: SidebarGroup, in tabs: [BrowserTab], selectedID: UUID?) -> some View {
+        // Tidy Tabs' header rides on the first tab of its group, so drag offsets stay the tabs'.
+        if let header = store.state.tabGroupHeader(above: tabs[group.indices[0]].id, inSpace: store.state.selectedSpace) {
+            VStack(spacing: 0) {
+                TabGroupHeaderRow(
+                    group: header,
+                    onClose: { header.tabIDs.forEach(actions.closeTab) },
+                    onRemoveHeader: { actions.removeTabGroupHeader(header.id) })
+                unpinnedTabs(group, in: tabs, selectedID: selectedID)
+            }
+        } else {
+            unpinnedTabs(group, in: tabs, selectedID: selectedID)
+        }
+    }
+
+    @ViewBuilder
+    private func unpinnedTabs(_ group: SidebarGroup, in tabs: [BrowserTab], selectedID: UUID?) -> some View {
         if let split = group.split {
             splitRow(split, tabs: group.indices.map { tabs[$0] }, pinned: false, selectedID: selectedID)
         } else {
@@ -652,6 +673,97 @@ private struct FavoriteTile: View {
             .accessibilityLabel(tab.displayTitle)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
             .accessibilityAction { onSelect() }
+    }
+}
+
+/// The line between pinned and Today tabs, with Arc Max's Tidy button at its right end
+/// ("Tidy", tooltip "Organize Today Tabs"). The button shows while the pointer is on the row,
+/// and its icon turns while Claude works (Arc's SidebarTidyButton rotation animation).
+private struct TodayDivider: View {
+    let showsLine: Bool
+    let canTidy: Bool
+    let isTidying: Bool
+    let onTidy: () -> Void
+    @State private var hovering = false
+    @State private var turning = false
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Rectangle()
+                .fill(.primary.opacity(showsLine ? M.dividerOpacity : 0))
+                .frame(height: M.dividerThickness)
+                .padding(.horizontal, M.dividerInset)
+            if canTidy, hovering || isTidying {
+                Button(action: onTidy) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 10, weight: .semibold))
+                            .rotationEffect(.degrees(turning ? 360 : 0))
+                        Text("Tidy")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .modifier(ChromeFill(strength: M.hoverFill))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+                .opacity(isTidying ? 0.6 : 0.75)
+                .disabled(isTidying)
+                .padding(.trailing, M.dividerInset)
+                .help("Organize Today Tabs")
+                .accessibilityLabel("Tidy")
+            }
+        }
+        .frame(height: M.dividerRowHeight)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onChange(of: isTidying, initial: true) { _, tidying in
+            if tidying {
+                withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) { turning = true }
+            } else {
+                withAnimation(.linear(duration: 0)) { turning = false }
+            }
+        }
+    }
+}
+
+/// Arc's tab group header (TabGroupHeaderCellView) above a Tidy Tabs group: its name, a close
+/// button on hover ("Close tab group", archives the group's tabs) and Remove Header in its menu.
+private struct TabGroupHeaderRow: View {
+    let group: TodayTabGroup
+    let onClose: () -> Void
+    let onRemoveHeader: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(group.title)
+                .font(.system(size: 11, weight: .semibold))
+                .opacity(0.55)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(hovering ? 0.55 : 0)
+            .help("Close tab group")
+            .accessibilityLabel("Close tab group")
+        }
+        .padding(.horizontal, M.iconInset)
+        .frame(height: M.dividerRowHeight)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button("Remove header", action: onRemoveHeader)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(group.title)
     }
 }
 
