@@ -65,6 +65,14 @@ final class PagePool {
         }
     }
 
+    /// A new selected tab showing `page`, which already exists (a popup).
+    func openTab(with page: WebPage) {
+        // Register before the tab exists so selecting it reuses this page.
+        let newID = UUID()
+        register(page, id: newID)
+        store.mutate { $0.openTab(id: newID, url: nil) }
+    }
+
     func discard(_ id: UUID, keepHistory: Bool) {
         guard let page = pages.removeValue(forKey: id) else { return }
         savedState[id] = keepHistory ? page.hibernationState() : nil
@@ -113,10 +121,7 @@ final class PagePool {
         case let .openInNewTab(url, foreground):
             store.mutate { $0.openTab(url: url, select: foreground) }
         case .popup(let page):
-            // Register before the tab exists so selecting it reuses this page.
-            let newID = UUID()
-            register(page, id: newID)
-            store.mutate { $0.openTab(id: newID, url: nil) }
+            openTab(with: page)
         case .closeRequested:
             store.mutate { $0.close(tab: id) }
         case .blockedCount(let count):
