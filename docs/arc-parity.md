@@ -42,7 +42,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | New Tab… (opens the command bar) | ⌘T | ✅ | |
-| New Window | ⌘N | 🟡 Another window on the shared sidebar (spaces, pinned, favourites, tabs) with its own space and tab, opening on the command bar; restored on relaunch (windows.json). A tab selected in two windows loads twice (Arc likely moves the page) | |
+| New Window | ⌘N | 🟡 Another window on the shared sidebar (spaces, pinned, favourites, tabs) with its own space and tab, opening on the command bar; restored on relaunch (windows.json). A tab selected in two windows has one page: it moves to the window that selected it last (or comes forward), and the other shows a blurred snapshot, as Arc's content placeholder | |
 | Blank Window | ⌃⌘N | 🟡 Arc's standalone-sidebar window: its own "Explore" tabs outside the spaces, restored on relaunch. Moving its tabs into a space not built | |
 | New Incognito Window | ⇧⌘N | ✅ in-memory profile per window (New Space moved off ⇧⌘N) | |
 | New Little Arc Window | ⌥⌘N | ✅ "New Little Kite Window" (`newLittleBrowserWindow`) | |

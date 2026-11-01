@@ -1499,6 +1499,26 @@ ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-stri
   clicked tab, focused. On a full split Kite does nothing, which matches Gabe's choice for Add Split View; Arc shows "Cannot Add New Pane".
 - No settings text mentions this click. The only Links-pane modifier settings are Peek (⇧) and Little Arc (⌥⌘).
 
+## One page per tab across windows → `SharedPages` (PagePool), `PagePlaceholderView` (Arc 1.171 strings and decomp, 1 Nov 2026)
+
+- Arc has a content placeholder system: `ContentPlaceholderClient` (`registerPlaceholder`, `unregisterPlaceholder`,
+  `currentPlaceholders`, `placeholderSnapshots`; arc-strings 82622–82627, 176059–176062) with `ContentPlaceholderData`,
+  `ContentPlaceholderSourceData` (43898–43900), fields `contentSnapshotClient`, `sources`, `placeholders` and a `sidebarItemID`
+  (176063–176068). So placeholders are keyed by tab and drawn from content snapshots.
+- The window side is `WindowContentPlaceholderViewController` (30684, 61654) with `ViewModel`, `Snapshot`, `BlurredSnapshotView`,
+  `ViewState` (30685–30688), an `NSHostingController` (`init(rootView:)`). Decomp around FUN_1001ad81c
+  (`~/rea-arc/decomp/out3/g65wcp.txt`): the SwiftUI view is `Image(nsImage:).resizable()` with `.stretch`, a flexible frame
+  centred, ignoring all safe areas; snapshots sit in a top-aligned `ForEach`, and a new one comes in with
+  `withAnimation(.easeInOut(duration: 0.2))`, the old one going 0.2 s later. `WebContentPlaceholderView` (30633, 61512) is a
+  layer-backed view whose `updateLayer` only sets a background colour (decomp @1001693a0–1001694c8, `out3/g65placeholder.txt`).
+- No user-visible string mentions a tab open in another window, and no "Bring here"/"Move here" action exists in the strings
+  (searched "another window", "other window", "open here", "move here", "this tab is"). So the placeholder has no text or
+  button; Kite adds none.
+- **[inferred]** Which window holds the live page: the one that put the tab on screen last (selected it), and a window coming
+  forward (becoming key) takes its pages back. The decomp doesn't show the trigger; Arc wasn't driven to watch it.
+- **[unmeasured]** The blur radius (Kite: Gaussian sigma 20 px on the 2× snapshot) and the placeholder's background colour
+  (Kite: the card's `windowBackgroundColor`).
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
