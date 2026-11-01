@@ -438,7 +438,7 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
 - Colours (Assets.car): `DownloadItemBackgroundHovered` light p3 0.96 grey / dark p3 0.12;
   `DownloadItemBackground` light sRGB white / dark p3 0.05 (Little Arc tray); `DownloadProgressBarBackground` light sRGB
   (0.808, 0.843, 0.906) / dark (0.443, 0.467, 0.510).
-- Quit with downloads running: alert "Downloads in progress" (not built in Kite yet).
+- Quit with downloads running: "Downloads in progress" (see its own section below).
 
 Kite (`DownloadsView.swift`): no Library yet, so the bottom bar's leading button (where Arc's Library button sits)
 shows the progress ring and opens a popover list. Row size, ring size and popover width are Kite's, unmeasured.
@@ -1498,6 +1498,28 @@ ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-stri
 - What the split looks like (which pane, focus, what a full split does) isn't traced. Kite follows Add Split View: a new pane after the
   clicked tab, focused. On a full split Kite does nothing, which matches Gabe's choice for Add Split View; Arc shows "Cannot Add New Pane".
 - No settings text mentions this click. The only Links-pane modifier settings are Peek (⇧) and Little Arc (⌥⌘).
+
+## Downloads in progress → `AppDelegate.applicationShouldTerminate`, `QuitDialog.runDownloadsInProgress` (Arc 1.171 strings, 1.169 disassembly, 1 Nov 2026)
+
+- Strings (`~/rea-arc/arc-strings.txt` 61957–61966, inside `applicationShouldTerminate(_:)` / `handleTerminateReply(_:allowTerminateLater:)`):
+  title "Downloads in progress" ("Alert title; Confirmation dialog when closing application while downloads are in progress."),
+  text "There are downloads in progress. Closing the application will cancel them." ("Alert informative text"). No count
+  or per-download wording exists: the text is the same for one download or many.
+- Buttons, decoded from inline Swift small strings in `~/rea-arc/decomp/arc.s` at 0x100232558 and 0x100232604 (fn 0x100232404):
+  **"Close " + app name** (so "Close Arc"; the name comes from fn 0x1005a4a94 and is appended) and **"Keep browsing"**
+  (comment "Alert button; Cancel closing app action."), in that order.
+- Mechanism: `applicationShouldTerminate(_:)` (0x10023e2b8…) asks ArcCore for a terminate decision (three cases;
+  "Unknown ArcCore terminate decision" asserts on others) and replies later; the dialog is built from the decision's
+  publisher (0x10023225c → closure 0x10023fa64 → 0x100232404). The same path cancels a pending auto-update relaunch
+  ("Auto update was cancelled because in progress download was detected.").
+- It's Arc's own SwiftUI dialog, like "Quit Arc?": presented through 0x100fc1948, a sibling of the quit dialog's
+  0x100fc2a50 (title, message, two button/action pairs). Its look isn't measured; Kite uses the "Quit Kite?" layout with a
+  message line.
+- With the warn-before-quitting dialog: that one is shown by the ⌘Q action before `terminate`; this one comes from
+  `applicationShouldTerminate`, so ⌘Q shows "Quit Arc?" first, then this **[inferred from where each lives; not traced
+  end to end]**. Quits that skip ⌘Q (Dock, logout, scripts) get only this one.
+- Which button Return/Escape pick isn't known; Kite makes Close Kite the default and Keep browsing the cancel button
+  **[Kite's choice]**.
 
 ## Still unknown
 
