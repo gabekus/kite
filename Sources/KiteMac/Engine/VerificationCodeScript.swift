@@ -1,12 +1,12 @@
 import Foundation
 
-/// Spots one-time-code fields and offers the code that just came by email.
+/// Spots one-time-code fields and offers the code that just came by email or text.
 ///
 /// Runs in Kite's own isolated world in every page's main frame, so the page's scripts
 /// can't call the `__kiteWantsCode` binding or reach the suggestion: it's in a closed
 /// shadow root, and the code only goes into the field when you click it (or press Enter
 /// on it). When a code field gets focus the script asks Kite, which looks in your recent
-/// mail (VerificationCodeService) and answers with `__kiteCodes.offer(code, sender)`.
+/// mail and texts (VerificationCodeService) and answers with `__kiteCodes.offer(code, sender)`.
 enum VerificationCodeScript {
     static let worldName = "kite-codes"
     static let bindingName = "__kiteWantsCode"
