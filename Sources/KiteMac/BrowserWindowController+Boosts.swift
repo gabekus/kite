@@ -8,14 +8,14 @@ extension BrowserWindowController {
     @objc func newBoost(_ sender: Any?) {
         guard !isIncognito, let tab = store.state.selectedTab,
               let boost = BoostsModel.shared.create(for: tab.url) else { return NSSound.beep() }
-        BoostEditorWindowController.show(boost.id, refresh: refreshAction(for: tab.id))
+        BoostEditorWindowController.show(boost.id, refresh: refreshAction(for: tab.id), browser: self)
     }
 
     /// The current site's newest Boost, open in its editor.
     @objc func editBoost(_ sender: Any?) {
         guard !isIncognito, let tab = store.state.selectedTab,
               let boost = BoostsModel.shared.library.boosts(for: tab.url).first else { return NSSound.beep() }
-        BoostEditorWindowController.show(boost.id, refresh: refreshAction(for: tab.id))
+        BoostEditorWindowController.show(boost.id, refresh: refreshAction(for: tab.id), browser: self)
     }
 
     @objc func viewBoosts(_ sender: Any?) {

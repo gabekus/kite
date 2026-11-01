@@ -83,8 +83,10 @@ final class WebKitPage: NSObject, WebPage {
     private let downloads: DownloadCoordinator
     private let contentRules: WebKitContentRules?
     private let appliesBoosts: Bool
-    /// The Boost script registered for the current page, so an unchanged one isn't re-added.
+    /// The Boost script registered for the current page, so an unchanged one isn't re-added,
+    /// and the user script carrying it, so it alone is replaced.
     private var boostScript: String?
+    private var boostUserScript: WKUserScript?
     private var observations: [NSKeyValueObservation] = []
 
     private static let inPageSchemes: Set<String> = ["http", "https", "about", "blob", "data", "file", "javascript"]
@@ -115,7 +117,7 @@ final class WebKitPage: NSObject, WebPage {
         webView.uiDelegate = self
         observe()
         WebKitMediaBridge.shared.attach(self)
-        ZapInjection.attach(to: self)
+        if appliesBoosts { LiveZaps.attach(to: self, owner: self) }
     }
 
     var view: NSView { webView }
@@ -374,16 +376,24 @@ extension WebKitPage: WKNavigationDelegate {
 }
 
 extension WebKitPage {
-    /// Boosts for the page about to load, as a document-start user script (top frame only).
-    /// User scripts are only Boosts' here; the ad blocker uses content rule lists.
+    /// Boosts (code and zaps) for the page about to load, as a document-start user script (top
+    /// frame only). WebKit can only remove every user script at once, so the others (the media
+    /// bridge's) are added back and only the old Boost script is dropped.
     fileprivate func applyBoosts(for url: URL) {
         let script = appliesBoosts ? BoostsModel.shared.script(for: url) : nil
         guard script != boostScript else { return }
         boostScript = script
         let controller = webView.configuration.userContentController
-        controller.removeAllUserScripts()
+        if let old = boostUserScript {
+            let others = controller.userScripts.filter { $0 !== old && $0.source != old.source }
+            controller.removeAllUserScripts()
+            others.forEach(controller.addUserScript)
+            boostUserScript = nil
+        }
         guard let script else { return }
-        controller.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let userScript = WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        controller.addUserScript(userScript)
+        boostUserScript = userScript
     }
 }
 

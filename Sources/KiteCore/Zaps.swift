@@ -2,7 +2,8 @@ import Foundation
 
 /// Arc's Zap (part of Boosts): elements the user picked on a site stay hidden there. Arc keeps
 /// them in the site's Boost and turns each selector into `<selector> { display: none !important; }`
-/// (BoostsClient). Kite keeps them per site here until Boosts can hold them.
+/// (BoostsClient). Kite's zaps live on `Boost.zaps`; this per-site library is the format of the
+/// old zaps.json, read once to move its zaps into Boosts, and `css(_:)` is the rule both use.
 public struct ZapLibrary: Codable, Equatable, Sendable {
     public var version = 1
     /// Selectors by site (`domain(of:)`), oldest first.
@@ -58,35 +59,10 @@ public struct ZapLibrary: Codable, Equatable, Sendable {
     }
 }
 
-/// The scripts that apply zaps to pages.
+/// Applies zaps to a live page. At load, the Boost script adds them (`BoostScript`).
 public enum ZapScript {
     /// Marks Kite's zap `<style>` element.
     public static let styleAttribute = "data-kite-zap"
-    /// The isolated world (Chromium) / content world (WebKit) the document-start script runs in,
-    /// so pages can't read other sites' zaps from it.
-    public static let worldName = "kite-zap"
-
-    /// Run at the start of every document in Kite's own world: hides the zaps for the page's site.
-    /// It carries every site's zaps, so it must never run in the page's world. A later copy (the
-    /// library changed) reuses the first one's style element, so stale zaps don't stay hidden.
-    public static func documentStart(_ library: ZapLibrary) -> String {
-        let sites = library.sites.mapValues { ZapLibrary.css($0) }.filter { !$0.value.isEmpty }
-        let data = (try? JSONSerialization.data(withJSONObject: sites, options: [.sortedKeys])) ?? Data("{}".utf8)
-        let table = escaped(String(decoding: data, as: UTF8.self))
-        return """
-            (() => {
-              if (window !== window.top) return;
-              let host = location.hostname.toLowerCase().replace(/\\.$/, '');
-              if (host.startsWith('www.') && host.length > 4) host = host.slice(4);
-              const css = (\(table))[host] || '';
-              if (window.__kiteZapStyle) { window.__kiteZapStyle.textContent = css; return; }
-              if (!css) return;
-            \(attachStyle)
-              window.__kiteZapStyle = style;
-            })();
-            """
-    }
-
     /// Replaces the page's zap CSS now (after a zap or an undo), in the page's world. Only that
     /// site's CSS goes in.
     public static func apply(css: String) -> String {

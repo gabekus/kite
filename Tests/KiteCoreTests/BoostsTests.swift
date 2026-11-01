@@ -99,4 +99,80 @@ import Testing
     @Test func literalEscapesQuotesAndLineSeparators() {
         #expect(BoostScript.literal("a'b\"c\n\u{2028}") == "\"a'b\\\"c\\n\\u2028\"")
     }
+
+    // MARK: Zaps
+
+    @Test func zapsGoInTheBoostScriptAsOneZapStyle() throws {
+        let a = Boost(name: "a", domain: "example.com", zaps: [".ad", "#banner"])
+        let b = Boost(name: "b", domain: "example.com", css: "p { color: red }", zaps: [".ad"])
+        #expect(!a.isEmpty)
+        let script = try #require(BoostScript.source(for: [a, b]))
+        let css = ".ad { display: none !important; }\n#banner { display: none !important; }"
+        #expect(script.contains(BoostScript.literal(css)))
+        #expect(script.contains("style[data-kite-zap]"))
+        #expect(script.contains("p { color: red }"))
+        // A zap-only Boost still makes a script; no zaps, no zap CSS.
+        #expect(BoostScript.source(for: [Boost(name: "c", domain: "x.com", zaps: ["#x"])]) != nil)
+        #expect(BoostScript.source(for: [Boost(name: "d", domain: "x.com", css: "a{}")])?.contains("const zaps = \"\"") == true)
+    }
+
+    @Test func zapsGoToTheEditedOrNewestBoostOrANewOne() throws {
+        var library = BoostLibrary()
+        let first = library.addZap(" .ad ", domain: "example.com", now: Date(timeIntervalSince1970: 1))
+        let id = try #require(first)
+        #expect(library.boosts.count == 1)
+        #expect(library.boost(id)?.name == "example.com")
+        #expect(library.boost(id)?.zaps == [".ad"])
+        let again = library.addZap(".ad", domain: "example.com")
+        #expect(again == id)
+        #expect(library.boost(id)?.zaps == [".ad"])
+        let blank = library.addZap("  ", domain: "example.com")
+        #expect(blank == nil)
+
+        let newer = try make(&library, page)
+        let toNewest = library.addZap("#b", domain: "example.com")
+        let toPreferred = library.addZap("#c", domain: "example.com", preferring: id)
+        #expect(toNewest == newer.id)
+        #expect(toPreferred == id)
+        // A preferred Boost for another site doesn't take it.
+        let other = try make(&library, URL(string: "https://other.org")!)
+        let notOther = library.addZap("#d", domain: "example.com", preferring: other.id)
+        #expect(notOther == newer.id)
+
+        #expect(library.activeZaps(forDomain: "example.com") == [".ad", "#c", "#b", "#d"])
+        library.setEnabled(id, false)
+        #expect(library.activeZaps(forDomain: "example.com") == ["#b", "#d"])
+        #expect(library.zapCSS(forDomain: "example.com") == "#b { display: none !important; }\n#d { display: none !important; }")
+        library.removeZap("#b", from: newer.id)
+        #expect(library.activeZaps(forDomain: "example.com") == ["#d"])
+        #expect(library.activeBoosts(for: page).flatMap(\.zaps) == ["#d"])
+    }
+
+    @Test func oldBoostsWithoutZapsStillDecode() throws {
+        let json = #"{"version":1,"boosts":[{"id":"6F1C2D3E-0000-4000-8000-000000000001","name":"a","domain":"a.com","css":"","js":"x()","isEnabled":true,"createdAt":0,"updatedAt":0}]}"#
+        let library = try JSONDecoder().decode(BoostLibrary.self, from: Data(json.utf8))
+        #expect(library.boosts.first?.zaps == [])
+        #expect(library.boosts.first?.js == "x()")
+        var withZaps = library
+        withZaps.addZap("#z", domain: "a.com")
+        #expect(try JSONDecoder().decode(BoostLibrary.self, from: JSONEncoder().encode(withZaps)) == withZaps)
+    }
+
+    @Test func migratesZapsJSONIntoEachSitesBoost() throws {
+        var library = BoostLibrary()
+        let existing = try make(&library, page)
+        var zaps = ZapLibrary()
+        zaps.add(".ad", for: "example.com")
+        zaps.add("#promo", for: "news.org")
+        let changed = library.migrate(zaps)
+        #expect(changed)
+        #expect(library.boost(existing.id)?.zaps == [".ad"])
+        let news = try #require(library.boosts(forDomain: "news.org").first)
+        #expect(news.zaps == ["#promo"])
+        #expect(news.name == "news.org")
+        // Running it again changes nothing.
+        let changedAgain = library.migrate(zaps)
+        #expect(!changedAgain)
+        #expect(library.boosts.count == 2)
+    }
 }

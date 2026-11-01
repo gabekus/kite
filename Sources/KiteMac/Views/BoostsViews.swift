@@ -53,13 +53,15 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
     private static var open: [UUID: BoostEditorWindowController] = [:]
     let boostID: UUID
 
-    /// `refresh` reloads the page the Boost was opened from (the editor's "Refresh this Page").
-    static func show(_ boostID: UUID, refresh: (() -> Void)?) {
+    /// `refresh` reloads the page the Boost was opened from (the editor's "Refresh this Page");
+    /// `browser` is its window, where the Zap tool opens the picker.
+    static func show(_ boostID: UUID, refresh: (() -> Void)?, browser: BrowserWindowController? = nil) {
         if let existing = open[boostID] {
+            if let browser { existing.zapTool.browser = browser }
             existing.showWindow(nil)
             return
         }
-        let controller = BoostEditorWindowController(boostID: boostID, refresh: refresh)
+        let controller = BoostEditorWindowController(boostID: boostID, refresh: refresh, browser: browser)
         open[boostID] = controller
         controller.showWindow(nil)
     }
@@ -69,8 +71,11 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
         open[boostID]?.close()
     }
 
-    private init(boostID: UUID, refresh: (() -> Void)?) {
+    private let zapTool: BoostZapTool
+
+    private init(boostID: UUID, refresh: (() -> Void)?, browser: BrowserWindowController?) {
         self.boostID = boostID
+        zapTool = BoostZapTool(boostID: boostID, browser: browser)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
@@ -87,6 +92,7 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
         window.contentView = NSHostingView(rootView: BoostEditorView(
             boostID: boostID,
             refresh: refresh,
+            zapTool: zapTool,
             delete: { [weak self] in self?.confirmDelete() },
             rename: { [weak self] in self?.rename() }
         ))
@@ -97,6 +103,7 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         Self.open[boostID] = nil
+        if zapTool.isPicking { zapTool.toggle() }
     }
 
     private func confirmDelete() {
@@ -114,6 +121,43 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
+/// The editor's Zap tool (Arc's selector picker): opens or closes the picker over the page in
+/// the browser window the editor was opened from. Opened from View Boosts…, it has no page.
+@MainActor
+final class BoostZapTool: ObservableObject {
+    let boostID: UUID
+    weak var browser: BrowserWindowController? {
+        didSet { update() }
+    }
+    @Published private(set) var isPicking = false
+    private var observer: NSObjectProtocol?
+
+    init(boostID: UUID, browser: BrowserWindowController?) {
+        self.boostID = boostID
+        self.browser = browser
+        observer = NotificationCenter.default.addObserver(forName: .kiteZapPickerChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.update() }
+        }
+        update()
+    }
+
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    var isAvailable: Bool { browser != nil }
+
+    func toggle() {
+        guard let browser else { return NSSound.beep() }
+        if browser.isShowingZapPicker { browser.hideZapPicker() } else { browser.showZapPicker(boostID: boostID) }
+        update()
+    }
+
+    private func update() {
+        isPicking = browser?.isShowingZapPicker ?? false
+    }
+}
+
 /// Arc's code input panel: CSS and JavaScript tabs over one editor.
 struct BoostEditorView: View {
     enum CodeType: String, CaseIterable, Identifiable {
@@ -124,6 +168,7 @@ struct BoostEditorView: View {
 
     let boostID: UUID
     let refresh: (() -> Void)?
+    @ObservedObject var zapTool: BoostZapTool
     let delete: () -> Void
     let rename: () -> Void
     @State private var codeType: CodeType = .css
@@ -133,9 +178,13 @@ struct BoostEditorView: View {
     @State private var js: String
     private var model: BoostsModel { BoostsModel.shared }
 
-    init(boostID: UUID, refresh: (() -> Void)?, delete: @escaping () -> Void, rename: @escaping () -> Void) {
+    init(
+        boostID: UUID, refresh: (() -> Void)?, zapTool: BoostZapTool,
+        delete: @escaping () -> Void, rename: @escaping () -> Void
+    ) {
         self.boostID = boostID
         self.refresh = refresh
+        self.zapTool = zapTool
         self.delete = delete
         self.rename = rename
         let boost = BoostsModel.shared.library.boost(boostID)
@@ -182,6 +231,16 @@ struct BoostEditorView: View {
             .labelsHidden()
             .frame(width: 100)
             .accessibilityIdentifier("boostCodeType")
+            if zapTool.isAvailable {
+                // Arc's Zap tool; its icon isn't in Arc's assets (an SF Symbol is a guess).
+                Button(action: zapTool.toggle) {
+                    Image(systemName: zapTool.isPicking ? "bolt.fill" : "bolt")
+                }
+                .buttonStyle(.borderless)
+                .help(zapTool.isPicking ? "Hide Selector Picker" : "Zap")
+                .accessibilityLabel(zapTool.isPicking ? "Hide Selector Picker" : "Zap")
+                .accessibilityIdentifier("boostZap")
+            }
             if let refresh {
                 Button(action: refresh) { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless)

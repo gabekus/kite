@@ -84,7 +84,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         super.init()
         browser.delegate = self
         prepareVerificationCodes()
-        ZapInjection.attach(to: self)
+        if appliesBoosts { LiveZaps.attach(to: self, owner: self) }
         historySwipe = HistorySwipeController(
             view: browser.view,
             canNavigate: { [weak browser] in $0 == .back ? browser?.canGoBack == true : browser?.canGoForward == true },
@@ -428,7 +428,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) {
-        onEvent?(.popup(ChromiumPage(browser: popup, adblocker: adblocker)))
+        onEvent?(.popup(ChromiumPage(browser: popup, adblocker: adblocker, appliesBoosts: appliesBoosts)))
     }
 
     func browserDidRequestClose(_ browser: KCBrowser) { onEvent?(.closeRequested) }
