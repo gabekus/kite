@@ -38,6 +38,8 @@ extension AutomationController {
                     + "(test builds: launch with KITE_DIAGNOSTICS=1 and a KITE_SUPPORT_PATH profile).")
             }
             return try await UIDiagnostics.shared.run(inspection)
+        case let .signIn(tab, reason):
+            return try await signIn(tab: tab, reason: reason, connection: connection)
         case .batch(let steps):
             return await runBatch(steps, connection: connection)
         default:
@@ -484,6 +486,9 @@ extension AutomationController {
         frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
         frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
         window.setFrame(frame, display: true, animate: false)
+        // Auto Layout can push back (minimum sizes, constraints); report where it settled,
+        // not the size asked for.
+        window.layoutIfNeeded()
         return .text("The window is now \(Int(window.frame.width))×\(Int(window.frame.height)) points.")
     }
 

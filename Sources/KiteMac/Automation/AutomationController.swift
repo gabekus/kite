@@ -14,6 +14,10 @@ protocol AutomationHost: AnyObject {
     /// The tab's page, created in the background if it isn't live.
     func automationPage(for tab: BrowserTab) -> WebPage
     func closeAutomatedTab(_ id: UUID)
+    /// Whether 1Password can fill in this window, for sign_in.
+    var canOpenPasswordManager: Bool { get }
+    /// Opens 1Password's popup over the selected tab. False if it couldn't.
+    func openPasswordManager() -> Bool
 }
 
 /// "Claude in the browser", the local half: runs Claude's tool calls against
@@ -44,6 +48,8 @@ final class AutomationController {
     var isEnabled: Bool { settings.allowClaudeControl }
     /// Tabs Claude is driving right now, for the "Claude is controlling this tab" banner.
     private(set) var controlledTabs: [UUID: ControlledTab] = [:]
+    /// Tabs handed to the user to sign in (sign_in), for the banner's Done and Cancel.
+    var signIns: [UUID: SignInRequest] = [:]
 
     @ObservationIgnored weak var host: AutomationHost?
     @ObservationIgnored let store: BrowserStore
@@ -292,6 +298,11 @@ final class AutomationController {
         controlledTabs[id] = entry
     }
 
+    /// Refreshes a controlled tab's idle clock without adding a connection.
+    func touchControlled(_ id: UUID) {
+        controlledTabs[id]?.lastActive = Date()
+    }
+
     private func disconnected(_ connection: Int) {
         for (id, var entry) in controlledTabs where entry.connections.contains(connection) {
             entry.connections.remove(connection)
@@ -449,6 +460,8 @@ final class AutomationController {
         }
         guard let tab else { throw AutomationError(.notFound, "That tab isn't open. Call tabs_context for the open tabs.") }
         if revoked.contains(tab.id) { throw AutomationError.stopped }
+        // Nothing reads or touches a tab while the user types a password into it.
+        if signIns[tab.id] != nil { throw AutomationError(.failed, SignInHandoff.busyMessage) }
         return tab
     }
 

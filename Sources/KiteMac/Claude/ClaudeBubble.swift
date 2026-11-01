@@ -156,6 +156,7 @@ struct ClaudeBubble: View {
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .help(help)
+        .accessibilityLabel(help)
     }
 
     private func transcript(_ task: ClaudeTask, isRunning: Bool) -> some View {
@@ -219,11 +220,8 @@ struct ClaudeBubble: View {
                 recentTasks(tasks)
             }
             if task == nil {
-                Button("Hide (Esc)", systemImage: "xmark") { model.close() }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Hide (Esc)")
+                // Same 22pt target as the header's buttons; the bare icon was 10.5pt.
+                headerButton("Hide (Esc)", symbol: "xmark") { model.close() }
             }
         }
         .padding(.horizontal, 14)

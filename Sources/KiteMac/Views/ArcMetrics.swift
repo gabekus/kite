@@ -28,6 +28,18 @@ enum ArcMetrics {
         /// The sidebar toggle's x, just right of the traffic lights.
         static let toggleX: CGFloat = 71
 
+        /// How far the sidebar can be dragged. From Arc 1.169's binary (the resize pan handler):
+        /// 164 to 500. Arc also hides the sidebar when dragged below 82; Kite doesn't yet.
+        static let widths: ClosedRange<CGFloat> = 164...500
+        /// Arc's `SidebarHeaderWidthLayout`, from the header's width (Arc 1.169's binary): compact
+        /// under 212, medium from 212 to under 228 (four 47pt favorite tiles with 8pt gaps and
+        /// padding), regular from 228. Compact shrinks the navigation buttons to 28pt with no gap
+        /// and hides the sidebar toggle and reload behind a More menu.
+        static let headerCompactBelow: CGFloat = 212
+        static let headerMediumBelow: CGFloat = 228
+        static let compactNavButtonSize: CGFloat = 28
+        static let compactNavButtonSpacing: CGFloat = 0
+
         // URL field.
         static let urlFieldTopGap: CGFloat = 6.5
         static let urlFieldHeight: CGFloat = 36
@@ -65,10 +77,19 @@ enum ArcMetrics {
         /// Favicon's leading edge inside the pill (x 17 in the window).
         static let iconInset: CGFloat = 9
         static let iconTextGap: CGFloat = 8
+        /// Each folder level indents its rows this much. Arc 1.169's binary: the tab list's
+        /// outline view sets indentationPerLevel 16, and its cell frame override only shifts every
+        /// level by the same constant; tab cells add no depth term of their own.
+        static let nestingIndent: CGFloat = 16
         static let tabFontSize: CGFloat = 14
         static let tabTextOpacity: Double = 0.865
         static let selectedFill: Double = 0.20
         static let hoverFill: Double = 0.10
+        /// A tab pill's fill on a light theme (Arc's TabCellBackgroundCurrent and
+        /// SidebarItemBackground assets): near-opaque white when selected, and a faint
+        /// dark wash, not white, on hover. Dark themes use selectedFill and hoverFill.
+        static let selectedFillLight: Double = 0.85
+        static let hoverFillLight: Double = 0.05
         /// Pinned tabs and folders start 3pt below the header.
         static let listTopSpacer: CGFloat = 3
 
@@ -116,6 +137,9 @@ enum ArcMetrics {
         static let rowItemSpacing: CGFloat = 4
         /// An item this narrow or narrower shows only its favicon.
         static let rowCompactWidth: CGFloat = 60
+        /// A title gets 20pt or less after the favicon: hidden, leaving just the favicon
+        /// (`SplitViewCellChildItemView.layout` in Arc 1.169's binary).
+        static let rowTitleMinWidth: CGFloat = 20
         /// Each item's corner is min(width / 2, this).
         static let rowItemMaxCornerRadius: CGFloat = 8
     }
@@ -134,6 +158,8 @@ enum ArcMetrics {
 
     enum CommandBar {
         static let width: CGFloat = 765
+        /// Kite's own: in a window too narrow for 765, the bar keeps this much from each edge.
+        static let minimumWindowMargin: CGFloat = 20
         /// Top edge as a share of the window's height, centred horizontally on the window.
         static let topFraction: CGFloat = 0.369
         /// Arc's command bar layer uses a 12pt circular corner (it sets no corner curve).

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML  // XMLParser lives here outside Apple platforms (Windows).
+#endif
 
 /// One-time codes sent by email ("Your FedEx verification code is 482913"), found in
 /// recent mail so Kite can offer them in the code field that asked for them.

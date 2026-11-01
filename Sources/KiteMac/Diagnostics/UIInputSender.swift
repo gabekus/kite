@@ -54,19 +54,57 @@ struct UIInputSender {
             try? await Task.sleep(for: .milliseconds(50))
             return "Dragged from (\(UIReport.number(from.x)), \(UIReport.number(from.y))) to (\(UIReport.number(to.x)), \(UIReport.number(to.y))) in \(steps) steps, starting on \(hit)." + note
         case let .scroll(point, dx, dy):
-            guard let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
-                                        wheel1: Int32(dy.rounded()), wheel2: Int32(dx.rounded()), wheel3: 0) else {
-                throw AutomationError(.failed, "Couldn't make a scroll event.")
-            }
-            let screen = window.convertPoint(toScreen: window.basePoint(point))
-            let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-            cgEvent.location = CGPoint(x: screen.x, y: primaryHeight - screen.y)
-            cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
-            cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
-            guard let event = NSEvent(cgEvent: cgEvent) else { throw AutomationError(.failed, "Couldn't make a scroll event.") }
+            let event = try scrollEvent(at: point, dx: dx, dy: dy, phase: nil)
             window.sendEvent(event)
             return "Scrolled dx \(UIReport.number(dx)), dy \(UIReport.number(dy)) at (\(UIReport.number(point.x)), \(UIReport.number(point.y))) on \(hitName(point))."
+        case let .phasedScroll(point, dx, dy, phase, steps):
+            let hit = hitName(point)
+            var sequence: [(CGScrollPhase, Double, Double)]
+            switch phase {
+            case .gesture:
+                let n = Double(steps)
+                sequence = [(.began, 0, 0)] + Array(repeating: (CGScrollPhase.changed, dx / n, dy / n), count: steps) + [(.ended, 0, 0)]
+            case .began: sequence = [(.began, dx, dy)]
+            case .changed: sequence = [(.changed, dx, dy)]
+            case .ended: sequence = [(.ended, dx, dy)]
+            case .cancelled: sequence = [(.cancelled, dx, dy)]
+            }
+            var consumed = 0
+            for (index, (eventPhase, stepX, stepY)) in sequence.enumerated() {
+                // Real trackpad events come about every 16 ms; the swipe asks the page about
+                // its scrollers when a gesture begins and needs time for the answer.
+                if index > 0 { try? await Task.sleep(for: .milliseconds(16)) }
+                let event = try scrollEvent(at: point, dx: stepX, dy: stepY, phase: eventPhase)
+                // The same step a real scroll takes in NSApplication's local event monitor.
+                if HistorySwipeController.route(event, in: window) { consumed += 1 } else { window.sendEvent(event) }
+            }
+            try? await Task.sleep(for: .milliseconds(50))
+            return "Sent a \(phase.rawValue) trackpad scroll (\(sequence.count) events, dx \(UIReport.number(dx)), dy \(UIReport.number(dy))) at (\(UIReport.number(point.x)), \(UIReport.number(point.y))) on \(hit); the swipe-to-navigate gesture consumed \(consumed) (\(HistorySwipeController.lastOutcome))."
         }
+    }
+
+    private enum CGScrollPhase: Int64 {
+        case began = 1, changed = 2, ended = 4, cancelled = 8
+    }
+
+    private func scrollEvent(at point: UIPoint, dx: Double, dy: Double, phase: CGScrollPhase?) throws -> NSEvent {
+        guard let cgEvent = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                    wheel1: Int32(dy.rounded()), wheel2: Int32(dx.rounded()), wheel3: 0) else {
+            throw AutomationError(.failed, "Couldn't make a scroll event.")
+        }
+        let screen = window.convertPoint(toScreen: window.basePoint(point))
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        cgEvent.location = CGPoint(x: screen.x, y: primaryHeight - screen.y)
+        cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+        cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
+        if let phase {
+            cgEvent.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            cgEvent.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase.rawValue)
+            cgEvent.setDoubleValueField(.scrollWheelEventPointDeltaAxis1, value: dy)
+            cgEvent.setDoubleValueField(.scrollWheelEventPointDeltaAxis2, value: dx)
+        }
+        guard let event = NSEvent(cgEvent: cgEvent) else { throw AutomationError(.failed, "Couldn't make a scroll event.") }
+        return event
     }
 
     // MARK: Keys

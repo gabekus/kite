@@ -61,6 +61,8 @@ extension BrowserWindowController {
             NSLayoutConstraint.activate([
                 bar.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: FindBar.Metrics.inset),
                 bar.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor, constant: -FindBar.Metrics.inset),
+                // In a card narrower than the bar, it narrows rather than spilling over the sidebar.
+                bar.leadingAnchor.constraint(greaterThanOrEqualTo: contentFrame.leadingAnchor, constant: FindBar.Metrics.inset),
             ])
         }
         return bar

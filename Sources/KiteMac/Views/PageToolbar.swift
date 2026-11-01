@@ -75,6 +75,7 @@ struct PageToolbar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Add Split View")
+                .accessibilityLabel("Add Split View")
             }
             .padding(.leading, Metrics.leading)
             .padding(.trailing, Metrics.trailing)
@@ -116,5 +117,6 @@ struct PageToolbar: View {
         // Not .disabled(), which dims the icon further than Arc's disabled grey.
         .allowsHitTesting(enabled)
         .help(help)
+        .accessibilityLabel(help)
     }
 }

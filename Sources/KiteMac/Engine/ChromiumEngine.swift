@@ -64,6 +64,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     /// away, then a few more times to catch ads that arrive late.
     private static let cosmeticPolls: [TimeInterval] = [0, 1, 3, 8]
     private var findCompletion: ((FindResult) -> Void)?
+    private var historySwipe: HistorySwipeController?
 
     /// Media elements that are currently playing; used to keep music tabs alive.
     private static let playingMediaScript =
@@ -75,6 +76,16 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         super.init()
         browser.delegate = self
         prepareVerificationCodes()
+        historySwipe = HistorySwipeController(
+            view: browser.view,
+            canNavigate: { [weak browser] in $0 == .back ? browser?.canGoBack == true : browser?.canGoForward == true },
+            navigate: { [weak browser] in $0 == .back ? browser?.goBack() : browser?.goForward() },
+            evaluate: { [weak browser] script, completion in
+                guard let browser else { return completion(nil) }
+                browser.evaluateJavaScript(script, completion: completion)
+            },
+            zoomFactor: { [weak browser] in browser?.zoomFactor ?? 1 }
+        )
     }
 
     /// Every page gets Kite's code-field script in its own world (VerificationCodeScript);
