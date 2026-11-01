@@ -112,6 +112,8 @@ struct LibraryView: View {
                     .background(Color(nsColor: .windowBackgroundColor))
             case .archive:
                 ArchivePageView(store: store, open: archiveActions.open, restore: archiveActions.restore)
+            case .media:
+                MediaPageView { url in archiveActions.open(url, false) }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -155,6 +157,8 @@ private struct PageRow: View {
         switch page {
         case .downloads: "arrow.down.circle"
         case .archive: "tray.full"
+        // Arc's welcome-card symbol for the page.
+        case .media: "photo.on.rectangle.angled"
         }
     }
 }

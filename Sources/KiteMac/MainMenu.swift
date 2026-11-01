@@ -330,6 +330,8 @@ enum MainMenu {
             // Arc: Open Library… ⇧⌘L, then View Downloads… ⇧⌘J (MainMenu.nib ids viewLibrary, viewDownloads).
             item("Open Library…", #selector(BrowserWindowController.toggleLibrary(_:)), "l", [.command, .shift], id: "viewLibrary"),
             item("View Downloads…", #selector(BrowserWindowController.viewDownloads(_:)), "j", [.command, .shift], id: "viewDownloads"),
+            // Arc: View Media…, no shortcut, after View Easels… (menudump Window).
+            item("View Media…", #selector(BrowserWindowController.viewMedia(_:)), id: "viewMedia"),
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), toTarget: false, id: "bringAllToFront"),
         ])
