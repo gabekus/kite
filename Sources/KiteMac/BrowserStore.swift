@@ -124,6 +124,9 @@ final class BrowserStore {
         state.syncPinnedURLs()
         // Tidy Tabs' headers lose tabs that left Today, and go when they have none.
         state.pruneTabGroups()
+        // Rows that come, go or move animate in the sidebar, like Arc's. SwiftUI applies the
+        // change on its next pass, so arming after the change is in time.
+        if Self.sidebarRows(of: before) != Self.sidebarRows(of: state) { SidebarRowsAnimator.arm() }
         scheduleSave()
         onChange?()
         link?.propagate(from: self)
@@ -134,6 +137,11 @@ final class BrowserStore {
             if !pinned.isEmpty { TidyTabTitlesController.shared.tabsPinned(pinned, in: self) }
         }
         return result
+    }
+
+    /// Every space's top-level row identities, in order.
+    private static func sidebarRows(of state: BrowserState) -> [[UUID]] {
+        state.spaces.flatMap { [$0.pinnedItems.map(\.id), $0.tabs.map(\.id)] }
     }
 
     /// Archives unpinned tabs left unused longer than the user's setting.
