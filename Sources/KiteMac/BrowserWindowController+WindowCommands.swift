@@ -98,6 +98,39 @@ extension BrowserWindowController {
         }
     }
 
+    /// Archive › View Archive… (Arc: "Opens the Archive, where all your closed tabs live."). Arc shows
+    /// it in its Library window; Kite opens kite://archive in a new tab, as ⌘Y does for History.
+    @objc func viewArchive(_ sender: Any?) {
+        let page = InternalPage.archive
+        store.mutate { state in
+            let id = state.openTab(url: page.url)
+            state.update(tab: id) { $0.title = page.title }
+        }
+    }
+
+    /// Archive › Clear Archive ("Clears all tabs in the Archive."), after Arc's confirmation.
+    @objc func clearArchive(_ sender: Any?) {
+        guard let window, !store.state.archived.isEmpty else { return NSSound.beep() }
+        let alert = NSAlert()
+        alert.messageText = "Are you sure you'd like to Clear Archive?"
+        alert.informativeText = "This action is permanent."
+        alert.addButton(withTitle: "Clear Archive")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons[0].hasDestructiveAction = true
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            store.mutate { $0.clearArchive() }
+            showToast("Archive cleared")
+        }
+    }
+
+    /// The archive page's Restore, with Arc's "Tab restored to <space>" toast.
+    func restoreArchivedTab(_ id: UUID) {
+        guard let spaceID = store.mutate({ $0.restoreArchived(id) }) else { return NSSound.beep() }
+        let space = store.state.spaces.first { $0.id == spaceID }
+        showToast("Tab restored to \(space?.name ?? "your space")")
+    }
+
     @objc func showKeyboardShortcuts(_ sender: Any?) {
         EssentialShortcutsWindow.show(menu: NSApp.mainMenu, overrides: (NSApp.delegate as? AppDelegate)?.keyBindings.bindings)
     }

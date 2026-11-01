@@ -436,7 +436,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
             for (index, tab) in spaces[s].tabs.enumerated() {
                 if tab.id != selected && tab.lastActiveAt < cutoff {
                     removed.append(tab)
-                    appendToArchive([ClosedTab(tab: tab, spaceID: spaces[s].id, index: index)])
+                    appendToArchive([ClosedTab(tab: tab, spaceID: spaces[s].id, index: index)], reason: .auto, now: now)
                 } else {
                     kept.append(tab)
                 }
@@ -447,9 +447,14 @@ public struct BrowserState: Hashable, Codable, Sendable {
         return removed
     }
 
-    /// Adds tabs to the archive, dropping the oldest past `archiveLimit`.
-    mutating func appendToArchive(_ tabs: [ClosedTab]) {
-        archived.append(contentsOf: tabs)
+    /// Adds tabs to the archive, stamped with when and why, dropping the oldest past `archiveLimit`.
+    mutating func appendToArchive(_ tabs: [ClosedTab], reason: ArchiveReason = .manual, now: Date = Date()) {
+        archived.append(contentsOf: tabs.map { closed in
+            var closed = closed
+            closed.archivedAt = closed.archivedAt ?? now
+            closed.reason = closed.reason ?? reason
+            return closed
+        })
         if archived.count > Self.archiveLimit {
             archived.removeFirst(archived.count - Self.archiveLimit)
         }

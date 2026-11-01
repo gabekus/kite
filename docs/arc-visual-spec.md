@@ -465,6 +465,30 @@ windows ("Archive Little Arcs after:"); no global hotkey.
   "Today - Saturday, October 31, 2026", rows with time, icon, title and site, and a per-row menu. Sizes are
   Kite's; Chromium's page wasn't measured in Arc.
 
+## Archive: View Archive…, Clear Archive (Arc 1.171 menu bar and strings, 1 Nov 2026)
+
+- Menu (AX, nothing pressed): Archive › … View History ⌘Y, **View Archive…**, **Clear Archive**, neither with a
+  shortcut. Action ids `viewArchive`, `clearArchive` (arc-strings.txt ~34940, 34985). Descriptions: "Opens the
+  Archive, where all your closed tabs live.", "Clears all tabs in the Archive." (~80672, 80735).
+- Storage: `StorableArchive` / `ArchivedItem` with `archivedAt`, `ArchiveReason`, `ArchivedItemSource` (~38820,
+  74723); Kite now stamps `archivedAt` and a reason (manual / auto) on each archived tab.
+- The view lives in Arc's Library ("Arc Home"): `HomeButton/Pages/Archive/ArchiveReducer.swift`,
+  `ArchiveContentView.swift`, `ArchivePage.swift` (~82492–82516). Strings there: sections "Today", "Yesterday",
+  "Earlier This Week" (~82481–82490; `ArchiveUiTimeBucket`); filter button "Filter Archived Tabs" with
+  `line.3.horizontal.decrease.circle`, groups "Where was the tab?" (space, plus Little Arc) and "How was the tab
+  closed?" ("Auto-Closed", "Manually Closed"), active filters as "Remove %@ Filter" chips (~82455, 82509–82516);
+  search empty state "No results found for …"; row accessory buttons Restore (`arrow.uturn.left`) and Delete,
+  the same two in a row's menu ("Restore/Delete menu item in archive page"); empty state "Nothing here yet!" /
+  "Hover your mouse over a tab and press the [×] to archive it."
+- Restore toast "Tab restored to <space>" (with a ". Click to view." variant), so Restore puts the tab back in its
+  space without switching to it (~76150). Clear: "Are you sure you'd like to Clear Archive?" / "This action is
+  permanent." (~82747), then a toast confirming the clear (its text isn't in the strings; Kite says "Archive
+  cleared").
+- Inferred or unverified: headings past "Earlier This Week" (Kite groups by month); the unfiltered page title
+  (string value missing; Kite says "Archive"); what a plain click on a row does (Kite opens the page, like
+  History); where in the space a restored tab lands (Kite: its old position); the Delete icon (Kite: trash); all
+  sizes. Kite has no Little Arc filter (Little Kite doesn't archive).
+
 ## Windows: New Window ⌘N, Blank Window ⌃⌘N (Arc 1.171 menu bar and strings, 1 Nov 2026)
 
 - Menu (read through AX, nothing pressed): File › New Tab… ⌘T, New Window ⌘N, Blank Window ⌃⌘N, New Incognito
