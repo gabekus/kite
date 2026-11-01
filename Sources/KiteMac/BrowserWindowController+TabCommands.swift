@@ -16,6 +16,14 @@ extension BrowserWindowController {
         showToast(cleared.count == 1 ? "Archived 1 tab" : "Archived \(cleared.count) tabs")
     }
 
+    /// The Today divider's Clear button. Arc's `clearOthers` mode (the selected tab is one of
+    /// several Today tabs) keeps the selected tab; otherwise it's Clear Today.
+    func clearFromTodayDivider(inSpace spaceID: UUID) {
+        let cleared = store.mutate { $0.clearUnselectedToday(inSpace: spaceID) }
+        if cleared.isEmpty { return NSSound.beep() }
+        showToast(cleared.count == 1 ? "Archived 1 tab" : "Archived \(cleared.count) tabs")
+    }
+
     /// Tabs › Reveal Tab in Sidebar: shows the sidebar, opens the folders the tab is in and
     /// scrolls its row into view.
     @objc func revealTabInSidebar(_ sender: Any?) {
