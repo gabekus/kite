@@ -274,6 +274,46 @@ public enum TabAudioButton {
     /// Arc's sidebar context menu items ("Context menu action to mute the selected tab" /
     /// "... to unmute a tab").
     public static func menuTitle(isMuted: Bool) -> String { isMuted ? "Unmute" : "Mute" }
+
+    /// Arc's animated speaker (ARCUI `SidebarCellSpeakerIconWrapperView`): SF `speaker` with three
+    /// sound waves that spring out while the tab plays and a slash that draws across it when muted.
+    /// Numbers from Arc 1.171's disassembly; see docs/arc-visual-spec.md.
+    public enum Speaker {
+        /// The speaker moves this far left while the waves show (0 when muted).
+        public static let playingOffset = -4.0
+        /// Each wave's frame (8 × 12), and its x offset shown and hidden (waves 1–3).
+        public static let waveSize = (width: 8.0, height: 12.0)
+        public static let waveShownOffset = 5.0
+        public static let waveHiddenOffsets = [2.0, 3.0, 4.0]
+        /// Waves and speaker: `spring(response: 0.3, dampingFraction: 0.6)`.
+        public static let waveSpring = (response: 0.3, damping: 0.6)
+        /// The slash: `spring(0.3, 0.65)` drawing in, `spring(0.25, 0.7)` going away.
+        public static let slashInSpring = (response: 0.3, damping: 0.65)
+        public static let slashOutSpring = (response: 0.25, damping: 0.7)
+        /// Wave n waits n × stagger (plus `waveShowDelay` when showing). Arc takes both from its
+        /// caller; their values weren't found, so these are inferred.
+        public static let waveStagger = 0.05
+        public static let waveShowDelay = 0.05
+        /// The slash waits this long after muting (from Arc's caller too; inferred).
+        public static let slashDelay = 0.1
+
+        /// Arc's SlashShape: a capsule at 45° from the top-left corner, as thick as 3.5/40 of the
+        /// box (twice that, and 1/4.5 of it longer at each end, for the gap it cuts in the speaker),
+        /// as long as `progress` of the box's diagonal.
+        public static func slashThickness(boxWidth: Double, cutout: Bool) -> Double {
+            boxWidth * 3.5 / (cutout ? 20 : 40)
+        }
+
+        public static func slashLength(boxWidth: Double, progress: Double, cutout: Bool) -> Double {
+            let overhang = cutout ? slashThickness(boxWidth: boxWidth, cutout: true) / 4.5 : 0
+            return progress * 2.0.squareRoot() * boxWidth + 2 * overhang
+        }
+
+        /// The delay before wave `index` (0–2) springs out (`showing`) or back.
+        public static func waveDelay(index: Int, showing: Bool) -> Double {
+            Double(index) * waveStagger + (showing ? waveShowDelay : 0)
+        }
+    }
 }
 
 /// Arc's command-bar actions Mute All Tabs / Unmute All Tabs (actions `muteAllTabs` / `unmuteAllTabs`,

@@ -972,6 +972,35 @@ a click, scroll, Esc or other key, or when the window resigns key. Inferred, not
 alignment, flipping, the popover material and 0.5pt border, fonts (Arc's view uses 11–16pt sizes; which goes where
 is unknown) and the `linkPreviewsEnabled` default (off, as Arc's `hoverCardsEnabled` and Gabe's Arc; Kite menu › Link Previews turns it on).
 
+### Hover card AI summary (g124; Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` ~80900–80935 and `decomp/arc.s` around `0x1020a7000`–`0x1020aa480`
+(HoverCardView's subviews, identified by their SwiftUI calls). Nothing was run in Arc.
+
+- **Asked:** `HoverCardViewModel.loadSummary(snapshot:)` sends the page ("WEBPAGE INFO:", a `<webpage>` block) and
+  asks for JSON: `blocked` (the page only asks for JavaScript or a security check), `quickSummary` (3–8 words
+  beyond the title, a fact or opinion), `details` (2–4 items: `label` like "Price:", `icon` an SF Symbol name,
+  `info` 5–10 words), in the user's language, "using markdown formatting", keeping the writer's tone. Search
+  results add a `userQuestion`. Errors and a `SummaryTimeout` exist; results are cached (`CacheKey`).
+- **Summary view** (`0x1020a93b4`): `VStack(alignment: .leading, spacing: 8)` of the quick summary
+  (`Text(...).bold()`, `0x1020a9824`) and the detail rows, `.font(.system(size: 13))`, a 3 next to an environment
+  key path (read as `.lineSpacing(3)`: inferred), a theme colour.
+- **Detail row** (`0x1020a9adc`, `0x1020aa1c0`): `HStack(alignment: .firstTextBaseline, spacing: 12)`; the icon at
+  `.system(size: 16, weight: .bold)` in a 12×12 frame, its first-baseline guide at `d[.center] + 0.4 × height`
+  (`0x1020a9e2c`), a 0.3 next to a key path (unidentified); the text is `Text(label).bold() + Text + Text(info)`.
+- **Loading** (`0x1020a7468`): `Text(String(repeating: " ", count: 100))` at 13pt, the same 3, `.redacted(reason:
+  .placeholder)`, a further modifier with 1.0 (unidentified; maybe a pulse), padding 15.
+- "AI Summary by Arc Browser" is used once, in the NSAttributedString built for sharing a card (`0x10209f894`, with
+  13pt and bold 13pt fonts), not in the card itself, so Kite's card has no footer.
+
+Kite: `LinkPreviewSummary` (prompt in Kite's own words, JSON parsing, page text) and `LinkPreviewSummarizer` (one
+headless `claude -p` per link, haiku, no tools or MCP, nothing saved, 30 s timeout, cached per link for the session).
+The card reads the linked page up to 512 KB (only its head without Claude Code) and shows, under the title and
+description: the placeholder while Claude works, then the quick summary and rows; nothing when Claude Code isn't
+installed, fails, or the page is blocked. Kite's: an icon name macOS doesn't know leaves the 12pt slot empty; the
+icon is `.secondary`; Markdown is rendered inline; 2pt above the section. Not built: `userQuestion` for search
+results, instant cards on HN/X/Google.
+
 ## Rename tab and Collapse Pinned Tabs (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
 
 - View menu (AX, nothing pressed): "Collapse Pinned Tabs", no shortcut, right after Show Toolbar ⇧⌘D. Strings
@@ -2294,8 +2323,22 @@ Arc-arm64 (1.171). Nothing was run in Arc.
   "Mute All Tabs" / "Unmute All Tabs" (see the next section).
 
 Kite: same size, place, gap, tooltips, menu titles and 0.18s show/hide (SwiftUI ease-in-out with an opacity
-transition rather than Arc's width collapse). The icon is SF `speaker.wave.3` / `speaker.slash` at 14pt medium,
-swapped without Arc's wave and slash animation; its 0.6 opacity copies Kite's close button (Arc's tint unmeasured).
+transition rather than Arc's width collapse). Its 0.6 opacity copies Kite's close button (Arc's tint unmeasured).
+
+**Animated speaker (g125; disassembly of ARCUI's views at `0x100aebe90`–`0x100aecb20`, 1 Nov 2026).** No repeating
+animation: the waves don't move while audio plays; they spring in or out when the state changes. Playing: SF
+`speaker` (14pt medium) offset −4 x; the three waves, each in an 8×12 frame, at x offset 5 and opacity 1. Otherwise
+the waves sit at offsets 2, 3 and 4 with opacity 0 and the speaker at 0. Every wave and the speaker use
+`spring(response: 0.3, dampingFraction: 0.6)`; wave n waits n × a stagger (plus a lead-in when showing), both values
+passed in by the caller and not found. The slash (`SlashShape`, `0x100aec934`) is a circular-cornered capsule rotated
+π/4 from the box's top-left, `progress × √2 × width` long and `maxX × 3.5/40` thick; a cut-out copy twice as thick and
+`thickness/4.5` longer at each end is subtracted from the box (`addRect`), masking a gap into the speaker. It draws in
+with `spring(0.3, 0.65)` (delayed) and away with `spring(0.25, 0.7)`. Arc's waves are filled custom Bézier outlines
+(8 curves each), which Kite doesn't copy.
+
+Kite (`TabSpeakerIcon`, numbers in `TabAudioButton.Speaker`): the same offsets, frames, springs, opacities and slash
+geometry; waves are Kite's own stroked arcs (1.5pt, round caps) around the frame's left edge. Inferred: stagger
+0.05 s, lead-in 0.05 s, slash and speaker delay 0.1 s when muting, and that the slash's box is the speaker glyph's.
 "Audible" is Kite's media script (playing and not muted by the page), not Chromium's audio-output signal.
 
 ## Mute / Unmute All Tabs → `MuteAllTabs` (KiteCore), `muteAllTabs(_:)` in `BrowserWindowController+Media` (Arc 1.171 binary, 1 Nov 2026)
