@@ -35,7 +35,8 @@ struct CommandBarOverlay: View {
                     Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture { store.hideCommandBar() }
-                    CommandBarView(store: store, mode: mode) { onCommit($0, mode) }
+                    // Arc's 765pt, but never past the window's edges: the window can be 640 wide.
+                    CommandBarView(store: store, mode: mode, width: min(C.width, proxy.size.width - 2 * C.minimumWindowMargin)) { onCommit($0, mode) }
                         .padding(.top, (proxy.size.height * C.topFraction).rounded())
                 }
             }
@@ -147,6 +148,7 @@ private extension NSImage {
 private struct CommandBarView: View {
     let store: BrowserStore
     let mode: CommandBarMode
+    let width: CGFloat
     let onCommit: (CommandSuggestion) -> Void
 
     @State private var query: String
@@ -162,9 +164,10 @@ private struct CommandBarView: View {
     /// The field's text while it shows an inline completion.
     @State private var completed: String?
 
-    init(store: BrowserStore, mode: CommandBarMode, onCommit: @escaping (CommandSuggestion) -> Void) {
+    init(store: BrowserStore, mode: CommandBarMode, width: CGFloat, onCommit: @escaping (CommandSuggestion) -> Void) {
         self.store = store
         self.mode = mode
+        self.width = width
         self.onCommit = onCommit
         let current = mode == .editCurrent ? store.state.selectedTab?.url?.absoluteString : nil
         _query = State(initialValue: current ?? "")
@@ -285,7 +288,7 @@ private struct CommandBarView: View {
                 .padding(.bottom, C.listBottomGap)
             }
         }
-        .frame(width: C.width)
+        .frame(width: width)
         .modifier(CommandBarPanel())
         .onAppear {
             focused = true
@@ -356,7 +359,10 @@ private struct CommandBarView: View {
 }
 
 /// Arc's panel: a dark tint over the blurred page, a hairline border, a wide soft shadow.
-private struct CommandBarPanel: ViewModifier {
+/// ⌘J's Claude bar uses the same panel with `accent` set: the border and a faint glow
+/// take that colour instead of white.
+struct CommandBarPanel: ViewModifier {
+    var accent: Color?
     @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
@@ -369,7 +375,7 @@ private struct CommandBarPanel: ViewModifier {
                 }
                 .clipShape(shape)
             }
-            .overlay(shape.strokeBorder(scheme == .dark ? Color.white.opacity(C.borderOpacity) : Color.black.opacity(0.12), lineWidth: 1))
+            .overlay(shape.strokeBorder(border, lineWidth: 1))
             // A black hairline just outside the border, which shows on light pages.
             .overlay(
                 RoundedRectangle(cornerRadius: C.cornerRadius + C.outlineWidth, style: .circular)
@@ -377,6 +383,12 @@ private struct CommandBarPanel: ViewModifier {
                     .padding(-C.outlineWidth)
             )
             .shadow(color: .black.opacity(C.shadowOpacity), radius: C.shadowRadius, y: C.shadowY)
+            .shadow(color: (accent ?? .clear).opacity(C.accentGlowOpacity), radius: C.accentGlowRadius)
+    }
+
+    private var border: Color {
+        if let accent { return accent.opacity(C.accentBorderOpacity) }
+        return scheme == .dark ? Color.white.opacity(C.borderOpacity) : Color.black.opacity(0.12)
     }
 }
 

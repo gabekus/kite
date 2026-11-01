@@ -144,6 +144,9 @@ enum Probe {
     // MARK: Capture
 
     static func capture(pid: pid_t, frame: CGRect) async throws -> CGImage {
+        // ScreenCaptureKit asserts unless this process has a window server connection, which a plain
+        // command-line tool only gets once AppKit's application object exists.
+        _ = await MainActor.run { NSApplication.shared }
         let content: SCShareableContent
         do {
             content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)

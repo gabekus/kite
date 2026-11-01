@@ -111,6 +111,7 @@ class KCClient : public CefClient,
                  public CefDownloadHandler,
                  public CefFindHandler,
                  public CefKeyboardHandler,
+                 public CefFocusHandler,
                  public CefDevToolsMessageObserver {
  public:
     explicit KCClient(KCBrowser* owner) : owner_(owner), adblock_(KCAdblockRequestHandler(owner)) {}
@@ -122,6 +123,14 @@ class KCClient : public CefClient,
     CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
     CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
+    CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+
+    // CefFocusHandler
+
+    /// True cancels: the page asked for the keyboard while Kite's own UI holds it.
+    bool OnSetFocus(CefRefPtr<CefBrowser> browser, FocusSource source) override {
+        return owner_.focusBlocked;
+    }
 
     // CefLifeSpanHandler
 
@@ -510,8 +519,19 @@ class KCClient : public CefClient,
 - (void)stopLoading { if (_browser) _browser->StopLoad(); }
 
 - (void)focus {
+    _focusBlocked = NO;
     _pendingFocus = !_browser;
     if (_browser) _browser->GetHost()->SetFocus(true);
+}
+
+- (void)blur {
+    _focusBlocked = YES;
+    _pendingFocus = NO;
+    if (_browser) _browser->GetHost()->SetFocus(false);
+}
+
+- (void)allowFocus {
+    _focusBlocked = NO;
 }
 
 - (void)setHidden:(BOOL)hidden {

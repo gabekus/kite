@@ -37,6 +37,11 @@
 	<string>Websites you allow can use your microphone.</string>
 	<key>NSLocationUsageDescription</key>
 	<string>Websites you allow can use your location.</string>
+	<!-- Bluetooth is how a phone proves it's nearby when you sign in with a
+	     passkey from your phone (the QR code). Without this string macOS
+	     kills Kite the first time Chromium touches Bluetooth. -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Kite uses Bluetooth to sign in with passkeys from your phone.</string>
 	<!-- Lets Kite be the default browser. -->
 	<key>CFBundleURLTypes</key>
 	<array>

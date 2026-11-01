@@ -233,6 +233,8 @@ enum MainMenu {
             // text field still moves its caret.
             alternate(#selector(BrowserWindowController.goBack(_:)), left, .command),
             alternate(#selector(BrowserWindowController.goForward(_:)), right, .command),
+            .separator(),
+            item("View History", #selector(BrowserWindowController.viewHistory(_:)), "y", id: "viewHistory"),
         ])
 
         submenu("Tabs", [
@@ -252,6 +254,7 @@ enum MainMenu {
 
         submenu("Spaces", [
             item("New Space", #selector(BrowserWindowController.newSpace(_:)), id: "newSpace"),
+            item("Edit Theme…", #selector(BrowserWindowController.editTheme(_:)), id: "editTheme"),
             item("Rename Space…", #selector(BrowserWindowController.renameSpace(_:)), id: "renameSpace"),
             .separator(),
             // ⇧⌘S is Gabe's Arc binding; ⌥⌘→ is Arc's default.

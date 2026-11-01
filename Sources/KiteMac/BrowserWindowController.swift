@@ -54,6 +54,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var peekTimer: DispatchWorkItem?
     private var sidebarWidth: CGFloat
     private var appearanceObservation: NSKeyValueObservation?
+    private var firstResponderObservation: NSKeyValueObservation?
+    /// Keys typed while the command bar's field doesn't exist yet, and the monitor holding them.
+    private var heldKeys: [NSEvent] = []
+    private var heldKeyMonitor: Any?
 
     /// The focused tab: the selected one, or the focused pane of its split.
     private var shownTabID: UUID?
@@ -64,12 +68,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var shownPages: [UUID: WebPage] = [:]
     private let splitPanes = SplitPanesView()
     private var paneClickMonitor: Any?
+    private var spaceSwipe: SpaceSwipeController!
     /// The page card, in window coordinates: where Chrome's extension install dialog hangs.
     var webAreaInWindow: NSRect { contentFrame.convert(contentFrame.bounds, to: nil) }
     /// After every sync: tabs, selection or pages may have changed.
     var didSync: (() -> Void)?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
+    /// Kite's own pages (kite://history) over the panes showing them, by tab.
+    private var internalPages: [UUID: NSHostingView<HistoryPageView>] = [:]
     private var commandBarVisible = false
     private var sidebarVisible = true
     /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
@@ -86,7 +93,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         self.pool = PagePool(engine: engine, store: store)
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
-        let window = NSWindow(
+        let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -112,6 +119,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.initial, .new]) { [weak self] app, _ in
             MainActor.assumeIsolated {
                 self?.store.setSystemIsDark(app.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+            }
+        }
+        // A page that navigates while the command bar is open takes the keyboard (Chromium
+        // focuses the new page); the bar takes it back so typing and Esc keep working.
+        firstResponderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.keepCommandBarFocused() }
             }
         }
         sync()
@@ -161,14 +175,31 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             forceReload: { [weak self] in self?.forceReload(nil) },
             toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
             closeTab: { [weak self] id in self?.close(tab: id) },
-            addSplitView: { [weak self] in self?.addSplitView(nil) }
+            addSplitView: { [weak self] in self?.addSplitView(nil) },
+            editTheme: { [weak self] id in self?.editTheme(ofSpace: id) },
+            renameSpace: { [weak self] id in self?.renameSpace(id: id) },
+            changeSpaceIcon: { [weak self] id in self?.changeIcon(ofSpace: id) },
+            deleteSpace: { [weak self] id in self?.deleteSpace(id) }
+        )
+        spaceSwipe = SpaceSwipeController(
+            store: store,
+            sidebar: { [weak self] in self?.sidebarHost },
+            showTheme: { [weak self] from, to, progress in
+                self?.themeView.setInteractiveTheme(from: from, to: to, progress: progress)
+                self?.peekCard.theme.setInteractiveTheme(from: from, to: to, progress: progress)
+            },
+            settleTheme: { [weak self] theme in
+                self?.themeView.finishInteractiveTheme(landingOn: theme)
+                self?.peekCard.theme.finishInteractiveTheme(landingOn: theme)
+            }
         )
         var sidebar = SidebarView(
             store: store,
             actions: actions,
             supportsDarkPages: pool.engine.supportsDarkPages,
             claude: claudeButton,
-            downloads: downloadsButton
+            downloads: downloadsButton,
+            swipe: spaceSwipe.model
         )
         var toolbar = PageToolbar(store: store, actions: actions)
         #if canImport(CEFBridge)
@@ -194,6 +225,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         commandBarHost.isHidden = true
         claudeBubbleHost = NSHostingView(rootView: ClaudeBubble(model: claudeBubble, store: store))
+        claudeBubbleHost.sizingOptions = []
         claudeBubbleHost.isHidden = true
         claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
 
@@ -289,14 +321,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             glowView.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: -Layout.glowMargin),
             glowView.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor, constant: Layout.glowMargin),
 
-            // Bottom centre of the page, as wide as the bubble wants up to the page's width.
-            claudeBubbleHost.centerXAnchor.constraint(equalTo: contentFrame.centerXAnchor),
-            claudeBubbleHost.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor),
-            claudeBubbleHost.widthAnchor.constraint(lessThanOrEqualTo: contentFrame.widthAnchor),
-            claudeBubbleHost.topAnchor.constraint(greaterThanOrEqualTo: contentFrame.topAnchor),
-            { let width = claudeBubbleHost.widthAnchor.constraint(equalToConstant: ClaudeBubble.Metrics.maxWidth + 32)
-              width.priority = .defaultHigh
-              return width }(),
+            // ⌘J sits where ⌘T does, so it covers the window the same way.
+            claudeBubbleHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            claudeBubbleHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            claudeBubbleHost.topAnchor.constraint(equalTo: rootView.topAnchor),
+            claudeBubbleHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
             commandBarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             commandBarHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
@@ -326,6 +355,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             self?.focusPane(under: event)
             return event
         }
+        if let window = window as? BrowserWindow { spaceSwipe.install(in: window) }
     }
 
     private func focusPane(under event: NSEvent) {
@@ -397,6 +427,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         updateCommandBar()
         updateSidebar()
         updateToolbar()
+        updateInternalPages()
         didSync?()
     }
 
@@ -492,6 +523,42 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sadTab = host
     }
 
+    /// Draws Kite's own pages over the shown tabs on kite:// URLs. Their engine pages stay blank.
+    private func updateInternalPages() {
+        let shown = shownTabIDs.filter { InternalPage(store.state.tab($0)?.url) != nil }
+        for (id, host) in internalPages where !shown.contains(id) {
+            host.removeFromSuperview()
+            internalPages[id] = nil
+        }
+        for id in shown {
+            let view = HistoryPageView(store: store.history) { [weak self] url, newTab in
+                self?.openFromInternalPage(id, url, newTab: newTab)
+            }
+            let host = internalPages[id] ?? NSHostingView(rootView: view)
+            if shownTabIDs.count > 1, let pane = splitPanes.frame(of: id) {
+                host.frame = splitPanes.convert(pane, to: contentClip)
+                host.autoresizingMask = []
+            } else {
+                host.frame = contentClip.bounds
+                host.autoresizingMask = [.width, .height]
+            }
+            if host.superview == nil {
+                host.rootView = view
+                contentClip.addSubview(host, positioned: .below, relativeTo: toolbarHost)
+            }
+            internalPages[id] = host
+        }
+    }
+
+    private func openFromInternalPage(_ id: UUID, _ url: URL, newTab: Bool) {
+        if newTab {
+            store.mutate { _ = $0.openTab(url: url, select: false) }
+        } else {
+            store.mutate { $0.update(tab: id) { $0.url = url; $0.title = "" } }
+            pool.loadedPage(id)?.load(url)
+        }
+    }
+
     private func updateToolbar() {
         // Arc disables Show Toolbar in split view tabs; the bar belongs to a single page.
         let visible = store.state.showsToolbar && shownTabIDs.count <= 1
@@ -507,8 +574,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func claudeBubbleOpened(_ open: Bool) {
         claudeBubbleHost.isHidden = !open
         if open {
+            // ⌘J and ⌘T share a spot: only one shows at a time.
+            store.hideCommandBar()
             window?.makeFirstResponder(claudeBubbleHost)
-        } else {
+        } else if store.commandBar == nil {
+            // Closed by ⌘T opening: leave the focus in ⌘T's field.
             shownPage?.focus()
         }
     }
@@ -519,12 +589,79 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     private func updateCommandBar() {
         let visible = store.commandBar != nil
-        guard visible != commandBarVisible else { return }
-        commandBarVisible = visible
-        commandBarHost.isHidden = !visible
-        if !visible {
-            shownPage?.focus()
+        if visible != commandBarVisible {
+            commandBarVisible = visible
+            commandBarHost.isHidden = !visible
+            if visible {
+                claudeBubble.close()
+            } else {
+                releaseHeldKeys(replay: false)
+                for page in shownPages.values { page.allowFocus() }
+                // Closed by ⌘J opening: leave the focus in Claude's field.
+                if !claudeBubble.isOpen { shownPage?.focus() }
+            }
         }
+        // Also when ⌘T or ⌘L comes while the bar is already open.
+        keepCommandBarFocused()
+    }
+
+    private var commandBarHasFocus: Bool {
+        (window?.firstResponder as? NSView)?.isDescendant(of: commandBarHost) == true
+    }
+
+    private func keepCommandBarFocused(attempt: Int = 0) {
+        guard commandBarVisible else { return }
+        if !commandBarHasFocus { focusCommandBar(attempt: attempt) }
+        if commandBarHasFocus { releaseHeldKeys(replay: true) }
+    }
+
+    /// Hands the bar's field the keyboard before the next key event is handled, so typing
+    /// straight after ⌘T or ⌘L lands in the bar rather than the page. SwiftUI's own focus
+    /// request (onAppear) comes a run loop later, after those keys are gone.
+    private func focusCommandBar(attempt: Int = 0) {
+        // Builds the bar's views now instead of on the next display pass.
+        commandBarHost.layoutSubtreeIfNeeded()
+        func field(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField, field.isEditable { return field }
+            return view.subviews.lazy.compactMap(field(in:)).first
+        }
+        guard let field = field(in: commandBarHost) else {
+            // The bar's first open in a session: SwiftUI makes the field on a later pass.
+            // Hold what's typed meanwhile so it lands in the bar, not the page.
+            holdKeys()
+            guard attempt < 50 else { return releaseHeldKeys(replay: true) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
+                self?.keepCommandBarFocused(attempt: attempt + 1)
+            }
+            return
+        }
+        // Otherwise Chromium still thinks its page has the keyboard and takes it back on the
+        // next navigation, or when a new page (a split pane, a tab at launch) starts up.
+        for page in shownPages.values { page.blur() }
+        window?.makeFirstResponder(field)
+    }
+
+    private func holdKeys() {
+        guard heldKeyMonitor == nil else { return }
+        heldKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.hold(event) == true ? nil : event
+        }
+    }
+
+    private func hold(_ event: NSEvent) -> Bool {
+        // Shortcuts still go to the menu.
+        guard event.window === window, !event.modifierFlags.contains(.command) else { return false }
+        heldKeys.append(event)
+        return true
+    }
+
+    private func releaseHeldKeys(replay: Bool) {
+        guard let monitor = heldKeyMonitor else { return }
+        NSEvent.removeMonitor(monitor)
+        heldKeyMonitor = nil
+        let keys = heldKeys
+        heldKeys = []
+        if replay { keys.forEach { window?.sendEvent($0) } }
     }
 
     private func updateSidebar() {
@@ -671,7 +808,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func open(_ url: URL, mode: CommandBarMode) {
         if mode == .editCurrent, let id = store.state.selectedTab?.id {
             store.mutate { $0.update(tab: id) { $0.url = url } }
-            pool.loadedPage(id)?.load(url)
+            // kite:// pages are drawn by the window, never loaded.
+            if InternalPage(url) == nil { pool.loadedPage(id)?.load(url) }
         } else {
             store.mutate { $0.openTab(url: url) }
         }
@@ -853,6 +991,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     @objc func nextSpace(_ sender: Any?) { store.mutate { $0.selectAdjacentSpace(offset: 1) } }
     @objc func previousSpace(_ sender: Any?) { store.mutate { $0.selectAdjacentSpace(offset: -1) } }
     @objc func newSpace(_ sender: Any?) { store.addSpace() }
+    @objc func editTheme(_ sender: Any?) { editTheme(ofSpace: store.state.selectedSpaceID) }
+
+    func editTheme(ofSpace id: UUID) {
+        if !store.isSidebarVisible { store.toggleSidebar() }
+        ThemeEditor.present(store: store, spaceID: id, from: sidebarHost)
+    }
 }
 
 /// The sidebar's trailing edge. Reports horizontal drag distance since mouse-down.
