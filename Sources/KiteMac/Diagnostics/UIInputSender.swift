@@ -1,5 +1,6 @@
 import AppKit
 import KiteCore
+import WebKit
 
 /// `ui input`: synthetic keys, clicks, drags and scrolls delivered to one Kite window only.
 ///
@@ -23,9 +24,21 @@ struct UIInputSender {
             }
             // A web view can claim a key and hand it back to the menu bar a moment later.
             try? await Task.sleep(for: .milliseconds(50))
+            // A WebKit page in a background window can take seconds to answer. Wait a while for it, so a
+            // shortcut that reaches the menu late isn't mistaken for one that did nothing (and pressed again).
+            let toPage = pressed.filter { $0.route.hasPrefix(Self.givenToPage) }.map(\.entry)
+            var waited = 0
+            while waited < 1500, toPage.contains(where: { keyLog.routes(of: $0).isEmpty }) {
+                try? await Task.sleep(for: .milliseconds(50))
+                waited += 50
+            }
             return pressed.map { chord, entry, route in
                 let menu = keyLog.routes(of: entry)
-                return "\(AutomationController.keyName(chord)): \(route)" + (menu.isEmpty ? "" : "; " + menu.joined(separator: "; "))
+                var line = "\(AutomationController.keyName(chord)): \(route)" + (menu.isEmpty ? "" : "; " + menu.joined(separator: "; "))
+                if menu.isEmpty, route.hasPrefix(Self.givenToPage) {
+                    line += "; no menu command yet: if the page passes the key on later, its command still runs in this window (see ui key_log), so don't press it again"
+                }
+                return line
             }.joined(separator: "\n")
         case .text(let text):
             for character in text {
@@ -161,8 +174,15 @@ struct UIInputSender {
         return NSEvent(cgEvent: event)
     }
 
+    private static let givenToPage = "given to the web page, which answers later"
+
     /// Delivers a key down the way AppKit would for this window, and says where it went.
     private func deliver(_ event: NSEvent) -> String {
+        // A real key reaches a window only once it's key, and becoming key gives its open command bar the
+        // field editor the windows share (another window's bar may hold it). Do the same here.
+        if !(window.isKeyWindow && NSApp.isActive) {
+            (window.windowController as? BrowserWindowController)?.takeKeysInBackground()
+        }
         // Named before delivery, which can move focus (Escape closing the command bar).
         let responder = responderName
         if window.isKeyWindow && NSApp.isActive {
@@ -184,7 +204,13 @@ struct UIInputSender {
                 MenuRouter.deliveringTo = nil
                 MenuRouter.deliveringToLittle = nil
             }
-            if window.performKeyEquivalent(with: event) { return "claimed as a key equivalent by a view (\(state))" }
+            if window.performKeyEquivalent(with: event) {
+                guard window.firstResponder is WKWebView else { return "claimed as a key equivalent by a view (\(state))" }
+                // WebKit asks the page first and, if the page doesn't use the key, sends this same event
+                // through the app later. Its menu command belongs to this window, not the one AppKit picks.
+                MenuRouter.handedToPage(event, browser: MenuRouter.deliveringTo, little: MenuRouter.deliveringToLittle)
+                return "\(Self.givenToPage) (\(state))"
+            }
             if performOnResponderChain(event) { return "handled by the menu bar on this window's responder chain (\(state))" }
             if NSApp.mainMenu?.performKeyEquivalent(with: event) == true { return "handled by the menu bar (\(state))" }
         }

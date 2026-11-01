@@ -16,11 +16,38 @@ final class MenuRouter: NSObject, NSMenuItemValidation {
     /// The same for a Little Kite window.
     static var deliveringToLittle: (NSWindowController & NSMenuItemValidation)?
 
+    /// A key `ui input` gave a background window's web page. WebKit answers later and, when the page
+    /// doesn't use the key, sends the same event through the app to the menu bar; with Kite in the
+    /// background its command would otherwise land in whichever window AppKit picks.
+    final class PageKey {
+        let event: NSEvent
+        weak var browser: BrowserWindowController?
+        weak var little: (NSWindowController & NSMenuItemValidation)?
+        init(event: NSEvent, browser: BrowserWindowController?, little: (NSWindowController & NSMenuItemValidation)?) {
+            self.event = event
+            self.browser = browser
+            self.little = little
+        }
+    }
+
+    private static var pageKeys: [PageKey] = []
+
+    static func handedToPage(_ event: NSEvent, browser: BrowserWindowController?, little: (NSWindowController & NSMenuItemValidation)?) {
+        pageKeys = Array(pageKeys.suffix(7)) + [PageKey(event: event, browser: browser, little: little)]
+    }
+
+    /// The page key the app is handing to the menu bar right now, if any.
+    private static var pageKeyBeingHandedBack: PageKey? {
+        guard !pageKeys.isEmpty, let event = NSApp.currentEvent, event.type == .keyDown else { return nil }
+        return pageKeys.last { $0.event === event }
+    }
+
     /// A Little Kite window in front takes the commands it has (Back, Reload, Copy URL, Archive Tab
     /// closes it); the rest are off there rather than acting on the main window behind it.
     /// An installed web app's window in front does the same (WebAppWindowController).
     var little: (NSWindowController & NSMenuItemValidation)? {
         if Self.deliveringTo != nil { return nil }
+        if let pageKey = Self.pageKeyBeingHandedBack { return pageKey.little }
         func auxiliary(_ window: NSWindow?) -> (NSWindowController & NSMenuItemValidation)? {
             let controller = window?.windowController
             if let little = controller as? LittleKiteWindowController { return little }
@@ -31,6 +58,7 @@ final class MenuRouter: NSObject, NSMenuItemValidation {
 
     var current: BrowserWindowController? {
         Self.deliveringTo
+            ?? Self.pageKeyBeingHandedBack?.browser
             ?? NSApp.keyWindow?.windowController as? BrowserWindowController
             ?? NSApp.mainWindow?.windowController as? BrowserWindowController
             ?? fallback

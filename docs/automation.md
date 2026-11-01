@@ -141,7 +141,13 @@ What works with Kite in the background (checked on a test build behind other win
   activate Kite the way a real first click would. `input` says when that happened. SwiftUI buttons and rows
   accept first mouse, so they work.
 - Keys: a web view claims ⌘ shortcuts as key equivalents and hands them back to the menu bar a moment later;
-  `input` and `key_log` follow the key through and name the menu item it fired.
+  `input` and `key_log` follow the key through and name the menu item it fired. A WebKit page in a background
+  window can take seconds to answer: `input` waits up to 1.5 s for it, and the menu command still runs in the
+  window you sent the key to if it comes later (don't press the key again; check `key_log`). Keys a page hands
+  back that aren't menu commands (Escape) go through AppKit, which may pick another Kite window.
+- Command bars: SwiftUI shares one field editor between windows, so with several windows' bars open only one
+  holds it. `input` gives its window's bar the field first, as becoming key would. Escape doesn't close a bar
+  in a background window (SwiftUI's exit command needs a key window).
 - `trace`: animation `from`/`to` values are the layer's own (position in its superlayer, bottom-left), while
   the sampled frames are window points. SwiftUI's accessibility frames follow the model, not the animation, so
   `match` shows only start and end; the layers show the curve.
