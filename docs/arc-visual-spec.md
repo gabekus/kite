@@ -1380,12 +1380,35 @@ Arc-arm64 (1.171). Nothing was run in Arc.
   staggered springs, response 0.3, damping 0.6) and a `SlashShape` (springs 0.25/0.7 out, 0.3/0.65 in). The speaker
   shifts 4pt left while the waves show. No speaker asset in any Assets.car.
 - **Menu bar:** no Mute item in Arc's File/Edit/View/Tabs/Archive/Window menus (menudump). The command bar has
-  "Mute all tabs" / "Unmute all tabs" (not built here).
+  "Mute All Tabs" / "Unmute All Tabs" (see the next section).
 
 Kite: same size, place, gap, tooltips, menu titles and 0.18s show/hide (SwiftUI ease-in-out with an opacity
 transition rather than Arc's width collapse). The icon is SF `speaker.wave.3` / `speaker.slash` at 14pt medium,
 swapped without Arc's wave and slash animation; its 0.6 opacity copies Kite's close button (Arc's tint unmeasured).
 "Audible" is Kite's media script (playing and not muted by the page), not Chromium's audio-output signal.
+
+## Mute / Unmute All Tabs → `MuteAllTabs` (KiteCore), `muteAllTabs(_:)` in `BrowserWindowController+Media` (Arc 1.171 binary, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt`, `strings` and `otool` disassembly (`decomp/arc.s`) of Arc-arm64 (1.171),
+`menudump` of Arc's menu bar. Nothing was pressed or run in Arc.
+
+- **Command-bar actions:** `muteAllTabs` / `unmuteAllTabs` sit in Arc's command-bar action list next to
+  `toggleSidebar`, `resetCurrentTab`, `addLeftSplit`… (strings ~69893, ~161128, ~169671; coding keys
+  `MuteAllTabsCodingKeys` / `UnmuteAllTabsCodingKeys` ~41029). Descriptions "Action to mute all tabs" / "Action to
+  unmute all tabs" (~79415).
+- **Titles:** "Mute All Tabs" / "Unmute All Tabs", built as small-string immediates ("Mute All" + " Tabs", at
+  0x101d874f8 and 0x101d895f4, next to the "Action to mute all tabs" literal). No extra trigger phrases were found
+  next to them (Add Bottom Split, two entries on, has "New Bottom Split"); the title is also matched lowercased.
+- **Not elsewhere:** no Mute item in Arc's File/Edit/View/Tabs/Archive/Window/Help menus (menudump). The sidebar
+  context menu (`SidebarMenu+PlatformGeneration.swift`) has only the per-tab "Mute" / "Unmute"; no space, Today or
+  all-tabs mute string exists.
+- **Scope:** not traced. Kite mutes every live page in the window, in all its spaces (Arc's command bar acts on
+  its window); whether Arc's reaches other windows, or tabs that load later, is unverified. Whether Arc offers
+  both actions at all times or only when they'd change something is unverified; Kite always offers both.
+
+Kite: hidden Tabs-menu items (`commandBarOnly`, ids `muteAllTabs` / `unmuteAllTabs`, so a shortcut can be set in
+keybindings.json), found by the command bar. Each live page's engine mute is set and its sidebar speaker updates.
+Hibernated tabs aren't touched (they have no page and make no sound).
 ## Task Manager → `TaskManager` (KiteCore), `TaskManagerWindow` (Arc 1.171 menu bar, strings and ArcCore, 1 Nov 2026)
 
 - Menu (`menudump Help`): Help › Troubleshooting holds Record Trace, Open Task Manager, a separator, Reveal Arc

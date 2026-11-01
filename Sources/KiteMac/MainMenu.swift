@@ -325,6 +325,9 @@ enum MainMenu {
                 reset.allowsKeyEquivalentWhenHidden = true
                 return reset
             }(),
+            // Arc's command-bar actions muteAllTabs / unmuteAllTabs: not in its menu bar, so hidden here.
+            commandBarOnly(item(MuteAllTabs.title(mute: true), #selector(BrowserWindowController.muteAllTabs(_:)), id: "muteAllTabs")),
+            commandBarOnly(item(MuteAllTabs.title(mute: false), #selector(BrowserWindowController.unmuteAllTabs(_:)), id: "unmuteAllTabs")),
             .separator(),
         ] + (1...9).map { n in
             item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n, id: n == 9 ? "lastTab" : "tab\(n)")
