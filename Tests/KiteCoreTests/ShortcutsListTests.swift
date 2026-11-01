@@ -60,3 +60,15 @@ import Testing
         #expect(ShortcutsList.parseShortcut("add split") == nil)
     }
 }
+
+@Suite struct ChromeButtonTests {
+    @Test func everyButtonIsShownUntilHidden() throws {
+        let defaults = try #require(UserDefaults(suiteName: "ChromeButtonTests-\(UUID().uuidString)"))
+        #expect(ChromeButton.allCases.allSatisfy { $0.isShown(in: defaults) })
+        ChromeButton.darkPage.setShown(false, in: defaults)
+        #expect(!ChromeButton.darkPage.isShown(in: defaults))
+        #expect(ChromeButton.extensions.isShown(in: defaults))
+        ChromeButton.darkPage.setShown(true, in: defaults)
+        #expect(defaults.object(forKey: ChromeButton.darkPage.hiddenKey) == nil)
+    }
+}

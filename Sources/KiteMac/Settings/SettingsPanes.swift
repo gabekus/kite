@@ -48,6 +48,9 @@ struct GeneralPane: View {
                 UnsupportedToggle("Block Cookie Banners", detail: "Blocking cookie banners may cause pages to load incorrectly.")
             }
             SettingsSection {
+                PasswordManagerPicker()
+            }
+            SettingsSection {
                 CommandToggle("Warn before quitting", #selector(AppDelegate.toggleQuitWarning(_:)))
                 SettingsRow(title: "Automatically update my Kite") {
                     CommandButton("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)))
@@ -177,10 +180,16 @@ struct AdvancedPane: View {
                 UnsupportedToggle("Enable Picture in Picture when you leave a video tab")
                 UnsupportedToggle("Allow window dragging from the top of webpages")
                 UnsupportedToggle("Enable Shared Quotes when highlighting text.")
-                CommandToggle("Show full URL when Toolbar is enabled", #selector(AppDelegate.toggleToolbarFullURLs(_:)))
                 UnsupportedToggle("When opening Kite, restore windows from previous session")
                 UnsupportedToggle("Haptic feedback when reordering tabs")
                 CommandToggle("Play Kite sound effects", #selector(AppDelegate.toggleSoundEffects(_:)))
+            }
+            // Arc's "Show full URL when Toolbar is enabled" (in its Advanced pane), plus Kite's own
+            // switch for each button in the address field and the toolbar.
+            SettingsSection(header: "Toolbar") {
+                CommandToggle("Show full URL when Toolbar is enabled", #selector(AppDelegate.toggleToolbarFullURLs(_:)))
+                Divider()
+                ToolbarButtonsList()
             }
             // Kite's own settings, which Arc doesn't have. Also in the Kite menu.
             SettingsSection(header: "Kite") {
@@ -209,6 +218,62 @@ private struct DarkPagesRow: View {
         SettingsRow(title: "Dark Pages") {
             Picker("", selection: Binding(get: { current }, set: { model.perform(command($0)) })) {
                 ForEach(modes.indices, id: \.self) { Text(titles[modes[$0]] ?? "").tag($0) }
+            }
+            .labelsHidden().fixedSize()
+        }
+    }
+}
+
+/// Settings → Advanced → Toolbar: a checkbox per button. Hidden buttons' commands still work.
+private struct ToolbarButtonsList: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Show these buttons:").font(.system(size: 13))
+            ForEach(ChromeButton.allCases, id: \.self) { button in
+                ToolbarButtonCheckbox(button: button)
+            }
+        }
+    }
+}
+
+private struct ToolbarButtonCheckbox: View {
+    let button: ChromeButton
+    @AppStorage private var hidden: Bool
+
+    init(button: ChromeButton) {
+        self.button = button
+        _hidden = AppStorage(wrappedValue: false, button.hiddenKey)
+    }
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { !hidden }, set: { button.setShown($0) })) {
+            HStack(spacing: 6) {
+                Text(button.title).font(.system(size: 13))
+                Text(button.location).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+        .toggleStyle(.checkbox)
+    }
+}
+
+/// Settings → General → Password manager: which one the address field's key button opens.
+/// No value means automatic (1Password if it's installed, else Bitwarden).
+// TODO: use PasswordManager.allCases and .name once claude/password-manager-setting merges.
+private struct PasswordManagerPicker: View {
+    @AppStorage("passwordManager") private var choice = ""
+    private let options: [(value: String, title: String)] = [
+        ("", "Automatic"), ("1password", "1Password"), ("bitwarden", "Bitwarden"), ("none", "None"),
+    ]
+
+    var body: some View {
+        SettingsRow(title: "Password manager") {
+            Picker("", selection: Binding(
+                get: { choice },
+                set: { value in
+                    if value.isEmpty { UserDefaults.standard.removeObject(forKey: "passwordManager") } else { choice = value }
+                }
+            )) {
+                ForEach(options, id: \.value) { Text($0.title).tag($0.value) }
             }
             .labelsHidden().fixedSize()
         }

@@ -524,6 +524,11 @@ private struct AddressPill: View {
     var installAppName: String?
     var installApp: ((NSView) -> Void)?
     @State private var hovering = false
+    // Settings → Advanced → Toolbar can hide each button; their commands still work from the menu bar.
+    @AppStorage(ChromeButton.passwordManager.hiddenKey) private var hidesPasswordManager = false
+    @AppStorage(ChromeButton.darkPage.hiddenKey) private var hidesDarkPage = false
+    @AppStorage(ChromeButton.siteControls.hiddenKey) private var hidesSiteControls = false
+    @AppStorage(ChromeButton.extensions.hiddenKey) private var hidesExtensions = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -541,8 +546,11 @@ private struct AddressPill: View {
             // Arc's buttons at the field's right end are 30pt wide on a 28pt pitch. Arc 1.169
             // shows its Site Control Center button (with the extensions) only on hover; Kite
             // always shows the extensions button, rightmost (Gabe's call, 2026-11-01).
+            let isDark = hidesDarkPage ? nil : isDark
+            let showSiteControls = hidesSiteControls ? nil : showSiteControls
+            let showExtensions = hidesExtensions ? nil : showExtensions
             HStack(spacing: -2) {
-                if let accessory { accessory }
+                if let accessory, !hidesPasswordManager { accessory }
                 if let isDark {
                     DarkPageToggle(isDark: isDark, action: toggleDark)
                 }
