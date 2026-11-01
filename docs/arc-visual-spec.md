@@ -621,12 +621,12 @@ Sources: `~/rea-arc/arc-strings.txt` 73677–73738 (module `SiteControlCenter`: 
 |---|---|---|
 | Popover | 262 wide, hosting inset 13 | 262 wide, hosting 236 at 13 |
 | Action buttons | 48.75×32.75, pitch 56, 23 from the popover's left | 49×33, pitch 56, at 23 |
-| Settings rows | 208×33, pitch 43 | 208×33, pitch 43 |
+| Settings rows | 208×33, pitch 43 | 208×33 (same row view, measured before the Kite-only Zoom row was removed), pitch 43 |
 | Footer | 82×32 left, 32×32 right, both 23 from the edges | Same |
 | From the toolbar | top y 38, right edge = window's | top 38, right edge 1280 of 1280 |
 
 Kite differs: no Boosts, capture, Developer Mode or sidebar preview; extensions stay in their own popover; action row
-has only Copy URL and Share; Kite adds Dark Page and Zoom rows (Arc's popover has neither) and four permission rows
+has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers plus four permission rows, shown
 always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
 circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
 

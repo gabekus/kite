@@ -29,11 +29,6 @@ public enum SiteControls {
     /// The ad blocker's row. Arc: "Block Ads & Trackers", subtitled On / Off.
     public static let adblockTitle = "Block Ads & Trackers"
     public static func onOff(_ on: Bool) -> String { on ? "On" : "Off" }
-
-    /// The zoom row's value, as Chromium rounds it ("110%").
-    public static func zoomPercent(_ factor: Double) -> String {
-        "\(Int((factor * 100).rounded()))%"
-    }
 }
 
 /// A permission the site can be given, as Chromium stores it per site (content settings).

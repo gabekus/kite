@@ -37,10 +37,4 @@ import Testing
         #expect(SitePermissionValue.block.toggled == .allow)
         #expect(SitePermissionValue.ask.toggled == .allow)
     }
-
-    @Test func zoomReadsAsAPercentage() {
-        #expect(SiteControls.zoomPercent(1) == "100%")
-        #expect(SiteControls.zoomPercent(1.1) == "110%")
-        #expect(SiteControls.zoomPercent(0.8999999) == "90%")
-    }
 }

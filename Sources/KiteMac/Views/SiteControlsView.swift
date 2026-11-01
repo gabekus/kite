@@ -12,8 +12,6 @@ final class SiteControlsModel {
         var copyURL: () -> Void
         var share: (NSView) -> Void
         var toggleAdblock: () -> Void
-        var toggleDark: () -> Void
-        var zoom: (Double) -> Void
         var clearCache: () -> Void
         var clearCookies: () -> Void
         var setPermission: (SitePermission, SitePermissionValue) -> Void
@@ -21,8 +19,6 @@ final class SiteControlsModel {
 
     let url: URL
     var blocksAds: Bool?
-    var isDark: Bool?
-    var zoom: Double = 1
     /// Nil on WebKit, which keeps no per-site permissions Kite can read.
     var permissions: [SitePermission: SitePermissionValue]?
     @ObservationIgnored var actions: Actions
@@ -104,20 +100,6 @@ struct SiteControlsView: View {
                         }
                     }
                 }
-                // Kite's own rows; Arc's Site Control Center has neither.
-                if let isDark = model.isDark {
-                    SettingRow(symbol: isDark ? "moon.fill" : "moon", title: "Dark Page", subtitle: SiteControls.onOff(isDark),
-                               isOn: isDark) { model.perform(model.actions.toggleDark) }
-                }
-                SettingRow(symbol: "plus.magnifyingglass", title: "Zoom", subtitle: SiteControls.zoomPercent(model.zoom),
-                           isOn: model.zoom != 1, help: "Actual Size") {
-                    model.perform { model.actions.zoom(1) }
-                } accessory: {
-                    HStack(spacing: 0) {
-                        RowAccessory(symbol: "minus", help: "Zoom Out") { model.perform { model.actions.zoom(model.zoom - 0.1) } }
-                        RowAccessory(symbol: "plus", help: "Zoom In") { model.perform { model.actions.zoom(model.zoom + 0.1) } }
-                    }
-                }
                 if model.permissions == nil {
                     Text("Camera, microphone, location and notification permissions need the Chromium engine.")
                         .font(.system(size: 11))
@@ -164,74 +146,38 @@ private struct ActionButton: View {
     }
 }
 
-private struct SettingRow<Accessory: View>: View {
+private struct SettingRow: View {
     let symbol: String
     let title: String
     let subtitle: String
     let isOn: Bool
-    var help: String?
     let action: () -> Void
-    @ViewBuilder var accessory: () -> Accessory
     @State private var hovering = false
-
-    init(symbol: String, title: String, subtitle: String, isOn: Bool, help: String? = nil,
-         action: @escaping () -> Void, @ViewBuilder accessory: @escaping () -> Accessory = { EmptyView() }) {
-        self.symbol = symbol
-        self.title = title
-        self.subtitle = subtitle
-        self.isOn = isOn
-        self.help = help
-        self.action = action
-        self.accessory = accessory
-    }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Button(action: action) {
-                HStack(spacing: 8) {
-                    Image(systemName: symbol)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(Color.primary.opacity(0.08)))
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                        Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.leading, 4)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(help ?? title)
-            .accessibilityLabel(title)
-            .accessibilityValue(subtitle)
-            accessory()
-        }
-        .frame(width: SiteControlsView.Metrics.rowSize.width, height: SiteControlsView.Metrics.rowSize.height)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(hovering ? 0.08 : 0)))
-        .onHover { hovering = $0 }
-    }
-}
-
-private struct RowAccessory: View {
-    let symbol: String
-    let help: String
-    let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 10, weight: .semibold))
-                .frame(width: 26, height: SiteControlsView.Metrics.rowSize.height)
-                .contentShape(Rectangle())
+            HStack(spacing: 8) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.primary.opacity(0.08)))
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 4)
+            .frame(width: SiteControlsView.Metrics.rowSize.width, height: SiteControlsView.Metrics.rowSize.height)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(hovering ? 0.08 : 0)))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .help(help)
-        .accessibilityLabel(help)
+        .onHover { hovering = $0 }
+        .help(title)
+        .accessibilityLabel(title)
+        .accessibilityValue(subtitle)
     }
 }
 
