@@ -102,6 +102,7 @@ final class WebKitPage: NSObject, WebPage {
         webView.uiDelegate = self
         observe()
         WebKitMediaBridge.shared.attach(self)
+        ZapInjection.attach(to: self)
     }
 
     var view: NSView { webView }
