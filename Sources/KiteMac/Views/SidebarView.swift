@@ -56,7 +56,8 @@ struct SidebarView: View {
     /// False on WebKit, which can't force pages dark.
     let supportsDarkPages: Bool
     let claude: ClaudeButtonModel
-    let downloads: DownloadsButtonModel
+    /// The window's Library, which the bottom bar's Library button opens.
+    let library: LibraryModel
     /// Opens the extensions popover from the address field's hover button; nil where
     /// extensions don't run (incognito, WebKit).
     var showExtensions: ((NSView) -> Void)?
@@ -167,7 +168,7 @@ struct SidebarView: View {
                 }
             }
 
-            SpaceBar(store: store, actions: actions, claude: claude, downloads: downloads)
+            SpaceBar(store: store, actions: actions, claude: claude, library: library)
                 .frame(height: M.bottomBarHeight)
         }
         .padding(.horizontal, M.padding)
@@ -1468,7 +1469,7 @@ private struct SpaceBar: View {
     let store: BrowserStore
     let actions: SidebarActions
     let claude: ClaudeButtonModel
-    let downloads: DownloadsButtonModel
+    let library: LibraryModel
 
     var body: some View {
         let state = store.state
@@ -1476,7 +1477,7 @@ private struct SpaceBar: View {
         let creating = store.spaceCreation != nil
         HStack(spacing: 4) {
             // Arc's Library button sits at the bar's leading end and carries download progress.
-            DownloadsSidebarButton(model: downloads, size: M.bottomButtonSize)
+            LibrarySidebarButton(library: library, size: M.bottomButtonSize)
                 .opacity(creating ? 0 : 1)
                 .disabled(creating)
             // Arc centres the spaces in the room between its end buttons. Too many to fit scroll rather
@@ -1745,14 +1746,15 @@ private struct SpaceHeader: View {
         .onChange(of: store.iconPickerRequest) { _, request in
             guard request == space.id else { return }
             store.iconPickerShown()
-            openPicker()
+            // From the context menu: wait for the menu to finish closing, or the popover won't show.
+            openPicker(after: 0.15)
         }
     }
 
-    private func openPicker() {
+    private func openPicker(after delay: Double = 0) {
         pickerOpen = true
-        // Next turn, so the placeholder it hangs from exists.
-        DispatchQueue.main.async {
+        // Next turn at the earliest, so the placeholder it hangs from exists.
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard let iconAnchor else { return }
             SpaceIconPicker.present(store: store, spaceID: space.id, from: iconAnchor) { pickerOpen = false }
         }
