@@ -80,5 +80,23 @@ done
 if [[ -d "$CONTENTS/Frameworks/Chromium Embedded Framework.framework" ]]; then
     codesign --force --sign "$SIGN_ID" "$CONTENTS/Frameworks/Chromium Embedded Framework.framework"
 fi
-codesign --force --sign "$SIGN_ID" "$APP"
+# Passkeys from iCloud Keychain (the macOS passwords app) only reach a browser
+# that has Apple's restricted com.apple.developer.web-browser.public-key-credential
+# entitlement; Chromium checks for it before it offers them (icloud_keychain_sys.mm).
+# A restricted entitlement needs a provisioning profile from Apple that grants it
+# to this App ID and lists the signing cert, or macOS refuses to launch the app.
+# So the entitlement is only added when such a profile is present, and checked
+# first. See docs/passkeys.md.
+PROFILE="${KITE_PROVISIONING_PROFILE:-$HOME/.kite-secrets/Kite.provisionprofile}"
+ENTITLEMENTS=()
+if [[ -f "$PROFILE" && "$SIGN_ID" != "-" ]]; then
+    if ENT_PLIST="$(scripts/passkey-entitlements.sh "$PROFILE" "$SIGN_ID" "$ROOT/build")"; then
+        cp "$PROFILE" "$CONTENTS/embedded.provisionprofile"
+        ENTITLEMENTS=(--entitlements "$ENT_PLIST")
+        echo "note: signing with the passkey entitlement from $PROFILE"
+    else
+        echo "warning: not adding the passkey entitlement (see above), iCloud Keychain passkeys stay off" >&2
+    fi
+fi
+codesign --force --sign "$SIGN_ID" ${ENTITLEMENTS[@]+"${ENTITLEMENTS[@]}"} "$APP"
 echo "Built $APP"
