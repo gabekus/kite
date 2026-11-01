@@ -11,6 +11,8 @@ struct PageToolbar: View {
     /// Opens Site Controls under the button.
     var showSiteControls: ((NSView) -> Void)?
     @State private var siteControlsAnchor: NSView?
+    /// Kite menu → Show Full URL in Toolbar (Arc: "Show full URL when Toolbar is enabled").
+    @AppStorage(ToolbarURL.showsFullURLKey) private var showsFullURL = false
     #if canImport(CEFBridge)
     /// Pinned extensions and the extensions menu; nil where extensions don't run (incognito, WebKit).
     var extensions: ExtensionsModel?
@@ -37,6 +39,9 @@ struct PageToolbar: View {
         static let disabled = grey(0x59)
         static let text = grey(0xC8)
         static let siteControlsSize: CGFloat = 16
+        /// Room kept clear on each side of the centred address: the three navigation buttons plus
+        /// a gap (the right side, Site Controls and Split View, is narrower). Kite's, not measured.
+        static let urlInset: CGFloat = leading + 3 * buttonPitch + 12
 
         static func grey(_ level: Int) -> Color {
             Color(red: Double(level) / 255, green: Double(level) / 255, blue: Double(level) / 255)
@@ -95,14 +100,17 @@ struct PageToolbar: View {
                     Image(systemName: "link")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Metrics.enabled)
-                    Text(selected?.url?.host() ?? "")
+                    Text(ToolbarURL.text(for: selected?.url, full: showsFullURL))
                         .font(.system(size: Metrics.fontSize))
                         .foregroundStyle(Metrics.text)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // A full URL truncates before it reaches the buttons on either side.
+            .padding(.horizontal, Metrics.urlInset)
             .offset(x: Metrics.centerOffset)
             .opacity(selected?.url == nil ? 0 : 1)
         }

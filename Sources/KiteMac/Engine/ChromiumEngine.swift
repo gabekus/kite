@@ -442,6 +442,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     func browser(_ browser: KCBrowser, openURLInNewTab url: URL, foreground: Bool) {
+        // CEF reports only the disposition (⌘-click: background, ⇧⌘: foreground); ⌥ is read from the
+        // keyboard, as Arc reads NSEvent.modifierFlags. ⌥⌘-click opens in Split View.
+        if !foreground, LinkClick.commandClickDestination(shift: false, option: NSEvent.modifierFlags.contains(.option)) == .splitView {
+            return onEvent?(.openInSplit(url)) ?? ()
+        }
         onEvent?(.openInNewTab(url, foreground: foreground))
     }
 

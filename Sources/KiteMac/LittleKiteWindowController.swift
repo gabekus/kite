@@ -204,7 +204,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         case let .navigationState(_, canGoBack, _):
             self.canGoBack = canGoBack
             updateBackButton()
-        case .openInNewTab(let url, _), .openInLinkPeek(let url):
+        case .openInNewTab(let url, _), .openInLinkPeek(let url), .openInSplit(let url):
             host.openTab(url)
         case let .openLink(url, target):
             let app = NSApp.delegate as? AppDelegate

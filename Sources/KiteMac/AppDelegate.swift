@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         history = HistoryStore(fileURL: Self.supportDirectory.appendingPathComponent("history.json"))
         store.history = history
         DownloadsModel.shared.start(fileURL: Self.supportDirectory.appendingPathComponent("downloads.json"))
+        DownloadsModel.shared.currentTabTitle = { DownloadTidier.frontBrowser?.store.state.selectedTab?.title }
 
         adblocker = Adblocker(directory: Self.supportDirectory.appendingPathComponent("Adblock", isDirectory: true))
         adblocker.setPolicy(enabled: store.state.blocksAds, allowedHosts: store.state.adblockAllowedHosts)
@@ -249,6 +250,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
     }
 
+    /// Kite menu → Tidy Tabs: Arc Max's Tidy button on the Today divider (Arc's `tidyTabsEnabled`,
+    /// on in Gabe's Arc, so on by default).
+    @objc func toggleTidyTabs(_ sender: Any?) {
+        UserDefaults.standard.set(!TidyTabs.isEnabled(in: .standard), forKey: TidyTabs.enabledKey)
+        // The sidebar reads the setting when it redraws.
+        store.mutate { _ in }
+    }
+
+    /// Kite menu → Tidy Downloads: Arc Max's AI rename of finished downloads (Arc's `renameDownloadsEnabled`).
+    @objc func toggleTidyDownloads(_ sender: Any?) {
+        UserDefaults.standard.set(!TidyDownloads.isEnabled(in: .standard), forKey: TidyDownloads.enabledKey)
+    }
+
+    /// Kite menu → Show Full URL in Toolbar: the toolbar prints the whole address instead of the
+    /// host (Arc: "Show full URL when Toolbar is enabled").
+    @objc func toggleToolbarFullURLs(_ sender: Any?) {
+        UserDefaults.standard.set(!ToolbarURL.showsFullURL(in: .standard), forKey: ToolbarURL.showsFullURLKey)
+    }
+
     /// Kite menu → Ask on Page: Arc Max's find-bar questions, off until turned on (Arc's `askOnPageEnabled`).
     @objc func toggleAskOnPage(_ sender: Any?) {
         UserDefaults.standard.set(!AskOnPage.isEnabled(in: .standard), forKey: AskOnPage.enabledKey)
@@ -279,7 +299,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// ⇧⌘N. Each incognito window gets its own in-memory profile, gone when it closes. With `url`
     /// (the page menu's Open Link in Incognito Window) it shows that page instead of the command bar.
-    func openIncognitoWindow(url: URL? = nil) {
+    @discardableResult
+    func openIncognitoWindow(url: URL? = nil) -> BrowserWindowController {
         let controller = BrowserWindowController(
             store: .incognito(), engine: engine.makeEphemeral(), adblocker: adblocker, incognito: true
         )
@@ -298,6 +319,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.window?.setFrameTopLeftPoint(NSPoint(x: front.frame.minX + 28, y: front.frame.maxY - 28))
         }
         if let url { controller.store.mutate { _ = $0.openTab(url: url) } } else { controller.newTab(nil) }
+        return controller
+    }
+
+    // MARK: AppleScript (AppleScript.swift)
+
+    /// The browser windows AppleScript's `windows` lists, front to back.
+    var scriptControllers: [BrowserWindowController] {
+        guard let windowController else { return [] }
+        let all = [windowController] + windows.all + incognitoControllers
+        return NSApp.orderedWindows.compactMap { window in all.first { $0.window === window } }
+    }
+
+    /// `make new window`: File › New Window, or New Incognito Window.
+    func openScriptWindow(incognito: Bool) -> BrowserWindowController {
+        incognito ? openIncognitoWindow() : windows.openNewWindow()
+    }
+
+    var allowsJavaScriptFromAppleEvents: Bool { store?.state.allowsJavaScriptFromAppleEvents ?? false }
+
+    /// View › Developer › Allow JavaScript from Apple Events (Arc's item, off by default).
+    @objc func toggleJavaScriptFromAppleEvents(_ sender: Any?) {
+        store.mutate { $0.allowsJavaScriptFromAppleEvents.toggle() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -446,8 +489,17 @@ extension AppDelegate: NSMenuItemValidation {
         if item.action == #selector(setArchiveInterval(_:)), let store {
             item.state = ArchiveInterval.allCases.firstIndex(of: store.state.archiveAfter) == item.tag ? .on : .off
         }
+        if item.action == #selector(toggleTidyDownloads(_:)) {
+            item.state = TidyDownloads.isEnabled(in: .standard) ? .on : .off
+        }
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleTidyTabs(_:)) {
+            item.state = TidyTabs.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleToolbarFullURLs(_:)) {
+            item.state = ToolbarURL.showsFullURL(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleAskOnPage(_:)) {
             item.state = AskOnPage.isEnabled(in: .standard) ? .on : .off
@@ -457,6 +509,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleLittleKiteLinks(_:)) {
             item.state = LittleKite.opensExternalLinks(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleJavaScriptFromAppleEvents(_:)) {
+            item.state = allowsJavaScriptFromAppleEvents ? .on : .off
         }
         if item.action == #selector(toggleQuitWarning(_:)), let store {
             item.state = store.state.warnsBeforeQuitting ? .on : .off

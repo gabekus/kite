@@ -330,8 +330,12 @@ extension WebKitPage: WKNavigationDelegate {
 
         let flags = navigationAction.modifierFlags
         if navigationAction.navigationType == .linkActivated && flags.contains(.command) {
-            // ⌘-click opens in the background, ⇧⌘-click opens and switches.
-            onEvent?(.openInNewTab(url, foreground: flags.contains(.shift)))
+            // ⌘-click opens in the background, ⇧⌘-click opens and switches, ⌥⌘-click opens in Split View.
+            switch LinkClick.commandClickDestination(shift: flags.contains(.shift), option: flags.contains(.option)) {
+            case .splitView: onEvent?(.openInSplit(url))
+            case .foregroundTab: onEvent?(.openInNewTab(url, foreground: true))
+            case .backgroundTab: onEvent?(.openInNewTab(url, foreground: false))
+            }
             return decisionHandler(.cancel)
         }
         // Arc's Peek: a click in this page or to a new one (target=_blank), not a subframe's own navigation.
@@ -625,7 +629,7 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
             directory = URL(fileURLWithPath: test, isDirectory: true)
         }
         let destination = Self.uniqueURL(in: directory, name: suggestedFilename)
-        DownloadsModel.shared.track(download, destination: destination)
+        DownloadsModel.shared.track(download, destination: destination, sourceTitle: download.webView?.title)
         completionHandler(destination)
     }
 

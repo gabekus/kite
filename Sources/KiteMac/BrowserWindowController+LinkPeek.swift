@@ -110,6 +110,9 @@ extension BrowserWindowController {
             store.mutate { $0.openTab(url: url, select: foreground) }
         case .openInLinkPeek(let url):
             store.mutate { $0.openTab(url: url) }
+        case .openInSplit(let url):
+            // The Peek's page isn't a pane yet: a ⌥⌘-click in it opens a background tab, like ⌘-click.
+            store.mutate { $0.openTab(url: url, select: false) }
         case .popup(let popup):
             pool.openTab(with: popup)
         case let .openLink(url, target):

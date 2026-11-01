@@ -23,6 +23,8 @@ cp "$BIN/kite-cli" "$CONTENTS/Helpers/kite"
 cp Resources/Info.plist "$CONTENTS/Info.plist"
 # Built from Resources/AppIcon.svg (1024 canvas, 824 body, the macOS icon grid).
 cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
+# The AppleScript dictionary (Info.plist's OSAScriptingDefinition).
+cp Resources/Kite.sdef "$CONTENTS/Resources/Kite.sdef"
 cp Sources/KiteMac/Shaders/*.metal "$CONTENTS/Resources/Shaders/"
 # Kite's helper extension (lists and manages extensions), loaded at launch.
 rm -rf "$CONTENTS/Resources/KiteHelperExtension"
