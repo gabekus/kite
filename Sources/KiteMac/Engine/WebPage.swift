@@ -32,6 +32,8 @@ enum PageEvent {
     case openInLinkPeek(URL)
     /// A link ⌥⌘-clicked in the page opens in a new Split View pane next to this tab (`LinkClick`).
     case openInSplit(URL)
+    /// A link ⌥⌘-clicked in the page opens in Little Kite (Settings › Links, `LinkClick`).
+    case openInLittleKite(URL)
     case closeRequested
     /// Requests the ad blocker stopped since the page started loading.
     case blockedCount(Int)

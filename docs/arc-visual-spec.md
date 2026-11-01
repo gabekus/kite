@@ -2221,8 +2221,8 @@ at +8). Kite runs nothing in Arc; none of this was seen on screen.
   - Otherwise it opens a background tab, or the current tab.
   - `newForegroundTab` (⇧⌘) passes through unchanged.
   - ⇧ alone is Peek (the caller tests shift, `disableShiftClickToOpenLinksInModal`).
-- That Little Arc key isn't in Gabe's defaults or among the `registerDefaults` keys found, so it is probably off by default **[inferred]**. Kite has
-  no ⌥⌘ Little Arc entry point, so in Kite ⌥⌘-click always splits.
+- That Little Arc key isn't in Gabe's defaults, but his Links pane shows it on, so it's on by default. Kite follows it since g88 (see
+  "Settings › Links: Little Arc rows").
 - What the split looks like (which pane, focus, what a full split does) isn't traced. Kite follows Add Split View: a new pane after the
   clicked tab, focused. On a full split Kite does nothing, which matches Gabe's choice for Add Split View; Arc shows "Cannot Add New Pane".
 - No settings text mentions this click. The only Links-pane modifier settings are Peek (⇧) and Little Arc (⌥⌘).
@@ -2614,3 +2614,30 @@ triggers). Kite's menu bar checked the same way (an AX read of the test Kite, pl
 - Arc's type-travel triggers for these items are Kite `CommandBarKeywords`, so the command bar still finds the
   old titles ("Reload Page", "Toggle Sidebar", "Back").
 
+
+## Settings › Links: Little Arc rows → `LittleKite` (KiteCore), `LittleKiteHotkey`, `LinksPane` (Arc 1.171 AX tree, defaults key names, strings and disassembly, 1 Nov 2026)
+
+- **Defaults.** Arc's keys are `globalLittleBrowserHotkeyEnabled`, `optionCommandClickLittleArcEntryPointEnabled` and
+  `autoArchiveLittleArcTimeThreshold` (arc-strings ~64233, ~152501). None of them is in Gabe's Arc defaults, while his
+  Links pane (`~/rea-arc/settings/pane-4.txt`, AX tree) shows both switches on and the pop-up at "6 hours (default)". So
+  the unset values are on, on and 6 hours. This replaces the "probably off" guess for the ⌥⌘ key in the ⌥⌘-click section.
+- **Archive Little Arcs after:** pop-up 200 wide at x 410. Its choices come from a static case list: the function at
+  0x1015aad00 takes a Bool and returns one of two static arrays, [1, 2, 3] or [3, 4, 5, 6]. Its one caller is
+  `ThresholdPreferenceView` (0x10207775c, "PreferencesFeature/ThresholdPreferenceView.swift"). The case order is
+  `twentySeconds, oneHour, sixHours, twelveHours, twentyFourHours, sevenDays, thirtyDays, never` (the label switch at
+  0x1015aad88; the debug-only "20 seconds" is case 0). So Little Arc offers **1 hour, 6 hours, 12 hours**, and tabs
+  12 hours to 30 days, which matches Kite's tab setting. The default reads "6 hours (default)".
+- **What archiving does** isn't traced. Kite closes a Little Kite window once it has gone unused (not key in the active
+  app) for the threshold, checking every minute **[inferred from the name and Arc's tab auto-archive]**. Arc's Library
+  has a "Little Arc" archive filter, which Kite doesn't have yet.
+- **Hotkey.** `GlobalHotkeyListenerClient` / `GlobalHotkeyManager_macOS.swift` with `EventHotKeyID` and "Failed to
+  register hotkey." (arc-strings ~41639, ~80258). That's a Carbon `RegisterEventHotKey`, which needs no Accessibility or
+  Input Monitoring prompt. `registerLittleBrowserShortcut` and `littleArcShortcut`, plus the row title split as
+  "Open Little Arc when I press " + shortcut, show that it follows New Little Arc Window's shortcut. Kite registers the
+  menu item's current shortcut, so a changed shortcut moves the hotkey and a removed one drops it, and shows it in the row
+  ("---" with none). While the hotkey is registered, ⌥⌘N reaches Kite instead of the frontmost app, as in Arc. Arc also
+  reads macOS's symbolic hotkeys (`kHISymbolicHotKey*`, `registeredSystemShortcuts`), probably to avoid system
+  shortcuts; Kite doesn't. Test runs (`KITE_DIAGNOSTICS`) skip the hotkey unless `KITE_TEST_GLOBAL_HOTKEY=1`.
+- **⌥⌘-click.** The policy helper (`out5/g37-policy.txt`) opens Little Arc when the key is on and both ⌥ and ⌘ are
+  held. Otherwise ⌥ splits. Kite does the same. An ⌥-middle-click (Chromium, no ⌘) still splits. Incognito windows always
+  split, because Kite's Little Kite runs on the normal profile **[Kite's choice; Arc not checked]**.

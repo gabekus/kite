@@ -103,6 +103,14 @@ import Testing
         #expect(LinkClick.commandClickDestination(shift: true, option: true) == .foregroundTab)
     }
 
+    @Test func optionCommandClickOpensLittleKiteWhileTheSettingIsOn() {
+        #expect(LinkClick.commandClickDestination(shift: false, option: true, opensLittleKite: true) == .littleKite)
+        #expect(LinkClick.commandClickDestination(shift: false, option: false, opensLittleKite: true) == .backgroundTab)
+        #expect(LinkClick.commandClickDestination(shift: true, option: true, opensLittleKite: true) == .foregroundTab)
+        // Arc wants ⌥ and ⌘: an ⌥-middle-click still splits.
+        #expect(LinkClick.commandClickDestination(shift: false, option: true, command: false, opensLittleKite: true) == .splitView)
+    }
+
     @Test func aLinkFromAPageMakesATwoPaneSplitWithTheLinkFocused() throws {
         var (state, ids) = makeState()
         guard case .added(let pane) = state.openLinkInSplit(url: link, from: ids[0]) else { Issue.record("no pane"); return }

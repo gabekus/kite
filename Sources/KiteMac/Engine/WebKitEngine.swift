@@ -381,8 +381,11 @@ extension WebKitPage: WKNavigationDelegate {
 
         let flags = navigationAction.modifierFlags
         if navigationAction.navigationType == .linkActivated && flags.contains(.command) {
-            // ⌘-click opens in the background, ⇧⌘-click opens and switches, ⌥⌘-click opens in Split View.
-            switch LinkClick.commandClickDestination(shift: flags.contains(.shift), option: flags.contains(.option)) {
+            // ⌘-click opens in the background, ⇧⌘-click opens and switches, ⌥⌘-click opens in Little Kite
+            // (Settings › Links) or Split View.
+            switch LinkClick.commandClickDestination(shift: flags.contains(.shift), option: flags.contains(.option),
+                                                     opensLittleKite: LittleKite.opensOnOptionCommandClick(in: .standard)) {
+            case .littleKite: onEvent?(.openInLittleKite(url))
             case .splitView: onEvent?(.openInSplit(url))
             case .foregroundTab: onEvent?(.openInNewTab(url, foreground: true))
             case .backgroundTab: onEvent?(.openInNewTab(url, foreground: false))
