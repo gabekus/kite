@@ -54,6 +54,8 @@ enum ArcMetrics {
         static let favoriteHeight: CGFloat = 47
         static let favoriteSpacing: CGFloat = 8
         static let favoriteIconSize: CGFloat = 18
+        /// A favorite split's panes inside its tile (Arc 1.169's binary, `AppTrayItemChildStack`).
+        static let favoriteSplitSpacing: CGFloat = 2
 
         /// URL field, favorite tiles and tab pills share one corner.
         static let cornerRadius: CGFloat = 11

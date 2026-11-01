@@ -15,10 +15,9 @@ extension BrowserState {
         guard selectedTab != nil else { return .noTab }
         guard splitSides.contains(side) else { return .full }
         let result = addSplitPane(id: id, now: now)
-        guard case .added(let pane) = result, let found = split(containing: pane),
-              let i = spaces[found.space].splits.firstIndex(where: { $0.id == found.split.id }) else { return result }
+        guard case .added(let pane) = result, let found = split(containing: pane) else { return result }
         let s = found.space
-        var split = spaces[s].splits[i]
+        var split = found.split
         if split.tabIDs.count == 2 { split.orientation = side.orientation }
         // Add Split View put the pane just after the focused one (for a favorite, after its unpinned copy),
         // each with half the old share: for a leading or top side, swap the two.
@@ -29,14 +28,17 @@ extension BrowserState {
             factors.swapAt(p - 1, p)
             split.widthFactors = factors
             // Keep the sidebar row's order the same as the panes'.
-            if let a = spaces[s].tabs.firstIndex(where: { $0.id == neighbor }),
+            if let a = favorites.firstIndex(where: { $0.id == neighbor }),
+               let b = favorites.firstIndex(where: { $0.id == pane }) {
+                favorites.swapAt(a, b)
+            } else if let a = spaces[s].tabs.firstIndex(where: { $0.id == neighbor }),
                let b = spaces[s].tabs.firstIndex(where: { $0.id == pane }) {
                 spaces[s].tabs.swapAt(a, b)
             } else {
                 spaces[s].pinnedItems.swapTabs(neighbor, pane)
             }
         }
-        spaces[s].splits[i] = split
+        updateSplit(split.id) { [split] in $0 = split }
         return result
     }
 }

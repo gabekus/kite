@@ -98,14 +98,39 @@ public enum AddSplitResult: Equatable, Sendable {
 extension BrowserState {
     // MARK: Lookup
 
-    /// The split holding the tab, in whichever space it is.
+    /// The split holding the tab, in whichever space it is. A favorite split shows in every space,
+    /// so it reports the current one.
     public func split(containing tabID: UUID) -> (space: Int, split: SplitView)? {
         for (s, space) in spaces.enumerated() {
             if let split = space.splits.first(where: { $0.tabIDs.contains(tabID) }) {
                 return (s, split)
             }
         }
+        if let split = favoriteSplits.first(where: { $0.tabIDs.contains(tabID) }) {
+            return (selectedSpaceIndex, split)
+        }
         return nil
+    }
+
+    /// Whether a split is a favorite's (Arc: a favorite tile can hold a split view).
+    public func isFavoriteSplit(_ splitID: UUID) -> Bool {
+        favoriteSplits.contains { $0.id == splitID }
+    }
+
+    /// Changes a split wherever it's kept: a space's list or the favorites'.
+    @discardableResult
+    mutating func updateSplit(_ splitID: UUID, _ body: (inout SplitView) -> Void) -> Bool {
+        for s in spaces.indices {
+            if let i = spaces[s].splits.firstIndex(where: { $0.id == splitID }) {
+                body(&spaces[s].splits[i])
+                return true
+            }
+        }
+        if let i = favoriteSplits.firstIndex(where: { $0.id == splitID }) {
+            body(&favoriteSplits[i])
+            return true
+        }
+        return false
     }
 
     /// The selected tab's split, if it's in one.
@@ -131,7 +156,7 @@ extension BrowserState {
     func sidebarStops(in s: Int) -> [UUID] {
         var seen = Set<UUID>()
         return sidebarTabs(in: s).compactMap { tab in
-            guard let split = spaces[s].splits.first(where: { $0.tabIDs.contains(tab.id) }) else { return tab.id }
+            guard let split = (spaces[s].splits + favoriteSplits).first(where: { $0.tabIDs.contains(tab.id) }) else { return tab.id }
             guard seen.insert(split.id).inserted else { return nil }
             if let selected = spaces[s].selectedTabID, split.tabIDs.contains(selected) { return selected }
             return focusTarget(of: split)
@@ -149,11 +174,16 @@ extension BrowserState {
         let s = location.space ?? selectedSpaceIndex
         let newTab = BrowserTab(id: id, url: nil, lastActiveAt: now)
 
-        if let i = spaces[s].splits.firstIndex(where: { $0.tabIDs.contains(focused.id) }) {
-            guard spaces[s].splits[i].tabIDs.count < SplitView.maxPanes else { return .full }
-            insertNextTo(focused.id, newTab, in: s)
-            let index = spaces[s].splits[i].tabIDs.firstIndex(of: focused.id)!
-            spaces[s].splits[i].insert(newTab.id, after: index)
+        if let existing = split(containing: focused.id)?.split {
+            guard existing.tabIDs.count < SplitView.maxPanes else { return .full }
+            if location.section == .favorite {
+                // A favorite split grows by a favorite.
+                favorites.insert(newTab, at: location.index + 1)
+            } else {
+                insertNextTo(focused.id, newTab, in: s)
+            }
+            let index = existing.tabIDs.firstIndex(of: focused.id)!
+            updateSplit(existing.id) { $0.insert(newTab.id, after: index) }
         } else if location.section == .favorite {
             // A favorite stays in the grid; the split is made of an unpinned copy and the new pane.
             let copy = BrowserTab(url: focused.url, title: focused.title, faviconURL: focused.faviconURL, lastActiveAt: now)
@@ -181,11 +211,12 @@ extension BrowserState {
     /// and the pane before it gets focus back. A pane that has loaded something stays.
     public mutating func cancelSplitPane(_ id: UUID) {
         // Chromium reports about:blank for the empty pane's page, so that counts as empty too.
-        guard let s = split(containing: id)?.space, tab(id)?.url.map({ $0.absoluteString == "about:blank" }) ?? true,
-              let split = spaces[s].splits.first(where: { $0.tabIDs.contains(id) }),
+        guard let (s, split) = split(containing: id), tab(id)?.url.map({ $0.absoluteString == "about:blank" }) ?? true,
               let index = split.tabIDs.firstIndex(of: id) else { return }
         let rest = split.tabIDs.filter { $0 != id }
-        if let i = spaces[s].tabs.firstIndex(where: { $0.id == id }) {
+        if let i = favorites.firstIndex(where: { $0.id == id }) {
+            favorites.remove(at: i)
+        } else if let i = spaces[s].tabs.firstIndex(where: { $0.id == id }) {
             spaces[s].tabs.remove(at: i)
         } else {
             _ = spaces[s].pinnedItems.removeTab(id)
@@ -198,11 +229,12 @@ extension BrowserState {
 
     /// Arc's Separate Page from Split View: the tab leaves the split and stays open on its own.
     public mutating func separateFromSplit(tab id: UUID) {
-        guard let s = split(containing: id)?.space, let i = spaces[s].splits.firstIndex(where: { $0.tabIDs.contains(id) }) else { return }
-        spaces[s].splits[i].remove(id)
+        guard let (s, found) = split(containing: id) else { return }
+        updateSplit(found.id) { $0.remove(id) }
+        let rest = found.tabIDs.filter { $0 != id }
         // Its own row now: just below the split's members.
         if let tabIndex = spaces[s].tabs.firstIndex(where: { $0.id == id }),
-           let last = spaces[s].tabs.lastIndex(where: { spaces[s].splits[i].tabIDs.contains($0.id) }),
+           let last = spaces[s].tabs.lastIndex(where: { rest.contains($0.id) }),
            last > tabIndex {
             let tab = spaces[s].tabs.remove(at: tabIndex)
             spaces[s].tabs.insert(tab, at: last)
@@ -213,17 +245,14 @@ extension BrowserState {
     /// Arc's Expand Current Split: the focused pane fills the split; the others stay in it, hidden.
     /// It only expands, as Arc's handler does: running it again changes nothing.
     public mutating func expandSplitPane() {
-        guard let focused = selectedSpace.selectedTabID, let s = split(containing: focused)?.space,
-              let i = spaces[s].splits.firstIndex(where: { $0.tabIDs.contains(focused) }) else { return }
-        spaces[s].splits[i].expandedTabID = focused
+        guard let focused = selectedSpace.selectedTabID, let split = split(containing: focused)?.split else { return }
+        updateSplit(split.id) { $0.expandedTabID = focused }
     }
 
     /// Focusing a hidden pane of an expanded split shows the whole split again.
     mutating func collapseExpandedSplit(toShow id: UUID) {
-        guard let s = split(containing: id)?.space,
-              let i = spaces[s].splits.firstIndex(where: { $0.tabIDs.contains(id) }),
-              let expanded = spaces[s].splits[i].expandedTabID, expanded != id else { return }
-        spaces[s].splits[i].expandedTabID = nil
+        guard let split = split(containing: id)?.split, let expanded = split.expandedTabID, expanded != id else { return }
+        updateSplit(split.id) { $0.expandedTabID = nil }
     }
 
     /// Switch to Split View N (1-based), and next/previous with wraparound.
@@ -242,28 +271,25 @@ extension BrowserState {
     /// Sets the share of the two panes either side of divider `index` (0 = between panes 0 and 1).
     /// `fraction` is how far along the pair the divider sits, clamped so neither pane goes under `minimum`.
     public mutating func moveSplitDivider(_ splitID: UUID, index: Int, fraction: Double, minimum: Double = 0) {
-        for s in spaces.indices {
-            guard let i = spaces[s].splits.firstIndex(where: { $0.id == splitID }) else { continue }
-            var factors = spaces[s].splits[i].normalizedFactors
+        updateSplit(splitID) { split in
+            var factors = split.normalizedFactors
             guard factors.indices.contains(index + 1) else { return }
             let pair = factors[index] + factors[index + 1]
             let low = min(minimum, pair / 2)
             let leading = min(max(fraction * pair, low), pair - low)
             factors[index] = leading
             factors[index + 1] = pair - leading
-            spaces[s].splits[i].widthFactors = factors
-            spaces[s].splits[i].expandedTabID = nil
-            return
+            split.widthFactors = factors
+            split.expandedTabID = nil
         }
     }
 
     /// Drops members that no longer exist (or moved to the favorites or another space)
     /// and splits left with fewer than two panes. Runs after every mutation that can remove a tab.
     public mutating func normalizeSplits() {
-        for s in spaces.indices where !spaces[s].splits.isEmpty {
-            let ids = Set(spaces[s].allTabs.map(\.id))
+        func normalize(_ splits: [SplitView], members ids: Set<UUID>) -> [SplitView] {
             var claimed = Set<UUID>()
-            spaces[s].splits = spaces[s].splits.compactMap { split in
+            return splits.compactMap { split in
                 var split = split
                 for id in split.tabIDs where !ids.contains(id) || claimed.contains(id) {
                     split.remove(id)
@@ -271,6 +297,13 @@ extension BrowserState {
                 claimed.formUnion(split.tabIDs)
                 return split.tabIDs.count >= 2 ? split : nil
             }
+        }
+        for s in spaces.indices where !spaces[s].splits.isEmpty {
+            spaces[s].splits = normalize(spaces[s].splits, members: Set(spaces[s].allTabs.map(\.id)))
+        }
+        for (profile, splits) in favoriteSplitsByProfile {
+            let kept = normalize(splits, members: Set((favoritesByProfile[profile] ?? []).map(\.id)))
+            favoriteSplitsByProfile[profile] = kept.isEmpty ? nil : kept
         }
     }
 }
