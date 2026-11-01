@@ -253,6 +253,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Kite menu → Tidy Downloads: Arc Max's AI rename of finished downloads (Arc's `renameDownloadsEnabled`).
     @objc func toggleTidyDownloads(_ sender: Any?) {
         UserDefaults.standard.set(!TidyDownloads.isEnabled(in: .standard), forKey: TidyDownloads.enabledKey)
+    }
+
     /// Kite menu → Ask on Page: Arc Max's find-bar questions, off until turned on (Arc's `askOnPageEnabled`).
     @objc func toggleAskOnPage(_ sender: Any?) {
         UserDefaults.standard.set(!AskOnPage.isEnabled(in: .standard), forKey: AskOnPage.enabledKey)
