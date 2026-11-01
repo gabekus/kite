@@ -32,6 +32,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
     let claudeButton = ClaudeButtonModel()
     let downloadsButton = DownloadsButtonModel()
+    /// Window › Open Library… (⇧⌘L): covers the sidebar and the card while open.
+    let library = LibraryModel()
+    private var libraryHost: NSHostingView<LibraryView>!
     /// Claude's chat bubble over the page; AppDelegate connects it to Claude Tasks.
     let claudeBubble = ClaudeBubbleModel()
     private var claudeBubbleHost: NSHostingView<ClaudeBubble>!
@@ -249,6 +252,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         claudeBubbleHost.sizingOptions = []
         claudeBubbleHost.isHidden = true
         claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
+        libraryHost = NSHostingView(rootView: makeLibraryView())
+        libraryHost.sizingOptions = []
+        libraryHost.isHidden = true
+        library.onOpenChange = { [weak self] open in self?.libraryOpened(open) }
 
         var dragStartWidth: CGFloat = 0
         resizeHandle.onBegin = { [weak self] in
@@ -268,7 +275,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         materialView.blendingMode = .behindWindow
         materialView.state = .followsWindowActiveState
 
-        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, claudeBubbleHost!, commandBarHost!, peekEdge, peekZone] as [NSView] {
+        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, libraryHost!, claudeBubbleHost!, commandBarHost!, peekEdge, peekZone] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -348,6 +355,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             claudeBubbleHost.topAnchor.constraint(equalTo: rootView.topAnchor),
             claudeBubbleHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
+            libraryHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            libraryHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            libraryHost.topAnchor.constraint(equalTo: rootView.topAnchor),
+            libraryHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+
             commandBarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             commandBarHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             commandBarHost.topAnchor.constraint(equalTo: rootView.topAnchor),
@@ -357,9 +369,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         // The peeking sidebar draws over the page; its views are raised by z-position rather
         // than reordered, which would drop their constraints.
-        for view in [peekCard, sidebarHost!, resizeHandle, claudeBubbleHost!, commandBarHost!] as [NSView] { view.wantsLayer = true }
+        for view in [peekCard, sidebarHost!, resizeHandle, libraryHost!, claudeBubbleHost!, commandBarHost!] as [NSView] { view.wantsLayer = true }
         commandBarHost.layer?.zPosition = 20
         claudeBubbleHost.layer?.zPosition = 15
+        libraryHost.layer?.zPosition = 13
         peekCard.isHidden = true
         peekEdge.onHover = { [weak self] inside in self?.edgeHovered(inside) }
         peekZone.onHover = { [weak self] inside in
@@ -437,6 +450,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         glowView.setTheme(space.theme)
         let appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
         sidebarHost.appearance = appearance
+        libraryHost.appearance = appearance
         materialView.appearance = appearance
         peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil)
         peekCard.material.appearance = appearance
@@ -454,6 +468,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         // A Peek belongs to the tab it opened over.
         if let linkPeek, linkPeek.sourceTabID != selected?.id { closeLinkPeek(animated: false) }
         if selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
+            // A page coming forward (⌘T, a tab opened from the Archive, another space) leaves the Library.
+            if library.isOpen, shownTabID != nil { library.close() }
             show(visible, focused: selected?.id)
         }
         if let split = state.selectedSplit {
@@ -633,6 +649,39 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         contentClip.topInset = visible ? PageToolbar.Metrics.inset : 0
     }
 
+    private func makeLibraryView() -> LibraryView {
+        LibraryView(
+            model: library,
+            store: store,
+            sidebarWidth: sidebarWidth,
+            archiveActions: .init(
+                open: { [weak self] url, newTab in
+                    guard let self else { return }
+                    store.mutate { _ = $0.openTab(url: url, select: !newTab) }
+                },
+                restore: { [weak self] id in self?.restoreArchivedTab(id) }
+            )
+        )
+    }
+
+    /// The Library covers the sidebar and the card: they fade out under it, so the window's material
+    /// and the space's tint show around the Library's card, and the peeking sidebar stays away.
+    private func libraryOpened(_ open: Bool) {
+        if open {
+            setPeeking(false)
+            libraryHost.rootView = makeLibraryView()
+        }
+        libraryHost.isHidden = !open
+        for view in [sidebarHost!, contentFrame, glowView, resizeHandle, peekCard] as [NSView] {
+            view.alphaValue = open ? 0 : 1
+        }
+        if open {
+            window?.makeFirstResponder(libraryHost)
+        } else {
+            shownPage?.focus()
+        }
+    }
+
     /// ⌘J: Claude's chat bubble.
     @objc func toggleClaudeBubble(_ sender: Any?) {
         claudeBubble.toggle()
@@ -785,7 +834,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     private func edgeHovered(_ inside: Bool) {
         peekTimer?.cancel()
-        guard inside, !sidebarVisible, !peeking else { return }
+        guard inside, !sidebarVisible, !peeking, !library.isOpen else { return }
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.setPeeking(true) }
         }

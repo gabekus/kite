@@ -679,6 +679,35 @@ Arc wasn't driven; nothing here is from a recording.
   12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
   top/bottom one on a top/bottom drop (Kite refuses it).
 
+## Library: Open Library… ⇧⌘L (Arc 1.171 menu bar, strings, MainMenu.nib, assets, 1 Nov 2026) → `LibraryView`
+
+Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, so no geometry was measured.
+- Menu (AX, read-only): Window › … Remove Window from Set, —, **Open Library…** ⇧⌘L, **View Downloads…** ⇧⌘J,
+  **View Easels…**, **View Media…**, **View Boosts…**, —, Bring All to Front. Archive › View Archive… (no shortcut).
+- MainMenu.nib (`strings`): item "View Library", ids `openLibrary` / `viewLibrary`, SF Symbol `archivebox`, search
+  title "Library"; the downloads item `openDownloads` / `viewDownloads` with `arrow.down.circle`; the actions are
+  `toggleLibrary:`, `toggleDownloads:`, `viewArchive`, `viewEaselsAndNotes:`, `viewScreenshotsAndCaptures:`, `viewBoosts`.
+- In the browser window, not a window of its own: `Arc/WindowState+Library.swift` (arc-strings.txt ~61918); the main
+  window controller holds `homeViewComponent`, `homeWidth`, `$__lazy_storage_$_homeSidebarMenuController` next to
+  `sidebar`, `windowContentsContainer` and the paging controller (~149539–149560, ~150100–150113); window action
+  `preloadHome` (~176459). The Library has its own page list (`HomeButton._AnimatedPageSidebarItemView`,
+  `PageSidebarItem.swift`, ~82466) and an exit control ("Button; Exit the Library", "Menu item title to exit the
+  Library", ~62220, ~82547). Kite draws it over the window's sidebar and card, which fade out under it.
+- Pages (`HomePageID`, ~82334–82342): `EaselsAndNotesPage`, `DownloadsPage`, `ArchivePage`, `MediaPage`, `BoostsPage`,
+  `SpacesPage`; Lottie icons in ARC_HomeButton.bundle: easels, downloads, archive, screenshots, boosts, spaces
+  (128×128, 60 fps). No History page: Arc's history is ⌘Y, chrome://history in a tab. Kite lists Downloads, then
+  Archive, in that enum order; the on-screen order of Arc's list is inferred from the enum.
+- Remembered page: `lastSelectedHomePage` in StorableHome.json (`HomePreferencesClient`); Gabe's value is
+  `DownloadsPage`. Kite keeps `LibraryLastPage` in its defaults with Arc's raw values.
+- Downloads page copy: empty state subtitle "Come back after you've found some cool stuff to save." (title value not in
+  the strings), "Filter Downloads" with a profiles section (Kite has no profiles, so no filter).
+- Colours (ARC_HomeButton Assets.car): Foreground / 2 / 3 black or white at 1, 0.6, 0.45; Background / 2 / 3 at
+  0.07–0.20; `LibraryItemOutline` black 0.03 / white 0.08. Not applied yet: Kite's pages keep their own colours.
+- Inferred or unverified: the transition, all sizes, the exit control's look and label (Kite: "Exit Library" with an
+  arrow at the bottom of the list), page icons (Kite: SF Symbols), and whether Arc leaves the Library when a tab is
+  selected (Kite does). ⇧⌘J still opens Kite's downloads popover, though Arc's copy says it "Opens the Downloads
+  section of your Library": follow-up.
+
 ## Expand Current Split (Arc 1.171 menu bar; Arc 1.169 binary, decompiled; 1 Nov 2026)
 
 - View menu (AX via `menudump`, nothing pressed): Add Split View, Close this Split Pane, Separate Page from
@@ -846,6 +875,7 @@ circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
 - Not observed (no Arc mini player was on screen; Arc wasn't driven): its position in the sidebar (Kite puts it above
   the space bar), the card fill colour (Kite uses the address field's fill), the title font (a CTFont; Kite uses 12 pt
   medium), button hover fills, which controls drop at 160 / 126, and whether closing the player pauses (Kite pauses).
+
 
 ## Check for Updates (Arc 1.171 Info.plist, menu bar and strings, 1 Nov 2026)
 

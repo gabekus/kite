@@ -6,8 +6,8 @@ import SwiftUI
 /// under "Today", "Yesterday" and "Earlier This Week"; a search field; a "Filter Archived Tabs" menu with
 /// "Where was the tab?" (a space) and "How was the tab closed?" (Auto-Closed / Manually Closed), whose
 /// picks show as removable chips; Restore and Delete as hover buttons and in each row's context menu; and
-/// "Nothing here yet!" when empty. Arc shows it in its Library window; Kite shows it in a tab at
-/// kite://archive. It only needs a store, so a Library window can host it as is.
+/// "Nothing here yet!" when empty. Shown in the Library (`LibraryView`, as in Arc) and as a tab at
+/// kite://archive.
 struct ArchivePageView: View {
     let store: BrowserStore
     /// Opens an archived tab's page: in this tab, or (⌘-click) in a new background tab.
