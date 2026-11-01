@@ -40,6 +40,8 @@ struct SidebarActions {
     var newProfile: (UUID) -> Void = { _ in }
     /// False in incognito windows, which have no profiles.
     var showsProfiles = true
+    /// After a drag drops something in the sidebar: Arc's move toasts.
+    var didDrop: (SidebarDropOutcome) -> Void = { _ in }
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -65,6 +67,7 @@ struct SidebarView: View {
     var swipe = SpaceSwipeModel()
     /// The Mini Player's buttons; nil shows no Mini Player.
     var miniPlayer: MiniPlayerActions?
+    @State private var drag = SidebarDragModel()
 
     var body: some View {
         // The host's width, not the column's: the column must never be wider than the sidebar, or
@@ -121,16 +124,21 @@ struct SidebarView: View {
                 .padding(.top, M.urlFieldTopGap)
             }
 
-            if !state.favorites.isEmpty {
+            // Arc's tray shows while dragging even when there are no favorites (`AppTrayDisplayMode.onDrag`).
+            if !state.favorites.isEmpty || drag.isDragging || !UserDefaults.standard.bool(forKey: "favoritesEmptyStateDismissed") {
                 FavoritesGrid(
+                    store: store,
                     favorites: state.favorites,
                     selectedID: selectedID,
                     onSelect: { id in store.mutate { $0.select(tab: id) } },
                     onUnload: actions.closeTab,
                     onRemove: { id in store.mutate { $0.toggleFavorite(tab: id) } },
                     onEditPinnedURL: actions.editPinnedURL,
-                    onReplacePinnedURL: actions.replacePinnedURL
+                    onReplacePinnedURL: actions.replacePinnedURL,
+                    onDrop: actions.didDrop
                 )
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.favoritesArea = $0 }
+                .onDisappear { drag.favoritesArea = nil }
                 .padding(.top, M.favoritesTopGap)
                 .padding(.bottom, M.favoritesBottomGap)
             }
@@ -153,6 +161,10 @@ struct SidebarView: View {
         .padding(.horizontal, M.padding)
         .frame(width: width, alignment: .leading)
         .foregroundStyle(.primary)
+        .overlay { SidebarDragOverlay(drag: drag) }
+        .onAppear { drag.store = store }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.bounds = $0 }
+        .environment(\.sidebarDrag, drag)
     }
 
     /// One space's page: its header, pinned items, new tab and today's tabs.
@@ -172,19 +184,18 @@ struct SidebarView: View {
             Section {
                 // A row rather than a section header: a plain List paints headers with an opaque bar.
                 SpaceHeader(store: store, actions: actions, space: space)
+                    .modifier(dropOnly(.header, space: space.id))
+                    .background {
+                        if space.id == store.state.selectedSpaceID { SidebarScrollViewFinder(drag: drag) }
+                    }
                     .sidebarRow(pill: false)
                 // View → Collapse Pinned Tabs leaves only the selected pinned tab.
-                let collapsed = store.state.isPinnedSectionCollapsed(space.id)
                 let shownPinned = store.state.shownPinnedItems(in: space)
                 let pinnedGroups = SidebarGroup.group(shownPinned.map(\.id), splits: space.splits)
                 ForEach(pinnedGroups) { group in
-                    pinnedGroup(group, in: shownPinned, depth: 0, selectedID: space.selectedTabID)
+                    pinnedGroup(group, in: shownPinned, parent: nil, depth: 0, space: space, selectedID: space.selectedTabID)
                         .sidebarRow()
                 }
-                .onMove(perform: collapsed ? nil : { from, to in
-                    let (items, target) = SidebarGroup.itemMove(pinnedGroups, from: from, to: to, itemCount: space.pinnedItems.count)
-                    store.mutate { $0.moveTabs(inSpace: space.id, pinned: true, fromOffsets: items, toOffset: target) }
-                })
             }
             Section {
                 // Arc Max's Tidy button sits on this divider (UnpinnedSectionHeaderCellView).
@@ -195,18 +206,16 @@ struct SidebarView: View {
                         canTidy: canTidy,
                         isTidying: store.tidyingSpaceIDs.contains(space.id),
                         onTidy: { actions.tidyTabs(space.id) })
+                        .modifier(dropOnly(.divider, space: space.id))
                         .sidebarRow(pill: false)
                 }
                 NewTabRow { store.showCommandBar(.newTab) }
+                    .modifier(dropOnly(.newTab, space: space.id))
                     .sidebarRow()
                 let unpinnedGroups = SidebarGroup.group(space.tabs.map(\.id), splits: space.splits)
                 ForEach(unpinnedGroups) { group in
-                    unpinnedGroup(group, in: space.tabs, selectedID: space.selectedTabID)
+                    unpinnedGroup(group, in: space.tabs, space: space, selectedID: space.selectedTabID)
                         .sidebarRow()
-                }
-                .onMove { from, to in
-                    let (items, target) = SidebarGroup.itemMove(unpinnedGroups, from: from, to: to, itemCount: space.tabs.count)
-                    store.mutate { $0.moveTabs(inSpace: space.id, pinned: false, fromOffsets: items, toOffset: target) }
                 }
             }
         }
@@ -225,10 +234,10 @@ struct SidebarView: View {
     }
 
     /// Folders nest, so this recursion has to erase its type.
-    private func pinnedItem(_ item: PinnedItem, depth: Int, selectedID: UUID?) -> AnyView {
+    private func pinnedItem(_ item: PinnedItem, parent: UUID?, depth: Int, space: Space, selectedID: UUID?) -> AnyView {
         switch item {
         case .tab(let tab):
-            return AnyView(row(tab, pinned: true, selected: tab.id == selectedID, depth: depth))
+            return AnyView(row(tab, pinned: true, selected: tab.id == selectedID, depth: depth, space: space.id, parent: parent))
         case .folder(let folder):
             // Like Arc, a collapsed folder still shows its selected tab.
             let visible = folder.isExpanded
@@ -240,15 +249,20 @@ struct SidebarView: View {
                     onToggle: { store.mutate { $0.setFolderExpanded(folder.id, !folder.isExpanded) } },
                     onRename: { actions.renameFolder(folder.id) },
                     onDelete: { actions.deleteFolder(folder.id) })
-                ForEach(SidebarGroup.group(visible.map(\.id), splits: store.state.selectedSpace.splits)) { group in
-                    pinnedGroup(group, in: visible, depth: depth + 1, selectedID: selectedID)
+                    .modifier(SidebarDragSource(
+                        store: store,
+                        row: .init(id: folder.id, kind: .folder(expanded: folder.isExpanded), space: space.id, pinned: true,
+                                   folder: parent, depth: depth, frame: .zero),
+                        onDrop: actions.didDrop) { DragGhost(icon: .symbol("folder.fill"), title: folder.name, depth: depth) })
+                ForEach(SidebarGroup.group(visible.map(\.id), splits: space.splits)) { group in
+                    pinnedGroup(group, in: visible, parent: folder.id, depth: depth + 1, space: space, selectedID: selectedID)
                 }
             })
         }
     }
 
     @ViewBuilder
-    private func unpinnedGroup(_ group: SidebarGroup, in tabs: [BrowserTab], selectedID: UUID?) -> some View {
+    private func unpinnedGroup(_ group: SidebarGroup, in tabs: [BrowserTab], space: Space, selectedID: UUID?) -> some View {
         // Tidy Tabs' header rides on the first tab of its group, so drag offsets stay the tabs'.
         if let header = store.state.tabGroupHeader(above: tabs[group.indices[0]].id, inSpace: store.state.selectedSpace) {
             VStack(spacing: 0) {
@@ -256,35 +270,36 @@ struct SidebarView: View {
                     group: header,
                     onClose: { header.tabIDs.forEach(actions.closeTab) },
                     onRemoveHeader: { actions.removeTabGroupHeader(header.id) })
-                unpinnedTabs(group, in: tabs, selectedID: selectedID)
+                unpinnedTabs(group, in: tabs, space: space, selectedID: selectedID)
             }
         } else {
-            unpinnedTabs(group, in: tabs, selectedID: selectedID)
+            unpinnedTabs(group, in: tabs, space: space, selectedID: selectedID)
         }
     }
 
     @ViewBuilder
-    private func unpinnedTabs(_ group: SidebarGroup, in tabs: [BrowserTab], selectedID: UUID?) -> some View {
+    private func unpinnedTabs(_ group: SidebarGroup, in tabs: [BrowserTab], space: Space, selectedID: UUID?) -> some View {
         if let split = group.split {
-            splitRow(split, tabs: group.indices.map { tabs[$0] }, pinned: false, selectedID: selectedID)
+            splitRow(split, tabs: group.indices.map { tabs[$0] }, pinned: false, selectedID: selectedID, space: space.id, parent: nil)
         } else {
             let tab = tabs[group.indices[0]]
-            row(tab, pinned: false, selected: tab.id == selectedID)
+            row(tab, pinned: false, selected: tab.id == selectedID, space: space.id, parent: nil)
         }
     }
 
-    private func pinnedGroup(_ group: SidebarGroup, in items: [PinnedItem], depth: Int, selectedID: UUID?) -> AnyView {
+    private func pinnedGroup(_ group: SidebarGroup, in items: [PinnedItem], parent: UUID?, depth: Int, space: Space, selectedID: UUID?) -> AnyView {
         guard let split = group.split else {
-            return pinnedItem(items[group.indices[0]], depth: depth, selectedID: selectedID)
+            return pinnedItem(items[group.indices[0]], parent: parent, depth: depth, space: space, selectedID: selectedID)
         }
         let tabs = group.indices.compactMap { index -> BrowserTab? in
             if case .tab(let tab) = items[index] { return tab }
             return nil
         }
-        return AnyView(splitRow(split, tabs: tabs, pinned: true, selectedID: selectedID, depth: depth))
+        return AnyView(splitRow(split, tabs: tabs, pinned: true, selectedID: selectedID, depth: depth, space: space.id, parent: parent))
     }
 
-    private func splitRow(_ split: SplitView, tabs: [BrowserTab], pinned: Bool, selectedID: UUID?, depth: Int = 0) -> some View {
+    private func splitRow(_ split: SplitView, tabs: [BrowserTab], pinned: Bool, selectedID: UUID?, depth: Int = 0,
+                          space: UUID, parent: UUID?) -> some View {
         SplitRow(
             tabs: tabs,
             isPinned: pinned,
@@ -299,9 +314,28 @@ struct SidebarView: View {
             onSeparate: { id in store.mutate { $0.separateFromSplit(tab: id) } },
             onTogglePin: { store.mutate { $0.togglePin(tab: split.tabIDs[0]) } }
         )
+        .modifier(SidebarDragSource(
+            store: store,
+            row: .init(id: split.id, kind: .split, space: space, pinned: pinned, folder: parent, depth: depth, frame: .zero,
+                       members: split.tabIDs),
+            onDrop: actions.didDrop) { DragGhost(icon: .tabs(tabs), title: "", depth: depth) })
     }
 
-    private func row(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int = 0) -> some View {
+    /// The space's header, the Today divider and New Tab take drops but don't drag.
+    private func dropOnly(_ kind: SidebarDragModel.Row.Kind, space: UUID) -> SidebarDragSource<EmptyView> {
+        SidebarDragSource(store: store, row: .init(id: space, kind: kind, space: space, pinned: kind != .newTab, folder: nil, depth: 0, frame: .zero),
+                          draggable: false) { EmptyView() }
+    }
+
+    private func row(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int = 0, space: UUID, parent: UUID?) -> some View {
+        SplitDropPreview(side: drag.splitSide(for: tab.id)) { tabRow(tab, pinned: pinned, selected: selected, depth: depth) }
+        .modifier(SidebarDragSource(
+            store: store,
+            row: .init(id: tab.id, kind: .tab, space: space, pinned: pinned, folder: parent, depth: depth, frame: .zero),
+            onDrop: actions.didDrop) { DragGhost(icon: .tabs([tab]), title: tab.displayTitle, depth: depth) })
+    }
+
+    private func tabRow(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int) -> some View {
         TabRow(
             tab: tab,
             isPinned: pinned,
@@ -687,6 +721,7 @@ private struct DarkPageToggle: View {
 
 /// Arc's favorites: square tiles of favicons, shared by every space.
 private struct FavoritesGrid: View {
+    let store: BrowserStore
     let favorites: [BrowserTab]
     let selectedID: UUID?
     let onSelect: (UUID) -> Void
@@ -694,23 +729,204 @@ private struct FavoritesGrid: View {
     let onRemove: (UUID) -> Void
     let onEditPinnedURL: (UUID) -> Void
     let onReplacePinnedURL: (UUID) -> Void
+    let onDrop: (SidebarDropOutcome) -> Void
+    @Environment(\.sidebarDrag) private var drag
+    @AppStorage("favoritesEmptyStateDismissed") private var emptyStateDismissed = false
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: M.favoriteSpacing), count: M.favoriteColumns)
+    /// The tray's slots: each favorite, and the drop gap while a drag aims between them.
+    private enum Slot: Identifiable, Hashable {
+        case tile(BrowserTab)
+        case gap
 
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: M.favoriteSpacing) {
-            ForEach(favorites) { tab in
-                FavoriteTile(
-                    tab: tab,
-                    isSelected: tab.id == selectedID,
-                    onSelect: { onSelect(tab.id) },
-                    onUnload: { onUnload(tab.id) },
-                    onRemove: { onRemove(tab.id) },
-                    onEditPinnedURL: { onEditPinnedURL(tab.id) },
-                    onReplacePinnedURL: { onReplacePinnedURL(tab.id) }
-                )
+        var id: String {
+            switch self {
+            case .tile(let tab): tab.id.uuidString
+            case .gap: "gap"
             }
         }
+    }
+
+    private var slots: [Slot] {
+        var slots = favorites.map(Slot.tile)
+        // Arc's tray counts one more item while a drag aims at it and leaves `dropGapFrame` empty.
+        if !favorites.isEmpty, case .favorites(let before)? = drag?.session?.target {
+            let at = before.flatMap { id in favorites.firstIndex { $0.id == id } } ?? favorites.count
+            slots.insert(.gap, at: at)
+        }
+        return slots
+    }
+
+    var body: some View {
+        let slots = slots
+        if slots.isEmpty {
+            if !emptyStateDismissed || drag?.isDragging == true {
+                FavoritesEmptyState(onDismiss: drag?.isDragging == true ? nil : { emptyStateDismissed = true })
+            }
+        } else {
+            FavoritesTrayLayout {
+                ForEach(slots) { slot in
+                    switch slot {
+                    case .gap:
+                        Color.clear
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag?.dropGap = $0 }
+                            .onDisappear { drag?.dropGap = nil }
+                    case .tile(let tab):
+                        tile(tab)
+                    }
+                }
+            }
+            .animation(.easeInOut(duration: 0.12), value: slots)
+        }
+    }
+
+    private func tile(_ tab: BrowserTab) -> some View {
+        FavoriteTile(
+            tab: tab,
+            isSelected: tab.id == selectedID,
+            onSelect: { onSelect(tab.id) },
+            onUnload: { onUnload(tab.id) },
+            onRemove: { onRemove(tab.id) },
+            onEditPinnedURL: { onEditPinnedURL(tab.id) },
+            onReplacePinnedURL: { onReplacePinnedURL(tab.id) }
+        )
+        // Tiles being dragged out of the tray keep their place, invisible (Arc: alpha 0).
+        .opacity(drag?.session?.ids.contains(tab.id) == true ? 0 : 1)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag?.reportTile(tab.id, frame: $0) }
+        .onDisappear { drag?.reportTile(tab.id, frame: nil) }
+        .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
+            .onChanged { value in
+                guard let drag else { return }
+                if !drag.isDragging {
+                    let frame = drag.tileFrame(tab.id) ?? .zero
+                    let row = SidebarDragModel.Row(id: tab.id, kind: .tab, space: store.state.selectedSpaceID, pinned: false,
+                                                   folder: nil, depth: 0, frame: frame)
+                    drag.begin([tab.id], row: row, at: value.startLocation, ghost: AnyView(FavoriteGhost(tab: tab)))
+                }
+                drag.move(to: value.location, in: store.state)
+            }
+            .onEnded { value in
+                guard let drag, let drop = drag.end(at: value.location, in: store.state) else { return }
+                var outcome: SidebarDropOutcome?
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    store.mutate { outcome = $0.dropSidebarItems(drop.ids, on: drop.target) }
+                }
+                if let outcome { onDrop(outcome) }
+            })
+    }
+}
+
+/// Arc's `AppTrayCollectionViewLayout` for favorites (Arc 1.169's binary): tiles 47pt high, 8pt
+/// apart, at most 4 a row. It fits as many columns as square tiles would allow, then balances
+/// the rows: 5 favorites are 3 + 2, 7 are 4 + 3, 9 are 3 × 3.
+struct FavoritesTrayLayout: Layout {
+    static func columns(count n: Int, width: CGFloat) -> Int {
+        guard n > 0 else { return 1 }
+        let h = M.favoriteHeight, gap = M.favoriteSpacing
+        let fit = max(Int(((width + gap) / (h + gap)).rounded(.down)), 1)
+        let c = min(n, M.favoriteColumns, fit)
+        let rows = (n + c - 1) / c
+        return (n + rows - 1) / rows
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? CGFloat(M.favoriteColumns) * (M.favoriteHeight + M.favoriteSpacing)
+        let cols = Self.columns(count: subviews.count, width: width)
+        let rows = (subviews.count + cols - 1) / cols
+        return CGSize(width: width, height: CGFloat(rows) * M.favoriteHeight + CGFloat(max(rows - 1, 0)) * M.favoriteSpacing)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let cols = Self.columns(count: subviews.count, width: bounds.width)
+        let width = (bounds.width - M.favoriteSpacing * CGFloat(cols - 1)) / CGFloat(cols)
+        for (i, view) in subviews.enumerated() {
+            let x = bounds.minX + CGFloat(i % cols) * (width + M.favoriteSpacing)
+            let y = bounds.minY + CGFloat(i / cols) * (M.favoriteHeight + M.favoriteSpacing)
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: width, height: M.favoriteHeight))
+        }
+    }
+}
+
+/// Arc's empty favorites tray (`AppTrayEmptyStateView`): its title and subtitle from Arc's strings,
+/// with a close button that hides it until a drag needs somewhere to drop. Its size and look are
+/// unmeasured.
+private struct FavoritesEmptyState: View {
+    var onDismiss: (() -> Void)?
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text("Drag to add Favorites")
+                .font(.system(size: 12, weight: .semibold))
+                .opacity(0.7)
+            Text("Favorites keep your most used sites and apps close")
+                .font(.system(size: 11))
+                .opacity(0.45)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, minHeight: M.favoriteHeight)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: M.cornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.2), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+        )
+        .overlay(alignment: .topTrailing) {
+            if let onDismiss, hovering {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).frame(width: 18, height: 18).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(0.5)
+                .padding(4)
+                .help("Dismiss")
+            }
+        }
+        .onHover { hovering = $0 }
+    }
+}
+
+/// A favorite's tile as it follows the pointer.
+private struct FavoriteGhost: View {
+    let tab: BrowserTab
+
+    var body: some View {
+        FaviconView(tab: tab, size: M.favoriteIconSize)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .modifier(ChromeFill(strength: M.fieldFill + M.selectedFill))
+    }
+}
+
+/// A sidebar row as it follows the pointer: the pill with its icon and title.
+struct DragGhost: View {
+    enum Icon {
+        case tabs([BrowserTab])
+        case symbol(String)
+    }
+
+    let icon: Icon
+    let title: String
+    var depth = 0
+
+    var body: some View {
+        HStack(spacing: M.iconTextGap) {
+            switch icon {
+            case .tabs(let tabs):
+                ForEach(tabs) { FaviconView(tab: $0, size: M.iconSize) }
+            case .symbol(let name):
+                Image(systemName: name).font(.system(size: 14)).frame(width: M.iconSize, height: M.iconSize)
+            }
+            if !title.isEmpty {
+                Text(title)
+                    .font(.system(size: M.tabFontSize))
+                    .opacity(M.tabTextOpacity)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, M.iconInset + indent(depth))
+        .padding(.trailing, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .modifier(TabPillFill(isSelected: true, isHovered: false))
     }
 }
 
@@ -1163,6 +1379,7 @@ private struct SplitRow: View {
 }
 
 private struct SpaceBar: View {
+    @Environment(\.sidebarDrag) private var drag
     let store: BrowserStore
     let actions: SidebarActions
     let claude: ClaudeButtonModel
@@ -1216,6 +1433,8 @@ private struct SpaceBar: View {
                 .buttonStyle(.plain)
                 .help(space.name)
                 .contextMenu { SpaceContextMenu(store: store, actions: actions, space: space) }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag?.reportSpaceIcon(space.id, frame: $0) }
+                .onDisappear { drag?.reportSpaceIcon(space.id, frame: nil) }
             }
         }
     }
