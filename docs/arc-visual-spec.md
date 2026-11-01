@@ -951,6 +951,28 @@ Arc was not opened or driven, so no geometry was measured.
   ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
   deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
 
+## Tidy Tab Titles → `TidyTabTitles` (KiteCore), `TidyTabTitlesController` (Arc 1.171 strings and defaults, 1 Nov 2026)
+
+- What and when: Max pane copy (`~/rea-arc/arc-strings.txt` 80509) says tabs are "automatically renamed with tidier,
+  shorter titles when you Pin them". Settings key `renamePinnedTabsEnabled` (64166; toggle
+  `onToggleRenamePinnedTabsEnabled` 69092), feature flag `rename-pinned-tabs-using-ai` (73906), analytics
+  `auto_renamed_pinned_tab` (70870). Gabe's Arc: `renamePinnedTabsEnabled = 1`, `arcMaxAutoOptInEnabled = 1`, so
+  Kite's `tidyTabTitlesEnabled` defaults on; Kite menu › Tidy Tab Titles turns it off (until a Settings window).
+  The search keyword for the setting is "tidy tab titles" (200328).
+- Mechanism: `WindowState+AIRenameTabs.swift`, `AIRenameTabsFeatureState`, `AIRenameTabsAction`, `TabRenameAIError`
+  (44027, 61275). The model is told it is bookmarking a tab and gets the title; rules (61279–61292): drop the site's
+  name unless it's all there is, drop SEO cruft, stay specific, keep proper nouns with context, drop words naming the
+  kind of page, keep subject/verb/object; reply JSON `filtered` (no limit) and `rewritten` (1–3 words), in the user's
+  language. Kite words its own prompt with the same rules and uses `rewritten` (inferred: which field Arc shows was
+  not traced in the disassembly; the 1–3 word one matches "shorter titles").
+- The result is the tab's custom title: Arc's rename path is `updateCustomTitle(for:title:options:)` (82917ff), and
+  "User renamed the tab before the automatic tab name could be generated." (82736) means a manual rename wins.
+  Undoing it is the ordinary Rename (an empty name shows the page's title again). Kite also drops the name if the tab
+  was unpinned before the reply.
+- Not copied: `isAnimatingAiRename` (an animation on the title; not measured), `TidyTitleConfiguration` /
+  `BundledTidyTitles` (per-site title rules from content.arc.net; data not inspected), the feedback report
+  (`submitTidyTabTitleFeedback`, 82961). Model: Arc's provider isn't known; Kite uses Claude haiku, no tools.
+
 ## Instant Links → `InstantLinks` (KiteCore), `InstantLinksController` (Arc 1.171 strings and disassembly, 1 Nov 2026)
 
 - **Key: ⇧⏎.** Arc's Max preferences description is stored XOR-obfuscated with the key "ObfuscatorString"
