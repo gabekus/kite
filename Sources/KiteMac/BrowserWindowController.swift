@@ -54,6 +54,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var peekTimer: DispatchWorkItem?
     private var sidebarWidth: CGFloat
     private var appearanceObservation: NSKeyValueObservation?
+    private var firstResponderObservation: NSKeyValueObservation?
+    /// Keys typed while the command bar's field doesn't exist yet, and the monitor holding them.
+    private var heldKeys: [NSEvent] = []
+    private var heldKeyMonitor: Any?
 
     /// The focused tab: the selected one, or the focused pane of its split.
     private var shownTabID: UUID?
@@ -112,6 +116,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.initial, .new]) { [weak self] app, _ in
             MainActor.assumeIsolated {
                 self?.store.setSystemIsDark(app.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+            }
+        }
+        // A page that navigates while the command bar is open takes the keyboard (Chromium
+        // focuses the new page); the bar takes it back so typing and Esc keep working.
+        firstResponderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.keepCommandBarFocused() }
             }
         }
         sync()
@@ -521,12 +532,76 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     private func updateCommandBar() {
         let visible = store.commandBar != nil
-        guard visible != commandBarVisible else { return }
-        commandBarVisible = visible
-        commandBarHost.isHidden = !visible
-        if !visible {
-            shownPage?.focus()
+        if visible != commandBarVisible {
+            commandBarVisible = visible
+            commandBarHost.isHidden = !visible
+            if !visible {
+                releaseHeldKeys(replay: false)
+                for page in shownPages.values { page.allowFocus() }
+                shownPage?.focus()
+            }
         }
+        // Also when ⌘T or ⌘L comes while the bar is already open.
+        keepCommandBarFocused()
+    }
+
+    private var commandBarHasFocus: Bool {
+        (window?.firstResponder as? NSView)?.isDescendant(of: commandBarHost) == true
+    }
+
+    private func keepCommandBarFocused(attempt: Int = 0) {
+        guard commandBarVisible else { return }
+        if !commandBarHasFocus { focusCommandBar(attempt: attempt) }
+        if commandBarHasFocus { releaseHeldKeys(replay: true) }
+    }
+
+    /// Hands the bar's field the keyboard before the next key event is handled, so typing
+    /// straight after ⌘T or ⌘L lands in the bar rather than the page. SwiftUI's own focus
+    /// request (onAppear) comes a run loop later, after those keys are gone.
+    private func focusCommandBar(attempt: Int = 0) {
+        // Builds the bar's views now instead of on the next display pass.
+        commandBarHost.layoutSubtreeIfNeeded()
+        func field(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField, field.isEditable { return field }
+            return view.subviews.lazy.compactMap(field(in:)).first
+        }
+        guard let field = field(in: commandBarHost) else {
+            // The bar's first open in a session: SwiftUI makes the field on a later pass.
+            // Hold what's typed meanwhile so it lands in the bar, not the page.
+            holdKeys()
+            guard attempt < 50 else { return releaseHeldKeys(replay: true) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
+                self?.keepCommandBarFocused(attempt: attempt + 1)
+            }
+            return
+        }
+        // Otherwise Chromium still thinks its page has the keyboard and takes it back on the
+        // next navigation, or when a new page (a split pane, a tab at launch) starts up.
+        for page in shownPages.values { page.blur() }
+        window?.makeFirstResponder(field)
+    }
+
+    private func holdKeys() {
+        guard heldKeyMonitor == nil else { return }
+        heldKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.hold(event) == true ? nil : event
+        }
+    }
+
+    private func hold(_ event: NSEvent) -> Bool {
+        // Shortcuts still go to the menu.
+        guard event.window === window, !event.modifierFlags.contains(.command) else { return false }
+        heldKeys.append(event)
+        return true
+    }
+
+    private func releaseHeldKeys(replay: Bool) {
+        guard let monitor = heldKeyMonitor else { return }
+        NSEvent.removeMonitor(monitor)
+        heldKeyMonitor = nil
+        let keys = heldKeys
+        heldKeys = []
+        if replay { keys.forEach { window?.sendEvent($0) } }
     }
 
     private func updateSidebar() {

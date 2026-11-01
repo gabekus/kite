@@ -120,6 +120,8 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func reloadIgnoringCache() { browser.reloadIgnoringCache() }
     func stopLoading() { browser.stopLoading() }
     func focus() { browser.focus() }
+    func blur() { browser.blur() }
+    func allowFocus() { browser.allowFocus() }
     func setVisible(_ visible: Bool) { browser.setHidden(!visible) }
     func showDevTools() { browser.showDevTools() }
 

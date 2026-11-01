@@ -156,7 +156,8 @@ extension BrowserState {
     /// Esc on a new pane's command bar: the still-empty pane goes away without being archived,
     /// and the pane before it gets focus back. A pane that has loaded something stays.
     public mutating func cancelSplitPane(_ id: UUID) {
-        guard let s = split(containing: id)?.space, tab(id)?.url == nil,
+        // Chromium reports about:blank for the empty pane's page, so that counts as empty too.
+        guard let s = split(containing: id)?.space, tab(id)?.url.map({ $0.absoluteString == "about:blank" }) ?? true,
               let split = spaces[s].splits.first(where: { $0.tabIDs.contains(id) }),
               let index = split.tabIDs.firstIndex(of: id) else { return }
         let rest = split.tabIDs.filter { $0 != id }
