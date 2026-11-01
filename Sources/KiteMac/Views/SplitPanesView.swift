@@ -11,6 +11,8 @@ final class SplitPanesView: NSView {
         let id: UUID
         let card: ShadowView
         let clip: ContentClipView
+        /// Arc's split button ("Split View Menu"), shown while the pointer is in the pane's top band.
+        let menuButton: SplitPaneMenuButton
     }
 
     private var panes: [Pane] = []
@@ -20,6 +22,9 @@ final class SplitPanesView: NSView {
 
     /// Divider `index` moved: the leading pane's share of the pair, and the smallest share either may have.
     var onDividerDrag: ((_ index: Int, _ fraction: Double, _ minimumShare: Double) -> Void)?
+    /// A pane's split button was clicked: the pane's tab and the button.
+    var onPaneMenu: ((_ id: UUID, _ button: NSView) -> Void)?
+    private var hoverAreas: [NSTrackingArea] = []
     /// The next layout change animates (Arc animates only a double-clicked divider evening out its panes).
     private var animatesNextLayout = false
     /// Whether the divider being dragged sits snapped to the middle of its panes.
@@ -29,7 +34,10 @@ final class SplitPanesView: NSView {
 
     /// Replaces the panes. `pages` are in pane order.
     func setPanes(_ pages: [(id: UUID, view: NSView)]) {
-        for pane in panes { pane.card.removeFromSuperview() }
+        for pane in panes {
+            pane.card.removeFromSuperview()
+            pane.menuButton.removeFromSuperview()
+        }
         for divider in dividers { divider.removeFromSuperview() }
         panes = pages.map { id, view in
             let card = ShadowView(cornerRadius: ArcMetrics.Content.cornerRadius)
@@ -45,8 +53,15 @@ final class SplitPanesView: NSView {
             clip.addSubview(view)
             clip.page = view
             addSubview(card)
-            return Pane(id: id, card: card, clip: clip)
+            let button = SplitPaneMenuButton()
+            button.onClick = { [weak self, weak button] in
+                guard let self, let button else { return }
+                self.onPaneMenu?(id, button)
+            }
+            return Pane(id: id, card: card, clip: clip, menuButton: button)
         }
+        // Over the cards (and the pages in them).
+        for pane in panes { addSubview(pane.menuButton) }
         dividers = (0..<max(pages.count - 1, 0)).map { index in
             let divider = SplitDividerView()
             divider.onDrag = { [weak self] point in self?.dragDivider(index, to: point) }
@@ -112,6 +127,7 @@ final class SplitPanesView: NSView {
                 }
             }
             for divider in dividers { divider.isHidden = true }
+            placeMenuButtons(animated: false)
             return
         }
         for pane in panes { pane.card.isHidden = false }
@@ -134,6 +150,49 @@ final class SplitPanesView: NSView {
                 offset += M.gap
             }
         }
+        placeMenuButtons(animated: animated)
+    }
+
+    // MARK: Split button
+
+    /// Each pane's split button sits in its top-right corner, where Arc's top bar has it, and the pane's top band
+    /// (the bar's height) reveals it.
+    private func placeMenuButtons(animated: Bool) {
+        for pane in panes {
+            let card = pane.card.frame
+            let size = M.menuButtonSize
+            let frame = CGRect(x: card.maxX - M.menuButtonTrailing - size, y: card.minY + M.menuButtonTop, width: size, height: size)
+            if animated { pane.menuButton.animator().frame = frame } else { pane.menuButton.frame = frame }
+            pane.menuButton.isHidden = pane.card.isHidden
+        }
+        updateTrackingAreas()
+    }
+
+    private func topBand(of card: CGRect) -> CGRect {
+        CGRect(x: card.minX, y: card.minY, width: card.width, height: min(M.menuRevealHeight, card.height))
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in hoverAreas { removeTrackingArea(area) }
+        // Always active: Arc's top bar reveals over a background window too (inferred; not checked in Arc).
+        hoverAreas = panes.enumerated().compactMap { i, pane in
+            guard !pane.card.isHidden else { return nil }
+            let area = NSTrackingArea(rect: topBand(of: pane.card.frame), options: [.mouseEnteredAndExited, .activeAlways],
+                                      owner: self, userInfo: ["pane": i])
+            addTrackingArea(area)
+            return area
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard let i = event.trackingArea?.userInfo?["pane"] as? Int, panes.indices.contains(i) else { return }
+        panes[i].menuButton.setRevealed(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard let i = event.trackingArea?.userInfo?["pane"] as? Int, panes.indices.contains(i) else { return }
+        panes[i].menuButton.setRevealed(false)
     }
 
     private func dragDivider(_ index: Int, to point: NSPoint) {
@@ -160,6 +219,105 @@ final class SplitPanesView: NSView {
         onDividerDrag?(index, 0.5, Double(M.minimumPaneWidth / available))
         // Nothing changed (already even): don't animate some later layout.
         animatesNextLayout = false
+    }
+}
+
+/// Arc's split button in a pane's top bar: "Split View Menu", 28×28 with `square.split.2x1`. Hidden until the
+/// pointer is in the pane's top band; it stays up while its menu is open.
+@MainActor
+final class SplitPaneMenuButton: NSView {
+    private typealias M = ArcMetrics.Split
+
+    var onClick: (() -> Void)?
+    private let icon = NSImageView()
+    private var hovering = false
+    private(set) var revealed = false
+    /// Held up while the menu is open, so it doesn't vanish under the menu.
+    var isMenuOpen = false {
+        didSet { if !isMenuOpen { setRevealed(revealed) } }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = M.menuButtonCornerRadius
+        layer?.cornerCurve = .continuous
+        icon.image = NSImage(systemSymbolName: "square.split.2x1", accessibilityDescription: nil)
+        icon.symbolConfiguration = .init(pointSize: M.menuButtonSymbolSize, weight: .medium)
+        icon.contentTintColor = .secondaryLabelColor
+        icon.autoresizingMask = [.width, .height]
+        addSubview(icon)
+        alphaValue = 0
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("Split View Menu")
+        updateFill()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    // A test build takes synthetic clicks while in the background (`kite ui input`).
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        UIDiagnostics.enabledByEnvironment || super.acceptsFirstMouse(for: event)
+    }
+
+    override func layout() {
+        super.layout()
+        icon.frame = bounds
+    }
+
+    func setRevealed(_ revealed: Bool) {
+        self.revealed = revealed
+        let alpha: CGFloat = revealed || isMenuOpen ? 1 : 0
+        guard alphaValue != alpha else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = M.menuButtonFadeDuration
+            animator().alphaValue = alpha
+        }
+    }
+
+    // A hidden button takes no clicks: they go to the page under it.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // The whole button takes the click, not the icon inside it.
+        alphaValue > 0 && frame.contains(point) ? self : nil
+    }
+
+    override func mouseDown(with event: NSEvent) { onClick?() }
+
+    override func accessibilityPerformPress() -> Bool {
+        onClick?()
+        return true
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        updateFill()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        updateFill()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateFill()
+    }
+
+    private func updateFill() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            let base = NSColor.windowBackgroundColor.withAlphaComponent(M.menuButtonFillOpacity)
+            layer?.backgroundColor = (hovering ? base.blended(withFraction: 0.08, of: .labelColor) ?? base : base).cgColor
+        }
     }
 }
 
