@@ -103,6 +103,9 @@ NS_SWIFT_UI_ACTOR
 /// The page called window.close().
 - (void)browserDidRequestClose:(KCBrowser *)browser;
 @optional
+/// A link the user clicked to `url` (in the page, target=_blank, or ⇧-click when `shift`): YES means the
+/// delegate opens it in Arc's Peek card, and the click goes no further.
+- (BOOL)browser:(KCBrowser *)browser opensLinkInPeek:(NSURL *)url shift:(BOOL)shift;
 /// Requests blocked since the page started loading.
 - (void)browser:(KCBrowser *)browser blockedCountDidChange:(NSInteger)count;
 /// Asked before each main-frame navigation; the script runs at document start
@@ -139,6 +142,8 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) BOOL canGoForward;
 /// 1.0 = 100%.
 @property (nonatomic) double zoomFactor;
+/// Mutes the tab's audio in the browser (Chromium's tab mute); the page isn't told.
+@property (nonatomic) BOOL audioMuted;
 /// Requests the ad blocker stopped since the page started loading.
 @property (nonatomic, readonly) NSInteger blockedCount;
 

@@ -1,4 +1,5 @@
 import AppKit
+import KiteCore
 
 /// What a page reports back to the browser.
 enum PageEvent {
@@ -10,6 +11,9 @@ enum PageEvent {
     case openInNewTab(URL, foreground: Bool)
     /// A popup the page opened (window.open, target=_blank). It becomes a new tab.
     case popup(WebPage)
+    /// A link the user clicked opens in Arc's Peek card instead (`WebPage.linkPeekPolicy` said so); the
+    /// page didn't navigate.
+    case openInLinkPeek(URL)
     case closeRequested
     /// Requests the ad blocker stopped since the page started loading.
     case blockedCount(Int)
@@ -18,6 +22,8 @@ enum PageEvent {
     /// Kite's own "Add to Kite" button on a Google result was clicked (checked by the
     /// engine): install that Chrome Web Store extension without leaving the page.
     case addExtension(id: String)
+    /// What the page is playing changed (MediaStateScript); nil when it has no media.
+    case media(MediaState?)
     /// The pointer moved onto a link (nil: off it). Drives ⇧-hover link previews.
     case linkHover(LinkHover?)
 }
@@ -48,6 +54,9 @@ enum SiteDataKind {
 protocol WebPage: AnyObject {
     var view: NSView { get }
     var onEvent: ((PageEvent) -> Void)? { get set }
+    /// Asked when the user clicks a link to `url` (in this page or a new one, `shift` held or not): true
+    /// cancels it and reports `.openInLinkPeek`. Nil (the default) never peeks.
+    var linkPeekPolicy: ((_ url: URL, _ shift: Bool) -> Bool)? { get set }
     var isLoading: Bool { get }
     /// 1.0 = 100%.
     var zoomFactor: Double { get set }
@@ -81,6 +90,11 @@ protocol WebPage: AnyObject {
     func hibernationState() -> Any?
     /// Whether the page is playing media or using the camera or mic (don't hibernate it).
     func checkBusy(_ completion: @escaping (Bool) -> Void)
+    /// Asks the page's media (the element that played last) to play, pause, change track or
+    /// enter picture in picture, as if you'd clicked.
+    func runMediaCommand(_ command: MediaCommand)
+    /// The browser's tab mute: the page keeps playing, silently, and isn't told.
+    var isAudioMuted: Bool { get set }
     func close()
 }
 

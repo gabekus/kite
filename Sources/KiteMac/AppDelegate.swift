@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// New and blank windows (⌘N, ⌃⌘N), restored on relaunch.
     private var windows: BrowserWindows!
     private var littleControllers: [LittleKiteWindowController] = []
+    private lazy var airTraffic = AirTrafficControlStore(fileURL: Self.supportDirectory.appendingPathComponent("LinkRouting.json"))
     /// Routes menu commands to whichever browser window is in front.
     private var menuRouter: MenuRouter!
     private var archiveTimer: Timer?
@@ -167,21 +168,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Web links open in Little Kite while Kite menu → Open Links from Other Apps in Little Kite
-    /// is on (Arc's default); files and everything else open as tabs in the main window.
+    /// Air Traffic Control routes each web link: the first route that matches sends it to a
+    /// space or Little Kite, else the default route (Little Kite while Kite menu → Open Links from
+    /// Other Apps in Little Kite is on, Arc's default). Files and everything else open as tabs
+    /// in the main window.
     private func open(_ urls: [URL]) {
         let little = LittleKite.opensExternalLinks(in: .standard)
+        let spaceIDs = Set(store.state.spaces.map(\.id))
         var openedTab = false
         for url in urls {
-            switch LittleKite.destination(for: url, opensExternalLinks: little) {
+            switch airTraffic.state.destination(for: url, spaceIDs: spaceIDs, opensExternalLinksInLittleKite: little) {
             case .littleKite:
                 openLittleKiteWindow(url: url)
-            case .tab:
+            case .mostRecentSpace:
                 store.mutate { _ = $0.openTab(url: url) }
+                openedTab = true
+            case .space(let id):
+                store.mutate { _ = $0.openTab(url: url, in: id) }
                 openedTab = true
             }
         }
         if openedTab { windowController.window?.makeKeyAndOrderFront(nil) }
+    }
+
+    /// Kite menu → Air Traffic Control… (Arc: Preferences → Links → Air Traffic Control…).
+    @objc func showAirTrafficControl(_ sender: Any?) {
+        let store = self.store!
+        AirTrafficControlWindow.show(store: airTraffic) {
+            store.state.spaces.map { .init(id: $0.id, name: $0.name, icon: $0.icon) }
+        }
     }
 
     /// File → New Little Kite Window (⌥⌘N) with no URL, or a link from another app.
@@ -230,6 +245,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openURLFromExtensionsMenu(_ sender: Any?) {
         guard let url = sender as? URL else { return }
         store.mutate { _ = $0.openTab(url: url) }
+    }
+
+    /// Kite › Check for Updates…: asks GitHub releases; a release opens in a new tab.
+    @objc func checkForUpdates(_ sender: Any?) {
+        UpdaterWindow.shared.openURL = { [weak self] url in self?.store.mutate { _ = $0.openTab(url: url) } }
+        UpdaterWindow.shared.checkForUpdates()
     }
 
     /// ⌘N: another window on the shared sidebar.

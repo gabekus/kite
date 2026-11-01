@@ -507,6 +507,42 @@ windows ("Archive Little Arcs after:"); no global hotkey.
   the command bar (`showCommandBar` is among `initialAppearanceActions`), the blank window's look, and what
   Arc does when two windows select the same tab (`ContentPlaceholderSourceData` hints at a placeholder).
 
+## Peek → `LinkPeek` (KiteCore), `LinkPeekView`, `BrowserWindowController+LinkPeek` (Arc 1.171 binary, 1 Nov 2026)
+
+Arc's Peek is `ModalContent.ModalV2HostView` in its `popover` layout mode (the cases are `popover`, `fullbleed`;
+arc-strings.txt ~166470). Decompiled in `~/rea-arc/decomp/out2/objc-setShadowRadius.txt` (FUN_101717e60),
+`objc-setCornerRadius.txt` (FUN_101716678), `objc-setShadowOpacity.txt` (FUN_101713230) and
+`out5/peek1-3.txt` (FUN_101715a98, FUN_101716134, FUN_101717608, FUN_1017156ac, FUN_100a05154, `mouseDown:`).
+Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sidebar's hover reveal.
+
+- Routing (strings ~80486): "Open a Peek window when clicking on links to other sites", "Note: This only affects
+  Favorites and Pinned tabs", "Open a Peek window when clicking on links with Shift held". The shift setting is
+  `disableShiftClickToOpenLinksInModal` (absent from Gabe's defaults, so shift-click peeks). How Arc defines
+  "other site" isn't in the strings; Kite compares registrable domains (`SignInHandoff.site`). **[inferred]**
+- Card (FUN_101715a98): 80% of the host's width, centred, 12pt from its top and bottom (height − 24). Kite's
+  host is the content card's area. Whether Arc's host is the content card or the whole window: **unverified**.
+- Corner radius 8 (popover; 10 fullbleed) (FUN_101717608, FUN_101716678).
+- Shadow (FUN_101717e60): black, opacity 0.3, radius 4, offset (0, 1) in the flipped host (fullbleed: 0.475, 22, (0, 14)).
+- Border view behind the card: frame outset 0.5pt, white fill, 2pt border, black at 0.25 alpha (faded by the
+  swipe-to-dismiss tug: (1 − tug/44) × 0.25) (FUN_101717730). Kite draws a 0.5pt black@25% hairline.
+- Buttons (`onClose`, `onExpand`, `onAddToSplit`; FUN_101716134): a column 120pt wide, 13pt right of the card,
+  top-aligned with it, 90pt tall with two buttons and 135pt with three (so 45pt a row). The split button shows
+  only when the parent can take another pane (`numberOfPanels < maximumNumberOfPanels`), titled "Create Split
+  View" or "Add to Split View" with `square.split.1x2` (strings ~75323). Hidden, the column sits under the
+  card's right edge (x = card.maxX − 120) and slides out. The buttons' size, fill and the close/expand symbols
+  and titles are **not measured**: Kite uses 30pt circles, `xmark`, `arrow.up.left.and.arrow.down.right`,
+  "Close", "Open as Tab".
+- Dismiss (`DismissMechanism`, ~166430): escapeKeyPressed, clickedCloseButton, clickedBackground (host
+  `mouseDown:` outside the card in popover mode), pressedCloseTabHotkey (⌘W), swipedRightToDismiss, redoClose.
+  Help text: "Exit the current context. Such as closing a Peek window or exiting fullscreen."
+- Motion (FUN_101713230 + FUN_100a05154, a `CASpringAnimation` built from a damping ratio and response:
+  stiffness (2π/response)², damping 4π·ratio/response): popover open 0.865 / 0.245s, close 0.895 / 0.225s
+  (fullbleed 0.885 / 0.18, 0.9 / 0.18). The transform tweens from the source (`tweenFromSource`:
+  `sourceRectInWindow`, `sourceCornerRadius`, `sourceSnapshot`), scale = source width / card width
+  (FUN_1017156ac). Kite has no link frame, so it grows from 20% at the pointer and fades in over 0.1s **[differs]**.
+- Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
+  swipe right to dismiss (`minimumDismissTranslation`, `tugRubberbanding`), undo "re-opening a closed Peek",
+  the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`), any scrim behind the card.
 ## Pinned URL reset and Reveal Tab (Arc 1.171 menu bar and binary, 1 Nov 2026)
 
 - Tabs menu (AX, read-only, `menudump`): … Next Tab ⌥⌘↓, Previous Tab ⌥⌘↑, Reveal Tab in Sidebar (no key), —,
@@ -642,6 +678,92 @@ Arc wasn't driven; nothing here is from a recording.
 - **Unverified / guessed:** the strip width (Arc's drop regions weren't traced), the placeholder colour (Kite uses the accent colour,
   12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
   top/bottom one on a top/bottom drop (Kite refuses it).
+
+## Mini Player and auto picture in picture → `MiniPlayerView`, `MediaStateScript` (Arc 1.171 strings, assets, disassembly, 1 Nov 2026)
+
+- Modules (arc-strings.txt 82066-82130): `MediaControlsFeature` (`MiniPlayerFeature.swift`, `MiniPlayerView.swift`,
+  `MediaControlsView.swift`, `MiniPlayerState+Observations.swift`) and `PictureInPicture` (`PIPWindowController`,
+  `DocumentPiPWindowController`). Mini player media types `AudioVideo` and `Recording` (43012). Actions
+  `toggleMuteStatusRequested`, `backToTabRequested`, `backToPIPRequested`; state `activeMediaControls`,
+  `maxActiveMediaControls`, `miniPlayerMarqueeTitleEnabled` (174040-174130).
+- Strings in `MiniPlayerView.swift`: "Close Mini Player", "Open Picture in Picture", "Back to Tab", "Adjust Tab Volume",
+  "Toggle Microphone", "Toggle Camera", "Previous Track", "Next Track", "Play"/"Pause" (tooltips).
+- Disassembly (`~/rea-arc/decomp/arc.s` 9577000-9600000, the MiniPlayerView/MediaControlsView bodies; constants read off
+  `fmov`/`mov` before each SwiftUI call):
+  - card: `RoundedRectangle(cornerRadius: 8, style: .continuous)`, stroke 0.5 pt, `Color.white.opacity(0.1)` in dark,
+    clear in light; rows `frame(height: 33)` with `padding(.horizontal, 10)` (title row) and `8` (controls row);
+    `GeometryProxy` width compared with 160 and 126 (controls dropped when narrow).
+  - title row: artwork/favicon 16×16 clipped to radius 4 in a 24×24 frame; title Text; `pip` symbol at 12 pt and `xmark`
+    at 14 pt, whose opacity/width switch 0↔1 / 0↔24 (shown on hover).
+  - controls: 24×24 buttons, 16×16 symbol frames, `Font.system(size: 14, weight: .medium)`; symbols `backward.end.fill`,
+    `play.fill`/`pause.fill`, `forward.end.fill`, `speaker.slash.fill`/`speaker.wave.1/2/3.fill` (+ Slider for volume),
+    `mic.fill`/`mic.slash.fill`, `video.fill`/`video.slash.fill`.
+  - `MediaControlsView`: height 33, `Animation.spring(response: 0.25, dampingFraction: 0.9)`.
+  - `PlaybackControlForeground` (ARC_MediaControlsFeature.bundle Assets.car): light black 50%, dark white 66%.
+- Auto PiP settings (key names only): `autoPipGloballyDisabled` (absent from Gabe's defaults, so off: auto PiP on),
+  `autoPipDisabledForHosts`, `autoPipDisabledDeadlines`, `useChromiumAutoPiP`, `useChromiumAutoPiPForGMeetOnly`,
+  `autoPictureInPictureOnWindowOccluded`; PiP window toggle "Open automatically" next to "Picture-in-picture on <host>".
+- Not observed (no Arc mini player was on screen; Arc wasn't driven): its position in the sidebar (Kite puts it above
+  the space bar), the card fill colour (Kite uses the address field's fill), the title font (a CTFont; Kite uses 12 pt
+  medium), button hover fills, which controls drop at 160 / 126, and whether closing the player pauses (Kite pauses).
+
+## Check for Updates (Arc 1.171 Info.plist, menu bar and strings, 1 Nov 2026)
+
+- Menu (read through AX, nothing pressed): Arc › … Import from Another Browser…, **Check for Updates…** (no
+  shortcut, enabled), then a separator and Services.
+- Mechanism: Sparkle (`Contents/Frameworks/Sparkle.framework`; `SPUUpdater`, `SPUUpdaterDelegate` in the strings).
+  Info.plist: `SUFeedURL` = an appcast on releases.arc.net, `SUPublicEDKey` (EdDSA-signed updates),
+  `SUEnableAutomaticChecks` = 1, `SUAutomaticallyUpdate` = 1, `SUScheduledCheckInterval` = 28800 (8 hours).
+- Arc draws its own Sparkle UI (`SoftwareUpdaterClient.CustomUserDriver`, `UpdaterWindowView`, `UpdaterStatusView`,
+  `ReleaseNotesView`; arc-strings.txt around lines 80110-80250): "Checking for updates..." with a cancel button;
+  "Your browser is up to date"; "A new version is available" (fallback title) with release notes and buttons to
+  install, download, or "remind me to download and install the update later"; on an error, "Download manually";
+  "Ready to Install" / "Install and Relaunch".
+- Sidebar banner: `SidebarBanner` cases `UpdateAvailableBanner` / `UpdateCompleteBanner`
+  (`SoftwareUpdateBannerUpdateAvailableView`, `…V2View`, `…UpdateSummaryView`), "Update available",
+  settings keys `autoUpdateBannerDismissalCount`, `canShowUpdateBanner`, `currentUpdateAvailableSince`. A dialog
+  "Arc is ready to update!" / "Restart required." also exists (lines ~61403-61407). Not observed on screen.
+- Kite: no release pipeline, notarisation or appcast yet, and gabekus/kite has no GitHub releases (1 Nov 2026), so
+  Kite › Check for Updates… asks `api.github.com/repos/gabekus/kite/releases/latest`, compares the tag with
+  CFBundleShortVersionString (`AppVersion` in KiteCore) and shows Arc's states in a small window
+  (`UpdaterWindow`): checking, up to date, no releases yet, a new version (notes, Remind Me Later, View Release,
+  Download when a .dmg/.zip is attached, opened in a Kite tab), and errors (Download manually, Try Again). Window
+  size and layout are Kite's; Arc's updater window wasn't measured. No background checks or banner yet.
+## Air Traffic Control → `AirTrafficControl` (KiteCore), `AirTrafficControlWindow` (Arc 1.171 binary strings and disassembly, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` and `~/rea-arc/decomp/arc.s` (short SwiftUI string literals decoded from the
+`mov`/`movk` immediates in `PreferencesFeature/LinkRoutingDialog.swift`'s code, around 0x10200bd38–0x1020155xx).
+Arc was not opened or driven, so no geometry was measured.
+
+- Module `LinkRouting` (`LinkRoutingClient.swift`, `LinkRoutingEditor.swift`), saved to `StorableLinkRouting.json`
+  (strings 67179, 80045–80055). Client API: `currentState`, `stateStream`, `addRule`, `updateDefaultDestination`,
+  `updateState`.
+- Model, from the reflection field names (strings 170798–170819) and coding keys (41563–41578):
+  `StorableLinkRoutingState { version, rules, defaultDestination }`;
+  `LinkMatchingRule { sourceComponents, destination }`; `LinkSourceComponent.componentType` has one case,
+  `urlMatch`; `LinkSourceTextMatchingStyle` is `matches` | `contains`; `LinkDestination` is `space` | `littleArc`
+  | `profile` | `mostRecent`.
+- **No source-app condition.** The only component type is `urlMatch`, and no sender/source-app string appears
+  in the module, so routing by the app a link came from isn't in this Arc. Kite doesn't build it.
+- Editor actions (strings 170798–170808): `addRule`, `updateDestination`, `updateTextMatchingStyle`,
+  `updateTextMatchingPattern`, `delete`, `updateDefaultDestination`, `onUpdateFocusedRuleId`, `onClose`.
+- Dialog views (41821–41831): `LinkRoutingDialog`, `DefaultRuleView`, `LinkMatchingRuleView`,
+  `LinkMatchingRuleComponentView` (`showPlusButton`, `title`, `iconName`), `LinkMatchingRuleDestinationView`,
+  `LinkMatchingRuleDestinationPickerView`.
+- Dialog text: "Air Traffic Control", "Routes let you choose where specific sites open inside Arc. For example,
+  you can route Spotify links to always open inside your Personal space.", "New Route", "Default", "URL" with
+  SF Symbol `link`, "Is equal to" / "Contains", placeholder "arc.net", "Open in", "Little Arc", "Open in Space",
+  "Most Recent Space", symbols `airplane.circle`, `arrow.turn.down.right`, `minus.circle.fill`, and a Done button
+  (`onClickDone`). Opened from Preferences → Links → "Air Traffic Control…" and the command bar action
+  `openAirTrafficControl` ("Action to open Air Traffic Control routes.").
+- Analytics enums: `LinkRoutingWindowType` littleArc / mainWindow / customSpace, `LinkRoutingURLMatchType`
+  equals / contains, `LinkRoutingRuleChangeType` added / removed / changed (strings 69697–69701, 161652–161656).
+- Settings key: only `openExternalLinksInLittleBrowserEnabled` in Arc's defaults; the routes and default live in
+  the JSON file. Kite treats an unset default as that setting (Little Kite when on, Most Recent Space when off).
+- Inferred, not found in the binary: rules are checked in order and the first match wins; a rule's several URL
+  components match when any one does; "Is equal to" compares the site (host without www.) or the whole link
+  ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
+  deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
 
 ## Still unknown
 

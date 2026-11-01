@@ -66,6 +66,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Every tab on screen in pane order, and its page: one, or a split's panes.
     private var shownTabIDs: [UUID] = []
     private var shownPages: [UUID: WebPage] = [:]
+    /// Tabs Kite put into picture in picture when you left them; it ends when you come back.
+    var autoPictureInPictureTabs: Set<UUID> = []
     private let splitPanes = SplitPanesView()
     private let splitDropZones = SplitDropZonesView()
     private var paneClickMonitor: Any?
@@ -83,6 +85,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
     private var cardCoverDuringToggle: CGRect?
     private var sidebarToggles = 0
+    /// Arc's Peek over the page, while one is open (BrowserWindowController+LinkPeek).
+    var linkPeek: LinkPeekSession?
 
     /// Incognito windows keep nothing: no saved frame, and every page closes with the window.
     let isIncognito: Bool
@@ -147,6 +151,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     func windowWillClose(_ notification: Notification) {
+        closeLinkPeek(animated: false)
         if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
         paneClickMonitor = nil
         store.saveNow()
@@ -208,6 +213,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             downloads: downloadsButton,
             swipe: spaceSwipe.model
         )
+        sidebar.miniPlayer = miniPlayerActions
         var toolbar = PageToolbar(store: store, actions: actions)
         #if canImport(CEFBridge)
         // Extensions run in the persistent Chromium profile only.
@@ -364,6 +370,22 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return event
         }
         if let window = window as? BrowserWindow { spaceSwipe.install(in: window) }
+        pool.onLinkPeek = { [weak self] id, url in self?.openLinkPeek(url, from: id) }
+    }
+
+    /// Puts `view` over the content card, above the page and glow and below ⌘J and the command bar.
+    func installOverContent(_ view: NSView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        rootView.addSubview(view)
+        view.wantsLayer = true
+        view.layer?.zPosition = 10
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: contentFrame.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor),
+            view.topAnchor.constraint(equalTo: contentFrame.topAnchor),
+            view.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor),
+        ])
+        rootView.layoutSubtreeIfNeeded()
     }
 
     private func focusPane(under event: NSEvent) {
@@ -421,6 +443,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         let selected = state.selectedTab
         let visible = state.visibleTabs
+        // A Peek belongs to the tab it opened over.
+        if let linkPeek, linkPeek.sourceTabID != selected?.id { closeLinkPeek(animated: false) }
         if selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
             show(visible, focused: selected?.id)
         }
@@ -458,6 +482,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         hideFindBar()
         let ids = tabs.map(\.id)
         if ids != shownTabIDs {
+            tabsChangedOnScreen(left: shownTabIDs.filter { !ids.contains($0) }, arrived: ids.filter { !shownTabIDs.contains($0) })
             for page in shownPages.values { page.view.removeFromSuperview() }
             splitPanes.setPanes([])
             splitPanes.removeFromSuperview()
@@ -887,6 +912,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         // ⌘W in another window (DevTools, a panel) closes that window, not a tab.
         if let key = NSApp.keyWindow, key !== window {
             key.performClose(sender)
+        } else if linkPeek != nil {
+            // Arc: ⌘W closes the Peek, not the tab under it.
+            closeLinkPeek(animated: true)
         } else if store.commandBar != nil {
             store.hideCommandBar()
         } else if let id = store.state.selectedTab?.id {
