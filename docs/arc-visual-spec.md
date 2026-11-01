@@ -1377,8 +1377,7 @@ Sources: `~/rea-arc/arc-strings.txt` 73677–73738 (module `SiteControlCenter`: 
 | Footer | 82×32 left, 32×32 right, both 23 from the edges | Same |
 | From the toolbar | top y 38, right edge = window's | top 38, right edge 1280 of 1280 |
 
-Kite differs: no capture or sidebar preview (Boosts: see g52 below); extensions stay in their own popover; action row
-has only Copy URL, Share and New Boost; the Settings rows are Arc's Block Ads & Trackers, Developer Mode and four permission rows, shown
+Kite differs: no sidebar preview (Boosts: g52, capture and extensions: g126/g127 below); the Settings rows are Arc's Block Ads & Trackers, Developer Mode and four permission rows, shown
 always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
 circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
 
@@ -1406,8 +1405,7 @@ circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
   permissions and an Ask (default) / Allow / Block menu per permission, Chromium's site details layout trimmed to
   the four permissions Kite's CEF bridge reads (`KCBrowser sitePermission`). WebKit keeps none, so the page says so.
   Chromium's usage/data section and its other permission types (JavaScript, pop-ups, sound, MIDI…) aren't there.
-- Still missing from Arc's popover: the Capture / full-page / Portrait Mode action buttons, the Extensions
-  section, the sidebar Preview row, and the footer menu's Manage Extensions… and Add Extension… (Boosts: g52 below).
+- Still missing from Arc's popover: the sidebar Preview row (capture buttons and extensions: g126/g127 below).
 
 ### Boosts in the Site Control Center (g52, Arc 1.171 binary, 1 Nov 2026)
 
@@ -1436,6 +1434,54 @@ Sources: `~/rea-arc/arc-strings.txt` 73696–73727 (`SiteControlCenterBoostsView
   `boost.sparkle.fill` image isn't copied: Kite uses SF Symbol `wand.and.stars`. Row styling is Kite's existing
   setting-row style; Arc's pixels weren't read. Toggling doesn't reload the page: it goes through
   `BoostsModel.setEnabled` (#166), so CSS, zaps and styles update live and only JS waits for the next load.
+
+### Capture buttons and the Extensions section (g126, g127, Arc 1.171 binary, 1 Nov 2026)
+
+Sources: `~/rea-arc/decomp/arc.s` (otool disassembly; Swift immediates decoded at each call), `Arc-arm64`'s data
+for the keypath offsets, `~/rea-arc/arc-strings.txt` 164060–164170 (state, actions, view members), Ghidra output in
+`~/rea-arc/decomp/out-g126/tile.txt`, and the masked probe in `~/rea-arc/notes/extensions.md` (25 Oct 2026). Arc was
+not driven or captured for this.
+
+- Action buttons (`SiteControlCenterActionButton`): cases in order share, copyURL, newBoost, capture,
+  captureFullPage, capturePortraitMode (the tooltip switch at 0x101373f58). Tooltips: "Share", "Copy URL",
+  "New Boost", "Capture a portion of this page", "Capture the full page", "Capture in Portrait Mode". Images:
+  `square.and.arrow.up`, asset `copy-url`, asset `boost.sparkle`, asset `window-screenshot-icon`, asset
+  `capture-full-page`, SF `camera`.
+- The row is built at 0x101388a14: share; then newBoost if the state's Bool at offset 0x30 is set, else copyURL;
+  then, if the Bool at 0x34 is set, capture and captureFullPage, or capturePortraitMode instead of captureFullPage
+  while the view's `_optionKeyDown` state is set. The 0x30 Bool also gates the Boosts section (0x101387968, with the
+  boosts array's count), so it is `boostsEnabled`; the one read twice for the capture buttons is `captureEnabled`
+  (the state's fields: `canCopyURL canShareURL isSecure settings keyboardShortcuts extensions extensionPickerState
+  boostsEnabled captureEnabled boosts`). The view controller watches flagsChanged and keyDown (mask 0x1400,
+  0x1013898dc). With capture on that's four buttons, matching the probe's four 48.75×32.75 buttons.
+  Actions: `didClickCaptureButton`, `didClickCaptureInPortraitModeButton`. What sets `captureEnabled` wasn't traced.
+- Extensions section (`SiteControlCenterExtensionsView`): header "Extensions", hover text "Manage"
+  (0x101376828, 0x10137688c), `onManageExtensionsClick`. Shown only when the extensions array (offset 0x20) isn't
+  empty (0x101387a24), after the Boosts section. Tiles 48×32 in four columns on a 56 × 40 pitch (probe); a 14×14
+  pin button (`pin.fill`, 8pt, black weight, 0x101379b38) at the tile's (37, 21), overhanging its bottom-right
+  corner by 3; tooltip "Pin" / "Unpin" (0x10137c1ec / 0x10137c1d4). The tile's overlay (0x101378668) shows the pin
+  button when the tile is hovered or the extension is pinned (the probe saw it only on the 5 pinned tiles). Then
+  an "Add Extension" tile (`plus`, 13pt semibold, 0x101378d84; tooltip and label 0x1013783b0). A focused tile
+  gets a 2pt rounded stroke, radius 6 (0x1013784a8), for the keyboard picker. Item fields: `isPinned isFocused
+  fallbackIcon title isActive`; right-click (`onExtensionRightClick`) goes to ADK's `showExtensionContextMenu:`,
+  Chromium's own extension menu, which is where per-site access lives.
+- Footer menu: Manage Extensions… and Add Extension… after the Boost items (0x10137dbdc, 0x10137dcf4).
+
+Kite (`SiteControls.actions`, `SiteControlsView`; verified with `kite ui tree` on a test profile, the popover's
+own window): action buttons Share, New Boost, Capture a portion of this page, Capture the full page at
+x 23/79/135/191, 49×33; clicking Capture closed the popover and put `CaptureOverlayView` over the page. With an
+unpacked test extension on Chromium: header "Extensions" at y 66 (Arc 65 from the popover top), tiles at y 93
+(Arc 92), x 23 then 79, the Add Extension tile after it; the next header 15 below the last row; hovering a tile
+shows "Pin" at (60, 114) = tile + (37, 21); clicking it pinned the extension (PinnedExtensions.json) and the button
+stayed as "Unpin"; clicking the tile closed Site Controls and opened the extension's popup from the sliders
+button; the header opened Kite's extensions popover. Differences: Kite's symbols (`link`, `wand.and.stars`,
+`viewfinder`, `rectangle.expand.vertical`, `camera`) instead of Arc's images; capture is on whenever Site
+Controls opens (it needs a page); the tiles list extensions that are on (inferred: Arc's come from Chromium's
+toolbar actions); right-click is Kite's Pin / Turn Off / Options / Remove… menu, so per-site access isn't
+offered; no dimming for extensions that don't run on the site (`isActive`), no keyboard picker or focus ring;
+Add Extension opens the Chrome Web Store (Arc's target wasn't traced). Not exercised: the ⌥ swap (`ui input`
+events don't reach NSEvent monitors; unit-tested), Capture Full Page and Portrait Mode from the popover (they
+write the clipboard), and the footer menu (an NSMenu in a background app).
 
 ## Site permission prompt → `PermissionPromptView`, `PermissionPromptCard` (Arc 1.171 binary, 1 Nov 2026)
 
