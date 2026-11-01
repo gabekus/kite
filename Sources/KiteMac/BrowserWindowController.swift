@@ -87,6 +87,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     let splitDropZones = SplitDropZonesView()
     private var paneClickMonitor: Any?
     private var spaceSwipe: SpaceSwipeController!
+    private let pageTopDragger = PageTopWindowDragger()
     /// The page card, in window coordinates: where Chrome's extension install dialog hangs.
     var webAreaInWindow: NSRect { contentFrame.convert(contentFrame.bounds, to: nil) }
     /// After every sync: tabs, selection or pages may have changed.
@@ -448,7 +449,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             self?.focusPane(under: event)
             return event
         }
-        if let window = window as? BrowserWindow { spaceSwipe.install(in: window) }
+        if let window = window as? BrowserWindow {
+            spaceSwipe.install(in: window)
+            pageTopDragger.install(in: window)
+        }
         pool.onLinkPeek = { [weak self] id, url in self?.openLinkPeek(url, from: id) }
         installPageMenu()
         pool.onPermissionRequestsChanged = { [weak self] in self?.updatePermissionPrompt() }

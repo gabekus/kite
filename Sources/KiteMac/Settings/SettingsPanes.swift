@@ -341,18 +341,20 @@ private struct FeatureDefaultsSwitch: View {
 private struct DefaultsToggle: View {
     let title: String
     var detail: String?
+    var icon: SettingsIcon?
     let inverted: Bool
     @AppStorage private var stored: Bool
 
-    init(_ title: String, detail: String? = nil, key: String, inverted: Bool = false) {
+    init(_ title: String, detail: String? = nil, icon: SettingsIcon? = nil, key: String, inverted: Bool = false) {
         self.title = title
         self.detail = detail
+        self.icon = icon
         self.inverted = inverted
         _stored = AppStorage(wrappedValue: inverted ? false : true, key)
     }
 
     var body: some View {
-        SettingsRow(title: title, detail: detail) {
+        SettingsRow(title: title, detail: detail, icon: icon) {
             SettingsSwitch(isOn: Binding(get: { stored != inverted }, set: { stored = $0 != inverted }))
         }
     }
@@ -462,12 +464,15 @@ struct AdvancedPane: View {
             SettingsSection {
                 CommandToggle("Play Kite sound effects", icon: SettingsIcon(symbol: "speaker.wave.2.fill", color: .blue), #selector(AppDelegate.toggleSoundEffects(_:)))
                 SettingsSeparator()
-                UnsupportedToggle("Haptic feedback when reordering tabs", icon: SettingsIcon(symbol: "hand.tap.fill", color: .blue))
+                DefaultsToggle("Haptic feedback when reordering tabs", icon: SettingsIcon(symbol: "hand.tap.fill", color: .blue),
+                               key: TabReorderHaptics.disabledKey, inverted: true)
             }
             SettingsSection {
-                UnsupportedToggle("When opening Kite, restore windows from previous session", icon: SettingsIcon(symbol: "macwindow", color: .green))
+                DefaultsToggle("When opening Kite, restore windows from previous session", icon: SettingsIcon(symbol: "macwindow", color: .green),
+                               key: WindowRestore.enabledKey)
                 SettingsSeparator()
-                UnsupportedToggle("Allow window dragging from the top of webpages", icon: SettingsIcon(symbol: "rectangle.topthird.inset.filled", color: .green))
+                DefaultsToggle("Allow window dragging from the top of webpages", icon: SettingsIcon(symbol: "rectangle.topthird.inset.filled", color: .green),
+                               key: PageTopWindowDrag.enabledKey)
                 SettingsSeparator()
                 CommandToggle("Show full URL when Toolbar is enabled", icon: SettingsIcon(symbol: "ellipsis.rectangle", color: .red), #selector(AppDelegate.toggleToolbarFullURLs(_:)))
                 SettingsSeparator()

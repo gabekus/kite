@@ -7,8 +7,8 @@ import KiteCore
 /// `bigIncognitoBrowserWindow`, `littleBrowserWindow`) with sidebar contexts `global`,
 /// `standalone` and `incognito`. A new window uses the global sidebar: the same spaces, pinned
 /// tabs, favourites and tabs as every normal window, with its own space and tab selected. A blank
-/// window gets a standalone sidebar of its own ("Explore" tabs). Both come back on relaunch, as
-/// Arc restores windows ("When opening Arc, restore windows from previous session").
+/// window gets a standalone sidebar of its own ("Explore" tabs). Both come back on relaunch while
+/// "When opening Kite, restore windows from previous session" is on, as in Arc.
 @MainActor
 final class BrowserWindows {
     private let main: BrowserStore
@@ -74,8 +74,11 @@ final class BrowserWindows {
         controller.newTab(nil)
     }
 
-    /// Reopens the windows saved at the last quit.
+    /// Reopens the windows saved at the last quit, when Settings › Advanced › "When opening Kite,
+    /// restore windows from previous session" is on. Off, Kite opens with its main window only, as
+    /// Arc opens one window (the sidebar's spaces and tabs come back either way).
     func restore() {
+        guard WindowRestore.isEnabled() else { return }
         guard let data = try? Data(contentsOf: fileURL),
               let file = try? JSONDecoder().decode(File.self, from: data) else { return }
         for saved in file.windows {

@@ -1634,7 +1634,8 @@ Arc shuts down on 22 Dec); the picture is the SF Symbol, not Arc's asset. No rep
   noise from a fixed-seed generator with a 6 / 9 ms exponential decay over a 210 / 160 Hz sine thump, 0.5 ms
   fade-in, peak 0.9, 48 kHz 16-bit mono, the same 0.634 s as Arc's file. Rendered to a WAV in memory at first use.
 - Haptics: Arc's `tabReorderingHapticsDisabled` sits next to `dropHapticSubject` and `dropHapticSubscription`
-  (strings 154777–154779; presumably the drop haptic when reordering). Not built in Kite: tab reordering belongs to the tab-drag work.
+  (strings 154777–154779; presumably the drop haptic when reordering). Built in g94, see "Settings › Advanced: haptics,
+  window restore, page-top dragging".
 ## Tidy Tabs → `TidyTabs`, `TodayTabGroup` (KiteCore), `TodayDivider`, `TabGroupHeaderRow` (Arc 1.171 strings and disassembly, 1 Nov 2026)
 
 Nothing in Arc was pressed or run. The only open Arc window had its sidebar hidden, so no Arc geometry was measured.
@@ -2678,6 +2679,46 @@ triggers). Kite's menu bar checked the same way (an AX read of the test Kite, pl
 - Arc's type-travel triggers for these items are Kite `CommandBarKeywords`, so the command bar still finds the
   old titles ("Reload Page", "Toggle Sidebar", "Back").
 
+## Settings › Advanced: haptics, window restore, page-top dragging → `TabReorderHaptics`, `WindowRestore`, `PageTopWindowDrag` (KiteCore), `PageTopWindowDragger`, `BrowserWindows.restore()` (Arc 1.171 strings, decompile, defaults key names, Settings AX recording, 1 Nov 2026)
+
+Nothing in Arc was pressed or run. Decompiles (Ghidra, read-only project) are under ~/rea-arc/decomp/out-g92.
+
+- **Rows** (~/rea-arc/settings/pane-7.txt): "Haptic feedback when reordering tabs" (hand.tap.fill) in the first section
+  with the sound effects; "When opening Arc, restore windows from previous session" (macwindow, AX identifier
+  `restoreWindowsPreference`) and "Allow window dragging from the top of webpages" (rectangle.topthird.inset.filled)
+  in the second. Gabe's Arc showed haptics 1, restore 0, window dragging 1.
+- **Haptics (g94):** key `tabReorderingHapticsDisabled` (strings 64175), read by the sidebar outline's data source and the
+  favourites tray next to `dropHapticSubject` (154777, 169307). Unset in Gabe's Arc, so on. Kite gates its existing drop
+  haptic (generic pattern, now; `sidebarDropped`) on it, under Arc's key name. The split divider's alignment haptic isn't
+  gated (Arc's split view has its own `isDragDropHapticFeedbackEnabled`).
+- **Restore windows (g93):** Arc's preference is `quitAlwaysKeepsWindows`, stored as `arc_quitAlwaysKeepsWindows`
+  (strings 64296, key table at 0x1005a2c1c; 0 in Gabe's Arc) beside `NSQuitAlwaysKeepsWindows` (1 in Arc's domain), so
+  AppKit always keeps restorable state and Arc decides. `AppDelegate.shouldRestoreWindowsOnLaunch` (0x100235464) returns
+  true when the update-relaunch flag (`restoreWindowsOnNextLaunch`) is set, otherwise the preference (`boolForKey`).
+  Arc's windows go through AppKit's `restoreWindow(withIdentifier:state:completionHandler:)`; Little Arc windows only
+  come back after an auto-update relaunch (string 61933). Off, nothing is restored and Arc opens one window; the
+  sidebar's spaces and tabs are Arc's own store and stay either way. Kite: `restoreWindowsOnLaunch`, on by default
+  (Kite always restored before; Arc's own default isn't in the binary's code read here, and Gabe's is off). Off,
+  `BrowserWindows.restore()` skips windows.json and Kite opens its main window only; windows.json is still written.
+  Kite has no update relaunch, so no exception for it.
+- **Page-top window dragging (g92):** key `contentWindowDraggingEnabled` (strings 64236), unset in Gabe's Arc and shown
+  on. `WindowContentViewController` adds an `ARCUI.WindowContentGrabber` (`grabberView`) to its content container while
+  the setting is on (0x10040b7e8) and lays it out in `viewWillLayout` (0x10040d0b4) from 0x10040d878: x 0, y = the
+  toolbar's bottom (0 without one), width = the container's width − 14, height = 60 − that y. So the band runs from the
+  toolbar's bottom to 60pt below the card's top, short of the scroller.
+  The grabber (0x100b11a68 hitTest, 0x100b11828 event monitor, 0x100b11d38): it only acts while `NSCursor.current` is the
+  arrow cursor (so links and text keep theirs); a press still goes on; drag events are swallowed and accumulate, and once
+  there's movement the window gets `performWindowDragWithEvent:`; a release after more than 1pt of movement is
+  swallowed, a smaller one passes. Its delegate gets a say on mouse-down (not identified; not copied).
+  Kite: `BrowserWindow` offers left-button events to `PageTopWindowDragger` first; a single press on a page view (not an
+  overlay) inside its `ContentClipView`'s band with the arrow cursor arms it, drags under 1pt are swallowed, past 1pt the
+  window gets `performDrag(with:)`. Split panes each have their own band.
+- **Verified** in a test Kite (WebKit, background, fresh profile) with temporary debug logs: a `ui input` drag at window
+  (700, 30) on a page (card at y 10) armed and called `performDrag` (a synthetic event doesn't move the window); presses at
+  y 75 (65 into the card) and in the trailing 14pt didn't arm, (1250, 69) did. A windows.json with a blank window: two
+  windows on launch with the switch on, one with `restoreWindowsOnLaunch` false. Haptics: the drop handler, reached
+  through a temporary hook, called `NSHapticFeedbackManager.perform(.generic, .now)` with the key unset and skipped it with
+  `tabReorderingHapticsDisabled` true. A haptic can't be felt in a test, and a real sidebar drag can't run in the background.
 
 ## Settings › Profiles › "Search Settings…" → `SearchEnginesPageView`, `SiteSearchDraft` (KiteCore) (Arc 1.171 strings and ArcCore locale.pak, 1 Nov 2026)
 
