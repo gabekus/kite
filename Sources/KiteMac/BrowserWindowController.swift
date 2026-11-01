@@ -81,8 +81,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var placeholders: [UUID: PagePlaceholderView] = [:]
     /// Tabs Kite put into picture in picture when you left them; it ends when you come back.
     var autoPictureInPictureTabs: Set<UUID> = []
-    private let splitPanes = SplitPanesView()
-    private let splitDropZones = SplitDropZonesView()
+    let splitPanes = SplitPanesView()
+    let splitDropZones = SplitDropZonesView()
     private var paneClickMonitor: Any?
     private var spaceSwipe: SpaceSwipeController!
     /// The page card, in window coordinates: where Chrome's extension install dialog hangs.
@@ -424,6 +424,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
 
         splitDropZones.onDrop = { [weak self] url, edge in self?.openDroppedLink(url, on: edge) }
+        store.sidebarDragContent = self
         splitPanes.onDividerDrag = { [weak self] index, fraction, minimum in
             guard let self, let split = store.state.selectedSplit else { return }
             store.mutate { $0.moveSplitDivider(split.id, index: index, fraction: fraction, minimum: minimum) }

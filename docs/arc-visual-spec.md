@@ -788,6 +788,34 @@ Arc wasn't driven; nothing here is from a recording.
   12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
   top/bottom one on a top/bottom drop (Kite refuses it).
 
+## Split View: drag a sidebar tab onto the pages → `SplitTabDrop.swift` (KiteCore), `BrowserWindowController+SplitTabDrop` (Arc 1.169 decompile, 1.171 strings, 1 Nov 2026)
+
+Arc wasn't driven; nothing here is from a recording or a capture. Sources: **[str]** `~/rea-arc/arc-strings.txt`; **[dec]** Ghidra on
+`~/rea-arc/decomp/Arc-arm64` (output in `decomp/out5/g42-*.txt`, `out6/g42-callers.txt`, `out7/g42-list*.txt`).
+
+- **It exists** [str]: Arc's onboarding card "Drag a tab from your sidebar into the middle of the screen to create a Split View."
+  (~80884); the window-contents split delegate has `onDropSidebarItem` (~176689). An older recording in this file ("Tab drag", dropped
+  over the page = cancelled) disagrees; that drop came after the new-window card had appeared, which may be a different path.
+- **Regions are per pane** [dec, `FUN_100a525a0` → `FUN_100a45034`]: Arc walks the panes, finds the one under the pointer, and asks
+  which band of that pane it's in: 1 left, 2 right, 3 bottom, 4 top, 0 none. Band depth (`FUN_100a453dc` / `FUN_100a45484`):
+  one pane: **45%** of its width from each side (**40%** when `verticalLayoutOrientationFromDragAllowed`, which also adds top/bottom
+  bands of min(**25%** of height, **50pt**)); several panes: min(width / **3**, **80pt**) from each end of a side-by-side split's
+  panes, min(height / **3**, **50pt**) of a top/bottom split's. A split only takes bands along its own axis.
+- **What a band does** [dec]: left/top insert a pane at the pane's index, right/bottom after it (`insertContent`,
+  `dropRegionInsertionIndex`); the middle (0) asks the delegate whether to replace the pane (`replaceContent`, `existingDropRegion`)
+  and otherwise inserts. With a flag the caller sets (inferred: dragging one of the split's own panes, g43), the bands are half the pane and the middle does nothing.
+- **Defaults** [dec, init @100a50820]: `allowInteractivePaneInsertion` true, `verticalLayoutOrientationFromDragAllowed` **false**,
+  `isDragDropHapticFeedbackEnabled` true. Whether Arc's window changes the vertical flag wasn't traced (it's set through the vtable).
+- **Placeholder** [dec]: while dragging, Arc inserts a placeholder pane into the layout (`FUN_100a599d8`, the delegate's view:
+  `SplitViewContentPlaceholderView`, 2pt border, r6 per #103) sized width / (panes + 1) (`draggingEntered:`), and relays out the others.
+- **Kite**: the sidebar drag (#145, SwiftUI, never leaves the window) reports to the window once it's off the sidebar; Arc's bands
+  pick the pane and side, with vertical drops off (ARCUI's default), so a single page splits left or right. The tab moves into the
+  split (its row becomes part of the split's row), gets 1/(n+1) taken from the others in proportion, and focus; Arc's drop haptic plays.
+  Refused: the tab already on screen, folders, favorites, a split's own row onto itself, a fifth pane.
+- **Differs / unverified**: Kite doesn't replace a pane on a middle drop (whether Arc's delegate allows it for sidebar tabs wasn't
+  traced) and inserts after the pane instead; Kite draws the placeholder over the pages (2pt / r6, accent at 12%, as #103) where the
+  new pane will go rather than moving the panes aside live; favorites dragged from the tray aren't taken (untraced in Arc).
+
 ## Split View: geometry and motion → `ArcMetrics.Split`, `SplitPanesView` (Arc 1.171 incognito capture + 1.169/1.171 decompile, 1 Nov 2026)
 
 Sources: **[cap]** one Arc incognito window (2056×1285pt, dark) on local fixture pages, View › Add Split View pressed through AX,

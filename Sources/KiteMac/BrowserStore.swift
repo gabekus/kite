@@ -105,6 +105,8 @@ final class BrowserStore {
     @ObservationIgnored weak var link: WindowLink?
     /// After every change: AppDelegate saves the extra windows (windows.json).
     @ObservationIgnored var didChangeState: (() -> Void)?
+    /// Where a sidebar drag that leaves the sidebar can drop: the window's page area (Split View).
+    @ObservationIgnored weak var sidebarDragContent: SidebarDragContentTarget?
     /// Tidy Tab Titles names the tabs pinned here; off in incognito, where nothing leaves the window.
     @ObservationIgnored var tidiesPinnedTabs = true
 
