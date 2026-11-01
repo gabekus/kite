@@ -58,6 +58,8 @@ final class ChromiumEngine: WebEngine {
 @MainActor
 final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     let browser: KCBrowser
+    /// The page's alert, confirm or prompt on screen (`PageDialogs`).
+    private var pageDialog: ArcDialog?
     var onEvent: ((PageEvent) -> Void)?
     var linkPeekPolicy: ((URL, Bool) -> Bool)?
     var contextMenuHost: (() -> PageContextMenu.Host)?
@@ -327,6 +329,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     func close() {
+        pageDialog?.dismiss()
         browser.close()
         browser.view.removeFromSuperview()
     }
@@ -457,6 +460,24 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         onEvent(.permissionRequest(PermissionRequest(id: promptID, origin: origin, permissions: requested) { allow in
             decisionHandler(allow.map { $0 ? .allow : .block } ?? .dismiss)
         }))
+    }
+
+    func browser(_ browser: KCBrowser, runJavaScriptDialog kind: JavaScriptDialogKind, message: String,
+                 defaultText: String, origin: URL?, completion: @escaping (Bool, String?) -> Void) {
+        pageDialog?.dismiss()
+        let kinds: [JavaScriptDialogKind: PageDialogs.Kind] = [
+            .alert: .alert, .confirm: .confirm, .prompt: .prompt, .leave: .leave, .reload: .reload,
+        ]
+        pageDialog = PageDialogs.present(kinds[kind] ?? .alert, message: message, defaultText: defaultText,
+                                         origin: origin, in: browser.view) { [weak self] ok, text in
+            self?.pageDialog = nil
+            completion(ok, text)
+        }
+    }
+
+    func browserDismissJavaScriptDialogs(_ browser: KCBrowser) {
+        pageDialog?.dismiss()
+        pageDialog = nil
     }
 
     func browser(_ browser: KCBrowser, permissionPromptDidCancel promptID: Int) {

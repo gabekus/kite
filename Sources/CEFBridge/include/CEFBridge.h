@@ -113,6 +113,15 @@ NS_SWIFT_UI_ACTOR
 
 // CEF's UI thread is the main thread, so Swift can treat these as main-actor types.
 NS_SWIFT_UI_ACTOR
+/// A dialog a page asked for: window.alert, confirm or prompt, or a beforeunload "Leave site?".
+typedef NS_ENUM(NSInteger, KCJavaScriptDialogKind) {
+    KCJavaScriptDialogKindAlert,
+    KCJavaScriptDialogKindConfirm,
+    KCJavaScriptDialogKindPrompt,
+    KCJavaScriptDialogKindLeave,
+    KCJavaScriptDialogKindReload,
+} NS_SWIFT_NAME(JavaScriptDialogKind);
+
 @protocol KCBrowserDelegate <NSObject>
 - (void)browser:(KCBrowser *)browser titleDidChange:(NSString *)title;
 - (void)browser:(KCBrowser *)browser addressDidChange:(NSURL *)url;
@@ -166,6 +175,17 @@ NS_SWIFT_UI_ACTOR
 /// Chromium dropped prompt `promptID` itself (the page navigated or closed); its handler
 /// no longer does anything.
 - (void)browser:(KCBrowser *)browser permissionPromptDidCancel:(NSInteger)promptID;
+/// The page wants a dialog (`origin` is the frame's page; `defaultText` is a prompt's starting
+/// text). Call `completion` once: OK or Cancel, and a prompt's text. Without this method
+/// Chromium shows its own.
+- (void)browser:(KCBrowser *)browser
+    runJavaScriptDialog:(KCJavaScriptDialogKind)kind
+                message:(NSString *)message
+            defaultText:(NSString *)defaultText
+                 origin:(nullable NSURL *)origin
+             completion:(void (NS_SWIFT_UI_ACTOR ^)(BOOL ok, NSString *_Nullable text))completion;
+/// Chromium dropped the page's dialog (it navigated or closed); its completion does nothing now.
+- (void)browserDismissJavaScriptDialogs:(KCBrowser *)browser;
 @end
 
 /// One Chromium browser (one tab), hosted in `view`.

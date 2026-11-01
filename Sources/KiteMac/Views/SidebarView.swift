@@ -231,8 +231,15 @@ struct SidebarView: View {
             return AnyView(VStack(spacing: M.rowPitch - M.pillHeight) {
                 FolderRow(
                     folder: folder, depth: depth,
+                    isRenaming: store.renamingFolderID == folder.id,
                     onToggle: { store.mutate { $0.setFolderExpanded(folder.id, !folder.isExpanded) } },
                     onRename: { actions.renameFolder(folder.id) },
+                    onCommitRename: { name in
+                        guard store.renamingFolderID == folder.id else { return }
+                        store.mutate { $0.renameFolder(folder.id, to: name) }
+                        store.endRenamingFolder()
+                    },
+                    onCancelRename: { store.endRenamingFolder() },
                     onDelete: { actions.deleteFolder(folder.id) })
                 ForEach(SidebarGroup.group(visible.map(\.id), splits: store.state.selectedSpace.splits)) { group in
                     pinnedGroup(group, in: visible, depth: depth + 1, selectedID: selectedID)
@@ -829,10 +836,15 @@ private struct TabGroupHeaderRow: View {
 private struct FolderRow: View {
     let folder: TabFolder
     let depth: Int
+    let isRenaming: Bool
     let onToggle: () -> Void
     let onRename: () -> Void
+    let onCommitRename: (String) -> Void
+    let onCancelRename: () -> Void
     let onDelete: () -> Void
     @State private var hovering = false
+    @State private var draft = ""
+    @FocusState private var fieldFocused: Bool
 
     var body: some View {
         HStack(spacing: M.iconTextGap) {
@@ -840,11 +852,26 @@ private struct FolderRow: View {
                 .font(.system(size: 14))
                 .frame(width: M.iconSize, height: M.iconSize)
                 .opacity(0.75)
-            Text(folder.name)
-                .font(.system(size: M.tabFontSize, weight: .semibold))
-                .opacity(M.tabTextOpacity)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            if isRenaming {
+                // In place, like a tab's title (Arc's EditableTextFieldWithCompletionHandler).
+                TextField("", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: M.tabFontSize, weight: .semibold))
+                    .focused($fieldFocused)
+                    .onSubmit { onCommitRename(draft) }
+                    .onExitCommand(perform: onCancelRename)
+                    .onAppear {
+                        draft = folder.name
+                        fieldFocused = true
+                    }
+                    .onChange(of: fieldFocused) { _, focused in if !focused { onCommitRename(draft) } }
+            } else {
+                Text(folder.name)
+                    .font(.system(size: M.tabFontSize, weight: .semibold))
+                    .opacity(M.tabTextOpacity)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .bold))
@@ -857,7 +884,7 @@ private struct FolderRow: View {
         .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture(perform: onToggle)
+        .onTapGesture { if !isRenaming { onToggle() } }
         // Arc's folder menu (SidebarMenu+ListContextMenu), in its order, with the items Kite has.
         .contextMenu {
             Button("Delete", action: onDelete)
@@ -1253,6 +1280,15 @@ private struct SpaceHeader: View {
             }
             .buttonStyle(.plain)
             .help("Change Space Icon")
+            .popover(isPresented: Binding(
+                get: { store.iconPickerSpaceID == space.id },
+                set: { if !$0, store.iconPickerSpaceID == space.id { store.iconPickerSpaceID = nil } }
+            ), arrowEdge: .bottom) {
+                SpaceIconPicker(current: space.icon) { icon in
+                    store.mutate { $0.setSpaceIcon(space.id, to: icon) }
+                    store.iconPickerSpaceID = nil
+                }
+            }
             if renaming {
                 TextField("Space Name", text: $draft)
                     .textFieldStyle(.plain)

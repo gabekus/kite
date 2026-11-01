@@ -581,11 +581,7 @@ extension WebKitPage: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor () -> Void
     ) {
-        let alert = NSAlert()
-        alert.messageText = frame.request.url?.host() ?? "This page says"
-        alert.informativeText = message
-        alert.runModal()
-        completionHandler()
+        PageDialogs.present(.alert, message: message, origin: frame.request.url, in: webView) { _, _ in completionHandler() }
     }
 
     func webView(
@@ -594,12 +590,7 @@ extension WebKitPage: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor (Bool) -> Void
     ) {
-        let alert = NSAlert()
-        alert.messageText = frame.request.url?.host() ?? "This page says"
-        alert.informativeText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        completionHandler(alert.runModal() == .alertFirstButtonReturn)
+        PageDialogs.present(.confirm, message: message, origin: frame.request.url, in: webView) { ok, _ in completionHandler(ok) }
     }
 
     func webView(
@@ -609,15 +600,8 @@ extension WebKitPage: WKUIDelegate {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping @MainActor (String?) -> Void
     ) {
-        let alert = NSAlert()
-        alert.messageText = frame.request.url?.host() ?? "This page says"
-        alert.informativeText = prompt
-        let field = NSTextField(string: defaultText ?? "")
-        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        completionHandler(alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil)
+        PageDialogs.present(.prompt, message: prompt, defaultText: defaultText ?? "", origin: frame.request.url,
+                            in: webView) { _, text in completionHandler(text) }
     }
 
     func webView(
