@@ -1275,6 +1275,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return pool.engine.supportsDarkPages && tab?.url?.host() != nil
         case #selector(installPageAsApp(_:)):
             return canInstallPageAsApp
+        case #selector(recordTrace(_:)):
+            // Chromium's tracing; WebKit has none.
+            return TraceRecorderWindow.isAvailable
         case #selector(toggleDeveloperMode(_:)):
             let url = store.state.selectedTab?.url
             item.title = store.state.developerModeMenuTitle(for: url)
@@ -1346,7 +1349,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return !isIncognito
         case #selector(setAsDefaultBrowser(_:)):
             item.state = Self.isDefaultBrowser ? .on : .off
-        case #selector(capturePage(_:)), #selector(captureFullPage(_:)):
+        case #selector(capturePage(_:)), #selector(captureFullPage(_:)), #selector(capturePortraitMode(_:)):
             return shownPage != nil && store.state.selectedTab?.url != nil
         case #selector(share(_:)), #selector(savePageAs(_:)), #selector(printPage(_:)),
              #selector(clearCookiesAndRefresh(_:)), #selector(clearCacheAndRefresh(_:)):

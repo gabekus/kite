@@ -56,6 +56,17 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)setAdblockEnabled:(BOOL)enabled allowedHosts:(NSSet<NSString *> *)hosts;
 @end
 
+/// Chromium's tracing, for Help › Troubleshooting › Record Trace. Call on the main thread;
+/// completions run on the main thread. Nothing leaves the Mac: the trace is written to `path`.
+@interface KCRuntime (Tracing)
+/// Starts tracing every process. `categories` is Chromium's comma-separated list; empty picks
+/// its defaults. NO if a trace is already running or ending.
++ (BOOL)beginTracingWithCategories:(NSString *)categories completion:(nullable void (^)(void))completion;
+/// Stops tracing and writes the JSON trace to `path`; `completion` gets the path written, or nil
+/// with `discard`. NO if no trace is running.
++ (BOOL)endTracingToPath:(NSString *)path discard:(BOOL)discard completion:(nullable void (^)(NSString *_Nullable path))completion;
+@end
+
 /// Posted on the main thread as a download progresses. `object` is the KCBrowser; userInfo has
 /// id, url, path, state (in-progress, complete, canceled, interrupted), receivedBytes, totalBytes,
 /// speed (bytes per second).
