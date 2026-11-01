@@ -235,6 +235,8 @@ enum MainMenu {
                 // Both open DevTools for now; picking the element or panel needs the DevTools frontend.
                 item("Inspect Elements", #selector(BrowserWindowController.showDevTools(_:)), "c", [.command, .option], id: "inspectElements"),
                 item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option], id: "javaScriptConsole"),
+                // Arc 1.169: ⌃D, no ⌘ (its menu's AXMenuItemCmdModifiers is 12).
+                item("Turn on Developer Mode for this site", #selector(BrowserWindowController.toggleDeveloperMode(_:)), "d", [.control], id: "toggleDeveloperMode"),
             ]),
             .separator(),
             item("Enter Full Screen", #selector(BrowserWindowController.toggleFullScreenMode(_:)), "f", [.command, .control], id: "fullscreen"),
