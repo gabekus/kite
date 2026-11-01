@@ -30,14 +30,21 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         var currentSpace: () -> Destination
         var spaces: () -> [Destination]
         var resolve: (String) -> URL?
+        /// Kite's profiles, the one a new Little Kite starts in (the current space's), and each one's engine.
+        var profiles: () -> [Profile]
+        var initialProfile: () -> Profile
+        var engine: (Profile) -> WebEngine
         /// Moves the page into the main window as a tab in that space and brings the main window forward.
-        var move: (_ page: WebPage, _ url: URL?, _ title: String?, _ spaceID: UUID) -> Void
+        /// `profileDirectory` is the profile the page was made in.
+        var move: (_ page: WebPage, _ url: URL?, _ title: String?, _ spaceID: UUID, _ profileDirectory: String?) -> Void
         /// Links the page opens in a new tab or popup go to the main window.
         var openTab: (URL) -> Void
         var adoptPopup: (WebPage) -> Void
     }
 
-    private let engine: WebEngine
+    private var engine: WebEngine
+    /// The page's profile, shown at the pill's leading edge while Kite has more than one.
+    private(set) var profile: Profile
     private let host: Host
     private var page: WebPage?
     private(set) var url: URL?
@@ -55,6 +62,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     private let backButton = NSButton()
     private let pill = LittlePillView()
     private let openIn = OpenInBox()
+    private var moveMenu: LittleMoveMenuController?
     /// Downloads this window's page started (Arc's Little Arc downloads tray).
     private let downloadsTray = LittleDownloadsTrayView()
     private var tray = LittleKite.DownloadsTray()
@@ -70,8 +78,10 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     /// Called once the window has closed, so the app delegate can let go of it.
     var didClose: ((LittleKiteWindowController) -> Void)?
 
-    init(engine: WebEngine, url: URL?, host: Host) {
-        self.engine = engine
+    init(url: URL?, host: Host) {
+        let profile = host.initialProfile()
+        self.profile = profile
+        engine = host.engine(profile)
         self.host = host
         self.url = url
         let window = LittleKiteWindow(
@@ -148,6 +158,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         root.addSubview(backButton)
 
         pill.onCopy = { [weak self] in self?.copyURL(nil) }
+        pill.onProfile = { [weak self] view in self?.showProfileMenu(from: view) }
         pill.onBeginEditing = { [weak self] in self?.url?.absoluteString ?? "" }
         pill.onCommit = { [weak self] text in
             guard let self, let url = self.host.resolve(text) else { return }
@@ -156,7 +167,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         root.addSubview(pill)
 
         openIn.onMove = { [weak self] in self?.openInCurrentSpace(nil) }
-        openIn.onChevron = { [weak self] view in self?.showSpacesMenu(from: view) }
+        openIn.onChevron = { [weak self] _ in self?.toggleMoveMenu(nil) }
         root.addSubview(openIn)
 
         downloadsTray.onDismiss = { [weak self] id in
@@ -166,6 +177,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         root.addSubview(downloadsTray)
         setUpExtensionsButton()
         updateBackButton()
+        updateProfileIndicator()
     }
 
     /// Arc shows the pill's extensions button only while extensions are installed
@@ -209,7 +221,13 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         let appearance = NSAppearance(named: destination.theme.prefersDarkForeground ? .aqua : .darkAqua)
         window?.appearance = appearance
         openIn.spaceName = destination.name
+        openIn.showsChevron = LittleKite.hasAdditionalDestinations(spaceCount: host.spaces().count)
         root.needsLayout = true
+    }
+
+    /// Arc's profile indicator: the page's profile, while there's more than one to tell apart.
+    private func updateProfileIndicator() {
+        pill.profileName = LittleKite.showsProfileIndicator(profileCount: host.profiles().count) ? profile.name : nil
     }
 
     // MARK: Page
@@ -383,24 +401,78 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         page.onEvent = nil
         self.page = nil
         stopFollowingDownloads()
-        host.move(page, url, pageTitle, spaceID)
+        host.move(page, url, pageTitle, spaceID, engine.profileDirectory)
         close()
     }
 
-    private func showSpacesMenu(from view: NSView) {
+    /// The chevron: Arc's searchable "Open In" menu (`toggleMoveMenu:`), over the Open In box.
+    @objc func toggleMoveMenu(_ sender: Any?) {
+        if let moveMenu, moveMenu.isOpen { return moveMenu.dismiss() }
+        guard let window, page != nil else { return NSSound.beep() }
+        applyDestination()
+        let options = host.spaces().map { space in
+            LittleMoveMenuController.Option(id: space.id, name: space.name, color: Self.swatchColor(space.theme))
+        }
+        let menu = LittleMoveMenuController(parent: window, anchor: openIn, options: options,
+                                            primaryID: host.currentSpace().id) { [weak self] id in self?.move(to: id) }
+        menu.didClose = { [weak self, weak menu] in
+            if let menu, self?.moveMenu === menu { self?.moveMenu = nil }
+        }
+        moveMenu = menu
+        menu.show()
+    }
+
+    private static func swatchColor(_ theme: Theme) -> NSColor {
+        guard let c = theme.colors.first else { return .controlAccentColor }
+        return NSColor(srgbRed: CGFloat(c.r), green: CGFloat(c.g), blue: CGFloat(c.b), alpha: 1)
+    }
+
+    // MARK: Profile
+
+    /// Arc's `showChangeProfileMenu`: the profiles, the page's ticked.
+    private func showProfileMenu(from view: NSView) {
         let menu = NSMenu()
-        for space in host.spaces() {
-            let item = NSMenuItem(title: space.name, action: #selector(moveToSpace(_:)), keyEquivalent: "")
+        for profile in host.profiles() {
+            let item = NSMenuItem(title: profile.name, action: #selector(changeProfile(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = space.id
+            item.representedObject = profile
+            item.state = profile.directory == self.profile.directory ? .on : .off
             menu.addItem(item)
+        }
+        // Menus are modal, so a background test run can't read one: it prints the items instead and picks
+        // the profile named in KITE_TEST_LITTLE_PROFILE_PICK.
+        if UIDiagnostics.enabledByEnvironment, let pick = ProcessInfo.processInfo.environment["KITE_TEST_LITTLE_PROFILE_PICK"] {
+            let line = menu.items.map { $0.title + ($0.state == .on ? " ✓" : "") }.joined(separator: " | ")
+            FileHandle.standardError.write(Data("KITE_TEST_LITTLE_PROFILE_MENU: \(line)\n".utf8))
+            if let item = menu.items.first(where: { $0.title == pick }) { changeProfile(item) }
+            return
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.height + 4), in: view)
     }
 
-    @objc private func moveToSpace(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        move(to: id)
+    @objc private func changeProfile(_ sender: NSMenuItem) {
+        guard let profile = sender.representedObject as? Profile else { return }
+        switchProfile(to: profile)
+    }
+
+    /// Reloads the page in `profile` (its own cookies and logins), as Arc's `setProfile` does: the page
+    /// starts again from its URL, since its state belongs to the old profile.
+    func switchProfile(to profile: Profile) {
+        guard profile.directory != self.profile.directory else { return }
+        self.profile = profile
+        engine = host.engine(profile)
+        if let page {
+            showPermissionPrompt(nil)
+            stopFollowingDownloads()
+            page.onEvent = nil
+            page.view.removeFromSuperview()
+            page.close()
+            self.page = nil
+            canGoBack = false
+            updateBackButton()
+        }
+        updateProfileIndicator()
+        if let url { load(url) }
     }
 
     /// Kite's shortcuts for this window, before the menu bar (whose commands act on the main window).
@@ -492,6 +564,15 @@ private final class LittlePillView: NSView, NSTextFieldDelegate {
     }
     var onCopy: (() -> Void)?
     var onExtensions: ((NSView) -> Void)?
+    /// The page's profile at the leading edge (Arc's profile indicator); nil hides it.
+    var profileName: String? {
+        didSet {
+            profileButton.isHidden = profileName == nil
+            profileButton.name = profileName ?? ""
+            needsLayout = true
+        }
+    }
+    var onProfile: ((NSView) -> Void)?
     /// Arc's extensions button, shown while extensions are installed.
     var showsExtensions = false {
         didSet {
@@ -507,6 +588,7 @@ private final class LittlePillView: NSView, NSTextFieldDelegate {
     private let field = NSTextField()
     private let copyButton = NSButton()
     private let extensionsButton = NSButton()
+    private let profileButton = ProfileIndicatorView()
     private var hovered = false {
         didSet { updateFill() }
     }
@@ -561,6 +643,10 @@ private final class LittlePillView: NSView, NSTextFieldDelegate {
         extensionsButton.action = #selector(extensionsClicked)
         extensionsButton.isHidden = true
         addSubview(extensionsButton)
+
+        profileButton.onClick = { [weak self] in self?.profileClicked() }
+        profileButton.isHidden = true
+        addSubview(profileButton)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Address")
@@ -579,7 +665,13 @@ private final class LittlePillView: NSView, NSTextFieldDelegate {
             let width = LittleKite.Pill.extensionsWidth, height = LittleKite.Pill.extensionsHeight
             extensionsButton.frame = CGRect(x: x, y: (Double(bounds.height) - height) / 2, width: width, height: height)
         }
-        let leading = M.pillLeadingInset
+        var leading = M.pillLeadingInset
+        if !profileButton.isHidden {
+            typealias P = LittleKite.ProfileIndicator
+            profileButton.frame = CGRect(x: P.x, y: (Double(bounds.height) - 16) / 2,
+                                         width: Double(profileButton.fittingWidth), height: 16)
+            leading = profileButton.frame.maxX + CGFloat(P.trailingGap)
+        }
         let trailing = CGFloat(buttons.labelTrailing)
         let labelHeight: CGFloat = 16
         // Centred between the pill's leading inset and its buttons, as Arc's host text is.
@@ -646,6 +738,7 @@ private final class LittlePillView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func copyClicked() { onCopy?() }
+    private func profileClicked() { onProfile?(profileButton) }
     @objc private func extensionsClicked() { onExtensions?(extensionsButton) }
 }
 
@@ -661,11 +754,20 @@ private final class OpenInBox: NSView {
     }
     var onMove: (() -> Void)?
     var onChevron: ((NSView) -> Void)?
+    /// Arc's `hasAdditionalDestinations`: no chevron (or divider) with only one space.
+    var showsChevron = true {
+        didSet {
+            chevron.isHidden = !showsChevron
+            divider.isHidden = !showsChevron
+            needsLayout = true
+            superview?.needsLayout = true
+        }
+    }
 
     private let moveButton = NSButton()
     private let keycap = PassthroughLabel(labelWithString: "⌘O")
     private let divider = NSView()
-    private let chevron = NSButton()
+    private let chevron = FirstMouseButton()
 
     override var isFlipped: Bool { true }
 
@@ -698,8 +800,9 @@ private final class OpenInBox: NSView {
         chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "More Spaces")?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
         chevron.contentTintColor = .secondaryLabelColor
-        chevron.toolTip = "Open in Another Space"
-        chevron.setAccessibilityLabel("Open in Another Space")
+        // Arc's title for it: "More Spaces".
+        chevron.toolTip = "More Spaces"
+        chevron.setAccessibilityLabel("More Spaces")
         chevron.target = self
         chevron.action = #selector(chevronClicked)
         addSubview(chevron)
@@ -714,7 +817,8 @@ private final class OpenInBox: NSView {
 
     /// Title, keycap, divider and chevron with Arc's spacing.
     var fittingWidth: CGFloat {
-        M.openInLeadingInset + titleWidth + 6 + keycapWidth + 7 + 7 + M.pillButtonSize + M.openInChevronTrailing
+        let content = M.openInLeadingInset + titleWidth + 6 + keycapWidth
+        return showsChevron ? content + 7 + 7 + M.pillButtonSize + M.openInChevronTrailing : content + M.openInLeadingInset
     }
 
     override func layout() {
@@ -763,6 +867,72 @@ private final class OpenInBox: NSView {
 
     @objc private func moveClicked() { onMove?() }
     @objc private func chevronClicked() { onChevron?(chevron) }
+}
+
+/// Arc's profile indicator in the Little Arc pill: a 14pt profile image, then the profile's name.
+/// A click opens the profile menu (Arc's `onClickChangeProfile`).
+private final class ProfileIndicatorView: NSView {
+    private typealias P = LittleKite.ProfileIndicator
+
+    var name = "" {
+        didSet {
+            label.stringValue = name
+            setAccessibilityLabel("Profile: \(name)")
+            needsLayout = true
+        }
+    }
+    var onClick: (() -> Void)?
+
+    private let image = NSImageView()
+    private let label = PassthroughLabel(labelWithString: "")
+
+    override var isFlipped: Bool { true }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        image.image = NSImage(systemSymbolName: "person.crop.circle", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: CGFloat(P.imageSize) - 1, weight: .medium))
+        image.contentTintColor = .secondaryLabelColor
+        image.imageScaling = .scaleProportionallyUpOrDown
+        addSubview(image)
+        label.font = .systemFont(ofSize: CGFloat(P.fontSize), weight: .medium)
+        label.textColor = .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        addSubview(label)
+        // Arc's tooltip on it in the Little Arc toolbar.
+        toolTip = "Change profile"
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    var fittingWidth: CGFloat {
+        CGFloat(P.imageSize + P.nameGap) + min(ceil(label.attributedStringValue.size().width) + 4, 160)
+    }
+
+    override func layout() {
+        super.layout()
+        let size = CGFloat(P.imageSize)
+        image.frame = CGRect(x: 0, y: (bounds.height - size) / 2, width: size, height: size)
+        let x = size + CGFloat(P.nameGap)
+        label.frame = CGRect(x: x, y: (bounds.height - 15) / 2, width: max(0, bounds.width - x), height: 15)
+    }
+
+    /// The whole indicator is one button.
+    override func hitTest(_ point: NSPoint) -> NSView? { isHidden || !frame.contains(point) ? nil : self }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { onClick?() }
+    override func accessibilityPerformPress() -> Bool {
+        onClick?()
+        return true
+    }
+}
+
+/// Takes the click that makes the window key, so the toolbar's menus open from a background window too.
+private final class FirstMouseButton: NSButton {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 /// A label that lets clicks through to the view under it.
