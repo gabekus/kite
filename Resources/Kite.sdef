@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<!--
+  Kite's AppleScript dictionary. Same classes, terms and codes as Arc 1.171's (see
+  docs/arc-visual-spec.md, "AppleScript"), so scripts written for Arc work after changing the
+  application name. Written for Kite; the scripting objects are in Sources/KiteMac/AppleScript.swift.
+  Not here yet: setting a tab's location, and the space `focus` command.
+-->
+<dictionary title="Kite Terminology">
+  <suite name="Standard Suite" code="core" description="Kite's windows, tabs and spaces.">
+
+    <command name="make" code="corecrel" description="Create a new window or tab.">
+      <cocoa class="NSCreateCommand"/>
+      <access-group identifier="*"/>
+      <parameter name="new" code="kocl" type="type" description="The kind of object to create.">
+        <cocoa key="ObjectClass"/>
+      </parameter>
+      <parameter name="with properties" code="prdt" type="record" optional="yes" description="Its starting property values.">
+        <cocoa key="KeyDictionary"/>
+      </parameter>
+      <result type="specifier" description="The new object."/>
+    </command>
+
+    <command name="count" code="corecnte" description="Count the elements of a class in an object.">
+      <cocoa class="NSCountCommand"/>
+      <access-group identifier="*"/>
+      <direct-parameter type="specifier" description="The object whose elements are counted."/>
+      <parameter name="each" code="kocl" type="type" optional="yes" description="The class of elements to count.">
+        <cocoa key="ObjectClass"/>
+      </parameter>
+      <result type="integer" description="How many there are."/>
+    </command>
+
+    <class name="application" code="capp" description="Kite.">
+      <cocoa class="NSApplication"/>
+      <element type="window" description="Kite's browser windows, front to back.">
+        <cocoa key="appleScriptWindows"/>
+      </element>
+      <property name="name" code="pnam" type="text" access="r" description="The application's name."/>
+      <property name="frontmost" code="pisf" type="boolean" access="r" description="Whether Kite is the active application.">
+        <cocoa key="isActive"/>
+      </property>
+      <property name="version" code="vers" type="text" access="r" description="Kite's version."/>
+      <responds-to command="quit">
+        <cocoa method="handleQuitScriptCommand:"/>
+      </responds-to>
+      <element type="tab" access="w" description="Write only: making a tab here opens it in a Little Kite window.">
+        <cocoa key="appleScriptTabs"/>
+      </element>
+    </class>
+
+    <command name="close" code="coreclos" description="Close a window or tab.">
+      <direct-parameter type="specifier" description="What to close."/>
+    </command>
+
+    <class name="window" code="WiND" plural="windows" description="A browser window.">
+      <cocoa class="KiteScriptWindow"/>
+      <element type="tab" access="rw" description="The window's tabs: favorites, then the current space's pinned and unpinned tabs.">
+        <cocoa key="appleScriptTabs"/>
+      </element>
+      <element type="space" access="r" description="The spaces this window can show.">
+        <cocoa key="appleScriptSpaces"/>
+      </element>
+      <property name="id" code="ID  " type="text" access="r" description="The window's unique identifier.">
+        <cocoa key="uniqueID"/>
+      </property>
+      <property name="name" code="pnam" type="text" access="r" description="The window's title.">
+        <cocoa key="title"/>
+      </property>
+      <property name="index" code="pidx" type="integer" description="The window's position, front to back.">
+        <cocoa key="orderedIndex"/>
+      </property>
+      <property name="closeable" code="hclb" type="boolean" access="r" description="Whether the window has a close button.">
+        <cocoa key="hasCloseBox"/>
+      </property>
+      <property name="minimizable" code="ismn" type="boolean" access="r" description="Whether the window can be minimized.">
+        <cocoa key="isMiniaturizable"/>
+      </property>
+      <property name="minimized" code="pmnd" type="boolean" description="Whether the window is minimized.">
+        <cocoa key="isMiniaturized"/>
+      </property>
+      <property name="resizable" code="prsz" type="boolean" access="r" description="Whether the window can be resized.">
+        <cocoa key="isResizable"/>
+      </property>
+      <property name="visible" code="pvis" type="boolean" description="Whether the window is on screen.">
+        <cocoa key="isVisible"/>
+      </property>
+      <property name="zoomable" code="iszm" type="boolean" access="r" description="Whether the window can be zoomed.">
+        <cocoa key="isZoomable"/>
+      </property>
+      <property name="zoomed" code="pzum" type="boolean" description="Whether the window is zoomed.">
+        <cocoa key="isZoomed"/>
+      </property>
+      <property name="active tab" code="acTa" type="tab" access="r" description="The selected tab.">
+        <cocoa key="activeTab"/>
+      </property>
+      <property name="active space" code="acSp" type="space" access="r" description="The space the window shows.">
+        <cocoa key="activeSpace"/>
+      </property>
+      <property name="incognito" code="inco" type="boolean" description="Whether it's an incognito window. Set only when making the window.">
+        <cocoa key="isIncognito"/>
+      </property>
+      <property name="mode" code="mode" type="text" description="'normal' or 'incognito'. Set only when making the window.">
+        <cocoa key="mode"/>
+      </property>
+      <responds-to command="close">
+        <cocoa method="handleCloseScriptCommand:"/>
+      </responds-to>
+    </class>
+
+    <command name="select" code="CrSelect" description="Select a tab.">
+      <direct-parameter type="specifier" description="The tab."/>
+    </command>
+
+    <command name="go back" code="CrSuBack" description="Go back, if the tab can.">
+      <direct-parameter type="specifier" description="The tab."/>
+    </command>
+
+    <command name="go forward" code="CrSuFwd " description="Go forward, if the tab can.">
+      <direct-parameter type="specifier" description="The tab."/>
+    </command>
+
+    <command name="reload" code="CrSuRlod" description="Reload a tab.">
+      <direct-parameter type="specifier" description="The tab."/>
+    </command>
+
+    <command name="stop" code="CrSustop" description="Stop a tab loading.">
+      <direct-parameter type="specifier" description="The tab."/>
+    </command>
+
+    <command name="execute" code="CrSuExJa" description="Run JavaScript in a tab. Needs View › Developer › Allow JavaScript from Apple Events.">
+      <direct-parameter type="specifier" description="The tab."/>
+      <parameter name="javascript" code="JvSc" type="text" description="The JavaScript to run.">
+        <cocoa key="javascript"/>
+      </parameter>
+      <result type="text"/>
+    </command>
+
+    <class name="tab" code="tAbB" plural="tabs" description="A tab.">
+      <cocoa class="KiteScriptTab"/>
+      <property name="id" code="ID  " type="text" access="r" description="The tab's unique identifier.">
+        <cocoa key="uniqueID"/>
+      </property>
+      <property name="title" code="pnam" type="text" access="r" description="The tab's title.">
+        <cocoa key="title"/>
+      </property>
+      <property name="URL" code="URL " type="text" access="rw" description="The tab's address. Setting it loads the page.">
+        <cocoa key="URL"/>
+      </property>
+      <property name="loading" code="ldng" type="boolean" access="r" description="Whether the tab is loading.">
+        <cocoa key="loading"/>
+      </property>
+      <property name="location" code="loca" type="text" access="r" description="Where the tab is in the sidebar: 'topApp' (a favorite), 'pinned' or 'unpinned'.">
+        <cocoa key="location"/>
+      </property>
+      <responds-to command="select">
+        <cocoa method="handleSelectScriptCommand:"/>
+      </responds-to>
+      <responds-to command="go back">
+        <cocoa method="handleGoBackScriptCommand:"/>
+      </responds-to>
+      <responds-to command="go forward">
+        <cocoa method="handleGoForwardScriptCommand:"/>
+      </responds-to>
+      <responds-to command="reload">
+        <cocoa method="handleReloadScriptCommand:"/>
+      </responds-to>
+      <responds-to command="stop">
+        <cocoa method="handleStopScriptCommand:"/>
+      </responds-to>
+      <responds-to command="execute">
+        <cocoa method="handleExecuteScriptCommand:"/>
+      </responds-to>
+      <responds-to command="close">
+        <cocoa method="handleCloseScriptCommand:"/>
+      </responds-to>
+    </class>
+
+    <class name="space" code="sPaC" plural="spaces" description="A space.">
+      <cocoa class="KiteScriptSpace"/>
+      <property name="id" code="ID  " type="text" access="r" description="The space's unique identifier.">
+        <cocoa key="uniqueID"/>
+      </property>
+      <property name="title" code="pnam" type="text" access="r" description="The space's name.">
+        <cocoa key="title"/>
+      </property>
+      <element type="tab" access="r" description="The space's pinned and unpinned tabs.">
+        <cocoa key="appleScriptTabs"/>
+      </element>
+    </class>
+  </suite>
+</dictionary>

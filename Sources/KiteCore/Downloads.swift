@@ -127,6 +127,14 @@ public struct DownloadList: Codable, Equatable, Sendable {
         return (item, true)
     }
 
+    /// The file was renamed or moved on disk. False when the item isn't listed.
+    @discardableResult
+    public mutating func setPath(_ path: String, for id: UUID) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return false }
+        items[index].path = path
+        return true
+    }
+
     public mutating func remove(_ id: UUID) {
         items.removeAll { $0.id == id }
     }

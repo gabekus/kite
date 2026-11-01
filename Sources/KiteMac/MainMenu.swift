@@ -94,10 +94,16 @@ enum MainMenu {
             // Until there's a Settings window.
             item("Open Links from Other Apps in Little Kite", #selector(AppDelegate.toggleLittleKiteLinks(_:)), toTarget: false),
             item("Air Traffic Control…", #selector(AppDelegate.showAirTrafficControl(_:)), toTarget: false, id: "openAirTrafficControl"),
+            // Arc's "Show full URL when Toolbar is enabled" (toolbarShowFullURLsEnabledPreference), off as in Gabe's Arc.
+            item("Show Full URL in Toolbar", #selector(AppDelegate.toggleToolbarFullURLs(_:)), toTarget: false, id: "toggleToolbarFullURLs"),
             // Arc Max's "5-Second Previews" (hoverCardsEnabled), off by default as in Arc.
             item("Link Previews (Hold ⇧ over a Link)", #selector(AppDelegate.toggleLinkPreviews(_:)), toTarget: false),
             // Arc: Settings → "Play Arc sound effects" (playUserInterfaceSoundsDisabled), on by default.
             item("Play Kite Sound Effects", #selector(AppDelegate.toggleSoundEffects(_:)), toTarget: false),
+            // Arc Max's Tidy Tabs (tidyTabsEnabled), on by default as in Gabe's Arc.
+            item("Tidy Tabs", #selector(AppDelegate.toggleTidyTabs(_:)), toTarget: false),
+            // Arc Max's Tidy Downloads (renameDownloadsEnabled), on as in Gabe's Arc.
+            item("Tidy Downloads (Rename with Claude)", #selector(AppDelegate.toggleTidyDownloads(_:)), toTarget: false),
             // Arc Max's "Ask on Page" (askOnPageEnabled), off by default as in Arc.
             item("Ask on Page (⌘F)", #selector(AppDelegate.toggleAskOnPage(_:)), toTarget: false),
             // Arc Max's Tidy Tab Titles (renamePinnedTabsEnabled), on as in Gabe's Arc.
@@ -255,6 +261,12 @@ enum MainMenu {
             submenuItem("Developer", [
                 item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option], id: "viewSource"),
                 item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option], id: "developerTools"),
+                // Both open DevTools for now; picking the element or panel needs the DevTools frontend.
+                item("Inspect Elements", #selector(BrowserWindowController.showDevTools(_:)), "c", [.command, .option], id: "inspectElements"),
+                item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option], id: "javaScriptConsole"),
+                // Arc 1.171: after Network Inspector, no shortcut and no identifier in its MainMenu.nib.
+                // Lets AppleScript's `execute` run JavaScript in tabs; off by default.
+                item("Allow JavaScript from Apple Events", #selector(AppDelegate.toggleJavaScriptFromAppleEvents(_:)), toTarget: false),
                 item("Inspect Elements", #selector(BrowserWindowController.inspectElements(_:)), "c", [.command, .option], id: "inspectElements"),
                 item("JavaScript Console", #selector(BrowserWindowController.showJavaScriptConsole(_:)), "j", [.command, .option], id: "javaScriptConsole"),
                 item("Network Inspector", #selector(BrowserWindowController.showNetworkInspector(_:)), id: "networkInspector"),

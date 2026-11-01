@@ -38,6 +38,8 @@ final class ToastView: NSView {
     private let actionBackground = NSView()
     private let actionButton = NSButton()
     private var action: (() -> Void)?
+    /// With an undo handler the share button is Arc's Undo accessory ("Download renamed!").
+    private var undo: (() -> Void)?
     private var hideTask: Task<Void, Never>?
 
     init() {
@@ -136,14 +138,19 @@ final class ToastView: NSView {
         return hit === shareButton || hit === actionButton ? hit : nil
     }
 
-    /// Shows `message`; with `shareURL`, Arc's share button sits on the right, or with `action`
-    /// a text button (title, handler) does.
-    func show(_ message: String, shareURL: URL? = nil, action: (title: String, run: () -> Void)? = nil,
-              for duration: Duration = Metrics.duration) {
+    /// Shows `message`; with `shareURL`, Arc's share button sits on the right, with `undo` the same
+    /// button is Arc's Undo accessory (arrow.uturn.backward), or with `action` a text button
+    /// (title, handler) does.
+    func show(_ message: String, shareURL: URL? = nil, undo: (() -> Void)? = nil,
+              action: (title: String, run: () -> Void)? = nil, for duration: Duration = Metrics.duration) {
         label.stringValue = message
-        self.shareURL = action == nil ? shareURL : nil
+        self.shareURL = action == nil && undo == nil ? shareURL : nil
+        self.undo = action == nil ? undo : nil
         self.action = action?.run
-        shareBackground.isHidden = self.shareURL == nil
+        shareButton.image = self.undo != nil
+            ? NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "Undo")
+            : NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: "Share")
+        shareBackground.isHidden = self.shareURL == nil && self.undo == nil
         actionBackground.isHidden = action == nil
         actionButton.title = action?.title ?? ""
         let buttonWidth = action == nil ? Metrics.buttonSize.width : actionButton.intrinsicContentSize.width + 18
@@ -169,6 +176,10 @@ final class ToastView: NSView {
     }
 
     @objc private func share() {
+        if let undo {
+            self.undo = nil
+            return undo()
+        }
         guard let shareURL else { return }
         NSSharingServicePicker(items: [shareURL]).show(relativeTo: shareBackground.bounds, of: shareBackground, preferredEdge: .minY)
     }

@@ -82,6 +82,10 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public var developerModeEnabledForHosts: Set<String>
     /// What the reload button does on a Developer Mode site, by Arc's `devModeReloadState`.
     public var devModeReloadState: DeveloperTabReloadSetting
+    /// View › Developer › Allow JavaScript from Apple Events: whether AppleScript's `execute`
+    /// may run JavaScript in a tab. Off by default, as Arc's (Chromium's
+    /// `browser.allow_javascript_apple_events`, kept per profile).
+    public var allowsJavaScriptFromAppleEvents: Bool
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -106,6 +110,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.spacesWithCollapsedPinnedSections = []
         self.developerModeEnabledForHosts = []
         self.devModeReloadState = .reload
+        self.allowsJavaScriptFromAppleEvents = false
         seedDefaultSiteSearches()
     }
 
@@ -114,7 +119,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         case spaces, favorites, selectedSpaceID, recentlyClosed, archived, searchEngine, darkPages, darkPageHosts
         case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter, showsToolbar
         case warnsBeforeQuitting, spacesWithCollapsedPinnedSections
-        case developerModeEnabledForHosts, devModeReloadState
+        case developerModeEnabledForHosts, devModeReloadState, allowsJavaScriptFromAppleEvents
     }
 
     public init(from decoder: Decoder) throws {
@@ -143,6 +148,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         spacesWithCollapsedPinnedSections = try c.decodeIfPresent(Set<UUID>.self, forKey: .spacesWithCollapsedPinnedSections) ?? []
         developerModeEnabledForHosts = try c.decodeIfPresent(Set<String>.self, forKey: .developerModeEnabledForHosts) ?? []
         devModeReloadState = (try? c.decodeIfPresent(DeveloperTabReloadSetting.self, forKey: .devModeReloadState)) ?? .reload
+        allowsJavaScriptFromAppleEvents = try c.decodeIfPresent(Bool.self, forKey: .allowsJavaScriptFromAppleEvents) ?? false
     }
 
     // MARK: Dark pages

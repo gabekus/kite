@@ -52,11 +52,13 @@ final class BrowserWindows {
     }
 
     /// ⌘N: a normal window on the front window's space, with the command bar open for its first page.
-    func openNewWindow() {
+    @discardableResult
+    func openNewWindow() -> BrowserWindowController {
         let front = frontStore()
         let state = (front ?? main).state.newWindowState(on: (front ?? main).state.selectedSpaceID)
         let controller = makeNormal(state, frame: nil)
         controller.newTab(nil)
+        return controller
     }
 
     /// ⌃⌘N: a window with its own sidebar, outside the spaces, opening on the command bar.
