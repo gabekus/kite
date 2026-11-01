@@ -92,6 +92,21 @@ final class WebKitEngine: WebEngine {
         }
         return page
     }
+
+    /// WebKit keeps no form data or per-site settings Kite can reach, and has no hosted apps.
+    var deletableBrowsingData: [BrowsingDataType] { [.history, .siteData, .cache, .downloads] }
+
+    func deleteBrowsingData(_ types: Set<BrowsingDataType>, since: Date?, completion: @escaping () -> Void) {
+        var kinds = Set<String>()
+        if types.contains(.siteData) {
+            kinds.formUnion(WKWebsiteDataStore.allWebsiteDataTypes().subtracting(Self.cacheTypes))
+        }
+        if types.contains(.cache) { kinds.formUnion(Self.cacheTypes) }
+        guard !kinds.isEmpty else { return completion() }
+        configuration.websiteDataStore.removeData(ofTypes: kinds, modifiedSince: since ?? .distantPast, completionHandler: completion)
+    }
+
+    private static let cacheTypes: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache]
 }
 
 @MainActor
@@ -198,6 +213,10 @@ final class WebKitPage: NSObject, WebPage {
     // WKWebView keeps no per-site permissions Kite can read or set.
     func sitePermission(_ permission: SitePermission, for url: URL) -> SitePermissionValue? { nil }
     func setSitePermission(_ permission: SitePermission, _ value: SitePermissionValue, for url: URL) {}
+    func defaultSitePermission(_ permission: SitePermission) -> SitePermissionValue? { nil }
+    func setDefaultSitePermission(_ permission: SitePermission, _ value: SitePermissionValue) {}
+    func preference(_ name: String) -> Any? { nil }
+    func setPreference(_ name: String, _ value: Any?) -> Bool { false }
 
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
         let configuration = WKFindConfiguration()

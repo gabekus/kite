@@ -12,6 +12,10 @@ public enum InternalPage: String, CaseIterable, Sendable {
     /// Chromium's site details page there (`arc://settings/content/siteDetails?site=<URL>`);
     /// Kite draws its own, as it does for History. `kite://site-settings?site=<origin>`.
     case siteSettings = "site-settings"
+    /// Profile settings › Your Data and Settings: Chromium's settings pages that Arc opens there
+    /// (`arc://settings/privacy`, `…/clearBrowserData`, `…/content/notifications`), drawn by
+    /// Kite. The path picks the page (`SettingsPage`).
+    case settings
 
     public static let scheme = "kite"
 
@@ -28,6 +32,7 @@ public enum InternalPage: String, CaseIterable, Sendable {
         case .history: "History"
         case .archive: "Archive"
         case .siteSettings: "Site Settings"
+        case .settings: "Settings"
         }
     }
 

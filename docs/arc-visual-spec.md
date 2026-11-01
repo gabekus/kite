@@ -2757,3 +2757,43 @@ Read from Arc's compiled `Base.lproj/MainMenu.nib` (control connectors: action, 
   "We talk to your search engine to help us suggest results." privacy banner aren't copied.
 - Not verified: the pop-up's open menu (modal), Other… and Ask every time live (they'd open panels over Gabe's
   work), and the Chromium engine (the test build runs WebKit).
+
+
+## Profile settings › Your Data and Settings → `SettingsPage`, `BrowsingDataType`, `BrowsingDataPeriod`, `PermissionException` (KiteCore), `SettingsPagesView.swift`, `AppDelegate+ProfileData` (Arc 1.171 binary, Arc's Chromium resources, 1 Nov 2026)
+
+What each row opens (binary, not observed live: Arc's Settings window wasn't pressed):
+- `FUN_10052c248` (an `ADK.ChromiumBrowser` method, so per profile) switches over a page enum whose case names
+  are in arc-strings.txt line 151566ff (`siteSettings, settings, searchEngines, passwords, privacy, notifications,
+  clearBrowserData, creditCards, …`) and appends one path each to the browser's scheme prefix
+  (arc.s 1353121–1353481): `settings/privacy`, `password-manager/passwords`, `settings/payments`,
+  `settings/content/notifications`, `settings/clearBrowserData` (strings 63377–63380). So the rows open
+  Chromium's own pages (arc://settings/…) for the profile. That they open as a new tab is inferred
+  (Arc's other `arc://settings/…` openers, e.g. All Site Settings…, open tabs); unverified.
+- Arc 1.171 runs Chromium 156.0.8078 (ArcCore CFBundleVersion 8078.74), the same as Kite's CEF 156.0.8078.17.
+  The pages' layout and wording below come from Arc's own copy: ArcCore.framework/Resources/en.lproj/locale.pak
+  (ids 6458–6489, 6604, 6808–6814, 7034–7075) and the settings WebUI bundle in resources.pak.
+- Privacy and security (`settings-privacy-page`): Delete browsing data ("Delete history, cookies, cache, and
+  more") opening the dialog (route clearBrowserData; closing goes back to privacy and shows a 5 s toast), Privacy
+  Guide, Third-party cookies, Security, Site settings ("Control what information websites can use and what content
+  they can show you"). Kite: the first and last.
+- Delete browsing data (`settings-clear-browsing-data-dialog`): title "Delete browsing data"; time chips from
+  [Last 15 min, Last hour, Last 24 hours, Last 7 days, Last 4 weeks, All time], at most 4 shown (the first 3, then
+  the selected one, else the 4th), the rest under "More ▾"; default Last hour (`browser.clear_data.time_period`, Chromium's
+  TimePeriod numbers). Checkboxes in order Browsing history, Cookies and other site data, Cached images and files,
+  Download history, Autofill form data, Site settings, Hosted app data; shown: the default three plus any whose
+  `browser.clear_data.*` pref is on, the rest behind "Show more ⌄". Buttons Cancel and, when not signed in to
+  Google, "Delete from this device" (disabled with nothing checked); prefs are saved on delete. Toast: "$1 deleted"
+  with the long period name, "Deleted" for all time.
+- Site settings › <permission>: "Default behavior" + "Sites automatically follow this setting when you visit
+  them" (notifications add a sentence), radio "Sites can ask to …" / "Don't allow sites to …"; "Customized
+  behaviors" with "Not allowed to …" and "Allowed to …" lists, "No sites added" when empty.
+
+Kite: kite://settings/{privacy, clearBrowserData, content, content/<camera|microphone|location|notifications>},
+drawn natively (Kite's tabs are Alloy-style and can't host chrome://settings), in the tab's profile. Chromium:
+dialog choices in the same prefs; deletion through Kite's helper extension (`chrome.browsingData.remove`, since
+the period start; hosted app data = protectedWeb storage) plus Kite's history.json and downloads list; Site
+settings removes the four permissions' content-settings exceptions changed in the range (their `last_modified`);
+defaults via CEF content settings with empty URLs. WebKit: `WKWebsiteDataStore.removeData(modifiedSince:)` for
+site data and cache, Kite's history and downloads; no permission pages. Passwords / Credit Cards: Kite's Chromium
+tabs have no Chrome password manager or card autofill, so both rows open the password manager's popup (disabled
+without one, and on WebKit).

@@ -69,6 +69,16 @@ final class ChromiumEngine: WebEngine {
         }
         KCRuntime.setAdblockEnabled(adblocker.isEnabled, allowedHosts: adblocker.allowedHosts)
     }
+
+    var deletableBrowsingData: [BrowsingDataType] { BrowsingDataType.allCases }
+
+    /// Chromium's own remover, through Kite's helper extension (chrome.browsingData). Kite's
+    /// history and downloads list are Kite's, deleted by the caller; this clears Chromium's too.
+    func deleteBrowsingData(_ types: Set<BrowsingDataType>, since: Date?, completion: @escaping () -> Void) {
+        let engineTypes = types.subtracting([.siteSettings])
+        guard !engineTypes.isEmpty, profileDirectory != nil else { return completion() }
+        ExtensionsModel.shared(engine: self).deleteBrowsingData(engineTypes, since: since, completion: completion)
+    }
 }
 
 @MainActor
@@ -288,6 +298,27 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         default: .ask
         }
     }
+
+    func defaultSitePermission(_ permission: SitePermission) -> SitePermissionValue? {
+        switch browser.defaultSitePermission(Self.bridged(permission)) {
+        case .allow: .allow
+        case .block: .block
+        default: .ask
+        }
+    }
+
+    func setDefaultSitePermission(_ permission: SitePermission, _ value: SitePermissionValue) {
+        let bridged: KCSitePermissionValue = switch value {
+        case .allow: .allow
+        case .block: .block
+        case .ask: .ask
+        }
+        browser.setDefaultSitePermission(Self.bridged(permission), value: bridged)
+    }
+
+    func preference(_ name: String) -> Any? { browser.preferenceNamed(name) }
+
+    func setPreference(_ name: String, _ value: Any?) -> Bool { browser.setPreferenceNamed(name, value: value) }
 
     func setSitePermission(_ permission: SitePermission, _ value: SitePermissionValue, for url: URL) {
         let bridged: KCSitePermissionValue = switch value {
