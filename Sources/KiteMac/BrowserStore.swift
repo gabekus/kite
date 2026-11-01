@@ -65,6 +65,8 @@ final class BrowserStore {
     private(set) var renamingTabID: UUID?
     /// The folder whose name is being edited in place in the sidebar.
     private(set) var renamingFolderID: UUID?
+    /// The live folder showing its intro popover in this window.
+    var liveFolderIntroID: UUID?
     private(set) var isSidebarVisible = true
     private(set) var revealRequest: RevealRequest?
     /// macOS light/dark, which dark pages follow in `.matchSystem`.
@@ -334,8 +336,10 @@ final class BrowserStore {
             recordedURLs[id] = url
             history(forTab: id)?.recordVisit(url, title: "")
         }
-        guard state.tab(id)?.url != url else { return }
+        let previous = state.tab(id)?.url
+        guard previous != url else { return }
         mutate { $0.update(tab: id) { $0.url = url } }
+        LiveFoldersController.shared?.tabURLChanged(id, from: previous, to: url, in: self)
     }
 
     private func showsInternalPage(_ id: UUID) -> Bool {

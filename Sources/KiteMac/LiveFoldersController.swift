@@ -66,6 +66,19 @@ final class LiveFoldersController {
 
     func isRefreshing(_ id: UUID) -> Bool { fetches[id] != nil }
 
+    /// A tab's page changed in `window` (any normal window's store). A pull request the user just made
+    /// or reviewed goes into the space's Pull Requests folder, made for it if need be, as in Arc; a new
+    /// folder shows its intro popover the first time, 0.1 s later (Arc's presenter delay).
+    func tabURLChanged(_ id: UUID, from old: URL?, to new: URL, in window: BrowserStore) {
+        guard window === store || window.link != nil, BrowserState.isPullRequestCreatedOrReviewed(from: old, to: new),
+              let filed = store.mutate({ $0.filePullRequest(tab: id) }) else { return }
+        // Not from inside the engine's navigation callback: a page made there never loads.
+        DispatchQueue.main.async { self.refresh(filed.folder, force: true) }
+        guard filed.created, !store.state.hasSeenLiveFolderIntro else { return }
+        store.mutate { $0.hasSeenLiveFolderIntro = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { window.liveFolderIntroID = filed.folder }
+    }
+
     func refreshAll() {
         for (_, folder) in store.state.liveFolders { refresh(folder.id, force: false) }
     }
@@ -146,7 +159,7 @@ final class GitHubPullRequestFetch {
     private var finished = false
 
     /// How long one results page gets to show its list (GitHub renders some of it after load).
-    private static let pageTimeout: TimeInterval = 20
+    private static let pageTimeout: TimeInterval = 12
     /// A page with no pull request links after this long has none.
     private static let emptyAfter: TimeInterval = 6
 
@@ -180,7 +193,13 @@ final class GitHubPullRequestFetch {
         tearDown()
         guard !finished else { return }
         guard !queries.isEmpty else { return finish(.success(Self.merge(results))) }
-        let url = Self.searchURL(queries.removeFirst())
+        load(Self.searchURL(queries.removeFirst()), retrying: true)
+    }
+
+    /// Loads one results page and reads it. A page whose script never answers (now and then a hidden
+    /// page never starts) gets one fresh try.
+    private func load(_ url: URL, retrying: Bool) {
+        tearDown()
         let page = engine.makePage(url: url, restoring: nil)
         if let host {
             // Window-sized: GitHub only renders the rows that fit, so a 1×1 page lists two.
@@ -207,9 +226,16 @@ final class GitHubPullRequestFetch {
                         return self.next()
                     }
                     lastCount = count
-                    if elapsed > Self.pageTimeout { self.finish(.failure(.unreachable)) }
+                    if elapsed > Self.pageTimeout {
+                        NSLog("Kite: live folder page never settled (ready: \(report.ready), \(count) pull requests)")
+                        self.finish(.failure(.unreachable))
+                    }
                 }
-                if Date().timeIntervalSince(started) > Self.pageTimeout + 2 { self.finish(.failure(.unreachable)) }
+                if Date().timeIntervalSince(started) > Self.pageTimeout + 2 {
+                    NSLog("Kite: live folder page didn't answer\(retrying ? ", trying again" : "")")
+                    if retrying { return self.load(url, retrying: false) }
+                    self.finish(.failure(.unreachable))
+                }
             }
         }
     }

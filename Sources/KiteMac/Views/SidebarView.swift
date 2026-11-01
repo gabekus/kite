@@ -52,6 +52,8 @@ struct SidebarActions {
 /// the space's pinned items (with folders), new tab and today's tabs, spaces.
 struct SidebarView: View {
     let store: BrowserStore
+    /// Live folder rows show GitHub's mark in the sidebar's appearance.
+    @Environment(\.colorScheme) private var colorScheme
     let actions: SidebarActions
     /// False on WebKit, which can't force pages dark.
     let supportsDarkPages: Bool
@@ -276,7 +278,9 @@ struct SidebarView: View {
                         store.endRenamingFolder()
                     },
                     onCancelRename: { store.endRenamingFolder() },
-                    onDelete: { actions.deleteFolder(folder.id) })
+                    onDelete: { actions.deleteFolder(folder.id) },
+                    showsIntro: store.liveFolderIntroID == folder.id,
+                    onDismissIntro: { store.liveFolderIntroID = nil })
                     .modifier(SidebarDragSource(
                         store: store,
                         row: .init(id: folder.id, kind: .folder(expanded: folder.isExpanded), space: space.id, pinned: true,
@@ -356,12 +360,9 @@ struct SidebarView: View {
     }
 
     private func row(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int = 0, space: UUID, parent: UUID?) -> some View {
-        SplitDropPreview(side: drag.splitSide(for: tab.id)) { tabRow(tab, pinned: pinned, selected: selected, depth: depth) }
-        // A live folder's new pull request, until it's opened.
-        .overlay(alignment: .leading) {
-            if let parent, store.state.folder(matching: parent.uuidString)?.folder.isUnread(tab) == true {
-                LiveUnreadDot().padding(.leading, indent(depth) + M.iconInset - 9)
-            }
+        let live = parent.flatMap { store.state.folder(matching: $0.uuidString)?.folder }.flatMap { $0.live == nil ? nil : $0 }
+        return SplitDropPreview(side: drag.splitSide(for: tab.id)) {
+            tabRow(tab, pinned: pinned, selected: selected, depth: depth, liveFolder: live)
         }
         .modifier(SidebarDragSource(
             store: store,
@@ -369,7 +370,7 @@ struct SidebarView: View {
             onDrop: actions.didDrop) { DragGhost(icon: .tabs([tab]), title: tab.displayTitle, depth: depth) })
     }
 
-    private func tabRow(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int) -> some View {
+    private func tabRow(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int, liveFolder: TabFolder? = nil) -> some View {
         TabRow(
             tab: tab,
             isPinned: pinned,
@@ -394,7 +395,9 @@ struct SidebarView: View {
             onCancelRename: { store.endRenamingTab() },
             isAudible: store.pages[tab.id]?.isAudible ?? false,
             isMuted: store.pages[tab.id]?.isAudioMuted ?? false,
-            onToggleMute: { actions.toggleMute(tab.id) }
+            onToggleMute: { actions.toggleMute(tab.id) },
+            isUnread: liveFolder?.isUnread(tab) ?? false,
+            icon: liveFolder.flatMap { _ in LiveFolderIcons.pullRequest(tab, dark: colorScheme == .dark) }
         )
     }
 }
@@ -1176,13 +1179,16 @@ private struct FolderRow: View {
     let onCommitRename: (String) -> Void
     let onCancelRename: () -> Void
     let onDelete: () -> Void
+    /// A live folder's intro popover (Arc's LiveItemIntroPopover), to the folder's right.
+    var showsIntro = false
+    var onDismissIntro: () -> Void = {}
     @State private var hovering = false
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
         HStack(spacing: M.iconTextGap) {
-            Image(systemName: folder.live != nil ? "arrow.triangle.pull" : folder.isExpanded ? "folder" : "folder.fill")
+            Image(systemName: folder.isExpanded ? "folder" : "folder.fill")
                 .font(.system(size: 14))
                 .frame(width: M.iconSize, height: M.iconSize)
                 .opacity(0.75)
@@ -1236,6 +1242,9 @@ private struct FolderRow: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityValue(folder.isExpanded ? "Expanded" : "Collapsed")
         .accessibilityAction { onToggle() }
+        .popover(isPresented: Binding(get: { showsIntro }, set: { if !$0 { onDismissIntro() } }), arrowEdge: .trailing) {
+            if let live = folder.live { LiveFolderIntro(source: live.source) }
+        }
     }
 }
 
@@ -1304,6 +1313,10 @@ private struct TabRow: View {
     var isAudible = false
     var isMuted = false
     var onToggleMute: () -> Void = {}
+    /// A live folder's pull request that a refresh added and the user hasn't opened.
+    var isUnread = false
+    /// Shown instead of the page's favicon (a live folder's pull request).
+    var icon: URL?
     @State private var hovering = false
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
@@ -1312,7 +1325,7 @@ private struct TabRow: View {
 
     var body: some View {
         HStack(spacing: M.iconTextGap) {
-            FaviconView(tab: tab, size: M.iconSize)
+            FaviconView(page: tab.url, icon: icon ?? tab.faviconURL, size: M.iconSize)
             if showsAudio {
                 TabAudioButtonView(isMuted: isMuted, action: onToggleMute)
                     // Arc: 2pt after the button, not the row's favicon-to-title gap.
@@ -1340,6 +1353,7 @@ private struct TabRow: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 0)
+            if isUnread && !hovering { LiveUnreadDot() }
             if hovering && canReset && !isRenaming {
                 // Arc's tooltip; its icon and placement are unverified (see arc-visual-spec.md).
                 Button(action: onReset) {

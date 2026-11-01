@@ -2481,5 +2481,20 @@ doing it: a live folder needs a signed-in GitHub session, which an incognito win
 - **Delete alert.** "Delete your %@ Live Folder?" / "You can restore this folder at any time by right-clicking the
   sidebar." The folder's title is "Pull Requests".
 - **Errors.** "Not signed in to GitHub", "We're having trouble connecting to GitHub…".
-- **Unverified, Kite's choice:** the folder icon (Kite: SF Symbol `arrow.triangle.pull`; Arc's own art isn't copied),
-  the unread marker (Kite: a 5pt accent dot left of the favicon), the alert's button titles, and the "Last fetch" date format.
+- **Icons (binary, pass 2).** The folder keeps Arc's ordinary folder glyph. Each pull request row shows the `GithubFavicon`
+  asset instead of the page's favicon (TabCellState follows the row's live item; Bitbucket gets AtlassianIcon): full colour,
+  black in light mode and white in dark. Kite shows GitHub's own site icons (`github.githubassets.com/favicons/favicon.png`,
+  `favicon-dark.png`) the same way, not Arc's asset.
+- **Unread (binary, pass 2).** `SidebarItemUnreadBadgeView`: a 6×6 circle centred in a 24×24 slot after the title, in the
+  row's tint. Kite hides it while the row is hovered, where the close button sits (Arc's hover behaviour is unverified).
+- **Made by a pull request (binary, pass 2).** Creation sources are pullRequestCreated, pullRequestDescriptionEdited,
+  pullRequestReviewSubmitted and spaceContextMenu; `reparentPullRequestToLiveFolder` moves the tab into the folder (a pinned
+  tab or favorite is copied in Arc; Kite leaves those). No confirmation: the folder is made, then the intro popover
+  (an NSPopover to the folder's right, `NSMaxXEdge`, 0.1 s after, closes on a click outside, no buttons; 250×80, padding
+  8/10/7/10, 6pt spacing, 20pt icon, title 14 semibold, description 13 medium at 0.7). Kite reads "made" as a github.com
+  compare page (`…/compare/…`, `…/pull/new/…`) giving way to the pull request, and "reviewed" as a `#pullrequestreview-…`
+  fragment; description edits aren't detected. Deleting the folder or turning it off stops this (Arc's
+  `hasTurnedOffGithubLiveFolder`, kept in Kite's session as `liveFoldersTurnedOff`), and the popover shows once
+  (`hasSeenGithubLiveFolderEducation` → `hasSeenLiveFolderIntro`). Which icon the popover shows is unverified (Kite: folder).
+- **Still unverified (Arc not recorded; Gabe's GitHub Live Folder is off):** the alert's button titles, the "Last fetch"
+  date format, whether viewing (not making) a pull request also files it, and whether the popover times out.

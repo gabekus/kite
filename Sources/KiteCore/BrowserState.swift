@@ -104,6 +104,11 @@ public struct BrowserState: Hashable, Codable, Sendable {
     /// may run JavaScript in a tab. Off by default, as Arc's (Chromium's
     /// `browser.allow_javascript_apple_events`, kept per profile).
     public var allowsJavaScriptFromAppleEvents: Bool
+    /// Live folder sources the user turned off (Arc's `hasTurnedOffGithubLiveFolder`): opening a pull
+    /// request no longer makes a GitHub folder by itself. Adding one from the space menu turns it back on.
+    public var liveFoldersTurnedOff: [LiveFolder.Source]
+    /// Whether the Pull Requests intro popover has shown (Arc's `hasSeenGithubLiveFolderEducation`).
+    public var hasSeenLiveFolderIntro: Bool
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -132,6 +137,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.developerModeEnabledForHosts = []
         self.devModeReloadState = .reload
         self.allowsJavaScriptFromAppleEvents = false
+        self.liveFoldersTurnedOff = []
+        self.hasSeenLiveFolderIntro = false
         seedDefaultSiteSearches()
     }
 
@@ -141,6 +148,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter, showsToolbar
         case warnsBeforeQuitting, spacesWithCollapsedPinnedSections
         case developerModeEnabledForHosts, devModeReloadState, allowsJavaScriptFromAppleEvents
+        case liveFoldersTurnedOff, hasSeenLiveFolderIntro
         case profiles, profileFavorites, retiredProfileDirectories, favoriteSplits
     }
 
@@ -177,6 +185,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
         developerModeEnabledForHosts = try c.decodeIfPresent(Set<String>.self, forKey: .developerModeEnabledForHosts) ?? []
         devModeReloadState = (try? c.decodeIfPresent(DeveloperTabReloadSetting.self, forKey: .devModeReloadState)) ?? .reload
         allowsJavaScriptFromAppleEvents = try c.decodeIfPresent(Bool.self, forKey: .allowsJavaScriptFromAppleEvents) ?? false
+        liveFoldersTurnedOff = try c.decodeIfPresent([LiveFolder.Source].self, forKey: .liveFoldersTurnedOff) ?? []
+        hasSeenLiveFolderIntro = try c.decodeIfPresent(Bool.self, forKey: .hasSeenLiveFolderIntro) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -200,6 +210,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
         try c.encode(developerModeEnabledForHosts, forKey: .developerModeEnabledForHosts)
         try c.encode(devModeReloadState, forKey: .devModeReloadState)
         try c.encode(allowsJavaScriptFromAppleEvents, forKey: .allowsJavaScriptFromAppleEvents)
+        try c.encode(liveFoldersTurnedOff, forKey: .liveFoldersTurnedOff)
+        try c.encode(hasSeenLiveFolderIntro, forKey: .hasSeenLiveFolderIntro)
         if !profiles.isEmpty { try c.encode(profiles, forKey: .profiles) }
         let others = favoritesByProfile.filter { $0.key != Profile.defaultDirectory && !$0.value.isEmpty }
         if !others.isEmpty { try c.encode(others, forKey: .profileFavorites) }

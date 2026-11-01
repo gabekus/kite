@@ -15,6 +15,13 @@ public struct LiveFolder: Hashable, Codable, Sendable {
             }
         }
 
+        /// The intro popover's description (Arc's "Description of what to expect from a Github Live Folder").
+        public var introText: String {
+            switch self {
+            case .github: "Pull requests from you and your team will show up here automatically"
+            }
+        }
+
         /// The folder's title (Arc's "The title for a GitHub automatic live folder").
         public var folderTitle: String {
             switch self {
@@ -161,6 +168,7 @@ extension BrowserState {
     /// its pinned section, or returns the one it has.
     @discardableResult
     public mutating func addLiveFolder(_ source: LiveFolder.Source, inSpace index: Int) -> UUID {
+        liveFoldersTurnedOff.removeAll { $0 == source }
         if let existing = liveFolder(source, inSpace: index) { return existing.id }
         let folder = TabFolder(name: source.folderTitle, live: LiveFolder(source: source))
         spaces[index].pinnedItems.append(.folder(folder))
@@ -170,7 +178,42 @@ extension BrowserState {
     /// Delete Live Folder: the folder and its tabs go without being archived, since the next
     /// refresh would bring them back anyway.
     public mutating func deleteLiveFolder(_ id: UUID) {
+        if let source = liveFolders.first(where: { $0.folder.id == id })?.folder.live?.source,
+           !liveFoldersTurnedOff.contains(source) {
+            liveFoldersTurnedOff.append(source)
+        }
         _ = removeFolder(id)
+    }
+
+    /// Arc files a pull request you just made or reviewed in its space's Pull Requests folder
+    /// (`reparentPullRequestToLiveFolder`; its creation sources are pullRequestCreated and
+    /// pullRequestReviewSubmitted). Making one shows up as GitHub leaving a compare page
+    /// (…/compare/… or …/pull/new/…) for the pull request, and reviewing as a pull request URL whose
+    /// fragment is a review (`#pullrequestreview-…`).
+    public static func isPullRequestCreatedOrReviewed(from old: URL?, to new: URL) -> Bool {
+        guard let pull = LivePullRequest.canonicalURL(new) else { return false }
+        if new.fragment()?.hasPrefix("pullrequestreview-") == true { return true }
+        guard let old, old.host()?.lowercased() == "github.com", LivePullRequest.canonicalURL(old) == nil else { return false }
+        let parts = old.path().split(separator: "/").map(String.init)
+        let repository = pull.path().split(separator: "/").prefix(2).joined(separator: "/")
+        guard parts.count >= 3, parts.prefix(2).joined(separator: "/") == repository else { return false }
+        return parts[2] == "compare" || (parts.count >= 4 && parts[2] == "pull" && parts[3] == "new")
+    }
+
+    /// Files tab `id` (on a pull request) in its space's GitHub live folder, making the folder unless
+    /// the user turned GitHub's off. A tab in Today moves in; a pinned tab or favorite stays where it is.
+    /// Returns the folder and whether it was made, or nil when nothing changed.
+    public mutating func filePullRequest(tab id: UUID) -> (folder: UUID, created: Bool)? {
+        guard !liveFoldersTurnedOff.contains(.github), let location = location(of: id), let s = location.space else { return nil }
+        let existing = liveFolder(.github, inSpace: s)
+        if let existing, existing.items.tabs.contains(where: { $0.id == id }) { return nil }
+        if existing != nil && location.section != .unpinned { return nil }
+        let folder = existing?.id ?? addLiveFolder(.github, inSpace: s)
+        if location.section == .unpinned {
+            moveTab(id, toFolder: folder)
+            spaces[s].pinnedItems.updateFolder(folder) { $0.isExpanded = true }
+        }
+        return (folder, existing == nil)
     }
 
     /// A refresh came back with `items`, newest first. Rows follow the result: new pull requests are

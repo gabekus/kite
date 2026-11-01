@@ -104,4 +104,37 @@ import Testing
         let round = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
         #expect(round.folders(inSpace: 0)[0].live?.source == .github)
     }
+
+    @Test func makingOrReviewingAPullRequest() {
+        func check(_ old: String?, _ new: String) -> Bool {
+            BrowserState.isPullRequestCreatedOrReviewed(from: old.flatMap(URL.init(string:)), to: URL(string: new)!)
+        }
+        #expect(check("https://github.com/a/b/compare/main...topic?expand=1", "https://github.com/a/b/pull/9"))
+        #expect(check("https://github.com/a/b/pull/new/topic", "https://github.com/a/b/pull/9"))
+        #expect(check("https://github.com/a/b/pull/9/files", "https://github.com/a/b/pull/9#pullrequestreview-123"))
+        #expect(!check("https://github.com/a/b/pulls", "https://github.com/a/b/pull/9"))
+        #expect(!check("https://github.com/x/y/compare/main...topic", "https://github.com/a/b/pull/9"))
+        #expect(!check(nil, "https://github.com/a/b/pull/9"))
+    }
+
+    @Test func filingAPullRequestMakesTheFolderOnce() {
+        var state = BrowserState(spaces: [Space(name: "Home", icon: "🏠", theme: Theme.presets[0])])
+        let space = state.spaces[0].id
+        let tab = state.openTab(url: URL(string: "https://github.com/a/b/pull/9"), in: space, select: true)
+        let filed = state.filePullRequest(tab: tab)
+        #expect(filed?.created == true)
+        let folder = state.liveFolder(.github, inSpace: 0)!
+        #expect(folder.id == filed?.folder && folder.items.tabs.map(\.id) == [tab])
+        #expect(state.filePullRequest(tab: tab) == nil)
+
+        // A second one joins the folder; deleting the folder stops it coming back.
+        let other = state.openTab(url: URL(string: "https://github.com/a/b/pull/10"), in: space, select: true)
+        #expect(state.filePullRequest(tab: other)?.created == false)
+        state.deleteLiveFolder(folder.id)
+        #expect(state.liveFoldersTurnedOff == [.github])
+        let third = state.openTab(url: URL(string: "https://github.com/a/b/pull/11"), in: space, select: true)
+        #expect(state.filePullRequest(tab: third) == nil)
+        state.addLiveFolder(.github, inSpace: 0)
+        #expect(state.liveFoldersTurnedOff.isEmpty)
+    }
 }
