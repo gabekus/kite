@@ -984,6 +984,64 @@ title string is inlined, so unknown); the editor's sizes and layout are Kite's (
 leaves out a Boost's JavaScript when it doesn't parse (shown under the editor), since its document-start
 scripts share one source with the ad blocker's.
 
+## Import from Another Browser → `BrowserImport` (KiteCore), `BrowserImportController` (Arc 1.171 menu bar, strings, assets, 1 Nov 2026)
+
+- Menu (menudump, nothing pressed): Arc › Set as Default Browser, separator, **Import from Another Browser…** (no
+  shortcut), Check for Updates…. Kite puts it just before Check for Updates…; the id `importFromAnotherBrowser` moves
+  there from File › Import from Arc… (now `importFromArc`).
+- Dialog (arc-strings.txt ~81440-81455, `ImportMenuFeature/ImportDialog.swift`): title "Import from your old browser",
+  intro "Import everything you need from your old browser to hit the ground running with Arc."; a Safari screen titled
+  "Import from Safari" with "To import Safari browser history, Arc will need Full Disk Access. Feel free to remove
+  access when this step is finished." (~75751) and "After you have given access, you can choose to restart Arc now, or
+  continue and restart later.", and buttons for back, restart, continue, "Continue without restarting" and cancel. The
+  other button labels are deduplicated short strings, so Kite's ("Continue", "Cancel", "Restart Kite", "Open System
+  Settings") are inferred. Arc's Safari screen has a drag-the-app drop target (`AuthFlowDropTarget*`,
+  `SystemPreferencesVentura` assets); Kite opens the Full Disk Access pane instead. Arc also has a profile step ("Which
+  Arc Profile should we import to?") and "Replace existing cookies…"; Kite has no profiles or cookie import, so
+  neither is built.
+- Per-browser lines (~75170): Firefox "history, autocomplete data, and bookmarks", Safari "history, passwords, and
+  bookmarks", Chromium browsers "history, cookies, passwords, autocomplete payment info, and bookmarks". Kite's line
+  names only what it imports: "Kite can import your history and bookmarks from X."
+- Browsers (ARC_ImportFeature.bundle Assets.car names): Brave, Chrome, Edge, Firefox, Opera, Opera GX, Safari,
+  Vivaldi. Kite reads all but Firefox, and lists only those with a profile on the Mac. Arc's order is unverified.
+- Toasts (bytes read from the Arc binary): "Now importing… Sit tight!", "Success! We imported all of your stuff",
+  "Only some of your data imported. Please try again!", "We weren’t able to import… please try again!".
+- Mechanism: Arc runs Chromium's importer through ADK (`ADK/Browser+Import.swift`, categories `history`,
+  `bookmarksAndFavicons`, `autofillFormData`, `notRecentHistory`; "Safari [a-z]+ database is unreadable for the
+  importer"). It probes Full Disk Access with paths such as `/Library/Safari/Bookmarks.plist` (~75165). Kite reads the
+  files itself and treats EPERM/EACCES on Safari's files as "needs Full Disk Access".
+- Where bookmarks land: **inferred.** Arc's onboarding state holds `spaceTitle`, `selectedFavorites`,
+  `importedFavorites` and `bookmarks` together (~166895), and its bookmark screen ("Bookmarks get an upgrade.",
+  `BookmarksSelection`) picks folders from a tree. Kite puts them in a space named after the browser as pinned tabs,
+  folders kept (collapsed); importing again replaces that space after asking.
+- File formats (key names and counts only, read from this Mac; fixtures are made up): Chromium `Bookmarks` and
+  `AccountBookmarks` JSON (`roots.bookmark_bar/other/synced`, nodes `type` url/folder, `name`, `url`, `children`);
+  history is the `urls` table of `History`. Safari `Bookmarks.plist`: top-level lists `BookmarksBar`, `BookmarksMenu`,
+  `com.apple.ReadingList` (left out) and a `History` proxy; leaves have `URLString` and `URIDictionary.title`.
+  `History.db`: `history_items` (`url`, `visit_count`) and `history_visits` (`history_item`, `visit_time` in seconds
+  since 2001, `title`), in WAL mode.
+## Tidy Tab Titles → `TidyTabTitles` (KiteCore), `TidyTabTitlesController` (Arc 1.171 strings and defaults, 1 Nov 2026)
+
+- What and when: Max pane copy (`~/rea-arc/arc-strings.txt` 80509) says tabs are "automatically renamed with tidier,
+  shorter titles when you Pin them". Settings key `renamePinnedTabsEnabled` (64166; toggle
+  `onToggleRenamePinnedTabsEnabled` 69092), feature flag `rename-pinned-tabs-using-ai` (73906), analytics
+  `auto_renamed_pinned_tab` (70870). Gabe's Arc: `renamePinnedTabsEnabled = 1`, `arcMaxAutoOptInEnabled = 1`, so
+  Kite's `tidyTabTitlesEnabled` defaults on; Kite menu › Tidy Tab Titles turns it off (until a Settings window).
+  The search keyword for the setting is "tidy tab titles" (200328).
+- Mechanism: `WindowState+AIRenameTabs.swift`, `AIRenameTabsFeatureState`, `AIRenameTabsAction`, `TabRenameAIError`
+  (44027, 61275). The model is told it is bookmarking a tab and gets the title; rules (61279–61292): drop the site's
+  name unless it's all there is, drop SEO cruft, stay specific, keep proper nouns with context, drop words naming the
+  kind of page, keep subject/verb/object; reply JSON `filtered` (no limit) and `rewritten` (1–3 words), in the user's
+  language. Kite words its own prompt with the same rules and uses `rewritten` (inferred: which field Arc shows was
+  not traced in the disassembly; the 1–3 word one matches "shorter titles").
+- The result is the tab's custom title: Arc's rename path is `updateCustomTitle(for:title:options:)` (82917ff), and
+  "User renamed the tab before the automatic tab name could be generated." (82736) means a manual rename wins.
+  Undoing it is the ordinary Rename (an empty name shows the page's title again). Kite also drops the name if the tab
+  was unpinned before the reply.
+- Not copied: `isAnimatingAiRename` (an animation on the title; not measured), `TidyTitleConfiguration` /
+  `BundledTidyTitles` (per-site title rules from content.arc.net; data not inspected), the feedback report
+  (`submitTidyTabTitleFeedback`, 82961). Model: Arc's provider isn't known; Kite uses Claude haiku, no tools.
+
 ## Instant Links → `InstantLinks` (KiteCore), `InstantLinksController` (Arc 1.171 strings and disassembly, 1 Nov 2026)
 
 - **Key: ⇧⏎.** Arc's Max preferences description is stored XOR-obfuscated with the key "ObfuscatorString"
@@ -1044,6 +1102,35 @@ read only for its function names, nothing copied).
   2pt stroke), the cursor during picking, the shelf's position and look, the candidate slider in
   `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped
   element again while its cell is hovered), and Arc's selector heuristics (Kite has its own).
+
+## Task Manager → `TaskManager` (KiteCore), `TaskManagerWindow` (Arc 1.171 menu bar, strings and ArcCore, 1 Nov 2026)
+
+- Menu (`menudump Help`): Help › Troubleshooting holds Record Trace, Open Task Manager, a separator, Reveal Arc
+  Data, Copy Arc Info. No shortcuts. Open Task Manager was disabled with Arc in the background (not read further).
+- Selectors: `openTaskManager` / `recordTrace` / `cancelTrace` (arc-strings 176564–176566), menu outlets
+  `openTaskManagerMenuItem`, `recordTraceMenuItem`, `cancelTraceMenuItem` (149687–149689), and
+  `$__lazy_storage_$_supportsTaskManager`; ArcCore exports `showTaskManager`.
+- It is Chromium's task manager, not an Arc window: ArcCore (CEF/Chromium 156.0.8078.74) contains
+  `TaskManagerView`, `task_manager_view.h`, `task_manager_search_bar_view.cc`, prefs `task_manager.column_visibility`,
+  `task_manager.category`, `task_manager.end_process_enabled`, and every `IDS_TASK_MANAGER_*_COLUMN`. No
+  `TaskManagerMac` (the old Cocoa one is gone).
+- Its English strings (ArcCore en.lproj/locale.pak): columns "Task", "Memory Footprint", "CPU", "Network",
+  "Process ID" (plus optional ones: Profile, Swapped Memory, Start Time, CPU Time, GPU Memory, JavaScript Memory,
+  Idle Wake Ups, …); buttons "End Process" and "End Task"; refreshed-UI strings "Search", "Search for any process
+  from the list.", "Ends the highlighted task.", "Task(s) ended.", categories "Tabs & extensions", "Browser",
+  "System", "All tasks"; row titles "Tab: $1", "Incognito Tab: $1", "Utility: $1", "GPU Process", "Subframe: $1";
+  "N/A".
+- Kite: CEF only runs Chrome commands (IDC_TASK_MANAGER) for Chrome-style browsers, and Kite's are Alloy style
+  (hosted in its own views), so Kite draws the table itself: Chromium's five default columns, its row titles, the
+  browser then GPU/utility processes then tabs, a process's numbers on its first row only, 1 s refresh, End Task.
+  Memory is the process's physical footprint (proc_pid_rusage, "145,268K"); CPU is % of one core.
+- Process ids: Chromium tabs' renderers report their pid to the browser (KiteHelper's render process handler,
+  `kite.rendererPID`, on each main-frame script context); WebKit tabs use WKWebView's private
+  `_webProcessIdentifier` (guarded). Chromium's GPU and utility processes are Kite's children, named from
+  `--type` / `--utility-sub-type`.
+- Inferred, not observed (Arc's task manager wasn't opened): the button wording ("End Task", the refreshed UI's,
+  over the older "End Process"), the window size, the row order, the utility names, and double-click to show a
+  tab. Network reads N/A: Kite has no per-tab network counter yet.
 
 ## Still unknown
 

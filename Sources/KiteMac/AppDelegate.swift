@@ -37,6 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #endif
 
 
+    /// Every browser window: the first, ⌘N and blank windows, and incognito windows.
+    var browserControllers: [BrowserWindowController] {
+        (windowController.map { [$0] } ?? []) + (windows?.all ?? []) + incognitoControllers
+    }
+
     static var supportDirectory: URL {
         if let override = ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] {
             return URL(fileURLWithPath: override, isDirectory: true)
@@ -130,8 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KCRuntime.extensionDialogAnchor = { [weak self] window in
             MainActor.assumeIsolated {
                 guard let self else { return .zero }
-                let controllers = [self.windowController!] + self.windows.all + self.incognitoControllers
-                return controllers.first { $0.window === window }?.webAreaInWindow ?? .zero
+                return self.browserControllers.first { $0.window === window }?.webAreaInWindow ?? .zero
             }
         }
         #endif
@@ -244,6 +248,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Kite menu → Link Previews: Arc Max's ⇧-hover cards, off until turned on (Arc's `hoverCardsEnabled`).
     @objc func toggleLinkPreviews(_ sender: Any?) {
         UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
+    }
+
+    /// Kite menu → Tidy Tab Titles: Arc Max's AI names for tabs you pin (Arc's `renamePinnedTabsEnabled`).
+    @objc func toggleTidyTabTitles(_ sender: Any?) {
+        UserDefaults.standard.set(!TidyTabTitles.isEnabled(in: .standard), forKey: TidyTabTitles.enabledKey)
     }
 
     /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
@@ -434,6 +443,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleTidyTabTitles(_:)) {
+            item.state = TidyTabTitles.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleLittleKiteLinks(_:)) {
             item.state = LittleKite.opensExternalLinks(in: .standard) ? .on : .off

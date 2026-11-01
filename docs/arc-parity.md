@@ -31,7 +31,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | About | | ✅ | |
 | Settings… | ⌘, | ❌ | Thread: Settings window |
 | Set as Default Browser | | ✅ (opens links from other apps in a new tab) | |
-| Import from Another Browser… | | 🟡 Arc only: spaces, pinned tabs, folders, favorites, themes, split views, archive (latest 500), history, Site Search, shortcut changes, and the settings Kite has (warn before quitting, Little Arc for links, archive interval) | Thread: import (Chrome/Safari later). Not yet: link routing, boosts, easels/notes, extensions, other profiles |
+| Import from Another Browser… | | 🟡 Arc: spaces, pinned tabs, folders, favorites, themes, split views, archive (latest 500), history, Site Search, shortcut changes, and the settings Kite has (warn before quitting, Little Arc for links, archive interval). Kite › Import from Another Browser…: bookmarks (a space per browser, as pinned tabs and folders) and history from Safari (explains Full Disk Access), Chrome, Brave, Edge, Vivaldi, Opera, Opera GX | Thread: import. Not yet: passwords, cookies, autofill, Firefox, other browser profiles, Arc’s bookmark picker; from Arc: link routing, boosts, easels/notes, extensions, other profiles |
 | Check for Updates… | | 🟡 checks GitHub releases, opens the release; no auto-install or sidebar banner yet | Sparkle once releases are signed and notarised |
 | Hide / Hide Others / Show All | ⌘H / ⌥⌘H | ✅ | |
 | Quit, with optional warn-before-quit | ⌘Q | 🟡 "Quit Kite?" with Arc's three buttons; look unmeasured, Kite menu toggle until Settings | B5 |
@@ -157,7 +157,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Arc item | Kite | Plan |
 |---|---|---|
 | Essential Keyboard Shortcuts (cheat sheet) | ✅ Arc's floating 475×458 window: 5 fixed commands with their live shortcuts as blue keycaps; "View All" opens the full list. Split View and Little Arc rows show a shortcut only once remapped or built | |
-| Restore Data, Reveal Data folder, Copy Info, Task Manager, Record Trace | 🟡 Reveal Kite Data, Copy Kite Info | Task Manager later |
+| Restore Data, Reveal Data folder, Copy Info, Task Manager, Record Trace | 🟡 Reveal Kite Data, Copy Kite Info, Open Task Manager (Chromium's default columns, End Task; Network reads N/A) | Task manager search and categories, Network column, extension and spare renderer rows; Record Trace |
 | Getting Started, Contact, Help Center, Export Arc Notes | ❌ | Skip |
 
 ## Features without a menu item
@@ -198,7 +198,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Instant Links | Command bar goes straight to the top result | 🟡 ⇧⏎ on a search: Kite's Claude splits it into Google queries (Arc's V1 schema: title, queries, tab/folder/split), a hidden web view opens each top result; tabs, a split or a folder. Falls back to the input as the query without Claude Code, and to the results page on a captcha | No loading cell in the sidebar (Arc's `InstantLinksCellView`), no V2 typed actions (images, maps, news, counts), no intent suggestion row, no settings toggle |
 | Ask on Page | ⌘F asks AI about the page | ❌ | With Claude in the browser |
 | ChatGPT/AI in command bar | Ask from the command bar | ❌ | With Claude in the browser |
-| Tidy Tab Titles | Pinned tabs get short AI titles | ❌ | With Claude in the browser |
+| Tidy Tab Titles | Pinned tabs get short AI titles | 🟡 pinning a tab (any path) asks Kite's Claude (`claude -p`, haiku, no tools) for a 1–3 word name, set as the tab's custom name; renaming or unpinning first wins; on by default as in Gabe's Arc, Kite menu › Tidy Tab Titles; `TidyTabTitles`, `TidyTabTitlesController` | No title animation (Arc's isAnimatingAiRename), no per-site rules (Arc's TidyTitleConfiguration), no feedback report, no settings row |
 | Tidy Downloads | Downloads renamed by AI | ❌ | With Claude in the browser |
 | Tidy Tabs | Groups Today tabs automatically | ❌ | With Claude in the browser |
 | Browse for Me | AI builds a page from search results | ❌ | Skip? |

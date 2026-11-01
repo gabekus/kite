@@ -34,6 +34,7 @@
 @property (nonatomic, readwrite) BOOL isLoading;
 @property (nonatomic, readwrite) BOOL canGoBack;
 @property (nonatomic, readwrite) BOOL canGoForward;
+@property (nonatomic, readwrite) int renderProcessIdentifier;
 @end
 
 NSString* const KCDownloadDidUpdateNotification = @"KCDownloadDidUpdateNotification";
@@ -155,6 +156,18 @@ class KCClient : public CefClient,
     CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+
+    // CefClient
+
+    /// The renderer reports its pid for the Task Manager (KiteHelper's kite.rendererPID).
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefFrame> frame,
+                                  CefProcessId source_process,
+                                  CefRefPtr<CefProcessMessage> message) override {
+        if (message->GetName() != "kite.rendererPID" || !frame->IsMain()) return false;
+        owner_.renderProcessIdentifier = message->GetArgumentList()->GetInt(0);
+        return true;
+    }
 
     // CefFocusHandler
 
@@ -283,6 +296,7 @@ class KCClient : public CefClient,
                                    int error_code,
                                    const CefString& error_string) override {
         KCBrowser* owner = owner_;
+        owner.renderProcessIdentifier = 0;
         if ([owner.delegate respondsToSelector:@selector(browser:renderProcessDidTerminateWithCode:)]) {
             [owner.delegate browser:owner renderProcessDidTerminateWithCode:error_code];
         }
