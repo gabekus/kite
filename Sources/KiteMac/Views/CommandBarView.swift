@@ -210,9 +210,18 @@ private struct CommandBarView: View {
         return strong + [search] + engine + tabs + history + weak
     }
 
+    /// Arc's privacy banner: while the list has the engine's suggestions, until Dismiss.
+    private var showsPrivacyBanner: Bool {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasEngineSuggestions = site == nil && !text.isEmpty && engineSuggestions.query == text
+            && !engineSuggestions.items.isEmpty
+        return SearchSuggestions.showsPrivacyBanner(hasEngineSuggestions: hasEngineSuggestions,
+                                                    dismissed: store.state.hasDismissedSearchSuggestionsPrivacy)
+    }
+
     /// The site Tab would switch to for what's typed so far.
     private var tabTarget: SiteSearch? {
-        site == nil ? SiteSearch.match(query, in: store.state.siteSearches) : nil
+        site == nil ? SiteSearch.match(query, in: store.state.activeSiteSearches) : nil
     }
 
     var body: some View {
@@ -303,7 +312,23 @@ private struct CommandBarView: View {
                 .padding(.top, C.listTopGap)
                 .padding(.bottom, C.listBottomGap)
             }
+            if showsPrivacyBanner {
+                SearchSuggestionsPrivacyBanner(
+                    onSettings: {
+                        store.hideCommandBar()
+                        SettingsWindowController.shared.show(.profiles)
+                    },
+                    onDismiss: {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            store.mutate { $0.hasDismissedSearchSuggestionsPrivacy = true }
+                        }
+                    },
+                    onLearnMore: { onCommit(.open(SearchSuggestionsPrivacyBanner.learnMoreURL)) }
+                )
+                .transition(.move(edge: .bottom))
+            }
         }
+        .animation(.spring(response: SearchSuggestionsPrivacyBanner.M.springResponse, dampingFraction: 1), value: showsPrivacyBanner)
         .frame(width: width)
         .modifier(CommandBarPanel())
         .onAppear {
@@ -338,7 +363,7 @@ private struct CommandBarView: View {
         let previous = typed
         typed = new
         guard site == nil, new.count > previous.count, new.hasPrefix(previous), !new.contains(" "),
-              let match = store.state.siteSearches.first(where: {
+              let match = store.state.activeSiteSearches.first(where: {
                   $0.shortcut.count > new.count && $0.shortcut.lowercased().hasPrefix(new.lowercased())
               })
         else { return }
@@ -394,6 +419,118 @@ private struct CommandBarView: View {
     private func commit(_ items: [CommandSuggestion]) {
         guard items.indices.contains(highlighted) else { return }
         onCommit(items[highlighted])
+    }
+}
+
+/// Arc's `SearchSuggestionsPrivacyView` (CommandBar/SearchSuggestionsPrivacyView.swift), in its wide
+/// layout: one 60pt row at the panel's foot, 1pt in from its edges, the bottom corners rounded 12.
+/// An info.circle, "We talk to your search engine…" in bold over "Learn more about your data on
+/// Arc here." ("here" underlined, a link), then "Search Settings…" and "Dismiss". Measured from
+/// Arc 1.171's binary and asset catalogs; see docs/arc-visual-spec.md.
+struct SearchSuggestionsPrivacyBanner: View {
+    let onSettings: () -> Void
+    let onDismiss: () -> Void
+    let onLearnMore: () -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    /// Kite has no privacy policy page; its home page says what it sends where.
+    static let learnMoreURL = URL(string: "https://github.com/gabekus/kite")!
+
+    enum M {
+        static let height: CGFloat = 60
+        static let edgeInset: CGFloat = 1
+        static let cornerRadius: CGFloat = 12
+        static let leading: CGFloat = 16
+        static let trailing: CGFloat = 10
+        static let iconToText: CGFloat = 14
+        static let titleToSubtitle: CGFloat = 2
+        static let buttonSpacing: CGFloat = 10
+        static let shadowOpacity: Double = 0.15
+        static let shadowRadius: CGFloat = 20
+        static let shadowY: CGFloat = 4
+        /// CASpringAnimation from damping ratio 1, response 0.3 (Arc's FUN_100a05154), sliding up by its height.
+        static let springResponse: Double = 0.3
+        static let buttonHPadding: CGFloat = 12
+        static let buttonVPadding: CGFloat = 6
+        static let buttonCornerRadius: CGFloat = 8
+    }
+
+    private var dark: Bool { scheme == .dark }
+    /// ARCUI's Gray12 and Gray10.
+    private var titleColor: Color { Color(white: dark ? 0.93 : 0.09) }
+    private var detailColor: Color { Color(white: dark ? 0.494 : 0.523) }
+    /// CommandBar's CommandBarBannerBackground.
+    private var background: Color {
+        dark ? Color(white: 0.086) : Color(red: 0.992, green: 0.992, blue: 0.996)
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: M.iconToText) {
+            Image(systemName: "info.circle").foregroundStyle(detailColor)
+            VStack(alignment: .leading, spacing: M.titleToSubtitle) {
+                Text("We talk to your search engine to help us suggest results.")
+                    .bold()
+                    .foregroundStyle(titleColor)
+                HStack(spacing: 0) {
+                    Text("Learn more about your data on Kite ")
+                    Button(action: onLearnMore) { Text("here").underline() }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("searchPrivacyLearnMore")
+                    Text(".")
+                }
+                .foregroundStyle(detailColor)
+            }
+            .lineLimit(1)
+            Spacer(minLength: 0)
+            HStack(alignment: .center, spacing: M.buttonSpacing) {
+                BannerButton(title: "Search Settings…", action: onSettings)
+                    .accessibilityIdentifier("searchPrivacySettings")
+                BannerButton(title: "Dismiss", action: onDismiss)
+                    .accessibilityIdentifier("searchPrivacyDismiss")
+            }
+        }
+        .font(.system(size: 13))
+        .padding(.leading, M.leading)
+        .padding(.trailing, M.trailing)
+        .frame(height: M.height)
+        .frame(maxWidth: .infinity)
+        .background(
+            UnevenRoundedRectangle(bottomLeadingRadius: M.cornerRadius, bottomTrailingRadius: M.cornerRadius, style: .circular)
+                .fill(background)
+                .shadow(color: .black.opacity(M.shadowOpacity), radius: M.shadowRadius, y: M.shadowY)
+        )
+        .padding([.horizontal, .bottom], M.edgeInset)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("searchSuggestionsPrivacy")
+    }
+
+    /// The banner's secondary buttons (CommandBarBannerSecondaryButton* colours): a filled rounded
+    /// rectangle with a 1pt edge.
+    private struct BannerButton: View {
+        let title: String
+        let action: () -> Void
+        @Environment(\.colorScheme) private var scheme
+        @State private var hovering = false
+
+        var body: some View {
+            let dark = scheme == .dark
+            let shape = RoundedRectangle(cornerRadius: M.buttonCornerRadius, style: .continuous)
+            Button(action: action) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(dark ? Color.white : Color(white: 0.09))
+                    .padding(.horizontal, M.buttonHPadding)
+                    .padding(.vertical, M.buttonVPadding)
+                    .background(shape.fill(dark ? Color(white: 0.137) : Color.white))
+                    .overlay(shape.strokeBorder(Color(white: dark ? 0.435 : 0.859), lineWidth: 1))
+                    .brightness(hovering ? (dark ? 0.05 : -0.03) : 0)
+                    .contentShape(shape)
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .onHover { hovering = $0 }
+            .accessibilityLabel(title)
+        }
     }
 }
 

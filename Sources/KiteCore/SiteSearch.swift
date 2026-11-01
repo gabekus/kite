@@ -13,13 +13,55 @@ public struct SiteSearch: Hashable, Codable, Sendable, Identifiable {
     public var urlTemplate: String
     /// The chip's colour as "RRGGBB": set for Arc's defaults; other sites use their favicon's colour.
     public var color: String?
+    /// Chromium's `is_active`: an inactive shortcut stays saved (the search engines page lists it under
+    /// "Inactive shortcuts") but Tab no longer enters it from the command bar (Arc's command bar state
+    /// keeps only `activeSearchEngines`).
+    public var isActive: Bool
 
-    public init(id: UUID = UUID(), name: String, shortcut: String, urlTemplate: String, color: String? = nil) {
+    public init(id: UUID = UUID(), name: String, shortcut: String, urlTemplate: String, color: String? = nil,
+                isActive: Bool = true) {
         self.id = id
         self.name = name
         self.shortcut = shortcut
         self.urlTemplate = urlTemplate
         self.color = color
+        self.isActive = isActive
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, shortcut, urlTemplate, color, isActive
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        shortcut = try c.decode(String.self, forKey: .shortcut)
+        urlTemplate = try c.decode(String.self, forKey: .urlTemplate)
+        color = try c.decodeIfPresent(String.self, forKey: .color)
+        isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive) ?? true
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(shortcut, forKey: .shortcut)
+        try c.encode(urlTemplate, forKey: .urlTemplate)
+        try c.encodeIfPresent(color, forKey: .color)
+        if !isActive { try c.encode(isActive, forKey: .isActive) }
+    }
+
+    /// The search engines page's filter field: Chromium keeps an entry while its name, shortcut
+    /// or URL contains the filter, ignoring case (`computeMatchingEngines_`); an empty filter keeps all.
+    public func matchesFilter(_ filter: String) -> Bool {
+        SiteSearch.matches(filter, [name, shortcut, urlTemplate])
+    }
+
+    public static func matches(_ filter: String, _ terms: [String]) -> Bool {
+        let filter = filter.lowercased()
+        guard !filter.isEmpty else { return true }
+        return terms.contains { $0.lowercased().contains(filter) }
     }
 
     /// From a Chromium search engine (Arc's Site Search settings). Chromium writes
@@ -102,11 +144,21 @@ extension BrowserState {
         siteSearchDefaultsSeeded = Self.siteSearchDefaultsVersion
     }
 
+    /// The shortcuts Tab can enter from the command bar.
+    public var activeSiteSearches: [SiteSearch] { siteSearches.filter(\.isActive) }
+
+    /// The search engines page's Activate (on an inactive shortcut) and ⋯ › Deactivate.
+    public mutating func setSiteSearch(_ id: UUID, active: Bool) {
+        guard let i = siteSearches.firstIndex(where: { $0.id == id }) else { return }
+        siteSearches[i].isActive = active
+    }
+
     /// Adds imported shortcuts; one with the same shortcut as an existing entry replaces it.
     public mutating func mergeSiteSearches(_ imported: [SiteSearch]) {
         for site in imported {
             if let i = siteSearches.firstIndex(where: { $0.shortcut.lowercased() == site.shortcut.lowercased() }) {
-                siteSearches[i] = SiteSearch(id: siteSearches[i].id, name: site.name, shortcut: site.shortcut, urlTemplate: site.urlTemplate, color: site.color)
+                siteSearches[i] = SiteSearch(id: siteSearches[i].id, name: site.name, shortcut: site.shortcut, urlTemplate: site.urlTemplate,
+                                             color: site.color, isActive: site.isActive)
             } else {
                 siteSearches.append(site)
             }

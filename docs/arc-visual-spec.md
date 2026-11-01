@@ -3193,8 +3193,25 @@ Nothing in Arc was pressed or run. Decompiles (Ghidra, read-only project) are un
   entry's URL drops its brand chip colour so the command bar uses the new site's favicon colour.
 - **Differs**: Chromium's page sizes and colours weren't measured (no capture of `arc://settings/searchEngines`);
   Kite's cards follow its Site Settings page. Kite's engines have no shortcuts, so the Search engines blurb is only
-  "You can change your default search engine here."; no Inactive shortcuts section (Kite has no
-  extension/visited-site engines), no delete confirmation, no filter field.
+  "You can change your default search engine here."; no delete confirmation, no keyboard-key radio group.
+- **Filter field and Inactive shortcuts (g123)** [res]: Chromium 156's page template and logic, read from Arc's
+  `ArcCore.framework/Resources/resources.pak` (settings bundle, resource 21246 `settings-search-engines-page`, 21247
+  `settings-search-engines-list` / `settings-search-engine-entry`): the subpage header carries a search field
+  (`search-label="$i18n{searchEnginesSearch}"`, filter-list icon); `computeMatchingEngines_` keeps entries whose
+  displayName, name, keyword or url contains the filter, ignoring case; a list that has entries but no matches shows
+  "No search results found" (`searchNoResults`, IDS 8882). After Site search comes an always-shown "Inactive shortcuts"
+  header (`searchEnginesInactiveShortcuts`, 6879) over the `others` list (`show-query-url`), or "Other saved search
+  engines will appear here" (6880) when there are none; the active and inactive lists show 5 rows
+  (`visibleEnginesSize`) and an expand row "Additional sites" / "Additional inactive sites" (6897). An entry shows an
+  "Activate" button when `canBeActivated`; its ⋯ menu has Make default, "Deactivate" (when `canBeDeactivated`) and
+  Delete. The field's label: ArcCore registers `searchEnginesSearch` in code (`csinc` at 0x4259b78 picks IDS 6863
+  "Filter sites on page" when a preceding check returns 0, else 6864 "Filter sites"); Kite uses "Filter sites on page"
+  **[which branch Arc takes is inferred]**. Arc's command bar state keeps `activeSearchEngines` (arc-strings ~172486),
+  so Kite's Tab-to-search only uses active shortcuts.
+- **Kite**: `SiteSearch.isActive` (saved only when off), `BrowserState.activeSiteSearches` / `setSiteSearch(_:active:)`,
+  `SiteSearch.matchesFilter`. Inactive rows show the URL and an Activate button instead of the shortcut; the Arc
+  import keeps a user-made shortcut Arc had turned off (`is_active = 2`) inactive. Kite's engines aren't filtered by
+  shortcut (they have none).
 
 ## Settings › General › "Previews Settings…" (g102, skipped) (Arc 1.171 strings, defaults key names, 1 Nov 2026)
 
@@ -3421,3 +3438,35 @@ Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, Ghidra decompile
 - Kite: the same format, "Kite Data Export.md", the same panel. `KITE_TEST_EXPORT_DATA_PATH` (test builds only) writes without the panel.
 
 **More Settings…**: strings 80409–80410, "Clicking opens arc://settings", Chromium's own settings WebUI, which Kite's Alloy-style tabs can't host. Kite opens its own Chromium settings pages instead (kite://settings/privacy, from g100/g101) in a new tab for the current space's profile. **Reset Translated-site Prompts** stays disabled: Kite has no translation.
+
+## Command bar › search suggestions privacy banner (g122) → `SearchSuggestionsPrivacyBanner` (CommandBarView.swift) (Arc 1.171 decomp, strings, asset catalogs, 1 Nov 2026)
+
+- **Strings** [strings + disasm]: title "We talk to your search engine to help us suggest results." (arc-strings 81286),
+  subtitle "Learn more about your data on Arc " + an underlined link "here" (`Text.underline`, PlainButtonStyle) + "."
+  (inline Swift strings at 0x1022197d4 and FUN_102219394), buttons "Search Settings…" ("a button taking you to the
+  General Preferences pane") and "Dismiss" ("will permanently hide the SuggestionsPrivacy view", inline at 0x102219c94).
+- **When** [decomp + strings]: CommandBar state `SearchSuggestionPrivacyState { bannerIsVisible,
+  bannerHasBeenExplicitlyDismissed }` (arc-strings ~172677); search results carry `searchPrivacyInfo` (~172529);
+  dismissal persists in the defaults key `commandBarSearchSuggestionsPrivacyHasBeenExplicitlyDismissed` (one app-wide
+  Bool). `SuggestionsView` (FUN_10222bb0c, a CombineLatest of two view-store Bools) adds `searchPrivacyView` when shown
+  and removes it when not. Kite: shown while the list holds the engine's suggestions for the typed text, until
+  Dismiss; the flag is `BrowserState.hasDismissedSearchSuggestionsPrivacy` (in the session, not UserDefaults).
+  **[Exactly what sets bannerIsVisible in the reducer isn't traced]**.
+- **Layout** [decomp FUN_1022185a0 / 1022188ac / 102218db0 / 102219d14, SuggestionsView layout FUN_10222d788 /
+  FUN_10222dbb4]: frame x 1, width W − 2, bottom 1pt above the list view's bottom; height 60 (wide) or 133
+  (condensed, `useCondensedWidth`). Wide: HStack(spacing 14) { info.circle, VStack(leading, spacing 2){title bold,
+  subtitle}, Spacer, HStack(spacing 10){two buttons} }, padding leading 16, trailing 10. Condensed: the buttons on
+  their own row under it. Rows' bottom content inset = 10 + banner height.
+- **Look** [updateLayer FUN_1022181d4, Assets.car]: layer background CommandBarBannerBackground (light #FDFDFE, dark
+  #161616), corner radius 12 on maskedCorners 3 (the bottom two), shadow black 0.15, radius 20, offset (0, −4),
+  masksToBounds off. Title ARCUI Gray12 (light 0.09, dark 0.93), icon and subtitle Gray10 (0.523 / 0.494). Buttons
+  use Dialogs' `DialogButtonStyle` variant 2 (type descriptor 0x103cce564); CommandBar's
+  CommandBarBannerSecondaryButton{Background,Border,Text} are #FFFFFF / #DBDBDB / #171717 light and #232323 / #6F6F6F /
+  #FFFFFF dark. Kite's buttons: those colours, 13pt medium, padding 12 × 6, radius 8 **[padding, radius and font
+  inferred]**. Default text size: SwiftUI's 13pt (no font set).
+- **Motion** [FUN_10222c1ac]: unhidden on the next main-queue turn, then a `CASpringAnimation` on `transform` from a
+  translation of its own height to identity, damping ratio 1, response 0.3 (FUN_100a05154). Kite: a move-from-bottom
+  transition with `.spring(response: 0.3, dampingFraction: 1)`.
+- **Kite differs**: only the wide layout (Kite's bar is always centred, 765 wide or the window less 40); "here" opens
+  https://github.com/gabekus/kite (Arc's privacy page has no Kite equivalent); "Search Settings…" opens Settings ›
+  Profiles, where Kite keeps "Include search engine suggestions".
