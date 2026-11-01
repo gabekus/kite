@@ -304,6 +304,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         libraryHost.isHidden = true
         library.onOpenChange = { [weak self] open in self?.libraryOpened(open) }
         NotificationCenter.default.addObserver(self, selector: #selector(downloadDidStart(_:)), name: DownloadsModel.didStartDownload, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeCSSSharingChanged), name: .kiteThemeCSSSharingChanged, object: nil)
 
         var dragStartWidth: CGFloat = 0
         resizeHandle.onBegin = { [weak self] in
@@ -510,6 +511,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         themeView.cutoutCornerRadius = Layout.cornerRadius
     }
 
+    /// Settings › Advanced › "Allow websites to get your theme data" was switched.
+    @objc private func themeCSSSharingChanged() { pool.updateThemeCSS() }
+
     // MARK: Sync with the store
 
     private func sync() {
@@ -518,6 +522,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         themeView.setTheme(space.theme, animated: shownSpaceID != nil)
         glowView.setTheme(space.theme)
+        pool.updateThemeCSS()
         let appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
         sidebarHost.appearance = appearance
         libraryHost.appearance = appearance
