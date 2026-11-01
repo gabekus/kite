@@ -1145,7 +1145,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             key.performClose(sender)
         } else if linkPeek != nil {
             // Arc: ⌘W closes the Peek, not the tab under it.
-            closeLinkPeek(animated: true)
+            closeLinkPeek(animated: true, undoable: true)
         } else if store.commandBar != nil {
             store.hideCommandBar()
         } else if let id = store.state.selectedTab?.id {
