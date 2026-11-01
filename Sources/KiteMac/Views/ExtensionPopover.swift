@@ -6,9 +6,6 @@ import KiteCore
 /// popover. Chromium can't show it in Kite's tabs ("Browser window has no toolbar"), so
 /// Kite loads the popup page itself and sizes the popover to the page, within Chrome's
 /// popup limits.
-///
-/// Extensions don't see Kite's tabs yet (Alloy-style browsers aren't in Chromium's tab
-/// model), so popups that act on the current tab can't find it.
 @MainActor
 final class ExtensionPopover: NSObject, NSPopoverDelegate {
     /// Chrome's limits for extension popups.
@@ -34,9 +31,30 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
     static func show(_ url: URL, engine: WebEngine, relativeTo rect: NSRect, of view: NSView) -> ExtensionPopover {
         shown?.popover.close()
         let popover = ExtensionPopover(url: url, engine: engine)
-        popover.popover.show(relativeTo: rect, of: view, preferredEdge: belowEdge(of: view))
+        popover.anchor = (rect, view)
         shown = popover
+        // Shown once the page has loaded and been measured, or after a moment at most.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.longestWait) { [weak popover] in popover?.present() }
         return popover
+    }
+
+    /// The longest a click waits for the popup before it appears anyway.
+    static let longestWait: TimeInterval = 0.8
+    private var anchor: (rect: NSRect, view: NSView)?
+    private var presented = false
+
+    /// Puts the popover on screen with the page hidden, and reveals the page once
+    /// Chromium has painted it: before its first frame a page is a blank white
+    /// rectangle, which flashed for a moment on every open.
+    private func present() {
+        guard !presented, let anchor, anchor.view.window != nil, Self.shown === self else { return }
+        presented = true
+        page.view.alphaValue = 0
+        popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: Self.belowEdge(of: anchor.view))
+        let painted = "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))"
+        page.evaluateJavaScript(painted) { [weak self] _ in self?.page.view.alphaValue = 1 }
+        // In case the page never answers.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.page.view.alphaValue = 1 }
     }
 
     private init(url: URL, engine: WebEngine) {
@@ -74,6 +92,7 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
             guard let self, let json = (result as? String)?.data(using: .utf8),
                   let size = try? JSONSerialization.jsonObject(with: json) as? [Double], size.count == 2 else { return }
             self.popover.contentSize = Self.clamped(NSSize(width: size[0], height: size[1]))
+            self.present()
             self.sizePolls += 1
             if self.sizePolls < 4 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15 * Double(self.sizePolls)) { [weak self] in self?.fitToPage() }
