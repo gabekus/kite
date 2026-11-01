@@ -44,6 +44,14 @@ final class HistoryStore {
         history.search(query, limit: limit)
     }
 
+    /// Import from Arc. Returns how many pages were new.
+    @discardableResult
+    func merge(_ entries: [HistoryEntry]) -> Int {
+        let added = history.merge(entries)
+        saveNow()
+        return added
+    }
+
     func removeAll() {
         history.removeAll()
         saveNow()

@@ -16,14 +16,45 @@ extension BrowserWindowController {
 
 @MainActor
 enum ArcImportController {
-    static var sidebarFile: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Arc/StorableSidebar.json")
+    /// Arc's folder in Application Support. A test build (one with `KITE_SUPPORT_PATH`)
+    /// can point `KITE_ARC_DATA_PATH` at a folder of hand-made files instead, so tests
+    /// never read the user's real Arc data.
+    nonisolated static var arcDirectory: URL {
+        let environment = ProcessInfo.processInfo.environment
+        if environment["KITE_SUPPORT_PATH"] != nil, let path = environment["KITE_ARC_DATA_PATH"] {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Arc")
     }
 
+    static var sidebarFile: URL { arcDirectory.appendingPathComponent("StorableSidebar.json") }
+
     /// Shortcuts the user changed in Arc's Settings → Shortcuts.
-    static var keyBindingsFile: URL {
-        sidebarFile.deletingLastPathComponent().appendingPathComponent("StorableKeyBindings.json")
+    static var keyBindingsFile: URL { arcDirectory.appendingPathComponent("StorableKeyBindings.json") }
+
+    /// Arc's archived tabs (Archive › View Archive).
+    static var archiveFile: URL { arcDirectory.appendingPathComponent("StorableArchiveItems.json") }
+
+    /// The default Arc profile's browsing history.
+    static var historyFile: URL { arcDirectory.appendingPathComponent("User Data/Default/History") }
+
+    private static let arcDefaultsDomain = "company.thebrowser.Browser"
+
+    /// The Arc settings Kite also has, from Arc's defaults. Under `KITE_ARC_DATA_PATH`, from a
+    /// company.thebrowser.Browser.plist in that folder instead.
+    static func readArcSettings() -> ArcSettings {
+        let keys = ["shouldWarnBeforeQuitting", "openExternalLinksInLittleBrowserEnabled", "autoArchiveTimeThresholdsPerProfile"]
+        var defaults: [String: Any] = [:]
+        if ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] != nil,
+           ProcessInfo.processInfo.environment["KITE_ARC_DATA_PATH"] != nil {
+            let file = arcDirectory.appendingPathComponent(arcDefaultsDomain + ".plist")
+            defaults = (NSDictionary(contentsOf: file) as? [String: Any]) ?? [:]
+        } else {
+            for key in keys {
+                defaults[key] = CFPreferencesCopyAppValue(key as CFString, arcDefaultsDomain as CFString)
+            }
+        }
+        return ArcSettings(defaults: defaults)
     }
 
     /// Reads Arc's sidebar from its usual place, or asks for the file if Arc isn't there.
@@ -62,12 +93,22 @@ enum ArcImportController {
         let reimported = result.spaces.filter { store.state.spaceIndex($0.id) != nil }.count
         let siteSearches = ArcSiteSearchImport.read()
         let keyBindings = (try? Data(contentsOf: keyBindingsFile)).flatMap { try? ArcKeyBindingsImport.parse($0) } ?? []
+        let archive = (try? Data(contentsOf: archiveFile)).map(ArcArchiveImport.parse) ?? []
+        // Incognito windows keep no history, so there's nowhere to put Arc's.
+        let history = store.history == nil ? [] : ArcHistoryImport.read(from: historyFile)
+        let settings = readArcSettings()
         var lines = [summary(result)]
         let extras = [
+            archive.isEmpty ? nil : count(archive.count, "archived tab"),
+            history.isEmpty ? nil : count(history.count, "history page"),
             siteSearches.isEmpty ? nil : count(siteSearches.count, "Site Search shortcut"),
             keyBindings.isEmpty ? nil : count(keyBindings.count, "keyboard shortcut change"),
+            settings.isEmpty ? nil : count(settings.names.count, "Arc setting") + " (" + settings.names.joined(separator: ", ") + ")",
         ].compactMap { $0 }
-        if !extras.isEmpty { lines.append("Also imports \(extras.joined(separator: " and ")).") }
+        if !extras.isEmpty { lines.append("Also imports \(list(extras)).") }
+        if archive.count > BrowserState.archiveLimit {
+            lines.append("Kite's archive keeps the latest \(BrowserState.archiveLimit) tabs, so older archived tabs are left out.")
+        }
         lines += result.notes
         lines.append(reimported > 0
             ? "\(count(reimported, "space")) imported before will be replaced with Arc's current version, including changes you made to them in Kite."
@@ -103,7 +144,13 @@ enum ArcImportController {
                 store.mutate {
                     $0.merge(imported: spaces, favorites: result.favorites)
                     $0.mergeSiteSearches(siteSearches)
+                    $0.mergeArchive(imported: archive)
+                    $0.apply(settings)
                 }
+                if let little = settings.opensExternalLinksInLittleKite {
+                    UserDefaults.standard.set(little, forKey: LittleKite.opensExternalLinksKey)
+                }
+                if !history.isEmpty { store.history?.merge(history) }
                 if !keyBindings.isEmpty {
                     (NSApp.delegate as? AppDelegate)?.keyBindings.merge(keyBindings, menu: NSApp.mainMenu)
                 }
@@ -118,8 +165,13 @@ enum ArcImportController {
         if !result.favorites.isEmpty { parts.append(count(result.favorites.count, "favorite")) }
         parts.append(count(result.tabCount - untitled.reduce(0) { $0 + $1.allTabs.count }, "tab"))
         if result.folderCount > 0 { parts.append(count(result.folderCount, "folder")) }
-        let list = parts.count > 1 ? parts.dropLast().joined(separator: ", ") + " and " + parts.last! : parts[0]
-        return "Found \(list)."
+        if result.splitCount > 0 { parts.append(count(result.splitCount, "split view")) }
+        return "Found \(list(parts))."
+    }
+
+    /// "a", "a and b", "a, b and c".
+    private static func list(_ parts: [String]) -> String {
+        parts.count > 1 ? parts.dropLast().joined(separator: ", ") + " and " + parts.last! : parts.first ?? ""
     }
 
     private static func count(_ n: Int, _ noun: String) -> String {

@@ -483,6 +483,30 @@ windows ("Archive Little Arcs after:"); no global hotkey.
   the command bar (`showCommandBar` is among `initialAppearanceActions`), the blank window's look, and what
   Arc does when two windows select the same tab (`ContentPlaceholderSourceData` hints at a placeholder).
 
+## Import from Arc: what Arc keeps where (Arc 1.171 files, defaults and strings, 1 Nov 2026)
+
+Key names and structure only, read from Arc's files in ~/Library/Application Support/Arc; nothing of the
+user's is copied. Test fixtures are made up.
+
+- `StorableSidebar.json`: a split view is a sidebar item whose `data` is `splitView` with `layoutOrientation`
+  (`horizontal` / `vertical`), `focusItemID`, `timeLastActiveAt` and `itemWidthFactors`, a flat
+  `[itemID, factor, ...]` list (Swift's encoding of a dictionary with non-string keys). On Gabe's Mac it held
+  one entry for a two-pane split, so Arc may leave panes out; Kite gives missing panes what's left of 1
+  (inferred). Children are the panes' tab items, in order.
+- `StorableArchiveItems.json` (`version` 1): `items` is a flat `[id, object, ...]` list. Each object has
+  `archivedAt` (seconds since 2001), `reason` (`manual`, `auto`, `clearButton`), `source` (`space` with the
+  space ID in `_0`, `littleArc`, `unknown`) and `sidebarItem`, a sidebar item whose `data` is `tab`
+  (`savedURL`, `savedTitle`, `timeLastActiveAt`). Only tab items were seen.
+- History is Chromium's: the `urls` table of `User Data/Default/History` (`url`, `title`, `visit_count`,
+  `last_visit_time` in microseconds since 1601, `hidden`).
+- Defaults (`company.thebrowser.Browser`, names and plain booleans only): `shouldWarnBeforeQuitting`,
+  `openExternalLinksInLittleBrowserEnabled`, `nativeAdBlockEnabled`, `topBarURLEnabled` (booleans), and
+  `autoArchiveTimeThresholdsPerProfile`, a JSON string `{"thresholds":[...]}`. The list was empty on Gabe's
+  Mac (Arc's default), so the element encoding (profile, then a case name such as `sevenDays`, next to
+  `thresholds` in arc-strings.txt ~165658) is inferred.
+- `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
+  `destination.space`). Kite has no link routing yet, so it isn't imported.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

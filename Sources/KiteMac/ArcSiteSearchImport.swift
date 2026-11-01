@@ -8,8 +8,7 @@ import SQLite3
 
 enum ArcSiteSearchImport {
     static var webDataFile: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Arc/User Data/Default/Web Data")
+        ArcImportController.arcDirectory.appendingPathComponent("User Data/Default/Web Data")
     }
 
     /// The shortcuts the user added or turned on, oldest first. Chromium's built-in

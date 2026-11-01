@@ -31,7 +31,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | About | | ✅ | |
 | Settings… | ⌘, | ❌ | Thread: Settings window |
 | Set as Default Browser | | ✅ (opens links from other apps in a new tab) | |
-| Import from Another Browser… | | 🟡 Arc only | Thread: import (Chrome/Safari later) |
+| Import from Another Browser… | | 🟡 Arc only: spaces, pinned tabs, folders, favorites, themes, split views, archive (latest 500), history, Site Search, shortcut changes, and the settings Kite has (warn before quitting, Little Arc for links, archive interval) | Thread: import (Chrome/Safari later). Not yet: link routing, boosts, easels/notes, extensions, other profiles |
 | Check for Updates… | | ❌ | Roadmap: Sparkle |
 | Hide / Hide Others / Show All | ⌘H / ⌥⌘H | ✅ | |
 | Quit, with optional warn-before-quit | ⌘Q | 🟡 "Quit Kite?" with Arc's three buttons; look unmeasured, Kite menu toggle until Settings | B5 |
