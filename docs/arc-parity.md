@@ -167,6 +167,8 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Sidebar | Favorites grid, pinned, unpinned "Today", folders, space switcher | 🟡 | Other session (favorites, folders, resize) |
 | Sidebar hover reveal | Hidden sidebar slides in at the left edge | ❌ | Thread: sidebar left-edge peek |
 | Auto-archive | "Archive tabs after": Never / 1 hour / 6 hours / 12 hours / 24 hours / 7 days / 30 days, per profile | ✅ Kite menu → Archive tabs after (moves to Settings; no profiles yet) | B5 |
+| Peek | Links from pinned tabs/favorites open in an overlay | 🟡 Links from a pinned tab or favorite to another site, and ⇧-clicked links, open in a card over the page (Arc's size, corner, shadow and spring); close (Esc, ⌘W, button, click outside), Open as Tab, Create/Add to Split View | Not yet: the tween from the link's own frame, the peeked item in the sidebar, swipe right to dismiss, reopen-closed-Peek undo, the Links settings toggles; button look unmeasured |
+| Hover cards / 5-second previews | ⇧ over a link shows a preview card | ❌ | Thread: Peek |
 | Peek | Links from pinned tabs/favorites open in an overlay | ❌ | Thread: Peek |
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | 🟡 ⇧-hover shows a card (title, description, image, site) sized and timed from Arc's binary; `LinkPreviewController`. Off by default as in Arc; Kite menu › Link Previews | No AI summary (Arc's quickSummary + detail rows), no instant cards on HN/X/Google, no share button yet |
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
@@ -180,7 +182,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
 | Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
 | Library | Downloads, archive, easels, media, boosts in one window | ❌ | Thread: Library |
-| Air Traffic Control | Rules to route links from other apps to a space | ❌ | Thread: Little Arc / routing |
+| Air Traffic Control | Rules to route links from other apps to a space | 🟡 | Kite menu → Air Traffic Control…: URL "Is equal to"/"Contains" routes to a space or Little Kite, plus a default. No profile destination; editor lives in its own window until Settings exists |
 | Live folders | GitHub PRs/issues, RSS etc. as an auto-updating folder | ❌ | Later |
 | Live calendars | Calendar favorite shows the next meeting | ❌ | Later |
 | Share spaces, folders, splits | Public link or collaborator | ❌ | Roadmap: sync + sharing |
