@@ -73,6 +73,7 @@ final class WebKitEngine: WebEngine {
 final class WebKitPage: NSObject, WebPage {
     let webView: WKWebView
     var onEvent: ((PageEvent) -> Void)?
+    var linkPeekPolicy: ((URL, Bool) -> Bool)?
     private let downloads: DownloadCoordinator
     private let contentRules: WebKitContentRules?
     private var observations: [NSKeyValueObservation] = []
@@ -259,6 +260,12 @@ extension WebKitPage: WKNavigationDelegate {
         if navigationAction.navigationType == .linkActivated && flags.contains(.command) {
             // ⌘-click opens in the background, ⇧⌘-click opens and switches.
             onEvent?(.openInNewTab(url, foreground: flags.contains(.shift)))
+            return decisionHandler(.cancel)
+        }
+        // Arc's Peek: a click in this page or to a new one (target=_blank), not a subframe's own navigation.
+        if navigationAction.navigationType == .linkActivated, navigationAction.targetFrame?.isMainFrame != false,
+           linkPeekPolicy?(url, flags.contains(.shift)) == true {
+            onEvent?(.openInLinkPeek(url))
             return decisionHandler(.cancel)
         }
         if navigationAction.targetFrame?.isMainFrame == true {

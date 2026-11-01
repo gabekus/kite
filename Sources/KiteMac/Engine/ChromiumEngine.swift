@@ -54,6 +54,7 @@ final class ChromiumEngine: WebEngine {
 final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     let browser: KCBrowser
     var onEvent: ((PageEvent) -> Void)?
+    var linkPeekPolicy: ((URL, Bool) -> Bool)?
     private var mediaInUse = false
     private let adblocker: Adblocker?
     private var address: URL?
@@ -332,6 +333,13 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     func browserDidRequestClose(_ browser: KCBrowser) { onEvent?(.closeRequested) }
+
+    @objc(browser:opensLinkInPeek:shift:)
+    func browser(_ browser: KCBrowser, opensLinkInPeek url: URL, shift: Bool) -> Bool {
+        guard linkPeekPolicy?(url, shift) == true else { return false }
+        onEvent?(.openInLinkPeek(url))
+        return true
+    }
 
     @objc(browser:renderProcessDidTerminateWithCode:)
     func browser(_ browser: KCBrowser, renderProcessDidTerminateWithCode code: Int32) { onEvent?(.crashed(code: Int(code))) }
