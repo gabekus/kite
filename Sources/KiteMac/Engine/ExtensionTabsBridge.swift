@@ -126,7 +126,7 @@ final class ExtensionTabsBridge {
         case "Target.attachedToTarget":
             guard Self.isExtensionWorker(info), let session = params["sessionId"] as? String else { return }
             sessions[targetID] = session
-            prepare(session)
+            prepare(session, origin: (info["url"] as? String).flatMap(ExtensionOrigin.origin(of:)))
         case "Target.targetDestroyed":
             sessions[targetID] = nil
         default:
@@ -142,7 +142,11 @@ final class ExtensionTabsBridge {
 
     /// The binding first, so the script finds it; Runtime events tell Kite when the
     /// worker restarted and needs the script again.
-    private func prepare(_ session: String) {
+    private func prepare(_ session: String, origin: String?) {
+        if let origin {
+            send(session, "Network.enable")
+            send(session, "Network.setExtraHTTPHeaders", ["headers": ["Origin": origin]])
+        }
         send(session, "Runtime.addBinding", ["name": ExtensionTabsScript.bindingName])
         send(session, "Runtime.enable")
         inject(session)
