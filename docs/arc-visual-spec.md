@@ -863,6 +863,45 @@ has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers pl
 always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
 circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
 
+## Site permission prompt → `PermissionPromptView`, `PermissionPromptCard` (Arc 1.171 binary, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` 41475–41484 and 79942–79967 (module `PermissionRequests`:
+`PermissionRequestState`, `PermissionRequestAction`, `PermissionRequestDialogView`, `PermissionRequestPopoverView.swift`),
+63660–63713 (`ArcPermissionRequestType+Utils` display names), 171998 / 176424 (`permissionRequest` beside
+`siteControlCenter` and `translateBubble` in the window's state), 194633 (`webContents:willAskForPermission:withRequests:…`).
+Short strings are Swift immediates decoded from `~/rea-arc/decomp/arc.s`; the rest is Ghidra output of the functions
+named below (read-only run of `DumpAround.java`). Arc wasn't driven, and no prompt was open to probe.
+
+- Text (0x101eb9934): one request: "Allow %@ to access your %@?" with the lower-case type name (`camera`, `microphone`,
+  `location`, `notifications`… from 0x10055b8ac–0x10055bd38); notifications alone: "Allow %@ to send you notifications?"
+  (also "…download multiple files?", "…store files on your device?", "…know when you're actively using this device?",
+  "Make %@ your default mail app?"). Several requests use the access sentence with a joined list (the join, 0x101eb9848,
+  wasn't read; Kite writes "camera and microphone"). The site is its title or "this website"; the site part gets its
+  own font and colour (an attributed string, 0x101eba00c).
+- Buttons (0x101eb6c50, 0x101eb6cf0): "Allow" ("Button to allow permission") and "Not Now" ("Button to deny
+  permission"). No "Block", "Don't Allow" or "Remember this decision" strings exist.
+- Footer (0x101eb7acc): "Click the lock to change this any time", with the word "lock" replaced by the `lock.fill`
+  symbol as a text attachment.
+- Icon (0x101eb82b0): the request type's icon (single request), a shared icon for several.
+- Placement, from Little Arc (`LittleWindowViewController.permissionRequestView`, 0x10002b8d4): a
+  `PermissionRequestDialogView` with corner radius 12, content insets 4 on every side, a 5 pt value (read as the
+  shadow radius) and a black shadow at 0.2; pinned leading and top to the page container at static constants + 8 (the
+  constants weren't read). It appears with 0x101cb203c: scale 0.8 → 1 about its left-middle point plus opacity 0 → 1,
+  0.1 s ease in-out. Where the main window puts it wasn't found in the binary; Kite uses the same card at the page's
+  top-leading corner.
+
+| | Arc | Kite (measured with `kite ui tree` / `trace`, Chromium build) |
+|---|---|---|
+| Card | radius 12, inset 4, shadow black 0.2 r5 | radius 12, inset 4, shadow black 0.2 r5 |
+| Position | page container leading/top + (constant + 8) | page top-leading + 8 (card at 352,18 on a page at 344,10) |
+| Appear | scale 0.8 about left-middle + fade, 0.1 s ease in-out | same (trace: 0.1 s, curve 0.42,0,0.58,1, x fixed at 352) |
+
+Kite differs: the card's width (300 + insets), fonts, icon circle and button styles are Kite's (Arc's SwiftUI body
+wasn't read); "Not Now" stores Block for the site (Arc's response type for it wasn't read; its footer says the choice
+can be changed later, so it reads as a stored answer); the site is named by its host (and port), not its title; only
+camera, microphone, location and notifications are handled, other types keep Chromium's default; no prompt over a
+Peek; on WebKit only camera and mic, asked every time.
+
 ## Mini Player and auto picture in picture → `MiniPlayerView`, `MediaStateScript` (Arc 1.171 strings, assets, disassembly, 1 Nov 2026)
 
 - Modules (arc-strings.txt 82066-82130): `MediaControlsFeature` (`MiniPlayerFeature.swift`, `MiniPlayerView.swift`,
@@ -950,6 +989,36 @@ Arc was not opened or driven, so no geometry was measured.
   components match when any one does; "Is equal to" compares the site (host without www.) or the whole link
   ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
   deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
+
+## Ask on Page → `AskOnPage` (KiteCore), `FindBar`, `AskOnPagePanel`, `AskOnPageClaude` (Arc 1.171 strings, defaults and disassembly, 1 Nov 2026)
+
+- Setting: `askOnPageEnabled` (plain boolean, `defaults read company.thebrowser.Browser`) is **0** in Gabe's Arc, so
+  Kite's `askOnPageEnabled` defaults off; Kite menu › Ask on Page (⌘F) turns it on, like Link Previews (#92).
+  Preferences copy (arc-strings.txt ~80512): "Press Command + F on any page to ask a question and let Max answer it
+  for you in seconds." So it lives in the ⌘F find bar, not a separate shortcut.
+- Placeholder (disassembly `0x10214f664`, small-string immediates): feature off → "Find in page…"; on, not in a
+  conversation → "Find or ask…"; in a conversation → "Ask a question…" (literal at `0x1039f4420`).
+- Find vs ask (`0x10214f534`): with the feature on, a query that is non-blank after trimming whitespace and whose
+  search finished with `numMatches == 0` is a question; otherwise it is one only while `isInConversation`.
+  AskInPage state field names (arc-strings.txt ~172100): `numMatches activeMatchOrdinal quotesSearched
+  isInConversation hasAnimatedIn messages fractionOfContextUsed startTime loading found notFound`; actions
+  `onQueryUpdated onDidClickFindQuote onDidUpdateChat onDidRequestNextResult onDidRequestPreviousResult
+  onShouldResetToFindInPage onDidAskLLM onDidRequestDismiss`.
+- ⌘F inside the field: Arc's field is `CommandFTextField` with an `onCommandF` closure
+  (`arc_performFindPanelAction:` at `0x100107e7c`). Kite: ⌘F while in a conversation goes back to find (inferred
+  pairing with `onShouldResetToFindInPage`).
+- Answer: `AskInPageConversationView` with `MessageView`, `QuoteView`, `FindQuoteButton`, `PulseModifier` (type
+  names ~42130). Arc's model prompt (AskInPageChat.swift, ~81000) asks for a verbatim quote in `<excerpt>` tags on
+  its own line, then a ≤10-word answer with the key term bold, Markdown, and saying when it's a guess. Kite's prompt
+  is its own wording of that behaviour. UI strings used word for word: "Quote not found. Make sure it’s accurate!"
+  (with `exclamationmark.triangle.fill`, `0x102154a24`), "Sorry, I encountered an error", "Sorry, I can’t read this
+  type of page.", "This page was long, so I read the first …" (interpolated; Kite shows a percentage, inferred
+  from `fractionOfContextUsed`).
+- Inferred or unmeasured: the field clears after a question is sent (the "Ask a question…" placeholder implies it);
+  the panel sits 6pt under the bar at the bar's width, 12pt padding, max 420pt tall, same navy as the bar (Arc's
+  panel was never opened here, so none of its geometry, colours, fonts or animation is measured); Kite doesn't
+  find-as-you-type while in a conversation; one question at a time. Arc's context limit is in tokens (Tiktoken);
+  Kite sends the first 60,000 characters of `document.body.innerText`.
 
 ## Import from Another Browser → `BrowserImport` (KiteCore), `BrowserImportController` (Arc 1.171 menu bar, strings, assets, 1 Nov 2026)
 
@@ -1069,6 +1138,41 @@ read only for its function names, nothing copied).
   `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped
   element again while its cell is hovered), and Arc's selector heuristics (Kite has its own).
 
+## Media page → `MediaPageView`, `MediaLibraryModel`, `KiteCore/MediaLibrary` (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
+
+Nothing in Arc was pressed or watched. Line numbers are `~/rea-arc/arc-strings.txt`; addresses are Arc-arm64.
+Short titles (≤15 bytes) are Swift immediates, decoded from the `mov`/`movk` pairs before each
+`NSLocalizedString` call.
+
+- What it is: a gallery, not a list of tabs playing media. `HomeButton/Pages/Media/MediaReducer.swift`
+  (82570), `MediaPage`, `MediaPageReducer`, `ScreenshotCell`, `HomeScreenshotPageDelegateAction`,
+  `MediaPagePreviewPresenter`, `AirDropContent`, `PermissionID`, `MediaObservationID` (43796–43810). Its
+  `HomePageID` case is `screenshotsAndCaptures` (174994 area). Library tooltip: "Opens your Library, which is
+  like your Camera Roll within Arc. Screenshots, Captures, Downloads, and more can appear here." (80704).
+- Menu: Window › View Media…, no shortcut, after View Easels… (`menudump Window`); title when shown is
+  "Hide Media" ("Menu item title to hide all Screenshots & Captures", 62223; decoded).
+- Sources: file flags `isScreenshot`, `isScreenRecording`, `isDownload`; `sourceFolders` downloads, desktop,
+  documents, screenshotsAndScreenRecordings, custom (166112 area); `ignoredFilePaths` in IgnoredPaths.json.
+  "Show media from:" (82453) toggles, decoded at 0x1025d7620: Documents, Desktop, Screenshots, Arc Captures,
+  Downloads (enum order 0–4 via 0x1025d7588).
+- Captures: `CaptureClient` (`storeCapture`, `deleteCapture`, `getImageCachePath`, StorableCaptures.json;
+  76364–76370), so Arc keeps its Captures and lists them here.
+- Welcome (before any folder is read; `isOnboardedToMediaPage`): symbol `photo.on.rectangle.angled`, "Your Media in
+  the Library", "Quickly grab screenshots, images, and videos from your computer by showing them in the Arc
+  Library!", "Media never leaves your computer and is not viewable by anyone but you." (82560–82566).
+  Empty-state action titles "Allow Access" / "Learn more"; denied copy "Allow Arc to show your Documents,
+  Desktop, and Download Folders to see them here alongside your Captures."; empty copy "Save media to your
+  Documents, Desktop, and Download Folders to see them here, alongside your Captures in Arc." (82551–82553).
+- Sections "Today", "Yesterday", "Earlier This Week" (shared Home strings); item kinds Image, Video, generic.
+- Item menu (decoded): Copy (inferred; its title wasn't decoded), Show in Finder, Open in Preview, Hide from Arc
+  (a screenshot/file), Delete (a Capture), Open Source URL / Copy Source URL (a Capture), AirDrop, Send via
+  iMessage. Preview: `BaseHomeComponents.MediaPreviewWindow` with `Backdrop`.
+- Kite: Arc → Kite in the copy ("Kite Captures", "Hide from Kite"). Inferred, not seen: that "Allow Access"
+  is the welcome card's button, which folders a non-screenshot lands under, that only a folder's own files
+  (not subfolders) are read, when Arc stores a Capture (Kite: every area and full-page capture), the grid,
+  tile and preview sizes, the filter icon, and that the preview is drawn in the page (Arc uses a window).
+  Not built yet: AirDrop, Send via iMessage, Learn more, the denied-permission state, custom folders, the
+  Hide Media title (View Media… opens the Library's Media page; it doesn't toggle).
 ## Tab audio button → `TabAudioButton` (KiteCore), `TabAudioButtonView` in `SidebarView` (Arc 1.171 binary, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt`, `otool` disassembly (`decomp/arc.s`) and Ghidra decompilation of

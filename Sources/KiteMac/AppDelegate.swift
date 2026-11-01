@@ -249,6 +249,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
     }
 
+    /// Kite menu → Ask on Page: Arc Max's find-bar questions, off until turned on (Arc's `askOnPageEnabled`).
+    @objc func toggleAskOnPage(_ sender: Any?) {
+        UserDefaults.standard.set(!AskOnPage.isEnabled(in: .standard), forKey: AskOnPage.enabledKey)
+    }
+
     /// Kite menu → Tidy Tab Titles: Arc Max's AI names for tabs you pin (Arc's `renamePinnedTabsEnabled`).
     @objc func toggleTidyTabTitles(_ sender: Any?) {
         UserDefaults.standard.set(!TidyTabTitles.isEnabled(in: .standard), forKey: TidyTabTitles.enabledKey)
@@ -443,6 +448,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleAskOnPage(_:)) {
+            item.state = AskOnPage.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleTidyTabTitles(_:)) {
             item.state = TidyTabTitles.isEnabled(in: .standard) ? .on : .off

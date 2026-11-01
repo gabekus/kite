@@ -78,6 +78,8 @@ final class WebKitPage: NSObject, WebPage {
     private let downloads: DownloadCoordinator
     private let contentRules: WebKitContentRules?
     private var observations: [NSKeyValueObservation] = []
+    /// Ids for this page's permission prompts.
+    private var permissionPromptCount = 0
 
     private static let inPageSchemes: Set<String> = ["http", "https", "about", "blob", "data", "file", "javascript"]
     private static let faviconScript = """
@@ -387,6 +389,32 @@ extension WebKitPage: WKUIDelegate {
 
     func webViewDidClose(_ webView: WKWebView) {
         onEvent?(.closeRequested)
+    }
+
+    /// getUserMedia: Arc's prompt. WebKit keeps no per-site store Kite can read, so it asks
+    /// each time the page does; "Not Now" and closing both deny.
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void
+    ) {
+        let permissions: [SitePermission] = switch type {
+        case .camera: [.camera]
+        case .microphone: [.microphone]
+        case .cameraAndMicrophone: [.camera, .microphone]
+        @unknown default: []
+        }
+        var components = URLComponents()
+        components.scheme = origin.protocol
+        components.host = origin.host
+        if origin.port != 0 { components.port = origin.port }
+        guard let onEvent, !permissions.isEmpty, let url = components.url else { return decisionHandler(.deny) }
+        permissionPromptCount += 1
+        onEvent(.permissionRequest(PermissionRequest(id: permissionPromptCount, origin: url, permissions: permissions) { allow in
+            decisionHandler(allow == true ? .grant : .deny)
+        }))
     }
 
     /// WebKit's private hover callback (WKUIDelegatePrivate): the element under the pointer after each
