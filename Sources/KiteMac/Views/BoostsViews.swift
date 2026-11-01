@@ -107,7 +107,7 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         Self.open[boostID] = nil
-        if zapTool.isPicking { zapTool.toggle() }
+        zapTool.close()
     }
 
     private func confirmDelete() {
@@ -125,15 +125,18 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-/// The editor's Zap tool (Arc's selector picker): opens or closes the picker over the page in
-/// the browser window the editor was opened from. Opened from View Boosts…, it has no page.
+/// The editor's Zap and Pick Selector tools (Arc's selector picker, in its zap and copy selector
+/// modes): open or close the picker over the page in the browser window the editor was opened
+/// from. Opened from View Boosts…, it has no page.
 @MainActor
 final class BoostZapTool: ObservableObject {
     let boostID: UUID
     weak var browser: BrowserWindowController? {
         didSet { update() }
     }
-    @Published private(set) var isPicking = false
+    /// The open picker's mode in that window, nil when it's closed.
+    @Published private(set) var mode: ZapPicker.Mode?
+    var isPicking: Bool { mode != nil }
     private var observer: NSObjectProtocol?
 
     init(boostID: UUID, browser: BrowserWindowController?) {
@@ -149,16 +152,27 @@ final class BoostZapTool: ObservableObject {
         if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 
-    var isAvailable: Bool { browser != nil }
+    /// The tools work on a page, and only while Boosts are on (Settings › Advanced).
+    var isAvailable: Bool { browser != nil && BoostsModel.shared.isOn }
 
-    func toggle() {
+    /// Opens the picker in `mode`, or closes it when it's already open in that mode. Arc's Pick
+    /// Selector and Zap buttons each read "Hide Selector Picker" only while their own mode is open.
+    func toggle(_ mode: ZapPicker.Mode = .zap) {
         guard let browser else { return NSSound.beep() }
-        if browser.isShowingZapPicker { browser.hideZapPicker() } else { browser.showZapPicker(boostID: boostID) }
+        let open = browser.zapPickerMode
+        browser.hideZapPicker()
+        if open != mode { browser.showZapPicker(boostID: boostID, mode: mode) }
+        update()
+    }
+
+    /// Closes the picker if it's open.
+    func close() {
+        if isPicking { browser?.hideZapPicker() }
         update()
     }
 
     private func update() {
-        isPicking = browser?.isShowingZapPicker ?? false
+        mode = browser?.zapPickerMode
     }
 }
 
@@ -181,6 +195,9 @@ struct BoostEditorView: View {
     /// fast typing and the text view jumps back to an older value.
     @State private var css: String
     @State private var js: String
+    /// The Boost before each Shuffle or Reset all Edits, newest last, for Arc's Undo. Kept while
+    /// the editor is open.
+    @State private var undoStack: [Boost] = []
     private var model: BoostsModel { BoostsModel.shared }
 
     init(
@@ -217,6 +234,7 @@ struct BoostEditorView: View {
                 }
             }
             .navigationTitle(boost.name)
+            .task { await runTestMenuSteps() }
         } else {
             Text("This Boost was deleted.")
                 .foregroundStyle(.secondary)
@@ -239,13 +257,24 @@ struct BoostEditorView: View {
             .frame(width: 100)
             .accessibilityIdentifier("boostCodeType")
             if zapTool.isAvailable {
-                // Arc's Zap tool; its icon isn't in Arc's assets (an SF Symbol is a guess).
-                Button(action: zapTool.toggle) {
-                    Image(systemName: zapTool.isPicking ? "bolt.fill" : "bolt")
+                // Arc's code toolbar: "Pick Selector", "Hide Selector Picker" while it's open in
+                // copy selector mode (arc.s 0x1012b19b4). Its icon is a guess (no asset in Arc).
+                let picking = zapTool.mode == .copySelector
+                Button(action: { zapTool.toggle(.copySelector) }) {
+                    Image(systemName: picking ? "cursorarrow.rays" : "cursorarrow")
                 }
                 .buttonStyle(.borderless)
-                .help(zapTool.isPicking ? "Hide Selector Picker" : "Zap")
-                .accessibilityLabel(zapTool.isPicking ? "Hide Selector Picker" : "Zap")
+                .help(picking ? "Hide Selector Picker" : "Pick Selector")
+                .accessibilityLabel(picking ? "Hide Selector Picker" : "Pick Selector")
+                .accessibilityIdentifier("boostPickSelector")
+                // Arc's Zap tool; its icon isn't in Arc's assets (an SF Symbol is a guess).
+                let zapping = zapTool.mode == .zap
+                Button(action: { zapTool.toggle(.zap) }) {
+                    Image(systemName: zapping ? "bolt.fill" : "bolt")
+                }
+                .buttonStyle(.borderless)
+                .help(zapping ? "Hide Selector Picker" : "Zap")
+                .accessibilityLabel(zapping ? "Hide Selector Picker" : "Zap")
                 .accessibilityIdentifier("boostZap")
             }
             if let refresh {
@@ -254,17 +283,83 @@ struct BoostEditorView: View {
                     .help("Refresh this Page")
                     .accessibilityIdentifier("boostRefresh")
             }
-            Button(action: rename) { Image(systemName: "pencil") }
-                .buttonStyle(.borderless)
-                .help("Rename this Boost")
-                .accessibilityIdentifier("boostRename")
-            Button(action: delete) { Image(systemName: "trash") }
-                .buttonStyle(.borderless)
-                .help("Delete this Boost")
-                .accessibilityIdentifier("boostDelete")
+            if !undoStack.isEmpty {
+                // Arc's header "Undo" (arrow.counterclockwise, arc.s 0x1012b70a8).
+                Button(action: undo) { Image(systemName: "arrow.counterclockwise") }
+                    .buttonStyle(.borderless)
+                    .help("Undo")
+                    .accessibilityLabel("Undo")
+                    .accessibilityIdentifier("boostUndo")
+            }
+            // Arc's header menu, in its order (arc.s 0x1012b7164–0x1012b7590). Report Boost… is
+            // left out: it reports to Arc's server.
+            Menu {
+                Button("Rename this Boost…", action: rename)
+                Button("Shuffle", action: shuffle)
+                Button("Delete this Boost", action: delete)
+                Button("Reset all Edits", action: resetAllEdits)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More")
+            .accessibilityLabel("Boost menu")
+            .accessibilityIdentifier("boostMenu")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    /// A test run (KITE_DIAGNOSTICS=1) can press the menu's items without opening the menu, which
+    /// would show over other apps: KITE_TEST_BOOST_MENU is a comma-separated list of shuffle,
+    /// reset and undo, done 3 s apart once the editor opens.
+    private func runTestMenuSteps() async {
+        guard UIDiagnostics.enabledByEnvironment,
+              let steps = ProcessInfo.processInfo.environment["KITE_TEST_BOOST_MENU"]?.split(separator: ",") else { return }
+        for step in steps {
+            try? await Task.sleep(for: .seconds(3))
+            switch step {
+            case "shuffle": shuffle()
+            case "reset": resetAllEdits()
+            case "undo": undo()
+            default: break
+            }
+        }
+    }
+
+    /// Arc's Shuffle: random colours, font, text size and case (`BoostEdits.shuffled`).
+    private func shuffle() {
+        guard let boost = model.library.boost(boostID) else { return }
+        undoStack.append(boost)
+        model.update(boostID) { $0 = BoostEdits.shuffled($0) }
+    }
+
+    /// Arc's Reset all Edits: the Boost starts over empty; Undo brings it back.
+    private func resetAllEdits() {
+        guard let boost = model.library.boost(boostID) else { return }
+        undoStack.append(boost)
+        model.update(boostID) { $0 = BoostEdits.reset($0) }
+        css = ""
+        js = ""
+    }
+
+    /// Puts back the Boost's data from before the last Shuffle or Reset all Edits (its name and
+    /// on/off switch as they are now).
+    private func undo() {
+        guard let before = undoStack.popLast() else { return }
+        model.update(boostID) { boost in
+            boost.css = before.css
+            boost.js = before.js
+            boost.zaps = before.zaps
+            boost.fontFamily = before.fontFamily
+            boost.textCase = before.textCase
+            boost.textZoom = before.textZoom
+            boost.colors = before.colors
+        }
+        css = before.css
+        js = before.js
     }
 
     private func editor(_ boost: Boost) -> some View {

@@ -1644,8 +1644,40 @@ Nothing in Arc was pressed or watched. Line numbers are `~/rea-arc/arc-strings.t
   clear it, the slider ranges (0–1, Brightness −1–1, from the maths), a new scheme starting at hue 0,
   saturation 0.5 and a 180° second hue, and the secondary puck being dragged to change the offset.
 - **Left out:** the analogous/complementary control (`ComplementaryColorControl`, Analogous/ComplementaryColorScheme
-  assets; its offsets weren't found), theme-driven schemes, `baseAppearance`, the editor menu's Shuffle and Reset
-  all Edits. (Live apply: see the next section.)
+  assets; its offsets weren't found), theme-driven schemes, `baseAppearance`. (Shuffle and Reset all Edits: the
+  next section but one; live apply: the next section.)
+
+## Boost Shuffle and Reset all Edits → `BoostEdits` (KiteCore), `BoostEditorView` (Arc 1.171 disassembly and Ghidra, 1 Nov 2026)
+
+Nothing in Arc was pressed or watched. Addresses are `~/rea-arc/decomp/Arc-arm64`; Ghidra output in
+`~/rea-arc/decomp/out-g113/` (sh1, sh2, sh3).
+
+- **Where.** The editor header's menu builds its items in this order (inline small strings and literals,
+  0x1012b7164–0x1012b76b0): "Rename this Boost…", "Shuffle", "Delete this Boost", "Report Boost…", "Reset all
+  Edits", then "All Boosts". The same header has a "Done" button (`xmark.circle.fill`) and an "Undo" button
+  (`arrow.counterclockwise`, 0x1012b70a8). Editor actions `shuffle`, `resetAll` (strings 163685–163687), analytics
+  event `boostShuffled` / `boost_shuffled`.
+- **Shuffle** (reducer jump table at 0x10129791c, case 19 → 0x101297d7c). Keeps the Boost's items except the style
+  ones and appends four new ones: a colour scheme (0x101293ef4), a font (0x101294134), a text case (0x101293e38) and
+  a text size (a random index below 5 into `BoostTextZoomOption`). The colour scheme draws (via `Double.random`,
+  2^53+1 steps): primary hue 0–360, primary saturation 0–1, the second hue's offset from the array [45, 90]
+  (__data 0x104571e90), invert lightness from [true, false] (0x104571ec8), and the advanced trio 0–1, 0–1 and
+  −1–1 (Kite maps them to Original Saturation, Contrast and Brightness; the first two can't be told apart by
+  range). Font and case are random elements of their option lists (the font list with a fallback to
+  `system-ui`). The change goes on the editor's change stack (0x10129fd30), so Undo takes it back, and is saved.
+- **Reset all Edits** (case 21 → 0x1012968ec). Replaces the Boost's items with those of a fresh, empty BoostData
+  (0x101149048), pushes that on the change stack and saves: CSS, JavaScript, zaps and every simple control go.
+  The name stays (only the items are saved). No confirmation string exists.
+- **Kite.** `BoostEdits.shuffled` draws the same ranges (hue 0–360, saturation 0–1, offset 45° or 90°, invert
+  on/off, Original Saturation and Contrast 0–1, Brightness −1–1, one of Arc's 18 fonts, the page's case or one of
+  the three, one of the five sizes) and keeps CSS, JS and zaps; `BoostEdits.reset` empties the Boost, keeping its
+  name, site and on/off switch. The editor header gets a menu (`ellipsis.circle`) with Arc's items except Report
+  Boost… (Arc's server) and All Boosts; Rename and Delete moved into it from their own buttons. Undo appears while
+  a Shuffle or Reset can be taken back (this editor session only).
+- **Inferred / unverified:** which of Arc's two 0–1 advanced values is which; whether Arc's font draw includes "no
+  font" (Kite always picks one of the 18) and its case draw "original" (Kite includes it); that Arc's Undo covers
+  every edit (Kite's covers only Shuffle and Reset all Edits); the menu's look, dividers and label icon (Arc's
+  header wasn't captured).
 
 ## Boosts apply live → `BoostLiveStyles`, `BoostScript.applyLive` (KiteCore), `LiveBoosts` (Arc 1.171 strings and disassembly, 1 Nov 2026)
 
@@ -2149,9 +2181,21 @@ read only for its function names, nothing copied).
   `zaps.json.migrated` (kept). Inferred: the Zap button's icon (SF `bolt`; no Zap asset in
   ARC_BoostsEditor.bundle) and its "Zap" tooltip (Arc's show string isn't in its strings).
 - **Unverified / not measured:** the highlight's colour, fill and stroke (Kite uses BoostsRed at 15% fill with a
-  2pt stroke), the cursor during picking, the shelf's position and look, the candidate slider in
-  `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped
-  element again while its cell is hovered), and Arc's selector heuristics (Kite has its own).
+  2pt stroke), the cursor during picking, the shelf's position and look, what `zapToPreview` shows on hover (Kite
+  shows the zapped element again while its cell is hovered), and Arc's selector heuristics (Kite has its own; Arc's
+  SelectorPicker.js ranks up to 15 candidates of at most 100 matches each).
+- **Copy selector mode (g114).** `SelectorPickerMode` has two cases; the post-click overlay picks its titles by the
+  mode byte: 1 → "Zap this" / "Zap all related elements", otherwise "Copy selector for this" / "Copy selector for
+  related" (0x1012d8ce4, 0x1012d8844). The code toolbar's button reads "Pick Selector" (inline small string at
+  0x1012b19d4) and "Hide Selector Picker" only while the picker is open in copy mode (0x1012b19b4: mode 0 → Hide,
+  1 or none → Pick). The action is `copySelectorToPasteboard` (string 163677). Kite: a Pick Selector button next to
+  Zap (SF `cursorarrow`, a guess) opens the same picker in copy mode; its buttons write the selector to the general
+  pasteboard and close the panel, the picker stays open for another pick (inferred) and has no shelf (Arc's shelf
+  text is Zap's). Neither tool shows, and the picker won't open, while Boosts are off in Settings.
+- **No candidate slider.** The post-click overlay (0x1012d85a0) is three buttons in a 250pt frame; the picker's code
+  (0x1012d3000–0x1012ef000) has no SwiftUI `Slider` or `DragGesture` (the editor's only drag gestures and slider
+  are the colour wheel's and Advanced color controls'). `SliderButton` is a type in the module but nothing ties it
+  to the picker, so Kite adds none.
 
 ## Media page → `MediaPageView`, `MediaLibraryModel`, `KiteCore/MediaLibrary` (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
 

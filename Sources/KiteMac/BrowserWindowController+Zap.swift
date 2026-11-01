@@ -8,7 +8,8 @@ extension Notification.Name {
 }
 
 /// Zap: Arc opens its picker from the Boost editor's Zap tool, and the zaps are part of the
-/// site's Boost. Never in incognito windows, which don't run Boosts.
+/// site's Boost. Never in incognito windows, which don't run Boosts, nor while Boosts are
+/// switched off in Settings (`BoostsModel.isOn`).
 extension BrowserWindowController {
     /// Opens the picker over the shown page; zaps go to the site's newest Boost (made by the
     /// first zap if the site has none).
@@ -16,14 +17,15 @@ extension BrowserWindowController {
         showZapPicker(boostID: nil)
     }
 
-    /// Opens the picker over the shown page for `boostID` (the Boost editor's Zap button).
-    /// Beeps when the shown page isn't on the web or, given a Boost, isn't on its site.
-    func showZapPicker(boostID: UUID?) {
-        guard !isIncognito, let page = shownPage, let container = page.view.superview,
+    /// Opens the picker over the shown page for `boostID` (the Boost editor's Zap button, or its
+    /// Pick Selector button with `mode` `.copySelector`). Beeps when the shown page isn't on the
+    /// web or, given a Boost, isn't on its site.
+    func showZapPicker(boostID: UUID?, mode: ZapPicker.Mode = .zap) {
+        guard !isIncognito, BoostsModel.shared.isOn, let page = shownPage, let container = page.view.superview,
               let tab = store.state.selectedTab, let domain = BoostLibrary.domain(of: tab.url) else { return NSSound.beep() }
         if let boostID, BoostsModel.shared.library.boost(boostID)?.domain != domain { return NSSound.beep() }
         removeZapPickers()
-        let picker = ZapPicker(page: page, boostID: boostID)
+        let picker = ZapPicker(page: page, boostID: boostID, mode: mode)
         picker.onClose = { [weak self] in self?.hideZapPicker() }
         container.addSubview(picker, positioned: .above, relativeTo: page.view)
         window?.makeFirstResponder(picker)
@@ -32,6 +34,9 @@ extension BrowserWindowController {
 
     /// Whether the picker is open in this window.
     var isShowingZapPicker: Bool { !zapPickers().isEmpty }
+
+    /// The open picker's mode, nil when none is open.
+    var zapPickerMode: ZapPicker.Mode? { zapPickers().first?.mode }
 
     /// Closes every picker in the window (the shown tab changed, or the user closed it).
     func hideZapPicker() {
