@@ -37,7 +37,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var toolbarHost: PageToolbarHost!
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
-    private var sidebarHost: NSHostingView<SidebarView>!
+    private var sidebarHost: SidebarHostingView!
     /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
     let claudeButton = ClaudeButtonModel()
     /// Window › Open Library… (⇧⌘L): covers the sidebar and the card while open.
@@ -285,7 +285,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             sidebar.fieldAccessory = AnyView(ExtensionsSelectionView(selection: extensions) { PasswordManagerFieldButton(model: $0) })
         }
         #endif
-        sidebarHost = NSHostingView(rootView: sidebar)
+        sidebarHost = SidebarHostingView(rootView: sidebar)
         SidebarRowsAnimator.register(sidebarHost)
         let toolbarHost = PageToolbarHost(rootView: toolbar)
         // Arc's right-click menu on the bar (Copy URL … Hide Toolbar).

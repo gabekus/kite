@@ -6,6 +6,10 @@ import SwiftUI
 /// scroll view hands its wheel events to the window's controller to page the spaces. The pages follow
 /// the fingers, rubber-band past the first and last space, and the theme crossfades with them; a release
 /// settles on a space (`SpaceSwipe.landing`).
+///
+/// Every frame, the swipe's and the settle's alike, is one offset for the whole strip of pages, set without
+/// animation (`SpacePages`): the settle is stepped here once a display frame rather than left to a SwiftUI
+/// animation, so the strip is always where `model.offset` says and a swipe can catch it mid-settle.
 @MainActor
 final class SpaceSwipeController {
     let model = SpaceSwipeModel()
@@ -21,6 +25,9 @@ final class SpaceSwipeController {
     private var swallowingMomentum = false
     /// A gesture that started vertically scrolls the tab list for its whole length.
     private var verticalGesture = false
+    /// The settle under way: where it started and when.
+    private var settling: (from: CGFloat, start: CFTimeInterval)?
+    private var clock: FrameClock?
 
     init(store: BrowserStore, sidebar: @escaping () -> NSView?,
          showTheme: @escaping (Theme, Theme, Float) -> Void, settleTheme: @escaping (Theme) -> Void) {
@@ -85,17 +92,16 @@ final class SpaceSwipeController {
     private func begin() {
         let state = store.state
         let index = state.selectedSpaceIndex
-        // Caught mid-settle: carry on from where the pages are.
+        // Caught mid-settle: carry on from where the pages are, with the selected space's neighbours.
+        stopSettling()
+        if model.anchor != nil { set { $0.anchor = nil } }
         swipe = SpaceSwipe(pageWidth: Double(model.pageWidth), hasPrevious: index > 0,
                            hasNext: index < state.spaces.count - 1, travel: Double(model.offset))
-        model.showsNeighbours = true
     }
 
     private func show() {
         guard let swipe else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { model.offset = CGFloat(swipe.offset) }
+        set { $0.offset = CGFloat(swipe.offset) }
         let state = store.state
         let index = state.selectedSpaceIndex
         let current = state.spaces[index].theme
@@ -109,12 +115,12 @@ final class SpaceSwipeController {
         let landing = cancelled ? 0 : swipe.landing
         let state = store.state
         let target = state.spaces[state.selectedSpaceIndex + landing]
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
+        set { model in
             if landing != 0 {
                 // The pages don't move this frame: the new space's page is where the old one's
-                // neighbour was, so the offset shifts by the page the selection moved.
+                // neighbour was, so the offset shifts by the page the selection moved, and the old
+                // space's pages stay built until the strip is at rest.
+                model.anchor = state.selectedSpace.id
                 selectingBySwipe = true
                 store.mutate { $0.selectSpace(target.id) }
                 selectingBySwipe = false
@@ -122,12 +128,7 @@ final class SpaceSwipeController {
             }
         }
         settleTheme(target.theme)
-        withAnimation(Self.settle) {
-            model.offset = 0
-        } completion: { [weak self] in
-            guard let self, self.swipe == nil else { return }
-            self.model.showsNeighbours = false
-        }
+        settle()
     }
 
     private var selectingBySwipe = false
@@ -136,21 +137,55 @@ final class SpaceSwipeController {
     /// comes in from the side it lies on.
     func spaceChanged(from old: Int, to new: Int) {
         guard !selectingBySwipe, swipe == nil, old != new, model.pageWidth > 0 else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            model.showsNeighbours = true
+        let state = store.state
+        set { model in
+            if old < state.spaces.count { model.anchor = state.spaces[old].id }
             model.offset = (new > old ? 1 : -1) * model.pageWidth
         }
-        withAnimation(Self.settle) {
-            model.offset = 0
-        } completion: { [weak self] in
-            guard let self, self.swipe == nil else { return }
-            self.model.showsNeighbours = false
-        }
+        settle()
     }
 
     /// Arc's page slide, fitted to a 1px-row recording of Spaces › Previous Space (1 Nov 2026): 97% of
-    /// the way 0.09s in and settled by 0.2s, quicker than the theme's colour, with no overshoot.
-    static let settle = Animation.spring(response: ArcMetrics.Motion.spacePageResponse, dampingFraction: 1)
+    /// the way 0.09s in and settled by 0.2s, quicker than the theme's colour, with no overshoot. A
+    /// critically damped spring of this response, stepped once a frame (`SpaceSwipe.settle`).
+    static let settleResponse = ArcMetrics.Motion.spacePageResponse
+
+    private func settle() {
+        guard model.offset != 0 else { return finishSettling() }
+        settling = (model.offset, CACurrentMediaTime())
+        guard let view = sidebar(), view.window != nil, !view.isHiddenOrHasHiddenAncestor else {
+            // No sidebar on screen to time frames from: just land.
+            set { $0.offset = 0 }
+            return finishSettling()
+        }
+        if clock == nil { clock = FrameClock(view: view) { [weak self] in self?.stepSettle() } }
+        clock?.start()
+    }
+
+    private func stepSettle() {
+        guard let settling else { return stopSettling() }
+        // Drawn for the frame being made, so the strip is where the spring is when it reaches the screen.
+        let now = clock?.targetTimestamp ?? CACurrentMediaTime()
+        let offset = SpaceSwipe.settle(from: Double(settling.from), elapsed: now - settling.start, response: Self.settleResponse)
+        set { $0.offset = CGFloat(offset) }
+        if offset == 0 { finishSettling() }
+    }
+
+    private func finishSettling() {
+        stopSettling()
+        // At rest: build the new space's neighbours now, between frames of nothing.
+        if model.anchor != nil { set { $0.anchor = nil } }
+    }
+
+    private func stopSettling() {
+        settling = nil
+        clock?.stop()
+    }
+
+    /// Changes the pages' model with no SwiftUI animation: every frame is placed by hand.
+    private func set(_ change: (SpaceSwipeModel) -> Void) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { change(model) }
+    }
 }
