@@ -43,6 +43,8 @@ struct SidebarView: View {
     var showSiteControls: ((NSView) -> Void)?
     /// Where a two-finger swipe between spaces has the pages.
     var swipe = SpaceSwipeModel()
+    /// The Mini Player's buttons; nil shows no Mini Player.
+    var miniPlayer: MiniPlayerActions?
 
     var body: some View {
         // The host's width, not the column's: the column must never be wider than the sidebar, or
@@ -109,6 +111,13 @@ struct SidebarView: View {
 
             SpacePages(store: store, swipe: swipe) { space in
                 spaceList(space)
+            }
+
+            if let miniPlayer, let id = store.miniPlayerTabID, let tab = state.tab(id), let page = store.pages[id],
+               let media = page.media {
+                MiniPlayerView(tab: tab, media: media.state, isMuted: page.isAudioMuted, actions: miniPlayer)
+                    .padding(.top, M.padding)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
             SpaceBar(store: store, actions: actions, claude: claude, downloads: downloads)

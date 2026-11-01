@@ -101,6 +101,7 @@ final class WebKitPage: NSObject, WebPage {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         observe()
+        WebKitMediaBridge.shared.attach(self)
     }
 
     var view: NSView { webView }
@@ -177,6 +178,23 @@ final class WebKitPage: NSObject, WebPage {
             return completion(true)
         }
         webView.requestMediaPlaybackState { completion($0 == .playing) }
+    }
+
+    func runMediaCommand(_ command: MediaCommand) {
+        // evaluateJavaScript counts as a user gesture, which play() and picture in picture need.
+        webView.evaluateJavaScript(command.script, in: nil, in: WebKitMediaBridge.world) { _ in }
+    }
+
+    /// WebKit's page mute (`_setPageMuted:`, private: there's no public API). Without it, does nothing.
+    var isAudioMuted = false {
+        didSet {
+            let selector = NSSelectorFromString("_setPageMuted:")
+            guard isAudioMuted != oldValue, webView.responds(to: selector) else { return }
+            typealias SetMuted = @convention(c) (AnyObject, Selector, Int) -> Void
+            let set = unsafeBitCast(webView.method(for: selector), to: SetMuted.self)
+            // _WKMediaAudioMuted = 1 << 0.
+            set(webView, selector, isAudioMuted ? 1 : 0)
+        }
     }
 
     func close() {
@@ -362,6 +380,32 @@ extension WebKitPage: WKUIDelegate {
         panel.canChooseDirectories = parameters.allowsDirectories
         panel.canChooseFiles = true
         completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+    }
+}
+
+/// Delivers MediaStateScript's reports to the page they came from. Installed once per content
+/// controller: popups share their opener's, and a controller takes only one handler per name.
+@MainActor
+final class WebKitMediaBridge: NSObject, WKScriptMessageHandler {
+    static let shared = WebKitMediaBridge()
+    static let world = WKContentWorld.world(name: MediaStateScript.worldName)
+    private let controllers = NSHashTable<WKUserContentController>.weakObjects()
+    private let pages = NSMapTable<WKWebView, WebKitPage>.weakToWeakObjects()
+
+    func attach(_ page: WebKitPage) {
+        pages.setObject(page, forKey: page.webView)
+        let controller = page.webView.configuration.userContentController
+        guard !controllers.contains(controller) else { return }
+        controllers.add(controller)
+        controller.addUserScript(WKUserScript(source: MediaStateScript.pageHook, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+        controller.addUserScript(WKUserScript(source: MediaStateScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: Self.world))
+        controller.add(self, contentWorld: Self.world, name: MediaStateScript.bindingName)
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, let webView = message.webView, let page = pages.object(forKey: webView),
+              let report = MediaState.parse(message.body as? String ?? "") else { return }
+        page.onEvent?(.media(report))
     }
 }
 

@@ -66,6 +66,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Every tab on screen in pane order, and its page: one, or a split's panes.
     private var shownTabIDs: [UUID] = []
     private var shownPages: [UUID: WebPage] = [:]
+    /// Tabs Kite put into picture in picture when you left them; it ends when you come back.
+    var autoPictureInPictureTabs: Set<UUID> = []
     private let splitPanes = SplitPanesView()
     private var paneClickMonitor: Any?
     private var spaceSwipe: SpaceSwipeController!
@@ -210,6 +212,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             downloads: downloadsButton,
             swipe: spaceSwipe.model
         )
+        sidebar.miniPlayer = miniPlayerActions
         var toolbar = PageToolbar(store: store, actions: actions)
         toolbar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view, overlap: 4) }
         sidebar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view) }
@@ -465,6 +468,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         hideFindBar()
         let ids = tabs.map(\.id)
         if ids != shownTabIDs {
+            tabsChangedOnScreen(left: shownTabIDs.filter { !ids.contains($0) }, arrived: ids.filter { !shownTabIDs.contains($0) })
             for page in shownPages.values { page.view.removeFromSuperview() }
             splitPanes.setPanes([])
             splitPanes.removeFromSuperview()
