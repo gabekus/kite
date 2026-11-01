@@ -50,7 +50,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate, NSW
         let host = NSHostingView(rootView: pane.view(model: model))
         host.sizingOptions = []
         let height = pane.contentHeight
-        var frame = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: SettingsMetrics.width, height: height))
+        var frame = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: pane.width, height: height))
         // Keep the top edge where it is, as macOS settings windows do.
         frame.origin = NSPoint(x: window.frame.minX, y: window.frame.maxY - frame.height)
         window.contentView = host

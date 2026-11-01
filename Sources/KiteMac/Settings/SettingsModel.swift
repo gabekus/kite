@@ -57,6 +57,9 @@ final class SettingsModel: ObservableObject {
 
     var archiveAfter: ArchiveInterval { store?.state.archiveAfter ?? .twelveHours }
 
+    /// The Spaces using Kite's one profile, for Profiles' list.
+    var spaceCount: Int { store?.state.spaces.count ?? 1 }
+
     // MARK: Shortcuts
 
     private var keyBindings: KeyBindingsStore? { (NSApp.delegate as? AppDelegate)?.keyBindings }
