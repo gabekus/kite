@@ -93,7 +93,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Developer → Inspect Elements | ⌥⌘C | 🟡 opens DevTools, no picker yet | Later |
 | Developer → JavaScript Console | ⌥⌘J | 🟡 opens DevTools, not on Console | Later |
 | Developer → Network Inspector | | ❌ | Later, with the two above |
-| Developer → Allow JavaScript from Apple Events | | ❌ | With AppleScript |
+| Developer → Allow JavaScript from Apple Events | | ✅ off by default, per profile; gates AppleScript `execute` | |
 | Turn on Developer Mode for this site | ⌃D | 🟡 Per-host switch (title flips to "Turn off…"), remembered across relaunches; on a Developer Mode site the sidebar's reload button gets Arc's reload options (Reload this page / Refresh (Ignore Cache) / Clear Cookies and Refresh) and reloads the way last chosen. No Site Controls row yet | Gap 16 |
 | Enter Full Screen | ⌃⌘F | ✅ | |
 | Dark Page for This Site (Kite only) | ⌥⌘D | ✅ | |
@@ -203,7 +203,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | App icons | Alternate Dock icons | ❌ | Skip? (we draw our own) |
 | Sound effects | Subtle UI sounds | ❌ | Later, our own sounds |
 | Remappable shortcuts | Settings → Shortcuts | 🟡 overrides in keybindings.json, keyed by Arc-style action IDs on every menu item; Import from Arc brings over Arc's StorableKeyBindings.json; the Settings editor is to come | B6 |
-| AppleScript dictionary | windows, tabs (URL, title, execute JS), spaces | ❌ | With MCP/CLI thread; worth matching |
+| AppleScript dictionary | windows, tabs (URL, title, execute JS), spaces | 🟡 Arc’s sdef: windows, tabs (id, title, URL, loading, location; make, select, close, go back/forward, reload, stop, execute), spaces read only, Little Kite tabs; no `focus` or settable `location` yet | Gap 28 |
 | Sync | Sidebar via CloudKit/Firebase | ❌ | Roadmap: sync |
 | Default browser, handle links | | ✅ | |
 | PWAs / installed apps | `app_mode_loader` shims | ❌ | Roadmap: PWAs |

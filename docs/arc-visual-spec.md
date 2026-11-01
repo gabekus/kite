@@ -857,6 +857,42 @@ Arc was not opened or driven, so no geometry was measured.
   ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
   deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
 
+## AppleScript dictionary → `Resources/Kite.sdef`, `AppleScript.swift` (Arc 1.171 sdef, Info.plist, nib, strings, 1 Nov 2026)
+
+- `Arc.app/Contents/Info.plist`: `NSAppleScriptEnabled` 1, `OSAScriptingDefinition` `Arc.sdef` (read with
+  `defaults read`). Kite's Info.plist now has the same two keys, pointing at `Kite.sdef`.
+- `Arc.app/Contents/Resources/Arc.sdef` (197 lines, read only; Arc wasn't run and no script was sent to it), one
+  "Standard Suite":
+  - `make` (NSCreateCommand), `count` (NSCountCommand), `close` (`coreclos`).
+  - `application` (`capp`): `windows` (cocoa key `appleScriptWindows`, front to back), `name`, `frontmost`,
+    `version`, `quit`, and a write-only `tabs` element "to create new Little Arc tabs" (line 44).
+  - `window` (`WiND`): `tabs` (rw), `spaces`, `id` (text), `name`, `index`, `closeable`, `minimizable`, `minimized`,
+    `resizable`, `visible`, `zoomable`, `zoomed`, `active tab`, `active space`, `incognito`, `mode` ("normal" or
+    "incognito", settable only when the window is made), responds to `close`.
+  - Tab commands `select` (`CrSelect`), `go back` (`CrSuBack`), `go forward` (`CrSuFwd `), `reload` (`CrSuRlod`),
+    `stop` (`CrSustop`), `execute` (`CrSuExJa`, parameter `javascript` `JvSc`, result text).
+  - `tab` (`tAbB`): `id` (text), `title`, `URL` (rw), `loading`, `location` ("topApp", "pinned" or "unpinned").
+  - `space` (`sPaC`): `id`, `title`, `tabs`; command `focus` (`SpaFocus`).
+  Kite's sdef has the same classes, terms and four-character codes (descriptions rewritten), so an Arc script
+  works after changing the application name.
+- `arc-strings.txt` 63011 "Please provide a valid URL property for the make new tab command." (Arc's reply to
+  `make new tab` without a usable URL): Kite's reply is the same.
+- View › Developer (`menudump View`): Allow JavaScript from Apple Events is after Network Inspector, no shortcut.
+  `MainMenu.nib`: action `allowJavascriptFromAppleEvents:`, no identifier (Network Inspector's is
+  `networkInspector`), so Kite's item has no key-binding id. `decomp/out2/objc-setState.txt` 1536: menu validation
+  sets the item's check mark from a stored value. ArcCore holds Chromium's pref
+  `browser.allow_javascript_apple_events` (per profile, off by default in Chromium); no key for it in
+  `defaults read company.thebrowser.Browser`. Kite keeps it per profile too (`BrowserState
+  .allowsJavaScriptFromAppleEvents`, in session.json), off by default. Arc also has a launch flag
+  `--enable-applescript-javascript` (strings 65137); Kite has no equivalent.
+- Not found: Arc's error text for `execute` while the item is off (no such string in Arc or ArcCore). Kite's
+  wording is its own ("Executing JavaScript through AppleScript is turned off…", error -1743).
+- Inferred, not observed (Arc wasn't scripted): which tabs a window lists. Kite lists the sidebar's tabs
+  (favorites, then the current space's pinned and unpinned tabs); a space lists its pinned and unpinned tabs.
+  `make new tab` in a window opens it at the top of the unpinned tabs and selects it, like ⌘T. A window's `id`
+  is its window number.
+- Not in Kite yet: setting a tab's `location`, and the space `focus` command (spaces belong to another thread).
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

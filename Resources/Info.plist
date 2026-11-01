@@ -26,6 +26,11 @@
 	<string>public.app-category.productivity</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<!-- AppleScript: Arc's dictionary, in Resources/Kite.sdef. -->
+	<key>NSAppleScriptEnabled</key>
+	<true/>
+	<key>OSAScriptingDefinition</key>
+	<string>Kite.sdef</string>
 	<key>NSPrincipalClass</key>
 	<string>KCApplication</string>
 	<!-- Lets dual-GPU Macs stay on the integrated GPU. -->
