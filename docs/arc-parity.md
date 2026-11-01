@@ -90,9 +90,9 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Cast | | ❌ | Skip? |
 | Developer → View Source | ⌥⌘U | ✅ Chromium (new `view-source:` tab) | |
 | Developer → Developer Tools | ⌥⌘I | ✅ | |
-| Developer → Inspect Elements | ⌥⌘C | 🟡 opens DevTools, no picker yet | Later |
-| Developer → JavaScript Console | ⌥⌘J | 🟡 opens DevTools, not on Console | Later |
-| Developer → Network Inspector | | ❌ | Later, with the two above |
+| Developer → Inspect Elements | ⌥⌘C | ✅ Chromium: DevTools with the element picker on (WebKit: Web Inspector's element selection) | |
+| Developer → JavaScript Console | ⌥⌘J | ✅ DevTools on Console | |
+| Developer → Network Inspector | | ✅ Chromium: DevTools on Network (WebKit: opens Web Inspector as it was) | |
 | Developer → Allow JavaScript from Apple Events | | ❌ | With AppleScript |
 | Turn on Developer Mode for this site | ⌃D | ❌ | Thread: Developer Mode |
 | Enter Full Screen | ⌃⌘F | ✅ | |

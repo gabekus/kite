@@ -27,6 +27,9 @@
 - (NSMutableArray<NSString *> *)documentScriptIdentifiers;
 - (void)addDocumentScript:(NSString *)script navigation:(NSUInteger)navigation completion:(nullable void (^)(void))completion;
 - (void)deliverDevToolsEvent:(NSString *)method data:(NSData *)data;
+- (void)devToolsFrontendDidOpen:(CefRefPtr<CefBrowser>)frontend;
+- (void)devToolsFrontendDidLoad;
+- (void)devToolsFrontendDidClose;
 - (BOOL)deliverSessionMessage:(NSData *)data;
 @property (nonatomic, readwrite) BOOL isLoading;
 @property (nonatomic, readwrite) BOOL canGoBack;
@@ -101,6 +104,26 @@ CefRefPtr<CefValue> ToCefValue(id object) {
     }
     return value;
 }
+
+/// Client for a tab's DevTools window. It keeps the frontend browser so View ›
+/// Developer can pick a panel (showDevToolsRunningFrontendScript:).
+class KCDevToolsClient : public CefClient, public CefLifeSpanHandler, public CefLoadHandler {
+ public:
+    explicit KCDevToolsClient(KCBrowser* owner) : owner_(owner) {}
+
+    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+    CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+
+    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override { [owner_ devToolsFrontendDidOpen:browser]; }
+    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override { [owner_ devToolsFrontendDidClose]; }
+    void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int httpStatusCode) override {
+        if (frame->IsMain()) [owner_ devToolsFrontendDidLoad];
+    }
+
+ private:
+    __weak KCBrowser* owner_;
+    IMPLEMENT_REFCOUNTING(KCDevToolsClient);
+};
 
 /// Per-browser CEF client: forwards Chromium callbacks to the Objective-C KCBrowser.
 class KCClient : public CefClient,
@@ -424,6 +447,11 @@ class KCClient : public CefClient,
     /// DevTools calls made before the browser exists; sent ahead of the first navigation.
     NSMutableArray<void (^)(void)>* _queuedDevTools;
     BOOL _attached;
+    /// The DevTools window's frontend, while it's open and Kite opened it.
+    CefRefPtr<CefBrowser> _devToolsFrontend;
+    BOOL _devToolsFrontendLoaded;
+    /// Runs in the frontend once it has loaded.
+    NSString* _pendingFrontendScript;
 }
 
 - (instancetype)initWithURL:(NSURL*)url delegate:(id<KCBrowserDelegate>)delegate {
@@ -557,11 +585,45 @@ class KCClient : public CefClient,
     if (_browser) _browser->GetHost()->SetZoomLevel(std::log(zoomFactor) / std::log(1.2));
 }
 
-- (void)showDevTools {
+- (void)showDevToolsRunningFrontendScript:(NSString*)frontendScript {
     if (!_browser) return;
+    CefRefPtr<CefBrowserHost> host = _browser->GetHost();
     CefWindowInfo windowInfo;
     CefBrowserSettings settings;
-    _browser->GetHost()->ShowDevTools(windowInfo, nullptr, settings, CefPoint());
+    if (_devToolsFrontend && host->HasDevTools()) {
+        // Already open: ShowDevTools just brings it forward.
+        host->ShowDevTools(windowInfo, nullptr, settings, CefPoint());
+        if (!frontendScript) return;
+        if (_devToolsFrontendLoaded) [self runFrontendScript:frontendScript];
+        else _pendingFrontendScript = frontendScript;
+        return;
+    }
+    _pendingFrontendScript = frontendScript;
+    _devToolsFrontendLoaded = NO;
+    host->ShowDevTools(windowInfo, new KCDevToolsClient(self), settings, CefPoint());
+}
+
+- (void)runFrontendScript:(NSString*)script {
+    if (!_devToolsFrontend) return;
+    CefRefPtr<CefFrame> frame = _devToolsFrontend->GetMainFrame();
+    if (frame) frame->ExecuteJavaScript(script.UTF8String, frame->GetURL(), 0);
+}
+
+- (void)devToolsFrontendDidOpen:(CefRefPtr<CefBrowser>)frontend {
+    _devToolsFrontend = frontend;
+}
+
+- (void)devToolsFrontendDidLoad {
+    _devToolsFrontendLoaded = YES;
+    NSString* script = _pendingFrontendScript;
+    _pendingFrontendScript = nil;
+    if (script) [self runFrontendScript:script];
+}
+
+- (void)devToolsFrontendDidClose {
+    _devToolsFrontend = nullptr;
+    _devToolsFrontendLoaded = NO;
+    _pendingFrontendScript = nil;
 }
 
 - (void)find:(NSString*)text forward:(BOOL)forward findNext:(BOOL)findNext {

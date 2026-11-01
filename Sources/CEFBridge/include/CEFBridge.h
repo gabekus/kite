@@ -157,8 +157,9 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) BOOL focusBlocked;
 /// Tells Chromium the tab is offscreen so it throttles rendering and timers.
 - (void)setHidden:(BOOL)hidden;
-/// Opens Chrome DevTools in its own window.
-- (void)showDevTools;
+/// Opens (or brings forward) Chrome DevTools in its own window, then runs `frontendScript` in the DevTools
+/// frontend page: on its load event when it opens, right away when it's already open.
+- (void)showDevToolsRunningFrontendScript:(nullable NSString *)frontendScript;
 /// `findNext` continues through the same search; results arrive on the delegate.
 - (void)find:(NSString *)text forward:(BOOL)forward findNext:(BOOL)findNext;
 - (void)stopFinding;

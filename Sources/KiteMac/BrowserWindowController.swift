@@ -900,16 +900,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     @objc func goBack(_ sender: Any?) { shownPage?.goBack() }
     @objc func goForward(_ sender: Any?) { shownPage?.goForward() }
 
-    @objc func showDevTools(_ sender: Any?) {
+    // View › Developer, like Arc 1.171.
+    @objc func showDevTools(_ sender: Any?) { showDevTools(on: .last) }
+    @objc func inspectElements(_ sender: Any?) { showDevTools(on: .inspectElement) }
+    @objc func showJavaScriptConsole(_ sender: Any?) { showDevTools(on: .console) }
+    @objc func showNetworkInspector(_ sender: Any?) { showDevTools(on: .network) }
+
+    private func showDevTools(on panel: DevToolsPanel) {
         guard let page = shownPage else { return NSSound.beep() }
-        if pool.engine.supportsDevTools {
-            page.showDevTools()
-        } else {
-            let alert = NSAlert()
-            alert.messageText = "Web Inspector"
-            alert.informativeText = "On the WebKit engine, right-click the page and choose Inspect Element."
-            alert.runModal()
-        }
+        page.showDevTools(panel)
     }
 
     @objc func toggleDarkPage(_ sender: Any?) {

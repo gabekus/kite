@@ -89,6 +89,11 @@ final class WebKitPage: NSObject, WebPage {
         if let contentRules {
             configuration.userContentController = contentRules.makeController()
         }
+        // Web Inspector in the window (View › Developer) needs WebKit's private developer
+        // extras; isInspectable alone only allows Safari's remote inspector.
+        if configuration.preferences.responds(to: NSSelectorFromString("_developerExtrasEnabled")) {
+            configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        }
         webView = WKWebView(frame: .zero, configuration: configuration)
         self.downloads = downloads
         self.contentRules = contentRules
@@ -121,8 +126,29 @@ final class WebKitPage: NSObject, WebPage {
     func allowFocus() {}
     // WebKit throttles views that aren't in a window on its own.
     func setVisible(_ visible: Bool) {}
-    // Web Inspector opens from the context menu; there's no public API to open it.
-    func showDevTools() {}
+    /// Web Inspector has no public API; WKWebView's private `_inspector` (`_WKInspector`)
+    /// opens it. Each call is guarded, and without it Kite says to use the context menu.
+    /// There's no call for the Network tab, so Network Inspector opens the inspector as is.
+    func showDevTools(_ panel: DevToolsPanel) {
+        let getter = NSSelectorFromString("_inspector")
+        guard webView.responds(to: getter), let inspector = webView.perform(getter)?.takeUnretainedValue() as? NSObject else {
+            let alert = NSAlert()
+            alert.messageText = "Web Inspector"
+            alert.informativeText = "On the WebKit engine, right-click the page and choose Inspect Element."
+            alert.runModal()
+            return
+        }
+        func call(_ name: String) {
+            let selector = NSSelectorFromString(name)
+            if inspector.responds(to: selector) { inspector.perform(selector) }
+        }
+        call("show")
+        switch panel {
+        case .last, .network: break
+        case .console: call("showConsole")
+        case .inspectElement: call("toggleElementSelection")
+        }
+    }
     // No public force-dark API in WebKit.
     func setForceDark(_ enabled: Bool) {}
 

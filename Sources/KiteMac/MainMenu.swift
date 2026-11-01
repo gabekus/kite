@@ -225,9 +225,9 @@ enum MainMenu {
             submenuItem("Developer", [
                 item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option], id: "viewSource"),
                 item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option], id: "developerTools"),
-                // Both open DevTools for now; picking the element or panel needs the DevTools frontend.
-                item("Inspect Elements", #selector(BrowserWindowController.showDevTools(_:)), "c", [.command, .option], id: "inspectElements"),
-                item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option], id: "javaScriptConsole"),
+                item("Inspect Elements", #selector(BrowserWindowController.inspectElements(_:)), "c", [.command, .option], id: "inspectElements"),
+                item("JavaScript Console", #selector(BrowserWindowController.showJavaScriptConsole(_:)), "j", [.command, .option], id: "javaScriptConsole"),
+                item("Network Inspector", #selector(BrowserWindowController.showNetworkInspector(_:)), id: "networkInspector"),
             ]),
             .separator(),
             item("Enter Full Screen", #selector(BrowserWindowController.toggleFullScreenMode(_:)), "f", [.command, .control], id: "fullscreen"),
