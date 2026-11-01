@@ -653,7 +653,27 @@ Kite's differences: no profile indicator (no profiles); the chevron is a plain m
 - Inferred or unverified: headings past "Earlier This Week" (Kite groups by month); the unfiltered page title
   (string value missing; Kite says "Archive"); what a plain click on a row does (Kite opens the page, like
   History); where in the space a restored tab lands (Kite: its old position); the Delete icon (Kite: trash); all
-  sizes. Kite has no Little Arc filter (Little Kite doesn't archive).
+  sizes.
+
+### Archive: Little Arc filter → `ClosedTab.littleKite`, `ArchiveFilter.Source`, `archiveLittleKite` (g121; Arc 1.171 strings, 1 Nov 2026)
+
+- `ArchivedItemSource` has coding keys `SpaceCodingKeys`, `LittleArcCodingKeys`, `StandaloneSidebarCodingKeys`,
+  `UnknownCodingKeys` (arc-strings.txt ~38832); the enum cases `space`, `littleArc`, `standaloneSidebar`,
+  `unknown` follow the reasons `manual`, `clearButton`, `clearTabGroup` (~165600). So an archived Little Arc is
+  its own source, not a space's tab.
+- The archive page's filter cases are `space`, `littleArc`, `autoArchived`, `manuallyArchived` with `tabSource`
+  (~175664), and the "Library Archive Tabs Little Arc Filter Title" string sits with "Where was the tab?" and
+  "How was the tab closed?" (~82509). Kite: "Little Kite" is the last entry under "Where was the tab?", a chip
+  like the others; a space's filter doesn't list Little Kite pages, rows say "Little Kite" where a tab's space
+  goes.
+- Restore is `unarchiveAndPutBackItem(_:desiredSpaceID:selectItem:archiveDataStoreClient:)` (~82754), with the
+  "Tab restored to <space>" toast: everything goes back into a space. A Little Kite page has none, so Kite puts it
+  at the top of the current space's Today (inferred: where Arc puts it isn't in the strings).
+- What archives one: Arc's `autoArchiveLittleArcTimeThreshold` ("Archive Little Arcs after:") and the Little Arc
+  window's File › Archive Tab ⌘W. Kite archives the page whenever a Little Kite window closes with a page still in
+  it (Auto-Closed for "Archive Little Kites after:", Manually Closed for ⌘W or the close button); "Open in
+  <Space>" moves it instead. Unverified: whether Arc archives on the close button too, and the filter's exact
+  title (its value isn't next to its comment in the strings; Kite says "Little Kite").
 
 ## Windows: New Window ⌘N, Blank Window ⌃⌘N (Arc 1.171 menu bar and strings, 1 Nov 2026)
 
@@ -766,6 +786,22 @@ Decompiled with `SymRefs7.java` / `DumpAt.java` into `~/rea-arc/decomp/out7/g45-
   swipe takes priority over the Peek page's own swipe back/forward (Arc's dismiss path doesn't check the page's
   history); the gesture isn't gated on System Settings › Swipe between pages. The haptic was not felt (no
   hands-on test).
+### Undo Archive Tab reloads the page (g120; Arc 1.171 strings and an incognito check, 1 Nov 2026)
+
+- Closing items tears down their web contents: the close-items state carries `requestedWindowContentsToTeardown`,
+  `successfullyTornDownWindowContents` and `CloseItemsContentTeardownResult` (arc-strings.txt ~176418, 44339), then
+  `beginTeardownWindowContent(_:options:)` and `completeCloseWindowContent(_:options:archiveInfo:)`, which asserts
+  "Attempting to close a window content that still has a blueprint" (~82780–82784; decompiled FUN_1028ea6c0 in
+  `~/rea-arc/decomp/out-g120/r1.txt`). Undo is `undoCloseItems` with a `CloseItemsUndoConfiguration` (~176401,
+  44037); nothing keeps a page alive for it.
+- Incognito check (one incognito window, a 127.0.0.1 fixture that stamps its load time; read through Arc's
+  AppleScript `execute javascript`): File › Archive Tab, then File › Restore Last Closed Tab brought the tab back
+  at the same URL (fragment included) as a fresh load: a second GET, the load stamp changed, a mark set in the
+  DOM was gone, `history.length` 1. Incognito has no Edit › Undo Archive Tab and no pinned tabs, so the pinned
+  case wasn't observed.
+- So Kite's reload on Undo Archive Tab matches Arc; Kite changes nothing here. Kite restores an unpinned tab's
+  back/forward list (its hibernation state); Arc's incognito restore didn't, which Kite keeps.
+
 ### Peek: Undo Close Peek → `closeLinkPeek(undoable:)`, `reopenLinkPeek` (g46; Arc 1.171 binary, 1 Nov 2026)
 
 From `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s` (otool) and Ghidra (`out5/g46-closepeek.txt`).

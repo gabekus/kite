@@ -287,7 +287,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             resolve: { URLInput.resolve($0, engine: store.state.searchEngine) },
             move: { [weak main] page, url, title, spaceID in main?.adopt(page, url: url, title: title, in: spaceID) },
             openTab: { url in store.mutate { _ = $0.openTab(url: url) } },
-            adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) }
+            adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) },
+            archive: { url, title, reason in
+                store.mutate { _ = $0.archiveLittleKite(url: url, title: title ?? "", reason: reason) }
+            }
         )
         let controller = LittleKiteWindowController(engine: main.pool.engine, url: url, host: host)
         controller.didClose = { [weak self] closed in self?.littleControllers.removeAll { $0 === closed } }

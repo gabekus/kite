@@ -17,21 +17,41 @@ public enum ArchiveReason: String, Hashable, Codable, CaseIterable, Sendable {
     }
 }
 
-/// The archive page's filters: Arc's "Where was the tab?" (a space) and "How was the tab closed?",
-/// plus the search field.
+/// The archive page's filters: Arc's "Where was the tab?" (a space, or Little Arc: its filter cases are
+/// `space`, `littleArc`, `autoArchived`, `manuallyArchived`) and "How was the tab closed?", plus the
+/// search field.
 public struct ArchiveFilter: Hashable, Sendable {
-    public var spaceID: UUID?
+    /// Where the tab was: one space, or Little Kite (Arc's "Little Arc" filter). nil shows all.
+    public enum Source: Hashable, Sendable {
+        case space(UUID)
+        case littleKite
+    }
+
+    public var source: Source?
     public var reason: ArchiveReason?
     public var query: String
 
-    public init(spaceID: UUID? = nil, reason: ArchiveReason? = nil, query: String = "") {
-        self.spaceID = spaceID
+    public init(source: Source? = nil, reason: ArchiveReason? = nil, query: String = "") {
+        self.source = source
         self.reason = reason
         self.query = query
     }
 
+    public init(spaceID: UUID?, reason: ArchiveReason? = nil, query: String = "") {
+        self.init(source: spaceID.map(Source.space), reason: reason, query: query)
+    }
+
+    public var spaceID: UUID? {
+        if case .space(let id) = source { return id }
+        return nil
+    }
+
     public func matches(_ item: ClosedTab) -> Bool {
-        if let spaceID, item.spaceID != spaceID { return false }
+        switch source {
+        case .space(let id): if item.isLittleKite || item.spaceID != id { return false }
+        case .littleKite: if !item.isLittleKite { return false }
+        case nil: break
+        }
         if let reason, (item.reason ?? .manual) != reason { return false }
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return true }
@@ -104,8 +124,10 @@ extension BrowserState {
         return sections
     }
 
-    /// Arc's archive Restore: the tab goes back to the space it was archived from (the current space
-    /// if that one is gone), where it was, without switching to it. Returns the space it went to.
+    /// Arc's archive Restore (`unarchiveAndPutBackItem(_:desiredSpaceID:…)`): the tab goes back to the
+    /// space it was archived from (the current space if that one is gone), where it was, without
+    /// switching to it. A Little Kite page has no space of its own and goes to the top of the current
+    /// space's Today. Returns the space it went to.
     @discardableResult
     public mutating func restoreArchived(_ tabID: UUID, now: Date = Date()) -> UUID? {
         guard let i = archived.lastIndex(where: { $0.tab.id == tabID }) else { return nil }
@@ -114,12 +136,25 @@ extension BrowserState {
         // It's open again, so ⇧⌘T mustn't bring back a second copy.
         recentlyClosed.removeAll { $0.tab.id == tabID }
         guard location(of: tabID) == nil else { return nil }
-        let s = spaceIndex(item.spaceID) ?? selectedSpaceIndex
+        let s = item.isLittleKite ? selectedSpaceIndex : (spaceIndex(item.spaceID) ?? selectedSpaceIndex)
         var tab = item.tab
         // Fresh, so auto-archive doesn't take it straight back.
         tab.lastActiveAt = now
         spaces[s].tabs.insert(tab, at: min(max(item.index, 0), spaces[s].tabs.count))
         return spaces[s].id
+    }
+
+    /// A Little Kite window closed with a page in it: Arc archives Little Arcs (`autoArchiveLittleArcTimeThreshold`,
+    /// archive `tabSource` `littleArc`), so the page lands in the archive under the Little Kite filter.
+    /// Nothing for a window that never had a page. Returns the archived item's id.
+    @discardableResult
+    public mutating func archiveLittleKite(url: URL?, title: String, faviconURL: URL? = nil, reason: ArchiveReason,
+                                           now: Date = Date()) -> UUID? {
+        guard let url else { return nil }
+        let tab = BrowserTab(url: url, title: title, faviconURL: faviconURL, lastActiveAt: now)
+        appendToArchive([ClosedTab(tab: tab, spaceID: selectedSpace.id, index: 0, littleKite: true)],
+                        reason: reason, now: now)
+        return tab.id
     }
 
     /// Arc's archive Delete: gone for good.

@@ -231,6 +231,12 @@ public struct ClosedTab: Hashable, Codable, Sendable {
     public var archivedAt: Date? = nil
     /// How it got there (Arc's `ArchiveReason`). nil for entries saved before Kite kept it.
     public var reason: ArchiveReason? = nil
+    /// A Little Kite window's page, not a sidebar tab (Arc's archive `tabSource` `littleArc`). Its
+    /// `spaceID` is the space that was current when it closed. nil for sidebar tabs.
+    public var littleKite: Bool? = nil
+
+    /// Whether this came from a Little Kite window.
+    public var isLittleKite: Bool { littleKite == true }
 }
 
 public enum TabSection: Hashable, Sendable {
