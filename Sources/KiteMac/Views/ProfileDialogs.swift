@@ -3,15 +3,111 @@ import KiteCore
 import SwiftUI
 
 // Arc's profile dialogs (ARC_ProfilesUI: ProfileCreationSheetWindow, ProfileChangeSheetWindow).
-// Wording and buttons are Arc's, read from its binary (the localized keys next to their comments):
-// "Create a new Profile", "What do you want to call this Profile?" (placeholder "Personal"),
-// Next / Back / Create Profile, "Which Spaces should use this Profile?", and for changing a
-// space's profile "Change Profile" / "Cancel" with a "New Profile" option. Layout is not
-// measured from Arc yet: it follows a macOS sheet.
+// Wording and buttons are Arc's, read from its binary (the localized keys next to their comments).
+// Layout from Arc 1.169 on 2026-11-01, Change Profile and both Create steps opened from the menu bar
+// and read through Accessibility (frames) and a window capture (colours, dark appearance):
+// sheets 450pt wide with 38pt insets, a 62pt (create) / 68pt (change) icon at the top, a 21pt title,
+// body text, and 40pt buttons whose key is shown in a chip (ESC, ↩), right-aligned at the bottom.
 
-private enum M {
-    static let width: CGFloat = 420
-    static let padding: CGFloat = 20
+enum ArcSheetMetrics {
+    static let width: CGFloat = 450
+    static let inset: CGFloat = 38
+    static let titleSize: CGFloat = 17
+    static let bodySize: CGFloat = 14
+    static let buttonHeight: CGFloat = 40
+    static let buttonRadius: CGFloat = 10
+    static let buttonGap: CGFloat = 8
+    /// Measured in Arc's dark sheets: background, secondary button, primary button.
+    static let background = Color(red: 0x1D / 255, green: 0x26 / 255, blue: 0x3E / 255)
+    static let secondary = Color(red: 0x3F / 255, green: 0x40 / 255, blue: 0x73 / 255)
+    static let primary = Color(red: 0x42 / 255, green: 0x56 / 255, blue: 0xF5 / 255)
+}
+
+private typealias M = ArcSheetMetrics
+
+/// Arc's dialog button: a filled rounded rectangle with the title and its key in a chip.
+struct ArcSheetButton: View {
+    let title: String
+    var key: String?
+    var primary = false
+    var enabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Text(title).font(.system(size: 15, weight: .medium))
+                if let key {
+                    Text(key)
+                        .font(.system(size: 11, weight: .bold))
+                        .padding(.horizontal, 6)
+                        .frame(height: 22)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.15)))
+                }
+            }
+            .foregroundStyle(.white.opacity(enabled ? 1 : 0.4))
+            .padding(.horizontal, 12)
+            .frame(height: M.buttonHeight)
+            .background(RoundedRectangle(cornerRadius: M.buttonRadius, style: .continuous)
+                .fill((primary ? M.primary : M.secondary).opacity(enabled ? 1 : 0.35)))
+            .overlay(RoundedRectangle(cornerRadius: M.buttonRadius, style: .continuous)
+                .strokeBorder(.white.opacity(primary ? 0.1 : 0.25), lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(title)
+    }
+}
+
+/// The sheet around a profile dialog's content.
+struct ArcSheet<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) { content }
+            .padding(M.inset)
+            .frame(width: M.width, alignment: .leading)
+            .background(M.background)
+            .environment(\.colorScheme, .dark)
+    }
+}
+
+/// Arc's smiley profile badge (icon-archie): a ring with a face, a green plus for a new profile.
+struct ProfileBadge: View {
+    var size: CGFloat = 62
+    var adding = false
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Circle()
+                .strokeBorder(.white.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                .overlay(
+                    Circle().fill(Color(red: 0.33, green: 0.33, blue: 0.55)).padding(size * 0.08)
+                        .overlay(Image(systemName: "face.smiling").font(.system(size: size * 0.5, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.85)))
+                )
+                .frame(width: size, height: size)
+            if adding {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: size * 0.3))
+                    .foregroundStyle(.white, Color(red: 0.3, green: 0.65, blue: 0.25))
+                    .offset(x: 4, y: 2)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private func title(_ text: Text) -> some View {
+    text.font(.system(size: M.titleSize, weight: .semibold)).foregroundStyle(.white)
+}
+
+private func bodyText(_ text: String) -> some View {
+    Text(text)
+        .font(.system(size: M.bodySize))
+        .foregroundStyle(.white.opacity(0.7))
+        .fixedSize(horizontal: false, vertical: true)
 }
 
 /// Create a new Profile: name it, then pick the spaces that use it.
@@ -28,21 +124,21 @@ struct CreateProfileView: View {
     @FocusState private var nameFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Create a new Profile").font(.system(size: 15, weight: .semibold))
+        ArcSheet {
+            ProfileBadge(adding: true)
             if step == 0 { nameStep } else { spacesStep }
-            HStack {
-                Button("Cancel") { finish(nil) }.keyboardShortcut(.cancelAction)
+            HStack(spacing: M.buttonGap) {
                 Spacer()
-                if step == 1 { Button("Back") { step = 0 } }
-                Button(step == 0 ? "Next" : "Create Profile", action: advance)
+                ArcSheetButton(title: step == 0 ? "Cancel" : "Back", key: "ESC") {
+                    if step == 0 { finish(nil) } else { step = 0 }
+                }
+                .keyboardShortcut(.cancelAction)
+                ArcSheetButton(title: step == 0 ? "Next" : "Create Profile", key: "↩", primary: true,
+                               enabled: !name.trimmingCharacters(in: .whitespaces).isEmpty, action: advance)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .padding(.top, 4)
+            .padding(.top, 30)
         }
-        .padding(M.padding)
-        .frame(width: M.width)
         .onAppear {
             spaces = initialSpaces
             nameFocused = true
@@ -50,42 +146,78 @@ struct CreateProfileView: View {
     }
 
     private var nameStep: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Profiles make your Spaces truly separate — with their own history, saved passwords, extensions, and other browsing data. No more flipping between work and personal accounts!")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("What do you want to call this Profile?").font(.system(size: 13, weight: .medium))
+        VStack(alignment: .leading, spacing: 0) {
+            title(Text("Create a new Profile")).padding(.top, 17)
+            bodyText("Profiles make your Spaces truly separate — with their own history, saved passwords, extensions, and other browsing data. No more flipping between work and personal accounts!")
+                .padding(.top, 13)
+            bodyText("What do you want to call this Profile?").padding(.top, 18)
             TextField("Personal", text: $name)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
                 .focused($nameFocused)
                 .onSubmit(advance)
                 .onChange(of: name) { _, _ in error = nil }
+                .padding(.horizontal, 12)
+                .frame(height: 49)
+                .background(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.12)))
+                .padding(.top, 16)
                 .accessibilityLabel("Profile name")
-            if let error {
-                Text(error.message).font(.system(size: 11)).foregroundStyle(.red)
+            Group {
+                if let error {
+                    Text(error.message).foregroundStyle(.red)
+                } else {
+                    // Arc's note under the field (its binary: "between computers.").
+                    Text("\(Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")) Profiles are **not synced** between computers.")
+                        .foregroundStyle(.white.opacity(0.6))
+                }
             }
+            .font(.system(size: 11.5))
+            .padding(.top, 8)
         }
     }
 
+    /// Arc shows each space as a card in its theme with a round check under it.
     private var spacesStep: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Which Spaces should use this Profile?").font(.system(size: 13, weight: .medium))
-            Text("These Spaces will start fresh in your brand new Profile — so you’ll have to log back in to websites, re-save your passwords, add extensions, etc. You can always switch back to your previous Profile though if you forgot something!")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(store.state.spaces) { space in
-                    Toggle(isOn: Binding(
-                        get: { spaces.contains(space.id) },
-                        set: { if $0 { spaces.insert(space.id) } else { spaces.remove(space.id) } }
-                    )) {
-                        Text("\(space.icon)  \(space.name)")
-                    }
-                    .toggleStyle(.checkbox)
+        VStack(alignment: .leading, spacing: 0) {
+            title(Text("Which Spaces should use this Profile?")).padding(.top, 17)
+            bodyText("These Spaces will start fresh in your brand new Profile — so you’ll have to log back in to websites, re-save your passwords, add extensions, etc. You can always switch back to your previous Profile though if you forgot something!")
+                .padding(.top, 13)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(store.state.spaces) { space in spaceCard(space) }
                 }
             }
-            .padding(.vertical, 4)
+            .padding(.top, 14)
         }
+    }
+
+    private func spaceCard(_ space: Space) -> some View {
+        let on = spaces.contains(space.id)
+        return Button {
+            if on { spaces.remove(space.id) } else { spaces.insert(space.id) }
+        } label: {
+            VStack(spacing: 0) {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(LinearGradient(colors: space.theme.colors.map { Color(red: Double($0.r), green: Double($0.g), blue: Double($0.b)) },
+                                         startPoint: .top, endPoint: .bottom).opacity(0.6))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.white.opacity(0.25)))
+                    .overlay(Text(space.icon).font(.system(size: 20)))
+                    .frame(width: 64, height: 95)
+                Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 17))
+                    .foregroundStyle(on ? Color.white : Color.white.opacity(0.4), on ? Color.green : Color.clear)
+                    .padding(.top, 10)
+                Text(space.name).font(.system(size: 12)).foregroundStyle(.white.opacity(0.75)).lineLimit(1)
+                    .frame(width: 76)
+                    .padding(.top, 10)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(space.name)
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(on ? "1" : "0")
     }
 
     private func advance() {
@@ -122,31 +254,47 @@ struct ChangeProfileView: View {
     @State private var selection = Profile.defaultDirectory
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Change Profile").font(.system(size: 15, weight: .semibold))
-            Picker("Profile", selection: $selection) {
-                ForEach(store.state.allProfiles) { profile in
-                    Text(profile.name).tag(profile.directory)
-                }
-                Divider()
-                Text("New Profile").tag(Self.newProfileTag)
+        let space = store.state.spaceIndex(spaceID).map { store.state.spaces[$0] }
+        let name = space?.name ?? ""
+        ArcSheet {
+            // The space's icon on a tile, with the profile badge on its corner.
+            ZStack(alignment: .bottomTrailing) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(M.primary.opacity(0.9))
+                    .overlay(Text(space?.icon ?? "").font(.system(size: 28)))
+                    .frame(width: 62, height: 62)
+                ProfileBadge(size: 24).offset(x: 6, y: 6)
             }
-            .labelsHidden()
-            Text("Each Profile has different browser data, so you might get logged out of some websites, see different Favorites up top, or need to re-install extensions.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
+            .padding(.trailing, 6)
+            title(Text("Change ") + Text("\(name)’s").bold() + Text(" Profile"))
+                .padding(.top, 17)
+            bodyText("Each Profile has different browser data, so you might get logged out of some websites, see different Favorites up top, or need to re-install extensions.")
+                .padding(.top, 13)
+            HStack(spacing: 6) {
+                (Text("\(name)’s").bold() + Text(" Profile")).font(.system(size: 13)).foregroundStyle(.white)
+                Picker("Profile", selection: $selection) {
+                    ForEach(store.state.allProfiles) { profile in
+                        Text(profile.name).tag(profile.directory)
+                    }
+                    Divider()
+                    Text("New Profile").tag(Self.newProfileTag)
+                }
+                .labelsHidden()
+                .fixedSize()
+                .tint(M.primary)
+            }
+            .padding(.top, 12)
+            HStack(spacing: M.buttonGap) {
                 Spacer()
-                Button("Cancel") { finish(.cancel) }.keyboardShortcut(.cancelAction)
-                Button("Change Profile") {
+                ArcSheetButton(title: "Cancel", key: "ESC") { finish(.cancel) }
+                    .keyboardShortcut(.cancelAction)
+                ArcSheetButton(title: "Change Profile", key: "↩", primary: true) {
                     finish(selection == Self.newProfileTag ? .newProfile : .profile(selection))
                 }
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(.top, 4)
+            .padding(.top, 26)
         }
-        .padding(M.padding)
-        .frame(width: M.width)
         .onAppear {
             if let s = store.state.spaceIndex(spaceID) { selection = store.state.profileDirectory(ofSpace: s) }
         }
@@ -180,8 +328,8 @@ struct ProfilesListView: View {
                 Spacer()
             }
         }
-        .padding(M.padding)
-        .frame(width: M.width + 60)
+        .padding(20)
+        .frame(width: 480)
         .sheet(item: $renaming) { profile in
             RenameProfileView(store: store, profile: profile) { renaming = nil }
         }
@@ -246,8 +394,8 @@ private struct RenameProfileView: View {
                 Button("Rename", action: save).keyboardShortcut(.defaultAction)
             }
         }
-        .padding(M.padding)
-        .frame(width: M.width)
+        .padding(20)
+        .frame(width: 420)
         .onAppear { name = profile.name }
     }
 
@@ -286,7 +434,7 @@ private struct DeleteProfileView: View {
                 .disabled(typed != profile.name)
             }
         }
-        .padding(M.padding)
-        .frame(width: M.width)
+        .padding(20)
+        .frame(width: 420)
     }
 }

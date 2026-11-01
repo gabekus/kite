@@ -1630,8 +1630,17 @@ ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-stri
   Profile name."; Settings "Your Profiles", "Not used", "%d Spaces", "Only Profiles not assigned to any Spaces
   can be deleted.", "The Default Profile cannot be deleted.", "Delete this Profile", "To continue, please type
   the name of this Profile:".
-- Not yet measured: the sheets' layout and chrome (Kite uses macOS sheets), the one-space count string, and
-  which characters Arc rejects as invalid.
+- Sheets (observed 2026-11-01: Arc 1.169 driven from its menu bar with Gabe's OK, frames from Accessibility,
+  colours from a window capture, dark appearance): 450pt wide, 38pt insets; Change Profile 450×338, Create
+  step 1 450×426, step 2 450×506 (Kite: 450×337, 450×506). Icon 62pt (create: smiley ring with a green plus;
+  change: the space's icon on a 68pt tile with the smiley badge). Title 21pt tall, body below it, buttons 40pt
+  tall at the bottom right with their key in a chip (Cancel/Back "ESC", primary "↩"). Background #1D263E,
+  secondary button #3F4073, primary #4256F5. Create step 1 has "Profiles are not synced between computers."
+  under the field; step 2 shows each space as a 64pt-wide card in its theme with a round check and its name,
+  the current space ticked; on step 2 Esc is Back. Change Profile's title is "Change <Space>'s Profile" and the
+  picker sits after "<Space>'s Profile" as a blue pill (ProfilePicker colour; Kite uses a pop-up button).
+- Not yet measured: light appearance, the Set Profile menu, the one-space count string, and which characters
+  Arc rejects as invalid.
 
 ## Split View: Add Left / Right / Top / Bottom Split → `SplitSides.swift` (KiteCore), `BrowserWindowController+SplitSides` (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
 
