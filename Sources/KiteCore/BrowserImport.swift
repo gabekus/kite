@@ -1,13 +1,15 @@
 import Foundation
 
-/// "Import from Another Browser…" (Arc's Arc menu): bookmarks and history from Safari and the
-/// Chromium browsers Arc's import lists (Chrome, Brave, Edge, Vivaldi, Opera, Opera GX).
+/// "Import from Another Browser…" (Arc's Arc menu): bookmarks and history from Safari, Firefox
+/// and the Chromium browsers Arc's import lists (Chrome, Brave, Edge, Vivaldi, Opera, Opera GX).
 ///
 /// Bookmarks become pinned tabs in a space named after the browser, keeping their folders.
 /// Importing again replaces that space. History goes into Kite's history (`History.merge`).
-/// The shell reads the files (KiteMac/BrowserImportController.swift); this is the pure part.
+/// Chrome, Brave, Edge, Vivaldi and Firefox can have several profiles; the dialog asks which
+/// one to import from. The shell reads the files (KiteMac/BrowserImportController.swift);
+/// this is the pure part.
 public enum ImportBrowser: String, CaseIterable, Sendable {
-    case safari, chrome, brave, edge, vivaldi, opera, operaGX
+    case safari, chrome, brave, edge, vivaldi, opera, operaGX, firefox
 
     public var title: String {
         switch self {
@@ -18,32 +20,70 @@ public enum ImportBrowser: String, CaseIterable, Sendable {
         case .vivaldi: "Vivaldi"
         case .opera: "Opera"
         case .operaGX: "Opera GX"
+        case .firefox: "Firefox"
         }
     }
 
-    public var isChromium: Bool { self != .safari }
+    public var isChromium: Bool { self != .safari && self != .firefox }
 
-    /// Where the browser keeps its default profile: under ~/Library/Application Support for
-    /// the Chromium browsers, ~/Library for Safari. Opera keeps its profile at the top level.
-    public var profilePath: String {
+    /// The browser's data folder: under ~/Library/Application Support, or ~/Library for Safari.
+    /// Chromium browsers keep their profiles (Default, Profile 1, …) and `Local State` in it,
+    /// Firefox its profiles and `profiles.ini`. Opera keeps its one profile at the top level.
+    public var dataFolder: String {
         switch self {
         case .safari: "Safari"
-        case .chrome: "Google/Chrome/Default"
-        case .brave: "BraveSoftware/Brave-Browser/Default"
-        case .edge: "Microsoft Edge/Default"
-        case .vivaldi: "Vivaldi/Default"
+        case .chrome: "Google/Chrome"
+        case .brave: "BraveSoftware/Brave-Browser"
+        case .edge: "Microsoft Edge"
+        case .vivaldi: "Vivaldi"
         case .opera: "com.operasoftware.Opera"
         case .operaGX: "com.operasoftware.OperaGX"
+        case .firefox: "Firefox"
         }
+    }
+
+    /// Whether the browser can have several profiles that the dialog lets you choose from.
+    public var hasProfiles: Bool {
+        switch self {
+        case .chrome, .brave, .edge, .vivaldi, .firefox: true
+        case .safari, .opera, .operaGX: false
+        }
+    }
+
+    /// The profile read when there's no list of profiles: Chromium's `Default`, or the data
+    /// folder itself (Safari, Opera). Firefox has no fixed one; its list is `profiles.ini`.
+    public var defaultProfile: ImportProfile? {
+        switch self {
+        case .chrome, .brave, .edge, .vivaldi: ImportProfile(directory: "Default", name: "Default")
+        case .safari, .opera, .operaGX: ImportProfile(directory: "", name: title)
+        case .firefox: nil
+        }
+    }
+
+    /// Where the default profile is, relative to Application Support (Library for Safari).
+    public var profilePath: String {
+        guard let directory = defaultProfile?.directory, !directory.isEmpty else { return dataFolder }
+        return dataFolder + "/" + directory
     }
 
     /// Bookmark files, in the order they're read. Chrome keeps the bookmarks of a signed-in
-    /// account in AccountBookmarks and the rest in Bookmarks.
+    /// account in AccountBookmarks and the rest in Bookmarks. Firefox keeps bookmarks and
+    /// history in the same database.
     public var bookmarkFiles: [String] {
-        isChromium ? ["Bookmarks", "AccountBookmarks"] : ["Bookmarks.plist"]
+        switch self {
+        case .safari: ["Bookmarks.plist"]
+        case .firefox: ["places.sqlite"]
+        default: ["Bookmarks", "AccountBookmarks"]
+        }
     }
 
-    public var historyFile: String { isChromium ? "History" : "History.db" }
+    public var historyFile: String {
+        switch self {
+        case .safari: "History.db"
+        case .firefox: "places.sqlite"
+        default: "History"
+        }
+    }
 
     /// Arc's line for each browser names everything Arc takes from it; Kite's names only
     /// what Kite imports so far.
@@ -61,8 +101,90 @@ public enum ImportBrowser: String, CaseIterable, Sendable {
         case .vivaldi: 5
         case .opera: 6
         case .operaGX: 7
+        case .firefox: 8
         }
         return UUID(uuidString: String(format: "4B495445-494D-5054-8000-%012d", n))!
+    }
+
+    /// The space for one of the browser's profiles. The default profile (or the only one) keeps
+    /// the browser's own space, so it's the same one an import before profiles made; each other
+    /// profile has its own, so importing a second profile doesn't replace the first.
+    public func spaceID(for profile: ImportProfile) -> UUID {
+        if profile.directory == defaultProfile?.directory { return spaceID }
+        // FNV-1a over the browser and the profile's folder: stable across launches.
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in (rawValue + "/" + profile.directory).utf8 {
+            hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+        }
+        return UUID(uuidString: String(format: "4B495445-494D-5054-%04X-%012llX", UInt32(0x8000 | (hash >> 52)), hash & 0xFFFF_FFFF_FFFF))!
+    }
+}
+
+/// One profile of the browser being imported from: its folder (relative to the browser's data
+/// folder, or absolute for a Firefox profile kept elsewhere) and the name the browser shows.
+public struct ImportProfile: Sendable, Equatable, Hashable {
+    public var directory: String
+    public var name: String
+
+    public init(directory: String, name: String) {
+        self.directory = directory
+        self.name = name
+    }
+
+    public var isAbsolute: Bool { directory.hasPrefix("/") }
+}
+
+public enum ImportProfiles {
+    /// A Chromium `Local State` file's profiles (`profile.info_cache`: folder → `name`), in the
+    /// order of `profile.profiles_order` when it's there, then Default, then by folder.
+    public static func chromium(localState data: Data) -> [ImportProfile] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let profile = root["profile"] as? [String: Any],
+              let cache = profile["info_cache"] as? [String: Any]
+        else { return [] }
+        let order = (profile["profiles_order"] as? [String]) ?? []
+        func rank(_ directory: String) -> (Int, Int, String) {
+            if let i = order.firstIndex(of: directory) { return (0, i, "") }
+            return (1, directory == "Default" ? 0 : 1, directory)
+        }
+        return cache.keys
+            .sorted { rank($0) < rank($1) }
+            .map { directory in
+                let info = cache[directory] as? [String: Any]
+                let name = (info?["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? directory
+                return ImportProfile(directory: directory, name: name)
+            }
+    }
+
+    /// Firefox's `profiles.ini`: a `[ProfileN]` section per profile with `Name`, `Path` and
+    /// `IsRelative`, in file order. The default is the one an `[Install…]` section names, else
+    /// the profile marked `Default=1`.
+    public static func firefox(ini text: String) -> (profiles: [ImportProfile], defaultDirectory: String?) {
+        var sections: [(name: String, values: [String: String])] = []
+        for raw in text.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix(";") || line.hasPrefix("#") { continue }
+            if line.hasPrefix("["), line.hasSuffix("]") {
+                sections.append((String(line.dropFirst().dropLast()), [:]))
+            } else if let eq = line.firstIndex(of: "="), !sections.isEmpty {
+                let key = line[..<eq].trimmingCharacters(in: .whitespaces)
+                let value = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+                sections[sections.count - 1].values[key] = value
+            }
+        }
+        var profiles: [ImportProfile] = []
+        var marked: String?
+        for section in sections where section.name.hasPrefix("Profile") {
+            guard let path = section.values["Path"], !path.isEmpty else { continue }
+            let relative = section.values["IsRelative"] != "0"
+            let directory = relative ? path : (path.hasPrefix("/") ? path : "/" + path)
+            let name = section.values["Name"].flatMap { $0.isEmpty ? nil : $0 } ?? path
+            profiles.append(ImportProfile(directory: directory, name: name))
+            if section.values["Default"] == "1", marked == nil { marked = directory }
+        }
+        let install = sections.first { $0.name.hasPrefix("Install") }?.values["Default"]
+        let defaultDirectory = [install, marked].compactMap { $0 }.first { d in profiles.contains { $0.directory == d } }
+        return (profiles, defaultDirectory)
     }
 }
 
@@ -162,6 +284,77 @@ public enum BookmarkImport {
         Space(id: browser.spaceID, name: browser.title, icon: icon, theme: theme, pinnedItems: result.items)
     }
 
+    /// The space for one profile's bookmarks: named after the browser, with the profile's name
+    /// when the browser has more than one ("Chrome (Work)").
+    public static func space(for browser: ImportBrowser, profile: ImportProfile, namedAfterProfile: Bool,
+                             _ result: Result, theme: Theme, icon: String) -> Space {
+        Space(id: browser.spaceID(for: profile), name: spaceName(browser, profile: profile, namedAfterProfile: namedAfterProfile),
+              icon: icon, theme: theme, pinnedItems: result.items)
+    }
+
+    public static func spaceName(_ browser: ImportBrowser, profile: ImportProfile, namedAfterProfile: Bool) -> String {
+        namedAfterProfile ? "\(browser.title) (\(profile.name))" : browser.title
+    }
+
+    /// One row of Firefox's `moz_bookmarks`, with its page's URL from `moz_places`.
+    public struct FirefoxRow: Sendable, Equatable {
+        public var id: Int64
+        public var parent: Int64
+        /// 1 bookmark, 2 folder, 3 separator.
+        public var type: Int
+        public var position: Int
+        public var title: String?
+        public var guid: String
+        public var url: String?
+
+        public init(id: Int64, parent: Int64, type: Int, position: Int, title: String?, guid: String, url: String?) {
+            self.id = id
+            self.parent = parent
+            self.type = type
+            self.position = position
+            self.title = title
+            self.guid = guid
+            self.url = url
+        }
+    }
+
+    /// Firefox's bookmarks (`places.sqlite`). Like Chromium's, the toolbar's contents go at the
+    /// top level; the Bookmarks Menu, Other Bookmarks and Mobile Bookmarks roots become folders
+    /// when they have anything in them. Tags and separators aren't bookmarks and are left out.
+    public static func firefox(_ rows: [FirefoxRow], now: Date = Date()) -> Result {
+        var children: [Int64: [FirefoxRow]] = [:]
+        for row in rows { children[row.parent, default: []].append(row) }
+        for key in children.keys { children[key]!.sort { $0.position < $1.position } }
+        var builder = Builder(now: now)
+        func root(_ guid: String) -> FirefoxRow? { rows.first { $0.guid == guid } }
+        func contents(_ folder: FirefoxRow) -> [PinnedItem] {
+            (children[folder.id] ?? []).flatMap { row -> [PinnedItem] in
+                switch row.type {
+                case 1:
+                    return builder.tab(row.url, title: row.title).map { [$0] } ?? []
+                case 2:
+                    let name = row.title ?? ""
+                    builder.path.append(name)
+                    let inner = contents(row)
+                    builder.path.removeLast()
+                    return inner.isEmpty ? [] : [builder.folder(name.isEmpty ? "Untitled" : name, inner)]
+                default:
+                    return []
+                }
+            }
+        }
+        var items: [PinnedItem] = []
+        if let toolbar = root("toolbar_____") { items += contents(toolbar) }
+        for (guid, fallback) in [("menu________", "Bookmarks Menu"), ("unfiled_____", "Other Bookmarks"), ("mobile______", "Mobile Bookmarks")] {
+            guard let node = root(guid) else { continue }
+            builder.path.append(fallback)
+            let inner = contents(node)
+            builder.path.removeLast()
+            if !inner.isEmpty { items.append(builder.folder(fallback, inner)) }
+        }
+        return builder.result(items)
+    }
+
     private struct Builder {
         let now: Date
         var bookmarkCount = 0
@@ -241,6 +434,11 @@ public enum BookmarkImport {
 }
 
 extension History {
+    /// Firefox's history timestamps (`moz_historyvisits.visit_date`): microseconds since 1970.
+    public static func firefoxDate(_ microseconds: Int64) -> Date {
+        Date(timeIntervalSince1970: Double(microseconds) / 1_000_000)
+    }
+
     /// Safari's history timestamps: seconds since 2001-01-01 UTC.
     public static func safariDate(_ seconds: Double) -> Date {
         Date(timeIntervalSinceReferenceDate: seconds)

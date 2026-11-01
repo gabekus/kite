@@ -1334,7 +1334,7 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   bookmarks", Chromium browsers "history, cookies, passwords, autocomplete payment info, and bookmarks". Kite's line
   names only what it imports: "Kite can import your history and bookmarks from X."
 - Browsers (ARC_ImportFeature.bundle Assets.car names): Brave, Chrome, Edge, Firefox, Opera, Opera GX, Safari,
-  Vivaldi. Kite reads all but Firefox, and lists only those with a profile on the Mac. Arc's order is unverified.
+  Vivaldi. Kite reads all of them, and lists only those with a profile on the Mac. Arc's order is unverified.
 - Toasts (bytes read from the Arc binary): "Now importing… Sit tight!", "Success! We imported all of your stuff",
   "Only some of your data imported. Please try again!", "We weren’t able to import… please try again!".
 - Mechanism: Arc runs Chromium's importer through ADK (`ADK/Browser+Import.swift`, categories `history`,
@@ -1351,6 +1351,32 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   `com.apple.ReadingList` (left out) and a `History` proxy; leaves have `URLString` and `URIDictionary.title`.
   `History.db`: `history_items` (`url`, `visit_count`) and `history_visits` (`history_item`, `visit_time` in seconds
   since 2001, `title`), in WAL mode.
+- Firefox (g63; strings ~75169-75179): bundle id `org.mozilla.firefox`, line "We can import your history,
+  autocomplete data, and bookmarks from Firefox." (Kite: history and bookmarks; no passwords, cookies or autofill),
+  and "Quit Firefox to continue importing" (Arc's ImportFeature watches `firefoxIsRunning`, ~166252). Kite reads a
+  copy of places.sqlite and its -wal, so Firefox can stay open and Kite doesn't ask to quit it. Bookmarks:
+  `moz_bookmarks` (`type` 1 bookmark / 2 folder / 3 separator, `parent`, `position`, `title`, `guid`, `fk` →
+  `moz_places.url`); roots by guid `toolbar_____` (top level, like Chromium's bar), `menu________` "Bookmarks Menu",
+  `unfiled_____` "Other Bookmarks", `mobile______` "Mobile Bookmarks" (folders when not empty); `tags________` and
+  separators left out. History: `moz_places` (`url`, `title`, `visit_count`, `hidden`) joined with
+  `moz_historyvisits` (`place_id`, `visit_date` in microseconds since 1970, `visit_type`; embed 4, download 7 and
+  framed-link 8 left out). Schema from Mozilla's published places schema: Firefox isn't installed on the dev Mac, so
+  no real Firefox file was read; fixtures are hand-made.
+- Source profile (g63): Arc's import picks one source-browser profile. Evidence: `ImportFeature/ImportSource.swift`
+  `init(source:profileIndices:)` and `onlyProfile` with "Expected only one selected profile" (~75174; decompiled at
+  `FUN_1016952a0`: asserts the index set has one member, then returns that profile), the menu dialog's "Import Prompt
+  should not allow proceeding without a source profile" (~81429), ADK `loadImportSourceProfiles` /
+  `ArcImportSourceProfile` (~31036, 67631), and an `ImportFeature.ProfilePicker` view (`ProfilePickerOption`,
+  `ProfileType`, fields `title`, `options`, `selectedIndices`, `onSelection`, `_isOpen`; ~39219, ~166184) used by
+  the browser selection (`profileTapped`). So: a drop-down of the browser's profiles. Kite shows a profile pop-up
+  under the browser pop-up; **inferred**: that it's hidden when the browser has one profile, which profile is offered
+  first (Chromium's Default, Firefox's install default from profiles.ini), and the order (Chrome's
+  `profile.profiles_order`, then profiles.ini order). Profiles come from Chromium's `Local State`
+  `profile.info_cache` (folder → `name`) and Firefox's `profiles.ini` (`[ProfileN]` `Name`/`Path`/`IsRelative`/
+  `Default`, `[Install…]` `Default`); a profile folder with no bookmarks or history isn't offered. Key names only were
+  read from this Mac's Chrome Local State. Each extra profile gets its own space, "Chrome (Work)"; the default
+  profile keeps the browser's space ID so an earlier import is still replaced. Arc's destination step ("Which Arc
+  Profile should we import to?") is not built: Kite imports into the current Kite profile.
 ## Tidy Tab Titles → `TidyTabTitles` (KiteCore), `TidyTabTitlesController` (Arc 1.171 strings and defaults, 1 Nov 2026)
 
 - What and when: Max pane copy (`~/rea-arc/arc-strings.txt` 80509) says tabs are "automatically renamed with tidier,
