@@ -10,6 +10,8 @@ import SwiftUI
 struct ExtensionsToolbarItems: View {
     @ObservedObject var model: ExtensionsModel
     @State private var showsMenu = false
+    @AppStorage(ChromeButton.pinnedExtensions.hiddenKey) private var hidesPinned = false
+    @AppStorage(ChromeButton.extensions.hiddenKey) private var hidesButton = false
 
     enum Metrics {
         static let iconSize: CGFloat = 16
@@ -23,23 +25,26 @@ struct ExtensionsToolbarItems: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(model.pinned) { item in
+            let pinned = hidesPinned ? [] : model.pinned
+            ForEach(pinned) { item in
                 PinnedExtensionButton(item: item, model: model)
             }
-            Button { showsMenu.toggle() } label: {
-                Image(systemName: "puzzlepiece.extension")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(PageToolbar.Metrics.enabled)
-                    .frame(width: Metrics.buttonSize.width, height: Metrics.buttonSize.height)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Extensions")
-            .accessibilityLabel("Extensions")
-            // The pinned icons' 36pt slots leave 10pt after the last icon.
-            .padding(.leading, model.pinned.isEmpty ? 0 : Metrics.buttonGap - (Metrics.iconPitch - Metrics.iconSize) / 2)
-            .popover(isPresented: $showsMenu, arrowEdge: .bottom) {
-                ExtensionsMenu(model: model) { showsMenu = false }
+            if !hidesButton {
+                Button { showsMenu.toggle() } label: {
+                    Image(systemName: "puzzlepiece.extension")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(PageToolbar.Metrics.enabled)
+                        .frame(width: Metrics.buttonSize.width, height: Metrics.buttonSize.height)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Extensions")
+                .accessibilityLabel("Extensions")
+                // The pinned icons' 36pt slots leave 10pt after the last icon.
+                .padding(.leading, pinned.isEmpty ? 0 : Metrics.buttonGap - (Metrics.iconPitch - Metrics.iconSize) / 2)
+                .popover(isPresented: $showsMenu, arrowEdge: .bottom) {
+                    ExtensionsMenu(model: model) { showsMenu = false }
+                }
             }
         }
         .onAppear { model.refresh() }

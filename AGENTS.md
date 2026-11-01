@@ -40,6 +40,11 @@ isn't, Chromium silently falls back to the user's own Chromium profile.
 Use `mktemp -d /tmp/k.XXXX`: the automation socket lives in the profile, and
 socket paths are limited to 104 bytes.
 
+`KITE_SUPPORT_PATH` doesn't cover UserDefaults: those follow the bundle ID. Test
+with `scripts/bundle-app.sh debug`, whose bundle is `dev.gabek.Kite.dev`, never a
+`dev.gabek.Kite` bundle (release builds, /Applications/Kite.app), which would
+change the installed Kite's settings. `scripts/check-test-defaults.sh` checks it.
+
 ## Reading Kite and Arc without the screen
 
 Don't switch apps, record the screen or drive Gabe's mouse and keyboard to see
