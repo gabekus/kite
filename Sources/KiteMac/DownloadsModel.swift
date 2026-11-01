@@ -54,7 +54,8 @@ final class DownloadsModel {
         #endif
     }
 
-    func apply(_ update: DownloadUpdate, sourceTitle: String? = nil) {
+    /// `window`: where the download started, when the engine says (WebKit does, Chromium doesn't).
+    func apply(_ update: DownloadUpdate, sourceTitle: String? = nil, window: NSWindow? = nil) {
         let previous = list.items.first { $0.engineID == update.engineID }?.state
         // A finished download is final: a late progress tick (WebKit's KVO hops to the main queue)
         // would mark it in progress again, and a late repeat would put back a path Tidy Downloads
@@ -62,6 +63,8 @@ final class DownloadsModel {
         if previous == .complete { return }
         let (item, isNew) = list.apply(update)
         if isNew, let title = sourceTitle ?? currentTabTitle(), !title.isEmpty { sourceTitles[item.id] = title }
+        // The window's Library button catches it (Arc's DownloadToLibrary fly-in).
+        if isNew, update.state == .inProgress { NotificationCenter.default.post(name: .kiteDownloadDidStart, object: window) }
         if update.state != .inProgress {
             let title = sourceTitles.removeValue(forKey: item.id)
             // Arc Max's Tidy Downloads: a finished download gets a readable name.
@@ -73,7 +76,7 @@ final class DownloadsModel {
 
     // MARK: WebKit
 
-    func track(_ download: WKDownload, destination: URL, sourceTitle: String?) {
+    func track(_ download: WKDownload, destination: URL, sourceTitle: String?, window: NSWindow? = nil) {
         let id = nextWebKitID
         nextWebKitID -= 1
         webKitDownloads[id] = download
@@ -86,7 +89,7 @@ final class DownloadsModel {
         let progress = download.progress
         apply(DownloadUpdate(engineID: id, url: url, path: destination.path, state: .inProgress,
                              receivedBytes: progress.completedUnitCount, totalBytes: progress.totalUnitCount),
-              sourceTitle: sourceTitle)
+              sourceTitle: sourceTitle, window: window)
         webKitProgress[id] = download.progress.observe(\.completedUnitCount) { _, _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { report(.inProgress) } }
         }

@@ -728,7 +728,8 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
             directory = URL(fileURLWithPath: test, isDirectory: true)
         }
         let destination = Self.uniqueURL(in: directory, name: suggestedFilename)
-        DownloadsModel.shared.track(download, destination: destination, sourceTitle: download.webView?.title)
+        DownloadsModel.shared.track(download, destination: destination, sourceTitle: download.webView?.title,
+                                    window: download.webView?.window)
         completionHandler(destination)
     }
 

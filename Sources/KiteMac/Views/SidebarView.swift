@@ -56,7 +56,8 @@ struct SidebarView: View {
     /// False on WebKit, which can't force pages dark.
     let supportsDarkPages: Bool
     let claude: ClaudeButtonModel
-    let downloads: DownloadsButtonModel
+    /// The window's Library, which the bottom bar's Library button opens.
+    let library: LibraryModel
     /// Opens the extensions popover from the address field's hover button; nil where
     /// extensions don't run (incognito, WebKit).
     var showExtensions: ((NSView) -> Void)?
@@ -162,7 +163,7 @@ struct SidebarView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
-            SpaceBar(store: store, actions: actions, claude: claude, downloads: downloads)
+            SpaceBar(store: store, actions: actions, claude: claude, library: library)
                 .frame(height: M.bottomBarHeight)
         }
         .padding(.horizontal, M.padding)
@@ -1436,13 +1437,13 @@ private struct SpaceBar: View {
     let store: BrowserStore
     let actions: SidebarActions
     let claude: ClaudeButtonModel
-    let downloads: DownloadsButtonModel
+    let library: LibraryModel
 
     var body: some View {
         let state = store.state
         HStack(spacing: 4) {
             // Arc's Library button sits at the bar's leading end and carries download progress.
-            DownloadsSidebarButton(model: downloads, size: M.bottomButtonSize)
+            LibrarySidebarButton(library: library, size: M.bottomButtonSize)
             // Too many spaces to fit scroll rather than widen the bar: an over-wide bar pushes the whole
             // sidebar off its left edge. While they fit they stay a plain row, so the bar's empty part
             // still drags the window (a scroll view never does).
