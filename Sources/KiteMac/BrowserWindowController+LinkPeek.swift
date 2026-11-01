@@ -161,7 +161,7 @@ extension BrowserWindowController {
         case .permissionRequest(let request):
             // Kite doesn't prompt over a Peek yet (where Arc shows it there wasn't read).
             request.respond(nil)
-        case .favicon, .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover, .media,
+        case .favicon, .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover, .media, .callControls, .capturing,
              .permissionRequestCancelled:
             break
         }

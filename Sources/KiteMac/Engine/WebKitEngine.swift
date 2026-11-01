@@ -335,6 +335,9 @@ final class WebKitPage: NSObject, WebPage {
         let navigationState: @Sendable @MainActor (WKWebView) -> PageEvent = {
             .navigationState(isLoading: $0.isLoading, canGoBack: $0.canGoBack, canGoForward: $0.canGoForward)
         }
+        let capturing: @Sendable @MainActor (WKWebView) -> PageEvent = {
+            .capturing($0.cameraCaptureState != .none || $0.microphoneCaptureState != .none)
+        }
         observations = [
             webView.observe(\.title, changeHandler: send { .title($0.title) }),
             webView.observe(\.url, changeHandler: send { .url($0.url) }),
@@ -342,6 +345,9 @@ final class WebKitPage: NSObject, WebPage {
             webView.observe(\.isLoading, changeHandler: send(navigationState)),
             webView.observe(\.canGoBack, changeHandler: send(navigationState)),
             webView.observe(\.canGoForward, changeHandler: send(navigationState)),
+            // A muted capture is still a call (Arc's Mini Player `Recording`).
+            webView.observe(\.cameraCaptureState, changeHandler: send(capturing)),
+            webView.observe(\.microphoneCaptureState, changeHandler: send(capturing)),
         ]
     }
 }
@@ -672,8 +678,10 @@ final class WebKitMediaBridge: NSObject, WKScriptMessageHandler {
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.frameInfo.isMainFrame, let webView = message.webView, let page = pages.object(forKey: webView),
-              let report = MediaState.parse(message.body as? String ?? "") else { return }
+        guard message.frameInfo.isMainFrame, let webView = message.webView, let page = pages.object(forKey: webView) else { return }
+        let body = message.body as? String ?? ""
+        if let call = CallControls.parse(body) { return page.onEvent?(.callControls(call)) ?? () }
+        guard let report = MediaState.parse(body) else { return }
         page.onEvent?(.media(report))
     }
 }

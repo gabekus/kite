@@ -304,6 +304,10 @@ final class PagePool {
             if let media, let level = store.pages[id]?.tabVolume, TabVolume.needsReapply(tab: level, reported: media.tabVolume) {
                 pages[id]?.runMediaCommand(.setVolume(level))
             }
+        case .callControls(let call):
+            store.updatePage(id) { $0.callControls = call }
+        case .capturing(let capturing):
+            store.captureChanged(id, capturing)
         case .crashed(let code):
             store.updatePage(id) {
                 $0.crashCode = code

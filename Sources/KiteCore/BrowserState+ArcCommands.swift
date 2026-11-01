@@ -17,7 +17,13 @@ extension BrowserState {
     /// A pinned or favorite selection stays; otherwise the first pinned tab is selected.
     @discardableResult
     public mutating func clearToday() -> [BrowserTab] {
-        let s = selectedSpaceIndex
+        clearToday(inSpace: selectedSpace.id)
+    }
+
+    /// Clear Today for one space: the ⇧⌘K command and the Today divider's Clear button.
+    @discardableResult
+    public mutating func clearToday(inSpace spaceID: UUID) -> [BrowserTab] {
+        guard let s = spaceIndex(spaceID) else { return [] }
         let cleared = spaces[s].tabs
         guard !cleared.isEmpty else { return [] }
         appendToArchive(cleared.enumerated().map { ClosedTab(tab: $1, spaceID: spaces[s].id, index: $0) })
