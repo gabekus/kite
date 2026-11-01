@@ -312,9 +312,9 @@ enum ArcMetrics {
         static let pillFillLight: Double = 0.06
         static let pillFillLightHovered: Double = 0.10
         static let hostFontSize: CGFloat = 13
-        /// Copy-link button: 16×16, its right edge 7.5pt inside the pill.
+        /// Copy-link button: 16×16, its right edge 7.5pt inside the pill (with the extensions
+        /// button, in `LittleKite.pillButtons`).
         static let pillButtonSize: CGFloat = 16
-        static let pillTrailingInset: CGFloat = 7.5
         static let pillLeadingInset: CGFloat = 14
 
         // "Open in <Space> ⌘O" plus the chevron, in one bordered box.

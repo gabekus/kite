@@ -473,9 +473,36 @@ background `screencapture -l<window id>` at 2x, toolbar strip only. Nothing in A
   binary; Kite defaults it on, since Arc shows the "Links Open in Little Arc" NUX on the first external link
   (`littleBrowserNUXPresentationCount`).
 
-Kite's differences: no profile indicator (no profiles) and no extensions button in the pill; the chevron is a plain
-menu of spaces, not Arc's searchable `LittleBrowserMoveMenuWindow`; no downloads tray; no auto-archive of Little
-windows ("Archive Little Arcs after:"); no global hotkey.
+Kite's differences: no profile indicator (no profiles); the chevron is a plain menu of spaces, not Arc's searchable
+`LittleBrowserMoveMenuWindow`; no auto-archive of Little windows ("Archive Little Arcs after:"); no global hotkey.
+
+### Little Arc extensions button and downloads tray (Arc 1.171, 1 Nov 2026) → `LittleKite.pillButtons`, `LittleKite.DownloadsTray`, `LittleDownloadsTrayView`
+
+- Extensions button: 23×19 in the pill, at x 1530.5 in the 1784pt window whose Open In box was 181 wide, so the copy
+  button sat at 1565 and the gap between them is 11.5pt (AX tree from #79; frames only). Constant 23 also in
+  `FUN_1022a0d74`. Toolbar state `hasExtensions` and URL-field `shouldDisplayExtensionsButton`, `onClickExtensions`,
+  `littleBrowserExtensionsButton`; LittleBrowser actions `didClickExtension`, `didRightClickExtension`,
+  `didDismissExtensionsMenu` (arc-strings.txt ~173370). So the button shows only while extensions are installed and
+  opens an extensions menu. Its symbol and menu weren't seen: Kite uses the puzzle piece and the main window's
+  extensions popover (`ExtensionsMenu`).
+- Tray (`LittleBrowserDownloadsTrayViewController`, decomp `out7/g57-tray.txt`, `g57-item.txt`, `g57-win.txt`):
+  pinned to the Little window's leading, trailing and bottom edges (`FUN_100015a70`), over the page; a scroll view
+  96pt tall (`FUN_1022a583c`); a collection view with 250×56 items (`sizeForItemAt`, 0x1022a6cc8), 20pt section insets
+  on every side, 10pt between items (0x1022a6d6c, 0x1022a6d80); the view is a `PassthroughView` (`hitTest:` passes
+  empty space through). Its list is the Little window's own `downloads` state; item actions `didClick` (opens the file,
+  `NSWorkspace`) and `didClickClose`.
+- Item (`LittleBrowserDownloadsTrayItemView`): background view with a black shadow, opacity 0.25, radius 3, offset
+  (0, 1) (`FUN_1022a19c4`, constants at 0x1037c5550), corner 8, `masksToBounds` off (`updateLayer`); fill
+  `DownloadItemBackground`, swapped for `DownloadItemBackgroundHovered` on hover while the close button shows
+  (`FUN_1022a2ec8`); a horizontal stack, spacing 10, insets 10, centred (`FUN_1022a187c`): 32×32 file icon
+  (`FUN_1022a1378`, icon fetched on `LittleBrowserDownloadsTrayItemViewIconFetcherQueue`), a vertical title stack with
+  5pt spacing (`FUN_1022a16b4`): the file name (`URL.lastPathComponent`) at 14pt, truncating in the middle, primary
+  colour (`FUN_1022a1490`), and a subtitle in a named text style, truncating at the tail, secondary colour
+  (`FUN_1022a15b4`); a flexible spacer; the close button (14pt image, primary tint, `closeButtonClicked:`).
+- Unverified: the subtitle's size (Kite: 12pt) and text (Kite: its downloads list's status line), the title's weight,
+  the close symbol, whether new items go first or last (Kite: last, scrolled into view), and whether Arc's close also
+  cancels a running download (Kite: it only leaves the tray). Arc's Little window wasn't open, so nothing was measured
+  live.
 ## History, ⌘Y (Arc 1.171 menu bar and strings, 1 Nov 2026)
 
 - Menu (read from Arc's menu bar through AX, nothing pressed): **Archive** › Go Back ⌘[, Go Forward ⌘], —,
