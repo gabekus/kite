@@ -127,7 +127,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Reveal Tab in Sidebar | | ✅ shows the sidebar, opens enclosing folders, scrolls to the row | Arc's highlight on reveal unverified |
 | Clear Today (unpinned tabs) | ⇧⌘K | ✅ archives them, with a toast | |
 | Reset all tabs in this Space (pinned back to their saved URL) | | ✅ | |
-| Pinned tab: "back to pinned URL" / reset | | 🟡 hover button, context menu (with Separate From Pinned Tab), hidden `resetTab` command | Arc's icon and placement unverified; Edit / Replace Pinned URL later |
+| Pinned tab: "back to pinned URL" / reset | | 🟡 hover button, context menu (with Separate From Pinned Tab), hidden `resetTab` command; Edit Pinned Page › Edit… (Edit Pinned URL dialog) and Replace Pinned URL with Current on pinned tabs and favorites | Arc's icon and placement unverified; Arc's command-bar "Replace Pin with Current Page" not built |
 | Duplicate tab, move tab to space | context menu | 🟡 Duplicate Tab in the Tabs menu | Move to space with the sidebar work |
 | Drag tabs between spaces / into folders | gesture | ❌ | Roadmap (other session owns sidebar) |
 
