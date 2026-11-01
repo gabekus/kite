@@ -61,7 +61,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| Undo / Redo (Undo includes "Undo Archive Tab") | ⌘Z / ⇧⌘Z | 🟡 text only | B3: undo close/archive |
+| Undo / Redo (Undo includes "Undo Archive Tab") | ⌘Z / ⇧⌘Z | 🟡 Archiving or closing a tab registers "Archive Tab" on the window's undo manager: Edit › Undo Archive Tab puts that tab back where it was, selected; Redo archives it again. Text undo unchanged. Pinned tabs come back selected but reloaded | |
 | Cut / Copy / Paste / Select All | ⌘X/C/V/A | ✅ | |
 | **Copy URL** (toast) | ⇧⌘C | ✅ "Copied Current URL" toast | |
 | **Copy URL as Markdown** | ⌥⇧⌘C | ✅ `[title](url)`, same "Copied Current URL" toast as Arc | |
