@@ -47,9 +47,18 @@
 	     kills Kite the first time Chromium touches Bluetooth. -->
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Kite uses Bluetooth to sign in with passkeys from your phone.</string>
-	<!-- Lets Kite be the default browser. -->
+	<!-- Lets Kite be the default browser, and the default mail app (Arc registers for mailto
+	     too); mailto: links then open the web mail site that registered itself (MailHandlers). -->
 	<key>CFBundleURLTypes</key>
 	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Email Address URL</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>mailto</string>
+			</array>
+		</dict>
 		<dict>
 			<key>CFBundleURLName</key>
 			<string>Web site URL</string>
