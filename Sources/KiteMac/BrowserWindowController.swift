@@ -429,6 +429,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             guard let self, let split = store.state.selectedSplit else { return }
             store.mutate { $0.moveSplitDivider(split.id, index: index, fraction: fraction, minimum: minimum) }
         }
+        installSplitPaneMenu()
         // Clicking into a pane focuses it. Web views take their own clicks, so watch from outside.
         paneClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             self?.focusPane(under: event)

@@ -160,6 +160,18 @@ enum ArcMetrics {
         /// The drop placeholder's outline (`SplitViewContentPlaceholderView.BorderView`, Arc 1.169 binary).
         static let dropBorderWidth: CGFloat = 2
         static let dropCornerRadius: CGFloat = 6
+        /// A pane's split button ("Split View Menu" in Arc 1.171's per-pane top bar, AX tree of an incognito window):
+        /// 28×28, 6pt below the pane's top and 5pt in from its right edge, the bar's last button. The bar is 40pt
+        /// tall; Kite reveals the button while the pointer is in that band (Arc's reveal region isn't measured).
+        static let menuButtonSize: CGFloat = 28
+        static let menuButtonTop: CGFloat = 6
+        static let menuButtonTrailing: CGFloat = 5
+        static let menuRevealHeight: CGFloat = 40
+        /// Not measured in Arc: the button's fill, corner, symbol size and fade.
+        static let menuButtonCornerRadius: CGFloat = 6
+        static let menuButtonSymbolSize: CGFloat = 13
+        static let menuButtonFillOpacity: Double = 0.85
+        static let menuButtonFadeDuration: Double = 0.15
 
         // The sidebar row: one item per pane, side by side.
         static let rowItemSpacing: CGFloat = 4
