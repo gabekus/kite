@@ -1,7 +1,7 @@
 import Foundation
 
-/// Imports spaces, pinned tabs, folders, favorites and themes from Arc's
-/// `StorableSidebar.json`.
+/// Imports spaces, pinned tabs, folders, split views, favorites and themes from
+/// Arc's `StorableSidebar.json`.
 ///
 /// Arc shuts down on 2026-12-22. This file is self-contained so it can be
 /// deleted, along with its menu item, some time after that.
@@ -15,6 +15,7 @@ public enum ArcImport {
         public var favorites: [BrowserTab]
         public var tabCount: Int
         public var folderCount: Int
+        public var splitCount: Int
         /// Spaces Arc had no name for (shown as "Arc Space"). Often leftovers
         /// the user never set up, so the shell may offer to skip them.
         public var untitledSpaceIDs: Set<UUID>
@@ -40,6 +41,17 @@ public enum ArcImport {
         return result
     }
 
+    /// Fills in panes without a stored width; nil (equal widths) if the stored ones don't add up.
+    static func splitWidthFactors(_ known: [Double?]) -> [Double]? {
+        let stored = known.compactMap { $0 }
+        guard !stored.isEmpty, stored.allSatisfy({ $0 > 0 }) else { return nil }
+        let missing = known.count - stored.count
+        let rest = 1 - stored.reduce(0, +)
+        if missing == 0 { return stored }
+        guard rest > 0 else { return nil }
+        return known.map { $0 ?? rest / Double(missing) }
+    }
+
     private struct Parser {
         let now: Date
         var spaceObjects: [[String: Any]] = []
@@ -50,7 +62,10 @@ public enum ArcImport {
         var usedIDs: Set<UUID> = []
         var tabCount = 0
         var folderCount = 0
-        var splitViews = 0
+        var splitCount = 0
+        var verticalSplits = 0
+        /// Splits found while building the current space.
+        var spaceSplits: [SplitView] = []
         var untitled: Set<UUID> = []
         var skippedKinds: Set<String> = []
         /// Profiles in the order spaces use them.
@@ -90,15 +105,19 @@ public enum ArcImport {
             var favorites: [BrowserTab] = []
             for profile in profiles {
                 guard let containerID = favoritesContainers[profile] else { continue }
-                for tab in children(of: containerID).flatMap({ flatTabs($0) })
+                // A split in the favorites grid can't stay one: favorites belong to no space.
+                spaceSplits = []
+                let tabs = children(of: containerID).flatMap { flatTabs($0) }
+                spaceSplits = []
+                for tab in tabs
                 where !favorites.contains(where: { $0.url == tab.url }) {
                     favorites.append(tab)
                 }
             }
 
             var notes: [String] = []
-            if splitViews > 0 {
-                notes.append("\(splitViews) split view\(splitViews == 1 ? " was" : "s were") imported as separate tabs.")
+            if verticalSplits > 0 {
+                notes.append("\(verticalSplits) split view\(verticalSplits == 1 ? " is" : "s are") stacked top to bottom in Arc. Kite shows \(verticalSplits == 1 ? "it" : "them") side by side until it has that layout.")
             }
             if profiles.count > 1 {
                 notes.append("Your spaces used \(profiles.count) Arc profiles. Kite has one profile for now, so you'll sign in to sites again.")
@@ -111,6 +130,7 @@ public enum ArcImport {
                 favorites: favorites,
                 tabCount: tabCount,
                 folderCount: folderCount,
+                splitCount: splitCount,
                 untitledSpaceIDs: untitled,
                 notes: notes
             )
@@ -118,7 +138,8 @@ public enum ArcImport {
 
         private mutating func buildSpace(_ object: [String: Any], index: Int) -> Space? {
             let containers = pairs(object["containerIDs"])
-            let pinned = containers["pinned"].map { children(of: $0).compactMap { pinnedItem($0) } } ?? []
+            spaceSplits = []
+            let pinned = containers["pinned"].map { children(of: $0).flatMap { pinnedItems($0) } } ?? []
             let unpinned = containers["unpinned"].map { children(of: $0).flatMap { flatTabs($0) } } ?? []
 
             let profile = profileKey(object["profile"]) ?? "default"
@@ -126,6 +147,9 @@ public enum ArcImport {
 
             let name = (object["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             if name == nil && pinned.isEmpty && unpinned.isEmpty { return nil }
+
+            splitCount += spaceSplits.count
+            verticalSplits += spaceSplits.filter { $0.orientation == .vertical }.count
 
             let customInfo = object["customInfo"] as? [String: Any]
             let id = uniqueID(object["id"])
@@ -137,7 +161,8 @@ public enum ArcImport {
                 theme: theme(customInfo?["windowTheme"]) ?? Theme.presets[index % Theme.presets.count],
                 pinnedItems: pinned,
                 tabs: unpinned,
-                selectedTabID: unpinned.first?.id
+                selectedTabID: unpinned.first?.id,
+                splits: spaceSplits
             )
         }
 
@@ -150,21 +175,18 @@ public enum ArcImport {
             return ids.compactMap { items[$0] }
         }
 
-        private mutating func pinnedItem(_ item: [String: Any]) -> PinnedItem? {
+        /// A pinned tab, a folder, or a split view's tabs side by side (the split itself
+        /// is recorded in `spaceSplits`).
+        private mutating func pinnedItems(_ item: [String: Any]) -> [PinnedItem] {
             let data = item["data"] as? [String: Any] ?? [:]
             if data["list"] != nil {
                 folderCount += 1
                 let id = item["id"] as? String ?? ""
-                let contents = children(of: id).compactMap { pinnedItem($0) }
+                let contents = children(of: id).flatMap { pinnedItems($0) }
                 let name = (item["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Folder"
-                return .folder(TabFolder(id: uniqueID(id), name: name, items: contents))
+                return [.folder(TabFolder(id: uniqueID(id), name: name, items: contents))]
             }
-            let tabs = flatTabs(item)
-            if tabs.count == 1 { return .tab(tabs[0]) }
-            if tabs.isEmpty { return nil }
-            // A split view in the pinned section: keep its tabs together in a folder.
-            folderCount += 1
-            return .folder(TabFolder(name: tabs.map(\.displayTitle).joined(separator: " | "), items: tabs.map(PinnedItem.tab)))
+            return flatTabs(item).map(PinnedItem.tab)
         }
 
         /// Tabs in an item, flattening split views and (outside the pinned section) folders.
@@ -185,9 +207,8 @@ public enum ArcImport {
                 return [imported]
             }
             let id = item["id"] as? String ?? ""
-            if data["splitView"] != nil {
-                splitViews += 1
-                return children(of: id).flatMap { flatTabs($0) }
+            if let split = data["splitView"] as? [String: Any] {
+                return splitTabs(id: id, split)
             }
             if data["list"] != nil {
                 return children(of: id).flatMap { flatTabs($0) }
@@ -195,6 +216,32 @@ public enum ArcImport {
             if let kind = data.keys.first { skippedKinds.insert(kind) }
             return []
         }
+
+        /// A split view's tabs, in pane order, recording the split for the space.
+        /// Arc's `itemWidthFactors` is a flat [itemID, factor, ...] list and may leave
+        /// panes out; those share what's left.
+        private mutating func splitTabs(id: String, _ split: [String: Any]) -> [BrowserTab] {
+            let widths = doublePairs(split["itemWidthFactors"])
+            var tabs: [BrowserTab] = []
+            var factors: [Double?] = []
+            for child in children(of: id) {
+                let childTabs = flatTabs(child)
+                tabs += childTabs
+                let factor = (child["id"] as? String).flatMap { widths[$0] }
+                factors += childTabs.indices.map { $0 == 0 ? factor : nil }
+            }
+            let panes = Array(tabs.prefix(SplitView.maxPanes))
+            guard panes.count >= 2 else { return tabs }
+            let orientation = SplitOrientation(rawValue: split["layoutOrientation"] as? String ?? "") ?? .horizontal
+            spaceSplits.append(SplitView(
+                id: uniqueID(id),
+                tabIDs: panes.map(\.id),
+                widthFactors: ArcImport.splitWidthFactors(Array(factors.prefix(panes.count))),
+                orientation: orientation
+            ))
+            return tabs
+        }
+
 
         /// Reuses Arc's UUIDs where possible (so re-importing updates the same spaces)
         /// but never hands out the same ID twice.
@@ -214,6 +261,15 @@ public enum ArcImport {
             var result: [String: String] = [:]
             for i in stride(from: 0, to: list.count - 1, by: 2) {
                 if let key = list[i] as? String, let value = list[i + 1] as? String { result[key] = value }
+            }
+            return result
+        }
+
+        private func doublePairs(_ raw: Any?) -> [String: Double] {
+            let list = raw as? [Any] ?? []
+            var result: [String: Double] = [:]
+            for i in stride(from: 0, to: list.count - 1, by: 2) {
+                if let key = list[i] as? String, let value = list[i + 1] as? Double { result[key] = value }
             }
             return result
         }

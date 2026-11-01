@@ -204,6 +204,10 @@ public struct ClosedTab: Hashable, Codable, Sendable {
     public var tab: BrowserTab
     public var spaceID: UUID
     public var index: Int
+    /// When it went into the archive (Arc's `archivedAt`). nil for entries saved before Kite kept it.
+    public var archivedAt: Date? = nil
+    /// How it got there (Arc's `ArchiveReason`). nil for entries saved before Kite kept it.
+    public var reason: ArchiveReason? = nil
 }
 
 public enum TabSection: Hashable, Sendable {

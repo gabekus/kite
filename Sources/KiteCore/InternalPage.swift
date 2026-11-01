@@ -5,6 +5,9 @@ import Foundation
 public enum InternalPage: String, CaseIterable, Sendable {
     /// Arc's ⌘Y "Opens your History in a new Today tab" (chrome://history there).
     case history
+    /// Arc's Archive › View Archive… ("Opens the Archive, where all your closed tabs live."),
+    /// which Arc shows in its Library; Kite shows it in a tab until it has a Library window.
+    case archive
 
     public static let scheme = "kite"
 
@@ -19,6 +22,7 @@ public enum InternalPage: String, CaseIterable, Sendable {
     public var title: String {
         switch self {
         case .history: "History"
+        case .archive: "Archive"
         }
     }
 }
