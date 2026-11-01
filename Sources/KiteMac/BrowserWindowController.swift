@@ -97,7 +97,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Arc's permission prompt over the focused tab, while its site waits for an answer.
     var permissionPrompt: PermissionPromptCard?
     /// Kite's own pages (kite://history, kite://archive) over the panes showing them, by tab.
-    private var internalPages: [UUID: (page: InternalPage, host: NSView)] = [:]
+    private var internalPages: [UUID: (url: URL, host: NSView)] = [:]
     private var commandBarVisible = false
     private var sidebarVisible = true
     /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
@@ -729,13 +729,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     /// Draws Kite's own pages over the shown tabs on kite:// URLs. Their engine pages stay blank.
     private func updateInternalPages() {
-        let shown = shownTabIDs.compactMap { id in InternalPage(store.state.tab(id)?.url).map { (id, $0) } }
-        for (id, entry) in internalPages where !shown.contains(where: { $0.0 == id && $0.1 == entry.page }) {
+        // Keyed by the whole URL: one kind of page can be about different things (a site's settings).
+        let shown = shownTabIDs.compactMap { id -> (UUID, InternalPage, URL)? in
+            guard let url = store.state.tab(id)?.url, let page = InternalPage(url) else { return nil }
+            return (id, page, url)
+        }
+        for (id, entry) in internalPages where !shown.contains(where: { $0.0 == id && $0.2 == entry.url }) {
             entry.host.removeFromSuperview()
             internalPages[id] = nil
         }
-        for (id, page) in shown {
-            let host = internalPages[id]?.host ?? makeInternalPage(page, for: id)
+        for (id, page, url) in shown {
+            let host = internalPages[id]?.host ?? makeInternalPage(page, url: url, for: id)
             if shownTabIDs.count > 1, let pane = splitPanes.frame(of: id) {
                 host.frame = splitPanes.convert(pane, to: contentClip)
                 host.autoresizingMask = []
@@ -746,11 +750,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             if host.superview == nil {
                 contentClip.addSubview(host, positioned: .below, relativeTo: toolbarHost)
             }
-            internalPages[id] = (page, host)
+            internalPages[id] = (url, host)
         }
     }
 
-    private func makeInternalPage(_ page: InternalPage, for id: UUID) -> NSView {
+    private func makeInternalPage(_ page: InternalPage, url: URL, for id: UUID) -> NSView {
         let open: (URL, Bool) -> Void = { [weak self] url, newTab in
             self?.openFromInternalPage(id, url, newTab: newTab)
         }
@@ -761,6 +765,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return NSHostingView(rootView: ArchivePageView(store: store, open: open) { [weak self] tabID in
                 self?.restoreArchivedTab(tabID)
             })
+        case .siteSettings:
+            // Chromium keeps permissions per profile, so the tab's own (blank) page reads them.
+            return NSHostingView(rootView: SiteSettingsPageView(
+                site: InternalPage.site(inSiteSettings: url),
+                read: { [weak self] permission, site in self?.pool.loadedPage(id)?.sitePermission(permission, for: site) },
+                write: { [weak self] permission, value, site in
+                    self?.pool.loadedPage(id)?.setSitePermission(permission, value, for: site)
+                }))
         }
     }
 

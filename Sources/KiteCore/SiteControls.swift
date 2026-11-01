@@ -29,6 +29,16 @@ public enum SiteControls {
     /// The ad blocker's row. Arc: "Block Ads & Trackers", subtitled On / Off.
     public static let adblockTitle = "Block Ads & Trackers"
     public static func onOff(_ on: Bool) -> String { on ? "On" : "Off" }
+
+    /// The per-site Developer Mode row (`BrowserState.developerModeEnabledForHosts`). Arc:
+    /// "Developer Mode", subtitled On / Off.
+    public static let developerModeTitle = "Developer Mode"
+
+    /// The Settings section's header, and the word Arc shows on it on hover; clicking it
+    /// opens the site's settings, like the footer menu's "All Site Settings…".
+    public static let settingsTitle = "Settings"
+    public static let settingsHoverText = "More"
+    public static let allSiteSettingsTitle = "All Site Settings…"
 }
 
 /// A permission the site can be given, as Chromium stores it per site (content settings).

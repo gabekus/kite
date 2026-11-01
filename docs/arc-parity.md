@@ -98,7 +98,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Developer → JavaScript Console | ⌥⌘J | ✅ DevTools on Console | |
 | Developer → Network Inspector | | ✅ Chromium: DevTools on Network (WebKit: opens Web Inspector as it was) | |
 | Developer → Allow JavaScript from Apple Events | | ❌ | With AppleScript |
-| Turn on Developer Mode for this site | ⌃D | 🟡 Per-host switch (title flips to "Turn off…"), remembered across relaunches; on a Developer Mode site the sidebar's reload button gets Arc's reload options (Reload this page / Refresh (Ignore Cache) / Clear Cookies and Refresh) and reloads the way last chosen. No Site Controls row yet | Gap 16 |
+| Turn on Developer Mode for this site | ⌃D | 🟡 Per-host switch (title flips to "Turn off…"), remembered across relaunches; on a Developer Mode site the sidebar's reload button gets Arc's reload options (Reload this page / Refresh (Ignore Cache) / Clear Cookies and Refresh) and reloads the way last chosen. Site Controls has Arc's Developer Mode row (On / Off) | Gap 16 |
 | Enter Full Screen | ⌃⌘F | ✅ | |
 | Dark Page for This Site (Kite only) | ⌥⌘D | ✅ | |
 
@@ -202,7 +202,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Share spaces, folders, splits | Public link or collaborator | ❌ | Roadmap: sync + sharing |
 | Profiles | Separate cookies per space | 🟡 Each profile is its own Chromium profile folder (Default, Profile 1…), as Arc: cookies, logins, history, extensions, favorites and 1Password per profile; spaces point at one; space menu › Set Profile ("Switch it up" confirm); delete only unused profiles, typed-name confirm, folder removed next launch | Not yet: Arc import of profiles, Little Kite profile picker, per-profile search engine / auto-archive / downloads settings, dialogs measured from Arc |
 | Incognito | Private window | ✅ | |
-| Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | 🟡 Popover from the toolbar's sliders button and the sidebar URL field's hover button: Copy URL, Share, Block Ads & Trackers, camera/mic/location/notifications (Chromium content settings; not on WebKit), Secure/Insecure, Clear Cache / Clear Cookies. No Boosts, capture, extensions section, Developer Mode, All Site Settings | Gap 8 |
+| Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | 🟡 Popover from the toolbar's sliders button and the sidebar URL field's hover button: Copy URL, Share, Block Ads & Trackers, Developer Mode, camera/mic/location/notifications (Chromium content settings; not on WebKit), Secure/Insecure, Clear Cache / Clear Cookies / All Site Settings… (and the Settings header, "More" on hover) opening the site's permissions page in a new tab (kite://site-settings; Arc opens Chromium's siteDetails page). No Boosts, capture, extensions section, sidebar Preview row | Gap 8, g59 |
 | Site permission prompts | A site asks for camera, mic, location or notifications | 🟡 Arc's card at the page's top-leading corner: the permission's icon, "Allow <site> to access your camera?" / "…to send you notifications?", Not Now / Allow, "Click the lock 🔒 to change this any time"; pops in like Arc's. Chromium stores the answer per site (Site Controls shows it); WebKit asks each time, camera and mic only. Not over a Peek; other permission types (MIDI, downloads, storage…) keep Chromium's default | Gap 35 |
 | Native ad blocker | uBlock-style lists | ❌ | Ad blocker thread |
 | Translation | Translate page, "never translate" sites | ❌ | Later (Chromium translate isn't in CEF) |
