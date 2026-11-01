@@ -158,7 +158,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func blur() { browser.blur() }
     func allowFocus() { browser.allowFocus() }
     func setVisible(_ visible: Bool) { browser.setHidden(!visible) }
-    func showDevTools() { browser.showDevTools() }
+    func showDevTools(_ panel: DevToolsPanel) { browser.showDevToolsRunningFrontendScript(panel.chromiumFrontendScript) }
 
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
         findCompletion = completion
