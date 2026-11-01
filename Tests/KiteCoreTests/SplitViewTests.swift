@@ -93,6 +93,69 @@ import Testing
         #expect(state.selectedSpace.splits.isEmpty)
     }
 
+    @Test func expandingShowsTheFocusedPaneAloneAndKeepsTheWidths() throws {
+        var (state, ids) = makeState()
+        guard case .added(let b) = state.addSplitPane() else { return }
+        let splitID = try #require(state.selectedSplit?.id)
+        state.moveSplitDivider(splitID, index: 0, fraction: 0.25)
+        state.toggleExpandedSplitPane()
+        var split = try #require(state.selectedSplit)
+        #expect(split.expandedTabID == b)
+        #expect(split.layoutFactors == [0, 1])
+        // Still a split: both panes stay members and on screen's list.
+        #expect(split.tabIDs == [ids[0], b])
+        #expect(state.visibleTabs.map(\.id) == [ids[0], b])
+        #expect(split.normalizedFactors == [0.25, 0.75])
+        // Again on the expanded pane: the old widths come back.
+        state.toggleExpandedSplitPane()
+        split = try #require(state.selectedSplit)
+        #expect(split.expandedTabID == nil)
+        #expect(split.layoutFactors == [0.25, 0.75])
+    }
+
+    @Test func expandingIsPerSplitAndSurvivesCoding() throws {
+        var (state, ids) = makeState()
+        guard case .added = state.addSplitPane() else { return }
+        state.toggleExpandedSplitPane()
+        state.select(tab: ids[1])
+        guard case .added = state.addSplitPane() else { return }
+        #expect(state.selectedSplit?.expandedTabID == nil)
+        #expect(state.selectedSpace.splits.compactMap(\.expandedTabID).count == 1)
+        let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
+        #expect(decoded.selectedSpace.splits.map(\.expandedTabID) == state.selectedSpace.splits.map(\.expandedTabID))
+        // A split saved before this existed decodes unexpanded.
+        let old = #"{"id":"\#(UUID().uuidString)","tabIDs":[],"widthFactors":[],"orientation":"horizontal"}"#
+        #expect(try JSONDecoder().decode(SplitView.self, from: Data(old.utf8)).expandedTabID == nil)
+    }
+
+    @Test func focusingAHiddenPaneOrChangingTheSplitUnexpands() throws {
+        var (state, ids) = makeState()
+        guard case .added(let b) = state.addSplitPane() else { return }
+        state.toggleExpandedSplitPane()
+        state.focusPane(number: 1)
+        #expect(state.selectedSplit?.expandedTabID == nil)
+        // Re-selecting the expanded pane itself keeps it expanded.
+        state.toggleExpandedSplitPane()
+        state.select(tab: ids[0])
+        #expect(state.selectedSplit?.expandedTabID == ids[0])
+        // A new pane is shown.
+        guard case .added = state.addSplitPane() else { return }
+        #expect(state.selectedSplit?.expandedTabID == nil)
+        // Closing the expanded pane shows the rest.
+        state.select(tab: b)
+        state.toggleExpandedSplitPane()
+        state.close(tab: b)
+        #expect(state.selectedSplit?.expandedTabID == nil)
+        #expect(state.selectedSplit?.layoutFactors.contains(0) == false)
+    }
+
+    @Test func expandingWithoutASplitDoesNothing() {
+        var (state, _) = makeState()
+        let before = state
+        state.toggleExpandedSplitPane()
+        #expect(state == before)
+    }
+
     @Test func focusingPanesByNumberAndWrapping() {
         var (state, ids) = makeState()
         guard case .added(let b) = state.addSplitPane() else { return }

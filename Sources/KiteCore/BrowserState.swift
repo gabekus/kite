@@ -280,6 +280,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         spaces[s].selectedTabID = id
         selectedSpaceID = spaces[s].id
         self[location].lastActiveAt = now
+        collapseExpandedSplit(toShow: id)
     }
 
     public mutating func update(tab id: UUID, _ body: (inout BrowserTab) -> Void) {

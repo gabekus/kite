@@ -617,6 +617,28 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Kite has no link routing yet, so it isn't imported.
 
+## Expand Current Split (Arc 1.171 menu bar; Arc 1.169 binary, decompiled; 1 Nov 2026)
+
+- View menu (AX via `menudump`, nothing pressed): Add Split View, Close this Split Pane, Separate Page from
+  Split View, **Expand Current Split**: no shortcut. MainMenu.nib: selector `maximizeCurrentSplitViewPane:`,
+  no key-binding ID; the command bar's ID is `expandSplitViewPane`, icon `arrow.up.left.and.arrow.down.right`,
+  search terms "Expand; Expand Split View; Maximize" (`~/rea-arc/notes/split-view.md` §2).
+- Mechanism (Ghidra, `~/rea-arc/decomp/ghidra`): `MainWindowController.maximizeCurrentSplitViewPane:`
+  (@10031b87c) only posts a notification. The window contents controller observes it
+  (`maximizeFocusedSplitViewNotificationToken`; registered in FUN_1004842f4, handler FUN_1004856b8) and calls a
+  split view controller method with `animated: true` and a per-pane closure (FUN_1004859cc) that returns
+  width factor **1.0 for the pane whose content ID is the focused one and 0.0 for every other pane**.
+- So the panes all stay in the split (unlike Separate); the focused one fills it. The handler reads no
+  state, so running it again on an expanded split does the same thing (inferred: it's not a toggle in Arc).
+  How Arc brings the other panes back (divider drag, double-click, focusing one) and the animation's
+  duration weren't traced; no string for "Collapse"/"Restore" split exists. `ExpandedCodingKeys` belongs
+  to other types (not split view).
+- Kite: `SplitView.expandedTabID` (per split, saved, decodes as nil from older sessions); the stored
+  `widthFactors` are left alone and the layout uses 1/0 (`layoutFactors`). The hidden panes and dividers are
+  hidden. Running it again on the expanded pane, focusing another pane of the split, dragging a divider,
+  adding a pane or closing the expanded pane brings the split back with its old widths: Kite's choices,
+  since Arc's way back is unknown. The change is immediate (Arc animates; duration unknown).
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

@@ -194,6 +194,8 @@ enum MainMenu {
             alternate(#selector(BrowserWindowController.addSplitView(_:)), "=", [.control, .shift]),
             item("Close this Split Pane", #selector(BrowserWindowController.closeSplitPane(_:)), "-", [.control, .shift], id: "removeSplitView"),
             item("Separate Page from Split View", #selector(BrowserWindowController.separateFromSplitView(_:)), id: "separateTabFromSplitView"),
+            // Arc's `maximizeCurrentSplitViewPane:`, no shortcut; `expandSplitViewPane` is its command bar ID.
+            item("Expand Current Split", #selector(BrowserWindowController.expandCurrentSplit(_:)), id: "expandSplitViewPane"),
         ] + (1...SplitView.maxPanes).map { n in
             // Arc builds these in code and hides them; their default keys aren't in its binary.
             let pane = item("Switch to Split View \(n)", #selector(BrowserWindowController.focusSplitPane(_:)), "\(n)", [.control, .shift], tag: n, id: "switchToSplitView\(n)")

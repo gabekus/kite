@@ -31,6 +31,12 @@ extension BrowserWindowController {
         store.mutate { $0.separateFromSplit(tab: id) }
     }
 
+    /// Arc's Expand Current Split: the focused pane fills the split; again brings the others back.
+    @objc func expandCurrentSplit(_ sender: Any?) {
+        guard store.state.selectedSplit != nil else { return NSSound.beep() }
+        store.mutate { $0.toggleExpandedSplitPane() }
+    }
+
     /// Switch to Split View 1…4: tags are the pane number.
     @objc func focusSplitPane(_ sender: NSMenuItem) {
         store.mutate { $0.focusPane(number: sender.tag) }
@@ -45,7 +51,7 @@ extension BrowserWindowController {
         switch item.action {
         case #selector(addSplitView(_:)):
             return store.state.selectedTab != nil
-        case #selector(closeSplitPane(_:)), #selector(separateFromSplitView(_:)),
+        case #selector(closeSplitPane(_:)), #selector(separateFromSplitView(_:)), #selector(expandCurrentSplit(_:)),
              #selector(focusNextSplitPane(_:)), #selector(focusPreviousSplitPane(_:)):
             return split != nil
         case #selector(focusSplitPane(_:)):

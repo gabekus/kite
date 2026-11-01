@@ -16,6 +16,9 @@ public struct SplitView: Identifiable, Hashable, Codable, Sendable {
     /// Each pane's share of the width (or height), summing to 1. Arc's `itemWidthFactors`.
     public var widthFactors: [Double]
     public var orientation: SplitOrientation
+    /// Arc's Expand Current Split: the pane shown full size while the others stay in the split.
+    /// `widthFactors` are kept, so expanding again (or focusing another pane) brings the old widths back.
+    public var expandedTabID: UUID?
 
     /// Arc refuses a fifth pane with a "Cannot Add New Pane" toast.
     public static let maxPanes = 4
@@ -40,10 +43,18 @@ public struct SplitView: Identifiable, Hashable, Codable, Sendable {
         return widthFactors.map { $0 / total }
     }
 
+    /// What the panes are laid out with: the expanded pane takes everything (1) and the rest
+    /// nothing (0), as Arc's maximize sets them; otherwise `normalizedFactors`.
+    public var layoutFactors: [Double] {
+        guard let expandedTabID, tabIDs.contains(expandedTabID) else { return normalizedFactors }
+        return tabIDs.map { $0 == expandedTabID ? 1 : 0 }
+    }
+
     /// Drops a pane and gives its share to the others in proportion.
     mutating func remove(_ tabID: UUID) {
         guard let i = tabIDs.firstIndex(of: tabID) else { return }
         var factors = normalizedFactors
+        if expandedTabID == tabID { expandedTabID = nil }
         tabIDs.remove(at: i)
         factors.remove(at: i)
         let total = factors.reduce(0, +)
@@ -60,6 +71,8 @@ public struct SplitView: Identifiable, Hashable, Codable, Sendable {
         factors.insert(half, at: at)
         tabIDs.insert(tabID, at: at)
         widthFactors = factors
+        // A new pane has to be seen to be filled.
+        expandedTabID = nil
     }
 }
 
@@ -186,6 +199,23 @@ extension BrowserState {
         normalizeSplits()
     }
 
+    /// Arc's Expand Current Split: the focused pane fills the split; the others stay in it, hidden.
+    /// Arc only ever expands; running it again on the expanded pane brings the split back (Kite).
+    public mutating func toggleExpandedSplitPane() {
+        guard let focused = selectedSpace.selectedTabID, let s = split(containing: focused)?.space,
+              let i = spaces[s].splits.firstIndex(where: { $0.tabIDs.contains(focused) }) else { return }
+        let split = spaces[s].splits[i]
+        spaces[s].splits[i].expandedTabID = split.expandedTabID == focused ? nil : focused
+    }
+
+    /// Focusing a hidden pane of an expanded split shows the whole split again.
+    mutating func collapseExpandedSplit(toShow id: UUID) {
+        guard let s = split(containing: id)?.space,
+              let i = spaces[s].splits.firstIndex(where: { $0.tabIDs.contains(id) }),
+              let expanded = spaces[s].splits[i].expandedTabID, expanded != id else { return }
+        spaces[s].splits[i].expandedTabID = nil
+    }
+
     /// Switch to Split View N (1-based), and next/previous with wraparound.
     public mutating func focusPane(number: Int, now: Date = Date()) {
         guard let split = selectedSplit, split.tabIDs.indices.contains(number - 1) else { return }
@@ -212,6 +242,7 @@ extension BrowserState {
             factors[index] = leading
             factors[index + 1] = pair - leading
             spaces[s].splits[i].widthFactors = factors
+            spaces[s].splits[i].expandedTabID = nil
             return
         }
     }
