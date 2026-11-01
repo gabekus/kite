@@ -40,7 +40,7 @@ extension BrowserWindowController {
         }
     }
 
-    func showToast(_ message: String, shareURL: URL? = nil, action: (title: String, run: () -> Void)? = nil,
+    func showToast(_ message: String, shareURL: URL? = nil, undo: (() -> Void)? = nil, action: (title: String, run: () -> Void)? = nil,
                    for duration: Duration = ToastView.Metrics.duration) {
         guard let root = window?.contentView else { return }
         let toast = root.subviews.lazy.compactMap { $0 as? ToastView }.first ?? {
@@ -61,6 +61,6 @@ extension BrowserWindowController {
             if constraint.firstAttribute == .top { constraint.constant = ToastView.Metrics.top + pane.top }
             if constraint.firstAttribute == .trailing { constraint.constant = -ToastView.Metrics.trailing - pane.trailing }
         }
-        toast.show(message, shareURL: shareURL, action: action, for: duration)
+        toast.show(message, shareURL: shareURL, undo: undo, action: action, for: duration)
     }
 }
