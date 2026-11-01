@@ -592,6 +592,32 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Kite has no link routing yet, so it isn't imported.
 
+## Developer Mode for a site, ⌃D (Arc 1.171 menu bar, strings, assets and defaults key names, 1 Nov 2026)
+
+- Menu: View › Developer › "Turn on Developer Mode for this site", AXMenuItemCmdModifiers 12 (⌃, no ⌘) on D,
+  last in the submenu after Allow JavaScript from Apple Events (`menudump View`). The off title is "Turn off
+  Developer Mode for this site" (arc-strings.txt 62211–62214). Command name `toggleDeveloperMode` (67583).
+- State: per host. `DeveloperModeClient.setDeveloperModeStatusForHost` (73577), stored in
+  `StorableDeveloperModeState.json` as `state.enabledHosts[]` (key paths only read), app state
+  `developerModeEnabledForHosts` (64267). Kite keys by the URL's lowercased host without the port (inferred
+  from "ForHost"; Arc's port handling not checked).
+- What it changes, from the strings: `BrowserNavigationButtons` has `isInDeveloperMode` and `reloadState`
+  (150804) and buttons `reloadButton`, `thinReloadButton`, `forceReloadButton`, `reloadOptionsButton`
+  (150778–150781). Its strings (62987–62994): "Refresh options button" / "A button that shows a list of reload
+  options.", "Refresh (Ignore Cache)", "Clear Cookies and Refresh", `devModeReloadState`, "Reload this page".
+  `DeveloperTabReloadSetting` lives in `BrowserNavigationButtonsFeature.swift` with cases `reload`,
+  `forceReload` (82636–82638, 176095–176096); persisted as the user default `devModeReloadState`.
+  Assets: `icon-browser-navigation-reload` 26×26, `icon-browser-navigation-force-reload` 22×15 (a loop ending
+  in an arrow down to a bar). Site Controls also has a Developer Mode row with on/off subtitles (63725,
+  73687–73688); the subtitle text isn't in the strings dump.
+- Not found: nothing ties Developer Mode to a console pane, an error indicator or a full-URL/port display
+  (the full URL is the separate toolbar setting `toolbarShowFullURLsEnabledPreference`). Kite builds only what
+  the strings show.
+- Inferred, not seen: the options button sits right of reload as a chevron (Kite: 16×32 menu button, reload
+  shifts left); picking Reload or Refresh (Ignore Cache) both does it and makes it the button's action, with a
+  checkmark on the current one; Clear Cookies and Refresh is one-shot. Arc's geometry in Developer Mode was not
+  measured (no Arc window was in Developer Mode, and Arc isn't driven).
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

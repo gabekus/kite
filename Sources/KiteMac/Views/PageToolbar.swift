@@ -47,7 +47,7 @@ struct PageToolbar: View {
             HStack(spacing: 0) {
                 button("arrow.left", "Back", enabled: page.canGoBack, action: actions.goBack)
                 button("arrow.right", "Forward", enabled: page.canGoForward, action: actions.goForward)
-                button(page.isLoading ? "xmark" : "arrow.clockwise", "Reload", enabled: selected != nil, action: actions.reload)
+                button(page.isLoading ? "xmark" : "arrow.clockwise", "Reload", enabled: selected != nil, action: actions.reloadButton)
                 Spacer()
                 #if canImport(CEFBridge)
                 if let extensions {
