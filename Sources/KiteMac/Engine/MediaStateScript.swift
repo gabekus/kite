@@ -8,7 +8,8 @@ import Foundation
 /// picture changes. Commands run in the same world (`MediaCommand.script`).
 ///
 /// `pageHook` runs in the page's own world, only to learn which Media Session actions
-/// (previous / next track) the page handles and to call its handler when asked. It talks to the
+/// (previous / next track, toggle microphone / camera) the page handles, and its microphone and
+/// camera state (`setMicrophoneActive` / `setCameraActive`), and to call its handler when asked. It talks to the
 /// isolated world with string-only window events; it calls nothing but the page's own handlers.
 enum MediaStateScript {
     static let worldName = "kite-media"
@@ -90,9 +91,22 @@ enum MediaStateScript {
           if (m === current) report();
         }, true);
       }
+      // A call's controls go in their own report (CallControls), whether or not anything plays.
+      const call = { mic: false, cam: false };
+      let lastCall = '';
+      const reportCall = () => {
+        const json = JSON.stringify({ call: { actions: actions.filter((a) => a.startsWith('toggle')), mic: call.mic, cam: call.cam } });
+        if (json !== lastCall) { lastCall = json; send(json); }
+      };
       window.addEventListener('__kiteMediaActions', (e) => {
         actions = typeof e.detail === 'string' && e.detail ? e.detail.split(',') : [];
         if (current) report();
+        reportCall();
+      });
+      window.addEventListener('__kiteMediaCapture', (e) => {
+        if (typeof e.detail !== 'string') return;
+        const key = e.detail.slice(0, 3);
+        if (key === 'mic' || key === 'cam') { call[key] = e.detail.endsWith('1'); reportCall(); }
       });
 
       const playing = () => [...document.querySelectorAll('video,audio')].find((m) => !m.paused && !m.ended);
@@ -110,7 +124,7 @@ enum MediaStateScript {
           switch (command) {
             case 'play': if (m) m.play().catch(() => {}); break;
             case 'pause': if (m) m.pause(); break;
-            case 'previoustrack': case 'nexttrack':
+            case 'previoustrack': case 'nexttrack': case 'togglemicrophone': case 'togglecamera':
               window.dispatchEvent(new CustomEvent('__kiteMediaAction', { detail: command })); break;
             case 'enterpip':
               if (m instanceof HTMLVideoElement && !pip(m)) {
@@ -126,6 +140,7 @@ enum MediaStateScript {
         },
       };
       send('null');
+      reportCall();
     })();
     """#
 
@@ -136,7 +151,7 @@ enum MediaStateScript {
       const original = proto.setActionHandler;
       if (typeof original !== 'function') return;
       const handlers = new Map();
-      const wanted = ['previoustrack', 'nexttrack'];
+      const wanted = ['previoustrack', 'nexttrack', 'togglemicrophone', 'togglecamera'];
       proto.setActionHandler = function (action, handler) {
         const result = original.apply(this, arguments);
         if (wanted.includes(action)) {
@@ -145,6 +160,16 @@ enum MediaStateScript {
         }
         return result;
       };
+      // A call's microphone and camera state (the Mini Player's Toggle Microphone / Toggle Camera).
+      for (const [name, key] of [['setMicrophoneActive', 'mic'], ['setCameraActive', 'cam']]) {
+        const set = proto[name];
+        if (typeof set !== 'function') continue;
+        proto[name] = function (active) {
+          const result = set.apply(this, arguments);
+          window.dispatchEvent(new CustomEvent('__kiteMediaCapture', { detail: key + (active ? '1' : '0') }));
+          return result;
+        };
+      }
       window.addEventListener('__kiteMediaAction', (e) => {
         const handler = handlers.get(e.detail);
         if (handler) handler.call(navigator.mediaSession, { action: e.detail });

@@ -388,6 +388,10 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         case "Runtime.executionContextsCleared":
             kiteContexts.removeAll()
         case "Runtime.bindingCalled" where params["name"] as? String == MediaStateScript.bindingName:
+            if let call = CallControls.parse(params["payload"] as? String ?? "") {
+                if let context = params["executionContextId"] as? Int { mediaContext = context }
+                return onEvent?(.callControls(call)) ?? ()
+            }
             guard let context = params["executionContextId"] as? Int,
                   let report = MediaState.parse(params["payload"] as? String ?? "") else { return }
             mediaContext = context
@@ -467,7 +471,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         }
     }
 
-    func browser(_ browser: KCBrowser, mediaAccessDidChange inUse: Bool) { mediaInUse = inUse }
+    func browser(_ browser: KCBrowser, mediaAccessDidChange inUse: Bool) {
+        guard inUse != mediaInUse else { return }
+        mediaInUse = inUse
+        onEvent?(.capturing(inUse))
+    }
 
     func browser(_ browser: KCBrowser, requestsPermissions permissions: [NSNumber], origin: URL, promptID: Int,
                  decisionHandler: @escaping (KCPermissionDecision) -> Void) {

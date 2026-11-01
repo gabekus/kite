@@ -229,7 +229,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
             showPermissionPrompt(request)
         case .permissionRequestCancelled(let id):
             if permissionRequest?.id == id { showPermissionPrompt(nil) }
-        case .favicon, .progress, .blockedCount, .crashed, .addExtension, .media:
+        case .favicon, .progress, .blockedCount, .crashed, .addExtension, .media, .callControls, .capturing:
             break
         }
     }

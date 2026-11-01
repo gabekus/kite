@@ -233,7 +233,7 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
         case .permissionRequest(let request):
             // No prompt UI here yet: deny, as a page with no answer would get.
             request.respond(nil)
-        case .favicon, .progress, .blockedCount, .crashed, .addExtension, .media, .permissionRequestCancelled:
+        case .favicon, .progress, .blockedCount, .crashed, .addExtension, .media, .callControls, .capturing, .permissionRequestCancelled:
             break
         }
     }

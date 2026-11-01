@@ -1074,6 +1074,32 @@ Peek; on WebKit only camera and mic, asked every time.
   the slider and symbol), that the row's speaker toggles the tab mute (`toggleMuted` exists; where it's wired wasn't
   traced), the slider's tint and size (Kite: small control size, system tint).
 
+### Mini Player microphone and camera ("Toggle Microphone" / "Toggle Camera") → `CallControls`, `MiniPlayerView.callControls`, `MediaStateScript` (Arc 1.171, 1 Nov 2026)
+
+- Strings (arc-strings.txt): Mini Player state `canToggleMicrophone`, `canToggleCamera`, `isMicrophoneOn`,
+  `isCameraOn` (151733, 174168), next to `mediaType` with cases `audioVideo` / `recording` (43020, 174160) and actions
+  `toggleMicrophone` / `toggleCamera` (161347, 174140); `ADKClient.toggleMicrophone` / `ADKClient.toggleCamera` /
+  `ADKClient.isRecording` (67679, 158189). Chromium Media Session fields `microphoneMuted`, `cameraOn`,
+  `toggleMicrophoneButtonVisible`, `toggleCamerButtonVisible`, `hangupButtonVisible` (152002). ArcCore.framework
+  strings: the Media Session action names `togglemicrophone`, `togglecamera`, `hangup` and `setMicrophoneActive` /
+  `setCameraActive`. So Arc's buttons are Chromium's Media Session call actions: they exist when the page registers
+  a `togglemicrophone` / `togglecamera` handler (Google Meet does), their state is what the page last passed to
+  `setMicrophoneActive` / `setCameraActive`, and a click runs the page's handler. Arc doesn't mute the capture itself.
+- Disassembly (arc.s 9586137-9586330, 0x102494168-0x1024943f0): the tooltips "Toggle Microphone" and "Toggle Camera"
+  (the second an inline small string) and symbols `mic.fill` / `mic.slash.fill`, `video.fill` / `video.slash.fill`.
+  The four bools are packed in one register; the slashed symbol is picked only when the page can toggle it and it's
+  off (`canToggleCamera && !isCameraOn`, mask 0x1000100 == 0x100). The buttons are built right after "Adjust Tab
+  Volume", microphone first.
+- Kite: the media script's page hook records the page's `togglemicrophone` / `togglecamera` handlers and its
+  `setMicrophoneActive` / `setCameraActive` calls (WebKit and Chromium both have them) and reports them apart from
+  the media report; the Mini Player shows each button after the volume button while the page handles it, and a
+  click calls the page's handler. A tab using the camera or mic (WebKit `cameraCaptureState` /
+  `microphoneCaptureState`, Chromium `OnMediaAccessChange`; Arc's `Recording`) gets the Mini Player when you leave
+  it even with nothing playing, without the play/pause and track buttons, and closing it doesn't pause anything.
+- Inferred, not read: whether Arc shows the buttons only while the page handles them (Kite) or always (disabled);
+  whether a `Recording` player drops play/pause; the exact layout around the buttons (no Spacer was traced). No hang
+  up button: Arc has no tooltip or symbol for one, so Kite has none.
+
 ## Check for Updates (Arc 1.171 Info.plist, menu bar and strings, 1 Nov 2026)
 
 - Menu (read through AX, nothing pressed): Arc › … Import from Another Browser…, **Check for Updates…** (no
