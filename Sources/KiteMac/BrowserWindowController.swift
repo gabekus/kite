@@ -206,7 +206,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             renameTab: { [weak self] id in self?.renameTab(id) },
             tidyTabs: { [weak self] id in self?.tidyTabs(inSpace: id) },
             removeTabGroupHeader: { [weak self] id in self?.removeTabGroupHeader(id) },
-            toggleMute: { [weak self] id in self?.toggleMute(id) }
+            toggleMute: { [weak self] id in self?.toggleMute(id) },
+            didDrop: { [weak self] outcome in self?.sidebarDropped(outcome) }
         )
         spaceSwipe = SpaceSwipeController(
             store: store,

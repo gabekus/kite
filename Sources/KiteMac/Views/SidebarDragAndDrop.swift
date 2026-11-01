@@ -67,15 +67,29 @@ final class SidebarDragModel {
     private(set) var rows: [String: Row] = [:]
     private(set) var tiles: [UUID: CGRect] = [:]
     var favoritesArea: CGRect?
+    /// The favorites tray's open slot while a drag aims at it (Arc's `dropGapFrame`).
+    var dropGap: CGRect?
     private(set) var spaceIcons: [UUID: CGRect] = [:]
     var bounds: CGRect = .zero
     private(set) var session: Session?
     /// The ghost for the session: the row as it was when picked up.
     private(set) var ghost: AnyView?
 
-    /// Unverified: how long the pointer rests on a tab before the drop offers a split. Arc waits
-    /// (`splitDropTargetDelaySatisfied`), but the delay isn't measured yet.
-    static let splitDelay: TimeInterval = 0.5
+    /// How long a tab row has to be the drop target before the drop offers a split. Arc 1.169's
+    /// `splitDropTargetDelaySatisfied` turns on 0.2s after the row becomes the target (binary).
+    static let splitDelay: TimeInterval = 0.2
+    /// Arc's `TablistEdgeDragController` (binary): a drag resting within 20pt of the tab list's left
+    /// or right edge for 0.35s (`switchThreshold`, one-shot, restarted by a move over 3pt) pages
+    /// to the space on that side, once per rest.
+    static let edgeZone: CGFloat = 20
+    static let edgeDwell: TimeInterval = 0.35
+    static let edgeSlop: CGFloat = 3
+
+    /// The window's store, for timers that re-aim a drag without a pointer move.
+    weak var store: BrowserStore?
+    private var edgeTimer: Timer?
+    private var edgeArmedAt: CGPoint?
+    private var splitTimer: Timer?
 
     var isDragging: Bool { session != nil }
 
@@ -110,6 +124,50 @@ final class SidebarDragModel {
         self.session = session
         lastState = state
         updateAutoscroll()
+        updateEdgeSwitch()
+        // A split offer comes due with the pointer at rest: aim again then.
+        if let hover = self.session?.hover, splitTimer == nil {
+            let due = Self.splitDelay - Date().timeIntervalSince(hover.since)
+            splitTimer = Timer.scheduledTimer(withTimeInterval: max(due, 0) + 0.01, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.splitTimer = nil
+                    if let session = self.session, let store = self.store { self.move(to: session.location, in: store.state) }
+                }
+            }
+        }
+    }
+
+    private func updateEdgeSwitch() {
+        guard let session, let list = listFrame,
+              session.location.y >= list.minY, session.location.y <= list.maxY,
+              session.location.x - list.minX < Self.edgeZone || list.maxX - session.location.x < Self.edgeZone,
+              bounds.contains(session.location) else {
+            edgeTimer?.invalidate()
+            edgeTimer = nil
+            edgeArmedAt = nil
+            return
+        }
+        if let armed = edgeArmedAt, hypot(armed.x - session.location.x, armed.y - session.location.y) <= Self.edgeSlop { return }
+        edgeArmedAt = session.location
+        edgeTimer?.invalidate()
+        edgeTimer = Timer.scheduledTimer(withTimeInterval: Self.edgeDwell, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let session = self.session, let store = self.store, let list = self.listFrame else { return }
+                self.edgeTimer = nil
+                let offset = session.location.x < list.midX ? -1 : 1
+                withAnimation(.spring(response: ArcMetrics.Motion.spaceSwitchResponse, dampingFraction: ArcMetrics.Motion.spaceSwitchDamping)) {
+                    store.mutate { $0.selectAdjacentSpace(offset: offset) }
+                }
+                self.move(to: session.location, in: store.state)
+            }
+        }
+    }
+
+    /// The tab list's frame in sidebar points.
+    var listFrame: CGRect? {
+        guard let scrollView, let host = scrollView.window?.contentView, let sidebar = sidebarView else { return nil }
+        return sidebar.convert(scrollView.convert(scrollView.bounds, to: host), from: host)
     }
 
     // MARK: Scrolling the list while dragging
@@ -173,6 +231,7 @@ final class SidebarDragModel {
             session = nil
             ghost = nil
             updateAutoscroll()
+            updateEdgeSwitch()
         }
         guard let session, let target = session.target else { return nil }
         return (session.ids, target)
@@ -182,6 +241,7 @@ final class SidebarDragModel {
         session = nil
         ghost = nil
         updateAutoscroll()
+        updateEdgeSwitch()
     }
 
     // MARK: Where a drop lands
@@ -264,6 +324,8 @@ final class SidebarDragModel {
     }
 
     private func favoritesTarget(at p: CGPoint, state: BrowserState) -> SidebarDropTarget {
+        // Over the open gap: it stays where it is, or the tiles it pushed aside would chase the pointer.
+        if let gap = dropGap, gap.contains(p), case .favorites? = session?.target, let target = session?.target { return target }
         let order = state.favorites.map(\.id)
         // The tile under the pointer, or the nearest on its row; its right half means after it.
         let candidates = order.compactMap { id in tiles[id].map { (id, $0) } }
@@ -310,19 +372,6 @@ final class SidebarDragModel {
         default: result = nil
         }
         return result.map { (y: $0.0, x: $0.1, width: $0.2) }
-    }
-
-    /// The favorites' insertion bar: a vertical line in the gap before a tile, or after the last.
-    var favoritesLine: CGRect? {
-        guard let session, case .favorites(let before) = session.target else { return nil }
-        let spacing = ArcMetrics.Sidebar.favoriteSpacing
-        if let before, let frame = tiles[before] {
-            return CGRect(x: frame.minX - spacing / 2 - 1, y: frame.minY, width: 2, height: frame.height)
-        }
-        if let last = tiles.values.max(by: { ($0.minY, $0.minX) < ($1.minY, $1.minX) }) {
-            return CGRect(x: last.maxX + spacing / 2 - 1, y: last.minY, width: 2, height: last.height)
-        }
-        return favoritesArea
     }
 
     /// A folder, split or space icon the drop goes on.
@@ -427,12 +476,6 @@ struct SidebarDragOverlay: View {
                 if let line = drag.insertionLine {
                     InsertionLine(width: line.width)
                         .offset(x: line.x, y: line.y - InsertionLine.thickness / 2)
-                }
-                if let bar = drag.favoritesLine {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(Color.white)
-                        .frame(width: bar.width, height: bar.height)
-                        .offset(x: bar.minX, y: bar.minY)
                 }
                 if let ghost = drag.ghost {
                     let frame = session.row.frame

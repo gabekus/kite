@@ -117,7 +117,7 @@ struct SidebarView: View {
             }
 
             // Arc's tray shows while dragging even when there are no favorites (`AppTrayDisplayMode.onDrag`).
-            if !state.favorites.isEmpty || drag.isDragging {
+            if !state.favorites.isEmpty || drag.isDragging || !UserDefaults.standard.bool(forKey: "favoritesEmptyStateDismissed") {
                 FavoritesGrid(
                     store: store,
                     favorites: state.favorites,
@@ -151,6 +151,7 @@ struct SidebarView: View {
         .frame(width: width, alignment: .leading)
         .foregroundStyle(.primary)
         .overlay { SidebarDragOverlay(drag: drag) }
+        .onAppear { drag.store = store }
         .coordinateSpace(.named(SidebarDragModel.space))
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SidebarDragModel.space)) } action: { drag.bounds = $0 }
         .environment(\.sidebarDrag, drag)
@@ -704,50 +705,155 @@ private struct FavoritesGrid: View {
     let onRemove: (UUID) -> Void
     let onDrop: (SidebarDropOutcome) -> Void
     @Environment(\.sidebarDrag) private var drag
+    @AppStorage("favoritesEmptyStateDismissed") private var emptyStateDismissed = false
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: M.favoriteSpacing), count: M.favoriteColumns)
+    /// The tray's slots: each favorite, and the drop gap while a drag aims between them.
+    private enum Slot: Identifiable, Hashable {
+        case tile(BrowserTab)
+        case gap
 
-    var body: some View {
-        if favorites.isEmpty {
-            // Arc's empty tray while a drag is on (`AppTrayDisplayMode.onDrag`): somewhere to drop.
-            RoundedRectangle(cornerRadius: M.cornerRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.25), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                .frame(height: M.favoriteHeight)
-                .overlay(Text("Drop to add to Favorites").font(.system(size: 11, weight: .medium)).opacity(0.5))
-        } else {
-            LazyVGrid(columns: columns, spacing: M.favoriteSpacing) {
-                ForEach(favorites) { tab in
-                    FavoriteTile(
-                        tab: tab,
-                        isSelected: tab.id == selectedID,
-                        onSelect: { onSelect(tab.id) },
-                        onUnload: { onUnload(tab.id) },
-                        onRemove: { onRemove(tab.id) }
-                    )
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SidebarDragModel.space)) } action: { drag?.reportTile(tab.id, frame: $0) }
-                    .onDisappear { drag?.reportTile(tab.id, frame: nil) }
-                    .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named(SidebarDragModel.space))
-                        .onChanged { value in
-                            guard let drag else { return }
-                            if !drag.isDragging {
-                                let frame = drag.tileFrame(tab.id) ?? .zero
-                                let row = SidebarDragModel.Row(id: tab.id, kind: .tab, space: store.state.selectedSpaceID, pinned: false,
-                                                               folder: nil, depth: 0, frame: frame)
-                                drag.begin([tab.id], row: row, at: value.startLocation, ghost: AnyView(FavoriteGhost(tab: tab)))
-                            }
-                            drag.move(to: value.location, in: store.state)
-                        }
-                        .onEnded { value in
-                            guard let drag, let drop = drag.end(at: value.location, in: store.state) else { return }
-                            var outcome: SidebarDropOutcome?
-                            withAnimation(.easeInOut(duration: 0.12)) {
-                                store.mutate { outcome = $0.dropSidebarItems(drop.ids, on: drop.target) }
-                            }
-                            if let outcome { onDrop(outcome) }
-                        })
-                }
+        var id: String {
+            switch self {
+            case .tile(let tab): tab.id.uuidString
+            case .gap: "gap"
             }
         }
+    }
+
+    private var slots: [Slot] {
+        var slots = favorites.map(Slot.tile)
+        // Arc's tray counts one more item while a drag aims at it and leaves `dropGapFrame` empty.
+        if case .favorites(let before)? = drag?.session?.target {
+            let at = before.flatMap { id in favorites.firstIndex { $0.id == id } } ?? favorites.count
+            slots.insert(.gap, at: at)
+        }
+        return slots
+    }
+
+    var body: some View {
+        let slots = slots
+        if slots.isEmpty {
+            if !emptyStateDismissed || drag?.isDragging == true {
+                FavoritesEmptyState(onDismiss: drag?.isDragging == true ? nil : { emptyStateDismissed = true })
+            }
+        } else {
+            FavoritesTrayLayout {
+                ForEach(slots) { slot in
+                    switch slot {
+                    case .gap:
+                        Color.clear
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SidebarDragModel.space)) } action: { drag?.dropGap = $0 }
+                            .onDisappear { drag?.dropGap = nil }
+                    case .tile(let tab):
+                        tile(tab)
+                    }
+                }
+            }
+            .animation(.easeInOut(duration: 0.12), value: slots)
+        }
+    }
+
+    private func tile(_ tab: BrowserTab) -> some View {
+        FavoriteTile(
+            tab: tab,
+            isSelected: tab.id == selectedID,
+            onSelect: { onSelect(tab.id) },
+            onUnload: { onUnload(tab.id) },
+            onRemove: { onRemove(tab.id) }
+        )
+        // Tiles being dragged out of the tray keep their place, invisible (Arc: alpha 0).
+        .opacity(drag?.session?.ids.contains(tab.id) == true ? 0 : 1)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SidebarDragModel.space)) } action: { drag?.reportTile(tab.id, frame: $0) }
+        .onDisappear { drag?.reportTile(tab.id, frame: nil) }
+        .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named(SidebarDragModel.space))
+            .onChanged { value in
+                guard let drag else { return }
+                if !drag.isDragging {
+                    let frame = drag.tileFrame(tab.id) ?? .zero
+                    let row = SidebarDragModel.Row(id: tab.id, kind: .tab, space: store.state.selectedSpaceID, pinned: false,
+                                                   folder: nil, depth: 0, frame: frame)
+                    drag.begin([tab.id], row: row, at: value.startLocation, ghost: AnyView(FavoriteGhost(tab: tab)))
+                }
+                drag.move(to: value.location, in: store.state)
+            }
+            .onEnded { value in
+                guard let drag, let drop = drag.end(at: value.location, in: store.state) else { return }
+                var outcome: SidebarDropOutcome?
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    store.mutate { outcome = $0.dropSidebarItems(drop.ids, on: drop.target) }
+                }
+                if let outcome { onDrop(outcome) }
+            })
+    }
+}
+
+/// Arc's `AppTrayCollectionViewLayout` for favorites (Arc 1.169's binary): tiles 47pt high, 8pt
+/// apart, at most 4 a row. It fits as many columns as square tiles would allow, then balances
+/// the rows: 5 favorites are 3 + 2, 7 are 4 + 3, 9 are 3 × 3.
+struct FavoritesTrayLayout: Layout {
+    static func columns(count n: Int, width: CGFloat) -> Int {
+        guard n > 0 else { return 1 }
+        let h = M.favoriteHeight, gap = M.favoriteSpacing
+        let fit = max(Int(((width + gap) / (h + gap)).rounded(.down)), 1)
+        let c = min(n, M.favoriteColumns, fit)
+        let rows = (n + c - 1) / c
+        return (n + rows - 1) / rows
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? CGFloat(M.favoriteColumns) * (M.favoriteHeight + M.favoriteSpacing)
+        let cols = Self.columns(count: subviews.count, width: width)
+        let rows = (subviews.count + cols - 1) / cols
+        return CGSize(width: width, height: CGFloat(rows) * M.favoriteHeight + CGFloat(max(rows - 1, 0)) * M.favoriteSpacing)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let cols = Self.columns(count: subviews.count, width: bounds.width)
+        let width = (bounds.width - M.favoriteSpacing * CGFloat(cols - 1)) / CGFloat(cols)
+        for (i, view) in subviews.enumerated() {
+            let x = bounds.minX + CGFloat(i % cols) * (width + M.favoriteSpacing)
+            let y = bounds.minY + CGFloat(i / cols) * (M.favoriteHeight + M.favoriteSpacing)
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: width, height: M.favoriteHeight))
+        }
+    }
+}
+
+/// Arc's empty favorites tray (`AppTrayEmptyStateView`): its title and subtitle from Arc's strings,
+/// with a close button that hides it until a drag needs somewhere to drop. Its size and look are
+/// unmeasured.
+private struct FavoritesEmptyState: View {
+    var onDismiss: (() -> Void)?
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text("Drag to add Favorites")
+                .font(.system(size: 12, weight: .semibold))
+                .opacity(0.7)
+            Text("Favorites keep your most used sites and apps close")
+                .font(.system(size: 11))
+                .opacity(0.45)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, minHeight: M.favoriteHeight)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: M.cornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.2), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+        )
+        .overlay(alignment: .topTrailing) {
+            if let onDismiss, hovering {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).frame(width: 18, height: 18).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(0.5)
+                .padding(4)
+                .help("Dismiss")
+            }
+        }
+        .onHover { hovering = $0 }
     }
 }
 

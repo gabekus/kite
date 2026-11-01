@@ -1575,3 +1575,33 @@ Kite's own choices, not measured against Chrome on screen:
 - The simple dialog's banner is Kite's own drawing, because Chrome's illustration is an asset.
 - "Open tab in app" opens the app at the tab's page and closes the tab. Chrome moves the live tab instead.
 - The app window's toolbar is 38pt: back, forward, reload, the title, Open in Kite. It is tinted with theme_color.
+
+## Sidebar drag and drop → `KiteCore.SidebarDrag`, `SidebarDragAndDrop.swift`, `FavoritesTrayLayout` (Arc 1.169 binary, 1 Nov 2026)
+
+Static analysis only (Swift field metadata, strings, Ghidra; notes in ~/rea-arc/notes/sidebar-dnd.md). Not yet checked
+against a recording of Arc, and Kite's drag not yet driven with Kite in front.
+
+- **Drop kinds** [meta]: `SidebarDropTarget` {tabList, appTray}; `SidebarDropType` {on, before, after};
+  `SidebarDropTargetRegion` {left, right}; `SidebarDropOperation` {move, copy}; `SpaceDestination` {absolute, pinned,
+  unpinned}. Section headers (pinned / Today) accept drops [dec @1001c5f58]. Kite: before/after between rows at any
+  level, on a folder (into it, at its end), on a tab's left or right half (make or join a split, max 4 panes), on a
+  space's icon (top of its Today), and into favorites.
+- **Split offer** [dec @1001db3d0]: `splitDropTargetDelaySatisfied` turns on 0.2s after a row becomes the drop target.
+  Arc's preview (`SplitDragPreviewView`) is a two-pane mini split in a palette colour at 0.5; Kite outlines the half the
+  dragged tab will take (look unmeasured).
+- **"On" feedback** [dec @1001dc0b0]: the row's whole rectangle filled with a theme colour at 0.5 (alpha inferred). Kite
+  fills the folder's pill with the selected-tab white.
+- **Edge drag** [dec @10029331c]: 20pt from the tab list's left or right edge, resting 0.35s (one-shot timer, restarted by a
+  move over 3pt), pages to the space on that side once per rest (that it switches space is inferred from the type).
+- **Favorites tray** [dec @101cf72fc]: insets 8, tiles 47 high, gap 8, at most 4 columns;
+  `cols = ceil(n / ceil(n / min(n, 4, floor((A + 8) / 55))))`, tile width shares the rest. While a drag aims at the tray
+  it counts one more and leaves that slot (`dropGapFrame`) empty; dragged tiles go to alpha 0. Display mode
+  {always, onDrag}. Empty state [str]: "Drag to add Favorites" / "Favorites keep your most used sites and apps close",
+  dismissable (size and look unmeasured; Kite's is a dashed pill).
+- **Toasts** [str]: "Pinned Tab to …", "Un-Pinned Tab from …", "Tab moved! Click to go there." Kite's moved toast has a
+  Go button rather than being clickable as a whole.
+- **Haptic**: generic, performed now (inferred).
+- **Unverified in Kite:** before/after zone split (Kite: halves; folders quarters with "on" in the middle), the insertion
+  line's look (Kite: NSTableView's white line with a ring), the ghost's opacity (0.6), autoscroll speed, the hover-to-expand
+  delay for collapsed folders (Kite doesn't expand), how near a drag must come to reveal the empty tray (Kite: as soon as a
+  drag starts), the landing animation (Kite: the 0.12s row animation), and drags out over the page (Kite cancels).
