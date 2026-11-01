@@ -15,6 +15,8 @@ struct PageStatus: Equatable {
     var media: MediaActivity?
     /// The browser's tab mute (WebPage.isAudioMuted).
     var isAudioMuted = false
+    /// The tab volume from the Mini Player (TabVolume, 0...1); it lives with the page, like the mute.
+    var tabVolume: Double = 1
 
     /// Whether the tab is playing media now (muted or not): the base for audio indicators.
     var isPlayingAudio: Bool { media?.state.isPlaying == true }

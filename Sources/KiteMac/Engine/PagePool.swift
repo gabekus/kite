@@ -252,6 +252,10 @@ final class PagePool {
             store.updatePage(id) { $0.blockedCount = count }
         case .media(let media):
             store.mediaChanged(id, media)
+            // The page's script starts at full volume after each navigation: send the tab's level again.
+            if let media, let level = store.pages[id]?.tabVolume, TabVolume.needsReapply(tab: level, reported: media.tabVolume) {
+                pages[id]?.runMediaCommand(.setVolume(level))
+            }
         case .crashed(let code):
             store.updatePage(id) {
                 $0.crashCode = code

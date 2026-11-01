@@ -997,7 +997,7 @@ Peek; on WebKit only camera and mic, asked every time.
   - title row: artwork/favicon 16×16 clipped to radius 4 in a 24×24 frame; title Text; `pip` symbol at 12 pt and `xmark`
     at 14 pt, whose opacity/width switch 0↔1 / 0↔24 (shown on hover).
   - controls: 24×24 buttons, 16×16 symbol frames, `Font.system(size: 14, weight: .medium)`; symbols `backward.end.fill`,
-    `play.fill`/`pause.fill`, `forward.end.fill`, `speaker.slash.fill`/`speaker.wave.1/2/3.fill` (+ Slider for volume),
+    `play.fill`/`pause.fill`, `forward.end.fill`, `speaker.slash.fill`/`speaker.wave.1/2/3.fill` (+ Slider for volume, below),
     `mic.fill`/`mic.slash.fill`, `video.fill`/`video.slash.fill`.
   - `MediaControlsView`: height 33, `Animation.spring(response: 0.25, dampingFraction: 0.9)`.
   - `PlaybackControlForeground` (ARC_MediaControlsFeature.bundle Assets.car): light black 50%, dark white 66%.
@@ -1008,6 +1008,27 @@ Peek; on WebKit only camera and mic, asked every time.
   the space bar), the card fill colour (Kite uses the address field's fill), the title font (a CTFont; Kite uses 12 pt
   medium), button hover fills, which controls drop at 160 / 126, and whether closing the player pauses (Kite pauses).
 
+### Mini Player tab volume ("Adjust Tab Volume") → `MiniPlayerView.volumeRow`, `TabVolume`, `MediaStateScript` (Arc 1.171, 1 Nov 2026)
+
+- Strings (arc-strings.txt): MiniPlayer actions `setVolume`, `toggleVolumeDrawer`, `toggleMuted` (174130-174145); state
+  `volume`, `isTabMuted`, `isVolumeExpanded` (174155-174160); `MiniPlayerView` `VolumeRowViewState` (43031) with
+  `isVolumeRowShown`, `volume`, `isMuted`, `isVolumeExpanded` (174205-174208); analytics `volumeDrawerOpened` /
+  `volumeDrawerClosed` (68965, 161345); the hosting view has `heightConstraint` / `onUpdateHeight` (the card grows).
+  Mechanism: `ADKClient.setVolume` (67687) and `webContents:didChangeVolume:` (194584), i.e. a volume on the tab's
+  web contents, not a page script. No volume key in Arc's defaults (nothing persisted across launches).
+- Disassembly (arc.s): the "Adjust Tab Volume" button sits in the controls row right after `forward.end.fill`
+  (next track) and before "Toggle Microphone" (9585804 → 9586015 → 9586178). The slider is a stock SwiftUI
+  `Slider(value:in:onEditingChanged:)` (9587416, 0x102495570) over `0...1` (the range constant at 0x103651b70 reads
+  0.0, 1.0), no step. The speaker symbol (0x102495334-0x1024953e8) is `speaker.slash.fill` when muted, `speaker.fill`
+  at volume 0, `speaker.wave.1.fill` below 1/3, `speaker.wave.3.fill` from 2/3 to 1, else `speaker.wave.2.fill`; it's
+  drawn at 14 pt medium in a 16×16 frame (0x1024951e8-0x102495240).
+- Kite: the controls row's speaker button (now the volume symbol, tooltip "Adjust Tab Volume") opens a third 33 pt row
+  with the tab's mute button and the 0...1 slider. The level scales every `<audio>`/`<video>` in the page's main
+  frame (element volume = the page's own volume × level, restored exactly at 1); it lives with the tab's page like
+  the mute, and Kite sends it again after a navigation.
+- Inferred, not read: that the drawer is a row below the controls (Arc's row order and its layout weren't read beyond
+  the slider and symbol), that the row's speaker toggles the tab mute (`toggleMuted` exists; where it's wired wasn't
+  traced), the slider's tint and size (Kite: small control size, system tint).
 
 ## Check for Updates (Arc 1.171 Info.plist, menu bar and strings, 1 Nov 2026)
 
