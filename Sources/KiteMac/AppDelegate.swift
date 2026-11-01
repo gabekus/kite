@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.history = history
         DownloadsModel.shared.start(fileURL: Self.supportDirectory.appendingPathComponent("downloads.json"))
         DownloadsModel.shared.currentTabTitle = { DownloadTidier.frontBrowser?.store.state.selectedTab?.title }
+        BoostsModel.shared.start(fileURL: Self.supportDirectory.appendingPathComponent("boosts.json"))
 
         adblocker = Adblocker(directory: Self.supportDirectory.appendingPathComponent("Adblock", isDirectory: true))
         adblocker.setPolicy(enabled: store.state.blocksAds, allowedHosts: store.state.adblockAllowedHosts)
@@ -155,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         open(pendingURLs)
         pendingURLs = []
-        // A test run can open the Zap picker, which has no menu item until Kite has Arc's Boost editor.
+        // A test run can open the Zap picker directly (users open it from the Boost editor's Zap tool).
         if UIDiagnostics.enabledByEnvironment, ProcessInfo.processInfo.environment["KITE_TEST_ZAP_PICKER"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.windowController.showZapPicker(nil) }
         }
@@ -379,6 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store?.saveNow()
         history?.saveNow()
         DownloadsModel.shared.saveNow()
+        BoostsModel.shared.flush()
     }
 
     // MARK: Settings

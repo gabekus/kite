@@ -1103,6 +1103,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if let valid = validateSplitItem(item) { return valid }
+        if let valid = validateBoostItem(item) { return valid }
         if let valid = validateSplitLayoutItem(item) { return valid }
         switch item.action {
         case #selector(setDarkPagesMode(_:)):

@@ -14,6 +14,8 @@ final class WebKitEngine: WebEngine {
     private let configuration: WKWebViewConfiguration
     private let downloads = DownloadCoordinator()
     private var contentRules: WebKitContentRules?
+    /// Incognito pages don't run Boosts.
+    private var appliesBoosts = true
 
     init(dataStore: WKWebsiteDataStore = .default()) {
         let configuration = WKWebViewConfiguration()
@@ -31,6 +33,7 @@ final class WebKitEngine: WebEngine {
     func makeEphemeral() -> WebEngine {
         let engine = WebKitEngine(dataStore: .nonPersistent())
         engine.contentRules = contentRules
+        engine.appliesBoosts = false
         return engine
     }
 
@@ -59,7 +62,10 @@ final class WebKitEngine: WebEngine {
 
     func makePage(url: URL?, restoring state: Any?) -> WebPage {
         // A copy, since the page swaps in its own content controller.
-        let page = WebKitPage(configuration: configuration.copy() as! WKWebViewConfiguration, downloads: downloads, contentRules: contentRules)
+        let page = WebKitPage(
+            configuration: configuration.copy() as! WKWebViewConfiguration, downloads: downloads,
+            contentRules: contentRules, appliesBoosts: appliesBoosts
+        )
         if let state {
             page.webView.interactionState = state
         } else if let url {
@@ -77,6 +83,11 @@ final class WebKitPage: NSObject, WebPage {
     var contextMenuHost: (() -> PageContextMenu.Host)?
     private let downloads: DownloadCoordinator
     private let contentRules: WebKitContentRules?
+    private let appliesBoosts: Bool
+    /// The Boost script registered for the current page, so an unchanged one isn't re-added,
+    /// and the user script carrying it, so it alone is replaced.
+    private var boostScript: String?
+    private var boostUserScript: WKUserScript?
     private var observations: [NSKeyValueObservation] = []
     /// Ids for this page's permission prompts.
     private var permissionPromptCount = 0
@@ -89,11 +100,9 @@ final class WebKitPage: NSObject, WebPage {
         })()
         """
 
-    init(configuration: WKWebViewConfiguration, downloads: DownloadCoordinator, contentRules: WebKitContentRules?) {
-        // Each page gets its own content controller so ad-block rules can differ per site.
-        if let contentRules {
-            configuration.userContentController = contentRules.makeController()
-        }
+    init(configuration: WKWebViewConfiguration, downloads: DownloadCoordinator, contentRules: WebKitContentRules?, appliesBoosts: Bool = true) {
+        // Each page gets its own content controller so ad-block rules and Boosts can differ per site.
+        configuration.userContentController = contentRules?.makeController() ?? WKUserContentController()
         // Web Inspector in the window (View › Developer) needs WebKit's private developer
         // extras; isInspectable alone only allows Safari's remote inspector.
         if configuration.preferences.responds(to: NSSelectorFromString("_developerExtrasEnabled")) {
@@ -102,6 +111,7 @@ final class WebKitPage: NSObject, WebPage {
         webView = WKWebView(frame: .zero, configuration: configuration)
         self.downloads = downloads
         self.contentRules = contentRules
+        self.appliesBoosts = appliesBoosts
         super.init()
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
@@ -118,7 +128,7 @@ final class WebKitPage: NSObject, WebPage {
         }
         WebKitMediaBridge.shared.attach(self)
         WebKitMailBridge.shared.attach(self)
-        ZapInjection.attach(to: self)
+        if appliesBoosts { LiveZaps.attach(to: self, owner: self) }
     }
 
     var view: NSView { webView }
@@ -360,6 +370,7 @@ extension WebKitPage: WKNavigationDelegate {
         }
         if navigationAction.targetFrame?.isMainFrame == true {
             contentRules?.apply(to: webView.configuration.userContentController, url: url)
+            applyBoosts(for: url)
         }
         decisionHandler(.allow)
     }
@@ -392,6 +403,28 @@ extension WebKitPage: WKNavigationDelegate {
     }
 }
 
+extension WebKitPage {
+    /// Boosts (code and zaps) for the page about to load, as a document-start user script (top
+    /// frame only). WebKit can only remove every user script at once, so the others (the media
+    /// bridge's) are added back and only the old Boost script is dropped.
+    fileprivate func applyBoosts(for url: URL) {
+        let script = appliesBoosts ? BoostsModel.shared.script(for: url) : nil
+        guard script != boostScript else { return }
+        boostScript = script
+        let controller = webView.configuration.userContentController
+        if let old = boostUserScript {
+            let others = controller.userScripts.filter { $0 !== old && $0.source != old.source }
+            controller.removeAllUserScripts()
+            others.forEach(controller.addUserScript)
+            boostUserScript = nil
+        }
+        guard let script else { return }
+        let userScript = WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        controller.addUserScript(userScript)
+        boostUserScript = userScript
+    }
+}
+
 extension WebKitPage: WKUIDelegate {
     /// The popup must use WebKit's configuration so it keeps `window.opener`.
     func webView(
@@ -400,7 +433,7 @@ extension WebKitPage: WKUIDelegate {
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        let popup = WebKitPage(configuration: configuration, downloads: downloads, contentRules: contentRules)
+        let popup = WebKitPage(configuration: configuration, downloads: downloads, contentRules: contentRules, appliesBoosts: appliesBoosts)
         onEvent?(.popup(popup))
         return popup.webView
     }

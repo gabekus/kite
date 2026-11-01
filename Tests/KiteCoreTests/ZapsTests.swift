@@ -38,20 +38,6 @@ import Testing
         #expect(decoded == library)
     }
 
-    @Test func documentStartScriptCarriesEverySiteButAppliesOnlyItsOwn() {
-        #expect(ZapScript.documentStart(ZapLibrary()).contains("({})[host]"))
-        var library = ZapLibrary()
-        library.add(".a\u{2028}", for: "example.com")
-        library.add("#b", for: "other.org")
-        let script = ZapScript.documentStart(library)
-        #expect(script.contains("\"example.com\""))
-        #expect(script.contains("#b { display: none !important; }"))
-        #expect(script.contains("location.hostname"))
-        #expect(script.contains("window !== window.top"))
-        #expect(script.contains("window.__kiteZapStyle"))
-        #expect(!script.contains("\u{2028}"))
-    }
-
     @Test func liveScriptHasOnlyTheGivenCSS() {
         let script = ZapScript.apply(css: "</style><b>'\"")
         #expect(script.contains(ZapScript.literal("</style><b>'\"")))

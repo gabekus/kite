@@ -14,6 +14,8 @@ final class ChromiumEngine: WebEngine {
     private var adblocker: Adblocker?
     /// nil is the persistent profile.
     private let context: KCRequestContext?
+    /// Incognito pages don't run Boosts.
+    private var appliesBoosts = true
 
     init(context: KCRequestContext? = nil) {
         self.context = context
@@ -23,7 +25,8 @@ final class ChromiumEngine: WebEngine {
         // CEF has no equivalent of WebKit's interactionState, so a revived tab reloads its URL.
         ChromiumPage(
             browser: KCBrowser(url: url, delegate: ChromiumDelegateProxy.placeholder, context: context),
-            adblocker: adblocker
+            adblocker: adblocker,
+            appliesBoosts: appliesBoosts
         )
     }
 
@@ -31,6 +34,7 @@ final class ChromiumEngine: WebEngine {
     func makeEphemeral() -> WebEngine {
         let engine = ChromiumEngine(context: .incognito())
         engine.adblocker = adblocker
+        engine.appliesBoosts = false
         return engine
     }
 
@@ -59,6 +63,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     var contextMenuHost: (() -> PageContextMenu.Host)?
     private var mediaInUse = false
     private let adblocker: Adblocker?
+    private let appliesBoosts: Bool
     private var address: URL?
     /// Bumped per load so a page that navigated away stops being polled.
     private var cosmeticGeneration = 0
@@ -73,13 +78,14 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     private static let playingMediaScript =
         "[...document.querySelectorAll('video,audio')].some(m => !m.paused && !m.muted && m.readyState > 2)"
 
-    init(browser: KCBrowser, adblocker: Adblocker?) {
+    init(browser: KCBrowser, adblocker: Adblocker?, appliesBoosts: Bool = true) {
         self.browser = browser
         self.adblocker = adblocker
+        self.appliesBoosts = appliesBoosts
         super.init()
         browser.delegate = self
         prepareVerificationCodes()
-        ZapInjection.attach(to: self)
+        if appliesBoosts { LiveZaps.attach(to: self, owner: self) }
         historySwipe = HistorySwipeController(
             view: browser.view,
             canNavigate: { [weak browser] in $0 == .back ? browser?.canGoBack == true : browser?.canGoForward == true },
@@ -467,7 +473,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) {
-        onEvent?(.popup(ChromiumPage(browser: popup, adblocker: adblocker)))
+        onEvent?(.popup(ChromiumPage(browser: popup, adblocker: adblocker, appliesBoosts: appliesBoosts)))
     }
 
     func browserDidRequestClose(_ browser: KCBrowser) { onEvent?(.closeRequested) }
@@ -503,8 +509,10 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     @objc(browser:documentStartScriptForURL:)
     func browser(_ browser: KCBrowser, documentStartScriptFor url: URL) -> String? {
         setExtensionOrigin(for: url)
-        let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url), ExtensionTabsScript.script(for: url)]
-            .compactMap { $0 }
+        let scripts = [
+            adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url), ExtensionTabsScript.script(for: url),
+            appliesBoosts ? BoostsModel.shared.script(for: url) : nil,
+        ].compactMap { $0 }
         return scripts.isEmpty ? nil : scripts.joined(separator: "\n")
     }
 

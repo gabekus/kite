@@ -677,7 +677,7 @@ Arc wasn't driven; nothing here is from a recording.
 - **Command bar actions** [str, arc-strings.txt 68850–68852 and 79417–79456]: IDs `newVerticalSplitView`, `convertToVerticalSplitView`,
   `convertToHorizontalSplitView`; titles "Add Vertical Split View", "Convert to Vertical Split View", "Convert to Horizontal Split
   View"; trigger phrases "New Vertical Split View", "Flip to vertical/horizontal split view". They aren't in MainMenu.nib's View menu, so
-  Kite keeps them as hidden menu items the command bar still finds (`MenuCommand.commandBarOnly`). Kite matches titles only, not the
+  Kite keeps them as hidden menu items the command bar still finds (MainMenu's `commandBarOnly`, marked with `CommandBarKeywords`). Kite matches titles only, not the
   trigger phrases. **Inferred:** Add Vertical Split View on a side-by-side split turns it top/bottom (a split has one orientation).
 - **Drop a link on the content** [str + dec]: the window-contents split delegate has `onDropURL`, `onDropSidebarItem`,
   `onDidUpdateSplitViewProposedDropTarget` and `onDidAdjustLayoutOrientation` (arc-strings.txt ~176689). `ARCUI.SplitViewController`
@@ -990,6 +990,39 @@ Arc was not opened or driven, so no geometry was measured.
   ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
   deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
 
+## Boosts (Arc 1.171, read 1 Nov 2026)
+
+Sources: `~/rea-arc/tools/menudump Window` (AX, nothing pressed), strings in `Contents/Resources/Base.lproj/MainMenu.nib`
+and `~/rea-arc/arc-strings.txt` (line numbers below), asset names from `ARC_BoostsEditor.bundle/Assets.car`.
+
+- Menu bar: Window › **View Boosts…** (no shortcut), after View Downloads…, View Easels…, View Media…. Its copy
+  says it opens the Library's Boosts pane (arc-strings ~62221).
+- MainMenu.nib also has **New Boost** (`newBoost`, outlet `newBoostMenuItem`) and **Edit Boost** (`editBoost`)
+  with the command-bar keywords "Boost; New Boost; Create boost; extension; Boost the Current Page; Edit Boost",
+  and **Boost Gallery** (`openBoostGallery`). None of the three shows in the menu bar (menudump), so they're
+  command-bar actions (Arc also has a `hiddenMenuItem` outlet, ~149700).
+- Other entry points: the site control centre's Boosts section with a new-Boost button and a "Manage Boosts"
+  footer item (~73700–73727), and a context menu titled "Customize Page" (~84895). Not built in Kite.
+- Editor: its own window (`BoostsEditorWindowController`, ~73423) with a code input panel
+  (`BoostsEditorCodeInputPanel`, `CodeType`), the JS placeholder "your javascript here", buttons "Refresh this
+  Page", "Rename this Boost", "Delete this Boost", "Show/Hide Developer Tools" (~73396–73407). The v2 editor
+  serves code from `arc://boost/v2/css/` and `arc://boost/v2/js/` (~73420). Colour wheel, font, text size/case
+  and Zap/selector picker controls are the rest of the editor (`BoostsEditor*`, ~37700–37818).
+- Delete asks "Delete this Boost?" / "Deleting a Boost can't be undone." (~61502–61507). Rename has its own
+  alert with cancel and done buttons (~61510).
+- Library page: empty state "Nothing Boosted Yet!", row buttons delete, rename, disable, enable (~82519–82525).
+- Storage: `StorableBoostsData.json` and a `localBoostsData` directory, `locallyEnabledBoostIDs` (~67162,
+  ~71519). Applied per page by `BoostsClient.applyToWebContent` / `WebContentState+Boosts.updateBoosts(for:)`;
+  a Boost "will run only on" its site (~82390). "Boosts can't be installed or used in Incognito Mode" (~61492).
+
+Kite (`KiteCore/Boosts.swift`, `KiteMac/BoostsModel.swift`, `Views/BoostsViews.swift`): code Boosts and zaps, in
+`boosts.json` (each Boost has `css`, `js` and `zaps`; see Zap below). Inferred, not seen in Arc: the domain is the host without `www.` and matches exactly; CSS goes in
+at document start and JS runs at DOMContentLoaded, in the page's world, top frame only; New Boost is offered on
+any web page and Edit Boost opens the site's newest Boost; the new Boost's name is its domain (Arc's default
+title string is inlined, so unknown); the editor's sizes and layout are Kite's (Arc's weren't measured). Kite
+leaves out a Boost's JavaScript when it doesn't parse (shown under the editor), since its document-start
+scripts share one source with the ad blocker's.
+
 ## Sound effects → `SoundEffects` (KiteCore), `SoundEffectPlayer` (Arc 1.171 strings, files, defaults and disassembly, 1 Nov 2026)
 
 - Setting: "Play Arc sound effects" next to "Haptic feedback when reordering tabs" (strings 80425–80426). Keys
@@ -1226,7 +1259,8 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   `instantLinks` item container. Which flags Arc's server turns on is unknown.
 - **Inferred:** ⇧⏎ only for a search (a typed URL opens as usual) and not in Site Search; results open in
   query order with the first selected; what Arc shows while it works (probably the sidebar cell) is unverified.
-## Zap → `ZapLibrary`, `ZapScript`, `ZapPickerScript` (KiteCore), `ZapsModel`, `ZapInjection`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
+
+## Zap → `Boost.zaps`, `ZapLibrary.css`, `ZapScript`, `ZapPickerScript` (KiteCore), `BoostsModel`, `LiveZaps`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, `ARC_BoostsEditor.bundle` (Assets.car, SelectorPicker.js;
 read only for its function names, nothing copied).
@@ -1249,9 +1283,16 @@ read only for its function names, nothing copied).
   sRGB 0.851 grey (#D9D9D9) for zap cells; Boosts palette `BoostsRed` sRGB (1, 0.055, 0.055).
 - **Storage and CSS.** Zaps are part of a Boost's data (`BoostData`, stored locally and in Firestore); applied as
   `<selector> { display: none !important; }` (BoostsClient string at 71515).
-- **Kite.** Per-site selectors in `zaps.json` (domain = host without `www.`, Boosts' rule); a document-start script
-  in an isolated world (Chromium `Page.addScriptToEvaluateOnNewDocument` with `worldName`, WebKit `WKUserScript` in a
-  `WKContentWorld`) adds one style element; a zap or removal replaces the CSS live in open pages.
+- **Kite.** Zaps are part of each Boost (`Boost.zaps` in `boosts.json`), as in Arc's `BoostData`. The Boost editor
+  has a Zap button (tooltip "Zap", then Arc's "Hide Selector Picker" while it's open) that opens the picker over the
+  page in the window the editor came from. A pick goes to the edited Boost, else the site's newest Boost, else a new
+  Boost for the site (as New Boost makes one). The shelf lists and removes that Boost's zaps. The Boost script adds
+  the site's zaps (Boosts that are on) as one `style[data-kite-zap]` at document start, top frame, page world; a
+  zap, an undo or a Boost turned on/off or deleted replaces that style live in open pages (`LiveZaps`). Like
+  Boosts, zaps never run in incognito windows, and the picker won't open there. The first Zap release kept zaps
+  in `zaps.json`; Kite moves them into each site's Boost on the first launch and renames the file
+  `zaps.json.migrated` (kept). Inferred: the Zap button's icon (SF `bolt`; no Zap asset in
+  ARC_BoostsEditor.bundle) and its "Zap" tooltip (Arc's show string isn't in its strings).
 - **Unverified / not measured:** the highlight's colour, fill and stroke (Kite uses BoostsRed at 15% fill with a
   2pt stroke), the cursor during picking, the shelf's position and look, the candidate slider in
   `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped

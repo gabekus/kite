@@ -4,8 +4,9 @@ import KiteCore
 
 /// Arc's Zap picker (BoostsEditor's SelectorPicker): a native overlay over the page. Moving
 /// the pointer highlights the element under it; clicking one offers "Zap this" and "Zap all
-/// related elements"; the shelf lists the site's zaps, and removing one shows it again.
-/// The page side only answers where elements are (`ZapPickerScript`).
+/// related elements"; the shelf lists the Boost's zaps, and removing one shows it again.
+/// Zaps are stored on the site's Boost (the one being edited, else the site's newest, else a
+/// new one). The page side only answers where elements are (`ZapPickerScript`).
 @MainActor
 final class ZapPicker: NSView {
     /// Arc's numbers where they're known; see docs/arc-visual-spec.md (Zap).
@@ -21,6 +22,8 @@ final class ZapPicker: NSView {
     }
 
     let page: WebPage
+    /// The Boost zaps go to; nil until the site has one (the first zap makes it).
+    private(set) var boostID: UUID?
     var onClose: (() -> Void)?
 
     private let model = ZapShelfModel()
@@ -35,8 +38,9 @@ final class ZapPicker: NSView {
     private var domain: String?
     private var hostKnown = false
 
-    init(page: WebPage) {
+    init(page: WebPage, boostID: UUID? = nil) {
         self.page = page
+        self.boostID = boostID
         super.init(frame: .zero)
         wantsLayer = true
         for layer in [related, highlight] {
@@ -49,12 +53,13 @@ final class ZapPicker: NSView {
         related.fillColor = Metrics.highlight.withAlphaComponent(0.08).cgColor
 
         model.onRemove = { [weak self] selector in
-            guard let self, let domain = self.domain else { return }
-            ZapsModel.shared.remove(selector, for: domain)
+            guard let self, let boostID = self.boostID else { return }
+            BoostsModel.shared.removeZap(selector, from: boostID)
+            self.zapsChanged()
         }
         model.onPreview = { [weak self] selector in
             guard let self else { return }
-            ZapsModel.shared.applyLive(to: self.page, except: selector)
+            BoostsModel.shared.applyZapsLive(to: self.page, except: selector)
         }
         model.onClose = { [weak self] in self?.onClose?() }
         shelf = NSHostingView(rootView: ZapShelf(model: model))
@@ -94,7 +99,9 @@ final class ZapPicker: NSView {
     }
 
     @objc private func zapsChanged() {
-        model.zaps = domain.map { ZapsModel.shared.selectors(for: $0) } ?? []
+        let boost = domain.flatMap { BoostsModel.shared.zapBoost(forDomain: $0, preferring: boostID) }
+        boostID = boost?.id ?? boostID
+        model.zaps = boost?.zaps ?? []
     }
 
     override func updateTrackingAreas() {
@@ -209,7 +216,8 @@ final class ZapPicker: NSView {
     private func zap(_ selector: String?) {
         guard let selector, let domain else { return }
         closePanel()
-        ZapsModel.shared.add(selector, for: domain)
+        boostID = BoostsModel.shared.addZap(selector, domain: domain, preferring: boostID) ?? boostID
+        zapsChanged()
     }
 
     // MARK: Geometry
