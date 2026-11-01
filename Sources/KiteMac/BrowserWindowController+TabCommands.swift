@@ -11,9 +11,91 @@ extension BrowserWindowController {
         showToast(cleared.count == 1 ? "Archived 1 tab" : "Archived \(cleared.count) tabs")
     }
 
+    /// Tabs › Reveal Tab in Sidebar: shows the sidebar, opens the folders the tab is in and
+    /// scrolls its row into view.
+    @objc func revealTabInSidebar(_ sender: Any?) {
+        guard let id = store.state.selectedTab?.id else { return NSSound.beep() }
+        if !store.isSidebarVisible { store.toggleSidebar() }
+        if let row = store.mutate({ $0.revealTab(id) }) { store.reveal(row: row) }
+    }
+
+    /// Arc's `resetTab` binding ("Reset tab to original URL."): the selected pinned tab or
+    /// favorite goes back to its pinned page.
+    @objc func resetTab(_ sender: Any?) {
+        guard let id = store.state.selectedTab?.id, store.state.canReset(tab: id) else { return NSSound.beep() }
+        backToPinnedURL(id)
+    }
+
+    /// "Back to Pinned URL" on a pinned tab's row.
+    func backToPinnedURL(_ id: UUID) {
+        guard let url = store.mutate({ $0.resetTab(id) }) else { return }
+        load(url, in: id)
+    }
+
+    /// "Separate From Pinned Tab": the page moves to a new unpinned tab and the pinned tab goes home.
+    func separateFromPinnedTab(_ id: UUID) {
+        guard let home = store.state.tab(id)?.pinnedURL,
+              store.mutate({ $0.separateFromPinnedTab(id) }) != nil else { return }
+        load(home, in: id)
+    }
+
+    /// Tabs › Reset all tabs in this Space.
+    @objc func resetAllTabsInSpace(_ sender: Any?) {
+        let reset = store.mutate { $0.resetPinnedTabs() }
+        if reset.isEmpty { return NSSound.beep() }
+        for (id, url) in reset { load(url, in: id) }
+    }
+
+    /// Loads a URL already set on the tab, if its page is loaded; an unloaded pinned tab
+    /// picks it up when it's next opened.
+    private func load(_ url: URL, in id: UUID) {
+        if InternalPage(url) == nil { pool.loadedPage(id)?.load(url) }
+    }
+
     @objc func duplicateTab(_ sender: Any?) {
         guard let id = store.state.selectedTab?.id else { return NSSound.beep() }
         store.mutate { _ = $0.duplicate(tab: id) }
+    }
+
+    /// Arc's "Rename Current Tab…": edits the tab's title in place in the sidebar, or, with the
+    /// sidebar hidden (or the tab a favorite or split pane), in Arc's "Rename Tab…" dialog.
+    @objc func renameCurrentTab(_ sender: Any?) {
+        guard let tab = store.state.selectedTab else { return NSSound.beep() }
+        renameTab(tab.id)
+    }
+
+    func renameTab(_ id: UUID) {
+        // Favorites and split panes have no title row to edit in.
+        let hasRow = !store.state.favorites.contains { $0.id == id } && store.state.split(containing: id) == nil
+        if store.isSidebarVisible && hasRow {
+            store.beginRenaming(tab: id)
+        } else {
+            showRenameTabDialog(id)
+        }
+    }
+
+    /// Arc's dialog (WindowData+Dialogs): "Rename Tab…", placeholder "Keep it short and sweet!",
+    /// Rename and Cancel.
+    private func showRenameTabDialog(_ id: UUID) {
+        guard let window, let tab = store.state.tab(id) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename Tab…"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: tab.displayTitle)
+        field.placeholderString = "Keep it short and sweet!"
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.store.mutate { $0.renameTab(id, to: field.stringValue) }
+        }
+    }
+
+    /// View → Collapse / Expand Pinned Tabs for the current space.
+    @objc func togglePinnedSection(_ sender: Any?) {
+        store.mutate { $0.togglePinnedSection($0.selectedSpaceID) }
     }
 
     /// Renames the space in place in its header, like Arc.

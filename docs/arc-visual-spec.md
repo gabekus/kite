@@ -543,6 +543,92 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
 - Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
   swipe right to dismiss (`minimumDismissTranslation`, `tugRubberbanding`), undo "re-opening a closed Peek",
   the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`), any scrim behind the card.
+## Pinned URL reset and Reveal Tab (Arc 1.171 menu bar and binary, 1 Nov 2026)
+
+- Tabs menu (AX, read-only, `menudump`): … Next Tab ⌥⌘↓, Previous Tab ⌥⌘↑, Reveal Tab in Sidebar (no key), —,
+  Item 1/2/3, Clear Today ⇧⌘K, Reset all tabs in this Space (no key). No "reset tab" item in any menu.
+- Binding names and descriptions (`arc-strings.txt`): `resetTab` 34996, "Reset tab to original URL." 80755;
+  `resetSpace` 34981, "Resets all your pinned tabs in the current Space." ~80729; `revealTabInSidebar` 67594,
+  "Reveals the current tab in your Sidebar." 80697. Menu title comment: "Title to reset Pinned Tabs while on a
+  focused list" 62244.
+- Model: `savedURL` (66907), `TabNavigatedAwayFromSavedURLHeuristic` (44184), `copySavedURLFromOriginalTab`.
+- Row state (`Browser/Sidebar/SidebarCells/TabCellState.swift`, fields at 149996): `canResetTab`,
+  `resetTabTitle`, `resetTabIcon`, `resetItemShortcut`. In the disassembly (`decomp/arc.s` 707906 and 888387)
+  the two `resetTabTitle` values sit side by side with one comment ("String that describes the action of
+  going back to a website"): "Back to Pinned URL" and "Separate From Pinned Tab". The same file has the
+  fallback title "Pinned URL" ("Fallback title for a page's pinned URL title").
+- Context menu strings (`SidebarMenu+MoveMenu.swift` area, 84933): Edit Pinned Page / "Edit the pinned URL",
+  "Replace Pinned URL with Current" (not built here).
+- Kite: `BrowserTab.pinnedURL` (set when a tab is pinned or favorited, cleared when unpinned; old sessions take
+  the current page), `BrowserState.resetTab`, `resetPinnedTabs`, `separateFromPinnedTab`, `revealTab`
+  (`KiteCore/PinnedURL.swift`).
+- Inferred, not observed: the navigated-away rule (Kite ignores fragment, trailing slash, `www.` and
+  http/https); the reset icon (`arrow.uturn.backward`) and its place left of the close button on hover;
+  "Separate From Pinned Tab" as a context-menu item (in Arc it is an alternate title of the same button, the
+  trigger unknown); Reveal opening enclosing folders and showing a hidden sidebar; no highlight on reveal
+  (TabCellState has `shouldPerformUserAttentionAnimation` and `tabHighlightState`, use unknown). Arc had no
+  window open, so none of this was seen on screen.
+## Hover cards / 5-Second Previews → `LinkPreview` (KiteCore), `LinkPreviewController` (Arc 1.171 binary, 1 Nov 2026)
+
+Strings, settings key names and disassembly only (`~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, selector
+stubs resolved through `__objc_stubs`/`__objc_selrefs`). Arc wasn't touched, and Gabe has the feature off
+(`hoverCardsEnabled` = 0), so nothing was recorded on screen.
+
+- What it is: an Arc Max feature, "5-Second Previews: speedy summaries when you hover and hold Shift over any link"
+  (strings ~75914, ~80521). Module `HoverCards`: `HoverCardsController`, `HoverCardWindow`, `HoverCardPopover`,
+  `HoverCardView` with `TitleView`, `BannerImageView`, `LinkView`, `SnapshotView`, `SummaryView`, `LoadingView`,
+  `ShareButton`, `DetailRow` (~41980–42033). The summary is AI: a prompt asks for JSON with `quickSummary` (3–8
+  words), 2–4 `details` (label, SF Symbol icon, 5–10 word info) and `blocked` (~80907). Footer "AI Summary by Arc
+  Browser"; failure text "No preview available". Instant (no ⇧) cards on supported domains: news.ycombinator.com,
+  X tweet links, Google results (CSS selectors listed at ~80920). Settings key `hoverCardsEnabled`.
+- Trigger: the event handler takes `modifierFlags` (device-independent) `== 0x20000`, ⇧ alone, OR'd with the
+  supported-domain check (`0x1020b7c40`). The local event monitor mask is 0x401022: left mouse down, mouse moved,
+  flags changed, scroll wheel (`addLocalMonitorForEventsMatchingMask:` at `0x1020b6474`).
+- Timing: the hover publisher is debounced `.milliseconds(100)` (`0x1020b5a10`); other strides 0.05 s and 0.15 s in
+  `beginTracking(url:)`; an `asyncAfter` of 0.2 s (`0x1020b7374`); the window fades with `NSAnimationContext`
+  duration 0.15 to alpha 1 (`didLoad(request:)`, `0x1020b97ec`). Card content: `spring(response 0.4, damping 0.75,
+  blend 0.1)`, `easeIn(0.15)`, scale from 0.8 (0.001 for a centred anchor), offsets ±30.
+- Geometry: `.frame(maxWidth: 300, maxHeight: 400)` (800 when anchored at centre) (`0x1020a2e70`); rounded rectangle
+  radius 12, continuous (0 in one mode) (`0x1020a2950`); shadow black 12 %, radius 6, x 2, y 2 (`0x1020aa96c`);
+  banner image frame 149.5 or 100 tall with radius 6. The window is the card frame inset by −30 on each side
+  (`CGRectInset` at `0x1020ba04c`), borderless, clear, not opaque, `animationBehavior` none, added as a child window.
+  While the card is open the mouse handler builds an `NSBezierPath` from the card's corners (24pt past its edge)
+  and keeps the card while the pointer is inside it (`0x1020b7d24`–`0x1020b7e50`). A second path shows it in an
+  `NSPopover` (`.transient`, `showRelativeToRect:… preferredEdge: maxY`).
+
+Kite's slice: ⇧ alone over a link (WebKit's private `_webView:mouseDidMoveOverElement:withFlags:userInfo:`, which
+also gives the link's box; Chromium's `OnStatusMessage`, at the pointer), 100 ms debounce, then a 300pt card 8pt
+below the link (above when there's no room), max 400 tall, radius 12, Arc's shadow, 30pt window inset, 0.15 s fade,
+spring scale from 0.8. It shows the page's og:image, title, description and site, read from the page's `<head>` with
+no cookies. Closes 0.2 s after the pointer leaves the link unless it's in the link-to-card corridor (24pt slack), on
+a click, scroll, Esc or other key, or when the window resigns key. Inferred, not from Arc: the 8pt gap, left-edge
+alignment, flipping, the popover material and 0.5pt border, fonts (Arc's view uses 11–16pt sizes; which goes where
+is unknown) and the `linkPreviewsEnabled` default (off, as Arc's `hoverCardsEnabled` and Gabe's Arc; Kite menu › Link Previews turns it on).
+
+## Rename tab and Collapse Pinned Tabs (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
+
+- View menu (AX, nothing pressed): "Collapse Pinned Tabs", no shortcut, right after Show Toolbar ⇧⌘D. Strings
+  "Collapse Pinned Tabs" / "Expand Pinned Tabs" (menu item titles), selectors `collapsePinnedSection:` and
+  `expandPinnedSection:`, `collapsePinnedSectionEnabled`. State: window data key
+  `spacesWithCollapsedPinnedSections` (per space), `PinnedSectionExpansionState`, toggle sources
+  `PinnedSectionToggledSource`, sidebar action `didClickPinnedTabsExpansionToggler`, AX id
+  `sidebarSpacePinnedTabsExpansionToggler`. The space header view has `pinnedSectionExpansionState`,
+  `chevronContainerView`, `chevronWidthConstraint` and `chevronView`, so the toggle is a chevron in the header.
+- Rename: the sidebar item menu has "Rename…" (comment "Rename a tab"), decoded from Swift small-string
+  immediates near `ContextMenus/SidebarMenu+PlatformGeneration.swift` in `~/rea-arc/decomp/arc.s`
+  (around line 12252170). Command-bar action "Rename Current Tab…" ("Action to rename current tab in the
+  sidebar"), action id `renameCurrentTab` (`RenameCurrentTabCodingKeys`), shortcut-list description "Rename the
+  current tab." (arc-strings.txt ~80753); not in the menu bar and no default key found. Dialog
+  (`WindowData+Dialogs.swift`, arc.s ~`0x10292bfa0`): title "Rename Tab…", placeholder "Keep it short and
+  sweet!", buttons "Rename" and "Cancel". In-place hint "Double-click to rename" ("Subtitle shown on tab with
+  hint on how to rename tab", `RenameTabHint`, `WindowData+RenameHints.swift`).
+- Kite: in-place edit in the row (Rename…, double-click, or the command when the sidebar shows); Arc's dialog
+  when the sidebar is hidden or the tab is a favorite or split pane. The name lives in `BrowserTab.customTitle`.
+- Inferred, not observed (Arc's sidebar was hidden in every open window, and Arc isn't driven): the chevron's
+  place and look, that it shows on hover, that a collapsed section still shows the selected pinned tab (Kite
+  does, as Arc's collapsed folders do), whether Arc's in-place editor selects the text, what an empty name
+  does (Kite goes back to the page title), the hover hint's timing (not built), and whether Arc keeps the
+  collapsed set per window (Kite saves it with the shared sidebar).
 ## Import from Arc: what Arc keeps where (Arc 1.171 files, defaults and strings, 1 Nov 2026)
 
 Key names and structure only, read from Arc's files in ~/Library/Application Support/Arc; nothing of the

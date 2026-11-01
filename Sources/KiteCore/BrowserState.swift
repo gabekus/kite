@@ -74,6 +74,9 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public var showsToolbar: Bool
     /// Ask "Quit Kite?" on ⌘Q, as Arc's "Warn before quitting" does. On by default.
     public var warnsBeforeQuitting: Bool
+    /// Spaces whose pinned tabs are folded away (View → Collapse Pinned Tabs), by Arc's name
+    /// for the same state, `spacesWithCollapsedPinnedSections`.
+    public var spacesWithCollapsedPinnedSections: Set<UUID>
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -95,6 +98,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.archiveAfter = .twelveHours
         self.showsToolbar = false
         self.warnsBeforeQuitting = true
+        self.spacesWithCollapsedPinnedSections = []
         seedDefaultSiteSearches()
     }
 
@@ -102,7 +106,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case spaces, favorites, selectedSpaceID, recentlyClosed, archived, searchEngine, darkPages, darkPageHosts
         case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter, showsToolbar
-        case warnsBeforeQuitting
+        case warnsBeforeQuitting, spacesWithCollapsedPinnedSections
     }
 
     public init(from decoder: Decoder) throws {
@@ -126,6 +130,9 @@ public struct BrowserState: Hashable, Codable, Sendable {
         archiveAfter = try c.decodeIfPresent(ArchiveInterval.self, forKey: .archiveAfter) ?? .twelveHours
         showsToolbar = try c.decodeIfPresent(Bool.self, forKey: .showsToolbar) ?? false
         warnsBeforeQuitting = try c.decodeIfPresent(Bool.self, forKey: .warnsBeforeQuitting) ?? true
+        // Pinned tabs saved before Kite kept a pinned URL take the page they're on.
+        syncPinnedURLs()
+        spacesWithCollapsedPinnedSections = try c.decodeIfPresent(Set<UUID>.self, forKey: .spacesWithCollapsedPinnedSections) ?? []
     }
 
     // MARK: Dark pages
@@ -352,6 +359,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
 
     public mutating func togglePin(tab id: UUID) {
         guard let location = location(of: id), let s = location.space else { return }
+        defer { syncPinnedURLs() }
         // A split pins and unpins as one item, keeping its panes together and in order.
         if let split = split(containing: id)?.split {
             let members = split.tabIDs.compactMap { member -> BrowserTab? in
@@ -383,7 +391,10 @@ public struct BrowserState: Hashable, Codable, Sendable {
     /// Moves a tab into the favorites, or a favorite back to the current space's unpinned tabs.
     public mutating func toggleFavorite(tab id: UUID) {
         guard let location = location(of: id) else { return }
-        defer { normalizeSplits() }
+        defer {
+            normalizeSplits()
+            syncPinnedURLs()
+        }
         switch location.section {
         case .favorite:
             let tab = favorites.remove(at: location.index)

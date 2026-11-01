@@ -185,7 +185,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             changeSpaceIcon: { [weak self] id in self?.changeIcon(ofSpace: id) },
             deleteSpace: { [weak self] id in self?.deleteSpace(id) },
             renameFolder: { [weak self] id in self?.renameFolder(id) },
-            deleteFolder: { [weak self] id in self?.deleteFolder(id) }
+            deleteFolder: { [weak self] id in self?.deleteFolder(id) },
+            resetTab: { [weak self] id in self?.backToPinnedURL(id) },
+            separateFromPinnedTab: { [weak self] id in self?.separateFromPinnedTab(id) },
+            renameTab: { [weak self] id in self?.renameTab(id) }
         )
         spaceSwipe = SpaceSwipeController(
             store: store,
@@ -985,6 +988,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let pinned = store.state.selectedTab.flatMap { store.state.location(of: $0.id) }?.section == .pinned
             item.title = pinned ? "Unpin Tab" : "Pin Tab"
             return store.state.selectedTab != nil
+        case #selector(revealTabInSidebar(_:)):
+            return store.state.selectedTab != nil
+        case #selector(resetTab(_:)):
+            return store.state.selectedTab.map { store.state.canReset(tab: $0.id) } ?? false
+        case #selector(resetAllTabsInSpace(_:)):
+            return store.state.selectedSpace.pinned.contains { $0.hasLeftPinnedURL }
         case #selector(selectSpaceNumber(_:)):
             // Arc lists only the spaces that exist, by name.
             let spaces = store.state.spaces
@@ -1001,6 +1010,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         case #selector(toggleToolbar(_:)):
             item.title = store.state.showsToolbar ? "Hide Toolbar" : "Show Toolbar"
             return store.state.selectedSplit == nil
+        case #selector(togglePinnedSection(_:)):
+            // Arc's two items, collapsePinnedSection and expandPinnedSection, as one retitled item.
+            let space = store.state.selectedSpace
+            item.title = store.state.isPinnedSectionCollapsed(space.id) ? "Expand Pinned Tabs" : "Collapse Pinned Tabs"
+            return !space.pinnedItems.isEmpty
+        case #selector(renameCurrentTab(_:)):
+            return store.state.selectedTab != nil
         case #selector(toggleStayOnTop(_:)):
             item.state = window?.level == .floating ? .on : .off
         case #selector(setAsDefaultBrowser(_:)):

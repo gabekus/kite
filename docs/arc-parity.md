@@ -80,7 +80,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Appearance: Automatic / Light / Dark (websites) | | 🟡 Dark Pages Off/Match/Always | Have it; the other session owns this |
 | Show Sidebar | ⌘S | ✅ | |
 | Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host and (disabled until built) Site Controls and Split View; the sidebar drops its nav buttons and URL field. "Show full URL" setting not yet | B5 (`topBarURLEnabled`) |
-| Collapse Pinned Tabs | | ❌ | B3 |
+| Collapse Pinned Tabs | | ✅ View › "Collapse Pinned Tabs" ("Expand Pinned Tabs" while collapsed) and a chevron in the space header | B3 |
 | Stop Loading | ⌘. | ✅ | |
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
 | Clear Cookies and Refresh / Clear Cache and Refresh | | ✅ per site | |
@@ -120,10 +120,10 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Next / Previous Tab | ⌥⌘↓ / ⌥⌘↑ | ✅ (⌃⇧Tab also goes to the previous tab) | |
 | Toggle recent tabs (MRU) | ⌃Tab | ✅ toggles the two most recent | Hold-⌃ cycling deeper later |
 | Tab 1…8, last tab | ⌘1…⌘9 | ✅ | |
-| Reveal Tab in Sidebar | | ❌ | B3 |
+| Reveal Tab in Sidebar | | ✅ shows the sidebar, opens enclosing folders, scrolls to the row | Arc's highlight on reveal unverified |
 | Clear Today (unpinned tabs) | ⇧⌘K | ✅ archives them, with a toast | |
-| Reset all tabs in this Space (pinned back to their saved URL) | | ❌ | B3 |
-| Pinned tab: "back to pinned URL" / reset | | ❌ | B3 |
+| Reset all tabs in this Space (pinned back to their saved URL) | | ✅ | |
+| Pinned tab: "back to pinned URL" / reset | | 🟡 hover button, context menu (with Separate From Pinned Tab), hidden `resetTab` command | Arc's icon and placement unverified; Edit / Replace Pinned URL later |
 | Duplicate tab, move tab to space | context menu | 🟡 Duplicate Tab in the Tabs menu | Move to space with the sidebar work |
 | Drag tabs between spaces / into folders | gesture | ❌ | Roadmap (other session owns sidebar) |
 
@@ -169,6 +169,8 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Auto-archive | "Archive tabs after": Never / 1 hour / 6 hours / 12 hours / 24 hours / 7 days / 30 days, per profile | ✅ Kite menu → Archive tabs after (moves to Settings; no profiles yet) | B5 |
 | Peek | Links from pinned tabs/favorites open in an overlay | 🟡 Links from a pinned tab or favorite to another site, and ⇧-clicked links, open in a card over the page (Arc's size, corner, shadow and spring); close (Esc, ⌘W, button, click outside), Open as Tab, Create/Add to Split View | Not yet: the tween from the link's own frame, the peeked item in the sidebar, swipe right to dismiss, reopen-closed-Peek undo, the Links settings toggles; button look unmeasured |
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | ❌ | Thread: Peek |
+| Peek | Links from pinned tabs/favorites open in an overlay | ❌ | Thread: Peek |
+| Hover cards / 5-second previews | ⇧ over a link shows a preview card | 🟡 ⇧-hover shows a card (title, description, image, site) sized and timed from Arc's binary; `LinkPreviewController`. Off by default as in Arc; Kite menu › Link Previews | No AI summary (Arc's quickSummary + detail rows), no instant cards on HN/X/Google, no share button yet |
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
 | Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | 🟡 Little Kite: own window, toolbar measured from Arc, "Open in <Space>" (⌘O) moves the live page into the main window, ⌘W closes, Kite menu → Open Links from Other Apps in Little Kite (on by default) | No profile indicator, extensions button, downloads tray, searchable space picker, auto-archive or global hotkey yet |
 | Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal panes, divider, sidebar row; no vertical layout or drag-to-split yet | Thread: Split view |
@@ -196,7 +198,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Tidy Downloads | Downloads renamed by AI | ❌ | With Claude in the browser |
 | Tidy Tabs | Groups Today tabs automatically | ❌ | With Claude in the browser |
 | Browse for Me | AI builds a page from search results | ❌ | Skip? |
-| Custom tab names | Rename a pinned tab | 🟡 imported names only | B3 |
+| Custom tab names | Rename a pinned tab | ✅ any tab: Rename… in its menu, double-click, Tabs › Rename Current Tab…; kept when the page title changes, imported from Arc | B3 |
 | Themes | Space colors, grain, light/dark, gradient editor | 🟡 presets + imported | Thread: space theme editor |
 | App icons | Alternate Dock icons | ❌ | Skip? (we draw our own) |
 | Sound effects | Subtle UI sounds | ❌ | Later, our own sounds |

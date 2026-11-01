@@ -115,6 +115,8 @@ NS_SWIFT_UI_ACTOR
 - (void)browser:(KCBrowser *)browser findResultCount:(int)count activeMatch:(int)activeMatch final:(BOOL)final;
 /// The page's renderer crashed or was killed; `code` is its exit code (11 for a segfault).
 - (void)browser:(KCBrowser *)browser renderProcessDidTerminateWithCode:(int)code;
+/// The status text changed. While the pointer is over a link it's the link's URL; nil when it clears.
+- (void)browser:(KCBrowser *)browser statusMessageDidChange:(nullable NSString *)message;
 /// YES for a store install's extension package (.crx): it's saved to a temporary
 /// folder for Chromium's installer and isn't reported as a download.
 - (BOOL)browser:(KCBrowser *)browser

@@ -153,6 +153,9 @@ final class PagePool {
             }
         case .closeRequested:
             store.mutate { $0.close(tab: id) }
+        case .linkHover(let hover):
+            guard let view = pages[id]?.view else { return }
+            LinkPreviewController.shared.hover(hover, in: view)
         case .blockedCount(let count):
             store.updatePage(id) { $0.blockedCount = count }
         case .crashed(let code):
