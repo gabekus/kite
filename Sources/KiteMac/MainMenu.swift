@@ -101,6 +101,9 @@ enum MainMenu {
 
         submenu("File", [
             item("New Tab", #selector(BrowserWindowController.newTab(_:)), "t", id: "newTab"),
+            // Arc's File menu: New Window ⌘N, Blank Window ⌃⌘N, New Incognito Window ⇧⌘N (read from its menu bar).
+            item("New Window", #selector(MenuRouter.newWindow(_:)), "n", id: "newWindow"),
+            item("Blank Window", #selector(MenuRouter.newBlankWindow(_:)), "n", [.command, .control], id: "newBlankWindow"),
             item("New Incognito Window", #selector(MenuRouter.newIncognitoWindow(_:)), "n", [.command, .shift], id: "newIncognitoWindow"),
             // Arc's File menu: "New Little Arc Window", ⌥⌘N, id newLittleBrowserWindow (MainMenu.nib).
             item("New Little Kite Window", #selector(MenuRouter.newLittleKiteWindow(_:)), "n", [.command, .option], id: "newLittleBrowserWindow"),

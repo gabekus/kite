@@ -465,6 +465,24 @@ windows ("Archive Little Arcs after:"); no global hotkey.
   "Today - Saturday, October 31, 2026", rows with time, icon, title and site, and a per-row menu. Sizes are
   Kite's; Chromium's page wasn't measured in Arc.
 
+## Windows: New Window ⌘N, Blank Window ⌃⌘N (Arc 1.171 menu bar and strings, 1 Nov 2026)
+
+- Menu (read through AX, nothing pressed): File › New Tab… ⌘T, New Window ⌘N, Blank Window ⌃⌘N, New Incognito
+  Window ⇧⌘N, New Little Arc Window ⌥⌘N. Action ids `newWindow`, `newBlankWindow`.
+- Window kinds (AX identifiers in the strings): `bigBrowserWindow`, `bigIncognitoBrowserWindow`,
+  `standaloneBrowserWindow`, `littleBrowserWindow`; window types `standard`, `incognito`, `little`,
+  `standaloneSidebar`; `SidebarContext` coding keys `Global`, `Standalone`, `Incognito`;
+  `StandardWindowState`, `FocusedSpaceCodingKeys` and `SidebarSpaceState` live in `SharedWindowFeature`.
+  Read as: normal windows share the global sidebar and keep their own focused space; a blank window is a
+  standalone-sidebar window whose tabs are titled "Explore" ("Title for Explore tabs in a standalone-sidebar
+  window"), archived with source `standaloneSidebar`, and movable to the global sidebar
+  (`MoveItemsToGlobalDestinationConfiguration`).
+- Restore: setting "When opening Arc, restore windows from previous session" (`windowRestorationSetting`,
+  `restoreWindowsOnNextLaunch`); Arc's `NSQuitAlwaysKeepsWindows` is 1 on Gabe's Mac.
+- Not observed (only one Arc window was open): which space and tab a new window opens on, whether Arc opens
+  the command bar (`showCommandBar` is among `initialAppearanceActions`), the blank window's look, and what
+  Arc does when two windows select the same tab (`ContentPlaceholderSourceData` hints at a placeholder).
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

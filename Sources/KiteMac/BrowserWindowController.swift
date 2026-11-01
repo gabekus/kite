@@ -86,7 +86,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Incognito windows keep nothing: no saved frame, and every page closes with the window.
     let isIncognito: Bool
 
-    init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker, incognito: Bool = false) {
+    /// `autosaveName` keeps the window's frame across launches; only the first normal window has one.
+    init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker, incognito: Bool = false,
+         autosaveName: String? = "KiteMainWindow") {
         self.store = store
         self.adblocker = adblocker
         self.isIncognito = incognito
@@ -108,7 +110,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.tabbingMode = .disallowed
         window.minSize = NSSize(width: 640, height: 420)
         window.center()
-        if !incognito { window.setFrameAutosaveName("KiteMainWindow") }
+        if !incognito, let autosaveName { window.setFrameAutosaveName(autosaveName) }
         super.init(window: window)
         window.delegate = self
 
