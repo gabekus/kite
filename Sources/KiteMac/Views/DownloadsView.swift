@@ -4,59 +4,18 @@ import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// This window's downloads list: a popover from the sidebar's downloads button. ⇧⌘J (Window ›
-/// View Downloads…) and the button both toggle it.
-@MainActor
-@Observable
-final class DownloadsButtonModel: NSObject, NSPopoverDelegate {
-    private(set) var isListShown = false
-    @ObservationIgnored weak var anchor: NSView?
-    @ObservationIgnored private var popover: NSPopover?
-
-    /// Shows the button while the list is open, even with nothing downloaded yet.
-    private(set) var isButtonForced = false
-
-    func toggle() {
-        if let popover, popover.isShown { return popover.close() }
-        guard let anchor, anchor.window != nil else {
-            // No downloads yet, so no button: show it, then hang the list from it.
-            guard !isButtonForced else { return }
-            isButtonForced = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                guard let self else { return }
-                if self.anchor?.window != nil { self.toggle() } else { self.isButtonForced = false }
-            }
-            return
-        }
-        let popover = NSPopover()
-        let host = NSHostingController(rootView: DownloadsList())
-        // Sized before it shows and as the list changes, so the popover stays on its button.
-        host.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = host
-        popover.contentSize = host.view.fittingSize
-        popover.behavior = .transient
-        popover.delegate = self
-        // Above the button: it sits at the bottom of the window.
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: anchor.isFlipped ? .minY : .maxY)
-        self.popover = popover
-        isListShown = true
-    }
-
-    func popoverDidClose(_ notification: Notification) {
-        popover = nil
-        isListShown = false
-        isButtonForced = false
-    }
-}
-
 /// Arc's download colours, from its asset catalogs (`assetutil --info`): the Little Arc
 /// downloads tray's DownloadItemBackground / DownloadItemBackgroundHovered, and BaseAssets'
 /// DownloadProgressBarBackground.
-private enum DownloadColors {
-    static let rowHovered = Color(nsColor: NSColor(name: nil) { appearance in
+enum DownloadColors {
+    static let itemBackground = NSColor(name: nil) { appearance in
+        appearance.isDark ? NSColor(displayP3Red: 0.05, green: 0.05, blue: 0.05, alpha: 1) : NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+    }
+    static let itemBackgroundHovered = NSColor(name: nil) { appearance in
         appearance.isDark ? NSColor(displayP3Red: 0.12, green: 0.12, blue: 0.12, alpha: 1)
             : NSColor(displayP3Red: 0.96, green: 0.96, blue: 0.96, alpha: 1)
-    })
+    }
+    static let rowHovered = Color(nsColor: itemBackgroundHovered)
     static let progressTrack = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.isDark ? NSColor(srgbRed: 0.443, green: 0.467, blue: 0.51, alpha: 1)
             : NSColor(srgbRed: 0.808, green: 0.843, blue: 0.906, alpha: 1)
@@ -67,71 +26,97 @@ private extension NSAppearance {
     var isDark: Bool { bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
 }
 
-/// Downloads in the sidebar's bottom bar, where Arc's Library button carries its
-/// DownloadProgressBadge. Shown once there's something in the list; a ring fills while
-/// files are downloading. Clicking opens the list.
-struct DownloadsSidebarButton: View {
-    let model: DownloadsButtonModel
+/// Arc's Library button at the leading end of the sidebar's bottom bar (`HomeBadging.HomeButton`,
+/// tooltip "open Library"): clicking it opens the Library, which covers the sidebar until it's
+/// exited. While files download, Arc's `DownloadProgressBadge` sits on it.
+struct LibrarySidebarButton: View {
+    let library: LibraryModel
     let size: CGFloat
     private var downloads: DownloadsModel { .shared }
 
     var body: some View {
         let list = downloads.list
-        if !list.items.isEmpty || model.isListShown || model.isButtonForced {
-            Button { model.toggle() } label: {
-                ZStack {
-                    if !list.active.isEmpty {
-                        Circle()
-                            .stroke(DownloadColors.progressTrack, lineWidth: 2)
-                            .frame(width: 20, height: 20)
-                        Circle()
-                            .trim(from: 0, to: list.activeFraction ?? 0.1)
-                            .stroke(Color.primary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                            .frame(width: 20, height: 20)
-                            .animation(.linear(duration: 0.2), value: list.activeFraction)
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 9, weight: .bold))
-                    } else {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.system(size: 15, weight: .regular))
-                    }
+        Button { library.toggle() } label: {
+            ZStack {
+                // Arc draws its own LibraryIcon (a template PDF); Kite uses the SF Symbol Arc's
+                // MainMenu.nib gives the Library menu item.
+                Image(systemName: "archivebox")
+                    .font(.system(size: 15, weight: .regular))
+                    .opacity(0.7)
+                if !list.active.isEmpty {
+                    DownloadProgressBadge(progress: list.activeFraction)
+                        .transition(.scale.combined(with: .opacity))
                 }
-                .frame(width: size, height: size)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .opacity(0.7)
-            .help("Downloads")
-            .accessibilityLabel("Downloads")
-            .background(DownloadsAnchor(model: model))
+            .animation(.easeOut(duration: 0.2), value: list.active.isEmpty)
+            .frame(width: size, height: size)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help("Library")
+        .accessibilityLabel("Library")
+        .accessibilityValue(list.active.isEmpty ? "" : "Downloading")
     }
 }
 
-/// Hands the button's NSView to the model, which anchors the popover to it.
-private struct DownloadsAnchor: NSViewRepresentable {
-    let model: DownloadsButtonModel
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async { model.anchor = view }
-        return view
+/// Arc's `DownloadProgressBadge` (BaseHomeComponents, decompiled): a 24pt disc with a 1pt edge, a heavy
+/// 10pt `arrow.down`, and a 21.5pt ring 2.5pt wide: a faint track (0.2) under the progress, which
+/// eases out as it grows. The ring turns once every 1.5 s unless Reduce Motion is on. Arc takes the
+/// colours from its palette (not resolved); Kite uses the sidebar's primary colour.
+struct DownloadProgressBadge: View {
+    enum Metrics {
+        static let size: CGFloat = 24
+        static let ringSize: CGFloat = 21.5
+        static let ringWidth: CGFloat = 2.5
+        static let edgeWidth: CGFloat = 1
+        static let iconSize: CGFloat = 10
+        static let turn: Double = 1.5
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        if model.anchor !== nsView { model.anchor = nsView }
+    /// 0…1, nil while no size is known.
+    let progress: Double?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var turning = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color(nsColor: .windowBackgroundColor))
+            Circle()
+                .strokeBorder(Color.primary.opacity(0.2), lineWidth: Metrics.edgeWidth)
+            Image(systemName: "arrow.down")
+                .font(.system(size: Metrics.iconSize, weight: .heavy))
+            Group {
+                Circle()
+                    .stroke(Color.primary.opacity(0.2), lineWidth: Metrics.ringWidth)
+                Circle()
+                    .trim(from: 0, to: progress ?? 0.1)
+                    .stroke(Color.primary, style: StrokeStyle(lineWidth: Metrics.ringWidth))
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeOut, value: progress)
+            }
+            .frame(width: Metrics.ringSize, height: Metrics.ringSize)
+            .rotationEffect(.degrees(turning ? 360 : 0))
+        }
+        .frame(width: Metrics.size, height: Metrics.size)
+        .onAppear { spin() }
+        .onChange(of: reduceMotion) { spin() }
+    }
+
+    private func spin() {
+        guard !reduceMotion else {
+            turning = false
+            return
+        }
+        withAnimation(.linear(duration: Metrics.turn).repeatForever(autoreverses: false)) { turning = true }
     }
 }
 
 /// Recent downloads, newest first: progress while downloading, then open, reveal in Finder,
 /// cancel or hide each one (Arc's Library › Downloads page and its download context menu).
-/// The sidebar's popover and the Library's Downloads page both show it.
 struct DownloadsList: View {
     /// One row's height plus the gap between rows.
     static let rowPitch: CGFloat = 54
-    /// In the Library: fills the page instead of a 320pt popover.
-    var fillsPage = false
     private var downloads: DownloadsModel { .shared }
 
     var body: some View {
@@ -139,8 +124,8 @@ struct DownloadsList: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Downloads")
-                    // In the Library, the same title as the Archive page's.
-                    .font(.system(size: fillsPage ? 20 : 13, weight: fillsPage ? .regular : .semibold))
+                    // The same title as the Library's Archive page.
+                    .font(.system(size: 20, weight: .regular))
                 Spacer()
                 if items.contains(where: { $0.state != .inProgress }) {
                     Button("Clear") { downloads.clearFinished() }
@@ -158,35 +143,17 @@ struct DownloadsList: View {
                 .focusEffectDisabled()
                 .help("Open Downloads Folder")
             }
-            .padding(.horizontal, fillsPage ? 20 : 14)
-            .padding(.top, fillsPage ? 0 : 12)
-            .padding(.bottom, fillsPage ? 0 : 8)
-            .frame(height: fillsPage ? 56 : nil)
+            .padding(.horizontal, 20)
+            .frame(height: 56)
 
-            if fillsPage { Divider() }
+            Divider()
 
-            if items.isEmpty && fillsPage {
+            if items.isEmpty {
                 // Arc's Downloads page empty-state subtitle (its title isn't in the strings).
                 Text("Come back after you've found some cool stuff to save.")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if items.isEmpty {
-                Text("No downloads yet")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-            } else if fillsPage {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(items) { item in
-                            DownloadRow(item: item)
-                        }
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.bottom, 6)
-                }
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
@@ -197,11 +164,9 @@ struct DownloadsList: View {
                     .padding(.horizontal, 6)
                     .padding(.bottom, 6)
                 }
-                .frame(height: min(CGFloat(items.count) * DownloadsList.rowPitch + 6, 360))
             }
         }
-        .frame(width: fillsPage ? nil : 320)
-        .frame(maxWidth: fillsPage ? .infinity : nil, maxHeight: fillsPage ? .infinity : nil, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -260,11 +225,16 @@ private struct DownloadRow: View {
         .accessibilityLabel(item.fileName)
     }
 
-    private var icon: NSImage {
-        if !item.path.isEmpty, FileManager.default.fileExists(atPath: item.path) {
-            return NSWorkspace.shared.icon(forFile: item.path)
+    private var icon: NSImage { item.icon }
+}
+
+extension DownloadItem {
+    /// The file's Finder icon, or its type's while it isn't on disk.
+    @MainActor var icon: NSImage {
+        if !path.isEmpty, FileManager.default.fileExists(atPath: path) {
+            return NSWorkspace.shared.icon(forFile: path)
         }
-        let ext = (item.fileName as NSString).pathExtension
+        let ext = (fileName as NSString).pathExtension
         return NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .data)
     }
 }

@@ -39,3 +39,48 @@ import Testing
         #expect(LittleKite.displayHost(of: nil) == "")
     }
 }
+
+@Suite struct LittleKitePillAndTrayTests {
+    @Test func pillButtonsMatchArcsLittleWindow() {
+        // Arc's 1784pt window: pill from 107 to 1588.5 (1481.5 wide), extensions at 1530.5, copy at 1565.
+        let buttons = LittleKite.pillButtons(pillWidth: 1481.5, showsExtensions: true)
+        #expect(buttons.copyX + 107 == 1565)
+        #expect(buttons.extensionsX.map { $0 + 107 } == 1530.5)
+        #expect(buttons.labelTrailing == buttons.extensionsX! - LittleKite.Pill.labelGap)
+    }
+
+    @Test func withoutExtensionsTheTextRunsUpToCopyLink() {
+        let buttons = LittleKite.pillButtons(pillWidth: 400, showsExtensions: false)
+        #expect(buttons.extensionsX == nil)
+        #expect(buttons.copyX == 400 - 7.5 - 16)
+        #expect(buttons.labelTrailing == buttons.copyX - 8)
+    }
+
+    @Test func trayKeepsOneCardPerDownloadInOrder() {
+        var tray = LittleKite.DownloadsTray()
+        #expect(tray.isEmpty)
+        let a = UUID(), b = UUID(), c = UUID()
+        tray.add(a)
+        tray.add(b)
+        tray.add(a)
+        tray.add(c)
+        #expect(tray.ids == [a, b, c])
+        tray.dismiss(b)
+        #expect(tray.ids == [a, c])
+        tray.keep(only: [c])
+        #expect(tray.ids == [c])
+        tray.dismiss(c)
+        #expect(tray.isEmpty)
+    }
+
+    @Test func trayGeometryIsArcs() {
+        typealias Tray = LittleKite.DownloadsTray
+        #expect(Tray.height == Tray.inset * 2 + Tray.itemHeight)
+        #expect(Tray.itemX(at: 0) == 20)
+        #expect(Tray.itemX(at: 2) == 540.0)
+        #expect(Tray.contentWidth(count: 0) == 0)
+        #expect(Tray.contentWidth(count: 1) == 290)
+        // 20 in, three 250pt cards 10pt apart, 20 out.
+        #expect(Tray.contentWidth(count: 3) == 810.0)
+    }
+}

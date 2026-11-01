@@ -1,5 +1,9 @@
 import AppKit
+#if canImport(CEFBridge)
+import Combine
+#endif
 import KiteCore
+import Observation
 
 /// Little Kite: Arc's "Little Arc". A small window with one page and no sidebar, for links
 /// from other apps (when Kite menu → Open Links from Other Apps in Little Kite is on) and
@@ -7,7 +11,8 @@ import KiteCore
 /// main window as a tab in that space and closes this window; ⌘W just closes it.
 ///
 /// Layout from Arc 1.171 (`ArcMetrics.LittleWindow`, docs/arc-visual-spec.md): traffic lights,
-/// back, the URL pill (host centred, copy link), then the Open In box; the page below, edge to edge.
+/// back, the URL pill (host centred, extensions, copy link), then the Open In box; the page below,
+/// edge to edge, with the downloads tray over its bottom edge while this window has downloads.
 @MainActor
 final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
     private typealias M = ArcMetrics.LittleWindow
@@ -50,6 +55,14 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     private let backButton = NSButton()
     private let pill = LittlePillView()
     private let openIn = OpenInBox()
+    /// Downloads this window's page started (Arc's Little Arc downloads tray).
+    private let downloadsTray = LittleDownloadsTrayView()
+    private var tray = LittleKite.DownloadsTray()
+    private var downloadStarts: NSObjectProtocol?
+    private var observesDownloads = false
+    #if canImport(CEFBridge)
+    private var extensionsChanges: AnyCancellable?
+    #endif
 
     /// Called once the window has closed, so the app delegate can let go of it.
     var didClose: ((LittleKiteWindowController) -> Void)?
@@ -142,7 +155,33 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         openIn.onMove = { [weak self] in self?.openInCurrentSpace(nil) }
         openIn.onChevron = { [weak self] view in self?.showSpacesMenu(from: view) }
         root.addSubview(openIn)
+
+        downloadsTray.onDismiss = { [weak self] id in
+            self?.tray.dismiss(id)
+            self?.refreshTray()
+        }
+        root.addSubview(downloadsTray)
+        setUpExtensionsButton()
         updateBackButton()
+    }
+
+    /// Arc shows the pill's extensions button only while extensions are installed
+    /// (`hasExtensions`); it opens the same extensions menu as the main window's.
+    private func setUpExtensionsButton() {
+        #if canImport(CEFBridge)
+        if engine is ChromiumEngine {
+            let model = ExtensionsModel.shared(engine: engine)
+            extensionsChanges = model.$extensions.receive(on: DispatchQueue.main).sink { [weak self] list in
+                MainActor.assumeIsolated { self?.pill.showsExtensions = !list.isEmpty }
+            }
+            pill.onExtensions = { view in ExtensionsMenu.present(model: model, from: view) }
+            model.refresh()
+        }
+        #endif
+        // WebKit test builds have no extensions: this shows the button so its layout can be checked.
+        if UIDiagnostics.enabledByEnvironment, ProcessInfo.processInfo.environment["KITE_TEST_LITTLE_EXTENSIONS_BUTTON"] == "1" {
+            pill.showsExtensions = true
+        }
     }
 
     private func layout() {
@@ -156,6 +195,8 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         openIn.frame = CGRect(x: width - M.openInTrailing - boxWidth, y: M.openInY, width: boxWidth, height: M.openInHeight)
         let pillMaxX = openIn.frame.minX - M.openInGap
         pill.frame = CGRect(x: M.pillX, y: M.pillY, width: max(0, pillMaxX - M.pillX), height: M.pillHeight)
+        let trayHeight = LittleKite.DownloadsTray.height
+        downloadsTray.frame = CGRect(x: 0, y: max(M.toolbarHeight, bounds.height - trayHeight), width: width, height: trayHeight)
     }
 
     /// The window takes the theme of the space "Open in" names, like Arc's.
@@ -188,6 +229,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         page.view.frame = webContainer.bounds
         page.view.autoresizingMask = [.width, .height]
         webContainer.addSubview(page.view)
+        followDownloads(of: page)
         page.setVisible(true)
         page.focus()
     }
@@ -258,6 +300,47 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         backButton.alphaValue = canGoBack ? 1 : 0.4
     }
 
+    // MARK: Downloads tray
+
+    /// Puts each download the page starts in the tray.
+    private func followDownloads(of page: WebPage) {
+        stopFollowingDownloads()
+        downloadStarts = NotificationCenter.default.addObserver(forName: DownloadsModel.didStartDownload, object: page.view,
+                                                                queue: .main) { [weak self] note in
+            guard let id = note.userInfo?["id"] as? UUID else { return }
+            MainActor.assumeIsolated {
+                self?.tray.add(id)
+                self?.refreshTray()
+            }
+        }
+    }
+
+    private func stopFollowingDownloads() {
+        if let downloadStarts { NotificationCenter.default.removeObserver(downloadStarts) }
+        downloadStarts = nil
+    }
+
+    /// Shows the tray's downloads as the list has them now, and keeps following the list while
+    /// the tray has any.
+    private func refreshTray() {
+        let items = Dictionary(DownloadsModel.shared.list.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        tray.keep(only: Set(items.keys))
+        downloadsTray.show(tray, items: items)
+        guard !tray.isEmpty, !observesDownloads else { return }
+        observesDownloads = true
+        withObservationTracking {
+            _ = DownloadsModel.shared.list
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.observesDownloads = false
+                    self.refreshTray()
+                }
+            }
+        }
+    }
+
     // MARK: Commands
 
     @objc func goBack(_ sender: Any?) { page?.goBack() }
@@ -293,6 +376,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         page.view.removeFromSuperview()
         page.onEvent = nil
         self.page = nil
+        stopFollowingDownloads()
         host.move(page, url, pageTitle, spaceID)
         close()
     }
@@ -347,6 +431,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
             page.close()
         }
         page = nil
+        stopFollowingDownloads()
         didClose?(self)
     }
 
@@ -386,6 +471,14 @@ private final class LittlePillView: NSView, NSTextFieldDelegate {
         didSet { hostLabel.stringValue = host }
     }
     var onCopy: (() -> Void)?
+    var onExtensions: ((NSView) -> Void)?
+    /// Arc's extensions button, shown while extensions are installed.
+    var showsExtensions = false {
+        didSet {
+            extensionsButton.isHidden = !showsExtensions
+            needsLayout = true
+        }
+    }
     var onCommit: ((String) -> Void)?
     /// The text to start editing with.
     var onBeginEditing: (() -> String)?
@@ -393,6 +486,7 @@ private final class LittlePillView: NSView, NSTextFieldDelegate {
     private let hostLabel = PassthroughLabel(labelWithString: "")
     private let field = NSTextField()
     private let copyButton = NSButton()
+    private let extensionsButton = NSButton()
     private var hovered = false {
         didSet { updateFill() }
     }
@@ -434,6 +528,19 @@ private final class LittlePillView: NSView, NSTextFieldDelegate {
         copyButton.action = #selector(copyClicked)
         addSubview(copyButton)
         copyButton.setAccessibilityLabel("Copy Link")
+
+        extensionsButton.isBordered = false
+        extensionsButton.bezelStyle = .regularSquare
+        extensionsButton.imagePosition = .imageOnly
+        extensionsButton.image = NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: "Extensions")?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+        extensionsButton.contentTintColor = .secondaryLabelColor
+        extensionsButton.toolTip = "Extensions"
+        extensionsButton.setAccessibilityLabel("Extensions")
+        extensionsButton.target = self
+        extensionsButton.action = #selector(extensionsClicked)
+        extensionsButton.isHidden = true
+        addSubview(extensionsButton)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Address")
@@ -446,9 +553,14 @@ private final class LittlePillView: NSView, NSTextFieldDelegate {
     override func layout() {
         super.layout()
         let size = M.pillButtonSize
-        copyButton.frame = CGRect(x: bounds.width - M.pillTrailingInset - size, y: (bounds.height - size) / 2, width: size, height: size)
+        let buttons = LittleKite.pillButtons(pillWidth: Double(bounds.width), showsExtensions: showsExtensions)
+        copyButton.frame = CGRect(x: buttons.copyX, y: (bounds.height - size) / 2, width: size, height: size)
+        if let x = buttons.extensionsX {
+            let width = LittleKite.Pill.extensionsWidth, height = LittleKite.Pill.extensionsHeight
+            extensionsButton.frame = CGRect(x: x, y: (Double(bounds.height) - height) / 2, width: width, height: height)
+        }
         let leading = M.pillLeadingInset
-        let trailing = copyButton.frame.minX - 8
+        let trailing = CGFloat(buttons.labelTrailing)
         let labelHeight: CGFloat = 16
         // Centred between the pill's leading inset and its buttons, as Arc's host text is.
         hostLabel.frame = CGRect(x: leading, y: (bounds.height - labelHeight) / 2, width: max(0, trailing - leading), height: labelHeight)
@@ -514,6 +626,7 @@ private final class LittlePillView: NSView, NSTextFieldDelegate {
     }
 
     @objc private func copyClicked() { onCopy?() }
+    @objc private func extensionsClicked() { onExtensions?(extensionsButton) }
 }
 
 // MARK: - Open In

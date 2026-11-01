@@ -86,10 +86,25 @@ extension BrowserState {
         spaces[s].name = name
     }
 
+    /// Arc puts a new space right after the one you're in, and switches to it.
+    @discardableResult
+    public mutating func insertSpace(name: String, icon: String, theme: Theme, profile: String? = nil) -> UUID {
+        var space = Space(name: name, icon: icon, theme: theme)
+        space.profile = profile
+        spaces.insert(space, at: selectedSpaceIndex + 1)
+        selectedSpaceID = space.id
+        return space.id
+    }
+
+    /// A space's icon: an emoji, a `symbol:` SF Symbol name, or empty for none (Arc shows a dot).
     public mutating func setSpaceIcon(_ id: UUID, to icon: String) {
+        guard let s = spaceIndex(id) else { return }
         let icon = icon.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let s = spaceIndex(id), let first = icon.first else { return }
-        spaces[s].icon = String(first)
+        if icon.hasPrefix(Space.symbolPrefix) {
+            spaces[s].icon = icon
+        } else {
+            spaces[s].icon = icon.first.map(String.init) ?? ""
+        }
     }
 
     /// Removes a space with its pinned and unpinned tabs. The last space stays: a window always has one.

@@ -276,9 +276,6 @@ enum MainMenu {
             submenuItem("Developer", [
                 item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option], id: "viewSource"),
                 item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option], id: "developerTools"),
-                // Both open DevTools for now; picking the element or panel needs the DevTools frontend.
-                item("Inspect Elements", #selector(BrowserWindowController.showDevTools(_:)), "c", [.command, .option], id: "inspectElements"),
-                item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option], id: "javaScriptConsole"),
                 // Arc 1.171: after Network Inspector, no shortcut and no identifier in its MainMenu.nib.
                 // Lets AppleScript's `execute` run JavaScript in tabs; off by default.
                 item("Allow JavaScript from Apple Events", #selector(AppDelegate.toggleJavaScriptFromAppleEvents(_:)), toTarget: false),
@@ -339,7 +336,7 @@ enum MainMenu {
         })
 
         submenu("Spaces", [
-            item("New Space", #selector(BrowserWindowController.newSpace(_:)), id: "newSpace"),
+            item("New Space…", #selector(BrowserWindowController.newSpace(_:)), id: "newSpace"),
             item("Edit Theme…", #selector(BrowserWindowController.editTheme(_:)), id: "editTheme"),
             item("Rename Space", #selector(BrowserWindowController.renameSpace(_:)), id: "renameSpace"),
             // Arc's MainMenu.nib: "Change Profile", action changeProfileForCurrentSpace:.

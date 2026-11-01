@@ -122,6 +122,9 @@ final class SidebarDragModel {
         session.target = resolved.flatMap { state.canDrop(session.ids, on: $0) ? $0 : nil }
         self.session = session
         lastState = state
+        // Off the sidebar, the page area can take the drag (a tab into Split View).
+        let outside = session.target == nil && !bounds.insetBy(dx: -1, dy: -1).contains(location)
+        store?.sidebarDragContent?.sidebarDrag(session.ids, movedTo: outside ? location : nil)
         updateAutoscroll()
         updateEdgeSwitch()
         // A split offer comes due with the pointer at rest: aim again then.
@@ -225,16 +228,24 @@ final class SidebarDragModel {
     func end(at location: CGPoint, in state: BrowserState) -> (ids: [UUID], target: SidebarDropTarget)? {
         move(to: location, in: state)
         defer {
+            if let session { store?.sidebarDragContent?.sidebarDrag(session.ids, movedTo: nil) }
             session = nil
             ghost = nil
             updateAutoscroll()
             updateEdgeSwitch()
         }
-        guard let session, let target = session.target else { return nil }
+        guard let session else { return nil }
+        guard let target = session.target else {
+            if !bounds.insetBy(dx: -1, dy: -1).contains(location) {
+                _ = store?.sidebarDragContent?.sidebarDrag(session.ids, droppedAt: location)
+            }
+            return nil
+        }
         return (session.ids, target)
     }
 
     func cancel() {
+        if let session { store?.sidebarDragContent?.sidebarDrag(session.ids, movedTo: nil) }
         session = nil
         ghost = nil
         updateAutoscroll()
@@ -405,6 +416,16 @@ final class SidebarDragModel {
     }
 
     private func indent(_ depth: Int) -> CGFloat { CGFloat(depth) * ArcMetrics.Sidebar.nestingIndent }
+}
+
+/// The page area, for a sidebar drag that leaves the sidebar. Points are SwiftUI global points
+/// (window points from the top-left), like the drag's own.
+@MainActor
+protocol SidebarDragContentTarget: AnyObject {
+    /// The drag moved off the sidebar to `point`, or (nil) came back or finished.
+    func sidebarDrag(_ ids: [UUID], movedTo point: CGPoint?)
+    /// The drag ended off the sidebar at `point`; true when the page area took it.
+    func sidebarDrag(_ ids: [UUID], droppedAt point: CGPoint) -> Bool
 }
 
 extension EnvironmentValues {

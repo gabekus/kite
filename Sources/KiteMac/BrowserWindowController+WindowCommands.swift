@@ -103,15 +103,11 @@ extension BrowserWindowController {
         showToast("Copied Kite info")
     }
 
-    /// Window › View Downloads… (⇧⌘J, as in Arc): the downloads list from the sidebar's bottom bar.
+    /// Window › View Downloads… (⇧⌘J; Arc's `toggleDownloads:`, "Opens the Downloads section of your
+    /// Library"): the Library on its Downloads page, or closes the Library when that page is showing.
     @objc func viewDownloads(_ sender: Any?) {
-        guard store.isSidebarVisible || downloadsButton.isListShown else {
-            // The list hangs from the sidebar's button: bring the sidebar back first.
-            store.toggleSidebar()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.downloadsButton.toggle() }
-            return
-        }
-        downloadsButton.toggle()
+        if library.isOpen, library.page == .downloads { return library.close() }
+        library.open(.downloads)
     }
 
     /// History › View History (⌘Y; Arc's Archive › View History): "Opens your History in a new

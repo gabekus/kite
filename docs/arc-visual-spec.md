@@ -405,6 +405,47 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
   Space Icon, Delete Space). Rename edits the header in place: Return or clicking away keeps it, Escape cancels.
   Unverified: whether Arc also starts a rename on double-click.
 
+**New, edit and delete space** (Arc brought forward and driven on a throwaway space, 1 Nov 2026, with Gabe's go;
+sidebar-only screen captures and the accessibility tree; the space was deleted afterwards)
+- **+ in the bottom bar** opens a popover menu (222×308, 40pt rows inset 14, titles at 39): New Space, New
+  Folder | New Easel ⌃⇧E, New Boost | New Split ⌘L, New Tab ⌘T. Kite leaves out Easel and Boost.
+- **Create a Space page** (`SpaceCreationView`, ids `spaceCreation…`), on a 289pt sidebar:
+  - It replaces the URL field, favourites and pages under the top row. The bar keeps only the strip, which
+    already shows the new space as the active dot. The new space goes right after the current one.
+  - A picture of three fanned cards at y 86 to 119, "Create a Space" (y 140, bold), "Separate your tabs for
+    life, / work, projects, and more." (y 171, two lines).
+  - Rows 261×36 at x 14: the name field at y 237 (dashed-plus icon at x 22, "Space name…" at x 48), Profile at
+    279 (smiley, "Profile", a pill with the profile's name and a chevron, an info button at the right), Choose
+    a Theme at 323 (brush icon). Fill #2C2B40 over #131029.
+  - Create Space 261×36 at y 1153: #2C4AFC once there's a name, about half that before. Cancel, a 40×15 text
+    button at y 1203.5.
+  - Choose a Theme opens the theme popover beside the row with an arrow at it. It starts empty: no handle, "Tap
+    to pick a color for this space" at y 162 on the grid, − and + off, the slider without its thumb. The pick
+    applies to the whole window at once.
+  - Kite's picture is its own (three SF Symbol cards); Arc's is an asset.
+- **Theme grid mapping** (dark mode, 25 taps on a 70pt lattice, the handle's fill read back): the HSL hue is the
+  angle round the centre, clockwise from the right (0° red, 90° green, 180° cyan, 270° purple); saturation stays
+  near 0.6; lightness is 0.565 at the centre plus 0.0025 a point; taps outside the 170pt circle are ignored.
+- **The space menu** (right-click the header): Change Space Icon…, Rename Space…, Edit Theme Color…, Set Profile ▸ |
+  New Folder, Live Folders ▸ | Share Space…, Export "name" into Folder ▸ | Manage Spaces… | Delete Space. Kite has
+  the ones it has features for, in that order.
+- **Rename:** Rename Space… or a click on the current space's name turns it into a field (13, 209, 229×18 for a
+  space with no icon) with the name selected, and the header's edit button becomes "Done". Return keeps it.
+- **Icon:** a space has no icon at first; its name starts at x 13 and its strip cell is a dot. Change Space Icon…
+  opens a popover under a dashed 24pt square in the icon's place: Emoji | Icon tabs, a search field, 7 emoji to a
+  row (33.5 apart) with a category bar, or 8 icons to a row (31 apart). A picked icon shows in the theme's
+  colour in the header and the strip, and a bin appears next to the tabs to remove it. Kite's Icon tab uses SF
+  Symbols.
+- **Delete Space** on an empty space deletes it at once, with no question, and goes to the space before it. The
+  binary's "Delete the space and close all tabs within it" alert (for a space with tabs) and its undo weren't
+  seen.
+- **Strip:** the current space's icon in colour, other spaces' icons greyed, icon-less spaces 8pt dots at about
+  23% white. A hovered cell gets a 32pt rounded backing and a pill above it: name, a profile chip, ⌃ and the
+  number. Arc draws the strip in its own child window, which window captures miss; screen captures show it.
+- **Switching** (Spaces › Next/Previous, 1px-row recordings at 80Hz): the theme colour follows the space-switch
+  spring above. The pages slide too, quicker: a feature entering from the left was 97% of the way 0.09s in and
+  settled by 0.2s with no overshoot, so about `spring(response: 0.1, dampingFraction: 1)`.
+
 **Theme editor → `ThemeEditor`, `ArcMetrics.ThemeEditor`** (Spaces → Edit Theme…, tree plus one capture)
 - An `AXPopover`, 382×534, hanging off the sidebar's right edge (x 313). Opened from the menu with the pointer
   away, its bottom sat on the window's bottom (y 751 to 1285); opened the same way a few minutes later it sat
@@ -440,8 +481,42 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
   (0.808, 0.843, 0.906) / dark (0.443, 0.467, 0.510).
 - Quit with downloads running: "Downloads in progress" (see its own section below).
 
-Kite (`DownloadsView.swift`): no Library yet, so the bottom bar's leading button (where Arc's Library button sits)
-shows the progress ring and opens a popover list. Row size, ring size and popover width are Kite's, unmeasured.
+Kite (`DownloadsView.swift`): the Library's Downloads page lists them; the bottom bar's Library button carries the
+progress badge and catches the fly-in (next section). Row sizes are Kite's, unmeasured.
+
+## Library button, download badge and fly-in (Arc 1.171 AX tree; Arc 1.169 binary, decompiled; 1 Nov 2026)
+
+→ `LibrarySidebarButton`, `DownloadProgressBadge` (DownloadsView.swift), `DownloadFlight` (KiteCore),
+`BrowserWindowController+DownloadFlight.swift`. Nothing in Arc was pressed; no Arc pixels were captured.
+
+- Button (`kite probe Arc tree`, roles and frames only, Gabe's window 2056×1285): a 32×32 AXButton in a hosting view at
+  (8, 1244), the bottom bar's leading end, 9pt above the window's bottom edge; the bar's spaces list runs 42–247 and
+  the + button sits at 249. Kite's measures 32×32 at (8, 779) in an 820pt window: the same 8pt and 9pt.
+  Strings: `HomeBadging.HomeButton` ("Title for tooltip on the button to open Library"), action
+  `libraryButtonClicked:`; the menu's toggle titles "open the Library" / "close the Library". Its icon is Arc's own
+  `LibraryIcon` (26×26 template PDF, ARCClients_BaseAssets): not copied, Kite uses `archivebox` (Arc's MainMenu.nib
+  symbol for the Library item). Clicking opens the Library (`toggleLibrary`; the sidebar is hidden while it's open).
+- Badge (`BaseHomeComponents.DownloadProgressBadge`, body FUN_1025d55f4, ring FUN_1025d607c / FUN_1025d64b4; fields
+  from `__swift5_fieldmd`: progress, progressRingOpacity, overallOpacity, overallScale, completionScale,
+  completionOpacity, iconName = "arrow.down", iconSize = 10): a 24pt disc with a 1pt edge (a palette colour at 0.5),
+  a heavy 10pt `arrow.down`, and a 21.5pt ring 2.5pt wide (track at 0.2 under the progress, `easeOut` as it grows),
+  the ring turning `linear(1.5).repeatForever` unless Reduce Motion. Palette colours unresolved (Kite: primary
+  colour, window background disc). Not built: the completion animation (completionScale/Opacity) and an
+  `interpolatingSpring(0.1, 0.5, 1.2, 0.5).repeatForever` on the icon whose property wasn't identified.
+- Fly-in (`DownloadsUI.DownloadToLibrary`, FUN_101cd9ce0 `animateDownload(source:destination:)`, FUN_101cdae38 view
+  model init, FUN_101cdb214 keyframes, lazy vx0/vy0/apexTime/projectileMotionDuration; caller in
+  `WindowViewController`, FUN_1002efce0): a borderless clear child window over the browser window shows a 30pt
+  `arrow.down.circle` (template, palette colours). Start: the source element's rect converted to the screen
+  (falling back to `NSEvent.mouseLocation`), in window points from the bottom-left, + (15, -15); non-finite → (70, 70).
+  Destination (32, 40) when the sidebar shows; with it hidden, (62, 70) into a `DownloadBin` that slides in (spring
+  0.9 / 0.82, x 53 or -80) with a bounce. Gravity 2648.7 pt/s², vy0 = 1600 - 1100 × start.y / window height,
+  landing at the later root, vx constant. Keyframes every 1/60 s until landing + 0.1333 s (sidebar showing): scale
+  (0.8, 1.2) → (1.6, 1.6) linearly up to the apex, then uniform 1.6 → 0.3 at landing (→ 0.7 into the bin), and
+  smaller while it sinks. Kite: the same numbers, a `CAKeyframeAnimation` group (position, scale x/y, linear) on a
+  layer in a click-through view over the window; source = the pointer (Kite's engines don't report the link's rect);
+  no fly-in while the sidebar is hidden (no bin yet).
+- ⇧⌘J: Arc's selector `toggleDownloads:`, "Opens the Downloads section of your Library" → Kite opens the Library on
+  Downloads, or closes it when Downloads is showing. The popover Kite had before is gone: Arc has none.
 
 ## Little Arc → `ArcMetrics.LittleWindow`, `LittleKiteWindowController` (Arc 1.171, 31 Oct 2026)
 
@@ -473,9 +548,36 @@ background `screencapture -l<window id>` at 2x, toolbar strip only. Nothing in A
   binary; Kite defaults it on, since Arc shows the "Links Open in Little Arc" NUX on the first external link
   (`littleBrowserNUXPresentationCount`).
 
-Kite's differences: no profile indicator (no profiles) and no extensions button in the pill; the chevron is a plain
-menu of spaces, not Arc's searchable `LittleBrowserMoveMenuWindow`; no downloads tray; no auto-archive of Little
-windows ("Archive Little Arcs after:"); no global hotkey.
+Kite's differences: no profile indicator (no profiles); the chevron is a plain menu of spaces, not Arc's searchable
+`LittleBrowserMoveMenuWindow`; no auto-archive of Little windows ("Archive Little Arcs after:"); no global hotkey.
+
+### Little Arc extensions button and downloads tray (Arc 1.171, 1 Nov 2026) → `LittleKite.pillButtons`, `LittleKite.DownloadsTray`, `LittleDownloadsTrayView`
+
+- Extensions button: 23×19 in the pill, at x 1530.5 in the 1784pt window whose Open In box was 181 wide, so the copy
+  button sat at 1565 and the gap between them is 11.5pt (AX tree from #79; frames only). Constant 23 also in
+  `FUN_1022a0d74`. Toolbar state `hasExtensions` and URL-field `shouldDisplayExtensionsButton`, `onClickExtensions`,
+  `littleBrowserExtensionsButton`; LittleBrowser actions `didClickExtension`, `didRightClickExtension`,
+  `didDismissExtensionsMenu` (arc-strings.txt ~173370). So the button shows only while extensions are installed and
+  opens an extensions menu. Its symbol and menu weren't seen: Kite uses the puzzle piece and the main window's
+  extensions popover (`ExtensionsMenu`).
+- Tray (`LittleBrowserDownloadsTrayViewController`, decomp `out7/g57-tray.txt`, `g57-item.txt`, `g57-win.txt`):
+  pinned to the Little window's leading, trailing and bottom edges (`FUN_100015a70`), over the page; a scroll view
+  96pt tall (`FUN_1022a583c`); a collection view with 250×56 items (`sizeForItemAt`, 0x1022a6cc8), 20pt section insets
+  on every side, 10pt between items (0x1022a6d6c, 0x1022a6d80); the view is a `PassthroughView` (`hitTest:` passes
+  empty space through). Its list is the Little window's own `downloads` state; item actions `didClick` (opens the file,
+  `NSWorkspace`) and `didClickClose`.
+- Item (`LittleBrowserDownloadsTrayItemView`): background view with a black shadow, opacity 0.25, radius 3, offset
+  (0, 1) (`FUN_1022a19c4`, constants at 0x1037c5550), corner 8, `masksToBounds` off (`updateLayer`); fill
+  `DownloadItemBackground`, swapped for `DownloadItemBackgroundHovered` on hover while the close button shows
+  (`FUN_1022a2ec8`); a horizontal stack, spacing 10, insets 10, centred (`FUN_1022a187c`): 32×32 file icon
+  (`FUN_1022a1378`, icon fetched on `LittleBrowserDownloadsTrayItemViewIconFetcherQueue`), a vertical title stack with
+  5pt spacing (`FUN_1022a16b4`): the file name (`URL.lastPathComponent`) at 14pt, truncating in the middle, primary
+  colour (`FUN_1022a1490`), and a subtitle in a named text style, truncating at the tail, secondary colour
+  (`FUN_1022a15b4`); a flexible spacer; the close button (14pt image, primary tint, `closeButtonClicked:`).
+- Unverified: the subtitle's size (Kite: 12pt) and text (Kite: its downloads list's status line), the title's weight,
+  the close symbol, whether new items go first or last (Kite: last, scrolled into view), and whether Arc's close also
+  cancels a running download (Kite: it only leaves the tray). Arc's Little window wasn't open, so nothing was measured
+  live.
 ## History, ⌘Y (Arc 1.171 menu bar and strings, 1 Nov 2026)
 
 - Menu (read from Arc's menu bar through AX, nothing pressed): **Archive** › Go Back ⌘[, Go Forward ⌘], —,
@@ -579,7 +681,7 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   **[differs]**. Closing back to the source with the close spring is **[inferred]**: the dismiss path wasn't
   decompiled, but the same transform function serves every non-presented state.
 - Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
-  undo "re-opening a closed Peek", the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
+  the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
   any scrim behind the card.
 
 ### Peek: swipe to dismiss → `LinkPeek.Swipe` (KiteCore), `LinkPeekSwipeController` (g45; Arc 1.171 binary, 1 Nov 2026)
@@ -613,6 +715,30 @@ Decompiled with `SymRefs7.java` / `DumpAt.java` into `~/rea-arc/decomp/out7/g45-
   swipe takes priority over the Peek page's own swipe back/forward (Arc's dismiss path doesn't check the page's
   history); the gesture isn't gated on System Settings › Swipe between pages. The haptic was not felt (no
   hands-on test).
+### Peek: Undo Close Peek → `closeLinkPeek(undoable:)`, `reopenLinkPeek` (g46; Arc 1.171 binary, 1 Nov 2026)
+
+From `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s` (otool) and Ghidra (`out5/g46-closepeek.txt`).
+Arc wasn't driven.
+
+- The command is the Edit menu's Undo (⌘Z), not ⇧⌘T. NSLocalizedString key "Close Peek" with the comment
+  "Undo prompt for re-opening a closed Peek" (strings 82976; built at 0x102a079b4, the key is the small
+  string in x0/x1, cached in a global at 0x10465a550). Arc's Edit menu titles Undo "Undo <name>" (menudump:
+  "Undo New Space"), so it reads **Undo Close Peek**.
+- Redo closes it again: `DismissMechanism` has a `redoClose` case after `escapeKeyPressed`,
+  `clickedCloseButton`, `clickedBackground`, `pressedCloseTabHotkey`, `swipedRightToDismiss` (strings
+  166427–166432).
+- The only reader of that name is FUN_102856aec (`out5/g46-closepeek.txt`), which builds the undo step. Its
+  payload copies the Peek's `URL`, a UUID string and the source item's fields, and no web contents, so the
+  reopened Peek loads its URL again **[inferred: payload layout from the decompile, not run]**. There's no
+  timer: it lives on the undo stack like any other step.
+- ⇧⌘T is "Restore Last Closed Tab" (menudump, ⇧⌘T); its reopen stack (`addToReopenStack`,
+  `reopenableItemID`) belongs to sidebar items' close options, and nothing ties it to the modal
+  **[inferred]**. Kite leaves Reopen Closed Tab alone.
+- Which dismissals register the step isn't decompiled. Kite registers it for the user's own closes (Esc, ⌘W,
+  close button, click outside, swipe right, Redo), not when the Peek is replaced, turned into a tab or pane,
+  or closed by switching tabs **[inferred]**. Undo selects the source tab if another tab is in front, then
+  opens the Peek with the normal open spring, from the link if it's still on the page.
+
 ## Pinned URL reset and Reveal Tab (Arc 1.171 menu bar and binary, 1 Nov 2026)
 
 - Tabs menu (AX, read-only, `menudump`): … Next Tab ⌥⌘↓, Previous Tab ⌥⌘↑, Reveal Tab in Sidebar (no key), —,
@@ -788,6 +914,34 @@ Arc wasn't driven; nothing here is from a recording.
   12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
   top/bottom one on a top/bottom drop (Kite refuses it).
 
+## Split View: drag a sidebar tab onto the pages → `SplitTabDrop.swift` (KiteCore), `BrowserWindowController+SplitTabDrop` (Arc 1.169 decompile, 1.171 strings, 1 Nov 2026)
+
+Arc wasn't driven; nothing here is from a recording or a capture. Sources: **[str]** `~/rea-arc/arc-strings.txt`; **[dec]** Ghidra on
+`~/rea-arc/decomp/Arc-arm64` (output in `decomp/out5/g42-*.txt`, `out6/g42-callers.txt`, `out7/g42-list*.txt`).
+
+- **It exists** [str]: Arc's onboarding card "Drag a tab from your sidebar into the middle of the screen to create a Split View."
+  (~80884); the window-contents split delegate has `onDropSidebarItem` (~176689). An older recording in this file ("Tab drag", dropped
+  over the page = cancelled) disagrees; that drop came after the new-window card had appeared, which may be a different path.
+- **Regions are per pane** [dec, `FUN_100a525a0` → `FUN_100a45034`]: Arc walks the panes, finds the one under the pointer, and asks
+  which band of that pane it's in: 1 left, 2 right, 3 bottom, 4 top, 0 none. Band depth (`FUN_100a453dc` / `FUN_100a45484`):
+  one pane: **45%** of its width from each side (**40%** when `verticalLayoutOrientationFromDragAllowed`, which also adds top/bottom
+  bands of min(**25%** of height, **50pt**)); several panes: min(width / **3**, **80pt**) from each end of a side-by-side split's
+  panes, min(height / **3**, **50pt**) of a top/bottom split's. A split only takes bands along its own axis.
+- **What a band does** [dec]: left/top insert a pane at the pane's index, right/bottom after it (`insertContent`,
+  `dropRegionInsertionIndex`); the middle (0) asks the delegate whether to replace the pane (`replaceContent`, `existingDropRegion`)
+  and otherwise inserts. With a flag the caller sets (inferred: dragging one of the split's own panes, g43), the bands are half the pane and the middle does nothing.
+- **Defaults** [dec, init @100a50820]: `allowInteractivePaneInsertion` true, `verticalLayoutOrientationFromDragAllowed` **false**,
+  `isDragDropHapticFeedbackEnabled` true. Whether Arc's window changes the vertical flag wasn't traced (it's set through the vtable).
+- **Placeholder** [dec]: while dragging, Arc inserts a placeholder pane into the layout (`FUN_100a599d8`, the delegate's view:
+  `SplitViewContentPlaceholderView`, 2pt border, r6 per #103) sized width / (panes + 1) (`draggingEntered:`), and relays out the others.
+- **Kite**: the sidebar drag (#145, SwiftUI, never leaves the window) reports to the window once it's off the sidebar; Arc's bands
+  pick the pane and side, with vertical drops off (ARCUI's default), so a single page splits left or right. The tab moves into the
+  split (its row becomes part of the split's row), gets 1/(n+1) taken from the others in proportion, and focus; Arc's drop haptic plays.
+  Refused: the tab already on screen, folders, favorites, a split's own row onto itself, a fifth pane.
+- **Differs / unverified**: Kite doesn't replace a pane on a middle drop (whether Arc's delegate allows it for sidebar tabs wasn't
+  traced) and inserts after the pane instead; Kite draws the placeholder over the pages (2pt / r6, accent at 12%, as #103) where the
+  new pane will go rather than moving the panes aside live; favorites dragged from the tray aren't taken (untraced in Arc).
+
 ## Split View: geometry and motion → `ArcMetrics.Split`, `SplitPanesView` (Arc 1.171 incognito capture + 1.169/1.171 decompile, 1 Nov 2026)
 
 Sources: **[cap]** one Arc incognito window (2056×1285pt, dark) on local fixture pages, View › Add Split View pressed through AX,
@@ -846,8 +1000,7 @@ Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, 
   0.07–0.20; `LibraryItemOutline` black 0.03 / white 0.08. Not applied yet: Kite's pages keep their own colours.
 - Inferred or unverified: the transition, all sizes, the exit control's look and label (Kite: "Exit Library" with an
   arrow at the bottom of the list), page icons (Kite: SF Symbols), and whether Arc leaves the Library when a tab is
-  selected (Kite does). ⇧⌘J still opens Kite's downloads popover, though Arc's copy says it "Opens the Downloads
-  section of your Library": follow-up.
+  selected (Kite does). ⇧⌘J opens the Library on its Downloads page (see "Library button" below).
 
 ## Expand Current Split (Arc 1.171 menu bar; Arc 1.169 binary, decompiled; 1 Nov 2026)
 
@@ -1295,6 +1448,37 @@ replaces its per-Boost `<style id="kite-boost-<id>">` (removed when empty), the 
 colour filter in place, through `evaluateJavaScript` in the page's world (same path as zaps, both engines). JS edits
 are saved but run only after Refresh this Page. Inferred, not seen in Arc: applying on every keystroke (Arc's
 timing wasn't observed).
+
+## Library › Boosts → `BoostsListView` (Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+Nothing in Arc was pressed or opened; Arc's Boosts page was never on screen, so no geometry was measured.
+
+- Page: `HomeButton.BoostsPage` (`HomePageID` `BoostsPage`, after `MediaPage`, before `SpacesPage`), views
+  `BoostsContentView`, `BoostsEmptyStateView`, `BoostCell`, reducer `BoostsPageReducer` (arc-strings 43733–43744).
+  Title "Boosts" ("Title for Boosts page in Arc Home.", NSLocalizedString key at arc.s 0x10276076c). Page icon:
+  the `boosts` Lottie in ARC_HomeButton.bundle (Kite: SF Symbol `paintbrush`).
+- Actions (arc-strings 175696–175733): `onSelectBoost` → `showBoostsEditorForURL`, `onRenameBoost` →
+  `showBoostsRenameDialog`, `onDeleteBoost` → `showBoostsDeleteConfirmationDialog`, `onToggleBoostIsActive`,
+  `onReportBoost` / `reportBoost`, `onBoostsGalleryButtonTapped` → `showBoostsGallery`.
+- Row buttons: "Rename", "Delete", "Enable", "Disable" (inline strings at arc.s 0x102760810–0x1027609fc, comments
+  "Button used to rename / delete / enable a disabled / disable an enabled boost."). The cell holds a SwiftUI
+  `Toggle` with a custom style framed 36 × 24, inside a 36 × 32 frame (arc.s 0x10275df54–0x10275e1f8). A subtitle
+  "<…> · by <author>" for Boosts written by someone else (0x102760a88; Kite has no shared Boosts).
+- Empty state (arc.s 0x10275e760–0x10275e9d0): image `BoostLarge` from the bundle, title "Nothing Boosted Yet!",
+  then "Click " + bold `Image(systemName: "paintbrush")` + " in URL bar to make your own, or grab one from the " +
+  underlined "Boost Gallery" + ".", with an `onTapGesture`. The gallery is `https://arc.net/boosts?ref=arc-app`
+  (arc-strings 63999).
+- Order: the reducer sorts with a comparator that compares a string field and, when equal, a `Date`, both
+  ascending (arc.s 0x102763f08–0x102763fac). Which fields wasn't traced. No Today / Yesterday grouping was found
+  for this page.
+
+Kite: the Library's Boosts page (`LibraryPage.boosts`, `BoostsListView`); Window › View Boosts… opens it instead
+of Kite's old Boosts window. Inferred or Kite's own: sort by site then oldest first; rows are one card in the style of
+Kite's Archive page (44 pt rows, favicon, name, site); Rename and Delete appear on hover (Arc's placement unknown)
+and the switch's tooltip is Enable / Disable; clicking a row opens `https://<site>/` in a new tab and the Boost's
+editor for that tab. The empty state says "Choose New Boost in the command bar to make your own." because Kite has
+no paintbrush in its URL bar, and drops Arc's Boost Gallery link (Arc's site; nothing there installs into Kite, and
+Arc shuts down on 22 Dec); the picture is the SF Symbol, not Arc's asset. No report action and no "by" subtitle.
 
 ## Sound effects → `SoundEffects` (KiteCore), `SoundEffectPlayer` (Arc 1.171 strings, files, defaults and disassembly, 1 Nov 2026)
 
