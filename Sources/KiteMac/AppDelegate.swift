@@ -250,6 +250,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
     }
 
+    /// Kite menu → Play Kite Sound Effects: Arc's "Play Arc sound effects", on by default.
+    @objc func toggleSoundEffects(_ sender: Any?) {
+        UserDefaults.standard.set(!SoundEffects.isEnabled(in: .standard), forKey: SoundEffects.enabledKey)
+    }
+
     /// Kite menu → Tidy Tabs: Arc Max's Tidy button on the Today divider (Arc's `tidyTabsEnabled`,
     /// on in Gabe's Arc, so on by default).
     @objc func toggleTidyTabs(_ sender: Any?) {
@@ -492,6 +497,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleSoundEffects(_:)) {
+            item.state = SoundEffects.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleTidyTabs(_:)) {
             item.state = TidyTabs.isEnabled(in: .standard) ? .on : .off

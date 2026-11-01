@@ -98,6 +98,8 @@ enum MainMenu {
             item("Show Full URL in Toolbar", #selector(AppDelegate.toggleToolbarFullURLs(_:)), toTarget: false, id: "toggleToolbarFullURLs"),
             // Arc Max's "5-Second Previews" (hoverCardsEnabled), off by default as in Arc.
             item("Link Previews (Hold ⇧ over a Link)", #selector(AppDelegate.toggleLinkPreviews(_:)), toTarget: false),
+            // Arc: Settings → "Play Arc sound effects" (playUserInterfaceSoundsDisabled), on by default.
+            item("Play Kite Sound Effects", #selector(AppDelegate.toggleSoundEffects(_:)), toTarget: false),
             // Arc Max's Tidy Tabs (tidyTabsEnabled), on by default as in Gabe's Arc.
             item("Tidy Tabs", #selector(AppDelegate.toggleTidyTabs(_:)), toTarget: false),
             // Arc Max's Tidy Downloads (renameDownloadsEnabled), on as in Gabe's Arc.

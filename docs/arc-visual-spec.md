@@ -990,6 +990,28 @@ Arc was not opened or driven, so no geometry was measured.
   ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
   deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
 
+## Sound effects → `SoundEffects` (KiteCore), `SoundEffectPlayer` (Arc 1.171 strings, files, defaults and disassembly, 1 Nov 2026)
+
+- Setting: "Play Arc sound effects" next to "Haptic feedback when reordering tabs" (strings 80425–80426). Keys
+  `playUserInterfaceSoundsDisabled` and `tabReorderingHapticsDisabled` (strings 64175, 64204), stored in Arc's
+  defaults beside `machineID`, `hoverCardsEnabled` and friends. Neither key is set in Gabe's Arc, so both are at
+  Arc's default: sounds on, haptics on. Kite's `soundEffectsEnabled` is on unless turned off.
+- Sound files in `ARC_SoundEffects.bundle` (names and `afinfo` only; nothing copied): `capture.wav` (WAVE, 2 ch,
+  48 kHz, 24-bit, 0.634 s) and `event.m4a` (AAC, 2 ch, 44.1 kHz, 3.52 s).
+- One effect. `sound(forEffect:)` (SoundEffectClientImpl.swift, 0x101cb7c38) doesn't branch on the effect: it
+  builds the URL for the small string "capture" with type "audio/vnd.wave" and caches the player by filename
+  (`soundsByFilename`). Nothing loads `event.m4a` through this client; where it's used, if anywhere, wasn't found.
+- Playing (0x101cb8190): get the player, `setVolume:` 0.7 (`0x3f333333`), play. The client also has `preload`,
+  `setIsEnabled` and `isEnabled`.
+- Who plays it: `WindowState` holds the `soundEffectClient` dependency, used from WindowState+Capture.swift (its
+  unimplemented-dependency stub sits among the capture code, 0x10020b870). So the sound goes with Capture.
+  Which capture paths play it (region, full page) and at what moment wasn't traced. Kite plays it, inferred, when
+  either Capture… or Capture Full Page has the image.
+- Kite's capture sound is its own, made in code (`SoundEffects.shutter`): two clicks 70 ms apart, each high-passed
+  noise from a fixed-seed generator with a 6 / 9 ms exponential decay over a 210 / 160 Hz sine thump, 0.5 ms
+  fade-in, peak 0.9, 48 kHz 16-bit mono, the same 0.634 s as Arc's file. Rendered to a WAV in memory at first use.
+- Haptics: Arc's `tabReorderingHapticsDisabled` sits next to `dropHapticSubject` and `dropHapticSubscription`
+  (strings 154777–154779; presumably the drop haptic when reordering). Not built in Kite: tab reordering belongs to the tab-drag work.
 ## Tidy Tabs → `TidyTabs`, `TodayTabGroup` (KiteCore), `TodayDivider`, `TabGroupHeaderRow` (Arc 1.171 strings and disassembly, 1 Nov 2026)
 
 Nothing in Arc was pressed or run. The only open Arc window had its sidebar hidden, so no Arc geometry was measured.
