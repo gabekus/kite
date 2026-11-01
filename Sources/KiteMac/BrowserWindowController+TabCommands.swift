@@ -42,6 +42,39 @@ extension BrowserWindowController {
         }
     }
 
+    func renameFolder(_ id: UUID) {
+        guard let window, let found = store.state.folder(matching: id.uuidString) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename Folder"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: found.folder.name)
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.store.mutate { $0.renameFolder(id, to: field.stringValue) }
+        }
+    }
+
+    /// Arc's folder Delete: asks first (Arc's wording), archives the tabs inside, then
+    /// shows Arc's "Folder deleted" toast.
+    func deleteFolder(_ id: UUID) {
+        guard let window, let found = store.state.folder(matching: id.uuidString) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete your \u{201C}\(found.folder.name)\u{201D} folder?"
+        alert.informativeText = "Deleting this folder will archive the tabs inside it."
+        alert.addButton(withTitle: "Delete Folder")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons[0].hasDestructiveAction = true
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            store.mutate { _ = $0.deleteFolder(id) }
+            showToast("Folder deleted")
+        }
+    }
+
     func deleteSpace(_ id: UUID) {
         guard let window, store.state.spaces.count > 1, let space = store.state.spaces.first(where: { $0.id == id }) else {
             return NSSound.beep()

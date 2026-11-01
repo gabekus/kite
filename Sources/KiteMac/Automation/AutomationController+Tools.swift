@@ -470,8 +470,9 @@ extension AutomationController {
                 action: "close a tab it didn't open",
                 detail: "Tab: “\(tab.displayTitle)”. You can reopen it with ⇧⌘T."), tab: tab.id)
         }
-        // A task's tabs are pinned in its folder, where closing would only unload them.
-        if Self.agentTask == nil || !store.mutate({ $0.removePinnedTab(tab.id) }) {
+        // A task's tabs are pinned in its folder, where closing would only unload them. Closing
+        // its last one takes the empty folder too.
+        if Self.agentTask == nil || !store.mutate({ $0.removePinnedTab(tab.id, droppingEmptyFolder: true) }) {
             host?.closeAutomatedTab(tab.id)
         }
         claudeOpened.remove(tab.id)
