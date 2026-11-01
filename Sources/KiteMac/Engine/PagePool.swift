@@ -198,10 +198,10 @@ final class PagePool {
     fileprivate func takeSavedState(_ id: UUID) -> Any? { savedState.removeValue(forKey: id) }
 
     /// Takes over a page made elsewhere (a Little Kite window's), for a new tab. Returns the tab's id.
-    func adopt(_ page: WebPage) -> UUID {
+    func adopt(_ page: WebPage, profileDirectory: String? = nil) -> UUID {
         let id = UUID()
         register(page, id: id)
-        pageProfiles[id] = currentEngine.profileDirectory
+        pageProfiles[id] = profileDirectory ?? currentEngine.profileDirectory
         return id
     }
 

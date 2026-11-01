@@ -9,7 +9,7 @@ import Testing
     @Test func webPageInArcsOrder() {
         let items = ToolbarMenu.items(hasURL: true, isWebPage: true, extensionsAvailable: true, showsFullURL: false)
         #expect(titles(items) == [
-            "Copy URL", "Share", "Capture…", "Capture Full Page",
+            "Copy URL", "Share", "Capture…", "Capture Full Page", "Capture in Portrait Mode",
             "---", "Manage Extensions…",
             "---", "Show Full URL", "Hide Toolbar",
         ])
@@ -18,7 +18,7 @@ import Testing
 
     @Test func fullURLItemSaysWhatItWillDo() {
         let items = ToolbarMenu.items(hasURL: true, isWebPage: true, extensionsAvailable: false, showsFullURL: true)
-        #expect(titles(items) == ["Copy URL", "Share", "Capture…", "Capture Full Page", "---", "Hide Full URL", "Hide Toolbar"])
+        #expect(titles(items) == ["Copy URL", "Share", "Capture…", "Capture Full Page", "Capture in Portrait Mode", "---", "Hide Full URL", "Hide Toolbar"])
     }
 
     @Test func kitePagesKeepADisabledCopyURLAndTheToolbarItem() {

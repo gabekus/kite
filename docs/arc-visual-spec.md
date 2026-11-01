@@ -590,8 +590,42 @@ background `screencapture -l<window id>` at 2x, toolbar strip only. Nothing in A
   binary; Kite defaults it on, since Arc shows the "Links Open in Little Arc" NUX on the first external link
   (`littleBrowserNUXPresentationCount`).
 
-Kite's differences: no profile indicator (no profiles); the chevron is a plain menu of spaces, not Arc's searchable
-`LittleBrowserMoveMenuWindow`; no auto-archive of Little windows ("Archive Little Arcs after:"); no global hotkey.
+Kite's differences when this was written (since built: auto-archive g87, hotkey g89, profile indicator and Open In
+menu g116, below).
+
+### Little Arc profile indicator and "Open In" menu (Arc 1.171, 1 Nov 2026) → `LittleKite.MoveMenu`, `LittleMoveMenuController`
+
+Sources: `~/rea-arc/arc-strings.txt`, otool disassembly `~/rea-arc/decomp/arc.s` (literal pools and float constants
+in 0x1022ac000–0x1022c4000), Ghidra decomp `~/rea-arc/decomp/out-g116/` (win.txt, view.txt, frame.txt). Nothing in
+Arc was opened or clicked; no pixels of the menu were seen.
+
+- Toolbar state (`LittleBrowserToolbar.ViewState`): `leftAccessory`, `moveToDestinationButtonType`,
+  `isMoveMenuPresented`, `openInShortcut`, `profileName`, `primaryDestination`, `hasAdditionalDestinations`;
+  actions `showChangeProfileMenu`, `onClickChangeProfile`, `toggleMoveMenu`. Little Arc state has `profile`,
+  `shouldShowProfileIndicators`, `setProfile`. Kite shows the indicator once there are two or more profiles
+  (inferred from `shouldShowProfileIndicators`) and the chevron only while there's more than one space.
+- Profile indicator: 14pt image at x 121 (pill x 107) and the name (AX tree, earlier section). Its tooltip in the
+  Little Arc toolbar is "Change profile" (inline string at 0x1022afa9c, comment "Tooltip; an indicator displaying the
+  current profile"). Arc confirms a profile change: "Each Profile has different browser data, so this webpage might
+  look a little different." with "Don't ask again" (`shouldBypassConfirmLittleBrowserProfileDialog`); Kite doesn't ask
+  yet. The image is Arc's own asset (16pt `NSImage`); Kite uses `person.crop.circle`.
+- Menu window (`LittleBrowserMoveMenuWindowController`, 0x1022c2338): a borderless (`fullSizeContentView`) window
+  that can become key, added as a child of the Little window and made key; its SwiftUI content is laid out against the
+  Open In button's rect (`anchorView`, re-read on resize). Closes on `windowDidResignKey:` and on `mouseDown:`
+  outside. Kite: a child `NSPanel` whose top-trailing corner sits on the Open In box's (Arc's view uses
+  `Alignment.topTrailing`, 0x1022b7bc4).
+- Menu state (`LittleBrowserMoveMenu.State`): `options`, `primaryKeyboardShortcut`, `isExpanded`, `results`,
+  `searchQuery`, `highlightedOptionID`; actions `didSelectOption`, `didUpdateSearchQuery`, `didHover`, `didAppear`,
+  `didToggleExpansion`, `didRequestDismiss`, `didSelectNext`, `didSelectPrevious`, `didSelectHighlightedOption`.
+  Options are spaces (`LittleBrowserMoveToListOption`: `spaceID`, `colorPalette`), so each row shows the space's
+  colour. The chevron's title is "More Spaces" (0x1022b741c). Arc's hidden command "Show Little Arc “Open In” Menu"
+  (`showLittleArcOpenInMenu`) has no default key found; Kite leaves it out.
+- Sizes (0x1022b7f28, 0x1022b8a08, 0x1022b8434, 0x1022b8d78): width 244 when expanded (else the anchor's width), the
+  results list `min(count × 46, 350)` tall, a 46pt search row; "Search Spaces…" with `magnifyingglass` 14pt semibold
+  in a 26pt frame. Kite always shows the expanded form (search plus every space); Arc's collapsed form wasn't
+  decoded. Row contents, colours, corner radius and shadow are Kite's (unmeasured).
+- Filtering: Kite matches the name ignoring case and accents, highlights the first match, ↑/↓ stop at the ends
+  (Arc's matching and wrap behaviour weren't decoded).
 
 ### Little Arc extensions button and downloads tray (Arc 1.171, 1 Nov 2026) → `LittleKite.pillButtons`, `LittleKite.DownloadsTray`, `LittleDownloadsTrayView`
 
@@ -2605,7 +2639,8 @@ pressed, so none of it was seen on screen.
 - The menu is built in `WindowContentViewController` (strings around arc.s 100420974), which also hosts the top
   bar; which part of the bar opens it isn't shown by the code. Kite opens it from a right-click anywhere on the bar
   that isn't a button.
-- Kite leaves out Capture in Portrait Mode and Enable/Disable Shared Quotes (Kite has neither feature). Manage
+- Kite leaves out Enable/Disable Shared Quotes (Kite doesn't have it); Capture in Portrait Mode follows Capture Full
+  Page since g83 added the feature. Manage
   Extensions… shows where extensions run (Chromium windows, not incognito) and opens the extensions popover from the
   bar's right end. Share uses File › Share…'s picker. Whether Arc's items have icons wasn't checked.
 - Kite's own pages (kite://) count as "not a web page": Copy URL disabled, then Hide Toolbar.

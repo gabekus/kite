@@ -292,11 +292,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             currentSpace: { destination(store.state.selectedSpace) },
             spaces: { store.state.spaces.map(destination) },
             resolve: { URLInput.resolve($0, engine: store.state.searchEngine) },
-            move: { [weak main] page, url, title, spaceID in main?.adopt(page, url: url, title: title, in: spaceID) },
+            profiles: { store.state.allProfiles },
+            initialProfile: { store.state.profile(store.state.selectedProfileDirectory) },
+            engine: { [weak main] profile in (main?.pool.engine ?? self.engine).forProfile(profile) },
+            move: { [weak main] page, url, title, spaceID, profile in
+                main?.adopt(page, url: url, title: title, in: spaceID, profileDirectory: profile)
+            },
             openTab: { url in store.mutate { _ = $0.openTab(url: url) } },
             adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) }
         )
-        let controller = LittleKiteWindowController(engine: main.pool.engine, url: url, host: host)
+        let controller = LittleKiteWindowController(url: url, host: host)
         controller.didClose = { [weak self] closed in self?.littleControllers.removeAll { $0 === closed } }
         littleControllers.append(controller)
         // Offset from another Little Kite window so they don't stack exactly.

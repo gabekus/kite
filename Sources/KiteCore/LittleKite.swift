@@ -221,3 +221,107 @@ extension LittleKite {
         }
     }
 }
+
+// MARK: - Profile indicator
+
+extension LittleKite {
+    /// Arc's Little Arc toolbar shows the page's profile (`ProfileIndicatorView`, tooltip "an indicator
+    /// displaying the current profile") at the pill's leading edge, behind `shouldShowProfileIndicators`.
+    /// Kite shows it once there is more than one profile, as Arc's profile pickers do (inferred).
+    public static func showsProfileIndicator(profileCount: Int) -> Bool { profileCount > 1 }
+
+    /// The indicator's place in the pill: the 14pt image 14pt in (x 121 in a window whose pill starts at
+    /// 107, `kite probe Arc tree`), then the profile's name.
+    public enum ProfileIndicator {
+        public static let x = 14.0
+        public static let imageSize = 14.0
+        public static let nameGap = 5.0
+        public static let fontSize = 12.0
+        /// Room between the name and the host text.
+        public static let trailingGap = 8.0
+    }
+}
+
+// MARK: - Open In menu
+
+extension LittleKite {
+    /// The chevron beside "Open in <Space>" shows only while there is somewhere else to go (Arc's toolbar
+    /// state `hasAdditionalDestinations`).
+    public static func hasAdditionalDestinations(spaceCount: Int) -> Bool { spaceCount > 1 }
+
+    /// Arc's `LittleBrowserMoveMenu`: the searchable "Open In" picker the chevron opens (its state holds
+    /// `options`, `primaryKeyboardShortcut`, `results`, `searchQuery`, `highlightedOptionID`; its actions
+    /// `didUpdateSearchQuery`, `didHover`, `didSelectNext`, `didSelectPrevious`, `didSelectHighlightedOption`,
+    /// `didRequestDismiss`). Sizes from its view code (Arc 1.171 decomp, docs/arc-visual-spec.md): 244pt wide,
+    /// a 46pt "Search Spaces…" row, 46pt rows, the list at most 350pt tall before it scrolls.
+    public struct MoveMenu: Equatable, Sendable {
+        public static let width = 244.0
+        public static let searchHeight = 46.0
+        public static let rowHeight = 46.0
+        public static let maxListHeight = 350.0
+        /// The magnifying glass: 14pt semibold, centred in a 26pt frame.
+        public static let searchIconSize = 14.0
+        public static let searchIconFrame = 26.0
+        public static let placeholder = "Search Spaces…"
+
+        public struct Option: Equatable, Sendable, Identifiable {
+            public var id: UUID
+            public var name: String
+            public init(id: UUID, name: String) {
+                self.id = id
+                self.name = name
+            }
+        }
+
+        /// Every space, in sidebar order.
+        public let options: [Option]
+        /// The space "Open in" names; its row shows ⌘O.
+        public let primaryID: UUID?
+        public private(set) var query = ""
+        public private(set) var highlightedID: UUID?
+
+        public init(options: [Option], primaryID: UUID?) {
+            self.options = options
+            self.primaryID = primaryID
+            highlightedID = options.first?.id
+        }
+
+        /// The options whose names contain the query (case and accents ignored), in sidebar order.
+        public var results: [Option] {
+            let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !needle.isEmpty else { return options }
+            return options.filter { $0.name.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        }
+
+        public var highlighted: Option? { results.first { $0.id == highlightedID } }
+
+        /// Typing in the search field: the first match is highlighted.
+        public mutating func updateQuery(_ text: String) {
+            query = text
+            highlightedID = results.first?.id
+        }
+
+        public mutating func hover(_ id: UUID) {
+            if results.contains(where: { $0.id == id }) { highlightedID = id }
+        }
+
+        /// ↓ and ↑ move the highlight, stopping at the ends.
+        public mutating func selectNext() { step(1) }
+        public mutating func selectPrevious() { step(-1) }
+
+        private mutating func step(_ delta: Int) {
+            let list = results
+            guard !list.isEmpty else { return highlightedID = nil }
+            guard let index = list.firstIndex(where: { $0.id == highlightedID }) else { return highlightedID = list.first?.id }
+            highlightedID = list[min(max(index + delta, 0), list.count - 1)].id
+        }
+
+        /// The list's height for `count` rows: 46pt each, scrolling past 350.
+        public static func listHeight(count: Int) -> Double {
+            min(Double(max(count, 0)) * rowHeight, maxListHeight)
+        }
+
+        /// The whole menu: the search row, then the list.
+        public var height: Double { Self.searchHeight + Self.listHeight(count: results.count) }
+    }
+}
