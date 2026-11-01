@@ -214,6 +214,11 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
             // Little Kite's menu has no Split View or Little Kite items.
             case .newTab, .splitView, .littleKite: host.openTab(url)
             }
+        case .pageCommand(.viewPageSource):
+            if let url, let source = URL(string: "view-source:" + url.absoluteString) { host.openTab(source) }
+        case .pageCommand:
+            // Save As… and Print… act on a tab; Kite doesn't run them in Little Kite yet.
+            NSSound.beep()
         case .popup(let popup):
             host.adoptPopup(popup)
         case .closeRequested:

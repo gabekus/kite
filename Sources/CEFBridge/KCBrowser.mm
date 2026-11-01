@@ -528,40 +528,90 @@ class KCClient : public CefClient,
 
     // CefContextMenuHandler
 
-    /// A right-click on a link: Arc's link items (from the delegate) at the top, in place of the
-    /// page items (Back, Forward, Print, View Source), which Chromium's menu leaves out for a link.
+    /// What was right-clicked, for the delegate: "linkURL", "imageURL" (a media image's source),
+    /// "selectionText", "editable", "pageURL" and the point ("x", "y", view points from the top left).
+    static NSDictionary<NSString*, id>* MenuParams(CefRefPtr<CefContextMenuParams> params) {
+        NSMutableDictionary<NSString*, id>* info = [NSMutableDictionary dictionary];
+        if (NSURL* link = ToNSURL(params->GetLinkUrl())) info[@"linkURL"] = link;
+        if (params->GetMediaType() == CM_MEDIATYPE_IMAGE) {
+            if (NSURL* image = ToNSURL(params->GetSourceUrl())) info[@"imageURL"] = image;
+        }
+        if (NSURL* page = ToNSURL(params->GetPageUrl())) info[@"pageURL"] = page;
+        info[@"selectionText"] = ToNSString(params->GetSelectionText()) ?: @"";
+        info[@"editable"] = @((params->GetTypeFlags() & CM_TYPEFLAG_EDITABLE) != 0);
+        info[@"x"] = @(params->GetXCoord());
+        info[@"y"] = @(params->GetYCoord());
+        return info;
+    }
+
+    static void AddMenuEntries(CefRefPtr<CefMenuModel> model, NSArray<NSDictionary<NSString*, id>*>* items) {
+        for (NSDictionary<NSString*, id>* item in items) {
+            int command = [item[@"id"] intValue];
+            if (command == 0) {
+                model->AddSeparator();
+                continue;
+            }
+            NSString* title = item[@"title"] ?: @"";
+            NSArray* children = item[@"children"];
+            if (children.count) {
+                CefRefPtr<CefMenuModel> submenu = model->AddSubMenu(MENU_ID_USER_FIRST + command, title.UTF8String);
+                AddMenuEntries(submenu, children);
+            } else {
+                model->AddItem(MENU_ID_USER_FIRST + command, title.UTF8String);
+            }
+            model->SetEnabled(MENU_ID_USER_FIRST + command, [item[@"enabled"] boolValue]);
+        }
+    }
+
+    /// Arc's menu (from the delegate) in place of Alloy's, except in editable content, on video,
+    /// audio and plugins, and in a plugin's own menu, which keep Chromium's.
     void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
                              CefRefPtr<CefFrame> frame,
                              CefRefPtr<CefContextMenuParams> params,
                              CefRefPtr<CefMenuModel> model) override {
         KCBrowser* owner = owner_;
         id<KCBrowserDelegate> delegate = owner.delegate;
-        NSURL* link = ToNSURL(params->GetLinkUrl());
-        if (!link || (params->GetTypeFlags() & CM_TYPEFLAG_EDITABLE) ||
-            ![delegate respondsToSelector:@selector(browser:contextMenuItemsForLinkURL:)]) {
+        CefContextMenuParams::MediaType media = params->GetMediaType();
+        if (params->IsCustomMenu() || (media != CM_MEDIATYPE_NONE && media != CM_MEDIATYPE_IMAGE) ||
+            ![delegate respondsToSelector:@selector(browser:contextMenuItemsForParams:)]) {
             return;
         }
-        NSArray<NSDictionary<NSString*, id>*>* items = [delegate browser:owner contextMenuItemsForLinkURL:link];
+        NSArray<NSDictionary<NSString*, id>*>* items = [delegate browser:owner contextMenuItemsForParams:MenuParams(params)];
         if (!items.count) return;
-        for (int page_item : {MENU_ID_BACK, MENU_ID_FORWARD, MENU_ID_PRINT, MENU_ID_VIEW_SOURCE}) model->Remove(page_item);
-        size_t index = 0;
-        for (NSDictionary<NSString*, id>* item in items) {
-            int command = [item[@"id"] intValue];
-            if (command == 0) {
-                model->InsertSeparatorAt(index++);
+        model->Clear();
+        AddMenuEntries(model, items);
+    }
+
+    /// The delegate may answer the menu itself (Kite's test hook): it returns the command to run,
+    /// -1 to cancel, or nil to let Chromium show the menu.
+    static void AppendForTest(CefRefPtr<CefMenuModel> model, NSMutableArray<NSDictionary<NSString*, id>*>* entries) {
+        for (size_t i = 0; i < model->GetCount(); i++) {
+            if (model->GetTypeAt(i) == MENUITEMTYPE_SEPARATOR) {
+                [entries addObject:@{}];
                 continue;
             }
-            NSString* title = item[@"title"] ?: @"";
-            model->InsertItemAt(index, MENU_ID_USER_FIRST + command, title.UTF8String);
-            model->SetEnabledAt(index, [item[@"enabled"] boolValue]);
-            index++;
+            [entries addObject:@{@"id": @(model->GetCommandIdAt(i)),
+                                 @"title": ToNSString(model->GetLabelAt(i)) ?: @"",
+                                 @"enabled": @(model->IsEnabledAt(i))}];
+            if (CefRefPtr<CefMenuModel> submenu = model->GetSubMenuAt(i)) AppendForTest(submenu, entries);
         }
-        // No separator first, last or twice in a row.
-        for (size_t i = model->GetCount(); i-- > 0;) {
-            bool separator = model->GetTypeAt(i) == MENUITEMTYPE_SEPARATOR;
-            bool redundant = i == 0 || i + 1 == model->GetCount() || model->GetTypeAt(i - 1) == MENUITEMTYPE_SEPARATOR;
-            if (separator && redundant) model->RemoveAt(i);
-        }
+    }
+
+    bool RunContextMenu(CefRefPtr<CefBrowser> browser,
+                        CefRefPtr<CefFrame> frame,
+                        CefRefPtr<CefContextMenuParams> params,
+                        CefRefPtr<CefMenuModel> model,
+                        CefRefPtr<CefRunContextMenuCallback> callback) override {
+        KCBrowser* owner = owner_;
+        id<KCBrowserDelegate> delegate = owner.delegate;
+        if (![delegate respondsToSelector:@selector(browser:answerContextMenuForTest:)]) return false;
+        NSMutableArray<NSDictionary<NSString*, id>*>* entries = [NSMutableArray array];
+        AppendForTest(model, entries);
+        NSNumber* pick = [delegate browser:owner answerContextMenuForTest:entries];
+        if (!pick) return false;
+        if (pick.intValue < 0) callback->Cancel();
+        else callback->Continue(pick.intValue, EVENTFLAG_NONE);
+        return true;
     }
 
     bool OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
@@ -572,9 +622,8 @@ class KCClient : public CefClient,
         if (command_id < MENU_ID_USER_FIRST || command_id > MENU_ID_USER_LAST) return false;
         KCBrowser* owner = owner_;
         id<KCBrowserDelegate> delegate = owner.delegate;
-        NSURL* link = ToNSURL(params->GetLinkUrl());
-        if (link && [delegate respondsToSelector:@selector(browser:performContextMenuItem:linkURL:)]) {
-            [delegate browser:owner performContextMenuItem:command_id - MENU_ID_USER_FIRST linkURL:link];
+        if ([delegate respondsToSelector:@selector(browser:performContextMenuItem:params:)]) {
+            [delegate browser:owner performContextMenuItem:command_id - MENU_ID_USER_FIRST params:MenuParams(params)];
         }
         return true;
     }
@@ -860,6 +909,28 @@ class KCClient : public CefClient,
 
 - (void)print {
     if (_browser) _browser->GetHost()->Print();
+}
+
+- (void)copySelection {
+    if (!_browser) return;
+    CefRefPtr<CefFrame> frame = _browser->GetFocusedFrame();
+    if (!frame) frame = _browser->GetMainFrame();
+    if (frame) frame->Copy();
+}
+
+- (void)inspectElementAtPoint:(NSPoint)point {
+    if (!_browser) return;
+    CefWindowInfo windowInfo;
+    CefBrowserSettings settings;
+    CefPoint at((int)point.x, (int)point.y);
+    CefRefPtr<CefBrowserHost> host = _browser->GetHost();
+    if (_devToolsFrontend && host->HasDevTools()) {
+        host->ShowDevTools(windowInfo, nullptr, settings, at);
+        return;
+    }
+    _pendingFrontendScript = nil;
+    _devToolsFrontendLoaded = NO;
+    host->ShowDevTools(windowInfo, new KCDevToolsClient(self), settings, at);
 }
 
 - (void)setForceDark:(BOOL)enabled {

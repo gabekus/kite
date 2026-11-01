@@ -1469,12 +1469,51 @@ ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-stri
   Add Split View pane). WebKit: the image section too (WebKit's Copy Image does the copying). Chromium (Alloy): link
   items replace Alloy's page items (Back, Forward, Print, View Source) when the click is on a link.
 - **Left out:** "Capture Image..." (its action isn't in the evidence); "Customize Page" › Boosts (Boosts aren't in
-  Kite); Copy Link Text.
+  Kite); Copy Link Text (Arc never shows it on a mouse right-click; see the next section).
 - **Inferred / unverified:** what the checks before Split View and Little Arc test (Kite: Split View hidden in Little
   Kite and disabled when the split already has 4 panes; Little Kite hidden in Little Kite and incognito windows);
   Open Link in Incognito Window disabled in incognito (Chromium's `IsOpenLinkOTREnabled`); which side of the
-  focused pane Arc's split opens on. Selection and page-level sections are still WebKit's own (Look Up, Search
-  With Google, Back/Reload…), not Chromium's.
+  focused pane Arc's split opens on. On WebKit the selection and page-level sections are still WebKit's own (Look
+  Up, Search With Google, Back/Reload…); Chromium has Arc's (next section).
+
+### Page, selection and image sections (ArcCore InitMenu, 1 Nov 2026)
+
+Sources: the arm64 slice of ArcCore 1.171 (`lipo -thin arm64`, `objdump --start-address`), titles from
+`en.lproj/locale.pak` (string id → text), `base::Feature` records read from `__DATA` (name pointer, default state
+at +8). Kite runs nothing in Arc; none of this was seen on screen.
+
+- **InitMenu** is ArcCore 0x4281540–0x4282df0. It asks `ContextMenuContentType::SupportsGroup(n)` (vtable +0x10 of
+  the object at +0x5a8) for each group and appends: page (group 1) → link (3) → image (5) → search-for-image (6)
+  → video, audio, canvas, plugin → editable (14) → copy (15) + Copy Link to Highlight → search provider (17,
+  unless the selection is a misspelling or the page is chrome://password-manager) → print (18, not on an
+  image) → extension items → developer (21). A trailing separator is removed (0x4282040).
+- **Page** (AppendPageItems 0x81ccc80): Back (33000, IDS 8911) · Forward (33001, 8912) · Reload (33002, 8924) ·
+  separator · Save As… (35004, 8913) · Print… (35003, 8914). Then Live Caption (feature
+  `LiveCaptionRightClick`, default off), Cast… (media router), Save to Memory (`MemoryBanks`, off), Send to Your
+  Device (sync), Translate (translate service). **Developer** (0x81cde0c): separator · View Page Source (35002,
+  8916, page only) · View/Reload Frame (frames) · Inspect (50162, 8889).
+- **Copy Link Text** (50107, 8951, at 0x4282b3c) is only added when the menu's source type is 3 (touch) and the
+  target isn't an image: never on a Mac right-click.
+- **Selection**: Copy (50150, 8982; AppendCopyItem 0x81cd640 adds a separator first when the menu isn't empty) ·
+  Copy Link to Highlight (8952, link-to-text observer, http/https pages with the `scroll_to_text_fragment_enabled`
+  pref) · the search item (AppendSearchProvider 0x81cd6cc): "Search $1 for “$2”" (9001, the engine's name), or
+  "Go to $1" (9007) when the selection is an address; inserted at index 0 unless the click is on a link, then
+  appended · Print… (35003; "Print Text Selection…" only with the `MenuSimplification`/`DesktopGlowUp` features,
+  both default off). The selection in titles is PrintableSelectionText (0x81cc7c0): 50 characters, cut at a word.
+- **macOS toolkit** (0x422a654, after InitMenu): with a selection and no link, "Look Up “$1”" (50355) at index 0
+  and a separator after it; then with any selection a separator and the "Speech" submenu (148: Start Speaking,
+  Stop Speaking; ui::TextServicesContextMenu 0x8be46c4).
+- **Image**: as above, preceded by a separator after link items. "Load Image" only without image contents;
+  "Search $1 for Image" (9003) when the engine has image search.
+- **Kite (Chromium)**: the whole menu comes from `PageContextMenu.menu(for:host:)` in this order; CEF's own
+  model is kept in editable fields, on video/audio/plugins. Search uses Kite's search engine and opens a
+  foreground tab; Open Image in New Tab a background tab; Look Up shows macOS's dictionary panel at the click;
+  Speech uses NSApplication's `speakString:` as Chromium does; Inspect opens DevTools on the clicked element.
+- **Inferred / left out**: Arc's embedder check of kind 24 (0x81cd8f8, 0x422a7ec) adds "Ask $AppName$ about “$1”"
+  (command 53247) before the search item; what turns it on wasn't traced, and Kite leaves it out. Cast, Translate,
+  Send to Your Device, Save to Memory, Live Caption and Search for Image are left out (Kite has none of those
+  features, and most are off in Arc by default). Copy Link to Highlight writes the selected text (or its first
+  and last three words) without Chromium's uniqueness prefix/suffix.
 ## ⌥⌘-click opens a link in Split View → `LinkClick` (KiteCore) (Arc 1.169 decomp, 1.171 strings, 1 Nov 2026)
 
 - The routing is in `decidePolicyForWebContentFrameNavigation(windowID:windowContentID:action:disposition:modifierFlags:response:)`

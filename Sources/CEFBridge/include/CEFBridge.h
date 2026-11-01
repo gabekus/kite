@@ -144,11 +144,19 @@ NS_SWIFT_UI_ACTOR
 - (void)browser:(KCBrowser *)browser renderProcessDidTerminateWithCode:(int)code;
 /// The status text changed. While the pointer is over a link it's the link's URL; nil when it clears.
 - (void)browser:(KCBrowser *)browser statusMessageDidChange:(nullable NSString *)message;
-/// Arc's link items for a right-click on `url`, top to bottom: dictionaries with "id" (an
-/// NSNumber; 0 is a separator), "title" and "enabled". Nil or empty keeps Chromium's menu.
-- (nullable NSArray<NSDictionary<NSString *, id> *> *)browser:(KCBrowser *)browser contextMenuItemsForLinkURL:(NSURL *)url;
-/// One of those items was chosen, by its "id".
-- (void)browser:(KCBrowser *)browser performContextMenuItem:(NSInteger)itemID linkURL:(NSURL *)url;
+/// The page's right-click menu, top to bottom, for what was clicked (`params`: "linkURL",
+/// "imageURL", "pageURL", "selectionText", "editable", and the point "x", "y" in view points
+/// from the top left): dictionaries with "id" (an NSNumber; 0 is a separator), "title",
+/// "enabled" and optionally "children" (a submenu). Nil or empty keeps Chromium's menu. Not
+/// asked in a plugin's menu or on video and audio.
+- (nullable NSArray<NSDictionary<NSString *, id> *> *)browser:(KCBrowser *)browser
+                                     contextMenuItemsForParams:(NSDictionary<NSString *, id> *)params;
+/// One of those items was chosen, by its "id", with the same `params`.
+- (void)browser:(KCBrowser *)browser performContextMenuItem:(NSInteger)itemID params:(NSDictionary<NSString *, id> *)params;
+/// Test hook: the built menu's entries ("id", "title", "enabled"; an empty dictionary is a
+/// separator; a submenu's entries follow it). Return the "id" to run, -1 to close the menu
+/// without running anything, or nil to show it as usual.
+- (nullable NSNumber *)browser:(KCBrowser *)browser answerContextMenuForTest:(NSArray<NSDictionary<NSString *, id> *> *)entries;
 /// YES for a store install's extension package (.crx): it's saved to a temporary
 /// folder for Chromium's installer and isn't reported as a download.
 - (BOOL)browser:(KCBrowser *)browser
@@ -218,6 +226,10 @@ NS_SWIFT_UI_ACTOR
 - (void)stopFinding;
 /// Chromium's print dialog for the page.
 - (void)print;
+/// Copies the focused frame's selection (Chromium's Copy: rich text and plain text).
+- (void)copySelection;
+/// Opens DevTools (or brings it forward) on the element at `point`, in view points from the top left.
+- (void)inspectElementAtPoint:(NSPoint)point;
 /// Chromium's auto dark mode for this tab's pages.
 - (void)setForceDark:(BOOL)enabled;
 /// The permission stored for `url`'s site in this browser's profile; Default before the
