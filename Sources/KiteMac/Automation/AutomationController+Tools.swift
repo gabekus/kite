@@ -486,6 +486,9 @@ extension AutomationController {
         frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
         frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
         window.setFrame(frame, display: true, animate: false)
+        // Auto Layout can push back (minimum sizes, constraints); report where it settled,
+        // not the size asked for.
+        window.layoutIfNeeded()
         return .text("The window is now \(Int(window.frame.width))×\(Int(window.frame.height)) points.")
     }
 

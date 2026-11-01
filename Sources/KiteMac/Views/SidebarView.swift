@@ -150,6 +150,9 @@ struct SidebarView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        // With a mouse connected macOS shows a legacy scroller, which took 15pt from every pill
+        // and drew a track in the sidebar. Scrolling still works; only the indicator goes.
+        .scrollIndicators(.never)
         .environment(\.defaultMinListRowHeight, 1)
     }
 
