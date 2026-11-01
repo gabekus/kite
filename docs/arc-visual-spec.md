@@ -1194,8 +1194,8 @@ Sources: `~/rea-arc/arc-strings.txt` 73696–73727 (`SiteControlCenterBoostsView
   (`viewBoosts`). Inferred: the footer shows Manage Boosts… / New Boost… only when the site has no Boosts section
   (`SiteControls.includesBoostsInMenu`); none of the Boost parts show in incognito (Boosts don't run there). Arc's
   `boost.sparkle.fill` image isn't copied: Kite uses SF Symbol `wand.and.stars`. Row styling is Kite's existing
-  setting-row style; Arc's pixels weren't read. Toggling doesn't reload the page (CSS/JS apply at the next load;
-  zaps update live).
+  setting-row style; Arc's pixels weren't read. Toggling doesn't reload the page: it goes through
+  `BoostsModel.setEnabled` (#166), so CSS, zaps and styles update live and only JS waits for the next load.
 
 ## Site permission prompt → `PermissionPromptView`, `PermissionPromptCard` (Arc 1.171 binary, 1 Nov 2026)
 
@@ -2322,9 +2322,43 @@ arc-strings.txt; they were read from the `mov`/`movk` immediates in `~/rea-arc/d
   two sides along its axis; four panes take none (validation greys the rest out). The empty pane goes right next to the focused
   one on that side, takes half its share, and gets the command bar, as Add Split View; Esc takes it away again.
   **Inferred:** next to the focused pane (not at the split's far end), half its share, and off-axis sides disabled rather than
-  converting the split. **Not built:** the Split View Controls Menu (needs Arc's pane split button; its Move items are pane
-  rearranging), the sidebar plus menu (Kite's + makes a space directly), and the tab context menu's Add Split View / Open in Split
-  View (no side items there in Arc).
+  converting the split. **Not built:** the tab context menu's Add Split View / Open in Split View (no side items there in Arc).
+  The Split View Controls Menu is the next section; the sidebar plus menu is already Arc's (see "New, edit and delete space").
+
+## Split View: the pane's split button and Split View Controls Menu → `SplitPaneMenu.swift` (KiteCore), `SplitPanesView`, `BrowserWindowController+SplitPaneMenu` (Arc 1.171 AX tree of an incognito window, 1.169 disassembly and decompile, strings, 1 Nov 2026)
+
+Sources: **[ax]** `kite probe Arc tree --window 0 --text` on one incognito window holding a local fixture page
+(127.0.0.1, so Arc showed its top bar); **[dis]** `~/rea-arc/decomp/arc.s`; **[dec]** Ghidra (`decomp/out5/g43-menu.txt`);
+**[str]** arc-strings.txt. Nothing was hovered or clicked in Arc; its menu was never on screen.
+
+- **Where the button is** [ax + str]: each pane has a top bar (`TopBarPanelContainerView`, `Arc/TopBarPanelView.swift`),
+  40pt tall across the pane's card from its top edge. Its last button is **"Split View Menu"**: 28×28, 6pt below the
+  card's top, 5pt in from its right edge (card 289…2046, button 2013…2041 at y 16; buttons 28×28 at y 16 all along).
+  The bar's other buttons were Site Settings, the URL field, Copy Link, Capture Window, Capture, the dev tools trio and
+  Extensions Menu. Strings next to the bar: "Split View Options" / "Split view menu button" with `square.split.2x1`,
+  "Close Split View Pane", "Remove Tab from Split View" (~63030). The bar has a hover tracker
+  (`hoverTracker`, `barHoverRegionID`, `isHovered`) and the pane controller a `TopBarActivationRegion` (~61065); the
+  split-view hover analytics are `split-view-hover-interaction-` select / rightClick / openMenu / separate /
+  addHorizontal / addVertical / copyLink (~80952), flag `split-view-actions-hover-button-enabled`.
+- **Opening** [dec, FUN_10041ef50 in `WindowContentViewController`]: builds the menu from the pane's
+  `contentPanelSplitViewMenuItems` and calls `popUpMenuPositioningItem:nil atLocation:` the mouse location in the pane's view.
+- **Items** [dis, @102ed2c48 maps each `ContentPanelSplitViewMenuItemType` to items]: 0 separator; 1 Move Left + Move
+  Right (`icon-split-move-left/right`); 2 Move Up + Move Down; 3 Add Left + Add Right Split; 4 Add Top + Add Bottom Split;
+  5/6 Separate Tab from Split (icon `icon-separate-from-split` or `…-menu-bottom`); 7/8 "Share Split View…"
+  ("A menuItem to copy a URL to a split view", icons `icon-split-share-vertical/horizontal`); 9/10 Convert to Vertical /
+  Horizontal Split View (`contentPanelFlipSplitOrientationMenuItem`). Each move/add item carries the pane's ID.
+- **Kite:** in a split, each pane's top 40pt band reveals a 28×28 `square.split.2x1` button at Arc's spot; clicking it
+  focuses that pane and pops the menu up at the pointer: Move Left/Right (Up/Down on a top/bottom split) | Add Left/Right
+  (Top/Bottom) Split | Separate Tab from Split | Convert to the other orientation. Move swaps the pane with its neighbour,
+  keeping its share, and the sidebar row follows. Add, Separate and Convert are the existing commands (#126, #103).
+- **Differs / inferred / unverified:** the list of item types per pane wasn't traced (it comes from the store); Kite's
+  order follows the enum and its separators are a guess. Move at an end is disabled (inferred), and a moved pane keeps its
+  share (inferred). Share Split View… is left out: it copies a link to the split (`override-super-copy-on-split-views-for-sharable-links`),
+  which needs Arc's sharing servers. Arc reveals its whole top bar on hover; Kite shows only the split button, with its own
+  fill, corner, symbol size and a 0.15s fade (none measured), and the reveal region (Arc's `TopBarActivationRegion`) is
+  assumed to be the bar's 40pt. Not built: the button on a single page (Arc's bar has it there too; which items it lists
+  wasn't traced). The sidebar plus menu's New Right/Bottom Split: Arc 1.171's live + menu (recorded above, "New, edit and
+  delete space") shows one "New Split ⌘L", which Kite already has; the Right/Bottom pair is another layout in the binary.
 
 ## Installed web apps (PWAs) → `WebApps`, `WebAppInstallability` (KiteCore), `WebAppsController`, `WebAppInstallDialog` (Kite addition; Chrome as the reference, 1 Nov 2026)
 
