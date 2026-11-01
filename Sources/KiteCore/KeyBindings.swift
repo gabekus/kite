@@ -52,6 +52,59 @@ public struct KeyShortcut: Codable, Hashable, Sendable {
     }
 }
 
+/// Who gets a shortcut first when a web page wants the same keys: Arc's
+/// `KeyboardShortcutPriority`, with its raw values, so keybindings.json reads like Arc's
+/// StorableKeyBindings.json.
+public enum KeyShortcutPriority: String, Codable, CaseIterable, Sendable {
+    /// Kite runs the command before the page sees the key.
+    case overrideWebView
+    /// The page gets the key; if it uses it, pressing the shortcut again runs Kite's command.
+    case promptAfterConsumedByWebView
+    /// The page gets the key; Kite runs the command only if the page doesn't use it.
+    case low
+
+    /// The picker's labels (Arc's, inline literals in its ShortcutsPane PriorityPicker).
+    public var title: String {
+        switch self {
+        case .overrideWebView: "Prefer Kite"
+        case .promptAfterConsumedByWebView: "Use Both"
+        case .low: "Prefer Websites"
+        }
+    }
+
+    /// The line under the picker (Arc's strings, "Arc" made "Kite").
+    public var subtitle: String {
+        switch self {
+        case .overrideWebView: "When shortcuts conflict, Kite wins."
+        case .promptAfterConsumedByWebView: "Press this shortcut once to use the website’s shortcut. Press it twice to use Kite’s shortcut."
+        case .low: "When shortcuts conflict, the website wins."
+        }
+    }
+
+    /// Each command's priority as Arc's MainMenu.nib sets it (`arcKeyBindingPriority`), by Kite's
+    /// IDs. Commands Arc sets nothing for, and Kite's own, are `low`, as Arc's are.
+    public static let defaults: [String: KeyShortcutPriority] = {
+        let kiteWins = [
+            "addressBar", "archiveTab", "closeWindow", "copyCurrentURL", "copyCurrentURLAsQuote",
+            "copyCurrentURLAsMarkdown", "nextRecentTabItem", "goBack", "goForward", "hideKite", "minimize",
+            "newIncognitoWindow", "newTab", "newWindow", "quitKite", "reopenClosedTab", "nextTab", "previousTab",
+            "newLittleBrowserWindow",
+        ]
+        let both = [
+            "addSplitView", "developerTools", "fullscreen", "inspectElements", "pinTab", "printPage",
+            "removeSplitView", "toggleSidebar", "toggleDeveloperMode", "toggleToolbar", "viewSource",
+        ]
+        var table: [String: KeyShortcutPriority] = [:]
+        for id in kiteWins { table[id] = .overrideWebView }
+        for id in both { table[id] = .promptAfterConsumedByWebView }
+        return table
+    }()
+
+    public static func defaultPriority(for action: String) -> KeyShortcutPriority {
+        defaults[action] ?? .low
+    }
+}
+
 /// A user's change to one command's shortcut. `shortcut == nil` removes it.
 public struct KeyBindingOverride: Codable, Hashable, Sendable {
     public enum Source: String, Codable, Sendable {
@@ -64,11 +117,25 @@ public struct KeyBindingOverride: Codable, Hashable, Sendable {
     public var action: String
     public var shortcut: KeyShortcut?
     public var source: Source
+    /// Who wins when a page wants the same keys; nil keeps the command's default.
+    public var priority: KeyShortcutPriority?
 
-    public init(action: String, shortcut: KeyShortcut?, source: Source = .user) {
+    public init(action: String, shortcut: KeyShortcut?, source: Source = .user, priority: KeyShortcutPriority? = nil) {
         self.action = action
         self.shortcut = shortcut
         self.source = source
+        self.priority = priority
+    }
+
+    private enum CodingKeys: String, CodingKey { case action, shortcut, source, priority }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        action = try c.decode(String.self, forKey: .action)
+        shortcut = try c.decodeIfPresent(KeyShortcut.self, forKey: .shortcut)
+        source = try c.decode(Source.self, forKey: .source)
+        // Files from before priorities have none; a value this build doesn't know keeps the default.
+        priority = (try? c.decodeIfPresent(KeyShortcutPriority.self, forKey: .priority)) ?? nil
     }
 }
 
@@ -92,6 +159,24 @@ public struct KeyBindings: Codable, Equatable, Sendable {
     public mutating func set(_ override: KeyBindingOverride) {
         userOverrides.removeAll { $0.action == override.action }
         userOverrides.append(override)
+    }
+
+    /// Changes a command's shortcut, keeping any priority the user chose for it.
+    public mutating func setShortcut(_ shortcut: KeyShortcut?, for action: String, source: KeyBindingOverride.Source = .user) {
+        set(KeyBindingOverride(action: action, shortcut: shortcut, source: source, priority: override(for: action)?.priority))
+    }
+
+    /// Changes a command's priority. `shortcut` is the one it has now, which the override keeps,
+    /// as Arc's does (an Arc override always holds the shortcut along with the priority).
+    public mutating func setPriority(_ priority: KeyShortcutPriority, for action: String, shortcut: KeyShortcut?) {
+        let existing = override(for: action)
+        let keep = priority == KeyShortcutPriority.defaultPriority(for: action) ? nil : priority
+        set(KeyBindingOverride(action: action, shortcut: existing?.shortcut ?? shortcut, source: existing?.source ?? .user, priority: keep))
+    }
+
+    /// The command's priority: the user's, else its default.
+    public func priority(for action: String) -> KeyShortcutPriority {
+        override(for: action)?.priority ?? KeyShortcutPriority.defaultPriority(for: action)
     }
 
     public mutating func reset(_ action: String) {

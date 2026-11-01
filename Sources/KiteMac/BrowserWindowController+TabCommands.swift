@@ -16,6 +16,14 @@ extension BrowserWindowController {
         showToast(cleared.count == 1 ? "Archived 1 tab" : "Archived \(cleared.count) tabs")
     }
 
+    /// The Today divider's Clear button. Arc's `clearOthers` mode (the selected tab is one of
+    /// several Today tabs) keeps the selected tab; otherwise it's Clear Today.
+    func clearFromTodayDivider(inSpace spaceID: UUID) {
+        let cleared = store.mutate { $0.clearUnselectedToday(inSpace: spaceID) }
+        if cleared.isEmpty { return NSSound.beep() }
+        showToast(cleared.count == 1 ? "Archived 1 tab" : "Archived \(cleared.count) tabs")
+    }
+
     /// Tabs › Reveal Tab in Sidebar: shows the sidebar, opens the folders the tab is in and
     /// scrolls its row into view.
     @objc func revealTabInSidebar(_ sender: Any?) {
@@ -65,6 +73,13 @@ extension BrowserWindowController {
     /// "Edit Pinned Page › Replace Pinned URL with Current".
     func replacePinnedURLWithCurrent(_ id: UUID) {
         if !store.mutate({ $0.replacePinnedURLWithCurrent(id) }) { NSSound.beep() }
+    }
+
+    /// Arc's command-bar action `replacePinnedTab`, "Replace Pin with Current Page": the selected pinned
+    /// tab's (or favorite's) page becomes its pinned URL, as Edit Pinned Page › Replace Pinned URL with Current.
+    @objc func replacePinWithCurrentPage(_ sender: Any?) {
+        guard let id = store.state.selectedTab?.id else { return NSSound.beep() }
+        replacePinnedURLWithCurrent(id)
     }
 
     /// Tabs › Reset all tabs in this Space.

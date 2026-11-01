@@ -231,6 +231,7 @@ struct SidebarView: View {
                         showsLine: !space.pinnedItems.isEmpty,
                         canTidy: canTidy,
                         canClear: canClear,
+                        clearAction: store.state.todayClearAction(inSpace: space.id),
                         isTidying: store.tidyingSpaceIDs.contains(space.id),
                         onTidy: { actions.tidyTabs(space.id) },
                         onClear: { actions.clearToday(space.id) })
@@ -387,6 +388,7 @@ struct SidebarView: View {
             isSelected: selected,
             depth: depth,
             isRenaming: store.renamingTabID == tab.id,
+            aiRename: store.aiRenames[tab.id],
             onSelect: { store.mutate { $0.select(tab: tab.id) } },
             onClose: { actions.closeTab(tab.id) },
             onTogglePin: { store.mutate { $0.togglePin(tab: tab.id) } },
@@ -1059,11 +1061,14 @@ private struct FavoriteTile: View {
 /// The line between pinned and Today tabs, with Arc's Tidy and Clear buttons at its right end
 /// (UnpinnedSectionDividerCellView: line, Tidy, Clear). Both fade in while the pointer is on the
 /// row (Arc: ease-out 0.1 s alpha). Tidy ("Tidy", tooltip "Organize Today Tabs") turns while
-/// Claude works; Clear ("↓ Clear", tooltip "Clear Today tabs") runs Clear Today for this space.
+/// Claude works; Clear ("↓ Clear", tooltip "Clear Today tabs") runs Clear Today for this space,
+/// or, when the selected tab is one of several Today tabs, drops the arrow ("Clear unselected
+/// Today tabs") and keeps that tab (Arc's `clearOthers`).
 private struct TodayDivider: View {
     let showsLine: Bool
     let canTidy: Bool
     let canClear: Bool
+    var clearAction: TodayClearAction = .clearAll
     let isTidying: Bool
     let onTidy: () -> Void
     let onClear: () -> Void
@@ -1082,8 +1087,8 @@ private struct TodayDivider: View {
                 }
                 if canClear, hovering {
                     Button(action: onClear) { EmptyView() }
-                        .buttonStyle(ClearButtonStyle())
-                        .help("Clear Today tabs")
+                        .buttonStyle(ClearButtonStyle(showsArrow: clearAction == .clearAll))
+                        .help(clearAction == .clearAll ? "Clear Today tabs" : "Clear unselected Today tabs")
                         .accessibilityLabel("Clear")
                         .transition(.opacity)
                 }
@@ -1131,12 +1136,17 @@ private struct TodayDivider: View {
 /// Pressing it dims it and drops the arrow 3 pt (0.175 s); releasing puts the arrow back, and
 /// the click counts only if the pointer is still on the button (an ordinary button release).
 private struct ClearButtonStyle: ButtonStyle {
+    /// Arc's `clearOthers` mode sets no image.
+    var showsArrow = true
+
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 2) {
-            Image(systemName: "arrow.down")
-                .font(.system(size: 11, weight: .bold))
-                .offset(y: configuration.isPressed ? 3 : 0)
-                .animation(.easeInOut(duration: 0.175), value: configuration.isPressed)
+            if showsArrow {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 11, weight: .bold))
+                    .offset(y: configuration.isPressed ? 3 : 0)
+                    .animation(.easeInOut(duration: 0.175), value: configuration.isPressed)
+            }
             Text("Clear")
                 .font(.system(size: 11, weight: .semibold))
         }
@@ -1311,6 +1321,8 @@ private struct TabRow: View {
     let isSelected: Bool
     var depth = 0
     var isRenaming = false
+    /// A Tidy Tab Titles name that just landed: the title wipes over from the old one.
+    var aiRename: BrowserStore.AIRename?
     let onSelect: () -> Void
     let onClose: () -> Void
     let onTogglePin: () -> Void
@@ -1334,6 +1346,7 @@ private struct TabRow: View {
     var icon: URL?
     @State private var hovering = false
     @State private var draft = ""
+    @State private var titleWidth: CGFloat = 0
     @FocusState private var fieldFocused: Bool
 
     private var showsAudio: Bool { TabAudioButton.isShown(isAudible: isAudible, isMuted: isMuted) }
@@ -1360,6 +1373,9 @@ private struct TabRow: View {
                         fieldFocused = true
                     }
                     .onChange(of: fieldFocused) { _, focused in if !focused { onCommitRename(draft) } }
+            } else if let aiRename {
+                AIRenameTitle(oldTitle: aiRename.oldTitle, newTitle: tab.displayTitle, start: aiRename.start)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { titleWidth = $0 }
             } else {
                 Text(tab.displayTitle)
                     .font(.system(size: M.tabFontSize))
@@ -1399,6 +1415,9 @@ private struct TabRow: View {
         .padding(.trailing, 6)
         .frame(height: M.pillHeight)
         .modifier(TabPillFill(isSelected: isSelected, isHovered: hovering))
+        .overlay {
+            if let aiRename { AIRenameSparks(start: aiRename.start, titleWidth: titleWidth) }
+        }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onSelect)
@@ -1423,6 +1442,93 @@ private struct TabRow: View {
             Button(isPinned ? "Unload Tab" : "Close Tab", action: onClose)
         }
     }
+}
+
+private typealias TitleAnimation = TidyTabTitleAnimation
+
+/// Arc's AnimatedGradientView on a tab row: the old title fades out and the new one in behind a
+/// soft edge that sweeps left to right (0.5 s, linear). Each is masked by a linear gradient from
+/// (-1.5, 0.5) to (1.5, 0.5) whose start and end x move to 1 and 3; stops at
+/// [0, w/(2w+70), (w+70)/(2w+70), 1], opaque-to-clear for the new title, the reverse for the old.
+private struct AIRenameTitle: View {
+    let oldTitle: String
+    let newTitle: String
+    let start: Date
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let progress = context.date.timeIntervalSince(start) / TitleAnimation.duration
+            ZStack(alignment: .leading) {
+                // Both masks span the whole title area, as Arc's one gradient view does.
+                label(oldTitle).frame(maxWidth: .infinity, alignment: .leading)
+                    .mask { mask(progress, newTitle: false) }
+                label(newTitle).frame(maxWidth: .infinity, alignment: .leading)
+                    .mask { mask(progress, newTitle: true) }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(newTitle)
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: M.tabFontSize))
+            .opacity(M.tabTextOpacity)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func mask(_ progress: Double, newTitle: Bool) -> some View {
+        GeometryReader { geometry in
+            let s = TitleAnimation.stops(width: geometry.size.width)
+            let x = TitleAnimation.gradientX(progress: progress)
+            let on = Color.white, off = Color.white.opacity(0)
+            LinearGradient(
+                stops: [
+                    .init(color: newTitle ? on : off, location: s[0]),
+                    .init(color: newTitle ? on : off, location: s[1]),
+                    .init(color: newTitle ? off : on, location: s[2]),
+                    .init(color: newTitle ? off : on, location: s[3]),
+                ],
+                startPoint: UnitPoint(x: x.start, y: 0.5),
+                endPoint: UnitPoint(x: x.end, y: 0.5))
+        }
+    }
+}
+
+/// Arc's SparksView over a renamed tab's row: an emitter runs along the row's middle from left
+/// to right during the wipe, throwing small sparks every way that fall, shrink and fade
+/// (lifetime 1 s, 100 ± 30 pt/s, gravity 200 pt/s², 75 × row/title width per second).
+private struct AIRenameSparks: View {
+    let start: Date
+    let titleWidth: CGFloat
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let time = context.date.timeIntervalSince(start)
+            Canvas { canvas, size in
+                // Arc's sparks aren't clipped to the cell; the canvas reaches `spill` past the row.
+                let rowWidth = Double(size.width - 2 * Self.spill), rowHeight = Double(size.height - 2 * Self.spill)
+                let title = Double(titleWidth > 0 ? titleWidth : size.width)
+                let count = TitleAnimation.sparkCount(rowWidth: rowWidth, titleWidth: title)
+                for index in 0..<count {
+                    guard let spark = TitleAnimation.spark(
+                        index: index, time: time, rowWidth: rowWidth, rowHeight: rowHeight, titleWidth: title)
+                    else { continue }
+                    let rect = CGRect(
+                        x: spark.x - spark.size / 2 + Self.spill, y: spark.y - spark.size / 2 + Self.spill,
+                        width: spark.size, height: spark.size)
+                    canvas.fill(Path(ellipseIn: rect), with: .color(.primary.opacity(spark.opacity * M.tabTextOpacity)))
+                }
+            }
+        }
+        .padding(-Self.spill)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private static let spill: CGFloat = 60
 }
 
 /// Arc's "Edit Pinned Page" submenu on a pinned tab or favorite (SidebarMenu+TabContextMenu,

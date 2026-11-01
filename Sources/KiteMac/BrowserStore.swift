@@ -75,6 +75,23 @@ final class BrowserStore {
     var tidyingSpaceIDs: Set<UUID> = []
     /// Instant Links at work, newest first: each shows a row at the top of its space's Today.
     var instantLinksRows: [InstantLinks.Pending] = []
+    /// Tidy Tab Titles names that just landed: the row wipes from the old title to the new one,
+    /// with sparks (Arc's TabCellView.isAnimatingAiRename). Keyed by tab, with the old title.
+    private(set) var aiRenames: [UUID: AIRename] = [:]
+
+    struct AIRename: Equatable {
+        let oldTitle: String
+        let start: Date
+    }
+
+    /// Plays the rename animation on a tab's row, then forgets it once the sparks are gone.
+    func animateAIRename(_ id: UUID, from oldTitle: String) {
+        let rename = AIRename(oldTitle: oldTitle, start: Date())
+        aiRenames[id] = rename
+        DispatchQueue.main.asyncAfter(deadline: .now() + TidyTabTitleAnimation.totalDuration) { [weak self] in
+            if self?.aiRenames[id] == rename { self?.aiRenames[id] = nil }
+        }
+    }
 
     @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored var onPageChange: ((UUID) -> Void)?
