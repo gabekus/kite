@@ -53,7 +53,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Close Window | ⇧⌘W | ✅ | |
 | Archive Tab | ⌘W | ✅ "Archive Tab" (`archiveTab`); closed unpinned tabs go to the archive. "Undo Archive Tab" (⌘Z) still to do | B3 |
 | Share… | | ✅ | |
-| Capture… / Full Page / Portrait | | ❌ | Thread: Capture |
+| Capture… / Full Page / Portrait | (none) | 🟡 Capture… (`capturePage`) and Capture Full Page (`captureFullPage`); Portrait Mode, click-to-capture an element and ⌘⇧-drag still to do | Thread: Capture |
 | Save Page As | | ✅ MHTML (Chromium) / web archive (WebKit) | |
 | Print | ⌘P | 🟡 Chromium's print opens its own window, no preview | Later: AppKit print sheet with preview |
 
@@ -178,7 +178,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Developer Mode | Per-site: URL bar shows localhost info, console pane | ❌ | Thread: Developer Mode |
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
-| Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
+| Capture | Screenshot tool for an area/full page | 🟡 Area (drag) and full page: Copy / Save; no Easels, no Portrait Mode | Thread: Capture |
 | Library | Downloads, archive, easels, media, boosts in one window | ❌ | Thread: Library |
 | Air Traffic Control | Rules to route links from other apps to a space | ❌ | Thread: Little Arc / routing |
 | Live folders | GitHub PRs/issues, RSS etc. as an auto-updating folder | ❌ | Later |

@@ -617,6 +617,42 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Kite has no link routing yet, so it isn't imported.
 
+## Capture → `CaptureOverlayView`, `BrowserWindowController+Capture`, `KiteCore/Capture` (Arc 1.171, 1 Nov 2026)
+
+Nothing in Arc was pressed or watched: menu bar read through AX, the rest from the binary, its strings and
+ARC_Capture.bundle's asset catalog. Line numbers are `~/rea-arc/arc-strings.txt`; addresses are Arc-arm64.
+
+- Menu: File › Share…, Capture…, Capture Full Page, Capture in Portrait Mode, Save Page As, Print, no
+  shortcuts (menudump). Shortcut ids `capturePage`, `captureFullPage` (34939, 34995, in the shortcut-id list
+  beside `addSplitView`, `archiveTab`); descriptions "Capture a part of the page, then save it or add it to an
+  Easel.", "Capture full page.", "Capture in Portrait Mode." (80669–80754). Also "Hold Command and Shift to
+  start a Capture." (80630, setting `dragToCaptureDisabled`).
+- Area: tooltips "Click or drag to capture a portion of this page" / "Drag to capture a portion of this page"
+  (79199–79202) in `ContentCaptureOverlayBubble`; views `ContentCaptureView`, `DimmedBackgroundView`; cursor
+  image `camera-cross-cursor` (53×50 pt). Colour assets (ARC_Capture.bundle): BlurredBackground light white
+  33%, dark black 25%; OverlayBubbleBlue P3 (0, 0.278, 1, 0.5); OverlayBubblePink P3 (1, 0.6, 0.6, 0.5);
+  OverlayBubbleText P3 (0.204, 0.021, 0.58); ImageViewBackground white / sRGB (0.082, 0.11, 0.188);
+  Background white / (0.071, 0.059, 0.18). Clicking captures a hovered element
+  (`WebContentState+HoveredCapture.swift`).
+- After an area capture Arc shows `contentCapturePopover` (`ContentCaptureViewController`: `CapturedImageView`,
+  `CapturedImageActionsView`, `CaptureImageMenuView` for Easels). Action descriptions: copy, save as a file,
+  send via iMessage, retake, edit (62280–62287). Copy toast "Copied Image" (immediate string at 0x1018e4b10,
+  case `captureCopied`).
+- Save (FUN_100421970): `NSSavePanel` sheet, PNG only, title "Save Capture Image", name "Capture-" +
+  `yyyy-MM-dd-HHmmss` + ".png".
+- Full page (`handleCaptureAction(_:)` in WindowState+Capture.swift, from 0x1001ffbec): toast "Capture in
+  Progress", a Combine delay `FullPageCaptureDelay` of 0.5 s (0x100201f54), the PNG written to
+  `NSFileManager.temporaryDirectory` + a name built from the title with `[^a-zA-Z0-9\-_ ]` removed and the
+  date format `'·' h.mma '·' MM-dd`, then toast "Screenshot Copied to Clipboard" with a button "to save the
+  screenshot copied to a file" (76207–76209); failures "Failed to Save" (`failedToSaveCaptureToDisk`).
+- Portrait Mode: settings `portraitCaptureBackground` ("Use Website Color" / "Use Desktop Wallpaper"),
+  `portraitCaptureColorPercentage`, `portraitCaptureHidesWatermark`, image `ArcCaptureWatermark`; its frame,
+  padding and output size weren't found, so Kite doesn't have it yet.
+- Inferred, not seen: how the title and date join in the full-page name (Kite: "Title · 3.45PM · 11-01.png"),
+  the Save button's title (Kite: "Save"), that the clipboard gets the image and the file, the popover's layout and
+  button styles, the selection outline (Kite: 1 pt white 90%), where the hint bubble sits, and what the 0.5 s
+  delay is for.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
