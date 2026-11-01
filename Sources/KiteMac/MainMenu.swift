@@ -175,6 +175,7 @@ enum MainMenu {
             // Arc's File menu: Capture…, Capture Full Page (no shortcuts; ids from Arc's shortcut table).
             item("Capture…", #selector(BrowserWindowController.capturePage(_:)), id: "capturePage"),
             item("Capture Full Page", #selector(BrowserWindowController.captureFullPage(_:)), id: "captureFullPage"),
+            item("Capture in Portrait Mode", #selector(BrowserWindowController.capturePortraitMode(_:)), id: "capturePortraitMode"),
             // "Save Page As", no ellipsis, as in Arc 1.171's File menu.
             keywords(item("Save Page As", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"), ["Save Page", "Save File"]),
             // A Kite addition (Arc has no installed apps): Chrome's "Install page as app…", for the current site.
@@ -459,6 +460,7 @@ enum MainMenu {
             .separator(),
             submenuItem("Troubleshooting", [
                 // Arc: Record Trace, Open Task Manager, —, Reveal Arc Data, Copy Arc Info (no shortcuts).
+                item("Record Trace", #selector(BrowserWindowController.recordTrace(_:)), id: "recordTrace"),
                 item("Open Task Manager", #selector(BrowserWindowController.openTaskManager(_:)), id: "openTaskManager"),
                 .separator(),
                 item("Reveal Kite Data", #selector(BrowserWindowController.revealDataFolder(_:)), id: "revealKiteData"),

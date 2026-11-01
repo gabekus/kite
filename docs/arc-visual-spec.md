@@ -1074,13 +1074,77 @@ ARC_Capture.bundle's asset catalog. Line numbers are `~/rea-arc/arc-strings.txt`
   `NSFileManager.temporaryDirectory` + a name built from the title with `[^a-zA-Z0-9\-_ ]` removed and the
   date format `'·' h.mma '·' MM-dd`, then toast "Screenshot Copied to Clipboard" with a button "to save the
   screenshot copied to a file" (76207–76209); failures "Failed to Save" (`failedToSaveCaptureToDisk`).
-- Portrait Mode: settings `portraitCaptureBackground` ("Use Website Color" / "Use Desktop Wallpaper"),
-  `portraitCaptureColorPercentage`, `portraitCaptureHidesWatermark`, image `ArcCaptureWatermark`; its frame,
-  padding and output size weren't found, so Kite doesn't have it yet.
+- Portrait Mode: see "Capture in Portrait Mode" below (g83).
 - Inferred, not seen: how the title and date join in the full-page name (Kite: "Title · 3.45PM · 11-01.png"),
   the Save button's title (Kite: "Save"), that the clipboard gets the image and the file, the popover's layout and
   button styles, the selection outline (Kite: 1 pt white 90%), where the hint bubble sits, and what the 0.5 s
   delay is for.
+
+## Capture in Portrait Mode → `BrowserWindowController+PortraitCapture`, `PortraitCaptureView`, `KiteCore/PortraitCapture` (Arc 1.171, g83, 1 Nov 2026)
+
+Nothing in Arc was pressed or captured: strings, Ghidra (read-only project, output in
+`~/rea-arc/decomp/out-g83/`), and asset catalogs. Line numbers are `~/rea-arc/arc-strings.txt`.
+
+- Menu: File › Capture in Portrait Mode, no shortcut, after Capture Full Page (menudump). Command id
+  `capturePortraitMode` (164100, 172028), selector `capturePrettyScreenshot:` on MainWindowController
+  (0x10031d178), description "Capture in Portrait Mode." (80671). The site control center has the same action
+  ("Tooltip for the capture in Portrait Mode button", 73694).
+- UI types (ContentPanel module, 38027–38033): `WindowScreenshotPopoverContent`, `WindowScreenshotPreviewImage`,
+  `WindowScreenshotColorSlider`, `CircularSelectionButton`, `WindowScreenshotWatermarkToggle`; view model
+  `WindowScreenshotViewModel` with `currentColor`, `sliderPercentage`, `showWatermark`, `background`,
+  `webContentTintColor`, `wallpaperImage`, `snapshotImage`, `onTakeScreenshot`. Buttons "Use Website Color" /
+  "Use Desktop Wallpaper" and "Portrait Capture Watermark Toggle" (73764–73768).
+- Settings (user defaults, 64159–64161): `portraitCaptureBackground` (an optional Bool: false = slider colour,
+  true = website colour, unset = desktop wallpaper, so the wallpaper is the default; view-model init
+  FUN_1013a7334), `portraitCaptureColorPercentage` (Double, written through a 0.05 s throttle),
+  `portraitCaptureHidesWatermark` (Bool; the watermark shows by default).
+- Colour (FUN_1013a7940, FUN_1013aea84): slider → nine colours `ColorPickerBrand1…9` (ARCClients_BaseAssets
+  Assets.car: sRGB (0.95, 0.918, 0.894), (0.95, 0.608, 0.733), (0.651, 0.447, 0.616), (0.949, 0.369, 0.42);
+  extended linear sRGB (1, 0.235, 0.097); P3 (0.95, 0.84, 0.428), (0.451, 0.897, 0.612), (0.496, 0.721, 0.838),
+  (0.401, 0.404, 0.527)); index ⌊p·8⌋, blended with the next by the remainder. Website: the page's tint, else
+  the slider colour at 0.95. Wallpaper: black under the wallpaper image.
+- Preview (FUN_1013aaf20, FUN_1013abe34): the backdrop is the colour with the colour turned +30° and −30° in
+  hue (FUN_1009a4820 rotates hue by degrees/360), 8 pt corners; the snapshot is resizable at its own aspect
+  ratio, clipped to a continuous rounded rectangle, stroked white 40%, shadowed black 15% radius 4. The
+  watermark toggle (FUN_1013aab28): 6 pt continuous corners, ultra-thin material, image
+  `window-screenshot-watermark-on/off` (24×24), opacity 1 hovered / 0.2. Watermark art `ArcCaptureWatermark`
+  254×32 SVG (Arc's main Assets.car).
+- After the shot: "Screenshot Copied to Clipboard" with a save button (76207–76209), as Capture Full Page.
+- Kite: the visible page (the page's own capture, both engines) with a margin of 6% of its longer side,
+  corner radius ¼ of the margin, the same white 40% edge and black 15% shadow, Kite's own "Kite" wordmark in
+  the bottom margin (Arc's art is not copied), Copy in the popover (Arc's `onTakeScreenshot`), PNG + file on
+  the clipboard, toast with Save (sheet "Save Capture Image"). The website colour is measured from the top rows
+  of the snapshot (Arc's `webContentTintColor` source wasn't traced).
+- Not found / Kite's choice: the output's margin, corner radius and size; whether Arc captures the web content
+  or the whole window (the type names say "window", `snapshotImage` lives in the content panel; Kite takes
+  the page); the direction of the two hue gradients; the slider's look (Arc has a `StripesConfig`, −45°,
+  15/15, colour at 30% alpha, meaning untraced); the popover's layout and the Copy button's title.
+
+## Record Trace → `TraceRecorderWindow`, `KCRuntime (Tracing)`, `KiteCore/TraceRecording` (Arc 1.171, g84, 1 Nov 2026)
+
+Strings, disassembly (`~/rea-arc/decomp/arc.s`) and Ghidra (out-g83/trace.txt); Arc wasn't touched.
+
+- Menu: Help › Troubleshooting › Record Trace, first, no shortcut, enabled (menudump).
+- Window (TracingWindowController init, decompiled in out-g83/trace.txt): `NSWindow(contentRect: 0,0,360,400, styleMask 0x800f` =
+  titled, closable, miniaturizable, resizable, full-size content view), title "Record Trace" (localized, small
+  string), not opaque, centred, frame autosaved as ".tracingWindowAutosaveFrame".
+- Editor (TraceConfigurationEditor.swift): "What's the issue you've been seeing?", "How long should the trace
+  last?" with four durations "5 seconds", "15 seconds", "30 seconds", "1 minute" (FUN_102d9677c), button
+  "Start Tracing" (FUN_102d9c7fc), and "Before starting, be sure to close out of any tabs with URLs you aren't
+  comfortable sharing with our team." Countdown labels " second remaining" / " seconds remaining" (76359–76363).
+- Recording (ADK/TracingControllerChromium.swift, 63386–63396): `start(traceDir:tracingDuration:additionalSample
+  PIDs:privacyFilteringEnabled:compressIntoZip:)`, file `trace_log.perfetto-trace.gz`, `sample` run on PIDs,
+  `heap` into heap.txt, the folder `arc_trace_bundle_` + `yyy-MM-dd_HH-mm-ss` zipped, then uploaded to
+  Filestack (84668, 84682–84684) with toasts "We've received the trace…", "We've cancelled your trace.",
+  "Trace upload failed…" (76194–76202).
+- Kite: the same window, prompts, durations and button; Chromium's own tracing (CefBeginTracing with its
+  default categories, CefEndTracing to `trace.json`), `/usr/bin/sample` of Kite's process for the duration,
+  and `description.txt` (the issue, duration, versions), in Kite Data/Traces/kite_trace_bundle_<date>.
+  Nothing is uploaded: the window ends on "Saved to …" with Show in Finder, and the warning says the trace
+  stays on the Mac. Cancel (and closing the window mid-trace) discards it. Disabled on WebKit (no tracing API).
+- Not found / Kite's choice: the default duration (Kite: 15 seconds), the window's layout and what it shows while
+  tracing (Kite: countdown, progress bar, Cancel), Arc's trace categories and privacy filter, the heap capture
+  and zip (Kite leaves them out; nothing is uploaded, so there's nothing to zip).
 
 ## Developer Mode for a site, ⌃D (Arc 1.171 menu bar, strings, assets and defaults key names, 1 Nov 2026)
 
@@ -2656,6 +2720,39 @@ Nothing in Arc was pressed or run. Decompiles (Ghidra, read-only project) are un
   through a temporary hook, called `NSHapticFeedbackManager.perform(.generic, .now)` with the key unset and skipped it with
   `tabReorderingHapticsDisabled` true. A haptic can't be felt in a test, and a real sidebar drag can't run in the background.
 
+## Settings › Profiles › "Search Settings…" → `SearchEnginesPageView`, `SiteSearchDraft` (KiteCore) (Arc 1.171 strings and ArcCore locale.pak, 1 Nov 2026)
+
+- **What Arc does** [bin]: the Profiles pane's "Manage search" row (pane-2 AX tree: button "Search Settings…") calls
+  `onManageSearchEnginesTapped`, which opens `arc://settings/searchEngines` (arc-strings.txt ~69087, 83313; the route
+  table at ~63381 lists `settings/searchEngines` beside `settings/privacy`, `settings/payments` …). That is
+  Chromium's own "Manage search engines and site search" page in a new tab, not an Arc sheet.
+- **Wording** [pak]: Chromium's strings in Arc's `ArcCore.framework/Resources/en.lproj/locale.pak`: "Manage search
+  engines and site search", "Search engines", "Site search", "Add site search", "Edit site search", "Shortcut",
+  "URL with %s in place of query", "$1 (Default)", "Make default", "Other saved search engines will appear here",
+  "To search a specific site or part of $AppName$, type its shortcut in the address bar, followed by your
+  preferred keyboard shortcut."
+- **Kite**: a native internal page, `kite://search-engines`, over Kite's Site Search store (Arc's 19 seeded
+  defaults + Arc import): a "Search engines" card (Kite's four engines, the default marked "(Default)", ⋯ menu
+  with Make default) and a "Site search" card (Add; rows with favicon, name, URL, shortcut, ⋯ menu Edit / Delete).
+  Add / Edit open an in-page dialog like Chromium's: Name, Shortcut, URL with %s; a problem shows under its field
+  (empty, shortcut with a space, shortcut already used by another entry, URL not http(s) with %s). Editing an
+  entry's URL drops its brand chip colour so the command bar uses the new site's favicon colour.
+- **Differs**: Chromium's page sizes and colours weren't measured (no capture of `arc://settings/searchEngines`);
+  Kite's cards follow its Site Settings page. Kite's engines have no shortcuts, so the Search engines blurb is only
+  "You can change your default search engine here."; no Inactive shortcuts section (Kite has no
+  extension/visited-site engines), no delete confirmation, no filter field.
+
+## Settings › General › "Previews Settings…" (g102, skipped) (Arc 1.171 strings, defaults key names, 1 Nov 2026)
+
+- Arc's button opens `PreferencesFeature/PreviewSettingsDialog.swift` (arc-strings.txt ~80550): "Show Arc Previews:",
+  the blurb "Save a click! Hover your mouse over an Arc Folder, Pinned, or Favorited tab to quickly preview what you
+  need from that site!", and per-source switches ("Outlook Calendar", "Recent pages on Linear, Notion, and Figma" sit
+  with it; the defaults keys beside them are `folderPreviewEnabled`, `calendarPreviewEnabled`, `gmailPreviewEnabled`,
+  `outlookCalendarPreviewEnabled`, `outlookEmailPreviewEnabled`, `notionCalendarPreviewEnabled`,
+  `recentPagesPreviewEnabled`). These are the sidebar hover previews ("Previews" row in arc-parity, not built); the
+  ⇧-hover link card is Max's "5-Second Previews" (`hoverCardsEnabled`). Kite has none of these previews, so the
+  button stays disabled. Dialog layout and row order not recorded (opening it needs a click in Arc).
+
 ## Settings › Links: Little Arc rows → `LittleKite` (KiteCore), `LittleKiteHotkey`, `LinksPane` (Arc 1.171 AX tree, defaults key names, strings and disassembly, 1 Nov 2026)
 
 - **Defaults.** Arc's keys are `globalLittleBrowserHotkeyEnabled`, `optionCommandClickLittleArcEntryPointEnabled` and
@@ -2706,3 +2803,32 @@ Read from Arc's compiled `Base.lproj/MainMenu.nib` (control connectors: action, 
   only, in both browsers. Nothing to build.
 - **Substitutions › Data Detectors**, between Smart Links and Text Replacement: `toggleAutomaticDataDetection:` to
   the first responder. Page views don't take it; AppKit text fields do.
+
+## Profile settings › Download location and search suggestions → `ProfileSettings`, `SearchSuggestions` (KiteCore), `DownloadLocation`, `SearchSuggestionFetcher`, `DownloadLocationPicker` (Arc 1.171 strings, disassembly and decompile, Settings AX recording; 1 Nov 2026)
+
+- **Per profile** [str]: Arc's profile preferences state (arc-strings.txt 171378–171395) holds
+  `getNonIncognitoBrowserContext`, `defaultSearchEngine`, `searchSuggestEnabled`, `downloadFilePath`,
+  `promptForDownloadFilePath` with actions `onSetSearchSuggestEnabled`, `onDidChangeFileDownloadPath`,
+  `onDidSetPromptForFileDownloadPath` (the selector `setSearchSuggestEnabled:` is on Arc's browser context). These are
+  the profile's Chromium prefs, so Kite keeps them per profile (`BrowserState.profileSettings`, by the profile's
+  `dataStoreID`); an incognito window uses the default profile's, as Arc reads the non-incognito context.
+- **Rows** [AX, ~/rea-arc/settings/pane-2.txt]: "Include search engine suggestions" is an AXCheckBox/AXToggle at
+  584,244 26×15 (value 1 in Gabe's Arc; Chromium's default is on); "Download location" is an AXPopUpButton
+  "Download Location" 180×20 at 430,370, value "Downloads".
+- **Pop-up items** [dis, ProfilePreferencesViewController+Profiles, Arc-arm64 0x10203ae98–0x10203bcac; Ghidra output in
+  ~/rea-arc/decomp/out-g97]: the items are tagged by an enum whose raw values are `arc.folder`, `arc.other`,
+  `arc.promptForDownload` (in that order). The content is a Label (title + icon, `TitleAndIconLabelStyle`) for the
+  folder, `Text("Other…")`, a `Divider`, `Text("Ask every time")` (small-string immediates at 0x10203bb78 and
+  0x10203bc50). The folder icon's source isn't decoded; Kite uses the folder's Finder icon at 16pt.
+- **Other…** [dec, FUN_10203fa08]: an `NSOpenPanel` with directoryURL the current folder, files off, directories on,
+  create directories on, multiple selection off, prompt "Select" (comment "Button to confirm selection of directory
+  for file downloads"), run modally; OK stores the folder. Kite also turns Ask off then, so the pop-up shows the folder.
+- **Kite**: Chromium's `OnBeforeDownload` asks `KCBrowser.downloadFolderProvider` for the browser's profile (found by
+  its request context) and continues into that folder, with Chromium's Save panel when Ask every time is on; WebKit's
+  `DownloadCoordinator` does the same with an `NSSavePanel` sheet. Suggestions: the command bar asks the engine's
+  suggest URL (Chromium's built-in engines' endpoints; none for Kagi) 80 ms after typing stops, ephemeral session
+  without cookies, and shows up to 4 as search rows right after the typed search. Arc gets them from Chromium's
+  search suggest provider (`chromiumSearchSuggestion` results, strings 68850–68862); its ranking and its
+  "We talk to your search engine to help us suggest results." privacy banner aren't copied.
+- Not verified: the pop-up's open menu (modal), Other… and Ask every time live (they'd open panels over Gabe's
+  work), and the Chromium engine (the test build runs WebKit).

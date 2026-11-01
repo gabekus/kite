@@ -55,7 +55,33 @@ final class SettingsModel: ObservableObject {
         set { store?.mutate { $0.searchEngine = newValue }; refresh() }
     }
 
+    /// Profiles › "Search Settings…": Arc opens Chromium's search engines page
+    /// (`arc://settings/searchEngines`) in a new tab of the front browser window; Kite opens its own,
+    /// kite://search-engines.
+    func openSearchSettings() {
+        let front = NSApp.orderedWindows.lazy
+            .compactMap { $0.windowController as? BrowserWindowController }
+            .first { !$0.isIncognito }
+        guard let browser = front?.store ?? store else { return NSSound.beep() }
+        browser.mutate { state in
+            let id = state.openTab(url: InternalPage.searchEngines.url)
+            state.update(tab: id) { $0.title = InternalPage.searchEngines.title }
+        }
+        if !UIDiagnostics.enabledByEnvironment { front?.window?.makeKeyAndOrderFront(nil) }
+    }
+
     var archiveAfter: ArchiveInterval { store?.state.archiveAfter ?? .twelveHours }
+
+    /// The profile whose settings Profiles shows beside its list, which has only Default so far.
+    var settingsProfile: String { Profile.defaultDirectory }
+
+    var profileSettings: ProfileSettings { store?.state.settings(ofProfile: settingsProfile) ?? ProfileSettings() }
+
+    func updateProfileSettings(_ change: @escaping (inout ProfileSettings) -> Void) {
+        let profile = settingsProfile
+        store?.mutate { $0.updateSettings(ofProfile: profile, change) }
+        refresh()
+    }
 
     /// The Spaces using Kite's one profile, for Profiles' list.
     var spaceCount: Int { store?.state.spaces.count ?? 1 }

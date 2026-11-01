@@ -12,6 +12,10 @@ public enum InternalPage: String, CaseIterable, Sendable {
     /// Chromium's site details page there (`arc://settings/content/siteDetails?site=<URL>`);
     /// Kite draws its own, as it does for History. `kite://site-settings?site=<origin>`.
     case siteSettings = "site-settings"
+    /// Settings › Profiles › "Search Settings…": the default search engine and the Site Search
+    /// shortcuts. Arc opens Chromium's page there (`arc://settings/searchEngines`, "Manage search
+    /// engines and site search"); Kite draws its own over its Site Search store. `kite://search-engines`.
+    case searchEngines = "search-engines"
 
     public static let scheme = "kite"
 
@@ -28,6 +32,7 @@ public enum InternalPage: String, CaseIterable, Sendable {
         case .history: "History"
         case .archive: "Archive"
         case .siteSettings: "Site Settings"
+        case .searchEngines: "Manage search engines and site search"
         }
     }
 
