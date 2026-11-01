@@ -579,7 +579,7 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   **[differs]**. Closing back to the source with the close spring is **[inferred]**: the dismiss path wasn't
   decompiled, but the same transform function serves every non-presented state.
 - Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
-  undo "re-opening a closed Peek", the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
+  the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
   any scrim behind the card.
 
 ### Peek: swipe to dismiss → `LinkPeek.Swipe` (KiteCore), `LinkPeekSwipeController` (g45; Arc 1.171 binary, 1 Nov 2026)
@@ -613,6 +613,30 @@ Decompiled with `SymRefs7.java` / `DumpAt.java` into `~/rea-arc/decomp/out7/g45-
   swipe takes priority over the Peek page's own swipe back/forward (Arc's dismiss path doesn't check the page's
   history); the gesture isn't gated on System Settings › Swipe between pages. The haptic was not felt (no
   hands-on test).
+### Peek: Undo Close Peek → `closeLinkPeek(undoable:)`, `reopenLinkPeek` (g46; Arc 1.171 binary, 1 Nov 2026)
+
+From `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s` (otool) and Ghidra (`out5/g46-closepeek.txt`).
+Arc wasn't driven.
+
+- The command is the Edit menu's Undo (⌘Z), not ⇧⌘T. NSLocalizedString key "Close Peek" with the comment
+  "Undo prompt for re-opening a closed Peek" (strings 82976; built at 0x102a079b4, the key is the small
+  string in x0/x1, cached in a global at 0x10465a550). Arc's Edit menu titles Undo "Undo <name>" (menudump:
+  "Undo New Space"), so it reads **Undo Close Peek**.
+- Redo closes it again: `DismissMechanism` has a `redoClose` case after `escapeKeyPressed`,
+  `clickedCloseButton`, `clickedBackground`, `pressedCloseTabHotkey`, `swipedRightToDismiss` (strings
+  166427–166432).
+- The only reader of that name is FUN_102856aec (`out5/g46-closepeek.txt`), which builds the undo step. Its
+  payload copies the Peek's `URL`, a UUID string and the source item's fields, and no web contents, so the
+  reopened Peek loads its URL again **[inferred: payload layout from the decompile, not run]**. There's no
+  timer: it lives on the undo stack like any other step.
+- ⇧⌘T is "Restore Last Closed Tab" (menudump, ⇧⌘T); its reopen stack (`addToReopenStack`,
+  `reopenableItemID`) belongs to sidebar items' close options, and nothing ties it to the modal
+  **[inferred]**. Kite leaves Reopen Closed Tab alone.
+- Which dismissals register the step isn't decompiled. Kite registers it for the user's own closes (Esc, ⌘W,
+  close button, click outside, swipe right, Redo), not when the Peek is replaced, turned into a tab or pane,
+  or closed by switching tabs **[inferred]**. Undo selects the source tab if another tab is in front, then
+  opens the Peek with the normal open spring, from the link if it's still on the page.
+
 ## Pinned URL reset and Reveal Tab (Arc 1.171 menu bar and binary, 1 Nov 2026)
 
 - Tabs menu (AX, read-only, `menudump`): … Next Tab ⌥⌘↓, Previous Tab ⌥⌘↑, Reveal Tab in Sidebar (no key), —,
