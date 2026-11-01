@@ -112,7 +112,7 @@ extension BrowserWindowController {
             store.mutate { $0.openTab(url: url) }
         case .popup(let popup):
             pool.openTab(with: popup)
-        case .favicon, .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover:
+        case .favicon, .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover, .media:
             break
         }
     }

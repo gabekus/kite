@@ -450,6 +450,7 @@ class KCClient : public CefClient,
     BOOL _pendingFocus;
     BOOL _hidden;
     double _zoomFactor;
+    BOOL _audioMuted;
     BOOL _forceDark;
     BOOL _closed;
     int _nextMessageID;
@@ -546,6 +547,7 @@ class KCClient : public CefClient,
         [self loadURL:url];
     }
     if (_zoomFactor != 1) self.zoomFactor = _zoomFactor;
+    if (_audioMuted) browser->GetHost()->SetAudioMuted(true);
     if (_forceDark) [self applyForceDark];
     if (_hidden) browser->GetHost()->WasHidden(true);
     if (_pendingFocus) [self focus];
@@ -601,6 +603,15 @@ class KCClient : public CefClient,
     _zoomFactor = zoomFactor;
     // Chromium zoom levels are logarithmic: each level is a 20% step.
     if (_browser) _browser->GetHost()->SetZoomLevel(std::log(zoomFactor) / std::log(1.2));
+}
+
+- (BOOL)audioMuted {
+    return _audioMuted;
+}
+
+- (void)setAudioMuted:(BOOL)audioMuted {
+    _audioMuted = audioMuted;
+    if (_browser) _browser->GetHost()->SetAudioMuted(audioMuted);
 }
 
 - (void)showDevToolsRunningFrontendScript:(NSString*)frontendScript {
