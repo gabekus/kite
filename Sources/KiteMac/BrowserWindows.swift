@@ -16,8 +16,13 @@ final class BrowserWindows {
     private let engine: WebEngine
     private let adblocker: Adblocker
     private let history: HistoryStore
+    /// Each normal window as it's made (the main one excepted).
+    var didMakeController: ((BrowserWindowController) -> Void)?
     private let fileURL: URL
     let link = WindowLink()
+    /// The normal windows' pages: a tab selected in two of them has one page, shown in the window
+    /// that put it on screen last, and a placeholder in the other.
+    let sharedPages = SharedPages()
     private(set) var controllers: [BrowserWindowController] = []
     private var kinds: [ObjectIdentifier: SavedWindow.Kind] = [:]
     private var saveTask: Task<Void, Never>?
@@ -49,6 +54,7 @@ final class BrowserWindows {
         self.history = history
         self.fileURL = fileURL
         link.add(main)
+        mainController.pool.join(sharedPages)
     }
 
     /// ⌘N: a normal window on the front window's space, with the command bar open for its first page,
@@ -107,18 +113,20 @@ final class BrowserWindows {
 
     private func makeNormal(_ state: BrowserState, frame: NSRect?) -> BrowserWindowController {
         let store = BrowserStore.linked(state, to: link)
-        return show(store, kind: .normal, frame: frame)
+        return show(store, kind: .normal, frame: frame, sharedPages: sharedPages)
     }
 
     private func makeBlank(_ state: BrowserState?, frame: NSRect?) -> BrowserWindowController {
-        show(.blank(state), kind: .blank, frame: frame)
+        show(.blank(state), kind: .blank, frame: frame, sharedPages: nil)
     }
 
-    private func show(_ store: BrowserStore, kind: SavedWindow.Kind, frame: NSRect?) -> BrowserWindowController {
-        store.history = history
+    private func show(_ store: BrowserStore, kind: SavedWindow.Kind, frame: NSRect?, sharedPages: SharedPages?) -> BrowserWindowController {
+        store.historyRoot = history
         store.didChangeState = { [weak self] in self?.scheduleSave() }
-        let controller = BrowserWindowController(store: store, engine: engine, adblocker: adblocker, autosaveName: nil)
+        let controller = BrowserWindowController(store: store, engine: engine, adblocker: adblocker, autosaveName: nil,
+                                                 sharedPages: sharedPages)
         controllers.append(controller)
+        didMakeController?(controller)
         kinds[ObjectIdentifier(controller)] = kind
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: controller.window, queue: .main

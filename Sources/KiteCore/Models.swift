@@ -147,6 +147,8 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     /// Arc's tab group headers in Today, from Tidy Tabs (see TidyTabs.swift). Each header sits
     /// above the first of its tabs in `tabs`.
     public var tabGroups: [TodayTabGroup] = []
+    /// The folder of the profile this space uses (Profiles.swift); nil is the default profile.
+    public var profile: String?
 
     public init(
         id: UUID = UUID(),
@@ -175,7 +177,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     public var allTabs: [BrowserTab] { pinned + tabs }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, icon, theme, pinnedItems, pinned, tabs, selectedTabID, splits, tabGroups
+        case id, name, icon, theme, pinnedItems, pinned, tabs, selectedTabID, splits, tabGroups, profile
     }
 
     public init(from decoder: Decoder) throws {
@@ -194,6 +196,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
         selectedTabID = try c.decodeIfPresent(UUID.self, forKey: .selectedTabID)
         splits = try c.decodeIfPresent([SplitView].self, forKey: .splits) ?? []
         tabGroups = try c.decodeIfPresent([TodayTabGroup].self, forKey: .tabGroups) ?? []
+        profile = try c.decodeIfPresent(String.self, forKey: .profile)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -207,6 +210,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
         try c.encodeIfPresent(selectedTabID, forKey: .selectedTabID)
         if !splits.isEmpty { try c.encode(splits, forKey: .splits) }
         if !tabGroups.isEmpty { try c.encode(tabGroups, forKey: .tabGroups) }
+        try c.encodeIfPresent(profile, forKey: .profile)
     }
 }
 

@@ -16,6 +16,9 @@ final class WebKitEngine: WebEngine {
     private var contentRules: WebKitContentRules?
     /// Incognito pages don't run Boosts.
     private var appliesBoosts = true
+    private(set) var profileDirectory: String? = Profile.defaultDirectory
+    private var profileEngines: [String: WebKitEngine] = [:]
+    private weak var defaultEngine: WebKitEngine?
 
     init(dataStore: WKWebsiteDataStore = .default()) {
         let configuration = WKWebViewConfiguration()
@@ -34,6 +37,20 @@ final class WebKitEngine: WebEngine {
         let engine = WebKitEngine(dataStore: .nonPersistent())
         engine.contentRules = contentRules
         engine.appliesBoosts = false
+        engine.profileDirectory = nil
+        return engine
+    }
+
+    /// WebKit keeps each profile in a data store named by the profile's `dataStoreID`.
+    func forProfile(_ profile: Profile) -> WebEngine {
+        let root = defaultEngine ?? self
+        if profile.isDefault || root.profileDirectory == nil { return root }
+        if let engine = root.profileEngines[profile.directory] { return engine }
+        let engine = WebKitEngine(dataStore: WKWebsiteDataStore(forIdentifier: profile.dataStoreID))
+        engine.contentRules = root.contentRules
+        engine.profileDirectory = profile.directory
+        engine.defaultEngine = root
+        root.profileEngines[profile.directory] = engine
         return engine
     }
 
@@ -285,6 +302,10 @@ final class WebKitPage: NSObject, WebPage {
         return pid
     }
 
+    /// WebKit loads in its shared networking process and has no public API for a page's bytes,
+    /// so the Network column reads N/A.
+    var networkBytes: UInt64? { nil }
+
     var isAudioMuted = false {
         didSet {
             let selector = NSSelectorFromString("_setPageMuted:")
@@ -526,21 +547,18 @@ extension WebKitPage: WKUIDelegate {
         }
         if let image {
             // Chromium's order. WebKit's own Copy Image item copies the image itself.
-            items.append(PageContextMenuItems.action(PageContextMenu.imageTitles[0]) { [weak self] in
+            items.append(PageContextMenuItems.action(PageContextMenu.title(.openImageInNewTab)) { [weak self] in
                 self?.onEvent?(.openInNewTab(image, foreground: false))
             })
-            items.append(PageContextMenuItems.action(PageContextMenu.imageTitles[1]) { [weak self] in
+            items.append(PageContextMenuItems.action(PageContextMenu.title(.saveImageAs)) { [weak self] in
                 self?.download(image)
             })
             if let copy = webKitItem("WKMenuItemIdentifierCopyImage") {
-                copy.title = PageContextMenu.imageTitles[2]
+                copy.title = PageContextMenu.title(.copyImage)
                 items.append(copy)
             }
-            items.append(PageContextMenuItems.action(PageContextMenu.imageTitles[3]) {
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(image.absoluteString, forType: .string)
-                pasteboard.setString(image.absoluteString, forType: .URL)
+            items.append(PageContextMenuItems.action(PageContextMenu.title(.copyImageAddress)) {
+                PageContextMenuItems.copy(image.absoluteString, asURL: true)
             })
             items.append(.separator())
         }

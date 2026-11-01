@@ -30,6 +30,25 @@ import Testing
         #expect(SiteControls.onOff(false) == "Off")
         #expect(SitePermissionValue.allow.subtitle == "Allowed")
         #expect(SitePermissionValue.block.subtitle == "Blocked")
+        #expect(SiteControls.developerModeTitle == "Developer Mode")
+        #expect(SiteControls.settingsTitle == "Settings")
+        #expect(SiteControls.settingsHoverText == "More")
+        #expect(SiteControls.allSiteSettingsTitle == "All Site Settings\u{2026}")
+    }
+
+    @Test func siteSettingsPageIsKeyedByOrigin() {
+        let url = InternalPage.siteSettingsURL(for: URL(string: "http://LocalHost:8080/a/b?q=1#x"))
+        #expect(url?.absoluteString == "kite://site-settings?site=http://localhost:8080")
+        #expect(InternalPage(url) == .siteSettings)
+        #expect(InternalPage.site(inSiteSettings: url)?.absoluteString == "http://localhost:8080")
+        #expect(InternalPage.siteSettingsURL(for: URL(string: "https://example.com"))?.absoluteString
+            == "kite://site-settings?site=https://example.com")
+        #expect(InternalPage.siteSettingsURL(for: URL(string: "kite://history")) == nil)
+        #expect(InternalPage.siteSettingsURL(for: nil) == nil)
+        #expect(InternalPage.site(inSiteSettings: URL(string: "kite://site-settings")) == nil)
+        #expect(InternalPage.site(inSiteSettings: URL(string: "kite://site-settings?site=file:///tmp")) == nil)
+        #expect(InternalPage.site(inSiteSettings: URL(string: "kite://history?site=https://a.com")) == nil)
+        #expect(InternalPage.siteSettings.title == "Site Settings")
     }
 
     @Test func clickingAPermissionFlipsIt() {

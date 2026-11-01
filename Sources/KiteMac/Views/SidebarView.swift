@@ -25,6 +25,9 @@ struct SidebarActions {
     /// A pinned tab that left its pinned page: "Back to Pinned URL" and "Separate From Pinned Tab".
     var resetTab: (UUID) -> Void = { _ in }
     var separateFromPinnedTab: (UUID) -> Void = { _ in }
+    /// A pinned tab's or favorite's "Edit Pinned Page" submenu: Edit… and Replace Pinned URL with Current.
+    var editPinnedURL: (UUID) -> Void = { _ in }
+    var replacePinnedURL: (UUID) -> Void = { _ in }
     /// A tab's Rename…: in place in its row, or Arc's dialog where there's no row.
     var renameTab: (UUID) -> Void
     /// Tidy Tabs: the Today divider's Tidy button, and a tab group header's context menu.
@@ -32,6 +35,11 @@ struct SidebarActions {
     var removeTabGroupHeader: (UUID) -> Void = { _ in }
     /// A tab row's speaker button and Mute / Unmute menu item.
     var toggleMute: (UUID) -> Void = { _ in }
+    /// A space's Set Profile (space id, profile folder) and its New Profile….
+    var setProfile: (UUID, String) -> Void = { _, _ in }
+    var newProfile: (UUID) -> Void = { _ in }
+    /// False in incognito windows, which have no profiles.
+    var showsProfiles = true
     /// After a drag drops something in the sidebar: Arc's move toasts.
     var didDrop: (SidebarDropOutcome) -> Void = { _ in }
 }
@@ -125,6 +133,8 @@ struct SidebarView: View {
                     onSelect: { id in store.mutate { $0.select(tab: id) } },
                     onUnload: actions.closeTab,
                     onRemove: { id in store.mutate { $0.toggleFavorite(tab: id) } },
+                    onEditPinnedURL: actions.editPinnedURL,
+                    onReplacePinnedURL: actions.replacePinnedURL,
                     onDrop: actions.didDrop
                 )
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.favoritesArea = $0 }
@@ -139,7 +149,8 @@ struct SidebarView: View {
 
             if let miniPlayer, let id = store.miniPlayerTabID, let tab = state.tab(id), let page = store.pages[id],
                let media = page.media {
-                MiniPlayerView(tab: tab, media: media.state, isMuted: page.isAudioMuted, actions: miniPlayer)
+                MiniPlayerView(tab: tab, media: media.state, isMuted: page.isAudioMuted, volume: page.tabVolume, actions: miniPlayer)
+                    .id(id)
                     .padding(.top, M.padding)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
@@ -338,6 +349,8 @@ struct SidebarView: View {
             canReset: pinned && tab.hasLeftPinnedURL,
             onReset: { actions.resetTab(tab.id) },
             onSeparate: { actions.separateFromPinnedTab(tab.id) },
+            onEditPinnedURL: { actions.editPinnedURL(tab.id) },
+            onReplacePinnedURL: { actions.replacePinnedURL(tab.id) },
             onRename: { actions.renameTab(tab.id) },
             onCommitRename: { name in
                 guard store.renamingTabID == tab.id else { return }
@@ -558,6 +571,11 @@ private struct AddressPill: View {
     var installAppName: String?
     var installApp: ((NSView) -> Void)?
     @State private var hovering = false
+    // Settings → Advanced → Toolbar can hide each button; their commands still work from the menu bar.
+    @AppStorage(ChromeButton.passwordManager.hiddenKey) private var hidesPasswordManager = false
+    @AppStorage(ChromeButton.darkPage.hiddenKey) private var hidesDarkPage = false
+    @AppStorage(ChromeButton.siteControls.hiddenKey) private var hidesSiteControls = false
+    @AppStorage(ChromeButton.extensions.hiddenKey) private var hidesExtensions = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -575,8 +593,11 @@ private struct AddressPill: View {
             // Arc's buttons at the field's right end are 30pt wide on a 28pt pitch. Arc 1.169
             // shows its Site Control Center button (with the extensions) only on hover; Kite
             // always shows the extensions button, rightmost (Gabe's call, 2026-11-01).
+            let isDark = hidesDarkPage ? nil : isDark
+            let showSiteControls = hidesSiteControls ? nil : showSiteControls
+            let showExtensions = hidesExtensions ? nil : showExtensions
             HStack(spacing: -2) {
-                if let accessory { accessory }
+                if let accessory, !hidesPasswordManager { accessory }
                 if let isDark {
                     DarkPageToggle(isDark: isDark, action: toggleDark)
                 }
@@ -706,6 +727,8 @@ private struct FavoritesGrid: View {
     let onSelect: (UUID) -> Void
     let onUnload: (UUID) -> Void
     let onRemove: (UUID) -> Void
+    let onEditPinnedURL: (UUID) -> Void
+    let onReplacePinnedURL: (UUID) -> Void
     let onDrop: (SidebarDropOutcome) -> Void
     @Environment(\.sidebarDrag) private var drag
     @AppStorage("favoritesEmptyStateDismissed") private var emptyStateDismissed = false
@@ -762,7 +785,9 @@ private struct FavoritesGrid: View {
             isSelected: tab.id == selectedID,
             onSelect: { onSelect(tab.id) },
             onUnload: { onUnload(tab.id) },
-            onRemove: { onRemove(tab.id) }
+            onRemove: { onRemove(tab.id) },
+            onEditPinnedURL: { onEditPinnedURL(tab.id) },
+            onReplacePinnedURL: { onReplacePinnedURL(tab.id) }
         )
         // Tiles being dragged out of the tray keep their place, invisible (Arc: alpha 0).
         .opacity(drag?.session?.ids.contains(tab.id) == true ? 0 : 1)
@@ -911,6 +936,8 @@ private struct FavoriteTile: View {
     let onSelect: () -> Void
     let onUnload: () -> Void
     let onRemove: () -> Void
+    let onEditPinnedURL: () -> Void
+    let onReplacePinnedURL: () -> Void
     @State private var hovering = false
 
     var body: some View {
@@ -924,6 +951,9 @@ private struct FavoriteTile: View {
             .help(tab.displayTitle)
             .contextMenu {
                 Button("Remove from Favorites", action: onRemove)
+                if tab.pinnedURL != nil {
+                    EditPinnedPageMenu(onEdit: onEditPinnedURL, onReplace: onReplacePinnedURL)
+                }
                 Button("Copy Link") { copyLink(tab.url) }
                 Divider()
                 Button("Unload Tab", action: onUnload)
@@ -1130,6 +1160,8 @@ private struct TabRow: View {
     var canReset = false
     var onReset: () -> Void = {}
     var onSeparate: () -> Void = {}
+    var onEditPinnedURL: () -> Void = {}
+    var onReplacePinnedURL: () -> Void = {}
     let onRename: () -> Void
     let onCommitRename: (String) -> Void
     let onCancelRename: () -> Void
@@ -1215,6 +1247,9 @@ private struct TabRow: View {
                 Button("Back to Pinned URL", action: onReset)
                 Button("Separate From Pinned Tab", action: onSeparate)
             }
+            if isPinned && tab.pinnedURL != nil {
+                EditPinnedPageMenu(onEdit: onEditPinnedURL, onReplace: onReplacePinnedURL)
+            }
             Button("Copy Link") { copyLink(tab.url) }
             Button("Rename…", action: onRename)
             if showsAudio {
@@ -1222,6 +1257,21 @@ private struct TabRow: View {
             }
             Divider()
             Button(isPinned ? "Unload Tab" : "Close Tab", action: onClose)
+        }
+    }
+}
+
+/// Arc's "Edit Pinned Page" submenu on a pinned tab or favorite (SidebarMenu+TabContextMenu,
+/// SidebarMenu+MoveMenu): "Edit…" opens the Edit Pinned URL dialog, and "Replace Pinned URL
+/// with Current" pins the page the tab is on. Arc builds both items unconditionally.
+private struct EditPinnedPageMenu: View {
+    let onEdit: () -> Void
+    let onReplace: () -> Void
+
+    var body: some View {
+        Menu("Edit Pinned Page") {
+            Button("Edit…", action: onEdit)
+            Button("Replace Pinned URL with Current", action: onReplace)
         }
     }
 }
@@ -1406,6 +1456,8 @@ private struct SpaceContextMenu: View {
             store.mutate { _ = $0.createFolder(name: "New Folder", inSpace: index) }
         }
         Divider()
+        // Arc's binary lists "Set Profile" just before Edit Theme Color.
+        if actions.showsProfiles { SetProfileMenu(store: store, actions: actions, space: space) }
         Button("Edit Theme Color") { actions.editTheme(space.id) }
         Button("Change Space Icon") { actions.changeSpaceIcon(space.id) }
         Divider()

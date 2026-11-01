@@ -25,23 +25,32 @@ final class ExtensionsModel: ObservableObject {
     private var waiting: [() -> Void] = []
 
     /// In the profile folder (not UserDefaults), so it follows the profile and test
-    /// profiles keep their own.
-    private static var pinnedFile: URL { AppDelegate.supportDirectory.appendingPathComponent("PinnedExtensions.json") }
-    private static var shared: ExtensionsModel?
+    /// profiles keep their own. Each Kite profile pins its own extensions.
+    private var pinnedFile: URL { Self.pinnedFile(profile) }
+
+    private static func pinnedFile(_ profile: String) -> URL {
+        let name = profile == Profile.defaultDirectory ? "PinnedExtensions.json" : "PinnedExtensions.\(profile).json"
+        return AppDelegate.supportDirectory.appendingPathComponent(name)
+    }
+    private static var shared: [String: ExtensionsModel] = [:]
+    /// The Chromium profile folder whose extensions these are.
+    let profile: String
     /// 1Password's Chrome Web Store id (checked against its CRX's signing key).
     static let onePasswordID = OnePassword.extensionID
 
-    /// One model for the persistent profile, shared by its windows.
+    /// One model per profile, shared by its windows.
     static func shared(engine: WebEngine) -> ExtensionsModel {
-        if let shared { return shared }
+        let profile = engine.profileDirectory ?? Profile.defaultDirectory
+        if let model = shared[profile] { return model }
         let model = ExtensionsModel(engine: engine)
-        shared = model
+        shared[profile] = model
         return model
     }
 
     init(engine: WebEngine) {
         self.engine = engine
-        let saved = (try? Data(contentsOf: Self.pinnedFile)).flatMap { try? JSONDecoder().decode([String].self, from: $0) }
+        profile = engine.profileDirectory ?? Profile.defaultDirectory
+        let saved = (try? Data(contentsOf: Self.pinnedFile(profile))).flatMap { try? JSONDecoder().decode([String].self, from: $0) }
         pinnedIDs = (saved ?? []).filter(ChromeWebStore.isExtensionID)
     }
 
@@ -55,7 +64,7 @@ final class ExtensionsModel: ObservableObject {
     func setPinned(_ id: String, _ pinned: Bool) {
         pinnedIDs.removeAll { $0 == id }
         if pinned { pinnedIDs.append(id) }
-        try? JSONEncoder().encode(pinnedIDs).write(to: Self.pinnedFile, options: .atomic)
+        try? JSONEncoder().encode(pinnedIDs).write(to: pinnedFile, options: .atomic)
     }
 
     /// Re-reads the list (installs happen in Chromium, so ask whenever it's shown).
@@ -133,7 +142,9 @@ final class ExtensionsModel: ObservableObject {
 
     // MARK: Files
 
-    private var profileDefault: URL { AppDelegate.supportDirectory.appendingPathComponent("Chromium/Default", isDirectory: true) }
+    private var profileDefault: URL {
+        AppDelegate.supportDirectory.appendingPathComponent("Chromium", isDirectory: true).appendingPathComponent(profile, isDirectory: true)
+    }
 
     /// Each extension's folder, from Secure Preferences, else (for an install Chromium
     /// hasn't written there yet) the newest version under Extensions/<id>.
@@ -152,5 +163,34 @@ final class ExtensionsModel: ObservableObject {
         }
         return folders
     }
+}
+#endif
+
+#if canImport(CEFBridge)
+import SwiftUI
+
+/// The extensions a window shows: its current space's profile's, which change as you move
+/// between spaces with different profiles.
+@MainActor
+final class ExtensionsSelection: ObservableObject {
+    @Published private(set) var model: ExtensionsModel
+
+    init(_ model: ExtensionsModel) {
+        self.model = model
+    }
+
+    func show(_ model: ExtensionsModel) {
+        guard model !== self.model else { return }
+        self.model = model
+        model.refresh()
+    }
+}
+
+/// `content` for the selection's current model.
+struct ExtensionsSelectionView<Content: View>: View {
+    @ObservedObject var selection: ExtensionsSelection
+    @ViewBuilder let content: (ExtensionsModel) -> Content
+
+    var body: some View { content(selection.model) }
 }
 #endif

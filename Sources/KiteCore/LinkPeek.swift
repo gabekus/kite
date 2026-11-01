@@ -71,4 +71,81 @@ public enum LinkPeek {
 
     public static let openSpring = Spring(dampingRatio: 0.865, response: 0.245)
     public static let closeSpring = Spring(dampingRatio: 0.895, response: 0.225)
+
+    // MARK: Tween from the clicked link
+
+    /// Arc opens the card from the element that was clicked (`tweenFromSource`: `sourceRectInWindow`,
+    /// `sourceCornerRadius`): the card is scaled uniformly to the source's width and centred on it, then
+    /// springs to its own frame. The corner radius is the source's divided by that scale, so it looks like
+    /// the source's at the start.
+    public struct SourceTween: Equatable, Sendable {
+        /// Uniform scale of the card at the start (source width / card width).
+        public var scale: Double
+        /// Move of the card's centre to the source's centre, in the host's flipped points.
+        public var dx, dy: Double
+        /// The card layer's corner radius at the start (before the scale is applied).
+        public var cornerRadius: Double
+    }
+
+    /// The radius Arc gives the source. Arc's page script returns no radius, so it is a constant the
+    /// caller sets; its value wasn't found. **[unverified]**
+    public static let sourceCornerRadius = 0.0
+
+    /// Nil when the source is too small to tween from (the caller falls back).
+    public static func sourceTween(source: Frame, card: Frame, cornerRadius: Double = sourceCornerRadius) -> SourceTween? {
+        guard source.width >= 1, source.height >= 1, card.width >= 1 else { return nil }
+        let scale = source.width / card.width
+        return SourceTween(
+            scale: scale,
+            dx: (source.x + source.width / 2) - (card.x + card.width / 2),
+            dy: (source.y + source.height / 2) - (card.y + card.height / 2),
+            cornerRadius: cornerRadius / scale
+        )
+    }
+
+    /// Page script for the clicked element. Like Arc's `WebContent+HoveredElementRect`: the element under the
+    /// pointer (`elementFromPoint` at `point`, in the page's CSS pixels from its top-left corner, mapped
+    /// through the visual viewport) and its `getBoundingClientRect`, when it is inside a link to `url`.
+    /// Otherwise (the pointer moved off, or the link was opened from the keyboard or by a script) the link
+    /// to `url` that has focus, or the first visible one. Returns `{x, y, width, height}` in CSS pixels of
+    /// the visible viewport, or null.
+    public static func sourceRectScript(point: (x: Double, y: Double)?, url: String) -> String {
+        let target = (try? JSONSerialization.data(withJSONObject: [url], options: []))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[\"\"]"
+        let at = point.map { "[\($0.x), \($0.y)]" } ?? "null"
+        return """
+        (() => {
+          const url = \(target)[0], at = \(at);
+          const vv = window.visualViewport;
+          const s = vv ? vv.scale : 1, ox = vv ? vv.offsetLeft : 0, oy = vv ? vv.offsetTop : 0;
+          const goesTo = (el) => { const a = el && el.closest && el.closest('a[href]'); return !!a && a.href === url; };
+          const shown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+          let el = at ? document.elementFromPoint(at[0] / s + ox, at[1] / s + oy) : null;
+          if (!goesTo(el)) {
+            const links = Array.from(document.querySelectorAll('a[href]')).filter((a) => a.href === url && shown(a));
+            el = links.find((a) => a === document.activeElement || a.contains(document.activeElement)) || links[0];
+          }
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return {x: (r.left - ox) * s, y: (r.top - oy) * s, width: r.width * s, height: r.height * s};
+        })()
+        """
+    }
+
+    /// The script's result as a frame in the page view's points (`zoom` is the page zoom, 1 = 100%).
+    public static func sourceFrame(scriptResult: Any?, zoom: Double) -> Frame? {
+        guard let dict = scriptResult as? [String: Any] else { return nil }
+        func number(_ key: String) -> Double? {
+            switch dict[key] {
+            case let value as Double: value
+            case let value as Int: Double(value)
+            case let value as NSNumber: value.doubleValue
+            default: nil
+            }
+        }
+        guard let x = number("x"), let y = number("y"), let w = number("width"), let h = number("height"),
+              [x, y, w, h].allSatisfy(\.isFinite), w > 0, h > 0 else { return nil }
+        let z = zoom > 0 ? zoom : 1
+        return Frame(x: x * z, y: y * z, width: w * z, height: h * z)
+    }
 }

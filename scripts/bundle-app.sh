@@ -21,6 +21,11 @@ swift build -c "$CONFIG" --product kite-cli
 mkdir -p "$CONTENTS/Helpers"
 cp "$BIN/kite-cli" "$CONTENTS/Helpers/kite"
 cp Resources/Info.plist "$CONTENTS/Info.plist"
+# Debug builds are test builds: their own bundle ID keeps their UserDefaults (Kite's settings
+# and AppKit's window frames alike) out of the installed Kite's dev.gabek.Kite preferences.
+# Release builds (install-app.sh, update-app.sh) keep dev.gabek.Kite. KITE_BUNDLE_ID overrides.
+BUNDLE_ID="${KITE_BUNDLE_ID:-$([[ "$CONFIG" == debug ]] && echo dev.gabek.Kite.dev || echo dev.gabek.Kite)}"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$CONTENTS/Info.plist"
 # Built from Resources/AppIcon.svg (1024 canvas, 824 body, the macOS icon grid).
 cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 # The AppleScript dictionary (Info.plist's OSAScriptingDefinition).
@@ -46,7 +51,7 @@ if [[ -d "$CEF/Release/Chromium Embedded Framework.framework" ]]; then
     # Chromium launches each process type from its own helper bundle.
     for kind in "" "GPU" "Renderer" "Plugin" "Alerts"; do
         name="Kite Helper${kind:+ ($kind)}"
-        id="dev.gabek.Kite.helper${kind:+.$(echo "$kind" | tr '[:upper:]' '[:lower:]')}"
+        id="$BUNDLE_ID.helper${kind:+.$(echo "$kind" | tr '[:upper:]' '[:lower:]')}"
         helper="$CONTENTS/Frameworks/$name.app/Contents"
         mkdir -p "$helper/MacOS"
         cp "$BIN/KiteHelper" "$helper/MacOS/$name"
@@ -91,7 +96,8 @@ fi
 # first. See docs/passkeys.md.
 PROFILE="${KITE_PROVISIONING_PROFILE:-$HOME/.kite-secrets/Kite.provisionprofile}"
 ENTITLEMENTS=()
-if [[ -f "$PROFILE" && "$SIGN_ID" != "-" ]]; then
+# The profile is for dev.gabek.Kite only, so other bundle IDs (debug builds) go without it.
+if [[ -f "$PROFILE" && "$SIGN_ID" != "-" && "$BUNDLE_ID" == dev.gabek.Kite ]]; then
     if ENT_PLIST="$(scripts/passkey-entitlements.sh "$PROFILE" "$SIGN_ID" "$ROOT/build")"; then
         cp "$PROFILE" "$CONTENTS/embedded.provisionprofile"
         ENTITLEMENTS=(--entitlements "$ENT_PLIST")

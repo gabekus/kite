@@ -28,6 +28,21 @@ enum MediaStateScript {
       let actions = [];
       let last = 'null';
       let poll = 0;
+      // Tab volume (Mini Player "Adjust Tab Volume"): every element plays at the volume the
+      // page gave it times `level`. `wanted` keeps the page's own volume per element, `ours`
+      // the value Kite last set, so its own volumechange (or a mute toggle) isn't taken for the
+      // page's.
+      let level = 1;
+      const wanted = new WeakMap();
+      const ours = new WeakMap();
+      const wantedOf = (m) => wanted.has(m) ? wanted.get(m) : m.volume;
+      const apply = (m) => {
+        if (!wanted.has(m)) { if (level === 1) return; wanted.set(m, m.volume); }
+        const target = Math.min(1, Math.max(0, wanted.get(m) * level));
+        ours.set(m, target);
+        if (m.volume === target) return;
+        try { m.volume = target; } catch (e) { ours.delete(m); }
+      };
 
       const pip = (m) => document.pictureInPictureElement === m || m.webkitPresentationMode === 'picture-in-picture';
       const snapshot = () => {
@@ -37,12 +52,14 @@ enum MediaStateScript {
         return {
           playing: !current.paused && !current.ended,
           video: current instanceof HTMLVideoElement && current.videoWidth > 0,
-          muted: current.muted || current.volume === 0,
+          muted: current.muted || wantedOf(current) === 0,
           pip: pip(current),
           title: (meta && meta.title) || document.title || '',
           artist: (meta && meta.artist) || null,
           artwork: art,
           actions,
+          volume: current.volume,
+          level,
         };
       };
       const report = () => {
@@ -61,10 +78,15 @@ enum MediaStateScript {
         document.addEventListener(type, (e) => {
           const m = e.target;
           if (!(m instanceof HTMLMediaElement)) return;
+          if (type === 'volumechange') {
+            // Still the volume Kite set (its own change, or the page toggling mute): keep the
+            // page's volume. Anything else is the page choosing a new volume.
+            if (!(ours.has(m) && ours.get(m) === m.volume)) { ours.delete(m); wanted.set(m, m.volume); apply(m); }
+          } else if (type === 'play' || type === 'loadedmetadata') apply(m);
           // Like Chromium's media sessions: muted autoplay (background videos) doesn't count
           // until it's unmuted.
           if (m !== current && (type === 'play' || type === 'playing' || type === 'volumechange')
-              && !m.paused && !m.muted && m.volume > 0) current = m;
+              && !m.paused && !m.muted && wantedOf(m) > 0) current = m;
           if (m === current) report();
         }, true);
       }
@@ -75,7 +97,15 @@ enum MediaStateScript {
 
       const playing = () => [...document.querySelectorAll('video,audio')].find((m) => !m.paused && !m.ended);
       globalThis.__kiteMedia = {
-        run(command) {
+        run(command, value) {
+          if (command === 'volume') {
+            const next = Number(value);
+            if (!Number.isFinite(next)) return;
+            level = Math.min(1, Math.max(0, next));
+            for (const el of document.querySelectorAll('video,audio')) apply(el);
+            report();
+            return;
+          }
           const m = current || playing();
           switch (command) {
             case 'play': if (m) m.play().catch(() => {}); break;

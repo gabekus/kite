@@ -10,7 +10,7 @@ import SwiftUI
 @MainActor
 final class ExtensionsMenuBar: NSObject, NSMenuDelegate {
     let item: NSMenuItem
-    private let model: ExtensionsModel
+    private var model: ExtensionsModel
     private var managePopover: NSPopover?
     private var listChanges: AnyCancellable?
 
@@ -22,6 +22,18 @@ final class ExtensionsMenuBar: NSObject, NSMenuDelegate {
         super.init()
         menu.delegate = self
         rebuild(menu, with: [])
+        follow(model)
+    }
+
+    /// Shows `model`'s extensions: the front window's profile's.
+    func show(_ model: ExtensionsModel) {
+        guard model !== self.model else { return }
+        self.model = model
+        follow(model)
+    }
+
+    private func follow(_ model: ExtensionsModel) {
+        guard let menu = item.submenu else { return }
         // Kept current, not only on open, so it's right for VoiceOver and `ui menu` too.
         listChanges = model.$extensions.receive(on: DispatchQueue.main).sink { [weak self, weak menu] list in
             guard let self, let menu else { return }

@@ -16,6 +16,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     let store: BrowserStore
     let pool: PagePool
+    #if canImport(CEFBridge)
+    /// The current space's profile's extensions, for the toolbar, sidebar and menu bar.
+    private(set) var extensionsSelection: ExtensionsSelection?
+    #endif
+    /// Called when the window's current space moves to another profile (or another space with one).
+    var onProfileChange: ((WebEngine) -> Void)?
+    var shownProfileDirectory: String?
     private let adblocker: Adblocker
     private let rootView = RootView()
     /// The system's sidebar material under the space's tint, like Arc's translucent window.
@@ -70,6 +77,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Every tab on screen in pane order, and its page: one, or a split's panes.
     private var shownTabIDs: [UUID] = []
     private var shownPages: [UUID: WebPage] = [:]
+    /// Shown tabs whose page another normal window has (`pageTaken`), by tab.
+    private var placeholders: [UUID: PagePlaceholderView] = [:]
     /// Tabs Kite put into picture in picture when you left them; it ends when you come back.
     var autoPictureInPictureTabs: Set<UUID> = []
     private let splitPanes = SplitPanesView()
@@ -88,7 +97,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Arc's permission prompt over the focused tab, while its site waits for an answer.
     var permissionPrompt: PermissionPromptCard?
     /// Kite's own pages (kite://history, kite://archive) over the panes showing them, by tab.
-    private var internalPages: [UUID: (page: InternalPage, host: NSView)] = [:]
+    private var internalPages: [UUID: (url: URL, host: NSView)] = [:]
     private var commandBarVisible = false
     private var sidebarVisible = true
     /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
@@ -101,12 +110,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     let isIncognito: Bool
 
     /// `autosaveName` keeps the window's frame across launches; only the first normal window has one.
+    /// `sharedPages` links this window's pages with the other normal windows' (one page per tab).
     init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker, incognito: Bool = false,
-         autosaveName: String? = "KiteMainWindow") {
+         autosaveName: String? = "KiteMainWindow", sharedPages: SharedPages? = nil) {
         self.store = store
         self.adblocker = adblocker
         self.isIncognito = incognito
         self.pool = PagePool(engine: engine, store: store)
+        if let sharedPages { pool.join(sharedPages) }
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
         let window = BrowserWindow(
@@ -131,6 +142,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         buildViews()
         store.onChange = { [weak self] in self?.sync() }
         store.onPageChange = { [weak self] id in self?.pageChanged(id) }
+        pool.onPageTaken = { [weak self] id in self?.pageTaken(id) }
+        pool.onLinkedWindowClosing = { [weak self] owner in self?.reclaimPages(from: owner) }
         // Dark pages in "Match System" follow macOS switching light/dark.
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.initial, .new]) { [weak self] app, _ in
             MainActor.assumeIsolated {
@@ -165,6 +178,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         paneClickMonitor = nil
         store.saveNow()
         if isIncognito { pool.retain(live: [], restorable: []) }
+        // Windows showing a placeholder for one of this window's pages take it back.
+        pool.leaveShared()
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
@@ -203,10 +218,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             deleteFolder: { [weak self] id in self?.deleteFolder(id) },
             resetTab: { [weak self] id in self?.backToPinnedURL(id) },
             separateFromPinnedTab: { [weak self] id in self?.separateFromPinnedTab(id) },
+            editPinnedURL: { [weak self] id in self?.editPinnedURL(id) },
+            replacePinnedURL: { [weak self] id in self?.replacePinnedURLWithCurrent(id) },
             renameTab: { [weak self] id in self?.renameTab(id) },
             tidyTabs: { [weak self] id in self?.tidyTabs(inSpace: id) },
             removeTabGroupHeader: { [weak self] id in self?.removeTabGroupHeader(id) },
             toggleMute: { [weak self] id in self?.toggleMute(id) },
+            setProfile: { [weak self] id, profile in self?.setProfile(profile, forSpace: id) },
+            newProfile: { [weak self] id in self?.presentCreateProfile(for: id) },
+            showsProfiles: !isIncognito,
             didDrop: { [weak self] outcome in self?.sidebarDropped(outcome) }
         )
         spaceSwipe = SpaceSwipeController(
@@ -238,12 +258,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         sidebar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view) }
         #if canImport(CEFBridge)
-        // Extensions run in the persistent Chromium profile only.
+        // Extensions run in the persistent Chromium profiles only, each profile its own.
         if !isIncognito, pool.engine is ChromiumEngine {
-            let extensions = ExtensionsModel.shared(engine: pool.engine)
+            let extensions = ExtensionsSelection(ExtensionsModel.shared(engine: pool.currentEngine))
+            extensionsSelection = extensions
             toolbar.extensions = extensions
-            sidebar.showExtensions = { view in ExtensionsMenu.present(model: extensions, from: view) }
-            sidebar.fieldAccessory = AnyView(OnePasswordFieldButton(model: extensions))
+            sidebar.showExtensions = { view in ExtensionsMenu.present(model: extensions.model, from: view) }
+            sidebar.fieldAccessory = AnyView(ExtensionsSelectionView(selection: extensions) { OnePasswordFieldButton(model: $0) })
         }
         #endif
         sidebarHost = NSHostingView(rootView: sidebar)
@@ -264,6 +285,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         claudeBubbleHost.sizingOptions = []
         claudeBubbleHost.isHidden = true
         claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
+        claudeBubble.postToProject = { [weak self] page, message in self?.postToClaudeProject(page, message: message) }
         libraryHost = NSHostingView(rootView: makeLibraryView())
         libraryHost.sizingOptions = []
         libraryHost.isHidden = true
@@ -498,6 +520,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         updateSplitDropZones()
         let live = state.allTabIDs
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
+        syncProfile()
         applyDarkPage()
         adblocker.setPolicy(enabled: state.blocksAds, allowedHosts: state.adblockAllowedHosts)
 
@@ -530,22 +553,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if ids != shownTabIDs {
             tabsChangedOnScreen(left: shownTabIDs.filter { !ids.contains($0) }, arrived: ids.filter { !shownTabIDs.contains($0) })
             hideZapPicker()
-            for page in shownPages.values { page.view.removeFromSuperview() }
-            splitPanes.setPanes([])
-            splitPanes.removeFromSuperview()
-            shownPages = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, pool.page(for: $0)) })
+            removePaneViews()
+            placeholders = [:]
             shownTabIDs = ids
-            if tabs.count > 1 {
-                splitPanes.setPanes(ids.map { ($0, shownPages[$0]!.view) })
-                contentClip.addSubview(splitPanes, positioned: .below, relativeTo: toolbarHost)
-                contentClip.page = splitPanes
-            } else if let id = ids.first, let page = shownPages[id] {
-                page.view.autoresizingMask = []
-                contentClip.addSubview(page.view, positioned: .below, relativeTo: toolbarHost)
-                contentClip.page = page.view
-            } else {
-                contentClip.page = nil
-            }
+            // Taking a page from another window puts a placeholder there (`pageTaken`).
+            shownPages = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, pool.claim($0)) })
+            installPaneViews()
             setSplitChrome(tabs.count > 1)
             updateToolbar()
         }
@@ -564,6 +577,76 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             shownPage?.focus()
         }
         pageChanged(focused)
+    }
+
+    /// What fills tab `id`'s pane: its page, or the placeholder left when another window took the page.
+    private func paneView(_ id: UUID) -> NSView? {
+        shownPages[id]?.view ?? placeholders[id]
+    }
+
+    /// Takes the panes' views out of the card. A page another window has taken stays where it is now.
+    private func removePaneViews() {
+        for page in shownPages.values where page.view.window == nil || page.view.window === window {
+            page.view.removeFromSuperview()
+        }
+        for placeholder in placeholders.values { placeholder.removeFromSuperview() }
+        splitPanes.setPanes([])
+        splitPanes.removeFromSuperview()
+    }
+
+    /// Puts `shownTabIDs`' views into the card: side by side when there are several.
+    private func installPaneViews() {
+        let ids = shownTabIDs
+        if ids.count > 1 {
+            splitPanes.setPanes(ids.compactMap { id in paneView(id).map { (id, $0) } })
+            contentClip.addSubview(splitPanes, positioned: .below, relativeTo: toolbarHost)
+            contentClip.page = splitPanes
+        } else if let id = ids.first, let view = paneView(id) {
+            view.autoresizingMask = []
+            contentClip.addSubview(view, positioned: .below, relativeTo: toolbarHost)
+            contentClip.page = view
+        } else {
+            contentClip.page = nil
+        }
+    }
+
+    /// Another normal window took tab `id`'s page to show it there (Arc's normal windows share one
+    /// sidebar, and a tab has one web content). This window shows a blurred snapshot of it instead,
+    /// as Arc's `WindowContentPlaceholderViewController` does, until it comes forward again.
+    private func pageTaken(_ id: UUID) {
+        guard let page = shownPages.removeValue(forKey: id) else { return }
+        let placeholder = PagePlaceholderView(frame: page.view.frame)
+        placeholders[id] = placeholder
+        page.captureImage(area: page.view.bounds) { [weak placeholder] data in placeholder?.setSnapshot(data) }
+        if page.view.window === window { page.view.removeFromSuperview() }
+        removePaneViews()
+        installPaneViews()
+        if shownTabID == id {
+            shownPage = nil
+            updateSadTab()
+            updatePermissionPrompt()
+        }
+    }
+
+    /// Brings back the pages of tabs this window shows a placeholder for: it came forward, or the
+    /// window holding them is closing (`from`; nil takes them from any window).
+    func reclaimPages(from owner: PagePool? = nil) {
+        let ids = placeholders.keys.filter { owner?.loadedPage($0) != nil || owner == nil }
+        guard !ids.isEmpty else { return }
+        removePaneViews()
+        for id in ids {
+            placeholders[id] = nil
+            if let tab = store.state.tab(id) { shownPages[id] = pool.claim(tab) }
+        }
+        installPaneViews()
+        shownPage = shownTabID.flatMap { shownPages[$0] }
+        pool.didShow(shownTabIDs)
+        applyDarkPage()
+        if let shownTabID { pageChanged(shownTabID) }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        reclaimPages()
     }
 
     /// How far the focused pane's top and trailing edges sit inside the content card (zero without a split).
@@ -647,13 +730,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     /// Draws Kite's own pages over the shown tabs on kite:// URLs. Their engine pages stay blank.
     private func updateInternalPages() {
-        let shown = shownTabIDs.compactMap { id in InternalPage(store.state.tab(id)?.url).map { (id, $0) } }
-        for (id, entry) in internalPages where !shown.contains(where: { $0.0 == id && $0.1 == entry.page }) {
+        // Keyed by the whole URL: one kind of page can be about different things (a site's settings).
+        let shown = shownTabIDs.compactMap { id -> (UUID, InternalPage, URL)? in
+            guard let url = store.state.tab(id)?.url, let page = InternalPage(url) else { return nil }
+            return (id, page, url)
+        }
+        for (id, entry) in internalPages where !shown.contains(where: { $0.0 == id && $0.2 == entry.url }) {
             entry.host.removeFromSuperview()
             internalPages[id] = nil
         }
-        for (id, page) in shown {
-            let host = internalPages[id]?.host ?? makeInternalPage(page, for: id)
+        for (id, page, url) in shown {
+            let host = internalPages[id]?.host ?? makeInternalPage(page, url: url, for: id)
             if shownTabIDs.count > 1, let pane = splitPanes.frame(of: id) {
                 host.frame = splitPanes.convert(pane, to: contentClip)
                 host.autoresizingMask = []
@@ -664,11 +751,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             if host.superview == nil {
                 contentClip.addSubview(host, positioned: .below, relativeTo: toolbarHost)
             }
-            internalPages[id] = (page, host)
+            internalPages[id] = (url, host)
         }
     }
 
-    private func makeInternalPage(_ page: InternalPage, for id: UUID) -> NSView {
+    private func makeInternalPage(_ page: InternalPage, url: URL, for id: UUID) -> NSView {
         let open: (URL, Bool) -> Void = { [weak self] url, newTab in
             self?.openFromInternalPage(id, url, newTab: newTab)
         }
@@ -679,6 +766,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return NSHostingView(rootView: ArchivePageView(store: store, open: open) { [weak self] tabID in
                 self?.restoreArchivedTab(tabID)
             })
+        case .siteSettings:
+            // Chromium keeps permissions per profile, so the tab's own (blank) page reads them.
+            return NSHostingView(rootView: SiteSettingsPageView(
+                site: InternalPage.site(inSiteSettings: url),
+                read: { [weak self] permission, site in self?.pool.loadedPage(id)?.sitePermission(permission, for: site) },
+                write: { [weak self] permission, value, site in
+                    self?.pool.loadedPage(id)?.setSitePermission(permission, value, for: site)
+                }))
         }
     }
 
@@ -1115,8 +1210,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if let valid = validateSplitItem(item) { return valid }
+        if let valid = validateProfileItem(item) { return valid }
         if let valid = validateBoostItem(item) { return valid }
         if let valid = validateSplitLayoutItem(item) { return valid }
+        if let valid = validateSplitSideItem(item) { return valid }
         switch item.action {
         case #selector(setDarkPagesMode(_:)):
             let modes = DarkPagesMode.allCases

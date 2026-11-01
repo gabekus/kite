@@ -93,4 +93,49 @@ import Testing
         #expect(TabAudioButton.spacingAfter == 2)
         #expect(TabAudioButton.showHideDuration == 0.18)
     }
+
+    @Test func volumeCommandScript() {
+        #expect(MediaCommand.setVolume(0.25).script == "globalThis.__kiteMedia?.run('volume', 0.25)")
+        #expect(MediaCommand.setVolume(3).script == "globalThis.__kiteMedia?.run('volume', 1.0)")
+        #expect(MediaCommand.setVolume(.nan).script == "globalThis.__kiteMedia?.run('volume', 1.0)")
+        #expect(MediaCommand.pause.script == "globalThis.__kiteMedia?.run('pause')")
+    }
+
+    @Test func parsesVolumes() throws {
+        let state = try #require(MediaState.parse(#"{"playing":true,"volume":0.4,"level":0.5}"#) ?? nil)
+        #expect(state.volume == 0.4 && state.tabVolume == 0.5)
+        let old = try #require(MediaState.parse(#"{"playing":true}"#) ?? nil)
+        #expect(old.volume == 1 && old.tabVolume == 1)
+        let wild = try #require(MediaState.parse(#"{"playing":true,"level":7}"#) ?? nil)
+        #expect(wild.tabVolume == 1)
+    }
+
+    @Test func volumeSymbolsFollowArcsThresholds() {
+        #expect(TabVolume.symbol(volume: 0.5, isMuted: true) == "speaker.slash.fill")
+        #expect(TabVolume.symbol(volume: 0, isMuted: false) == "speaker.fill")
+        #expect(TabVolume.symbol(volume: 0.2, isMuted: false) == "speaker.wave.1.fill")
+        #expect(TabVolume.symbol(volume: 0.5, isMuted: false) == "speaker.wave.2.fill")
+        #expect(TabVolume.symbol(volume: 2.0 / 3, isMuted: false) == "speaker.wave.3.fill")
+        #expect(TabVolume.symbol(volume: 1, isMuted: false) == "speaker.wave.3.fill")
+    }
+
+    @Test func reappliesOnlyWhenThePageDiffers() {
+        #expect(!TabVolume.needsReapply(tab: 1, reported: 1))
+        #expect(TabVolume.needsReapply(tab: 0.3, reported: 1))
+        #expect(!TabVolume.needsReapply(tab: 0.3, reported: 0.3))
+    }
+}
+
+@Suite struct MuteAllTabsTests {
+    @Test func arcsTitles() {
+        #expect(MuteAllTabs.title(mute: true) == "Mute All Tabs")
+        #expect(MuteAllTabs.title(mute: false) == "Unmute All Tabs")
+    }
+
+    @Test func changesOnlyPagesNotAlreadyThere() {
+        let pages = ["a": false, "b": true, "c": false]
+        #expect(Set(MuteAllTabs.pagesToChange(pages, mute: true)) == ["a", "c"])
+        #expect(MuteAllTabs.pagesToChange(pages, mute: false) == ["b"])
+        #expect(MuteAllTabs.pagesToChange([String: Bool](), mute: true).isEmpty)
+    }
 }

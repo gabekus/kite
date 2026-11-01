@@ -15,6 +15,8 @@ struct PageStatus: Equatable {
     var media: MediaActivity?
     /// The browser's tab mute (WebPage.isAudioMuted).
     var isAudioMuted = false
+    /// The tab volume from the Mini Player (TabVolume, 0...1); it lives with the page, like the mute.
+    var tabVolume: Double = 1
 
     /// Whether the tab is playing media now (muted or not): the base for audio indicators.
     var isPlayingAudio: Bool { media?.state.isPlaying == true }
@@ -58,8 +60,13 @@ final class BrowserStore {
     /// nil for an incognito window: nothing is written to disk.
     @ObservationIgnored private let session: SessionStore?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
-    /// Browsing history to record into; nil for an incognito window.
-    @ObservationIgnored var history: HistoryStore?
+    /// The default profile's browsing history, which leads to the other profiles'; nil for an
+    /// incognito window, which records none.
+    @ObservationIgnored var historyRoot: HistoryStore?
+    /// The current space's profile's history.
+    var history: HistoryStore? { historyRoot?.forProfile(state.selectedProfileDirectory) }
+    /// The history a tab's visits go to: its own profile's.
+    private func history(forTab id: UUID) -> HistoryStore? { historyRoot?.forProfile(state.profileDirectory(ofTab: id)) }
     /// The URL each tab last recorded, so repeated reports of one page count once.
     @ObservationIgnored private var recordedURLs: [UUID: URL] = [:]
 
@@ -215,11 +222,38 @@ final class BrowserStore {
         onChange?()
     }
 
+    // MARK: Profiles
+
+    /// Arc's Create a new Profile: the profile, with `spaces` moved into it.
+    func createProfile(named name: String, spaces: [UUID]) throws -> Profile {
+        var made: Result<Profile, Error> = .failure(ProfileNameError.invalid)
+        mutate { state in made = Result { try state.createProfile(named: name, spaces: spaces) } }
+        return try made.get()
+    }
+
+    func renameProfile(_ directory: String, to name: String) throws {
+        var outcome: Result<Void, Error> = .success(())
+        mutate { state in outcome = Result { try state.renameProfile(directory, to: name) } }
+        try outcome.get()
+    }
+
+    /// Forgets the profile now; its data goes at the next launch (ProfileFolders).
+    func deleteProfile(_ directory: String) {
+        let profile = state.profile(directory)
+        guard state.canDeleteProfile(directory), mutate({ $0.deleteProfile(directory) }) else { return }
+        historyRoot?.forgetProfile(directory)
+        ProfileFolders.delete(profile)
+    }
+
+    func setProfile(_ directory: String?, forSpace id: UUID) {
+        mutate { $0.setProfile(directory, forSpace: id) }
+    }
+
     // MARK: Page events from web views
 
     func pageTitleChanged(_ id: UUID, _ title: String?) {
         guard let title, !title.isEmpty, !showsInternalPage(id) else { return }
-        if let url = recordedURLs[id] { history?.updateTitle(url, title) }
+        if let url = recordedURLs[id] { history(forTab: id)?.updateTitle(url, title) }
         guard state.tab(id)?.title != title else { return }
         mutate { $0.update(tab: id) { $0.title = title } }
     }
@@ -231,7 +265,7 @@ final class BrowserStore {
         // Before the tab check: a typed URL is already on the tab when the page reports it.
         if recordedURLs[id] != url {
             recordedURLs[id] = url
-            history?.recordVisit(url, title: "")
+            history(forTab: id)?.recordVisit(url, title: "")
         }
         guard state.tab(id)?.url != url else { return }
         mutate { $0.update(tab: id) { $0.url = url } }

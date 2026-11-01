@@ -46,6 +46,8 @@ enum PageEvent {
     case linkHover(LinkHover?)
     /// An "Open Link in …" item of the page's right-click menu (Arc's link items).
     case openLink(URL, PageContextMenu.LinkTarget)
+    /// Save As…, Print… or View Page Source from the page's right-click menu.
+    case pageCommand(PageContextMenu.PageCommand)
     /// The site asks for the camera, microphone, location or notifications: Arc's prompt.
     case permissionRequest(PermissionRequest)
     /// The engine dropped the prompt with this id itself (the page navigated or closed).
@@ -144,6 +146,9 @@ protocol WebPage: AnyObject {
     var isAudioMuted: Bool { get set }
     /// The pid of the process rendering the page, for the Task Manager; nil when unknown.
     var processIdentifier: pid_t? { get }
+    /// Bytes the page's requests have received and sent so far, for the Task Manager's Network
+    /// column; nil when the engine can't count them.
+    var networkBytes: UInt64? { get }
     func close()
 }
 
@@ -159,4 +164,10 @@ protocol WebEngine: AnyObject {
     func makePage(url: URL?, restoring state: Any?) -> WebPage
     /// A sibling engine whose cookies, cache and storage live in memory only (incognito).
     func makeEphemeral() -> WebEngine
+    /// The engine for `profile`'s pages (Profiles.swift): its own cookies, logins, history and
+    /// extensions. The same object every time for one profile; the default profile's is the
+    /// app's own engine.
+    func forProfile(_ profile: Profile) -> WebEngine
+    /// The profile folder this engine's pages use; nil for incognito.
+    var profileDirectory: String? { get }
 }
