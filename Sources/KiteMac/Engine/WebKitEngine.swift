@@ -302,6 +302,10 @@ final class WebKitPage: NSObject, WebPage {
         return pid
     }
 
+    /// WebKit loads in its shared networking process and has no public API for a page's bytes,
+    /// so the Network column reads N/A.
+    var networkBytes: UInt64? { nil }
+
     var isAudioMuted = false {
         didSet {
             let selector = NSSelectorFromString("_setPageMuted:")
@@ -543,21 +547,18 @@ extension WebKitPage: WKUIDelegate {
         }
         if let image {
             // Chromium's order. WebKit's own Copy Image item copies the image itself.
-            items.append(PageContextMenuItems.action(PageContextMenu.imageTitles[0]) { [weak self] in
+            items.append(PageContextMenuItems.action(PageContextMenu.title(.openImageInNewTab)) { [weak self] in
                 self?.onEvent?(.openInNewTab(image, foreground: false))
             })
-            items.append(PageContextMenuItems.action(PageContextMenu.imageTitles[1]) { [weak self] in
+            items.append(PageContextMenuItems.action(PageContextMenu.title(.saveImageAs)) { [weak self] in
                 self?.download(image)
             })
             if let copy = webKitItem("WKMenuItemIdentifierCopyImage") {
-                copy.title = PageContextMenu.imageTitles[2]
+                copy.title = PageContextMenu.title(.copyImage)
                 items.append(copy)
             }
-            items.append(PageContextMenuItems.action(PageContextMenu.imageTitles[3]) {
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(image.absoluteString, forType: .string)
-                pasteboard.setString(image.absoluteString, forType: .URL)
+            items.append(PageContextMenuItems.action(PageContextMenu.title(.copyImageAddress)) {
+                PageContextMenuItems.copy(image.absoluteString, asURL: true)
             })
             items.append(.separator())
         }

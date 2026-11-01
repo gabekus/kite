@@ -559,9 +559,25 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   Help text: "Exit the current context. Such as closing a Peek window or exiting fullscreen."
 - Motion (FUN_101713230 + FUN_100a05154, a `CASpringAnimation` built from a damping ratio and response:
   stiffness (2π/response)², damping 4π·ratio/response): popover open 0.865 / 0.245s, close 0.895 / 0.225s
-  (fullbleed 0.885 / 0.18, 0.9 / 0.18). The transform tweens from the source (`tweenFromSource`:
-  `sourceRectInWindow`, `sourceCornerRadius`, `sourceSnapshot`), scale = source width / card width
-  (FUN_1017156ac). Kite has no link frame, so it grows from 20% at the pointer and fades in over 0.1s **[differs]**.
+  (fullbleed 0.885 / 0.18, 0.9 / 0.18).
+- Tween from the clicked element (g44). `ModalV2TransitionConfiguration` cases `tweenFromSource`
+  (`sourceSnapshot`, `sourceRectInWindow`, `sourceCornerRadius`), `immediate`, `crossFade` (arc-strings.txt
+  166539–166544). FUN_1017156ac (`out5/peek3.txt` 187–) builds the transition view's transform: translate by
+  source.midX − card.midX and source.midY − card.midY, then a **uniform** scale of source width / card width
+  (not a frame tween: the card keeps its own aspect ratio, as wide as the source and centred on it). With no
+  source (case 1) it's the identity. FUN_101717608 (`out5/peek1.txt`) gives the card's corner radius as
+  sourceCornerRadius / that scale, so it looks like the source's at the start and springs to 8; it's animated
+  on the card and content container with the same spring as the transform (`objc-setShadowOpacity.txt`
+  ~1712–1960). The source rect comes from the page: `ADK/WebContent+HoveredElementRect.swift` (strings
+  63760–63796) runs `document.elementFromPoint` at the mouse point (mapped through `visualViewport`), takes that
+  element's `getBoundingClientRect` (the element itself, its `closest('a[href]')` only for the URL), and returns
+  x/y/width/height scaled back by `visualViewport.scale`. Kite (`LinkPeek.sourceRectScript`, `sourceTween`)
+  asks the source page the same way when the Peek opens, and falls back to the link to that URL (focused, else
+  first visible) when the pointer isn't on it, then to the old 20%-at-the-pointer growth if the page doesn't
+  answer within 0.12s. The value of `sourceCornerRadius` isn't in the script's output; Kite uses 0
+  **[unverified]**. Arc crossfades from `sourceSnapshot`; Kite fades the card in over 0.1s instead
+  **[differs]**. Closing back to the source with the close spring is **[inferred]**: the dismiss path wasn't
+  decompiled, but the same transform function serves every non-presented state.
 - Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
   swipe right to dismiss (`minimumDismissTranslation`, `tugRubberbanding`), undo "re-opening a closed Peek",
   the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`), any scrim behind the card.
@@ -740,6 +756,38 @@ Arc wasn't driven; nothing here is from a recording.
   12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
   top/bottom one on a top/bottom drop (Kite refuses it).
 
+## Split View: geometry and motion → `ArcMetrics.Split`, `SplitPanesView` (Arc 1.171 incognito capture + 1.169/1.171 decompile, 1 Nov 2026)
+
+Sources: **[cap]** one Arc incognito window (2056×1285pt, dark) on local fixture pages, View › Add Split View pressed through AX,
+recorded with a ScreenCaptureKit stream of that window only (frames every ~17–25ms) plus `screencapture -l`; **[dec]** Ghidra on
+`~/rea-arc/decomp/Arc-arm64` (`ARCUI.SplitViewController`).
+
+- **Gap = divider** [cap + dec]: 10pt between panes (pane 1 ends at x 1163, pane 2 starts at 1173, at 2×). `SplitViewController`'s
+  init sets `draggerHandleWidth` = **10.0** and `draggerHandleHitTargetOutset` = **0** (@100a50820), so the divider's hit area is
+  exactly the 10pt gap. The gap shows the window background (sampled #0d0e11, the same as the sidebar).
+- **Pane cards** [cap]: each pane is its own card, inset 10pt from the window's top, right and bottom and starting at the sidebar's
+  edge, like a single page; all four corners of every pane are rounded, including the corners facing the divider (same radius as
+  the single-page card). Two panes split the width evenly (873.5pt each of 1757).
+- **Grip** [cap + dec]: 2×24pt, centred in the gap (pixels x 2333–2336, y 1261–1308 at 2×), white ~18–20% on the dark window
+  (sampled ≈#373739 on #0d0e11): matches `DragHint` and the decompiled 2×24 / corner 1 pill.
+- **Minimum pane width** [dec]: `minimumPaneWidth` = **220.0** (@100a50820; ARCUI's default, no other writer found).
+- **Centre snap** [dec, pan handler @100a50d3c, 100a51b90–100a51c4c]: while dragging, the divider's offset from the middle of its two
+  panes is `position − pairLength × 0.5`; under **14pt** it snaps to the middle. Entering the snap plays
+  `NSHapticFeedbackManager` alignment feedback (the call also checks the drag's velocity against 120pt/s; Kite plays it on entering the
+  snap regardless).
+- **Double-click on a divider** [dec, @100a51d34 → closure @100a52084]: both panes beside it get half their combined share
+  (`fmul 0.5`), the others are untouched; the layout update runs animated (`@100a49224(1,1,1)`): `NSAnimationContext` duration
+  **0.2s** (0x3fc999999999999a), timing **easeOut**, `allowsImplicitAnimation` (@100a4ffd8).
+- **Dragging** [dec]: the pan handler relayouts with animation off (`@100a49224(0,1,0)`): panes follow the pointer, no easing.
+- **Add Split View** [cap]: no animation. The first frame after the menu press already has the final two-pane layout; the only motion
+  afterwards is the new pane's command bar appearing.
+- **Kite**: gap 10, grip unchanged, minimum pane 220, the 14pt centre snap with an alignment haptic, and double-click to even out a pair
+  animated 0.2s ease-out. Adding and closing panes stay instant.
+- **Not observed / unverified**: closing a pane (View › Close this Split Pane) and adding a third pane were pressed but Arc had lost
+  the front by then and didn't act, so their motion isn't recorded (Kite keeps them instant, like add); a real divider drag (needs the
+  real pointer) and the cursor/hover zone (no pointer sweep on Arc: the hit width is from the decompile only); filling the new pane from
+  its command bar (Arc's bar ignores an AX value + AXConfirm, and the window had lost the front before a Return could reach it).
+
 ## Library: Open Library… ⇧⌘L (Arc 1.171 menu bar, strings, MainMenu.nib, assets, 1 Nov 2026) → `LibraryView`
 
 Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, so no geometry was measured.
@@ -904,10 +952,38 @@ Sources: `~/rea-arc/arc-strings.txt` 73677–73738 (module `SiteControlCenter`: 
 | Footer | 82×32 left, 32×32 right, both 23 from the edges | Same |
 | From the toolbar | top y 38, right edge = window's | top 38, right edge 1280 of 1280 |
 
-Kite differs: no Boosts, capture, Developer Mode or sidebar preview; extensions stay in their own popover; action row
-has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers plus four permission rows, shown
+Kite differs: no Boosts, capture or sidebar preview; extensions stay in their own popover; action row
+has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers, Developer Mode and four permission rows, shown
 always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
 circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
+
+### Developer Mode row, Settings header and All Site Settings… (g59, Arc 1.169 binary, 1 Nov 2026)
+
+- Developer Mode row: title "Developer Mode" (Swift immediate at 0x10055d650 after the comment "Title of developer
+  mode item in site settings view", arc-strings 63725), subtitles "On" (0x1013726a0) / "Off" (0x101372520), next to
+  "Subtitle of developer mode item… when it's on/off" (73687–73688). It comes right after Block Ads & Trackers in
+  `SiteSetting+Display` (0x10055d594 → 0x10055d624). Symbol: `hammer.fill` is one of the settings view's four
+  symbols and the only one that fits (inferred). Kite: the row toggles the same per-host switch as ⌃D
+  (`BrowserState.toggleDeveloperMode`), shown for every site.
+- Settings header: hover text "More" (0x101384e2c, "Text shown on hover of site settings section"); the view has
+  `onSiteSettingsTitleClick` (arc-strings 164087). Kite shows "More" at the header's right on hover; a click opens
+  the site's settings like the menu item. That a header click navigates is inferred: the feature's only settings
+  navigation action is `didClickNavigateToSettings` (164116).
+- Footer menu, last item: "All Site Settings…" with an ellipsis (literal at 0x10137de00), `onAllSiteSettingsClick`
+  → `didClickNavigateToSettings`.
+- What it opens: ADK's settings pages (arc-strings 63370–63380, 151566 `siteSettings`) are built at 0x10052c4fc as
+  "arc://" (or "dia://") + `settings/content/siteDetails?site=` + the URL's `absoluteString`, or
+  `settings/content/siteDetails` without one. That is Chromium's per-site details page (that site's permissions),
+  opened as a web page, not Arc's Settings window. Which settings page the site control centre passes wasn't traced
+  through the reducer (inferred: `siteSettings` with the current URL, the only site-scoped page).
+- Kite: a new tab on its own page `kite://site-settings?site=<origin>` (`InternalPage.siteSettings`,
+  `SiteSettingsPageView`), drawn natively like kite://history: the site, then a Permissions card with Reset
+  permissions and an Ask (default) / Allow / Block menu per permission, Chromium's site details layout trimmed to
+  the four permissions Kite's CEF bridge reads (`KCBrowser sitePermission`). WebKit keeps none, so the page says so.
+  Chromium's usage/data section and its other permission types (JavaScript, pop-ups, sound, MIDI…) aren't there.
+- Still missing from Arc's popover: the Capture / full-page / Portrait Mode and New Boost action buttons, the Boosts
+  and Extensions sections, the sidebar Preview row, and the footer menu's Manage Boosts…, New Boost, Manage
+  Extensions… and Add Extension… (`includeBoostsInContextMenu` suggests the Boost items are conditional).
 
 ## Site permission prompt → `PermissionPromptView`, `PermissionPromptCard` (Arc 1.171 binary, 1 Nov 2026)
 
@@ -965,7 +1041,7 @@ Peek; on WebKit only camera and mic, asked every time.
   - title row: artwork/favicon 16×16 clipped to radius 4 in a 24×24 frame; title Text; `pip` symbol at 12 pt and `xmark`
     at 14 pt, whose opacity/width switch 0↔1 / 0↔24 (shown on hover).
   - controls: 24×24 buttons, 16×16 symbol frames, `Font.system(size: 14, weight: .medium)`; symbols `backward.end.fill`,
-    `play.fill`/`pause.fill`, `forward.end.fill`, `speaker.slash.fill`/`speaker.wave.1/2/3.fill` (+ Slider for volume),
+    `play.fill`/`pause.fill`, `forward.end.fill`, `speaker.slash.fill`/`speaker.wave.1/2/3.fill` (+ Slider for volume, below),
     `mic.fill`/`mic.slash.fill`, `video.fill`/`video.slash.fill`.
   - `MediaControlsView`: height 33, `Animation.spring(response: 0.25, dampingFraction: 0.9)`.
   - `PlaybackControlForeground` (ARC_MediaControlsFeature.bundle Assets.car): light black 50%, dark white 66%.
@@ -976,6 +1052,27 @@ Peek; on WebKit only camera and mic, asked every time.
   the space bar), the card fill colour (Kite uses the address field's fill), the title font (a CTFont; Kite uses 12 pt
   medium), button hover fills, which controls drop at 160 / 126, and whether closing the player pauses (Kite pauses).
 
+### Mini Player tab volume ("Adjust Tab Volume") → `MiniPlayerView.volumeRow`, `TabVolume`, `MediaStateScript` (Arc 1.171, 1 Nov 2026)
+
+- Strings (arc-strings.txt): MiniPlayer actions `setVolume`, `toggleVolumeDrawer`, `toggleMuted` (174130-174145); state
+  `volume`, `isTabMuted`, `isVolumeExpanded` (174155-174160); `MiniPlayerView` `VolumeRowViewState` (43031) with
+  `isVolumeRowShown`, `volume`, `isMuted`, `isVolumeExpanded` (174205-174208); analytics `volumeDrawerOpened` /
+  `volumeDrawerClosed` (68965, 161345); the hosting view has `heightConstraint` / `onUpdateHeight` (the card grows).
+  Mechanism: `ADKClient.setVolume` (67687) and `webContents:didChangeVolume:` (194584), i.e. a volume on the tab's
+  web contents, not a page script. No volume key in Arc's defaults (nothing persisted across launches).
+- Disassembly (arc.s): the "Adjust Tab Volume" button sits in the controls row right after `forward.end.fill`
+  (next track) and before "Toggle Microphone" (9585804 → 9586015 → 9586178). The slider is a stock SwiftUI
+  `Slider(value:in:onEditingChanged:)` (9587416, 0x102495570) over `0...1` (the range constant at 0x103651b70 reads
+  0.0, 1.0), no step. The speaker symbol (0x102495334-0x1024953e8) is `speaker.slash.fill` when muted, `speaker.fill`
+  at volume 0, `speaker.wave.1.fill` below 1/3, `speaker.wave.3.fill` from 2/3 to 1, else `speaker.wave.2.fill`; it's
+  drawn at 14 pt medium in a 16×16 frame (0x1024951e8-0x102495240).
+- Kite: the controls row's speaker button (now the volume symbol, tooltip "Adjust Tab Volume") opens a third 33 pt row
+  with the tab's mute button and the 0...1 slider. The level scales every `<audio>`/`<video>` in the page's main
+  frame (element volume = the page's own volume × level, restored exactly at 1); it lives with the tab's page like
+  the mute, and Kite sends it again after a navigation.
+- Inferred, not read: that the drawer is a row below the controls (Arc's row order and its layout weren't read beyond
+  the slider and symbol), that the row's speaker toggles the tab mute (`toggleMuted` exists; where it's wired wasn't
+  traced), the slider's tint and size (Kite: small control size, system tint).
 
 ## Check for Updates (Arc 1.171 Info.plist, menu bar and strings, 1 Nov 2026)
 
@@ -1460,7 +1557,48 @@ Hibernated tabs aren't touched (they have no page and make no sound).
   `--type` / `--utility-sub-type`.
 - Inferred, not observed (Arc's task manager wasn't opened): the button wording ("End Task", the refreshed UI's,
   over the older "End Process"), the window size, the row order, the utility names, and double-click to show a
-  tab. Network reads N/A: Kite has no per-tab network counter yet.
+  tab.
+
+### Search, categories, sorting, columns, Network (g58)
+
+Arc's task manager wasn't opened (the rules allow no presses in Arc), so this follows Chromium's source for the
+refreshed task manager that ArcCore 156 ships (`task_manager_search_bar_view.cc` and the category strings are in
+it), read from chromium.googlesource.com (main, Nov 2026) and reimplemented:
+
+- Header (`TaskManagerView::CreateHeaderContent`): category tabs with icons on the left, then a spacer and the
+  search field in flex 7:3, over a separator. On the Mac there are three tabs (`GetTabDefinitions`): "Tabs &
+  extensions", "Browser" (the `kSystem` category; "System" is ChromeOS's title), "All tasks"; the default is Tabs &
+  extensions (`kDefaultCategory`), restored from `task_manager.category`. Tabs and extensions (renderers without a
+  subtype, extensions, guests) go under the first; the browser, GPU and utility processes under Browser
+  (`ShouldKeepTaskForTabsAndExtensions` / `ShouldKeepTaskForSystem`). Changing tab clears the selection.
+- Search (locale.pak 930–932, chromium_strings.grd): placeholder "Search", accessible name "Search for any process
+  from the list.", clear button "Clear search" (shown only with text). It filters 50 ms after typing
+  (`kInputChangeCallbackDelay`), case- and accent-insensitively on the Task column's text, and keeps every task of
+  a process that has a match in the shown category (`UpdateMatchedProcessSet`, `ShouldKeepTask`).
+- Sorting (`views::TableView::ToggleSortOrder`): a new column sorts its initial way (ascending for Task and
+  Process ID, descending for the rest, `initial_sort_is_ascending` in task_manager_columns.h); the next click
+  reverses it; the third clears it. With nothing saved it opens sorted by CPU, highest first
+  (`RetrieveSavedColumnsSettingsAndUpdateTable`). A process's rows stay together and processes sort by their
+  first row (`GroupSortHelper`).
+- Columns: right-click the header (or the rows) for a checklist of columns; the last visible one can't be hidden
+  (`IsCommandIdEnabled`). Kite lists the columns it can fill: Chromium's five defaults plus Idle Wake Ups
+  (interrupt wakeups per second, `ri_interrupt_wkups`) and File Descriptors (`PROC_PIDLISTFDS`), both off by
+  default as in Chromium. Saved, with the sort and category, in `TaskManager.json` in Kite's support folder
+  (Chromium: local state). Left out: Profile, the WebCore caches, GPU, SQLite, JavaScript and CppGC memory,
+  Process Priority, Keepalive Count (they need numbers from inside the engine).
+- Chromium turns alternating row colours off on every platform (`SetAlternatingRowColorsEnabled(false)`); End Task
+  is enabled only when every selected task can end (`IsEndProcessButtonEnabled`); opening it selects the active
+  tab's row (`SelectTaskOfActiveTab`).
+- Network: bytes received + sent per second over the last refresh, summed per process and shown on its first row
+  (`Task::Refresh`, `TaskGroup`), written by `ui::FormatSpeed` ("$1 B/s", "$1 KB/s", "$1 MB/s" at 3 KiB / 2 MiB /
+  1 GiB, one decimal under 100, locale.pak 50449–50454), "0" for none. Chromium counts each request's bytes in its
+  network service; Kite's Chromium engine counts them in CEF's `OnResourceLoadComplete` (body bytes received plus
+  in-memory upload bytes), so a request counts when it finishes, not as it streams, and disk-cache hits count
+  too. GPU and utility rows read "0" (Chromium credits the network service's bytes to the tasks that asked).
+  The Browser row reads N/A (Kite's own requests aren't counted), and on WebKit every row reads N/A: WebKit
+  loads in its shared networking process and has no public API for a page's bytes.
+- Inferred: the tab strip's look (accent title and a 2 px underline for the selected tab, SF Symbols for Chromium's
+  tab and list icons, Kite's app icon for Browser), the paddings and the search field's minimum width.
 
 ## mailto: handling → `MailHandler`, `MailHandlerSettings` (KiteCore), `MailHandlers` (Arc 1.171 strings, Info.plist and settings key names, 1 Nov 2026)
 
@@ -1516,12 +1654,51 @@ ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-stri
   Add Split View pane). WebKit: the image section too (WebKit's Copy Image does the copying). Chromium (Alloy): link
   items replace Alloy's page items (Back, Forward, Print, View Source) when the click is on a link.
 - **Left out:** "Capture Image..." (its action isn't in the evidence); "Customize Page" › Boosts (Boosts aren't in
-  Kite); Copy Link Text.
+  Kite); Copy Link Text (Arc never shows it on a mouse right-click; see the next section).
 - **Inferred / unverified:** what the checks before Split View and Little Arc test (Kite: Split View hidden in Little
   Kite and disabled when the split already has 4 panes; Little Kite hidden in Little Kite and incognito windows);
   Open Link in Incognito Window disabled in incognito (Chromium's `IsOpenLinkOTREnabled`); which side of the
-  focused pane Arc's split opens on. Selection and page-level sections are still WebKit's own (Look Up, Search
-  With Google, Back/Reload…), not Chromium's.
+  focused pane Arc's split opens on. On WebKit the selection and page-level sections are still WebKit's own (Look
+  Up, Search With Google, Back/Reload…); Chromium has Arc's (next section).
+
+### Page, selection and image sections (ArcCore InitMenu, 1 Nov 2026)
+
+Sources: the arm64 slice of ArcCore 1.171 (`lipo -thin arm64`, `objdump --start-address`), titles from
+`en.lproj/locale.pak` (string id → text), `base::Feature` records read from `__DATA` (name pointer, default state
+at +8). Kite runs nothing in Arc; none of this was seen on screen.
+
+- **InitMenu** is ArcCore 0x4281540–0x4282df0. It asks `ContextMenuContentType::SupportsGroup(n)` (vtable +0x10 of
+  the object at +0x5a8) for each group and appends: page (group 1) → link (3) → image (5) → search-for-image (6)
+  → video, audio, canvas, plugin → editable (14) → copy (15) + Copy Link to Highlight → search provider (17,
+  unless the selection is a misspelling or the page is chrome://password-manager) → print (18, not on an
+  image) → extension items → developer (21). A trailing separator is removed (0x4282040).
+- **Page** (AppendPageItems 0x81ccc80): Back (33000, IDS 8911) · Forward (33001, 8912) · Reload (33002, 8924) ·
+  separator · Save As… (35004, 8913) · Print… (35003, 8914). Then Live Caption (feature
+  `LiveCaptionRightClick`, default off), Cast… (media router), Save to Memory (`MemoryBanks`, off), Send to Your
+  Device (sync), Translate (translate service). **Developer** (0x81cde0c): separator · View Page Source (35002,
+  8916, page only) · View/Reload Frame (frames) · Inspect (50162, 8889).
+- **Copy Link Text** (50107, 8951, at 0x4282b3c) is only added when the menu's source type is 3 (touch) and the
+  target isn't an image: never on a Mac right-click.
+- **Selection**: Copy (50150, 8982; AppendCopyItem 0x81cd640 adds a separator first when the menu isn't empty) ·
+  Copy Link to Highlight (8952, link-to-text observer, http/https pages with the `scroll_to_text_fragment_enabled`
+  pref) · the search item (AppendSearchProvider 0x81cd6cc): "Search $1 for “$2”" (9001, the engine's name), or
+  "Go to $1" (9007) when the selection is an address; inserted at index 0 unless the click is on a link, then
+  appended · Print… (35003; "Print Text Selection…" only with the `MenuSimplification`/`DesktopGlowUp` features,
+  both default off). The selection in titles is PrintableSelectionText (0x81cc7c0): 50 characters, cut at a word.
+- **macOS toolkit** (0x422a654, after InitMenu): with a selection and no link, "Look Up “$1”" (50355) at index 0
+  and a separator after it; then with any selection a separator and the "Speech" submenu (148: Start Speaking,
+  Stop Speaking; ui::TextServicesContextMenu 0x8be46c4).
+- **Image**: as above, preceded by a separator after link items. "Load Image" only without image contents;
+  "Search $1 for Image" (9003) when the engine has image search.
+- **Kite (Chromium)**: the whole menu comes from `PageContextMenu.menu(for:host:)` in this order; CEF's own
+  model is kept in editable fields, on video/audio/plugins. Search uses Kite's search engine and opens a
+  foreground tab; Open Image in New Tab a background tab; Look Up shows macOS's dictionary panel at the click;
+  Speech uses NSApplication's `speakString:` as Chromium does; Inspect opens DevTools on the clicked element.
+- **Inferred / left out**: Arc's embedder check of kind 24 (0x81cd8f8, 0x422a7ec) adds "Ask $AppName$ about “$1”"
+  (command 53247) before the search item; what turns it on wasn't traced, and Kite leaves it out. Cast, Translate,
+  Send to Your Device, Save to Memory, Live Caption and Search for Image are left out (Kite has none of those
+  features, and most are off in Arc by default). Copy Link to Highlight writes the selected text (or its first
+  and last three words) without Chromium's uniqueness prefix/suffix.
 ## ⌥⌘-click opens a link in Split View → `LinkClick` (KiteCore) (Arc 1.169 decomp, 1.171 strings, 1 Nov 2026)
 
 - The routing is in `decidePolicyForWebContentFrameNavigation(windowID:windowContentID:action:disposition:modifierFlags:response:)`

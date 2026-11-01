@@ -141,7 +141,8 @@ struct SidebarView: View {
 
             if let miniPlayer, let id = store.miniPlayerTabID, let tab = state.tab(id), let page = store.pages[id],
                let media = page.media {
-                MiniPlayerView(tab: tab, media: media.state, isMuted: page.isAudioMuted, actions: miniPlayer)
+                MiniPlayerView(tab: tab, media: media.state, isMuted: page.isAudioMuted, volume: page.tabVolume, actions: miniPlayer)
+                    .id(id)
                     .padding(.top, M.padding)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }

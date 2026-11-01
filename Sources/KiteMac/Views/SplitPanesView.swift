@@ -20,6 +20,10 @@ final class SplitPanesView: NSView {
 
     /// Divider `index` moved: the leading pane's share of the pair, and the smallest share either may have.
     var onDividerDrag: ((_ index: Int, _ fraction: Double, _ minimumShare: Double) -> Void)?
+    /// The next layout change animates (Arc animates only a double-clicked divider evening out its panes).
+    private var animatesNextLayout = false
+    /// Whether the divider being dragged sits snapped to the middle of its panes.
+    private var snappedDivider: Int?
 
     override var isFlipped: Bool { true }
 
@@ -46,6 +50,8 @@ final class SplitPanesView: NSView {
         dividers = (0..<max(pages.count - 1, 0)).map { index in
             let divider = SplitDividerView()
             divider.onDrag = { [weak self] point in self?.dragDivider(index, to: point) }
+            divider.onDragEnd = { [weak self] in self?.snappedDivider = nil }
+            divider.onDoubleClick = { [weak self] in self?.equalizeDivider(index) }
             addSubview(divider)
             return divider
         }
@@ -57,7 +63,15 @@ final class SplitPanesView: NSView {
         self.factors = factors
         self.orientation = orientation
         for divider in dividers { divider.isVertical = orientation == .vertical }
-        layoutPanes()
+        guard animatesNextLayout else { return layoutPanes() }
+        animatesNextLayout = false
+        // Arc: `NSAnimationContext` with duration 0.2, ease-out and implicit animation, around the layout.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = M.equalizeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            layoutPanes(animated: true)
+        }
     }
 
     /// The pane under a point in this view's coordinates.
@@ -81,7 +95,10 @@ final class SplitPanesView: NSView {
         return max(length - M.gap * CGFloat(max(panes.count - 1, 0)), 0)
     }
 
-    private func layoutPanes() {
+    private func layoutPanes(animated: Bool = false) {
+        func place(_ view: NSView, _ frame: CGRect) {
+            if animated { view.animator().frame = frame } else { view.frame = frame }
+        }
         guard !panes.isEmpty else { return }
         let shares = factors.count == panes.count ? factors : Array(repeating: 1 / Double(panes.count), count: panes.count)
         // Expand Current Split: one pane at 1, the rest at 0. The hidden panes and every divider
@@ -105,15 +122,15 @@ final class SplitPanesView: NSView {
             let length = i == panes.count - 1
                 ? (isHorizontal ? bounds.width : bounds.height) - offset
                 : (available * shares[i]).rounded()
-            pane.card.frame = isHorizontal
+            place(pane.card, isHorizontal
                 ? CGRect(x: offset, y: 0, width: length, height: bounds.height)
-                : CGRect(x: 0, y: offset, width: bounds.width, height: length)
+                : CGRect(x: 0, y: offset, width: bounds.width, height: length))
             pane.card.needsLayout = true
             offset += length
             if i < dividers.count {
-                dividers[i].frame = isHorizontal
+                place(dividers[i], isHorizontal
                     ? CGRect(x: offset, y: 0, width: M.gap, height: bounds.height)
-                    : CGRect(x: 0, y: offset, width: bounds.width, height: M.gap)
+                    : CGRect(x: 0, y: offset, width: bounds.width, height: M.gap))
                 offset += M.gap
             }
         }
@@ -127,8 +144,22 @@ final class SplitPanesView: NSView {
         let pair = isHorizontal ? leading.width + trailing.width : leading.height + trailing.height
         guard pair > 0, available > 0 else { return }
         let position = (isHorizontal ? point.x : point.y) - start - M.gap / 2
-        let fraction = min(max(Double(position / pair), 0), 1)
+        let (fraction, snapped) = SplitView.dividerFraction(position: Double(position), pairLength: Double(pair), snapDistance: M.centerSnapDistance)
+        // Arc taps the trackpad as the divider lands in the middle.
+        if snapped, snappedDivider != index {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+        snappedDivider = snapped ? index : nil
         onDividerDrag?(index, fraction, Double(M.minimumPaneWidth / available))
+    }
+
+    /// Arc's double-click on a divider: its two panes share their space evenly, animated.
+    private func equalizeDivider(_ index: Int) {
+        guard panes.indices.contains(index + 1), available > 0 else { return }
+        animatesNextLayout = true
+        onDividerDrag?(index, 0.5, Double(M.minimumPaneWidth / available))
+        // Nothing changed (already even): don't animate some later layout.
+        animatesNextLayout = false
     }
 }
 
@@ -140,6 +171,8 @@ final class SplitDividerView: NSView {
 
     /// The drag's location in the superview's coordinates.
     var onDrag: ((NSPoint) -> Void)?
+    var onDragEnd: (() -> Void)?
+    var onDoubleClick: (() -> Void)?
     var isVertical = false {
         didSet {
             needsLayout = true
@@ -162,6 +195,17 @@ final class SplitDividerView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override var mouseDownCanMoveWindow: Bool { false }
+
+    // A test build takes synthetic clicks on the divider while in the background (`kite ui input`).
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        UIDiagnostics.enabledByEnvironment || super.acceptsFirstMouse(for: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { onDoubleClick?() }
+    }
+
+    override func mouseUp(with event: NSEvent) { onDragEnd?() }
 
     override func layout() {
         super.layout()
