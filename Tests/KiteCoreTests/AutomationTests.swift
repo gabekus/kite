@@ -542,4 +542,12 @@ import Testing
         try Data("garbage".utf8).write(to: url)
         #expect(AutomationSettings.load(from: url).allowClaudeControl == false)
     }
+
+    @Test func askBeforeActingIsOffUnlessTurnedOn() throws {
+        #expect(AutomationSettings().askBeforeActing == false)
+        let old = try JSONDecoder().decode(AutomationSettings.self, from: Data(#"{"allowClaudeControl":true}"#.utf8))
+        #expect(old.askBeforeActing == false)
+        let on = try JSONEncoder().encode(AutomationSettings(askBeforeActing: true))
+        #expect(try JSONDecoder().decode(AutomationSettings.self, from: on).askBeforeActing == true)
+    }
 }

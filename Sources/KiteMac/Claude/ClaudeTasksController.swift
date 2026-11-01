@@ -22,10 +22,10 @@ final class ClaudeTasksController {
 
     static let setUpKey = "claudeSetUp"
 
-    /// Where ⌘J sends a request: the Claude desktop app (one Claude, with its memory and
-    /// history) or a headless Claude Code task in Kite. Desktop when it's installed.
+    /// Where ⌘J sends a request: a headless Claude Code task here in Kite (the default, so
+    /// ⌘J never leaves Kite), or the Claude desktop app when the user turns that on.
     var runsIn: ClaudeRunsIn = UserDefaults.standard.string(forKey: ClaudeRunsIn.defaultsKey).flatMap(ClaudeRunsIn.init)
-        ?? (ClaudeDesktop.isInstalled ? .desktop : .kite) {
+        ?? .kite {
         didSet { UserDefaults.standard.set(runsIn.rawValue, forKey: ClaudeRunsIn.defaultsKey) }
     }
 

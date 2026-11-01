@@ -105,11 +105,16 @@ public struct AutomationSettings: Codable, Hashable, Sendable {
     public var useClaudeSpace: Bool
     /// Log every tab's requests (redacted) for Claude, and keep a week of them on disk, not just the tabs Claude drives.
     public var recordNetwork: Bool
+    /// Ask the user before Claude submits, sends, posts, pays, buys or deletes anything, opens a file
+    /// or closes a tab it didn't open. Off by default: Claude just does what it was asked.
+    public var askBeforeActing: Bool
 
-    public init(allowClaudeControl: Bool = false, useClaudeSpace: Bool = false, recordNetwork: Bool = false) {
+    public init(allowClaudeControl: Bool = false, useClaudeSpace: Bool = false, recordNetwork: Bool = false,
+                askBeforeActing: Bool = false) {
         self.allowClaudeControl = allowClaudeControl
         self.useClaudeSpace = useClaudeSpace
         self.recordNetwork = recordNetwork
+        self.askBeforeActing = askBeforeActing
     }
 
     public init(from decoder: Decoder) throws {
@@ -117,6 +122,7 @@ public struct AutomationSettings: Codable, Hashable, Sendable {
         allowClaudeControl = try c.decodeIfPresent(Bool.self, forKey: .allowClaudeControl) ?? false
         useClaudeSpace = try c.decodeIfPresent(Bool.self, forKey: .useClaudeSpace) ?? false
         recordNetwork = try c.decodeIfPresent(Bool.self, forKey: .recordNetwork) ?? false
+        askBeforeActing = try c.decodeIfPresent(Bool.self, forKey: .askBeforeActing) ?? false
     }
 
     public static func fileURL(supportDirectory: URL) -> URL {

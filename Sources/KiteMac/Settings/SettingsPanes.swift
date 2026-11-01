@@ -445,6 +445,8 @@ struct AdvancedPane: View {
                 SettingsSeparator()
                 CommandToggle("Open Claude’s Tabs in a Claude Space", #selector(AppDelegate.toggleClaudeSpace(_:)))
                 SettingsSeparator()
+                CommandToggle("Ask Before Claude Acts", #selector(AppDelegate.toggleAskBeforeClaudeActs(_:)))
+                SettingsSeparator()
                 CommandToggle("Record Network for Claude", #selector(AppDelegate.toggleRecordNetwork(_:)))
                 SettingsSeparator()
                 CommandToggle("Ask Claude in the Claude App", #selector(AppDelegate.toggleClaudeRunsInDesktop(_:)))
