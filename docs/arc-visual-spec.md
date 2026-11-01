@@ -2791,3 +2791,45 @@ Read from Arc's compiled `Base.lproj/MainMenu.nib` (control connectors: action, 
   "We talk to your search engine to help us suggest results." privacy banner aren't copied.
 - Not verified: the pop-up's open menu (modal), Other… and Ask every time live (they'd open panels over Gabe's
   work), and the Chromium engine (the test build runs WebKit).
+
+## Shortcut priority and Extension Shortcuts → `ShortcutPriorityRouter`, `KeyShortcutPriority`, `ShortcutsPane` (Arc 1.171, 1 Nov 2026)
+
+Sources: `Base.lproj/MainMenu.nib` (user-defined runtime attributes, parsed in scratch), `arc-strings.txt`, Arc's
+disassembly (`~/rea-arc/decomp/arc.s`), and the key names in Gabe's `StorableKeyBindings.json` (no values beyond
+the priorities read).
+
+- **Three priorities [str, json]** (`KeyboardShortcutPriority`, raw values in `StorableKeyBindings.json` as each
+  override's `priority` and `default.priority`): `overrideWebView`, `promptAfterConsumedByWebView`, `low`.
+  `KeyBindingsClient.setPriorityForAction` sets one; analytics `keyboard_shortcut_priority_changed`.
+- **Picker labels [dis]**: `PriorityPicker` builds them as inline Swift literals next to the comments "Priority for
+  preferring Arc." / "…websites first, then Arc on another invocation." / "…websites." (arc.s 0x10205f9d8–fa88):
+  "Prefer Arc", "Use Both", "Prefer Websites". Enum order: 0 websites (`low`), 1 both, 2 Arc. Subtitles [str]:
+  "When shortcuts conflict, Arc wins." / "Press this shortcut once to use the website’s shortcut. Press it twice to
+  use Arc’s shortcut." / "When shortcuts conflict, the website wins." Kite says Kite. Where the picker sits in the
+  pane wasn't observed (row detail needs a click); Kite shows it under a row when you click the row's name, as a
+  segmented control with the subtitle under it **[guess]**.
+- **Defaults [nib]** (`arcKeyBindingPriority` on each menu item; items without one default to `low`, which matches
+  `default.priority` for `capturePage`, `savePageAs`, `focusNextSpace` in the json): Arc wins for Open Command Bar,
+  Archive Tab, Close Window, Copy URL (+ as Quote, as Markdown), Tab Switcher, Cycle Tab, Go Back/Forward, Hide,
+  Minimize, New Incognito Window, New Tab, New Window, Quit, Restore Last Closed Tab, Next/Previous Tab, New Little
+  Arc Window. Use Both for Add Split View, Close this Split Pane, Developer Tools, Inspect Elements, View Source,
+  Toggle Developer Mode, Enter Full Screen, Pin Tab, Print, Show/Hide Sidebar, Show/Hide Toolbar (and Arc-only
+  Exit, Reveal Current Tab, Join Meeting, New Note, Open Little Arc or Peek in…, Peek Email). Everything else
+  the website.
+- **Use Both [str]**: Chromium tells Arc a page used a key (`webContents:didConsumeKey:withModifierFlags:…`,
+  `onDidConsumeModifiedKeydownEvent`), then a toast "Toast indicating that the user can press the same hotkey
+  again to run the browser action" (format "Take an action again, '<do something> again to <do action>'") with
+  the accessory "Edit the shortcut". Kite's toast reads "Press ⌘D again to Pin Tab" **[wording inferred from the
+  comment]**; the accessory opens Settings › Shortcuts. Neither of Kite's engines reports a used key, only an
+  unused one (it reaches the menu bar), so Kite counts a key as used when 0.35 s pass without its command running.
+  The second press counts while the toast is up (4.6 s, Kite's toast time) **[Arc's window unobserved]**.
+- **Extension Shortcuts… [str]**: "Menu item to view shortcuts registered by extensions"; Arc's ADK opens
+  Chromium's `extensions/shortcuts` WebUI (listed with `settings/…` pages in ADK/BrowserChromium.swift's strings).
+  Kite can't: its Alloy tabs don't open chrome:// pages, and it has no extension-commands runtime, so the item
+  stays disabled.
+- Verified in a test Kite (WebKit, `ui input` + `ui key_log` + page text on a 127.0.0.1 fixture that
+  preventDefaults some keys): ⌘T and ⌘F (set to Prefer Kite in keybindings.json) ran Kite's command and the page
+  never saw them; ⌘D (Use Both) went to the page, the toast appeared, and the second press pinned the tab without
+  the page seeing it; ⌘S (Use Both, page passes it on) toggled the sidebar with no toast; ⌘Y (website) stayed with
+  the page. Chromium: ⌘F with Prefer Kite ran Find before the page. With Kite in the background Chromium's view
+  declines key equivalents, so its page-first path couldn't be driven.

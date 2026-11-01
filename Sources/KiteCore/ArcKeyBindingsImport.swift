@@ -27,7 +27,10 @@ public enum ArcKeyBindingsImport {
     private struct Override: Decodable {
         var action: Action
         var state: [String: [String: Shortcut]]
+        var priority: String?
+        var `default`: Default?
         struct Action: Decodable { var identifier: String }
+        struct Default: Decodable { var priority: String? }
     }
 
     struct Shortcut: Decodable {
@@ -37,14 +40,16 @@ public enum ArcKeyBindingsImport {
 
     /// One override per changed action. Arc's `unset` state means the user removed
     /// the shortcut; `valid` holds the new one. Entries Kite can't read are skipped.
+    /// A priority comes along only when the user changed it from Arc's default for that command.
     public static func parse(_ data: Data) throws -> [KeyBindingOverride] {
         try JSONDecoder().decode(File.self, from: data).userOverrides.compactMap { entry in
             let action = kiteActions[entry.action.identifier] ?? entry.action.identifier
+            let priority = entry.priority.flatMap { $0 == entry.default?.priority ? nil : KeyShortcutPriority(rawValue: $0) }
             if entry.state["unset"] != nil {
-                return KeyBindingOverride(action: action, shortcut: nil, source: .arc)
+                return KeyBindingOverride(action: action, shortcut: nil, source: .arc, priority: priority)
             }
             guard let arc = entry.state["valid"]?["_0"], let shortcut = shortcut(arc) else { return nil }
-            return KeyBindingOverride(action: action, shortcut: shortcut, source: .arc)
+            return KeyBindingOverride(action: action, shortcut: shortcut, source: .arc, priority: priority)
         }
     }
 

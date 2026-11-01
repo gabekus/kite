@@ -205,6 +205,7 @@ struct UIInputSender {
                 MenuRouter.deliveringToLittle = nil
             }
             if window.performKeyEquivalent(with: event) {
+                if ShortcutPriorityRouter.shared.lastTaken === event { return "run by Kite before the page saw it (its shortcut priority) (\(state))" }
                 guard window.firstResponder is WKWebView else { return "claimed as a key equivalent by a view (\(state))" }
                 // WebKit asks the page first and, if the page doesn't use the key, sends this same event
                 // through the app later. Its menu command belongs to this window, not the one AppKit picks.
@@ -222,40 +223,8 @@ struct UIInputSender {
     /// this window's (in the background there's none, and AppKit finds them disabled). Run the one this key
     /// matches on this window's chain instead, as it would with the window key.
     private func performOnResponderChain(_ event: NSEvent) -> Bool {
-        guard let item = NSApp.mainMenu.flatMap({ Self.menuItem(in: $0, matching: event) }),
-              let action = item.action else { return false }
-        // An item with a target (the MenuRouter) still runs when AppKit's menu bar, inactive in the background,
-        // won't: validated by its target, as the menu bar would.
-        if let target = item.target {
-            if let validator = target as? NSMenuItemValidation, !validator.validateMenuItem(item) { return false }
-            NSApp.sendAction(action, to: target, from: item)
-            NotificationCenter.default.post(name: NSMenu.didSendActionNotification, object: item.menu, userInfo: ["MenuItem": item])
-            return true
-        }
-        var responder = window.firstResponder
-        while let current = responder, !current.responds(to: action) { responder = current.nextResponder }
-        guard let target = responder else { return false }
-        if let validator = target as? NSMenuItemValidation, !validator.validateMenuItem(item) { return false }
-        if let validator = target as? NSUserInterfaceValidations, !validator.validateUserInterfaceItem(item) { return false }
-        NSApp.sendAction(action, to: target, from: item)
-        // The key log credits menu commands through this notification.
-        NotificationCenter.default.post(name: NSMenu.didSendActionNotification, object: item.menu, userInfo: ["MenuItem": item])
-        return true
-    }
-
-    /// The menu item whose key equivalent matches `event`: same key, same ⌘⌃⌥⇧ (an uppercase equivalent implies ⇧).
-    private static func menuItem(in menu: NSMenu, matching event: NSEvent) -> NSMenuItem? {
-        let modifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
-        let flags = event.modifierFlags.intersection(modifiers)
-        let key = event.charactersIgnoringModifiers?.lowercased()
-        for item in menu.items {
-            if let submenu = item.submenu, let found = menuItem(in: submenu, matching: event) { return found }
-            guard !item.keyEquivalent.isEmpty, item.keyEquivalent.lowercased() == key else { continue }
-            var mask = item.keyEquivalentModifierMask.intersection(modifiers)
-            if item.keyEquivalent != item.keyEquivalent.lowercased() { mask.insert(.shift) }
-            if mask == flags { return item }
-        }
-        return nil
+        guard let item = MenuKeyDispatch.item(matching: event) else { return false }
+        return MenuKeyDispatch.perform(item, in: window)
     }
 
     private func deliverUp(_ event: NSEvent) {

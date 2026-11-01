@@ -34,6 +34,26 @@ final class KeyBindingsStore {
         apply(to: menu)
     }
 
+    /// Changes a command's shortcut, keeping the priority chosen for it.
+    func setShortcut(_ shortcut: KeyShortcut?, for action: String, menu: NSMenu?) {
+        bindings.setShortcut(shortcut, for: action)
+        save()
+        apply(to: menu)
+    }
+
+    /// Changes who wins when a page wants a command's keys.
+    func setPriority(_ priority: KeyShortcutPriority, for action: String, menu: NSMenu?) {
+        let current = menu.flatMap { Self.items(in: $0).first { $0.identifier?.rawValue == action } }?.shortcut
+        bindings.setPriority(priority, for: action, shortcut: current)
+        save()
+        apply(to: menu)
+    }
+
+    /// The command a menu item runs, by ID: its own, or the one a ShortcutMirror repeats.
+    static func action(of item: NSMenuItem) -> String? {
+        (item.representedObject as? ShortcutMirror)?.id ?? item.identifier?.rawValue
+    }
+
     func reset(_ action: String, menu: NSMenu?) {
         bindings.reset(action)
         save()
@@ -60,7 +80,8 @@ final class KeyBindingsStore {
                       seen.insert(id).inserted
                 else { return [] }
                 let original = defaults[ObjectIdentifier(item)] ?? item.shortcut
-                return [ShortcutEntry(id: id, title: item.title, menuPath: path, shortcut: item.shortcut, defaultShortcut: original)]
+                return [ShortcutEntry(id: id, title: item.title, menuPath: path, shortcut: item.shortcut, defaultShortcut: original,
+                                      priority: bindings.priority(for: id))]
             }
         }
         return walk(menu, [])

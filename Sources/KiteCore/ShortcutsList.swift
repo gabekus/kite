@@ -9,16 +9,20 @@ public struct ShortcutEntry: Hashable, Sendable, Identifiable {
     public var menuPath: [String]
     public var shortcut: KeyShortcut?
     public var defaultShortcut: KeyShortcut?
+    /// Who wins when a page wants the same keys.
+    public var priority: KeyShortcutPriority
 
-    public init(id: String, title: String, menuPath: [String] = [], shortcut: KeyShortcut?, defaultShortcut: KeyShortcut?) {
+    public init(id: String, title: String, menuPath: [String] = [], shortcut: KeyShortcut?, defaultShortcut: KeyShortcut?,
+                priority: KeyShortcutPriority? = nil) {
         self.id = id
         self.title = title
         self.menuPath = menuPath
         self.shortcut = shortcut
         self.defaultShortcut = defaultShortcut
+        self.priority = priority ?? KeyShortcutPriority.defaultPriority(for: id)
     }
 
-    public var isCustomized: Bool { shortcut != defaultShortcut }
+    public var isCustomized: Bool { shortcut != defaultShortcut || priority != KeyShortcutPriority.defaultPriority(for: id) }
 }
 
 /// The Shortcuts pane's list logic, kept out of AppKit so it can be tested.

@@ -16,6 +16,10 @@ struct ShortcutsPane: View {
     @State private var recording: String?
     /// A recorded shortcut that another command already has, waiting for the user to choose.
     @State private var pending: (id: String, shortcut: KeyShortcut)?
+    /// The row showing its priority picker (click a row's name). Test runs can open one with
+    /// KITE_SETTINGS_SHORTCUT=<command ID>, since rows can't be clicked while Kite stays in the background.
+    @State private var selected: String? = ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] != nil
+        ? ProcessInfo.processInfo.environment["KITE_SETTINGS_SHORTCUT"] : nil
 
     enum M {
         static let pillSize = CGSize(width: 372, height: 36)
@@ -97,6 +101,8 @@ struct ShortcutsPane: View {
             ShortcutRow(
                 entry: entry,
                 isRecording: recording == entry.id,
+                isSelected: selected == entry.id,
+                select: { selected = selected == entry.id ? nil : entry.id },
                 pending: pending?.id == entry.id ? pending?.shortcut : nil,
                 conflicts: pending?.id == entry.id ? ShortcutsList.conflicts(for: pending?.shortcut, excluding: entry.id, in: all) : [],
                 startRecording: { recording = entry.id; pending = nil },
@@ -169,11 +175,14 @@ private struct ArtKey: View {
 
 /// A 48pt list row: the command's name and its keycap (click to record). A recorded shortcut that
 /// another command has shows Arc's note under the row, with Remove Conflicting Shortcut and Cancel.
-/// Right-click for reset and remove.
+/// Click the name for the priority picker (Arc's PriorityPicker: Prefer Kite / Use Both / Prefer
+/// Websites, with the chosen one's line under it). Right-click for reset and remove.
 private struct ShortcutRow: View {
     @EnvironmentObject private var model: SettingsModel
     let entry: ShortcutEntry
     let isRecording: Bool
+    let isSelected: Bool
+    let select: () -> Void
     let pending: KeyShortcut?
     let conflicts: [ShortcutEntry]
     let startRecording: () -> Void
@@ -188,6 +197,23 @@ private struct ShortcutRow: View {
                 ShortcutRecorder(shortcut: pending ?? entry.shortcut, isRecording: isRecording, start: startRecording, finish: finishRecording)
             }
             .frame(height: ShortcutsPane.M.rowHeight)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: select)
+            if isSelected {
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("When shortcuts conflict", selection: Binding(get: { entry.priority }, set: { model.setPriority($0, for: entry.id) })) {
+                        ForEach(KeyShortcutPriority.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    Text(entry.priority.subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.bottom, 12)
+            }
             if let pending, let note = ShortcutsList.conflictDescription(conflicts) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -219,10 +245,6 @@ private struct ShortcutRow: View {
                     model.removeConflicts(with: shortcut, keeping: entry.id)
                 }
             }
-            Divider()
-            // Arc lets a website take priority over a shortcut; Kite's key routing has no priority yet.
-            Button("When shortcuts conflict, Kite wins.") {}.disabled(true)
-            Button("When shortcuts conflict, the website wins.") {}.disabled(true)
             Divider()
             Button("Reset All Shortcuts") { model.resetAllShortcuts() }
         }
