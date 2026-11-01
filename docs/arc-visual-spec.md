@@ -507,6 +507,42 @@ windows ("Archive Little Arcs after:"); no global hotkey.
   the command bar (`showCommandBar` is among `initialAppearanceActions`), the blank window's look, and what
   Arc does when two windows select the same tab (`ContentPlaceholderSourceData` hints at a placeholder).
 
+## Peek → `LinkPeek` (KiteCore), `LinkPeekView`, `BrowserWindowController+LinkPeek` (Arc 1.171 binary, 1 Nov 2026)
+
+Arc's Peek is `ModalContent.ModalV2HostView` in its `popover` layout mode (the cases are `popover`, `fullbleed`;
+arc-strings.txt ~166470). Decompiled in `~/rea-arc/decomp/out2/objc-setShadowRadius.txt` (FUN_101717e60),
+`objc-setCornerRadius.txt` (FUN_101716678), `objc-setShadowOpacity.txt` (FUN_101713230) and
+`out5/peek1-3.txt` (FUN_101715a98, FUN_101716134, FUN_101717608, FUN_1017156ac, FUN_100a05154, `mouseDown:`).
+Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sidebar's hover reveal.
+
+- Routing (strings ~80486): "Open a Peek window when clicking on links to other sites", "Note: This only affects
+  Favorites and Pinned tabs", "Open a Peek window when clicking on links with Shift held". The shift setting is
+  `disableShiftClickToOpenLinksInModal` (absent from Gabe's defaults, so shift-click peeks). How Arc defines
+  "other site" isn't in the strings; Kite compares registrable domains (`SignInHandoff.site`). **[inferred]**
+- Card (FUN_101715a98): 80% of the host's width, centred, 12pt from its top and bottom (height − 24). Kite's
+  host is the content card's area. Whether Arc's host is the content card or the whole window: **unverified**.
+- Corner radius 8 (popover; 10 fullbleed) (FUN_101717608, FUN_101716678).
+- Shadow (FUN_101717e60): black, opacity 0.3, radius 4, offset (0, 1) in the flipped host (fullbleed: 0.475, 22, (0, 14)).
+- Border view behind the card: frame outset 0.5pt, white fill, 2pt border, black at 0.25 alpha (faded by the
+  swipe-to-dismiss tug: (1 − tug/44) × 0.25) (FUN_101717730). Kite draws a 0.5pt black@25% hairline.
+- Buttons (`onClose`, `onExpand`, `onAddToSplit`; FUN_101716134): a column 120pt wide, 13pt right of the card,
+  top-aligned with it, 90pt tall with two buttons and 135pt with three (so 45pt a row). The split button shows
+  only when the parent can take another pane (`numberOfPanels < maximumNumberOfPanels`), titled "Create Split
+  View" or "Add to Split View" with `square.split.1x2` (strings ~75323). Hidden, the column sits under the
+  card's right edge (x = card.maxX − 120) and slides out. The buttons' size, fill and the close/expand symbols
+  and titles are **not measured**: Kite uses 30pt circles, `xmark`, `arrow.up.left.and.arrow.down.right`,
+  "Close", "Open as Tab".
+- Dismiss (`DismissMechanism`, ~166430): escapeKeyPressed, clickedCloseButton, clickedBackground (host
+  `mouseDown:` outside the card in popover mode), pressedCloseTabHotkey (⌘W), swipedRightToDismiss, redoClose.
+  Help text: "Exit the current context. Such as closing a Peek window or exiting fullscreen."
+- Motion (FUN_101713230 + FUN_100a05154, a `CASpringAnimation` built from a damping ratio and response:
+  stiffness (2π/response)², damping 4π·ratio/response): popover open 0.865 / 0.245s, close 0.895 / 0.225s
+  (fullbleed 0.885 / 0.18, 0.9 / 0.18). The transform tweens from the source (`tweenFromSource`:
+  `sourceRectInWindow`, `sourceCornerRadius`, `sourceSnapshot`), scale = source width / card width
+  (FUN_1017156ac). Kite has no link frame, so it grows from 20% at the pointer and fades in over 0.1s **[differs]**.
+- Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
+  swipe right to dismiss (`minimumDismissTranslation`, `tugRubberbanding`), undo "re-opening a closed Peek",
+  the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`), any scrim behind the card.
 ## Pinned URL reset and Reveal Tab (Arc 1.171 menu bar and binary, 1 Nov 2026)
 
 - Tabs menu (AX, read-only, `menudump`): … Next Tab ⌥⌘↓, Previous Tab ⌥⌘↑, Reveal Tab in Sidebar (no key), —,
