@@ -149,6 +149,9 @@ import Testing
                        identifier: nil, isEnabled: false, isHidden: false, isOn: false),
             UIMenuItem(path: ["Edit", "Start Dictation"], key: "🎤", modifiers: [], action: "startDictation:", target: nil,
                        identifier: nil, isEnabled: true, isHidden: false, isOn: false),
+            // Arc's Tabs menu repeats File › New Tab… ⌘T: same action, so not a conflict.
+            UIMenuItem(path: ["Tabs", "New Tab…"], key: "t", modifiers: ["cmd"], action: "newTab:", target: "MenuRouter",
+                       identifier: nil, isEnabled: true, isHidden: false, isOn: false),
         ]
         #expect(items[0].firesWhileTyping)
         // AppKit matches fn E on a plain "e".
@@ -162,6 +165,7 @@ import Testing
         #expect(text.contains("File > New Tab  ⌘T  newTab: → MenuRouter  #newTab"))
         #expect(text.contains("History > Back  ⌘←  goBack: → responder chain  (disabled)"))
         #expect(text.contains("CONFLICT ⌘S: View > Toggle Sidebar wins over Spaces > Next Space"))
+        #expect(!text.contains("CONFLICT ⌘T"))
         #expect(UIReport.menu(items, match: "space").split(separator: "\n").first == "Spaces > Next Space  ⌘S  nextSpace: → MenuRouter")
     }
 
