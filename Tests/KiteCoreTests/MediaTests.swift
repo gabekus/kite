@@ -72,3 +72,25 @@ import Testing
         #expect(MediaCommand.enterPictureInPicture.script == "globalThis.__kiteMedia?.run('enterpip')")
     }
 }
+
+@Suite struct TabAudioButtonTests {
+    @Test func shownWhileAudibleOrMuted() {
+        #expect(!TabAudioButton.isShown(isAudible: false, isMuted: false))
+        #expect(TabAudioButton.isShown(isAudible: true, isMuted: false))
+        #expect(TabAudioButton.isShown(isAudible: false, isMuted: true))
+        #expect(TabAudioButton.isShown(isAudible: true, isMuted: true))
+    }
+
+    @Test func arcsWording() {
+        #expect(TabAudioButton.tooltip(isMuted: false) == "Mute this tab")
+        #expect(TabAudioButton.tooltip(isMuted: true) == "Unmute this tab")
+        #expect(TabAudioButton.menuTitle(isMuted: false) == "Mute")
+        #expect(TabAudioButton.menuTitle(isMuted: true) == "Unmute")
+    }
+
+    @Test func arcsGeometry() {
+        #expect(TabAudioButton.side == 24)
+        #expect(TabAudioButton.spacingAfter == 2)
+        #expect(TabAudioButton.showHideDuration == 0.18)
+    }
+}

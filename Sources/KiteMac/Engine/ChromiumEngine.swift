@@ -78,6 +78,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         super.init()
         browser.delegate = self
         prepareVerificationCodes()
+        ZapInjection.attach(to: self)
         historySwipe = HistorySwipeController(
             view: browser.view,
             canNavigate: { [weak browser] in $0 == .back ? browser?.canGoBack == true : browser?.canGoForward == true },
@@ -134,6 +135,12 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         browser.callDevToolsMethod("Runtime.evaluate", params: params) { _, _ in }
     }
 
+    /// As the renderer last reported it (KiteHelper sends its pid with each main-frame script context).
+    var processIdentifier: pid_t? {
+        let pid = browser.renderProcessIdentifier
+        return pid > 0 ? pid : nil
+    }
+
     var isAudioMuted: Bool {
         get { browser.audioMuted }
         set { browser.audioMuted = newValue }
@@ -157,7 +164,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func blur() { browser.blur() }
     func allowFocus() { browser.allowFocus() }
     func setVisible(_ visible: Bool) { browser.setHidden(!visible) }
-    func showDevTools() { browser.showDevTools() }
+    func showDevTools(_ panel: DevToolsPanel) { browser.showDevToolsRunningFrontendScript(panel.chromiumFrontendScript) }
 
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
         findCompletion = completion
@@ -254,6 +261,16 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     /// Content settings are per origin.
     private static func site(_ url: URL) -> URL {
         SiteControls.origin(of: url).flatMap(URL.init(string:)) ?? url
+    }
+
+    private static func unbridged(_ permission: KCSitePermission) -> SitePermission {
+        switch permission {
+        case .camera: .camera
+        case .microphone: .microphone
+        case .location: .location
+        case .notifications: .notifications
+        @unknown default: .notifications
+        }
     }
 
     private static func bridged(_ permission: SitePermission) -> KCSitePermission {
@@ -409,6 +426,19 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     func browser(_ browser: KCBrowser, mediaAccessDidChange inUse: Bool) { mediaInUse = inUse }
+
+    func browser(_ browser: KCBrowser, requestsPermissions permissions: [NSNumber], origin: URL, promptID: Int,
+                 decisionHandler: @escaping (KCPermissionDecision) -> Void) {
+        let requested = permissions.compactMap { KCSitePermission(rawValue: $0.intValue).map(Self.unbridged) }
+        guard let onEvent, !requested.isEmpty else { return decisionHandler(.dismiss) }
+        onEvent(.permissionRequest(PermissionRequest(id: promptID, origin: origin, permissions: requested) { allow in
+            decisionHandler(allow.map { $0 ? .allow : .block } ?? .dismiss)
+        }))
+    }
+
+    func browser(_ browser: KCBrowser, permissionPromptDidCancel promptID: Int) {
+        onEvent?(.permissionRequestCancelled(id: promptID))
+    }
 
     func browser(_ browser: KCBrowser, openURLInNewTab url: URL, foreground: Bool) {
         onEvent?(.openInNewTab(url, foreground: foreground))

@@ -1,8 +1,11 @@
 import AppKit
+import KiteCore
 
 /// Find in page (⌘F), matching Arc 1.169: a 300×32 navy bar at the content
 /// card's top-right corner with a magnifier, the query, an n/N counter,
 /// previous / next arrows, a divider and close. Return / ⇧Return step through matches; Esc closes it.
+/// With Ask on Page on (Arc Max), it reads "Find or ask…" and Return on a query the page has no
+/// match for asks Claude instead (`onAsk`); the answer shows in an `AskOnPagePanel` under the bar.
 @MainActor
 final class FindBar: NSView, NSTextFieldDelegate {
     /// Measured from Arc in points; x positions are from the bar's leading edge at its full 300pt
@@ -33,6 +36,16 @@ final class FindBar: NSView, NSTextFieldDelegate {
 
     var onSearch: ((_ text: String, _ forward: Bool, _ findNext: Bool) -> Void)?
     var onClose: (() -> Void)?
+    /// Return on a question (Ask on Page).
+    var onAsk: ((String) -> Void)?
+
+    /// Ask on Page is on (read from the Kite menu's toggle each time the bar opens).
+    var askEnabled = false { didSet { updatePlaceholder() } }
+    /// The conversation under the bar; while it has questions every query is one.
+    weak var askPanel: AskOnPagePanel? { didSet { updatePlaceholder() } }
+    var inConversation: Bool { askPanel?.inConversation ?? false }
+    /// Matches for the current query once its search came back (WebKit only says found or not).
+    private var matches: Int?
 
     let field = NSTextField()
     private let countLabel = NSTextField(labelWithString: "")
@@ -65,6 +78,7 @@ final class FindBar: NSView, NSTextFieldDelegate {
         field.cell?.isScrollable = true
         field.cell?.wraps = false
         field.setAccessibilityLabel("Find on page")
+        field.placeholderAttributedString = Self.placeholder(AskOnPage.placeholder(enabled: false, inConversation: false))
 
         countLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
         countLabel.textColor = Metrics.counter
@@ -131,7 +145,29 @@ final class FindBar: NSView, NSTextFieldDelegate {
         search()
     }
 
+    var isAskMode: Bool {
+        AskOnPage.isAskMode(enabled: askEnabled, query: query, matches: matches, inConversation: inConversation)
+    }
+
+    func updatePlaceholder() {
+        field.placeholderAttributedString = Self.placeholder(AskOnPage.placeholder(enabled: askEnabled, inConversation: inConversation))
+        if inConversation { countLabel.stringValue = "" }
+    }
+
+    private static func placeholder(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [.foregroundColor: Metrics.icon, .font: NSFont.systemFont(ofSize: 13)])
+    }
+
+    /// Clears the field after a question is sent, so the placeholder reads "Ask a question…".
+    func clearQuery() {
+        field.stringValue = ""
+        lastQuery = ""
+        matches = nil
+        countLabel.stringValue = ""
+    }
+
     func show(_ result: FindResult) {
+        matches = result.matches ?? (result.found ? 1 : 0)
         if let matches = result.matches {
             countLabel.stringValue = matches == 0 ? "0/0" : "\(result.activeMatch ?? 0)/\(matches)"
         } else {
@@ -148,7 +184,10 @@ final class FindBar: NSView, NSTextFieldDelegate {
 
     private func search() {
         lastQuery = ""
+        matches = nil
         countLabel.stringValue = ""
+        // In a conversation the field only takes questions.
+        if inConversation { return }
         if query.isEmpty {
             onSearch?("", true, false)
         } else {
@@ -163,6 +202,11 @@ final class FindBar: NSView, NSTextFieldDelegate {
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
         case #selector(NSResponder.insertNewline(_:)):
+            let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            if isAskMode {
+                if !question.isEmpty { onAsk?(question) }
+                return true
+            }
             step(forward: !(NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false))
         case #selector(NSResponder.cancelOperation(_:)):
             onClose?()
