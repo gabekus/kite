@@ -70,9 +70,21 @@ extension BrowserWindowController {
 
     // MARK: Page
 
+    /// File › Print ⌘P: the macOS print sheet, with a page preview, on this window.
     @objc func printPage(_ sender: Any?) {
-        guard let page = shownPage else { return NSSound.beep() }
-        page.printPage()
+        guard let window, let page = shownPage, window.attachedSheet == nil else { return NSSound.beep() }
+        let tab = store.state.selectedTab
+        page.makePrintOperation { [weak self, weak window, weak page] operation in
+            // The tab may have changed, or another sheet opened, while Chromium made the PDF.
+            guard let self, let window, let page, page === self.shownPage, window.attachedSheet == nil else { return }
+            guard let operation else { return NSSound.beep() }
+            operation.jobTitle = PagePrint.jobTitle(title: tab?.title ?? "", url: tab?.url)
+            operation.showsPrintPanel = true
+            operation.showsProgressPanel = true
+            operation.printPanel.options.formUnion([.showsPreview, .showsCopies, .showsPageRange,
+                                                    .showsPaperSize, .showsOrientation, .showsScaling])
+            operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        }
     }
 
     @objc func stopLoading(_ sender: Any?) {

@@ -1,6 +1,22 @@
 import AppKit
 import KiteCore
 
+extension NSPrintInfo {
+    /// A copy of the app's print settings (paper, printer) for printing one page, with Chrome's
+    /// margins, so the shared settings only change when someone picks Page Setup.
+    static func printInfoForPage() -> NSPrintInfo {
+        let info = NSPrintInfo.shared.copy() as! NSPrintInfo
+        let margin = PagePrint.marginInches * 72
+        info.topMargin = margin
+        info.bottomMargin = margin
+        info.leftMargin = margin
+        info.rightMargin = margin
+        info.isHorizontallyCentered = false
+        info.isVerticallyCentered = false
+        return info
+    }
+}
+
 /// What a page reports back to the browser.
 enum PageEvent {
     case title(String?)
@@ -79,7 +95,9 @@ protocol WebPage: AnyObject {
     /// `completion` may run more than once as results come in.
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void)
     func stopFinding()
-    func printPage()
+    /// File › Print: the page as an AppKit print operation, which the window runs as its print
+    /// sheet with a page preview. nil when the page can't be printed.
+    func makePrintOperation(_ completion: @escaping (NSPrintOperation?) -> Void)
     /// The page as one file for Save Page As: MHTML on Chromium, a web archive on WebKit.
     func archive(completion: @escaping (_ data: Data?, _ fileExtension: String) -> Void)
     /// Clears one site's cookies or cache (Arc's "Clear … and Refresh"). Reloading is up to the caller.
