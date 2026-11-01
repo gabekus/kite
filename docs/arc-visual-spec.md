@@ -405,6 +405,47 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
   Space Icon, Delete Space). Rename edits the header in place: Return or clicking away keeps it, Escape cancels.
   Unverified: whether Arc also starts a rename on double-click.
 
+**New, edit and delete space** (Arc brought forward and driven on a throwaway space, 1 Nov 2026, with Gabe's go;
+sidebar-only screen captures and the accessibility tree; the space was deleted afterwards)
+- **+ in the bottom bar** opens a popover menu (222×308, 40pt rows inset 14, titles at 39): New Space, New
+  Folder | New Easel ⌃⇧E, New Boost | New Split ⌘L, New Tab ⌘T. Kite leaves out Easel and Boost.
+- **Create a Space page** (`SpaceCreationView`, ids `spaceCreation…`), on a 289pt sidebar:
+  - It replaces the URL field, favourites and pages under the top row. The bar keeps only the strip, which
+    already shows the new space as the active dot. The new space goes right after the current one.
+  - A picture of three fanned cards at y 86 to 119, "Create a Space" (y 140, bold), "Separate your tabs for
+    life, / work, projects, and more." (y 171, two lines).
+  - Rows 261×36 at x 14: the name field at y 237 (dashed-plus icon at x 22, "Space name…" at x 48), Profile at
+    279 (smiley, "Profile", a pill with the profile's name and a chevron, an info button at the right), Choose
+    a Theme at 323 (brush icon). Fill #2C2B40 over #131029.
+  - Create Space 261×36 at y 1153: #2C4AFC once there's a name, about half that before. Cancel, a 40×15 text
+    button at y 1203.5.
+  - Choose a Theme opens the theme popover beside the row with an arrow at it. It starts empty: no handle, "Tap
+    to pick a color for this space" at y 162 on the grid, − and + off, the slider without its thumb. The pick
+    applies to the whole window at once.
+  - Kite's picture is its own (three SF Symbol cards); Arc's is an asset.
+- **Theme grid mapping** (dark mode, 25 taps on a 70pt lattice, the handle's fill read back): the HSL hue is the
+  angle round the centre, clockwise from the right (0° red, 90° green, 180° cyan, 270° purple); saturation stays
+  near 0.6; lightness is 0.565 at the centre plus 0.0025 a point; taps outside the 170pt circle are ignored.
+- **The space menu** (right-click the header): Change Space Icon…, Rename Space…, Edit Theme Color…, Set Profile ▸ |
+  New Folder, Live Folders ▸ | Share Space…, Export "name" into Folder ▸ | Manage Spaces… | Delete Space. Kite has
+  the ones it has features for, in that order.
+- **Rename:** Rename Space… or a click on the current space's name turns it into a field (13, 209, 229×18 for a
+  space with no icon) with the name selected, and the header's edit button becomes "Done". Return keeps it.
+- **Icon:** a space has no icon at first; its name starts at x 13 and its strip cell is a dot. Change Space Icon…
+  opens a popover under a dashed 24pt square in the icon's place: Emoji | Icon tabs, a search field, 7 emoji to a
+  row (33.5 apart) with a category bar, or 8 icons to a row (31 apart). A picked icon shows in the theme's
+  colour in the header and the strip, and a bin appears next to the tabs to remove it. Kite's Icon tab uses SF
+  Symbols.
+- **Delete Space** on an empty space deletes it at once, with no question, and goes to the space before it. The
+  binary's "Delete the space and close all tabs within it" alert (for a space with tabs) and its undo weren't
+  seen.
+- **Strip:** the current space's icon in colour, other spaces' icons greyed, icon-less spaces 8pt dots at about
+  23% white. A hovered cell gets a 32pt rounded backing and a pill above it: name, a profile chip, ⌃ and the
+  number. Arc draws the strip in its own child window, which window captures miss; screen captures show it.
+- **Switching** (Spaces › Next/Previous, 1px-row recordings at 80Hz): the theme colour follows the space-switch
+  spring above. The pages slide too, quicker: a feature entering from the left was 97% of the way 0.09s in and
+  settled by 0.2s with no overshoot, so about `spring(response: 0.1, dampingFraction: 1)`.
+
 **Theme editor → `ThemeEditor`, `ArcMetrics.ThemeEditor`** (Spaces → Edit Theme…, tree plus one capture)
 - An `AXPopover`, 382×534, hanging off the sidebar's right edge (x 313). Opened from the menu with the pointer
   away, its bottom sat on the window's bottom (y 751 to 1285); opened the same way a few minutes later it sat
@@ -473,9 +514,36 @@ background `screencapture -l<window id>` at 2x, toolbar strip only. Nothing in A
   binary; Kite defaults it on, since Arc shows the "Links Open in Little Arc" NUX on the first external link
   (`littleBrowserNUXPresentationCount`).
 
-Kite's differences: no profile indicator (no profiles) and no extensions button in the pill; the chevron is a plain
-menu of spaces, not Arc's searchable `LittleBrowserMoveMenuWindow`; no downloads tray; no auto-archive of Little
-windows ("Archive Little Arcs after:"); no global hotkey.
+Kite's differences: no profile indicator (no profiles); the chevron is a plain menu of spaces, not Arc's searchable
+`LittleBrowserMoveMenuWindow`; no auto-archive of Little windows ("Archive Little Arcs after:"); no global hotkey.
+
+### Little Arc extensions button and downloads tray (Arc 1.171, 1 Nov 2026) → `LittleKite.pillButtons`, `LittleKite.DownloadsTray`, `LittleDownloadsTrayView`
+
+- Extensions button: 23×19 in the pill, at x 1530.5 in the 1784pt window whose Open In box was 181 wide, so the copy
+  button sat at 1565 and the gap between them is 11.5pt (AX tree from #79; frames only). Constant 23 also in
+  `FUN_1022a0d74`. Toolbar state `hasExtensions` and URL-field `shouldDisplayExtensionsButton`, `onClickExtensions`,
+  `littleBrowserExtensionsButton`; LittleBrowser actions `didClickExtension`, `didRightClickExtension`,
+  `didDismissExtensionsMenu` (arc-strings.txt ~173370). So the button shows only while extensions are installed and
+  opens an extensions menu. Its symbol and menu weren't seen: Kite uses the puzzle piece and the main window's
+  extensions popover (`ExtensionsMenu`).
+- Tray (`LittleBrowserDownloadsTrayViewController`, decomp `out7/g57-tray.txt`, `g57-item.txt`, `g57-win.txt`):
+  pinned to the Little window's leading, trailing and bottom edges (`FUN_100015a70`), over the page; a scroll view
+  96pt tall (`FUN_1022a583c`); a collection view with 250×56 items (`sizeForItemAt`, 0x1022a6cc8), 20pt section insets
+  on every side, 10pt between items (0x1022a6d6c, 0x1022a6d80); the view is a `PassthroughView` (`hitTest:` passes
+  empty space through). Its list is the Little window's own `downloads` state; item actions `didClick` (opens the file,
+  `NSWorkspace`) and `didClickClose`.
+- Item (`LittleBrowserDownloadsTrayItemView`): background view with a black shadow, opacity 0.25, radius 3, offset
+  (0, 1) (`FUN_1022a19c4`, constants at 0x1037c5550), corner 8, `masksToBounds` off (`updateLayer`); fill
+  `DownloadItemBackground`, swapped for `DownloadItemBackgroundHovered` on hover while the close button shows
+  (`FUN_1022a2ec8`); a horizontal stack, spacing 10, insets 10, centred (`FUN_1022a187c`): 32×32 file icon
+  (`FUN_1022a1378`, icon fetched on `LittleBrowserDownloadsTrayItemViewIconFetcherQueue`), a vertical title stack with
+  5pt spacing (`FUN_1022a16b4`): the file name (`URL.lastPathComponent`) at 14pt, truncating in the middle, primary
+  colour (`FUN_1022a1490`), and a subtitle in a named text style, truncating at the tail, secondary colour
+  (`FUN_1022a15b4`); a flexible spacer; the close button (14pt image, primary tint, `closeButtonClicked:`).
+- Unverified: the subtitle's size (Kite: 12pt) and text (Kite: its downloads list's status line), the title's weight,
+  the close symbol, whether new items go first or last (Kite: last, scrolled into view), and whether Arc's close also
+  cancels a running download (Kite: it only leaves the tray). Arc's Little window wasn't open, so nothing was measured
+  live.
 ## History, ⌘Y (Arc 1.171 menu bar and strings, 1 Nov 2026)
 
 - Menu (read from Arc's menu bar through AX, nothing pressed): **Archive** › Go Back ⌘[, Go Forward ⌘], —,
@@ -579,7 +647,7 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   **[differs]**. Closing back to the source with the close spring is **[inferred]**: the dismiss path wasn't
   decompiled, but the same transform function serves every non-presented state.
 - Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
-  undo "re-opening a closed Peek", the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
+  the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
   any scrim behind the card.
 
 ### Peek: swipe to dismiss → `LinkPeek.Swipe` (KiteCore), `LinkPeekSwipeController` (g45; Arc 1.171 binary, 1 Nov 2026)
@@ -613,6 +681,30 @@ Decompiled with `SymRefs7.java` / `DumpAt.java` into `~/rea-arc/decomp/out7/g45-
   swipe takes priority over the Peek page's own swipe back/forward (Arc's dismiss path doesn't check the page's
   history); the gesture isn't gated on System Settings › Swipe between pages. The haptic was not felt (no
   hands-on test).
+### Peek: Undo Close Peek → `closeLinkPeek(undoable:)`, `reopenLinkPeek` (g46; Arc 1.171 binary, 1 Nov 2026)
+
+From `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s` (otool) and Ghidra (`out5/g46-closepeek.txt`).
+Arc wasn't driven.
+
+- The command is the Edit menu's Undo (⌘Z), not ⇧⌘T. NSLocalizedString key "Close Peek" with the comment
+  "Undo prompt for re-opening a closed Peek" (strings 82976; built at 0x102a079b4, the key is the small
+  string in x0/x1, cached in a global at 0x10465a550). Arc's Edit menu titles Undo "Undo <name>" (menudump:
+  "Undo New Space"), so it reads **Undo Close Peek**.
+- Redo closes it again: `DismissMechanism` has a `redoClose` case after `escapeKeyPressed`,
+  `clickedCloseButton`, `clickedBackground`, `pressedCloseTabHotkey`, `swipedRightToDismiss` (strings
+  166427–166432).
+- The only reader of that name is FUN_102856aec (`out5/g46-closepeek.txt`), which builds the undo step. Its
+  payload copies the Peek's `URL`, a UUID string and the source item's fields, and no web contents, so the
+  reopened Peek loads its URL again **[inferred: payload layout from the decompile, not run]**. There's no
+  timer: it lives on the undo stack like any other step.
+- ⇧⌘T is "Restore Last Closed Tab" (menudump, ⇧⌘T); its reopen stack (`addToReopenStack`,
+  `reopenableItemID`) belongs to sidebar items' close options, and nothing ties it to the modal
+  **[inferred]**. Kite leaves Reopen Closed Tab alone.
+- Which dismissals register the step isn't decompiled. Kite registers it for the user's own closes (Esc, ⌘W,
+  close button, click outside, swipe right, Redo), not when the Peek is replaced, turned into a tab or pane,
+  or closed by switching tabs **[inferred]**. Undo selects the source tab if another tab is in front, then
+  opens the Peek with the normal open spring, from the link if it's still on the page.
+
 ## Pinned URL reset and Reveal Tab (Arc 1.171 menu bar and binary, 1 Nov 2026)
 
 - Tabs menu (AX, read-only, `menudump`): … Next Tab ⌥⌘↓, Previous Tab ⌥⌘↑, Reveal Tab in Sidebar (no key), —,
