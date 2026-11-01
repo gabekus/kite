@@ -45,7 +45,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | New Window | ⌘N | ❌ | Thread: multiple windows |
 | Blank Window | ⌃⌘N | ❌ | Thread: multiple windows |
 | New Incognito Window | ⇧⌘N | ✅ in-memory profile per window (New Space moved off ⇧⌘N) | |
-| New Little Arc Window | ⌥⌘N | ❌ | Thread: Little Arc |
+| New Little Arc Window | ⌥⌘N | ✅ "New Little Kite Window" (`newLittleBrowserWindow`) | |
 | Restore Last Closed Tab | ⇧⌘T | ✅ | |
 | Open Command Bar | (none) | ✅ via ⌘T/⌘L | |
 | New Profile | | ❌ | Thread: profiles |
@@ -170,7 +170,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Peek | Links from pinned tabs/favorites open in an overlay | ❌ | Thread: Peek |
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | ❌ | Thread: Peek |
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
-| Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | ❌ | Thread: Little Arc |
+| Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | 🟡 Little Kite: own window, toolbar measured from Arc, "Open in <Space>" (⌘O) moves the live page into the main window, ⌘W closes, Kite menu → Open Links from Other Apps in Little Kite (on by default) | No profile indicator, extensions button, downloads tray, searchable space picker, auto-archive or global hotkey yet |
 | Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal panes, divider, sidebar row; no vertical layout or drag-to-split yet | Thread: Split view |
 | Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | ❌ | Thread: Mini player |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |

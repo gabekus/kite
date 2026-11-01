@@ -13,6 +13,17 @@ final class MenuRouter: NSObject, NSMenuItemValidation {
 
     /// While `ui input` delivers a key to a background window, menu commands go to that window.
     static var deliveringTo: BrowserWindowController?
+    /// The same for a Little Kite window.
+    static var deliveringToLittle: LittleKiteWindowController?
+
+    /// A Little Kite window in front takes the commands it has (Back, Reload, Copy URL, Archive Tab
+    /// closes it); the rest are off there rather than acting on the main window behind it.
+    var little: LittleKiteWindowController? {
+        if Self.deliveringTo != nil { return nil }
+        return Self.deliveringToLittle
+            ?? NSApp.keyWindow?.windowController as? LittleKiteWindowController
+            ?? (NSApp.keyWindow == nil ? NSApp.mainWindow?.windowController as? LittleKiteWindowController : nil)
+    }
 
     var current: BrowserWindowController? {
         Self.deliveringTo
@@ -22,18 +33,30 @@ final class MenuRouter: NSObject, NSMenuItemValidation {
     }
 
     override func responds(to selector: Selector!) -> Bool {
-        super.responds(to: selector) || (current?.responds(to: selector) ?? false)
+        if super.responds(to: selector) { return true }
+        if let little { return little.responds(to: selector) }
+        return current?.responds(to: selector) ?? false
     }
 
     override func forwardingTarget(for selector: Selector!) -> Any? {
-        current
+        if let little { return little.responds(to: selector) ? little : nil }
+        return current
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        current?.validateMenuItem(item) ?? false
+        if let little {
+            guard let action = item.action else { return false }
+            if action == #selector(newIncognitoWindow(_:)) || action == #selector(newLittleKiteWindow(_:)) { return true }
+            return little.responds(to: action) && little.validateMenuItem(item)
+        }
+        return current?.validateMenuItem(item) ?? false
     }
 
     @objc func newIncognitoWindow(_ sender: Any?) {
         (NSApp.delegate as? AppDelegate)?.openIncognitoWindow()
+    }
+
+    @objc func newLittleKiteWindow(_ sender: Any?) {
+        (NSApp.delegate as? AppDelegate)?.openLittleKiteWindow(url: nil)
     }
 }

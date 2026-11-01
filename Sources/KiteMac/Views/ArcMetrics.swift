@@ -265,4 +265,53 @@ enum ArcMetrics {
         static let accentGlowOpacity: Double = 0.22
         static let accentGlowRadius: CGFloat = 14
     }
+
+    /// Arc 1.171's Little Arc window, measured from its accessibility tree (`kite probe Arc tree`)
+    /// and a background capture at 2x (see docs/arc-visual-spec.md, "Little Arc"). Window points
+    /// from the top-left. No sidebar; the page runs edge to edge under a 47pt toolbar.
+    enum LittleWindow {
+        /// The only size Arc has stored for it (`LittleBrowserWindow_size` in Arc's defaults).
+        static let defaultSize = CGSize(width: 1495, height: 1245)
+        static let minSize = CGSize(width: 480, height: 320)
+        /// The page's top edge.
+        static let toolbarHeight: CGFloat = 47
+        /// 16pt buttons at x 9/29/49, y 15.5: 3pt left of and 0.5pt above the main window's.
+        static let trafficLightCenter = CGPoint(x: 17, y: 23.5)
+        /// Unmeasured (needs a pointer sweep on Arc): the main window's area, moved with the lights.
+        static let trafficLightHoverArea = Window.trafficLightHoverArea.offsetBy(dx: -3, dy: -0.5)
+        /// Back button: 16×16 at x 79.5, y 15.5.
+        static let backButton = CGRect(x: 79.5, y: 15.5, width: 16, height: 16)
+
+        // The URL pill (Arc's command bar placeholder): x 107 to 7.5pt short of the Open In button.
+        static let pillX: CGFloat = 107
+        static let pillY: CGFloat = 8
+        static let pillHeight: CGFloat = 31
+        /// From the antialiased corner in the 2x capture (about 10px); approximate.
+        static let pillCornerRadius: CGFloat = 5
+        /// Arc's `LittleBrowserCommandBarPlaceholderBackground(Hovered)` colour assets.
+        static let pillFillDark: Double = 0.10
+        static let pillFillDarkHovered: Double = 0.15
+        static let pillFillLight: Double = 0.06
+        static let pillFillLightHovered: Double = 0.10
+        static let hostFontSize: CGFloat = 13
+        /// Copy-link button: 16×16, its right edge 7.5pt inside the pill.
+        static let pillButtonSize: CGFloat = 16
+        static let pillTrailingInset: CGFloat = 7.5
+        static let pillLeadingInset: CGFloat = 14
+
+        // "Open in <Space> ⌘O" plus the chevron, in one bordered box.
+        static let openInGap: CGFloat = 7.5
+        static let openInY: CGFloat = 7.5
+        static let openInHeight: CGFloat = 30.5
+        static let openInTrailing: CGFloat = 7
+        static let openInCornerRadius: CGFloat = 6.5
+        /// Title from 6.5pt in; the chevron's 16pt button 6pt from the right edge.
+        static let openInLeadingInset: CGFloat = 6.5
+        static let openInChevronTrailing: CGFloat = 6
+        static let openInFontSize: CGFloat = 13
+        /// "Open in" in #9495A4 on Arc's dark box: about 55% white.
+        static let openInDimOpacity: Double = 0.55
+        /// The ⌘O keycap: 15.5pt tall.
+        static let keycapHeight: CGFloat = 15.5
+    }
 }

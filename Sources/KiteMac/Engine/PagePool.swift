@@ -44,6 +44,13 @@ final class PagePool {
         return page
     }
 
+    /// Takes over a page made elsewhere (a Little Kite window's), for a new tab. Returns the tab's id.
+    func adopt(_ page: WebPage) -> UUID {
+        let id = UUID()
+        register(page, id: id)
+        return id
+    }
+
     /// The tabs now on screen: one, or a split's panes.
     func didShow(_ ids: [UUID]) {
         let shown = Set(ids)

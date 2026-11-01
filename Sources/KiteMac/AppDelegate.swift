@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var adblocker: Adblocker!
     private var windowController: BrowserWindowController!
     private var incognitoControllers: [BrowserWindowController] = []
+    private var littleControllers: [LittleKiteWindowController] = []
     /// Routes menu commands to whichever browser window is in front.
     private var menuRouter: MenuRouter!
     private var archiveTimer: Timer?
@@ -125,6 +126,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             NSApp.activate(ignoringOtherApps: true)
         }
+        // A test run (KITE_DIAGNOSTICS=1 on a throwaway profile) can open a link the way another
+        // app would, without going through Launch Services and the user's default browser.
+        if UIDiagnostics.enabledByEnvironment, let test = ProcessInfo.processInfo.environment["KITE_TEST_OPEN_URL"],
+           let url = URL(string: test) {
+            pendingURLs.append(url)
+        }
         open(pendingURLs)
         pendingURLs = []
 
@@ -145,11 +152,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Web links open in Little Kite while Kite menu → Open Links from Other Apps in Little Kite
+    /// is on (Arc's default); files and everything else open as tabs in the main window.
     private func open(_ urls: [URL]) {
+        let little = LittleKite.opensExternalLinks(in: .standard)
+        var openedTab = false
         for url in urls {
-            store.mutate { _ = $0.openTab(url: url) }
+            switch LittleKite.destination(for: url, opensExternalLinks: little) {
+            case .littleKite:
+                openLittleKiteWindow(url: url)
+            case .tab:
+                store.mutate { _ = $0.openTab(url: url) }
+                openedTab = true
+            }
         }
-        if !urls.isEmpty { windowController.window?.makeKeyAndOrderFront(nil) }
+        if openedTab { windowController.window?.makeKeyAndOrderFront(nil) }
+    }
+
+    /// File → New Little Kite Window (⌥⌘N) with no URL, or a link from another app.
+    func openLittleKiteWindow(url: URL?) {
+        let main = windowController!
+        let store = self.store!
+        func destination(_ space: Space) -> LittleKiteWindowController.Destination {
+            .init(id: space.id, name: space.name, theme: space.theme)
+        }
+        let host = LittleKiteWindowController.Host(
+            currentSpace: { destination(store.state.selectedSpace) },
+            spaces: { store.state.spaces.map(destination) },
+            resolve: { URLInput.resolve($0, engine: store.state.searchEngine) },
+            move: { [weak main] page, url, title, spaceID in main?.adopt(page, url: url, title: title, in: spaceID) },
+            openTab: { url in store.mutate { _ = $0.openTab(url: url) } },
+            adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) }
+        )
+        let controller = LittleKiteWindowController(engine: main.pool.engine, url: url, host: host)
+        controller.didClose = { [weak self] closed in self?.littleControllers.removeAll { $0 === closed } }
+        littleControllers.append(controller)
+        // Offset from another Little Kite window so they don't stack exactly.
+        if let previous = littleControllers.dropLast().last?.window, let window = controller.window {
+            window.setFrameTopLeftPoint(NSPoint(x: previous.frame.minX + 28, y: previous.frame.maxY - 28))
+        }
+        if UIDiagnostics.enabledByEnvironment {
+            // Test runs stay behind the user's windows.
+            controller.window?.orderBack(nil)
+        } else {
+            controller.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    /// Kite menu → Open Links from Other Apps in Little Kite (Arc: Preferences → Links,
+    /// "Links from other apps open in Little Arc").
+    @objc func toggleLittleKiteLinks(_ sender: Any?) {
+        UserDefaults.standard.set(!LittleKite.opensExternalLinks(in: .standard), forKey: LittleKite.opensExternalLinksKey)
     }
 
     /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
@@ -323,6 +377,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(setArchiveInterval(_:)), let store {
             item.state = ArchiveInterval.allCases.firstIndex(of: store.state.archiveAfter) == item.tag ? .on : .off
+        }
+        if item.action == #selector(toggleLittleKiteLinks(_:)) {
+            item.state = LittleKite.opensExternalLinks(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleQuitWarning(_:)), let store {
             item.state = store.state.warnsBeforeQuitting ? .on : .off

@@ -84,6 +84,7 @@ enum MainMenu {
             item("Diagnostics for Claude", #selector(AppDelegate.toggleClaudeDiagnostics(_:)), toTarget: false),
             item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:)), id: "defaultBrowser"),
             // Until there's a Settings window.
+            item("Open Links from Other Apps in Little Kite", #selector(AppDelegate.toggleLittleKiteLinks(_:)), toTarget: false),
             item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
             submenuItem("Archive tabs after", ArchiveInterval.allCases.enumerated().map { i, interval in
                 item(interval.title, #selector(AppDelegate.setArchiveInterval(_:)), tag: i, toTarget: false)
@@ -101,6 +102,8 @@ enum MainMenu {
         submenu("File", [
             item("New Tab", #selector(BrowserWindowController.newTab(_:)), "t", id: "newTab"),
             item("New Incognito Window", #selector(MenuRouter.newIncognitoWindow(_:)), "n", [.command, .shift], id: "newIncognitoWindow"),
+            // Arc's File menu: "New Little Arc Window", ⌥⌘N, id newLittleBrowserWindow (MainMenu.nib).
+            item("New Little Kite Window", #selector(MenuRouter.newLittleKiteWindow(_:)), "n", [.command, .option], id: "newLittleBrowserWindow"),
             // No key, like Gabe's Arc: ⌘L is Add Split View. Clicking the URL pill still edits the URL.
             item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), id: "openLocation"),
             item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift], id: "reopenClosedTab"),
