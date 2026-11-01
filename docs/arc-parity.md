@@ -42,8 +42,8 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | New Tab… (opens the command bar) | ⌘T | ✅ | |
-| New Window | ⌘N | ❌ | Thread: multiple windows |
-| Blank Window | ⌃⌘N | ❌ | Thread: multiple windows |
+| New Window | ⌘N | 🟡 Another window on the shared sidebar (spaces, pinned, favourites, tabs) with its own space and tab, opening on the command bar; restored on relaunch (windows.json). A tab selected in two windows loads twice (Arc likely moves the page) | |
+| Blank Window | ⌃⌘N | 🟡 Arc's standalone-sidebar window: its own "Explore" tabs outside the spaces, restored on relaunch. Moving its tabs into a space not built | |
 | New Incognito Window | ⇧⌘N | ✅ in-memory profile per window (New Space moved off ⇧⌘N) | |
 | New Little Arc Window | ⌥⌘N | ✅ "New Little Kite Window" (`newLittleBrowserWindow`) | |
 | Restore Last Closed Tab | ⇧⌘T | ✅ | |
@@ -223,9 +223,9 @@ Small and shortcut-level, one PR each, in this order:
   ⌘Z undo, Reset tabs in space, back to pinned URL, New Folder, Rename tab/space, Reveal in sidebar,
   Collapse Pinned, ⇧⌘S next space, Manage Spaces, swipe between spaces. Avoids the sidebar files the
   other session is editing where possible.
-- **B4. Windows:** ⇧⌘N incognito (done; New Space moved to the Spaces menu). ⌘N new window and ⌃⌘N
-  blank window need per-window selection in `BrowserState` and pages that can move between windows, so
-  they get their own thread.
+- **B4. Windows:** ⇧⌘N incognito (done; New Space moved to the Spaces menu). ⌘N and ⌃⌘N done: each normal
+  window has its own `BrowserState` copy (`WindowSelection`), kept in step by `WindowLink`. Still to do: pages
+  that move between windows instead of loading twice.
 - **B5. Small UX:** Show Toolbar ⇧⌘D, Stay On Top, sidebar hover reveal, auto-archive setting,
   warn before quit, Share…, Set as Default Browser, keyboard-shortcut cheat sheet, Reveal data folder,
   sad tab, swipe gestures, Save Page As, Clear Cookies/Cache and Refresh.

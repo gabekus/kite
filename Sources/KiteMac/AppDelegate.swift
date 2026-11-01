@@ -15,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var adblocker: Adblocker!
     private var windowController: BrowserWindowController!
     private var incognitoControllers: [BrowserWindowController] = []
+    /// New and blank windows (⌘N, ⌃⌘N), restored on relaunch.
+    private var windows: BrowserWindows!
     private var littleControllers: [LittleKiteWindowController] = []
     /// Routes menu commands to whichever browser window is in front.
     private var menuRouter: MenuRouter!
@@ -69,6 +71,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
         NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
         windowController.showWindow(nil)
+        windows = BrowserWindows(
+            main: store, mainController: windowController, engine: engine, adblocker: adblocker,
+            history: history, fileURL: Self.supportDirectory.appendingPathComponent("windows.json")
+        )
+        windows.restore()
 
         automation = AutomationController(store: store, supportDirectory: Self.supportDirectory)
         automation.host = windowController
@@ -121,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KCRuntime.extensionDialogAnchor = { [weak self] window in
             MainActor.assumeIsolated {
                 guard let self else { return .zero }
-                let controllers = [self.windowController!] + self.incognitoControllers
+                let controllers = [self.windowController!] + self.windows.all + self.incognitoControllers
                 return controllers.first { $0.window === window }?.webAreaInWindow ?? .zero
             }
         }
@@ -220,6 +227,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.mutate { _ = $0.openTab(url: url) }
     }
 
+    /// ⌘N: another window on the shared sidebar.
+    func openNewWindow() { windows.openNewWindow() }
+
+    /// ⌃⌘N: a window with a sidebar of its own.
+    func openBlankWindow() { windows.openBlankWindow() }
+
     /// ⇧⌘N. Each incognito window gets its own in-memory profile, gone when it closes.
     func openIncognitoWindow() {
         let controller = BrowserWindowController(
@@ -252,6 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         claudeTasks?.stopAll()
         claudeTasks?.saveNow()
+        windows?.applicationWillTerminate()
         saveSession()
         automation?.shutdown()
     }

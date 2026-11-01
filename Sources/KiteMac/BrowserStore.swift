@@ -49,6 +49,33 @@ final class BrowserStore {
         BrowserStore(state: BrowserState(spaces: [Space(name: "Incognito", icon: "🕶️", theme: Theme.presets[3])]))
     }
 
+    /// Another normal window's store: a copy of the shared sidebar with its own selection,
+    /// kept in step through `link`. The main window's store writes the session.
+    static func linked(_ state: BrowserState, to link: WindowLink) -> BrowserStore {
+        let store = BrowserStore(state: state)
+        link.add(store)
+        return store
+    }
+
+    /// A Blank Window's store (Arc's standalone-sidebar window): its own tabs, outside the
+    /// shared sidebar. Arc titles them "Explore" ("Title for Explore tabs in a standalone-sidebar window").
+    static func blank(_ state: BrowserState? = nil) -> BrowserStore {
+        BrowserStore(state: state ?? BrowserState(spaces: [Space(name: "Explore", icon: "🧭", theme: Theme.presets[0])]))
+    }
+
+    /// The normal windows this store's changes are copied to; nil for incognito and blank windows.
+    @ObservationIgnored weak var link: WindowLink?
+    /// After every change: AppDelegate saves the extra windows (windows.json).
+    @ObservationIgnored var didChangeState: (() -> Void)?
+
+    /// Takes a change made in another normal window, keeping this window's selection.
+    func adopt(_ other: BrowserState) {
+        state = state.adoptingContent(of: other)
+        scheduleSave()
+        onChange?()
+        didChangeState?()
+    }
+
     private init(state: BrowserState) {
         session = nil
         self.state = state
@@ -69,6 +96,8 @@ final class BrowserStore {
         let result = body(&state)
         scheduleSave()
         onChange?()
+        link?.propagate(from: self)
+        didChangeState?()
         return result
     }
 
@@ -112,6 +141,8 @@ final class BrowserStore {
             pendingSplitPane = nil
             state.cancelSplitPane(pane)
             scheduleSave()
+            link?.propagate(from: self)
+            didChangeState?()
         }
         onChange?()
     }
@@ -193,6 +224,33 @@ final class BrowserStore {
             try session?.save(state)
         } catch {
             NSLog("Kite: couldn't save session: \(error)")
+        }
+    }
+}
+
+/// Arc's normal windows share one sidebar and each shows its own space and tab. Every normal
+/// window has its own store; a change in one is copied into the rest, which keep their selection.
+@MainActor
+final class WindowLink {
+    private struct Weak { weak var store: BrowserStore? }
+    private var stores: [Weak] = []
+
+    var all: [BrowserStore] { stores.compactMap(\.store) }
+
+    func add(_ store: BrowserStore) {
+        stores.removeAll { $0.store == nil }
+        stores.append(Weak(store: store))
+        store.link = self
+    }
+
+    func remove(_ store: BrowserStore) {
+        stores.removeAll { $0.store == nil || $0.store === store }
+        if store.link === self { store.link = nil }
+    }
+
+    func propagate(from source: BrowserStore) {
+        for other in all where other !== source {
+            other.adopt(source.state)
         }
     }
 }

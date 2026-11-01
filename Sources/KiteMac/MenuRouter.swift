@@ -46,10 +46,19 @@ final class MenuRouter: NSObject, NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if let little {
             guard let action = item.action else { return false }
-            if action == #selector(newIncognitoWindow(_:)) || action == #selector(newLittleKiteWindow(_:)) { return true }
+            if [#selector(newWindow(_:)), #selector(newBlankWindow(_:)), #selector(newIncognitoWindow(_:)),
+                #selector(newLittleKiteWindow(_:))].contains(action) { return true }
             return little.responds(to: action) && little.validateMenuItem(item)
         }
         return current?.validateMenuItem(item) ?? false
+    }
+
+    @objc func newWindow(_ sender: Any?) {
+        (NSApp.delegate as? AppDelegate)?.openNewWindow()
+    }
+
+    @objc func newBlankWindow(_ sender: Any?) {
+        (NSApp.delegate as? AppDelegate)?.openBlankWindow()
     }
 
     @objc func newIncognitoWindow(_ sender: Any?) {
