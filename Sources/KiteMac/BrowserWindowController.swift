@@ -273,6 +273,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         claudeBubbleHost.sizingOptions = []
         claudeBubbleHost.isHidden = true
         claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
+        claudeBubble.postToProject = { [weak self] page, message in self?.postToClaudeProject(page, message: message) }
         libraryHost = NSHostingView(rootView: makeLibraryView())
         libraryHost.sizingOptions = []
         libraryHost.isHidden = true

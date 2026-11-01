@@ -345,6 +345,14 @@ isn't an API. So Kite joins Desktop instead of running a second Claude next to i
   installed), Return in the ⌘J bar opens `claude://claude.ai/new?q=…` with the request (and the attached tab's
   title, URL and Kite tab id) in a new Desktop chat. Desktop shows it in the composer and the user sends it. The
   bar's ↗ button switches between Desktop and running here.
+- **Each space has a ⌘J route.** The chip in the ⌘J bar names where a request from this space goes, and its
+  menu changes it: **New chat** (the two items above), a **Claude Project** (added once from its
+  `claude.ai/code/project/chan_…` link), or a **folder**. A project's page opens in a Peek over the tab (a new tab
+  if the space has none) and Kite posts the request in the project's own composer, so it lands in that project's
+  conversation and its replies show in the Peek. A folder runs the task here with `claude -p` in that folder, so it
+  has the folder's CLAUDE.md and memory; follow-ups resume there. Routes live in `<profile>/Claude/routes.json`.
+  There's no public API to post into a project: Desktop's `claude://claude.ai/project/<id>` only opens the page,
+  and Claude Code's `/send-to-project` needs its own approval dialog.
 - **Kite tasks continue in Desktop.** A task that ran here (`claude -p`) has a Claude Code session id; the bar's
   "Continue in the Claude App" button runs `claude --desktop --resume <id>`, which opens that session in
   Desktop's Code tab (Claude Code 2.1.285+, Claude subscription sign-in).
