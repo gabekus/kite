@@ -35,6 +35,44 @@ enum BrowserHistoryImport {
         }
     }
 
+    /// Firefox's places.sqlite: a page per `moz_places` row that has visits in
+    /// `moz_historyvisits`, with its latest visit. Hidden pages (redirect sources, subframes) and
+    /// embedded, download and framed-link visits are left out, as Firefox's history leaves them.
+    static func firefox(from file: URL) throws -> [HistoryEntry] {
+        let sql = """
+            SELECT p.url, p.title, p.visit_count, MAX(v.visit_date) AS last
+            FROM moz_places p JOIN moz_historyvisits v ON v.place_id = p.id
+            WHERE p.hidden = 0 AND v.visit_type NOT IN (4, 7, 8)
+            GROUP BY p.id ORDER BY last DESC LIMIT \(History.maxEntries)
+            """
+        return try query(file, sql) { statement in
+            (sqlite3_column_int64(statement, 2), History.firefoxDate(sqlite3_column_int64(statement, 3)))
+        }
+    }
+
+    /// Firefox's bookmarks: every `moz_bookmarks` row with its page's URL from `moz_places`.
+    static func firefoxBookmarks(from file: URL) throws -> [BookmarkImport.FirefoxRow] {
+        let sql = """
+            SELECT b.id, b.parent, b.type, b.position, COALESCE(NULLIF(b.title, ''), p.title), b.guid, p.url
+            FROM moz_bookmarks b LEFT JOIN moz_places p ON p.id = b.fk
+            """
+        return try withCopy(file) { db in
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { throw Failure.unreadable }
+            defer { sqlite3_finalize(statement) }
+            var rows: [BookmarkImport.FirefoxRow] = []
+            func text(_ column: Int32) -> String? { sqlite3_column_text(statement, column).map { String(cString: $0) } }
+            while sqlite3_step(statement) == SQLITE_ROW {
+                rows.append(BookmarkImport.FirefoxRow(
+                    id: sqlite3_column_int64(statement, 0), parent: sqlite3_column_int64(statement, 1),
+                    type: Int(sqlite3_column_int(statement, 2)), position: Int(sqlite3_column_int(statement, 3)),
+                    title: text(4), guid: text(5) ?? "", url: text(6)
+                ))
+            }
+            return rows
+        }
+    }
+
     /// Whether macOS lets Kite read `file`. Reading anything in ~/Library/Safari needs Full Disk Access.
     static func canRead(_ file: URL) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return false }
@@ -49,6 +87,27 @@ enum BrowserHistoryImport {
         _ sql: String,
         visits: (OpaquePointer?) -> (count: Int64, last: Date)
     ) throws -> [HistoryEntry] {
+        try withCopy(file) { db in
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { throw Failure.unreadable }
+            defer { sqlite3_finalize(statement) }
+
+            var entries: [HistoryEntry] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let raw = sqlite3_column_text(statement, 0), let url = URL(string: String(cString: raw)),
+                      History.records(url)
+                else { continue }
+                let title = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
+                let (count, last) = visits(statement)
+                entries.append(HistoryEntry(url: url, title: title, lastVisit: last, visitCount: max(1, Int(count))))
+            }
+            return entries
+        }
+    }
+
+    /// Opens a copy of the database (with its write-ahead log) and runs `body` on it. Firefox
+    /// keeps places.sqlite locked while it runs; the copy can still be read.
+    private static func withCopy<T>(_ file: URL, _ body: (OpaquePointer?) throws -> T) throws -> T {
         let fm = FileManager.default
         guard fm.fileExists(atPath: file.path) else { throw Failure.unreadable }
         guard canRead(file) else { throw Failure.noAccess }
@@ -68,19 +127,6 @@ enum BrowserHistoryImport {
             throw Failure.unreadable
         }
         defer { sqlite3_close(db) }
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { throw Failure.unreadable }
-        defer { sqlite3_finalize(statement) }
-
-        var entries: [HistoryEntry] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard let raw = sqlite3_column_text(statement, 0), let url = URL(string: String(cString: raw)),
-                  History.records(url)
-            else { continue }
-            let title = sqlite3_column_text(statement, 1).map { String(cString: $0) } ?? ""
-            let (count, last) = visits(statement)
-            entries.append(HistoryEntry(url: url, title: title, lastVisit: last, visitCount: max(1, Int(count))))
-        }
-        return entries
+        return try body(db)
     }
 }

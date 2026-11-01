@@ -159,6 +159,12 @@ What works with Kite in the background (checked on a test build behind other win
   items follow its title in the line). WebKit only: it also keeps a covered test window's page answering, which
   the menu needs. Despite `input`'s first-mouse note, right-clicks on a page reach WebKit in the background. With
   `KITE_TEST_PASTEBOARD=name` the menu's Copy items write that named pasteboard instead of the clipboard.
+- Import from Another Browser's dialog is an alert sheet, which brings Kite to the front. With `KITE_TEST_IMPORT=1`
+  (on a `KITE_SUPPORT_PATH` profile, usually with `KITE_BROWSER_DATA_PATH` pointing at hand-made browser files) the
+  menu item writes the dialog's choices to stderr instead, as `KITE_TEST_IMPORT: Chrome [Person 1*, Work] | Firefox
+  [default-release*]` (* the profile offered first). Put `Browser` or `Browser/Profile name` in `test-import-pick`
+  in the profile folder and the next press imports it straight away (no replace question). A focused WebKit page
+  takes ⌃⌥⌘ key equivalents first, so click the sidebar before sending a test shortcut for the item.
 - Instant Links (⇧⏎ in the command bar) without Google or Claude: on a `KITE_SUPPORT_PATH` profile,
   `KITE_TEST_INSTANT_LINKS_SEARCH_URL='http://127.0.0.1:PORT/results?q=%s'` makes the hidden reader load that page
   instead of Google (it takes the first `#search a` that holds an `h3`), and `KITE_CLAUDE_BIN` names a stub that
