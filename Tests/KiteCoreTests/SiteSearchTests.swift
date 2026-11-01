@@ -93,3 +93,49 @@ import Testing
         #expect(old.siteSearches.isEmpty)
     }
 }
+
+@Suite struct SiteSearchEditingTests {
+    let youtube = SiteSearch(name: "YouTube", shortcut: "yt", urlTemplate: "https://www.youtube.com/results?search_query=%s", color: "FF0000")
+
+    @Test func validatesTheDialogFields() {
+        let sites = [youtube]
+        #expect(SiteSearchDraft(name: "Kagi", shortcut: "k", urlTemplate: "https://kagi.com/search?q=%s").isValid(in: sites))
+        #expect(SiteSearchDraft().problems(in: sites) == [.emptyName, .emptyShortcut, .invalidURL])
+        #expect(SiteSearchDraft(name: "x", shortcut: "a b", urlTemplate: "https://x.com/?q=%s").problems(in: sites) == [.shortcutHasSpace])
+        #expect(SiteSearchDraft(name: "x", shortcut: "YT", urlTemplate: "https://x.com/?q=%s").problems(in: sites) == [.shortcutTaken("YouTube")])
+        // The entry being edited keeps its own shortcut.
+        #expect(SiteSearchDraft(youtube).isValid(in: sites, editing: youtube.id))
+        #expect(SiteSearchDraft(name: "x", shortcut: "x", urlTemplate: "https://x.com/").problems(in: sites) == [.invalidURL])
+        #expect(SiteSearchDraft(name: "x", shortcut: "x", urlTemplate: "javascript:%s").problems(in: sites) == [.invalidURL])
+        #expect(SiteSearchDraft(name: "x", shortcut: "x", urlTemplate: "x.com/?q=%s").problems(in: sites) == [.invalidURL])
+    }
+
+    @Test func addsEditsAndRemoves() throws {
+        var state = BrowserState.makeDefault()
+        state.siteSearches = [youtube]
+        let duplicate = state.addSiteSearch(SiteSearchDraft(name: "Dup", shortcut: "yt", urlTemplate: "https://x.com/?q=%s"))
+        #expect(duplicate == nil)
+        let added = state.addSiteSearch(SiteSearchDraft(name: " Kagi ", shortcut: "k", urlTemplate: "https://kagi.com/search?q=%s"))
+        let id = try #require(added)
+        #expect(state.siteSearches.last?.name == "Kagi")
+        #expect(state.siteSearches.last?.url(for: "a b")?.absoluteString == "https://kagi.com/search?q=a%20b")
+
+        // Renaming keeps the brand colour; a new URL drops it.
+        var saved = state.updateSiteSearch(youtube.id, SiteSearchDraft(name: "YT", shortcut: "yt", urlTemplate: youtube.urlTemplate))
+        #expect(saved)
+        #expect(state.siteSearches[0].color == "FF0000")
+        saved = state.updateSiteSearch(youtube.id, SiteSearchDraft(name: "YT", shortcut: "yt", urlTemplate: "https://m.youtube.com/results?q=%s"))
+        #expect(saved)
+        #expect(state.siteSearches[0].color == nil)
+        saved = state.updateSiteSearch(youtube.id, SiteSearchDraft(name: "YT", shortcut: "k", urlTemplate: "https://m.youtube.com/results?q=%s"))
+        #expect(!saved)
+
+        state.removeSiteSearch(id)
+        #expect(state.siteSearches.map(\.shortcut) == ["yt"])
+    }
+
+    @Test func searchEnginesPageURL() {
+        #expect(InternalPage(URL(string: "kite://search-engines")) == .searchEngines)
+        #expect(InternalPage.searchEngines.url.absoluteString == "kite://search-engines")
+    }
+}

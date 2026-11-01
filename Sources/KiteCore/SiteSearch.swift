@@ -113,3 +113,95 @@ extension BrowserState {
         }
     }
 }
+
+/// The Add / Edit site search dialog on the search engines page (Settings › Profiles › Search
+/// Settings…). Chromium's dialog has the same three fields: Name, Shortcut, and "URL with %s in
+/// place of query".
+public struct SiteSearchDraft: Equatable, Sendable {
+    public var name: String
+    public var shortcut: String
+    public var urlTemplate: String
+
+    public init(name: String = "", shortcut: String = "", urlTemplate: String = "") {
+        self.name = name
+        self.shortcut = shortcut
+        self.urlTemplate = urlTemplate
+    }
+
+    public init(_ site: SiteSearch) {
+        self.init(name: site.name, shortcut: site.shortcut, urlTemplate: site.urlTemplate)
+    }
+
+    public enum Problem: Equatable, Sendable {
+        case emptyName, emptyShortcut, shortcutHasSpace, shortcutTaken(String), invalidURL
+
+        public var message: String {
+            switch self {
+            case .emptyName: "Enter a name"
+            case .emptyShortcut: "Enter a shortcut"
+            case .shortcutHasSpace: "A shortcut can’t contain spaces"
+            case .shortcutTaken(let name): "Already used by “\(name)”"
+            case .invalidURL: "Enter a web address with %s where the query goes"
+            }
+        }
+    }
+
+    private var trimmed: (name: String, shortcut: String, url: String) {
+        (name.trimmingCharacters(in: .whitespacesAndNewlines),
+         shortcut.trimmingCharacters(in: .whitespacesAndNewlines),
+         urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// What's wrong with the draft, field by field (empty when it can be saved). `editing` is the
+    /// entry being edited, which may keep its own shortcut.
+    public func problems(in sites: [SiteSearch], editing: UUID? = nil) -> [Problem] {
+        let (name, shortcut, url) = trimmed
+        var problems: [Problem] = []
+        if name.isEmpty { problems.append(.emptyName) }
+        if shortcut.isEmpty {
+            problems.append(.emptyShortcut)
+        } else if shortcut.contains(where: \.isWhitespace) {
+            problems.append(.shortcutHasSpace)
+        } else if let other = sites.first(where: { $0.id != editing && $0.shortcut.lowercased() == shortcut.lowercased() }) {
+            problems.append(.shortcutTaken(other.name))
+        }
+        let probe = URL(string: url.replacingOccurrences(of: "%s", with: "q"))
+        if !url.contains("%s") || !["http", "https"].contains(probe?.scheme?.lowercased() ?? "") || probe?.host() == nil {
+            problems.append(.invalidURL)
+        }
+        return problems
+    }
+
+    public func isValid(in sites: [SiteSearch], editing: UUID? = nil) -> Bool {
+        problems(in: sites, editing: editing).isEmpty
+    }
+}
+
+extension BrowserState {
+    /// Adds a site search from the dialog. Nil (and nothing added) if the draft isn't valid.
+    @discardableResult
+    public mutating func addSiteSearch(_ draft: SiteSearchDraft) -> UUID? {
+        guard draft.isValid(in: siteSearches) else { return nil }
+        let site = SiteSearch(name: draft.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                              shortcut: draft.shortcut.trimmingCharacters(in: .whitespacesAndNewlines),
+                              urlTemplate: draft.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines))
+        siteSearches.append(site)
+        return site.id
+    }
+
+    /// Saves an edit. A new URL drops the entry's brand colour, so its chip takes the new site's favicon colour.
+    @discardableResult
+    public mutating func updateSiteSearch(_ id: UUID, _ draft: SiteSearchDraft) -> Bool {
+        guard let i = siteSearches.firstIndex(where: { $0.id == id }), draft.isValid(in: siteSearches, editing: id) else { return false }
+        let url = draft.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        if siteSearches[i].urlTemplate != url { siteSearches[i].color = nil }
+        siteSearches[i].name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        siteSearches[i].shortcut = draft.shortcut.trimmingCharacters(in: .whitespacesAndNewlines)
+        siteSearches[i].urlTemplate = url
+        return true
+    }
+
+    public mutating func removeSiteSearch(_ id: UUID) {
+        siteSearches.removeAll { $0.id == id }
+    }
+}
