@@ -16,23 +16,8 @@ extension BrowserWindowController {
         store.mutate { _ = $0.duplicate(tab: id) }
     }
 
-    @objc func renameSpace(_ sender: Any?) { renameSpace(id: store.state.selectedSpaceID) }
-
-    func renameSpace(id: UUID) {
-        guard let window, let space = store.state.spaces.first(where: { $0.id == id }) else { return }
-        let alert = NSAlert()
-        alert.messageText = "Rename Space"
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(string: space.name)
-        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            self?.store.mutate { $0.renameSpace(space.id, to: field.stringValue) }
-        }
-    }
+    /// Renames the space in place in its header, like Arc.
+    @objc func renameSpace(_ sender: Any?) { store.beginRenaming(space: store.state.selectedSpaceID) }
 
     /// The space's icon is one emoji; the field opens the emoji picker.
     func changeIcon(ofSpace id: UUID) {
