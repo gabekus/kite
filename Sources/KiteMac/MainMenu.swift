@@ -82,6 +82,9 @@ enum MainMenu {
         submenu("Kite", [
             item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false, id: "aboutKite"),
             .separator(),
+            // Arc's app menu: Settings… ⌘, right after About and its separator (read from Arc's menu bar);
+            // "viewPreferences" is the item's arcKeyBindingID in Arc's MainMenu.nib.
+            item("Settings…", #selector(AppDelegate.showSettings(_:)), ",", toTarget: false, id: "viewPreferences"),
             // Claude's chat bubble at the bottom of the page; the menu item only carries the shortcut.
             item("Ask Claude", #selector(BrowserWindowController.toggleClaudeBubble(_:)), "j", id: "askClaude"),
             .separator(),
@@ -151,6 +154,8 @@ enum MainMenu {
             item("Capture…", #selector(BrowserWindowController.capturePage(_:)), id: "capturePage"),
             item("Capture Full Page", #selector(BrowserWindowController.captureFullPage(_:)), id: "captureFullPage"),
             item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"),
+            // A Kite addition (Arc has no installed apps): Chrome's "Install page as app…", for the current site.
+            item("Install Page as App…", #selector(BrowserWindowController.installPageAsApp(_:)), id: "installPageAsApp"),
             // "Print", no ellipsis, as in Arc's File menu.
             item("Print", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
             .separator(),
@@ -249,6 +254,12 @@ enum MainMenu {
             commandBarOnly(item("Add Vertical Split View", #selector(BrowserWindowController.addVerticalSplitView(_:)), id: "newVerticalSplitView")),
             commandBarOnly(item("Convert to Vertical Split View", #selector(BrowserWindowController.convertToVerticalSplitView(_:)), id: "convertToVerticalSplitView")),
             commandBarOnly(item("Convert to Horizontal Split View", #selector(BrowserWindowController.convertToHorizontalSplitView(_:)), id: "convertToHorizontalSplitView")),
+            // Arc's Add Left/Right/Top/Bottom Split command bar actions (AddLeftSplitCodingKeys…), with its
+            // "New … Split" trigger phrases. Not in its menu bar either.
+            commandBarOnly(item("Add Left Split", #selector(BrowserWindowController.addLeftSplit(_:)), id: "addLeftSplit"), keywords: ["New Left Split"]),
+            commandBarOnly(item("Add Right Split", #selector(BrowserWindowController.addRightSplit(_:)), id: "addRightSplit"), keywords: ["New Right Split"]),
+            commandBarOnly(item("Add Top Split", #selector(BrowserWindowController.addTopSplit(_:)), id: "addTopSplit"), keywords: ["New Top Split"]),
+            commandBarOnly(item("Add Bottom Split", #selector(BrowserWindowController.addBottomSplit(_:)), id: "addBottomSplit"), keywords: ["New Bottom Split"]),
             .separator(),
             item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0", id: "actualSize"),
             item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "=", id: "zoomIn"),
@@ -317,6 +328,9 @@ enum MainMenu {
                 reset.allowsKeyEquivalentWhenHidden = true
                 return reset
             }(),
+            // Arc's command-bar actions muteAllTabs / unmuteAllTabs: not in its menu bar, so hidden here.
+            commandBarOnly(item(MuteAllTabs.title(mute: true), #selector(BrowserWindowController.muteAllTabs(_:)), id: "muteAllTabs")),
+            commandBarOnly(item(MuteAllTabs.title(mute: false), #selector(BrowserWindowController.unmuteAllTabs(_:)), id: "unmuteAllTabs")),
             .separator(),
         ] + (1...9).map { n in
             item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n, id: n == 9 ? "lastTab" : "tab\(n)")
@@ -355,6 +369,8 @@ enum MainMenu {
             // Arc's MainMenu.nib has these as command-bar actions, out of the menu bar, with these keywords.
             commandBarOnly(item("New Boost", #selector(BrowserWindowController.newBoost(_:)), id: "newBoost"), keywords: boostKeywords),
             commandBarOnly(item("Edit Boost", #selector(BrowserWindowController.editBoost(_:)), id: "editBoost"), keywords: boostKeywords),
+            // Installed web apps (a Kite addition); AppDelegate's WebAppsController fills it in.
+            submenuItem("Web Apps", []),
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), toTarget: false, id: "bringAllToFront"),
         ])

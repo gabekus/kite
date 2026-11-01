@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var engine: WebEngine!
 
     private var store: BrowserStore!
+    /// For Settings, which changes the search engine directly.
+    var browserStore: BrowserStore? { store }
     private var history: HistoryStore!
     private(set) var keyBindings: KeyBindingsStore!
     private var adblocker: Adblocker!
@@ -18,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// New and blank windows (⌘N, ⌃⌘N), restored on relaunch.
     private var windows: BrowserWindows!
     private var littleControllers: [LittleKiteWindowController] = []
+    /// Installed web apps (File › Install Page as App…, Window › Web Apps, kite-app:// links).
+    private(set) lazy var webApps = WebAppsController(supportDirectory: Self.supportDirectory)
     private lazy var airTraffic = AirTrafficControlStore(fileURL: Self.supportDirectory.appendingPathComponent("LinkRouting.json"))
     /// Routes menu commands to whichever browser window is in front.
     private var menuRouter: MenuRouter!
@@ -84,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             history: history, fileURL: Self.supportDirectory.appendingPathComponent("windows.json")
         )
         windows.restore()
+        setUpWebApps()
 
         automation = AutomationController(store: store, supportDirectory: Self.supportDirectory)
         automation.host = windowController
@@ -187,6 +192,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let spaceIDs = Set(store.state.spaces.map(\.id))
         var openedTab = false
         for url in urls {
+            // A web app's launcher (~/Applications/Kite Apps/<Name>.app) opens kite-app://<id>.
+            if webApps.handleLaunchURL(url) { continue }
             if MailHandler.isMailto(url) {
                 // Kite as the default mail app (it registers for mailto, as Arc does): the default
                 // web mail app's compose page in a new tab, else the system's mail app if that isn't Kite.
@@ -210,6 +217,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         if openedTab { windowController.window?.makeKeyAndOrderFront(nil) }
+    }
+
+    /// Installed apps' windows send links and popups to the main window, like Little Kite's.
+    private func setUpWebApps() {
+        let main = windowController!
+        let store = self.store!
+        webApps.host = WebAppsController.Host(
+            engine: { [weak main] in main?.pool.engine ?? self.engine },
+            openTab: { [weak main] url in
+                store.mutate { _ = $0.openTab(url: url) }
+                if !UIDiagnostics.enabledByEnvironment { main?.window?.makeKeyAndOrderFront(nil) }
+            },
+            adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) },
+            move: { [weak main] page, url, title in main?.adopt(page, url: url, title: title, in: nil) },
+            mainWindow: { [weak main] in main?.window }
+        )
+        WebAppInstallOffers.shared.isInstalled = { [weak webApps] id in webApps?.state.app(id: id) != nil }
+        webApps.menu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu?.item(withTitle: "Web Apps")?.submenu
     }
 
     /// Kite menu → Air Traffic Control… (Arc: Preferences → Links → Air Traffic Control…).
@@ -385,6 +410,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Settings
 
+    /// Kite → Settings… (⌘,).
+    @objc func showSettings(_ sender: Any?) {
+        SettingsWindowController.shared.show()
+    }
+
     /// Chromium's Energy Saver (30fps on low battery). Off unless the user turns it on.
     static let energySaverKey = "chromiumEnergySaver"
 
@@ -418,6 +448,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .cancel:
             break
         }
+    }
+
+    /// Every quit (⌘Q after "Quit Kite?", the Dock, scripts, logging out) stops here while
+    /// downloads are running: Arc's "Downloads in progress" asks first, from its own
+    /// applicationShouldTerminate(_:). Close Kite cancels them; Keep browsing cancels the quit.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let active = DownloadsModel.shared.list.active
+        guard !active.isEmpty else { return .terminateNow }
+        guard QuitDialog.runDownloadsInProgress(over: NSApp.keyWindow ?? NSApp.mainWindow) else { return .terminateCancel }
+        active.forEach { DownloadsModel.shared.cancel($0) }
+        return .terminateNow
     }
 
     /// Kite menu → Warn Before Quitting, until there's a Settings window (Arc has it in General).

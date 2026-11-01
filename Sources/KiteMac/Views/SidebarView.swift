@@ -25,6 +25,9 @@ struct SidebarActions {
     /// A pinned tab that left its pinned page: "Back to Pinned URL" and "Separate From Pinned Tab".
     var resetTab: (UUID) -> Void = { _ in }
     var separateFromPinnedTab: (UUID) -> Void = { _ in }
+    /// A pinned tab's or favorite's "Edit Pinned Page" submenu: Edit… and Replace Pinned URL with Current.
+    var editPinnedURL: (UUID) -> Void = { _ in }
+    var replacePinnedURL: (UUID) -> Void = { _ in }
     /// A tab's Rename…: in place in its row, or Arc's dialog where there's no row.
     var renameTab: (UUID) -> Void
     /// Tidy Tabs: the Today divider's Tidy button, and a tab group header's context menu.
@@ -51,6 +54,8 @@ struct SidebarView: View {
     var fieldAccessory: AnyView?
     /// Opens Site Controls from the address field's hover button.
     var showSiteControls: ((NSView) -> Void)?
+    /// Chrome's install icon, shown while the tab's page has an installable manifest; nil in incognito.
+    var installApp: ((NSView) -> Void)?
     /// Where a two-finger swipe between spaces has the pages.
     var swipe = SpaceSwipeModel()
     /// The Mini Player's buttons; nil shows no Mini Player.
@@ -104,7 +109,9 @@ struct SidebarView: View {
                     toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } },
                     showExtensions: showExtensions,
                     showSiteControls: SiteControls.applies(to: selectedTab?.url) ? showSiteControls : nil,
-                    accessory: fieldAccessory
+                    accessory: fieldAccessory,
+                    installAppName: installApp == nil ? nil : WebAppInstallOffers.shared.offer(for: selectedID)?.name,
+                    installApp: installApp
                 )
                 .padding(.top, M.urlFieldTopGap)
             }
@@ -115,7 +122,9 @@ struct SidebarView: View {
                     selectedID: selectedID,
                     onSelect: { id in store.mutate { $0.select(tab: id) } },
                     onUnload: actions.closeTab,
-                    onRemove: { id in store.mutate { $0.toggleFavorite(tab: id) } }
+                    onRemove: { id in store.mutate { $0.toggleFavorite(tab: id) } },
+                    onEditPinnedURL: actions.editPinnedURL,
+                    onReplacePinnedURL: actions.replacePinnedURL
                 )
                 .padding(.top, M.favoritesTopGap)
                 .padding(.bottom, M.favoritesBottomGap)
@@ -300,6 +309,8 @@ struct SidebarView: View {
             canReset: pinned && tab.hasLeftPinnedURL,
             onReset: { actions.resetTab(tab.id) },
             onSeparate: { actions.separateFromPinnedTab(tab.id) },
+            onEditPinnedURL: { actions.editPinnedURL(tab.id) },
+            onReplacePinnedURL: { actions.replacePinnedURL(tab.id) },
             onRename: { actions.renameTab(tab.id) },
             onCommitRename: { name in
                 guard store.renamingTabID == tab.id else { return }
@@ -516,7 +527,15 @@ private struct AddressPill: View {
     var showExtensions: ((NSView) -> Void)?
     var showSiteControls: ((NSView) -> Void)?
     var accessory: AnyView?
+    /// The installable app's name; nil hides the install icon.
+    var installAppName: String?
+    var installApp: ((NSView) -> Void)?
     @State private var hovering = false
+    // Settings → Advanced → Toolbar can hide each button; their commands still work from the menu bar.
+    @AppStorage(ChromeButton.passwordManager.hiddenKey) private var hidesPasswordManager = false
+    @AppStorage(ChromeButton.darkPage.hiddenKey) private var hidesDarkPage = false
+    @AppStorage(ChromeButton.siteControls.hiddenKey) private var hidesSiteControls = false
+    @AppStorage(ChromeButton.extensions.hiddenKey) private var hidesExtensions = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -534,8 +553,11 @@ private struct AddressPill: View {
             // Arc's buttons at the field's right end are 30pt wide on a 28pt pitch. Arc 1.169
             // shows its Site Control Center button (with the extensions) only on hover; Kite
             // always shows the extensions button, rightmost (Gabe's call, 2026-11-01).
+            let isDark = hidesDarkPage ? nil : isDark
+            let showSiteControls = hidesSiteControls ? nil : showSiteControls
+            let showExtensions = hidesExtensions ? nil : showExtensions
             HStack(spacing: -2) {
-                if let accessory { accessory }
+                if let accessory, !hidesPasswordManager { accessory }
                 if let isDark {
                     DarkPageToggle(isDark: isDark, action: toggleDark)
                 }
@@ -544,11 +566,15 @@ private struct AddressPill: View {
                     SiteControlsFieldButton(action: showSiteControls)
                         .opacity(hovering || SiteControlsPopover.isShown ? 1 : 0)
                 }
+                // Chrome's install icon sits at the field's right end; the extensions button stays rightmost.
+                if let installAppName, let installApp {
+                    InstallAppFieldButton(appName: installAppName, size: ExtensionsFieldButton.size, action: installApp)
+                }
                 if let showExtensions {
                     ExtensionsFieldButton(action: showExtensions)
                 }
             }
-            .padding(.trailing, isDark != nil || showExtensions != nil || showSiteControls != nil ? 4 : 0)
+            .padding(.trailing, isDark != nil || showExtensions != nil || showSiteControls != nil || installAppName != nil ? 4 : 0)
         }
         .modifier(ChromeFill(strength: M.fieldFill))
         .onHover { hovering = $0 }
@@ -577,6 +603,33 @@ private struct ExtensionsFieldButton: View {
         .onHover { hovering = $0 }
         .help("Extensions")
         .accessibilityLabel("Extensions")
+    }
+}
+
+/// Chrome's install icon (a monitor with a down arrow, kInstallDesktopIcon), tooltip "Install <app>"
+/// (IDS_OMNIBOX_PWA_INSTALL_ICON_TOOLTIP). The address field's other buttons' size and hover.
+struct InstallAppFieldButton: View {
+    let appName: String
+    var size: CGFloat = 30
+    var opacity: (normal: Double, hovered: Double) = (0.6, 0.9)
+    let action: (NSView) -> Void
+    @State private var anchor: NSView?
+    @State private var hovering = false
+
+    var body: some View {
+        Button { if let anchor { action(anchor) } } label: {
+            Image(systemName: "desktopcomputer.and.arrow.down")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: size, height: size)
+                .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0, cornerRadius: 6))
+                .background(AnchorView(view: $anchor))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(hovering ? opacity.hovered : opacity.normal)
+        .onHover { hovering = $0 }
+        .help("Install \(appName)")
+        .accessibilityLabel("Install \(appName)")
     }
 }
 
@@ -633,6 +686,8 @@ private struct FavoritesGrid: View {
     let onSelect: (UUID) -> Void
     let onUnload: (UUID) -> Void
     let onRemove: (UUID) -> Void
+    let onEditPinnedURL: (UUID) -> Void
+    let onReplacePinnedURL: (UUID) -> Void
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: M.favoriteSpacing), count: M.favoriteColumns)
 
@@ -644,7 +699,9 @@ private struct FavoritesGrid: View {
                     isSelected: tab.id == selectedID,
                     onSelect: { onSelect(tab.id) },
                     onUnload: { onUnload(tab.id) },
-                    onRemove: { onRemove(tab.id) }
+                    onRemove: { onRemove(tab.id) },
+                    onEditPinnedURL: { onEditPinnedURL(tab.id) },
+                    onReplacePinnedURL: { onReplacePinnedURL(tab.id) }
                 )
             }
         }
@@ -657,6 +714,8 @@ private struct FavoriteTile: View {
     let onSelect: () -> Void
     let onUnload: () -> Void
     let onRemove: () -> Void
+    let onEditPinnedURL: () -> Void
+    let onReplacePinnedURL: () -> Void
     @State private var hovering = false
 
     var body: some View {
@@ -670,6 +729,9 @@ private struct FavoriteTile: View {
             .help(tab.displayTitle)
             .contextMenu {
                 Button("Remove from Favorites", action: onRemove)
+                if tab.pinnedURL != nil {
+                    EditPinnedPageMenu(onEdit: onEditPinnedURL, onReplace: onReplacePinnedURL)
+                }
                 Button("Copy Link") { copyLink(tab.url) }
                 Divider()
                 Button("Unload Tab", action: onUnload)
@@ -876,6 +938,8 @@ private struct TabRow: View {
     var canReset = false
     var onReset: () -> Void = {}
     var onSeparate: () -> Void = {}
+    var onEditPinnedURL: () -> Void = {}
+    var onReplacePinnedURL: () -> Void = {}
     let onRename: () -> Void
     let onCommitRename: (String) -> Void
     let onCancelRename: () -> Void
@@ -961,6 +1025,9 @@ private struct TabRow: View {
                 Button("Back to Pinned URL", action: onReset)
                 Button("Separate From Pinned Tab", action: onSeparate)
             }
+            if isPinned && tab.pinnedURL != nil {
+                EditPinnedPageMenu(onEdit: onEditPinnedURL, onReplace: onReplacePinnedURL)
+            }
             Button("Copy Link") { copyLink(tab.url) }
             Button("Rename…", action: onRename)
             if showsAudio {
@@ -968,6 +1035,21 @@ private struct TabRow: View {
             }
             Divider()
             Button(isPinned ? "Unload Tab" : "Close Tab", action: onClose)
+        }
+    }
+}
+
+/// Arc's "Edit Pinned Page" submenu on a pinned tab or favorite (SidebarMenu+TabContextMenu,
+/// SidebarMenu+MoveMenu): "Edit…" opens the Edit Pinned URL dialog, and "Replace Pinned URL
+/// with Current" pins the page the tab is on. Arc builds both items unconditionally.
+private struct EditPinnedPageMenu: View {
+    let onEdit: () -> Void
+    let onReplace: () -> Void
+
+    var body: some View {
+        Menu("Edit Pinned Page") {
+            Button("Edit…", action: onEdit)
+            Button("Replace Pinned URL with Current", action: onReplace)
         }
     }
 }

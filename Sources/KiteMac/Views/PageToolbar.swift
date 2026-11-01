@@ -10,9 +10,17 @@ struct PageToolbar: View {
     let actions: SidebarActions
     /// Opens Site Controls under the button.
     var showSiteControls: ((NSView) -> Void)?
+    /// Chrome's install icon after the address, for an installable page; nil in incognito.
+    var installApp: ((NSView) -> Void)?
     @State private var siteControlsAnchor: NSView?
     /// Kite menu → Show Full URL in Toolbar (Arc: "Show full URL when Toolbar is enabled").
     @AppStorage(ToolbarURL.showsFullURLKey) private var showsFullURL = false
+    // Settings → Advanced → Toolbar can hide each button; their commands still work from the menu bar.
+    @AppStorage(ChromeButton.back.hiddenKey) private var hidesBack = false
+    @AppStorage(ChromeButton.forward.hiddenKey) private var hidesForward = false
+    @AppStorage(ChromeButton.reload.hiddenKey) private var hidesReload = false
+    @AppStorage(ChromeButton.siteControls.hiddenKey) private var hidesSiteControls = false
+    @AppStorage(ChromeButton.splitView.hiddenKey) private var hidesSplitView = false
     #if canImport(CEFBridge)
     /// Pinned extensions and the extensions menu; nil where extensions don't run (incognito, WebKit).
     var extensions: ExtensionsModel?
@@ -53,9 +61,11 @@ struct PageToolbar: View {
         let page = selected.flatMap { store.pages[$0.id] } ?? PageStatus()
         ZStack {
             HStack(spacing: 0) {
-                button("arrow.left", "Back", enabled: page.canGoBack, action: actions.goBack)
-                button("arrow.right", "Forward", enabled: page.canGoForward, action: actions.goForward)
-                button(page.isLoading ? "xmark" : "arrow.clockwise", "Reload", enabled: selected != nil, action: actions.reloadButton)
+                if !hidesBack { button("arrow.left", "Back", enabled: page.canGoBack, action: actions.goBack) }
+                if !hidesForward { button("arrow.right", "Forward", enabled: page.canGoForward, action: actions.goForward) }
+                if !hidesReload {
+                    button(page.isLoading ? "xmark" : "arrow.clockwise", "Reload", enabled: selected != nil, action: actions.reloadButton)
+                }
                 Spacer()
                 #if canImport(CEFBridge)
                 if let extensions {
@@ -65,50 +75,61 @@ struct PageToolbar: View {
                 }
                 #endif
                 let hasSite = SiteControls.applies(to: selected?.url)
-                Button { if let siteControlsAnchor { showSiteControls?(siteControlsAnchor) } } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 8, weight: .semibold))
-                        .frame(width: Metrics.siteControlsSize, height: Metrics.siteControlsSize)
-                        .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(lineWidth: 1.25))
-                        .foregroundStyle(hasSite ? Metrics.enabled : Metrics.disabled)
-                        .frame(width: Metrics.buttonPitch, height: Metrics.height)
-                        .background(AnchorView(view: $siteControlsAnchor))
-                        .contentShape(Rectangle())
+                if !hidesSiteControls {
+                    Button { if let siteControlsAnchor { showSiteControls?(siteControlsAnchor) } } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 8, weight: .semibold))
+                            .frame(width: Metrics.siteControlsSize, height: Metrics.siteControlsSize)
+                            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(lineWidth: 1.25))
+                            .foregroundStyle(hasSite ? Metrics.enabled : Metrics.disabled)
+                            .frame(width: Metrics.buttonPitch, height: Metrics.height)
+                            .background(AnchorView(view: $siteControlsAnchor))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .allowsHitTesting(hasSite)
+                    .help("Site Control Center")
+                    .accessibilityLabel("Site Control Center")
                 }
-                .buttonStyle(.plain)
-                .allowsHitTesting(hasSite)
-                .help("Site Control Center")
-                .accessibilityLabel("Site Control Center")
-                Button(action: actions.addSplitView) {
-                    Image(systemName: "rectangle.split.2x1")
-                        .resizable()
-                        .fontWeight(.medium)
-                        .frame(width: 14, height: 14.5)
-                        .foregroundStyle(Metrics.enabled)
-                        .frame(width: Metrics.buttonPitch, height: Metrics.height)
-                        .contentShape(Rectangle())
+                if !hidesSplitView {
+                    Button(action: actions.addSplitView) {
+                        Image(systemName: "rectangle.split.2x1")
+                            .resizable()
+                            .fontWeight(.medium)
+                            .frame(width: 14, height: 14.5)
+                            .foregroundStyle(Metrics.enabled)
+                            .frame(width: Metrics.buttonPitch, height: Metrics.height)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Add Split View")
+                    .accessibilityLabel("Add Split View")
                 }
-                .buttonStyle(.plain)
-                .help("Add Split View")
-                .accessibilityLabel("Add Split View")
             }
             .padding(.leading, Metrics.leading)
             .padding(.trailing, Metrics.trailing)
 
-            Button { store.showCommandBar(selected == nil ? .newTab : .editCurrent) } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "link")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Metrics.enabled)
-                    Text(ToolbarURL.text(for: selected?.url, full: showsFullURL))
-                        .font(.system(size: Metrics.fontSize))
-                        .foregroundStyle(Metrics.text)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+            HStack(spacing: 2) {
+                Button { store.showCommandBar(selected == nil ? .newTab : .editCurrent) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "link")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Metrics.enabled)
+                        Text(ToolbarURL.text(for: selected?.url, full: showsFullURL))
+                            .font(.system(size: Metrics.fontSize))
+                            .foregroundStyle(Metrics.text)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                // Chrome's install icon at the address's end (the extensions stay at the bar's right end).
+                if let installApp, let name = WebAppInstallOffers.shared.offer(for: selected?.id)?.name {
+                    InstallAppFieldButton(appName: name, size: 24, opacity: (0.8, 1), action: installApp)
+                        .foregroundStyle(Metrics.enabled)
+                }
             }
-            .buttonStyle(.plain)
             // A full URL truncates before it reaches the buttons on either side.
             .padding(.horizontal, Metrics.urlInset)
             .offset(x: Metrics.centerOffset)

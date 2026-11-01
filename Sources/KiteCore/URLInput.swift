@@ -43,6 +43,12 @@ public enum URLInput {
         return engine.searchURL(for: text)
     }
 
+    /// What was typed as a URL, or nil when it would be a search (Arc's "Enter a URL…" fields).
+    public static func url(_ input: String) -> URL? {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        return explicitURL(text) ?? hostLikeURL(text)
+    }
+
     public static func looksLikeURL(_ input: String) -> Bool {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         return explicitURL(text) != nil || hostLikeURL(text) != nil

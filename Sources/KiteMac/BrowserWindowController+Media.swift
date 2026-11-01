@@ -28,6 +28,20 @@ extension BrowserWindowController {
         store.updatePage(id) { $0.isAudioMuted = muted }
     }
 
+    /// Arc's command-bar Mute All Tabs: every live page in this window, in all its spaces.
+    @objc func muteAllTabs(_ sender: Any?) { setAllTabsMuted(true) }
+
+    /// Arc's command-bar Unmute All Tabs.
+    @objc func unmuteAllTabs(_ sender: Any?) { setAllTabsMuted(false) }
+
+    func setAllTabsMuted(_ muted: Bool) {
+        let live = pool.livePages
+        for id in MuteAllTabs.pagesToChange(live.mapValues(\.isAudioMuted), mute: muted) {
+            live[id]?.isAudioMuted = muted
+            store.updatePage(id) { $0.isAudioMuted = muted }
+        }
+    }
+
     /// Tabs left the screen or came onto it (switching tabs, spaces or split panes).
     func tabsChangedOnScreen(left: [UUID], arrived: [UUID]) {
         store.tabsLeftScreen(left)
