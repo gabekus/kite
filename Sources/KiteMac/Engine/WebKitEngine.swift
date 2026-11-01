@@ -91,6 +91,11 @@ final class WebKitPage: NSObject, WebPage {
         if let contentRules {
             configuration.userContentController = contentRules.makeController()
         }
+        // Web Inspector in the window (View › Developer) needs WebKit's private developer
+        // extras; isInspectable alone only allows Safari's remote inspector.
+        if configuration.preferences.responds(to: NSSelectorFromString("_developerExtrasEnabled")) {
+            configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        }
         webView = WKWebView(frame: .zero, configuration: configuration)
         self.downloads = downloads
         self.contentRules = contentRules
@@ -102,6 +107,7 @@ final class WebKitPage: NSObject, WebPage {
         webView.uiDelegate = self
         observe()
         WebKitMediaBridge.shared.attach(self)
+        ZapInjection.attach(to: self)
     }
 
     var view: NSView { webView }
@@ -124,8 +130,29 @@ final class WebKitPage: NSObject, WebPage {
     func allowFocus() {}
     // WebKit throttles views that aren't in a window on its own.
     func setVisible(_ visible: Bool) {}
-    // Web Inspector opens from the context menu; there's no public API to open it.
-    func showDevTools() {}
+    /// Web Inspector has no public API; WKWebView's private `_inspector` (`_WKInspector`)
+    /// opens it. Each call is guarded, and without it Kite says to use the context menu.
+    /// There's no call for the Network tab, so Network Inspector opens the inspector as is.
+    func showDevTools(_ panel: DevToolsPanel) {
+        let getter = NSSelectorFromString("_inspector")
+        guard webView.responds(to: getter), let inspector = webView.perform(getter)?.takeUnretainedValue() as? NSObject else {
+            let alert = NSAlert()
+            alert.messageText = "Web Inspector"
+            alert.informativeText = "On the WebKit engine, right-click the page and choose Inspect Element."
+            alert.runModal()
+            return
+        }
+        func call(_ name: String) {
+            let selector = NSSelectorFromString(name)
+            if inspector.responds(to: selector) { inspector.perform(selector) }
+        }
+        call("show")
+        switch panel {
+        case .last, .network: break
+        case .console: call("showConsole")
+        case .inspectElement: call("toggleElementSelection")
+        }
+    }
     // No public force-dark API in WebKit.
     func setForceDark(_ enabled: Bool) {}
     // WKWebView keeps no per-site permissions Kite can read or set.
@@ -145,6 +172,43 @@ final class WebKitPage: NSObject, WebPage {
 
     func archive(completion: @escaping (Data?, String) -> Void) {
         webView.createWebArchiveData { completion(try? $0.get(), "webarchive") }
+    }
+
+    func captureImage(area: CGRect?, completion: @escaping (Data?) -> Void) {
+        let deviceScale = webView.window?.backingScaleFactor ?? 2
+        guard let area else {
+            // takeSnapshot stops at the viewport; a PDF of the page (no rect) holds all of it as one page.
+            webView.createPDF(configuration: WKPDFConfiguration()) { result in
+                guard let pdf = try? result.get(), let rep = NSPDFImageRep(data: pdf) else { return completion(nil) }
+                let size = rep.bounds.size
+                let scale = deviceScale * Capture.fullPageScale(contentHeight: size.height, deviceScale: deviceScale)
+                completion(Self.png(size: size, scale: scale) { rep.draw(in: NSRect(origin: .zero, size: size)) })
+            }
+            return
+        }
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = webView.isFlipped ? area
+            : CGRect(x: area.minX, y: webView.bounds.height - area.maxY, width: area.width, height: area.height)
+        configuration.snapshotWidth = NSNumber(value: Double(area.width))
+        webView.takeSnapshot(with: configuration) { image, _ in
+            guard let image else { return completion(nil) }
+            completion(Self.png(size: area.size, scale: deviceScale) { image.draw(in: NSRect(origin: .zero, size: area.size)) })
+        }
+    }
+
+    /// Draws into a bitmap of `size` points at `scale` pixels per point and encodes it.
+    private static func png(size: CGSize, scale: CGFloat, draw: () -> Void) -> Data? {
+        let width = Int((size.width * scale).rounded()), height = Int((size.height * scale).rounded())
+        guard width > 0, height > 0, let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return nil }
+        bitmap.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        draw()
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.representation(using: .png, properties: [:])
     }
 
     func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void) {
@@ -190,6 +254,16 @@ final class WebKitPage: NSObject, WebPage {
     }
 
     /// WebKit's page mute (`_setPageMuted:`, private: there's no public API). Without it, does nothing.
+    /// WKWebView's private `_webProcessIdentifier` (WebKit has no public API for it); nil if a
+    /// macOS release drops it, or before the web process starts.
+    var processIdentifier: pid_t? {
+        let selector = NSSelectorFromString("_webProcessIdentifier")
+        guard webView.responds(to: selector),
+              let pid = (webView.value(forKey: "_webProcessIdentifier") as? NSNumber)?.int32Value, pid > 0
+        else { return nil }
+        return pid
+    }
+
     var isAudioMuted = false {
         didSet {
             let selector = NSSelectorFromString("_setPageMuted:")
