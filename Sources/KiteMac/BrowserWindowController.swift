@@ -1033,7 +1033,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             item.state = Self.isDefaultBrowser ? .on : .off
         case #selector(capturePage(_:)), #selector(captureFullPage(_:)):
             return shownPage != nil && store.state.selectedTab?.url != nil
-        case #selector(share(_:)), #selector(savePageAs(_:)),
+        case #selector(share(_:)), #selector(savePageAs(_:)), #selector(printPage(_:)),
              #selector(clearCookiesAndRefresh(_:)), #selector(clearCacheAndRefresh(_:)):
             return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):

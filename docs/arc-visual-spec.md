@@ -689,6 +689,25 @@ ARC_Capture.bundle's asset catalog. Line numbers are `~/rea-arc/arc-strings.txt`
   button styles, the selection outline (Kite: 1 pt white 90%), where the hint bubble sits, and what the 0.5 s
   delay is for.
 
+## Print ⌘P (Arc 1.171 menu bar, strings and ArcCore, 1 Nov 2026)
+
+- Menu bar (`menudump File`): the last item of the File group is **Print**, no ellipsis, ⌘P (mods=0).
+  Kite's item is now "Print" too (it was "Print…").
+- `arc-strings.txt` 34978 `printPage` (key binding name), 80726 its description "Prints the current page, or save
+  it as a PDF.", 176531 `printCurrentTab` (command), 190604 `printPage:` (the menu action; `decomp/arc.s`
+  805358 only checks it in menu validation). No `printOperation`, `NSPrintOperation`, `NSPrintPanel`, `PDFKit`
+  or `PrintPreview` in Arc's own binary: Arc doesn't build its own print sheet.
+- ArcCore (Arc's Chromium) has Chromium's print stack, including its print preview: `PrintPreviewUI`,
+  `chrome://print`, `printing.print_preview_disabled`, `runModalWithPrintInfo:` (the system dialog), and
+  locale.pak has the preview's strings ("Save as PDF", "Pages per sheet", "Print using system dialog").
+  So Arc's ⌘P most likely opens Chromium's print preview (a dialog over the page, with "Save as PDF").
+  Not observed: Arc wasn't driven.
+- Kite (`printPage(_:)`, `makePrintOperation`): the standard macOS print sheet on the window, with a page
+  preview, on both engines. WebKit gives `WKWebView.printOperation(with:)`, paged to the paper's width like
+  Safari. Chromium prints the page to PDF over DevTools (`Page.printToPDF`, the sheet's paper size, Chrome's
+  0.4 in margins, no backgrounds or header/footer) and PDFKit prints that. CEF's own `Print()` for a child
+  browser opens an app-modal panel with no preview, which is what Kite had before.
+
 ## Site Control Center → `SiteControlsView`, `SiteControlsPopover` (Arc 1.169 binary + masked probe, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt` 73677–73738 (module `SiteControlCenter`: `SiteControlCenterActionButton`,

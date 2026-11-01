@@ -127,7 +127,8 @@ enum MainMenu {
             item("Capture…", #selector(BrowserWindowController.capturePage(_:)), id: "capturePage"),
             item("Capture Full Page", #selector(BrowserWindowController.captureFullPage(_:)), id: "captureFullPage"),
             item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"),
-            item("Print…", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
+            // "Print", no ellipsis, as in Arc's File menu.
+            item("Print", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
             .separator(),
             // 1Password's own shortcut for its popup.
             item("1Password…", #selector(BrowserWindowController.showOnePassword(_:)), "x", [.command, .shift], id: "onePassword"),
