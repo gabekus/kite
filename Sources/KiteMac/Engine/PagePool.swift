@@ -233,7 +233,8 @@ final class PagePool {
         page.linkPeekPolicy = { [weak self] url, shift in
             guard let self, self.onLinkPeek != nil else { return false }
             let state = self.store.state
-            return LinkPeek.opensInPeek(section: state.location(of: id)?.section, from: state.tab(id)?.url, to: url, shift: shift)
+            return LinkPeek.opensInPeek(section: state.location(of: id)?.section, from: state.tab(id)?.url, to: url, shift: shift,
+                                       options: LinkPeek.Options(defaults: .standard))
         }
         onPageCreated?(id, page)
     }

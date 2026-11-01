@@ -25,6 +25,25 @@ import Testing
         #expect(LinkPeek.opensInPeek(section: .unpinned, from: mail, to: sameSite, shift: true))
     }
 
+    @Test func linksSwitchesGateEachCase() {
+        let news = URL(string: "https://www.nytimes.com/article")!
+        let noShift = LinkPeek.Options(shiftClick: false)
+        #expect(!LinkPeek.opensInPeek(section: .unpinned, from: mail, to: news, shift: true, options: noShift))
+        #expect(LinkPeek.opensInPeek(section: .pinned, from: mail, to: news, shift: false, options: noShift))
+        let noOtherSites = LinkPeek.Options(otherSites: false)
+        #expect(!LinkPeek.opensInPeek(section: .pinned, from: mail, to: news, shift: false, options: noOtherSites))
+        #expect(!LinkPeek.opensInPeek(section: .favorite, from: mail, to: news, shift: false, options: noOtherSites))
+        #expect(LinkPeek.opensInPeek(section: .pinned, from: mail, to: news, shift: true, options: noOtherSites))
+    }
+
+    @Test func linksSwitchesReadArcsKeysOnByDefault() {
+        let defaults = UserDefaults(suiteName: "LinkPeekTests-\(UUID().uuidString)")!
+        #expect(LinkPeek.Options(defaults: defaults) == LinkPeek.Options(shiftClick: true, otherSites: true))
+        defaults.set(true, forKey: "disableShiftClickToOpenLinksInModal")
+        defaults.set(false, forKey: "modalEnabled")
+        #expect(LinkPeek.Options(defaults: defaults) == LinkPeek.Options(shiftClick: false, otherSites: false))
+    }
+
     @Test func onlyWebLinksPeek() {
         #expect(!LinkPeek.opensInPeek(section: .pinned, from: mail, to: URL(string: "mailto:a@b.c")!, shift: false))
         #expect(!LinkPeek.opensInPeek(section: .pinned, from: mail, to: URL(string: "about:blank")!, shift: true))

@@ -643,6 +643,15 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   Favorites and Pinned tabs", "Open a Peek window when clicking on links with Shift held". The shift setting is
   `disableShiftClickToOpenLinksInModal` (absent from Gabe's defaults, so shift-click peeks). How Arc defines
   "other site" isn't in the strings; Kite compares registrable domains (`SignInHandoff.site`). **[inferred]**
+- The two Links switches (g85, g86): Arc's preference keys table (`decomp/out3/warnquit.txt` lines 90 and 155)
+  names `modalEnabled` and `disableShiftClickToOpenLinksInModal`; the Links pane's state has `modalEnabled`
+  (`onToggleModalEnabled`) next to `shiftClickModalEntryPointEnabled` (`onToggleShiftClickModalEntryPointEnabled`)
+  (strings ~171036, ~171305), so "links to other sites" is `modalEnabled` and "Shift held" is the inverted
+  disable key. Defaults: both keys are absent from Gabe's Arc defaults and the recorded Links pane
+  (`~/rea-arc/settings/pane-4.txt`) shows both switches at Value=1, so unset = on. Kite reads the same keys
+  (`LinkPeek.Options`): off, a ⇧-click is left to the engine (Chromium's new window, WebKit's normal
+  navigation) and a cross-site link from a Favorite or Pinned tab navigates the tab. That Arc's
+  `modalEnabled` gates only the cross-site case and not ⇧-click is **[inferred]** from the pane's wording.
 - Card (FUN_101715a98): 80% of the host's width, centred, 12pt from its top and bottom (height − 24). Kite's
   host is the content card's area. Whether Arc's host is the content card or the whole window: **unverified**.
 - Corner radius 8 (popover; 10 fullbleed) (FUN_101717608, FUN_101716678).

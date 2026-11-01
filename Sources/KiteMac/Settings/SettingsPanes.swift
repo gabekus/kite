@@ -287,6 +287,27 @@ private struct FeatureDefaultsSwitch: View {
     }
 }
 
+/// A switch row bound to a defaults key that's on when unset; `inverted` for Arc's "disable…" keys.
+private struct DefaultsToggle: View {
+    let title: String
+    var detail: String?
+    let inverted: Bool
+    @AppStorage private var stored: Bool
+
+    init(_ title: String, detail: String? = nil, key: String, inverted: Bool = false) {
+        self.title = title
+        self.detail = detail
+        self.inverted = inverted
+        _stored = AppStorage(wrappedValue: inverted ? false : true, key)
+    }
+
+    var body: some View {
+        SettingsRow(title: title, detail: detail) {
+            SettingsSwitch(isOn: Binding(get: { stored != inverted }, set: { stored = $0 != inverted }))
+        }
+    }
+}
+
 /// The coloured band across the top of Max (128pt) and Links (135pt). Arc's are illustrations;
 /// Kite draws a plain band with a symbol.
 private struct SettingsBanner: View {
@@ -326,9 +347,11 @@ struct LinksPane: View {
                     SettingsMetrics.line.frame(height: 1).padding(.vertical, 6)
                     SettingsBlurb("Peek is a way to preview a link without opening a new tab. It’s perfect for quickly looking at a link from an email, news article, or tweet.")
                     SettingsSection {
-                        UnsupportedToggle("Open a Peek window when clicking on links with Shift held")
+                        DefaultsToggle("Open a Peek window when clicking on links with Shift held",
+                                       key: LinkPeek.shiftClickDisabledKey, inverted: true)
                         SettingsSeparator()
-                        UnsupportedToggle("Open a Peek window when clicking on links to other sites", detail: "Note: This only affects Favorites and Pinned tabs")
+                        DefaultsToggle("Open a Peek window when clicking on links to other sites",
+                                       detail: "Note: This only affects Favorites and Pinned tabs", key: LinkPeek.otherSitesEnabledKey)
                     }
                     SettingsSection {
                         SettingsRow(title: "Choose where links open inside Kite.") {
