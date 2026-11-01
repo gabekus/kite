@@ -90,9 +90,9 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Cast | | ❌ | Skip? |
 | Developer → View Source | ⌥⌘U | ✅ Chromium (new `view-source:` tab) | |
 | Developer → Developer Tools | ⌥⌘I | ✅ | |
-| Developer → Inspect Elements | ⌥⌘C | 🟡 opens DevTools, no picker yet | Later |
-| Developer → JavaScript Console | ⌥⌘J | 🟡 opens DevTools, not on Console | Later |
-| Developer → Network Inspector | | ❌ | Later, with the two above |
+| Developer → Inspect Elements | ⌥⌘C | ✅ Chromium: DevTools with the element picker on (WebKit: Web Inspector's element selection) | |
+| Developer → JavaScript Console | ⌥⌘J | ✅ DevTools on Console | |
+| Developer → Network Inspector | | ✅ Chromium: DevTools on Network (WebKit: opens Web Inspector as it was) | |
 | Developer → Allow JavaScript from Apple Events | | ❌ | With AppleScript |
 | Turn on Developer Mode for this site | ⌃D | 🟡 Per-host switch (title flips to "Turn off…"), remembered across relaunches; on a Developer Mode site the sidebar's reload button gets Arc's reload options (Reload this page / Refresh (Ignore Cache) / Clear Cookies and Refresh) and reloads the way last chosen. No Site Controls row yet | Gap 16 |
 | Enter Full Screen | ⌃⌘F | ✅ | |
@@ -173,8 +173,9 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | 🟡 ⇧-hover shows a card (title, description, image, site) sized and timed from Arc's binary; `LinkPreviewController`. Off by default as in Arc; Kite menu › Link Previews | No AI summary (Arc's quickSummary + detail rows), no instant cards on HN/X/Google, no share button yet |
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
 | Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | 🟡 Little Kite: own window, toolbar measured from Arc, "Open in <Space>" (⌘O) moves the live page into the main window, ⌘W closes, Kite menu → Open Links from Other Apps in Little Kite (on by default) | No profile indicator, extensions button, downloads tray, searchable space picker, auto-archive or global hotkey yet |
-| Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal panes, divider, sidebar row; no vertical layout or drag-to-split yet | Thread: Split view |
+| Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal and top/bottom panes, divider, sidebar row; command bar Add Vertical Split View and Convert to Horizontal/Vertical; drop a page link on a content edge to open it in a new pane (real drag pending a hands-on check). Not yet: Add Top/Bottom/Left/Right menu items, dragging sidebar tabs into a split, moving panes | Thread: Split view |
 | Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | 🟡 | Sidebar Mini Player (play/pause, prev/next, tab mute, PiP, close, back to tab); auto PiP on leaving a playing video. No volume slider, mic/camera, marquee, Arc PiP window |
+| Zap (Boosts) | Pick elements on a page; they stay hidden on that site | 🟡 Picker overlay over the page (hover highlight, click → Zap this / Zap all related elements / Cancel), shelf listing the site's zaps with remove; per-site selectors in zaps.json injected at document start (Chromium isolated world, WebKit content world) | No entry point until the Boost editor (gap 21) calls `showZapPicker`; no candidate slider, zap preview images or Copy selector mode; highlight colour/cursor unmeasured. Gap 22 |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
 | Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |
 | Developer Mode | Per-site switch and dev reload options (Arc's strings show no console pane or URL change) | 🟡 See the Developer menu row | Gap 16 |
@@ -193,10 +194,10 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | 🟡 Popover from the toolbar's sliders button and the sidebar URL field's hover button: Copy URL, Share, Block Ads & Trackers, camera/mic/location/notifications (Chromium content settings; not on WebKit), Secure/Insecure, Clear Cache / Clear Cookies. No Boosts, capture, extensions section, Developer Mode, All Site Settings | Gap 8 |
 | Native ad blocker | uBlock-style lists | ❌ | Ad blocker thread |
 | Translation | Translate page, "never translate" sites | ❌ | Later (Chromium translate isn't in CEF) |
-| Instant Links | Command bar goes straight to the top result | ❌ | With Claude in the browser |
+| Instant Links | Command bar goes straight to the top result | 🟡 ⇧⏎ on a search: Kite's Claude splits it into Google queries (Arc's V1 schema: title, queries, tab/folder/split), a hidden web view opens each top result; tabs, a split or a folder. Falls back to the input as the query without Claude Code, and to the results page on a captcha | No loading cell in the sidebar (Arc's `InstantLinksCellView`), no V2 typed actions (images, maps, news, counts), no intent suggestion row, no settings toggle |
 | Ask on Page | ⌘F asks AI about the page | ❌ | With Claude in the browser |
 | ChatGPT/AI in command bar | Ask from the command bar | ❌ | With Claude in the browser |
-| Tidy Tab Titles | Pinned tabs get short AI titles | ❌ | With Claude in the browser |
+| Tidy Tab Titles | Pinned tabs get short AI titles | 🟡 pinning a tab (any path) asks Kite's Claude (`claude -p`, haiku, no tools) for a 1–3 word name, set as the tab's custom name; renaming or unpinning first wins; on by default as in Gabe's Arc, Kite menu › Tidy Tab Titles; `TidyTabTitles`, `TidyTabTitlesController` | No title animation (Arc's isAnimatingAiRename), no per-site rules (Arc's TidyTitleConfiguration), no feedback report, no settings row |
 | Tidy Downloads | Downloads renamed by AI | ❌ | With Claude in the browser |
 | Tidy Tabs | Groups Today tabs automatically | ❌ | With Claude in the browser |
 | Browse for Me | AI builds a page from search results | ❌ | Skip? |

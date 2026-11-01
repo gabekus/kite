@@ -78,6 +78,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         super.init()
         browser.delegate = self
         prepareVerificationCodes()
+        ZapInjection.attach(to: self)
         historySwipe = HistorySwipeController(
             view: browser.view,
             canNavigate: { [weak browser] in $0 == .back ? browser?.canGoBack == true : browser?.canGoForward == true },
@@ -157,7 +158,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func blur() { browser.blur() }
     func allowFocus() { browser.allowFocus() }
     func setVisible(_ visible: Bool) { browser.setHidden(!visible) }
-    func showDevTools() { browser.showDevTools() }
+    func showDevTools(_ panel: DevToolsPanel) { browser.showDevToolsRunningFrontendScript(panel.chromiumFrontendScript) }
 
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
         findCompletion = completion

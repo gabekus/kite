@@ -45,6 +45,14 @@ enum MainMenu {
             return hidden
         }
 
+        /// A command Arc offers only in its command bar: hidden from the menu bar, still found by the command bar.
+        func commandBarOnly(_ item: NSMenuItem) -> NSMenuItem {
+            item.isHidden = true
+            item.allowsKeyEquivalentWhenHidden = true
+            item.representedObject = MenuCommand.commandBarOnly
+            return item
+        }
+
         func submenuItem(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
             let menu = TypingSafeMenu(title: title)
             items.forEach(menu.addItem)
@@ -88,6 +96,8 @@ enum MainMenu {
             item("Air Traffic Control…", #selector(AppDelegate.showAirTrafficControl(_:)), toTarget: false, id: "openAirTrafficControl"),
             // Arc Max's "5-Second Previews" (hoverCardsEnabled), off by default as in Arc.
             item("Link Previews (Hold ⇧ over a Link)", #selector(AppDelegate.toggleLinkPreviews(_:)), toTarget: false),
+            // Arc Max's Tidy Tab Titles (renamePinnedTabsEnabled), on as in Gabe's Arc.
+            item("Tidy Tab Titles", #selector(AppDelegate.toggleTidyTabTitles(_:)), toTarget: false),
             item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
             submenuItem("Archive tabs after", ArchiveInterval.allCases.enumerated().map { i, interval in
                 item(interval.title, #selector(AppDelegate.setArchiveInterval(_:)), tag: i, toTarget: false)
@@ -222,6 +232,11 @@ enum MainMenu {
                 previous.isHidden = true
                 return previous
             }(),
+            // Arc's command bar actions for top/bottom splits: not in its menu bar, so hidden here too,
+            // but offered in the command bar.
+            commandBarOnly(item("Add Vertical Split View", #selector(BrowserWindowController.addVerticalSplitView(_:)), id: "newVerticalSplitView")),
+            commandBarOnly(item("Convert to Vertical Split View", #selector(BrowserWindowController.convertToVerticalSplitView(_:)), id: "convertToVerticalSplitView")),
+            commandBarOnly(item("Convert to Horizontal Split View", #selector(BrowserWindowController.convertToHorizontalSplitView(_:)), id: "convertToHorizontalSplitView")),
             .separator(),
             item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0", id: "actualSize"),
             item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "=", id: "zoomIn"),
@@ -236,9 +251,9 @@ enum MainMenu {
             submenuItem("Developer", [
                 item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option], id: "viewSource"),
                 item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option], id: "developerTools"),
-                // Both open DevTools for now; picking the element or panel needs the DevTools frontend.
-                item("Inspect Elements", #selector(BrowserWindowController.showDevTools(_:)), "c", [.command, .option], id: "inspectElements"),
-                item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option], id: "javaScriptConsole"),
+                item("Inspect Elements", #selector(BrowserWindowController.inspectElements(_:)), "c", [.command, .option], id: "inspectElements"),
+                item("JavaScript Console", #selector(BrowserWindowController.showJavaScriptConsole(_:)), "j", [.command, .option], id: "javaScriptConsole"),
+                item("Network Inspector", #selector(BrowserWindowController.showNetworkInspector(_:)), id: "networkInspector"),
                 // Arc 1.169: ⌃D, no ⌘ (its menu's AXMenuItemCmdModifiers is 12).
                 item("Turn on Developer Mode for this site", #selector(BrowserWindowController.toggleDeveloperMode(_:)), "d", [.control], id: "toggleDeveloperMode"),
             ]),

@@ -150,6 +150,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         open(pendingURLs)
         pendingURLs = []
+        // A test run can open the Zap picker, which has no menu item until Kite has Arc's Boost editor.
+        if UIDiagnostics.enabledByEnvironment, ProcessInfo.processInfo.environment["KITE_TEST_ZAP_PICKER"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.windowController.showZapPicker(nil) }
+        }
 
         diagnostics = DiagnosticsRecorder(directory: Self.supportDirectory.appendingPathComponent("Diagnostics", isDirectory: true))
         diagnostics.start()
@@ -239,6 +243,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Kite menu → Link Previews: Arc Max's ⇧-hover cards, off until turned on (Arc's `hoverCardsEnabled`).
     @objc func toggleLinkPreviews(_ sender: Any?) {
         UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
+    }
+
+    /// Kite menu → Tidy Tab Titles: Arc Max's AI names for tabs you pin (Arc's `renamePinnedTabsEnabled`).
+    @objc func toggleTidyTabTitles(_ sender: Any?) {
+        UserDefaults.standard.set(!TidyTabTitles.isEnabled(in: .standard), forKey: TidyTabTitles.enabledKey)
     }
 
     /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
@@ -428,6 +437,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleTidyTabTitles(_:)) {
+            item.state = TidyTabTitles.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleLittleKiteLinks(_:)) {
             item.state = LittleKite.opensExternalLinks(in: .standard) ? .on : .off

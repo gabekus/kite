@@ -653,6 +653,47 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Kite has no link routing yet, so it isn't imported.
 
+## View › Developer: Inspect Elements, JavaScript Console, Network Inspector (Arc 1.171, 1 Nov 2026)
+
+- Menu (menudump, AX, nothing pressed): View › Developer = View Source ⌥⌘U, Developer Tools ⌥⌘I, Inspect
+  Elements ⌥⌘C, JavaScript Console ⌥⌘J, Network Inspector (no shortcut), Allow JavaScript from Apple Events,
+  Turn on Developer Mode for this site ⌃⌥⌘D.
+- Strings (`~/rea-arc/arc-strings.txt`): action ids `inspectElements`, `javaScriptConsole`, `networkInspector`
+  (~176572); shortcut descriptions "Opens the element inspector.", "Opens the JavaScript console." (~80689) and
+  "Opens the network inspector developer tool." (~80758); analytics `devToolsInspectElementsOpened`,
+  `devToolsJavascriptConsoleOpened`, `devToolsNetworkPanelOpened` (~160538).
+- Mechanism in Kite (not Arc's code): Chromium's DevTools frontend embedder API, the calls Chrome makes for
+  ⌥⌘C/⌥⌘J (`DevToolsAPI.enterInspectElementMode()`, `DevToolsAPI.showPanel('console' | 'network')`; both names
+  are in CEF 156's binary), run in the DevTools page after it calls `InspectorFrontendHost.loadCompleted()`.
+- Not observed in Arc (would need pressing its menu): whether Arc's DevTools is docked or a window, and which
+  panel Arc's picker leaves showing. Kite keeps its own DevTools window.
+
+## Split View: top/bottom layout and drop-to-split → `SplitLayout.swift` (KiteCore), `SplitDropZonesView` (Arc strings and 1.169 decompile, 1 Nov 2026)
+
+Arc wasn't driven; nothing here is from a recording.
+
+- **Orientation** [str]: `SplitViewLayoutOrientation` is `horizontal` / `vertical` (arc-strings.txt ~156440); one split is one row or
+  one column. Kite already stored and rendered both (`SplitView.orientation`, `SplitPanesView`); this adds ways to get a vertical one.
+- **Command bar actions** [str, arc-strings.txt 68850–68852 and 79417–79456]: IDs `newVerticalSplitView`, `convertToVerticalSplitView`,
+  `convertToHorizontalSplitView`; titles "Add Vertical Split View", "Convert to Vertical Split View", "Convert to Horizontal Split
+  View"; trigger phrases "New Vertical Split View", "Flip to vertical/horizontal split view". They aren't in MainMenu.nib's View menu, so
+  Kite keeps them as hidden menu items the command bar still finds (`MenuCommand.commandBarOnly`). Kite matches titles only, not the
+  trigger phrases. **Inferred:** Add Vertical Split View on a side-by-side split turns it top/bottom (a split has one orientation).
+- **Drop a link on the content** [str + dec]: the window-contents split delegate has `onDropURL`, `onDropSidebarItem`,
+  `onDidUpdateSplitViewProposedDropTarget` and `onDidAdjustLayoutOrientation` (arc-strings.txt ~176689). `ARCUI.SplitViewController`
+  registers its view (a `DraggingDestinationForwardingView`) for two pasteboard types (@100a496f8). Its `draggingEntered:` (@100a54404)
+  runs only with `allowInteractivePaneInsertion` on, asks the delegate whether to take an outside drag, and sizes the proposed pane
+  as **width / (panes + 1)** by full height. Fields `dropRegion`, `dropRegionInsertionIndex`, `insertContent` / `replaceContent`,
+  `verticalLayoutOrientationFromDragAllowed`, `shouldDisplayDraggerPaneForSecondaryAxis` (~155594). The placeholder is
+  `SplitViewContentPlaceholderView.BorderView`: border **2**, corner **6** (@1001da6d0; colour set by the caller, not traced).
+- **Kite:** four 64pt strips along the content card's edges take a dragged http(s) link (not files). A single page takes all four edges
+  (left/right → side by side, top/bottom → top/bottom); a split takes only the two ends of its own axis; four panes take none. The
+  new pane gets an equal 1/(n+1) share and focus. The strips answer hit tests only while the mouse button is held after the click,
+  so clicks and hovers reach the page (checked with `ui pointer` / `ui input`).
+- **Unverified / guessed:** the strip width (Arc's drop regions weren't traced), the placeholder colour (Kite uses the accent colour,
+  12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
+  top/bottom one on a top/bottom drop (Kite refuses it).
+
 ## Library: Open Library… ⇧⌘L (Arc 1.171 menu bar, strings, MainMenu.nib, assets, 1 Nov 2026) → `LibraryView`
 
 Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, so no geometry was measured.
@@ -681,6 +722,7 @@ Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, 
   arrow at the bottom of the list), page icons (Kite: SF Symbols), and whether Arc leaves the Library when a tab is
   selected (Kite does). ⇧⌘J still opens Kite's downloads popover, though Arc's copy says it "Opens the Downloads
   section of your Library": follow-up.
+
 ## Expand Current Split (Arc 1.171 menu bar; Arc 1.169 binary, decompiled; 1 Nov 2026)
 
 - View menu (AX via `menudump`, nothing pressed): Add Split View, Close this Split Pane, Separate Page from
@@ -945,6 +987,87 @@ Arc was not opened or driven, so no geometry was measured.
   `com.apple.ReadingList` (left out) and a `History` proxy; leaves have `URLString` and `URIDictionary.title`.
   `History.db`: `history_items` (`url`, `visit_count`) and `history_visits` (`history_item`, `visit_time` in seconds
   since 2001, `title`), in WAL mode.
+## Tidy Tab Titles → `TidyTabTitles` (KiteCore), `TidyTabTitlesController` (Arc 1.171 strings and defaults, 1 Nov 2026)
+
+- What and when: Max pane copy (`~/rea-arc/arc-strings.txt` 80509) says tabs are "automatically renamed with tidier,
+  shorter titles when you Pin them". Settings key `renamePinnedTabsEnabled` (64166; toggle
+  `onToggleRenamePinnedTabsEnabled` 69092), feature flag `rename-pinned-tabs-using-ai` (73906), analytics
+  `auto_renamed_pinned_tab` (70870). Gabe's Arc: `renamePinnedTabsEnabled = 1`, `arcMaxAutoOptInEnabled = 1`, so
+  Kite's `tidyTabTitlesEnabled` defaults on; Kite menu › Tidy Tab Titles turns it off (until a Settings window).
+  The search keyword for the setting is "tidy tab titles" (200328).
+- Mechanism: `WindowState+AIRenameTabs.swift`, `AIRenameTabsFeatureState`, `AIRenameTabsAction`, `TabRenameAIError`
+  (44027, 61275). The model is told it is bookmarking a tab and gets the title; rules (61279–61292): drop the site's
+  name unless it's all there is, drop SEO cruft, stay specific, keep proper nouns with context, drop words naming the
+  kind of page, keep subject/verb/object; reply JSON `filtered` (no limit) and `rewritten` (1–3 words), in the user's
+  language. Kite words its own prompt with the same rules and uses `rewritten` (inferred: which field Arc shows was
+  not traced in the disassembly; the 1–3 word one matches "shorter titles").
+- The result is the tab's custom title: Arc's rename path is `updateCustomTitle(for:title:options:)` (82917ff), and
+  "User renamed the tab before the automatic tab name could be generated." (82736) means a manual rename wins.
+  Undoing it is the ordinary Rename (an empty name shows the page's title again). Kite also drops the name if the tab
+  was unpinned before the reply.
+- Not copied: `isAnimatingAiRename` (an animation on the title; not measured), `TidyTitleConfiguration` /
+  `BundledTidyTitles` (per-site title rules from content.arc.net; data not inspected), the feedback report
+  (`submitTidyTabTitleFeedback`, 82961). Model: Arc's provider isn't known; Kite uses Claude haiku, no tools.
+
+## Instant Links → `InstantLinks` (KiteCore), `InstantLinksController` (Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+- **Key: ⇧⏎.** Arc's Max preferences description is stored XOR-obfuscated with the key "ObfuscatorString"
+  (decoder at `0x1007f6b0c`, called from `MaxPreferenceViewController` at `0x102024720`/`0x102024758`; data
+  `0x1045d9270` len 0x49 and `0x1045d92e8` len 0x25). Decoded, it tells you to press Shift + Enter on any web
+  search to open the top result, and adds that you can search multiple queries. Arc's command bar text field
+  has a `shiftReturn` command (strings 156140–156200: return, escape, backTab, optionReturn, commandReturn,
+  shiftReturn, commandShiftReturn).
+- **Setting:** `instantLinksEnabled` (strings 64169, 171070 `isInstantLinksEnabled`), one of the Arc Max
+  toggles; Gabe's Arc has it on (`defaults read company.thebrowser.Browser`), so Kite defaults it on
+  (`instantLinksEnabled` in Kite's defaults; no settings UI yet).
+- **Mechanism (V1):** an obfuscated prompt (decoded at `0x1045e83d0`, call `0x102280578`) asks a model to turn
+  the input into JSON `{title, queries[], format}` with format `tab` | `folder` | `split` (folder or split only
+  when asked; one query unless the input asks for several things; `site:` added when a site is named). Kite
+  uses the same schema with its own wording, run on Kite's Claude (`claude -p --model haiku`, no tools).
+- **Top result:** `WebSearch/GoogleSearchEngine.swift` loads Google in hidden WebKit web content
+  (`googleHiddenWebContentWebKit`, `document.documentElement.outerHTML`), reads results with `#search a`
+  (also `#tvcap a`, `#topstuff a`, `#botstuff a`), unwraps `https://www.google.com/url?q=`, and detects captchas
+  (`form[id='captcha-form']`, `iframe[title='reCAPTCHA']`, `div[id='recaptcha']`) (strings 200340–200375,
+  83515–83535). Kite uses a hidden `WKWebView` the same way (`#search a` links that hold an `h3`), and follows
+  Google's opaque `/goto?url=` redirect to the first page off Google.
+- **Also in the binary, not built:** `InstantLinksResponseV2` with typed actions (web with a count, image, map,
+  directions, flights, news, siteSearch on 15 named sites, history; URL templates at strings 81470–81495) behind
+  remote flag `instant-links-v2-enabled`; an intent prompt (navigate vs search) behind
+  `instant-links-intent-prototype-enabled` / `instant-links-suggestion-enabled` with a `SuggestionInstantLinksView`
+  row; and a sidebar cell `InstantLinksCellView` (`links`, `favicons`, `linkCount`, `isExpanded`) plus an
+  `instantLinks` item container. Which flags Arc's server turns on is unknown.
+- **Inferred:** ⇧⏎ only for a search (a typed URL opens as usual) and not in Site Search; results open in
+  query order with the first selected; what Arc shows while it works (probably the sidebar cell) is unverified.
+## Zap → `ZapLibrary`, `ZapScript`, `ZapPickerScript` (KiteCore), `ZapsModel`, `ZapInjection`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, `ARC_BoostsEditor.bundle` (Assets.car, SelectorPicker.js;
+read only for its function names, nothing copied).
+
+- **Where it lives.** Zap is a tool inside Arc's Boost editor (`BoostsEditor` module: `SelectorPicker`,
+  `SelectorPickerMode`, `HoveredElementTracker`, `PostClickOverlay`, `SelectorPreview`, `SelectorSpotlight`,
+  `SelectorVisualizer`, `HighlightRect`, `PinToRectView`, `BoostsEditorShelfView`, `IndividualZapCell`; strings
+  37721–37814). Editor actions include `showSelectorPicker`, `hideSelectorPicker`, `appendZap`, `removeZap`,
+  `setZapToPreview` (163640–163700). The editor opens from the site control center's New Boost button and the page
+  context menu's "Customize Page" › "Create a new boost" (73700–73727, 84896). No menu bar item or command bar
+  action for Zap (menudump: only Window › View Boosts…, disabled).
+- **Picker mechanism.** Native overlay over the web contents; page JS only answers geometry:
+  `getHoveredElement({x: …})`, `getSelectorCandidates({x: …})`, `rectsForSelector(…)` (JS.swift strings, 73424–73428;
+  the bundle's SelectorPicker.js defines these three window functions). Candidates are capped at 100 matches.
+- **Text.** Shelf: "Click elements on the page to " + bold "Zap" + " them" (arc.s 0x1012eef9c: literal, then inline
+  small strings `Zap` with `Text.bold()`, then ` them`). Post-click buttons: "Zap this" (inline small string at
+  0x1012d8d04), "Zap all related elements", "Cancel" (0x1012d8d6c); in copy mode "Copy selector for this" /
+  "Copy selector for related". Error: "Failed to run Zap JS". Editor button: "Hide Selector Picker".
+- **Sizes and colours.** Post-click overlay `.frame(width: 250)` (0x1012d8960, 250.0). `ZapPreviewBackground`
+  sRGB 0.851 grey (#D9D9D9) for zap cells; Boosts palette `BoostsRed` sRGB (1, 0.055, 0.055).
+- **Storage and CSS.** Zaps are part of a Boost's data (`BoostData`, stored locally and in Firestore); applied as
+  `<selector> { display: none !important; }` (BoostsClient string at 71515).
+- **Kite.** Per-site selectors in `zaps.json` (domain = host without `www.`, Boosts' rule); a document-start script
+  in an isolated world (Chromium `Page.addScriptToEvaluateOnNewDocument` with `worldName`, WebKit `WKUserScript` in a
+  `WKContentWorld`) adds one style element; a zap or removal replaces the CSS live in open pages.
+- **Unverified / not measured:** the highlight's colour, fill and stroke (Kite uses BoostsRed at 15% fill with a
+  2pt stroke), the cursor during picking, the shelf's position and look, the candidate slider in
+  `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped
+  element again while its cell is hovered), and Arc's selector heuristics (Kite has its own).
 
 ## Still unknown
 
