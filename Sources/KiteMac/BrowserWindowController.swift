@@ -215,6 +215,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         )
         sidebar.miniPlayer = miniPlayerActions
         var toolbar = PageToolbar(store: store, actions: actions)
+        toolbar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view, overlap: 4) }
+        sidebar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view) }
         #if canImport(CEFBridge)
         // Extensions run in the persistent Chromium profile only.
         if !isIncognito, pool.engine is ChromiumEngine {
@@ -962,8 +964,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     /// Blocking on or off for the current site. Reloads so the page shows the
-    /// change right away. Arc has no ad-block control in its sidebar, so this
-    /// lives in the View menu until Kite has Arc's site controls.
+    /// change right away. Also Site Controls' "Block Ads & Trackers" row.
     @objc func toggleAdblockForSite(_ sender: Any?) {
         guard let tab = store.state.selectedTab, tab.url?.host() != nil else { return NSSound.beep() }
         store.mutate { $0.toggleAdblock(for: tab.url) }
