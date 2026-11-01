@@ -443,6 +443,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Every quit (⌘Q after "Quit Kite?", the Dock, scripts, logging out) stops here while
+    /// downloads are running: Arc's "Downloads in progress" asks first, from its own
+    /// applicationShouldTerminate(_:). Close Kite cancels them; Keep browsing cancels the quit.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let active = DownloadsModel.shared.list.active
+        guard !active.isEmpty else { return .terminateNow }
+        guard QuitDialog.runDownloadsInProgress(over: NSApp.keyWindow ?? NSApp.mainWindow) else { return .terminateCancel }
+        active.forEach { DownloadsModel.shared.cancel($0) }
+        return .terminateNow
+    }
+
     /// Kite menu → Warn Before Quitting, until there's a Settings window (Arc has it in General).
     @objc func toggleQuitWarning(_ sender: Any?) {
         store.mutate { $0.warnsBeforeQuitting.toggle() }

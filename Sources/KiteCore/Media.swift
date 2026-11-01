@@ -161,6 +161,19 @@ public enum TabAudioButton {
     public static func menuTitle(isMuted: Bool) -> String { isMuted ? "Unmute" : "Mute" }
 }
 
+/// Arc's command-bar actions Mute All Tabs / Unmute All Tabs (actions `muteAllTabs` / `unmuteAllTabs`,
+/// "Action to mute all tabs", Arc 1.171): not in Arc's menu bar or sidebar menus. Kite applies them to every
+/// live page in the window (all its spaces). See docs/arc-visual-spec.md.
+public enum MuteAllTabs {
+    /// Arc's action titles (built in code as "Mute All Tabs" / "Unmute All Tabs").
+    public static func title(mute: Bool) -> String { mute ? "Mute All Tabs" : "Unmute All Tabs" }
+
+    /// The pages to change so every page's mute is `mute`, given each page's current mute.
+    public static func pagesToChange<ID: Hashable>(_ muted: [ID: Bool], mute: Bool) -> [ID] {
+        muted.compactMap { $0.value == mute ? nil : $0.key }
+    }
+}
+
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }
