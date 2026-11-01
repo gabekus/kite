@@ -58,7 +58,7 @@ final class ClaudeBubbleModel {
             postToProject(ClaudeRoute.projectURL(id: id), ClaudeRoute.projectMessage(goal: goal, tab: context))
             return
         case let .folder(path):
-            tasks.start(goal: goal, tab: tab, directory: path)
+            tasks.start(goal: goal, tab: tab, directory: path, space: space)
             taskID = tasks.selectedID
             draft = ""
             attachTab = false
@@ -73,7 +73,7 @@ final class ClaudeBubbleModel {
             close()
             return
         }
-        tasks.start(goal: goal, tab: tab)
+        tasks.start(goal: goal, tab: tab, space: space)
         taskID = tasks.selectedID
         draft = ""
         attachTab = false

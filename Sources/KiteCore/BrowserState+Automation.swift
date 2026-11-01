@@ -64,6 +64,42 @@ extension BrowserState {
 
     /// Adds an empty folder at the end of a space's pinned section.
     @discardableResult
+    /// The space's Claude folder, where Claude's tabs go when asked from that space: made on
+    /// first use, and gone again once its tabs have all archived (`TabFolder.ephemeral`).
+    public mutating func claudeFolder(inSpace id: UUID) -> UUID? {
+        guard let index = spaceIndex(id) else { return nil }
+        if let folder = spaces[index].pinnedItems.compactMap({ item -> TabFolder? in
+            if case .folder(let folder) = item, folder.ephemeral == true { return folder }
+            return nil
+        }).first {
+            return folder.id
+        }
+        let folder = TabFolder(name: Self.claudeSpaceName, ephemeral: true)
+        spaces[index].pinnedItems.append(.folder(folder))
+        return folder.id
+    }
+
+    /// A task's own folder inside the space's Claude folder, so each task's tabs stay together.
+    /// Ephemeral too: it goes once its tabs have archived or closed.
+    public mutating func claudeTaskFolder(named name: String, inSpace id: UUID) -> UUID? {
+        guard let claude = claudeFolder(inSpace: id), let index = spaceIndex(id) else { return nil }
+        let folder = TabFolder(name: name, ephemeral: true)
+        guard spaces[index].pinnedItems.updateFolder(claude, { $0.items.append(.folder(folder)) }) else { return nil }
+        return folder.id
+    }
+
+    /// Drops ephemeral (Claude) folders left empty, deepest first.
+    mutating func dropEmptyEphemeralFolders(inSpace index: Int) {
+        func pruned(_ items: [PinnedItem]) -> [PinnedItem] {
+            items.compactMap { item in
+                guard case .folder(var folder) = item else { return item }
+                folder.items = pruned(folder.items)
+                return folder.ephemeral == true && folder.items.isEmpty ? nil : .folder(folder)
+            }
+        }
+        spaces[index].pinnedItems = pruned(spaces[index].pinnedItems)
+    }
+
     public mutating func createFolder(name: String, inSpace index: Int) -> UUID {
         let folder = TabFolder(name: name)
         spaces[index].pinnedItems.append(.folder(folder))
@@ -98,6 +134,8 @@ extension BrowserState {
     public mutating func removeFolder(_ id: UUID) -> [UUID] {
         for s in spaces.indices {
             guard let folder = spaces[s].pinnedItems.removeFolder(id) else { continue }
+            // A task's folder was the Claude folder's last: that goes too.
+            if folder.ephemeral == true { dropEmptyEphemeralFolders(inSpace: s) }
             let removed = folder.items.tabs.map(\.id)
             if let selected = spaces[s].selectedTabID, removed.contains(selected) {
                 spaces[s].selectedTabID = spaces[s].allTabs.first?.id
@@ -122,6 +160,7 @@ extension BrowserState {
         if droppingEmptyFolder, let parent,
            folders(inSpace: s).first(where: { $0.id == parent })?.items.isEmpty == true {
             _ = spaces[s].pinnedItems.removeFolder(parent)
+            dropEmptyEphemeralFolders(inSpace: s)
         }
         if spaces[s].selectedTabID == id { spaces[s].selectedTabID = spaces[s].allTabs.first?.id }
         normalizeSplits()

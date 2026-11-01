@@ -426,14 +426,13 @@ extension AutomationController {
         if let url, case .deny(let reason) = AutomationPolicy.evaluate(.navigate(url), host: nil) {
             throw AutomationError(.denied, reason)
         }
-        // A Claude task's tabs go in its folder in the Claude space, out of the user's way.
+        // A Claude task's tabs go in the Claude folder of the space it was asked from (taskOpenedTab).
         let task = Self.agentTask
-        var placement = placement
-        if task != nil, case .currentSpace = placement { placement = .claudeSpace }
         let spaceID: UUID?
         switch placement {
         case .currentSpace: spaceID = nil
-        case .claudeSpace: spaceID = store.mutate { $0.claudeSpace() }
+        // A task never makes a Claude space: its tabs go to its space's Claude folder.
+        case .claudeSpace: spaceID = task == nil ? store.mutate { $0.claudeSpace() } : nil
         case .space(let name):
             guard let index = store.state.space(matching: name) else {
                 throw AutomationError(.notFound, "There's no space called \(name). Call list_spaces.")

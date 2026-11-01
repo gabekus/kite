@@ -578,9 +578,34 @@ public struct BrowserState: Hashable, Codable, Sendable {
                 }
             }
             spaces[s].tabs = kept
+            spaces[s].pinnedItems = Self.archivingStaleEphemeralTabs(
+                spaces[s].pinnedItems, inEphemeral: false, keep: selected, cutoff: cutoff) { tab in
+                removed.append(tab)
+                appendToArchive([ClosedTab(tab: tab, spaceID: spaces[s].id, index: 0)], reason: .auto, now: now)
+            }
         }
         normalizeSplits()
         return removed
+    }
+
+    /// The pinned tree with stale tabs taken out of Claude folders (`TabFolder.ephemeral`), and
+    /// Claude folders that end up empty dropped. Ordinary folders and pinned tabs stay.
+    private static func archivingStaleEphemeralTabs(_ items: [PinnedItem], inEphemeral: Bool, keep selected: UUID?,
+                                                   cutoff: Date, archive: (BrowserTab) -> Void) -> [PinnedItem] {
+        items.compactMap { item in
+            switch item {
+            case .tab(let tab):
+                guard inEphemeral, tab.id != selected, tab.lastActiveAt < cutoff else { return item }
+                archive(tab)
+                return nil
+            case .folder(var folder):
+                let ephemeral = inEphemeral || folder.ephemeral == true
+                folder.items = archivingStaleEphemeralTabs(folder.items, inEphemeral: ephemeral, keep: selected,
+                                                           cutoff: cutoff, archive: archive)
+                if folder.ephemeral == true, folder.items.isEmpty { return nil }
+                return .folder(folder)
+            }
+        }
     }
 
     /// Adds tabs to the archive, stamped with when and why, dropping the oldest past `archiveLimit`.
