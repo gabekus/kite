@@ -122,6 +122,8 @@ final class WebKitPage: NSObject, WebPage {
     /// and the user script carrying it, so it alone is replaced.
     private var boostScript: String?
     private var boostUserScript: WKUserScript?
+    /// The theme stylesheet's document-start script (`themeCSS`).
+    private var themeUserScript: WKUserScript?
     private var observations: [NSKeyValueObservation] = []
     /// Ids for this page's permission prompts.
     private var permissionPromptCount = 0
@@ -296,6 +298,27 @@ final class WebKitPage: NSObject, WebPage {
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
         webView.evaluateJavaScript(script) { result, _ in completion(result) }
+    }
+
+    /// Set on the page's next documents (a document-start user script, top frame) and applied live.
+    var themeCSS: String? {
+        didSet {
+            guard themeCSS != oldValue else { return }
+            let script = ThemeCSS.script(css: themeCSS)
+            webView.evaluateJavaScript(script, completionHandler: nil)
+            let controller = webView.configuration.userContentController
+            if let old = themeUserScript {
+                // WebKit can only remove every user script at once: put the others back.
+                let others = controller.userScripts.filter { $0 !== old }
+                controller.removeAllUserScripts()
+                others.forEach(controller.addUserScript)
+                themeUserScript = nil
+            }
+            guard themeCSS != nil else { return }
+            let userScript = WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            controller.addUserScript(userScript)
+            themeUserScript = userScript
+        }
     }
 
     func hibernationState() -> Any? { webView.interactionState }

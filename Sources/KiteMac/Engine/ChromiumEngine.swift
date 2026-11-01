@@ -291,6 +291,14 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
     func setForceDark(_ enabled: Bool) { browser.setForceDark(enabled) }
 
+    /// Read again for each new document (document-start script) and applied live when it changes.
+    var themeCSS: String? {
+        didSet {
+            guard themeCSS != oldValue else { return }
+            browser.evaluateJavaScript(ThemeCSS.script(css: themeCSS)) { _ in }
+        }
+    }
+
     func sitePermission(_ permission: SitePermission, for url: URL) -> SitePermissionValue? {
         switch browser.sitePermission(Self.bridged(permission), for: Self.site(url)) {
         case .allow: .allow
@@ -597,6 +605,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         let scripts = [
             adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url), ExtensionTabsScript.script(for: url),
             appliesBoosts ? BoostsModel.shared.script(for: url) : nil,
+            themeCSS.map { ThemeCSS.script(css: $0) },
         ].compactMap { $0 }
         return scripts.isEmpty ? nil : scripts.joined(separator: "\n")
     }

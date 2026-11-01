@@ -142,6 +142,9 @@ protocol WebPage: AnyObject {
     /// Clears one site's cookies or cache (Arc's "Clear … and Refresh"). Reloading is up to the caller.
     func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void)
     func setForceDark(_ enabled: Bool)
+    /// The space theme's stylesheet for the page (Settings › Advanced › "Allow websites to get
+    /// your theme data", `ThemeCSS`), or nil for none. Applied live and to each new document's top frame.
+    var themeCSS: String? { get set }
     /// The permission the profile stores for `url`'s site (Chromium content settings); nil
     /// where the engine keeps none Kite can read (WebKit asks every time, through macOS).
     func sitePermission(_ permission: SitePermission, for url: URL) -> SitePermissionValue?

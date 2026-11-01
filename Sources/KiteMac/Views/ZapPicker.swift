@@ -7,8 +7,22 @@ import KiteCore
 /// related elements"; the shelf lists the Boost's zaps, and removing one shows it again.
 /// Zaps are stored on the site's Boost (the one being edited, else the site's newest, else a
 /// new one). The page side only answers where elements are (`ZapPickerScript`).
+///
+/// Arc's other `SelectorPickerMode`, copy selector (the editor's "Pick Selector"), is the same
+/// picker whose buttons read "Copy selector for this" / "Copy selector for related" and put the
+/// selector on the pasteboard instead of zapping it; it has no shelf.
 @MainActor
 final class ZapPicker: NSView {
+    /// Arc's `SelectorPickerMode`.
+    enum Mode {
+        case zap
+        case copySelector
+    }
+
+    /// Where Copy selector writes: the general pasteboard, or a test build's KITE_TEST_PASTEBOARD
+    /// (as Capture), so trying it doesn't replace the user's clipboard.
+    static var pasteboard: NSPasteboard { BrowserWindowController.capturePasteboard }
+
     /// Arc's numbers where they're known; see docs/arc-visual-spec.md (Zap).
     enum Metrics {
         /// SelectorPicker.swift's post-click overlay: `.frame(width: 250)`.
@@ -22,6 +36,7 @@ final class ZapPicker: NSView {
     }
 
     let page: WebPage
+    let mode: Mode
     /// The Boost zaps go to; nil until the site has one (the first zap makes it).
     private(set) var boostID: UUID?
     var onClose: (() -> Void)?
@@ -38,8 +53,9 @@ final class ZapPicker: NSView {
     private var domain: String?
     private var hostKnown = false
 
-    init(page: WebPage, boostID: UUID? = nil) {
+    init(page: WebPage, boostID: UUID? = nil, mode: Mode = .zap) {
         self.page = page
+        self.mode = mode
         self.boostID = boostID
         super.init(frame: .zero)
         wantsLayer = true
@@ -64,6 +80,7 @@ final class ZapPicker: NSView {
         model.onClose = { [weak self] in self?.onClose?() }
         shelf = NSHostingView(rootView: ZapShelf(model: model))
         shelf.translatesAutoresizingMaskIntoConstraints = false
+        shelf.isHidden = mode == .copySelector
         addSubview(shelf)
         // Bottom centre of the page; SwiftUI sizes it as zaps come and go.
         NSLayoutConstraint.activate([
@@ -183,10 +200,11 @@ final class ZapPicker: NSView {
         self.target = target
         highlight.path = path([target.rect])
         let host = NSHostingView(rootView: ZapPanel(
+            mode: mode,
             canZapRelated: target.related != nil,
             canZapThis: target.selector != nil,
-            onZapThis: { [weak self] in self?.zap(target.selector) },
-            onZapRelated: { [weak self] in self?.zap(target.related) },
+            onZapThis: { [weak self] in self?.choose(target.selector) },
+            onZapRelated: { [weak self] in self?.choose(target.related) },
             onHoverRelated: { [weak self] hovering in
                 guard let self else { return }
                 self.related.path = hovering ? self.path(target.relatedRects ?? []) : nil
@@ -211,6 +229,22 @@ final class ZapPicker: NSView {
         panel = nil
         related.path = nil
         highlight.path = nil
+    }
+
+    private func choose(_ selector: String?) {
+        switch mode {
+        case .zap: zap(selector)
+        case .copySelector: copy(selector)
+        }
+    }
+
+    /// Arc's copySelectorToPasteboard. The picker stays open for the next element (inferred).
+    private func copy(_ selector: String?) {
+        guard let selector else { return }
+        closePanel()
+        let pasteboard = Self.pasteboard
+        pasteboard.clearContents()
+        pasteboard.setString(selector, forType: .string)
     }
 
     private func zap(_ selector: String?) {
@@ -303,8 +337,11 @@ struct ZapShelf: View {
     }
 }
 
-/// Arc's post-click overlay: "Zap this", "Zap all related elements" and "Cancel", 250pt wide.
+/// Arc's post-click overlay: "Zap this", "Zap all related elements" and "Cancel", 250pt wide;
+/// in copy selector mode "Copy selector for this" and "Copy selector for related" (arc.s
+/// 0x1012d8ce4 and 0x1012d8844 pick the title by the mode).
 struct ZapPanel: View {
+    var mode: ZapPicker.Mode = .zap
     var canZapRelated: Bool
     var canZapThis: Bool
     var onZapThis: () -> Void
@@ -315,10 +352,10 @@ struct ZapPanel: View {
     var body: some View {
         VStack(spacing: 6) {
             if canZapThis {
-                button("Zap this", action: onZapThis)
+                button(mode == .zap ? "Zap this" : "Copy selector for this", action: onZapThis)
             }
             if canZapRelated {
-                button("Zap all related elements", action: onZapRelated)
+                button(mode == .zap ? "Zap all related elements" : "Copy selector for related", action: onZapRelated)
                     .onHover(perform: onHoverRelated)
             }
             button("Cancel", prominent: false, action: onCancel)

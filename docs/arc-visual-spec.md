@@ -748,11 +748,10 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   asks the source page the same way when the Peek opens, and falls back to the link to that URL (focused, else
   first visible) when the pointer isn't on it, then to the old 20%-at-the-pointer growth if the page doesn't
   answer within 0.12s. The value of `sourceCornerRadius` isn't in the script's output; Kite uses 0
-  **[unverified]**. Arc crossfades from `sourceSnapshot`; Kite fades the card in over 0.1s instead
-  **[differs]**. Closing back to the source with the close spring is **[inferred]**: the dismiss path wasn't
+  **[unverified]**. Arc crossfades from `sourceSnapshot`: see "Peek: source snapshot crossfade"
+  below (g119). Closing back to the source with the close spring is **[inferred]**: the dismiss path wasn't
   decompiled, but the same transform function serves every non-presented state.
-- Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
-  the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
+- The Peek's badge in the sidebar: see "Peek: badge in the sidebar" below (g115). Not built yet: the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`),
   any scrim behind the card.
 
 ### Peek: swipe to dismiss → `LinkPeek.Swipe` (KiteCore), `LinkPeekSwipeController` (g45; Arc 1.171 binary, 1 Nov 2026)
@@ -786,6 +785,69 @@ Decompiled with `SymRefs7.java` / `DumpAt.java` into `~/rea-arc/decomp/out7/g45-
   swipe takes priority over the Peek page's own swipe back/forward (Arc's dismiss path doesn't check the page's
   history); the gesture isn't gated on System Settings › Swipe between pages. The haptic was not felt (no
   hands-on test).
+### Peek: source snapshot crossfade → `LinkPeek.snapshotFadeOut` / `snapshotFadeIn` / `snapshotFrame`, `LinkPeekView` (g119; Arc 1.171 binary, 1 Nov 2026)
+
+Ghidra, `~/rea-arc/decomp/out-g115/snap1.txt` (FUN_101713230, FUN_101716678, FUN_101712254, FUN_1017129ec,
+FUN_10171bad4) and `callers4.txt`. Arc wasn't driven.
+
+- `ModalV2HostView` has a lazy `transitionSourceImageView` (an image view, FUN_101712254) inside the card's
+  `contentContainerView`, above the page: the page view is inserted below it (`addSubview:positioned:-1
+  relativeTo:`, FUN_10171bad4). When the transition configuration changes, its image is set to the
+  `tweenFromSource` case's `sourceSnapshot` (nil for `immediate`) (FUN_1017129ec).
+- At the end of the transition function (FUN_101713230, after `commit`), a `CASpringAnimation` on the image
+  view's layer: damping ratio 0.95 (0x3fee666666666666), response = share × the transition's response
+  (popover 0.245 open / 0.225 close; fullbleed 0.18), `beginTime = CACurrentMediaTime() + delay × response`,
+  fill mode both, final opacity 0 when presenting and 1 when dismissing. Open: share 0.5, delay 0, so
+  1 → 0 with response 0.1225s (stiffness 2630.8, damping 97.45). Close: share 0.65, delay 0.35, so 0 → 1 with
+  response 0.14625s (stiffness 1845.7, damping 81.6) starting 0.07875s in. The from/to values are bridged
+  constants the decompiler hides; 1 → 0 / 0 → 1 is **[inferred]** from the final opacity set on the layer.
+- The card doesn't fade in on open. On close (tweenFromSource or immediate), the card's `transitionView` fades
+  to 0 with the close spring (0.895 / 0.225s), alongside the transform.
+- The snapshot's frame in the card: laid out from the source rect and the card's width (FUN_1017174b8 →
+  FUN_1001acb24). Kite gives it the card's width and the source's height at that width, centred, so under the
+  tween's uniform scale it covers the source exactly **[inferred]**.
+- Kite: when the source page answers with the clicked element's frame (and it's wholly on the page), Kite
+  captures that area (`captureImage`) and opens the card with it on top, fading it out with Arc's spring; the
+  card doesn't fade. Closing fades the card out with the close spring while the snapshot fades back in. If the
+  page or the capture takes over 0.12s, the card opens without the snapshot, fading in over 0.1s as before
+  **[differs]**. `ui trace` (WebKit debug build, 1 Nov 2026): open, `PassThroughImageView opacity` spring
+  stiffness 2630.8 / damping 97.45 from 1 to 0 starting at the link's frame [420,210 162×40]; close, card opacity
+  spring 779.82 / 49.99 1 → 0 and snapshot opacity spring 1845.73 / 81.63 0 → 1 with a delayed begin, ending on
+  the link [420,210 160×40].
+
+### Peek: badge in the sidebar → `LinkPeek.Badge`, `LinkPeekBadgeView` in `SidebarView`, `parkLinkPeek` (g115; Arc 1.171 binary, 1 Nov 2026)
+
+Ghidra, `~/rea-arc/decomp/out-g115/sym1.txt`, `callers1–3.txt`, `sym3.txt`, `at1–4.txt`; colours from
+`assetutil --info` on ARCUI_ARCUI.bundle's Assets.car. Arc wasn't driven.
+
+- `TabCellState` has `modalIcon` (strings ~150009, between `tabHighlightState` and `unreadBadgeType`), and
+  `TabCellView` a lazy `_modalBadgeView`, a `ModalV2SidebarBadgeView`. Its subscriber (FUN_100362bf0) hides the
+  badge when the icon is nil, else sets the icon on the badge's image view and shows it. No other sidebar cell
+  (favorites, folders) has a modal badge in the strings.
+- The badge (FUN_10036798c, FUN_1002d67c4, `layout`): 24×24 (constant 0x10380c7a8), layer corner radius 6,
+  background ARCUI colour `GrayA4` (black 0.071 light, white 0.077 dark); an `NSImageView` centred, 16×16
+  (0x10380c918), corner radius 4 (0x10380c920). It has no mouse handling (its methods: init, `updateLayer`,
+  `layout`), so a click on it is a click on the row.
+- Placed in the cell's `bodyStack` with sort key 8 (the close button's is 7, the title stack's 2), so it's the
+  row's last view. While it (or the unread badge) shows, the row's `tabInfoStackView` right inset is 14 instead
+  of 18 (0x10380c7f0 / 0x10380c7d0).
+- Which tab: the window keeps modals by window content (`modalByWindowContent`, `sourceToWindowContentMap`,
+  `windowContentSidebarItemMap`, strings ~81000, 172140), so a Peek belongs to the tab it was opened over, and
+  that tab's row shows the badge with the Peek page's icon. That the Peek stays (hidden) while another tab is
+  shown, and is back when its tab is selected again, is **[inferred]** from that per-content map; Arc wasn't
+  run. Not to be confused with `isPeeked` / `peekedPinnedSidebarItemID` / `transientPeekedItems`, which sit with
+  `collapsePinnedSectionEnabled` and the outline view's expansion state (a collapsed section or folder
+  showing its current item), not the Peek modal.
+- Kite: `BrowserStore.linkPeekBadges` (tab → the Peek page's URL and favicon) drives `LinkPeekBadgeView` after
+  the hover close button, Arc's size, radii and fill. Showing another tab parks the Peek (`parkLinkPeek`: view
+  removed, page hidden and kept); showing its tab again puts it back as it was, without animation; closing the
+  tab discards it. Kite keeps the row's own trailing padding rather than Arc's 18 → 14 inset **[differs]**.
+  Verified in a WebKit debug build (1 Nov 2026): `ui tree` finds `sidebarTabCellPeekBadge` [282,204.5 24×24] on
+  the pinned source row, the badge shows the Peek page's favicon (`ui capture`), it stays after switching to
+  another tab while the Peek leaves the tree, the Peek is back on switching back, Esc then closes it and the badge
+  goes. The click on the row itself wasn't exercised (`ui input` clicks on sidebar rows are dropped in the
+  background); `switch_tab` runs the same selection.
+
 ### Undo Archive Tab reloads the page (g120; Arc 1.171 strings and an incognito check, 1 Nov 2026)
 
 - Closing items tears down their web contents: the close-items state carries `requestedWindowContentsToTeardown`,
@@ -822,8 +884,8 @@ Arc wasn't driven.
   `reopenableItemID`) belongs to sidebar items' close options, and nothing ties it to the modal
   **[inferred]**. Kite leaves Reopen Closed Tab alone.
 - Which dismissals register the step isn't decompiled. Kite registers it for the user's own closes (Esc, ⌘W,
-  close button, click outside, swipe right, Redo), not when the Peek is replaced, turned into a tab or pane,
-  or closed by switching tabs **[inferred]**. Undo selects the source tab if another tab is in front, then
+  close button, click outside, swipe right, Redo), not when the Peek is replaced, turned into a tab or pane
+  **[inferred]**. Undo selects the source tab if another tab is in front, then
   opens the Peek with the normal open spring, from the link if it's still on the page.
 
 ## Pinned URL reset and Reveal Tab (Arc 1.171 menu bar and binary, 1 Nov 2026)
@@ -1618,8 +1680,40 @@ Nothing in Arc was pressed or watched. Line numbers are `~/rea-arc/arc-strings.t
   clear it, the slider ranges (0–1, Brightness −1–1, from the maths), a new scheme starting at hue 0,
   saturation 0.5 and a 180° second hue, and the secondary puck being dragged to change the offset.
 - **Left out:** the analogous/complementary control (`ComplementaryColorControl`, Analogous/ComplementaryColorScheme
-  assets; its offsets weren't found), theme-driven schemes, `baseAppearance`, the editor menu's Shuffle and Reset
-  all Edits. (Live apply: see the next section.)
+  assets; its offsets weren't found), theme-driven schemes, `baseAppearance`. (Shuffle and Reset all Edits: the
+  next section but one; live apply: the next section.)
+
+## Boost Shuffle and Reset all Edits → `BoostEdits` (KiteCore), `BoostEditorView` (Arc 1.171 disassembly and Ghidra, 1 Nov 2026)
+
+Nothing in Arc was pressed or watched. Addresses are `~/rea-arc/decomp/Arc-arm64`; Ghidra output in
+`~/rea-arc/decomp/out-g113/` (sh1, sh2, sh3).
+
+- **Where.** The editor header's menu builds its items in this order (inline small strings and literals,
+  0x1012b7164–0x1012b76b0): "Rename this Boost…", "Shuffle", "Delete this Boost", "Report Boost…", "Reset all
+  Edits", then "All Boosts". The same header has a "Done" button (`xmark.circle.fill`) and an "Undo" button
+  (`arrow.counterclockwise`, 0x1012b70a8). Editor actions `shuffle`, `resetAll` (strings 163685–163687), analytics
+  event `boostShuffled` / `boost_shuffled`.
+- **Shuffle** (reducer jump table at 0x10129791c, case 19 → 0x101297d7c). Keeps the Boost's items except the style
+  ones and appends four new ones: a colour scheme (0x101293ef4), a font (0x101294134), a text case (0x101293e38) and
+  a text size (a random index below 5 into `BoostTextZoomOption`). The colour scheme draws (via `Double.random`,
+  2^53+1 steps): primary hue 0–360, primary saturation 0–1, the second hue's offset from the array [45, 90]
+  (__data 0x104571e90), invert lightness from [true, false] (0x104571ec8), and the advanced trio 0–1, 0–1 and
+  −1–1 (Kite maps them to Original Saturation, Contrast and Brightness; the first two can't be told apart by
+  range). Font and case are random elements of their option lists (the font list with a fallback to
+  `system-ui`). The change goes on the editor's change stack (0x10129fd30), so Undo takes it back, and is saved.
+- **Reset all Edits** (case 21 → 0x1012968ec). Replaces the Boost's items with those of a fresh, empty BoostData
+  (0x101149048), pushes that on the change stack and saves: CSS, JavaScript, zaps and every simple control go.
+  The name stays (only the items are saved). No confirmation string exists.
+- **Kite.** `BoostEdits.shuffled` draws the same ranges (hue 0–360, saturation 0–1, offset 45° or 90°, invert
+  on/off, Original Saturation and Contrast 0–1, Brightness −1–1, one of Arc's 18 fonts, the page's case or one of
+  the three, one of the five sizes) and keeps CSS, JS and zaps; `BoostEdits.reset` empties the Boost, keeping its
+  name, site and on/off switch. The editor header gets a menu (`ellipsis.circle`) with Arc's items except Report
+  Boost… (Arc's server) and All Boosts; Rename and Delete moved into it from their own buttons. Undo appears while
+  a Shuffle or Reset can be taken back (this editor session only).
+- **Inferred / unverified:** which of Arc's two 0–1 advanced values is which; whether Arc's font draw includes "no
+  font" (Kite always picks one of the 18) and its case draw "original" (Kite includes it); that Arc's Undo covers
+  every edit (Kite's covers only Shuffle and Reset all Edits); the menu's look, dividers and label icon (Arc's
+  header wasn't captured).
 
 ## Boosts apply live → `BoostLiveStyles`, `BoostScript.applyLive` (KiteCore), `LiveBoosts` (Arc 1.171 strings and disassembly, 1 Nov 2026)
 
@@ -2123,9 +2217,21 @@ read only for its function names, nothing copied).
   `zaps.json.migrated` (kept). Inferred: the Zap button's icon (SF `bolt`; no Zap asset in
   ARC_BoostsEditor.bundle) and its "Zap" tooltip (Arc's show string isn't in its strings).
 - **Unverified / not measured:** the highlight's colour, fill and stroke (Kite uses BoostsRed at 15% fill with a
-  2pt stroke), the cursor during picking, the shelf's position and look, the candidate slider in
-  `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped
-  element again while its cell is hovered), and Arc's selector heuristics (Kite has its own).
+  2pt stroke), the cursor during picking, the shelf's position and look, what `zapToPreview` shows on hover (Kite
+  shows the zapped element again while its cell is hovered), and Arc's selector heuristics (Kite has its own; Arc's
+  SelectorPicker.js ranks up to 15 candidates of at most 100 matches each).
+- **Copy selector mode (g114).** `SelectorPickerMode` has two cases; the post-click overlay picks its titles by the
+  mode byte: 1 → "Zap this" / "Zap all related elements", otherwise "Copy selector for this" / "Copy selector for
+  related" (0x1012d8ce4, 0x1012d8844). The code toolbar's button reads "Pick Selector" (inline small string at
+  0x1012b19d4) and "Hide Selector Picker" only while the picker is open in copy mode (0x1012b19b4: mode 0 → Hide,
+  1 or none → Pick). The action is `copySelectorToPasteboard` (string 163677). Kite: a Pick Selector button next to
+  Zap (SF `cursorarrow`, a guess) opens the same picker in copy mode; its buttons write the selector to the general
+  pasteboard and close the panel, the picker stays open for another pick (inferred) and has no shelf (Arc's shelf
+  text is Zap's). Neither tool shows, and the picker won't open, while Boosts are off in Settings.
+- **No candidate slider.** The post-click overlay (0x1012d85a0) is three buttons in a 250pt frame; the picker's code
+  (0x1012d3000–0x1012ef000) has no SwiftUI `Slider` or `DragGesture` (the editor's only drag gestures and slider
+  are the colour wheel's and Advanced color controls'). `SliderButton` is a type in the module but nothing ties it
+  to the picker, so Kite adds none.
 
 ## Media page → `MediaPageView`, `MediaLibraryModel`, `KiteCore/MediaLibrary` (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
 
@@ -3104,3 +3210,28 @@ the priorities read).
 - Inferred / unverified: whether Arc's items span spaces (Kite: current space), `preferredSnapshotWidth` (Kite 180 pt),
   the highlight and panel colours (Kite: primary at 15%, hudWindow material), split items (Kite: one card per tab),
   and no pixel comparison with Arc (opening it needs keys sent to Arc).
+
+## Settings › Advanced: theme data for websites, Export Data, More Settings… → `ThemeCSS`, `DataExport` (KiteCore), `PagePool.updateThemeCSS()`, `AppDelegate.exportData(from:)` (Arc 1.171 strings, disassembly and decompile, defaults key names, Settings AX recording; 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, Ghidra decompiles in `~/rea-arc/decomp/out-g95/at*.txt`, `~/rea-arc/settings/pane-7.txt`.
+
+**Allow websites to get your theme data** (g95)
+- Label at strings 80415, in Arc's AdvancedPreferences; switch on in the AX recording with the key unset (pane-7: `[584,427]`, Value=1). Defaults key `themeToCSSSharingAllowed` (strings 64195; `allowThemeToCSSSharing` in the view state).
+- `FUN_1000c63c0` builds a `[String: String]` of twelve properties, in this order of string literals (strings 61305–61316): `--arc-palette-foregroundPrimary`, `…Secondary`, `…Tertiary`, `maxContrastColor`, `minContrastColor`, `backgroundExtra`, `background`, `focus`, `hover`, `cutoutColor`, `title`, `subtitle`. Each value comes from a key path into the theme's palette, picking the light or dark variant from `NSAppearance`.
+- Then the backdrop (strings 61317–61319): one-colour themes add `--arc-background-simple-color`; gradients add `--arc-background-gradient-color` + index and `--arc-background-gradient-overlay-color` + index, one per colour.
+- Values: `FUN_1009ac0b8` converts the colour to `displayP3ColorSpace`, takes each component ×255 as an Int (truncated) and formats `#%02X%02X%02X%02X` (RGBA).
+- Text: `FUN_1000c53ac` makes `name: value;` lines, joined with `\n`, wrapped in `:root {\n` … `\n}`.
+- Delivery: `FUN_1000c5ef4` hands that string to a method of the window's web contents (protocol witness +0x328, name not recovered). `FUN_1000c565c` drives it from a Combine `switchToLatest` sink on `WindowContentViewController` (theme + the Bool setting), so it is re-sent whenever the theme, the shown contents or the switch change.
+- Kite: the same names, format and `:root` text. It's a `<style data-kite-theme-css>` in the top frame, added at document start (CEF document-start script, WebKit user script) and replaced live. Every live page gets its own space's theme (favorites take the current space's). Off removes it live.
+- Kite's palette is derived, because Kite's `Theme` has none: ink white or black by `prefersDarkForeground`; secondary, tertiary and subtitle ink at 60 / 40 / 60 %; hover ink at 10 %; background the OKLab mean; backgroundExtra and cutout ±0.06 / ∓0.06 L; focus `Theme.accent`. No overlay colours. Unverified: Arc's real palette values, and whether Arc reaches subframes.
+
+**Export Data** (g96)
+- Button label "Export Data", comment "exports Arc Spaces and tabs as Markdown", default name "Arc Data Export.md" (strings 80441–80442). `ExportDataButton` has one field, `sidebar: () -> SidebarContainer` (field descriptor in `__swift5_fieldmd`).
+- `FUN_101ffefac` opens an `NSSavePanel`: allowed type `UTType(filenameExtension: "md")`, else plain text; name field "Arc Data Export.md"; `canCreateDirectories = true`; `beginSheetModal(for: button's window)`.
+- On OK, `FUN_101fff3d0` starts a Task: `FUN_101fa43fc` makes the Markdown, then `Data.write(to:)`. A thrown error goes to an error presenter.
+- `FUN_101fa43fc` makes one block per space (`FUN_101fa4620`) and joins them with `\n`. A block is `# ` + the space title (whitespace runs folded to one space) and its items, joined with `\n`, plus a trailing `\n`.
+- Items (`FUN_101fa4c7c`, recursive): a tab is `- ` + `URL.absoluteString` (empty without a URL; no title). A folder is `String(repeating: "#", count: depth)` + ` ` + name, then its children at depth + 1. Top-level items are at depth 2.
+- Inferred: the space's containers (pinned, then unpinned) are rendered one after another with an empty line between them.
+- Kite: the same format, "Kite Data Export.md", the same panel. `KITE_TEST_EXPORT_DATA_PATH` (test builds only) writes without the panel.
+
+**More Settings…**: strings 80409–80410, "Clicking opens arc://settings", Chromium's own settings WebUI, which Kite's Alloy-style tabs can't host. Kite opens its own Chromium settings pages instead (kite://settings/privacy, from g100/g101) in a new tab for the current space's profile. **Reset Translated-site Prompts** stays disabled: Kite has no translation.

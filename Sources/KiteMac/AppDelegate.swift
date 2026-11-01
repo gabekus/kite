@@ -178,8 +178,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         open(pendingURLs)
         pendingURLs = []
         // A test run can open the Zap picker directly (users open it from the Boost editor's Zap tool).
-        if UIDiagnostics.enabledByEnvironment, ProcessInfo.processInfo.environment["KITE_TEST_ZAP_PICKER"] == "1" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.windowController.showZapPicker(nil) }
+        // A test run can open the shown site's Boost editor (Edit Boost) 10 s after launch.
+        if UIDiagnostics.enabledByEnvironment, ProcessInfo.processInfo.environment["KITE_TEST_BOOST_MENU"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.windowController.editBoost(nil) }
+        }
+        // "copy" opens it in copy selector mode (the editor's Pick Selector).
+        if UIDiagnostics.enabledByEnvironment, let zap = ProcessInfo.processInfo.environment["KITE_TEST_ZAP_PICKER"], zap == "1" || zap == "copy" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                self?.windowController.showZapPicker(boostID: nil, mode: zap == "copy" ? .copySelector : .zap)
+            }
         }
 
         diagnostics = DiagnosticsRecorder(directory: Self.supportDirectory.appendingPathComponent("Diagnostics", isDirectory: true))
