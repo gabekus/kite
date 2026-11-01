@@ -257,6 +257,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.mutate { _ in }
     }
 
+    /// Kite menu → Show Full URL in Toolbar: the toolbar prints the whole address instead of the
+    /// host (Arc: "Show full URL when Toolbar is enabled").
+    @objc func toggleToolbarFullURLs(_ sender: Any?) {
+        UserDefaults.standard.set(!ToolbarURL.showsFullURL(in: .standard), forKey: ToolbarURL.showsFullURLKey)
+    }
+
     /// Kite menu → Ask on Page: Arc Max's find-bar questions, off until turned on (Arc's `askOnPageEnabled`).
     @objc func toggleAskOnPage(_ sender: Any?) {
         UserDefaults.standard.set(!AskOnPage.isEnabled(in: .standard), forKey: AskOnPage.enabledKey)
@@ -480,6 +486,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleTidyTabs(_:)) {
             item.state = TidyTabs.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleToolbarFullURLs(_:)) {
+            item.state = ToolbarURL.showsFullURL(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleAskOnPage(_:)) {
             item.state = AskOnPage.isEnabled(in: .standard) ? .on : .off
