@@ -147,6 +147,12 @@ NS_SWIFT_UI_ACTOR
 - (void)reloadIgnoringCache;
 - (void)stopLoading;
 - (void)focus;
+/// Kite's own UI has the keyboard (the command bar): tells Chromium the page lost it, and
+/// refuses the page's own focus requests (on navigation, or once a new page starts up)
+/// until `focus` or `allowFocus`.
+- (void)blur;
+- (void)allowFocus;
+@property (nonatomic, readonly) BOOL focusBlocked;
 /// Tells Chromium the tab is offscreen so it throttles rendering and timers.
 - (void)setHidden:(BOOL)hidden;
 /// Opens Chrome DevTools in its own window.

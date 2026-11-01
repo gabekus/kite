@@ -16,9 +16,10 @@ extension BrowserWindowController {
         store.mutate { _ = $0.duplicate(tab: id) }
     }
 
-    @objc func renameSpace(_ sender: Any?) {
-        guard let window else { return }
-        let space = store.state.selectedSpace
+    @objc func renameSpace(_ sender: Any?) { renameSpace(id: store.state.selectedSpaceID) }
+
+    func renameSpace(id: UUID) {
+        guard let window, let space = store.state.spaces.first(where: { $0.id == id }) else { return }
         let alert = NSAlert()
         alert.messageText = "Rename Space"
         alert.addButton(withTitle: "Rename")
@@ -30,6 +31,45 @@ extension BrowserWindowController {
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
             self?.store.mutate { $0.renameSpace(space.id, to: field.stringValue) }
+        }
+    }
+
+    /// The space's icon is one emoji; the field opens the emoji picker.
+    func changeIcon(ofSpace id: UUID) {
+        guard let window, let space = store.state.spaces.first(where: { $0.id == id }) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Change Space Icon"
+        alert.informativeText = "Type or pick an emoji."
+        alert.addButton(withTitle: "Change")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: space.icon)
+        field.frame = NSRect(x: 0, y: 0, width: 60, height: 24)
+        field.font = .systemFont(ofSize: 15)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.store.mutate { $0.setSpaceIcon(space.id, to: field.stringValue) }
+        }
+        DispatchQueue.main.async {
+            field.currentEditor()?.selectAll(nil)
+            NSApp.orderFrontCharacterPalette(field)
+        }
+    }
+
+    func deleteSpace(_ id: UUID) {
+        guard let window, store.state.spaces.count > 1, let space = store.state.spaces.first(where: { $0.id == id }) else {
+            return NSSound.beep()
+        }
+        let alert = NSAlert()
+        alert.messageText = "Delete \u{201C}\(space.name)\u{201D}?"
+        alert.informativeText = "Its pinned and unpinned tabs are closed."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons[0].hasDestructiveAction = true
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.store.mutate { $0.deleteSpace(space.id) }
         }
     }
 }
