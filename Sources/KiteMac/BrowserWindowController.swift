@@ -1108,6 +1108,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return store.state.selectedTab != nil
         case #selector(toggleStayOnTop(_:)):
             item.state = window?.level == .floating ? .on : .off
+        case #selector(importFromAnotherBrowser(_:)):
+            // An incognito window keeps nothing, so there's nowhere to put the import.
+            return !isIncognito
         case #selector(setAsDefaultBrowser(_:)):
             item.state = Self.isDefaultBrowser ? .on : .off
         case #selector(capturePage(_:)), #selector(captureFullPage(_:)):
