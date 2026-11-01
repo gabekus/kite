@@ -2357,3 +2357,15 @@ an Arc incognito window captured at 2× (1 Nov 2026).
   dragged row's look (Arc draws it in its own window, which a window capture misses; Kite: the pill at 0.6), autoscroll speed, the hover-to-expand
   delay for collapsed folders (Kite doesn't expand), how near a drag must come to reveal the empty tray (Kite: as soon as a
   drag starts), the landing animation (Kite: the 0.12s row animation), and drags out over the page (Kite cancels).
+
+**Part 2 (1 Nov 2026):**
+- **Move commands** [str]: Arc's command bar has "Move to Today in <space>", "Move to Pinned in <space>" and
+  "Move to Top Apps" / "Remove from Top Apps" (Favorites' old name), next to their type-travel descriptions ("Action to
+  move this tab to the Today section of a space"). Kite adds them as command-bar-only menu commands, titled per space.
+  Arc also has "Move to Explore in" (no Kite equivalent) and an " and switch there" suffix whose use isn't known.
+- **Favorite split views** [dec @101d0271c]: a tray item can hold children (`AppTrayItemChildStack`, orientation
+  horizontal or vertical) sharing the tile evenly, 2pt apart, each with its own corners. Kite keeps favorite splits per
+  profile (`favoriteSplitsByProfile`); dropping a split in the tray makes one, and the split's panes, divider and
+  orientation work as in a space. Child corner radius and the selected child's look are unmeasured.
+- **Folders under a drag**: Kite opens a collapsed folder after the system spring-loading delay (0.5s unless changed).
+  Arc's interval (`DraggingTimerState`) wasn't found; unverified.

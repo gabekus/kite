@@ -354,7 +354,16 @@ enum MainMenu {
             // Hidden while there's no such space, but ⌃n still reaches validation once there is.
             space.allowsKeyEquivalentWhenHidden = true
             return space
-        })
+        }
+        // Arc's command bar moves the current tab: "Move to Today in <space>", "Move to Pinned in <space>"
+        // (Arc 1.169 strings). Titled per space when validated.
+        + (1...9).flatMap { n in [
+            commandBarOnly(item("Move to Today in Space \(n)", #selector(BrowserWindowController.moveTabToToday(_:)), tag: n)),
+            commandBarOnly(item("Move to Pinned in Space \(n)", #selector(BrowserWindowController.moveTabToPinned(_:)), tag: n)),
+        ] }
+        // Arc's "Move to Top Apps" / "Remove from Top Apps" (its old name for Favorites).
+        + [commandBarOnly(item("Add to Favorites", #selector(BrowserWindowController.toggleFavoriteTab(_:)), id: "toggleFavorite"),
+                          keywords: ["Move to Top Apps", "Remove from Top Apps", "Favorite"])])
 
         submenu("Window", [
             item("Stay On Top", #selector(BrowserWindowController.toggleStayOnTop(_:)), id: "stayOnTop"),

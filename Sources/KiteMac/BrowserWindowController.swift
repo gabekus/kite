@@ -1281,6 +1281,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return store.state.selectedTab.map { store.state.canReset(tab: $0.id) } ?? false
         case #selector(resetAllTabsInSpace(_:)):
             return store.state.selectedSpace.pinned.contains { $0.hasLeftPinnedURL }
+        case #selector(moveTabToToday(_:)), #selector(moveTabToPinned(_:)):
+            let spaces = store.state.spaces
+            guard spaces.indices.contains(item.tag - 1), let tab = store.state.selectedTab else { return false }
+            let space = spaces[item.tag - 1]
+            let pinned = item.action == #selector(moveTabToPinned(_:))
+            item.title = "Move to \(pinned ? "Pinned" : "Today") in \(space.name)"
+            // Not where it already is.
+            let location = store.state.location(of: tab.id)
+            return !(location?.space == item.tag - 1 && location?.section == (pinned ? .pinned : .unpinned))
+        case #selector(toggleFavoriteTab(_:)):
+            guard let tab = store.state.selectedTab else { return false }
+            item.title = store.state.location(of: tab.id)?.section == .favorite ? "Remove from Favorites" : "Add to Favorites"
         case #selector(selectSpaceNumber(_:)):
             // Arc lists only the spaces that exist, by name.
             let spaces = store.state.spaces
