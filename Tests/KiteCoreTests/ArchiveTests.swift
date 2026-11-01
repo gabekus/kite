@@ -131,6 +131,37 @@ import Testing
         #expect(ids(ArchiveFilter(query: "nothing")).isEmpty)
     }
 
+    @Test func littleKitePagesGetArcsLittleArcFilterAndRestoreToTheCurrentSpace() throws {
+        var state = state()
+        let home = archive(&state, "https://swift.org", title: "Swift", ago: 60)
+        state.selectSpace(state.spaces[1].id)
+        let archived = state.archiveLittleKite(url: URL(string: "https://news.example/a"), title: "A", reason: .auto, now: now)
+        let little = try #require(archived)
+        // A window that never had a page leaves nothing.
+        let none = state.archiveLittleKite(url: nil, title: "", reason: .manual, now: now)
+        #expect(none == nil)
+        func ids(_ filter: ArchiveFilter) -> [UUID] {
+            state.archiveSections(filter, now: now, calendar: utc).flatMap { $0.items.map(\.tab.id) }
+        }
+        #expect(ids(ArchiveFilter(source: .littleKite)) == [little])
+        // Not a sidebar tab, so no space's filter lists it, even the space that was current.
+        #expect(ids(ArchiveFilter(source: .space(state.spaces[1].id))).isEmpty)
+        #expect(ids(ArchiveFilter(source: .space(state.spaces[0].id))) == [home])
+        #expect(ids(ArchiveFilter(source: .littleKite, reason: .auto)) == [little])
+        #expect(ids(ArchiveFilter(source: .littleKite, reason: .manual)).isEmpty)
+        #expect(state.archived.last?.isLittleKite == true && state.archived.last?.archivedAt == now)
+
+        // It survives a save.
+        let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
+        #expect(decoded.archived.last?.isLittleKite == true)
+
+        // Restore puts it at the top of the current space's Today.
+        state.selectSpace(state.spaces[0].id)
+        #expect(state.restoreArchived(little, now: now) == state.spaces[0].id)
+        #expect(state.spaces[0].tabs.first?.id == little)
+        #expect(state.spaces[0].tabs.first?.url == URL(string: "https://news.example/a"))
+    }
+
     @Test func legacyEntriesWithoutDateOrReasonStillShow() throws {
         var state = state()
         let tab = BrowserTab(url: URL(string: "https://old.example"), lastActiveAt: now.addingTimeInterval(-60))

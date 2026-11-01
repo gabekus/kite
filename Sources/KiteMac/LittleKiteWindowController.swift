@@ -40,6 +40,8 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         /// Links the page opens in a new tab or popup go to the main window.
         var openTab: (URL) -> Void
         var adoptPopup: (WebPage) -> Void
+        /// The window closed with its page still in it: the page goes into the archive (Arc's Little Arc filter).
+        var archive: (_ url: URL?, _ title: String?, _ reason: ArchiveReason) -> Void = { _, _, _ in }
     }
 
     private var engine: WebEngine
@@ -74,6 +76,8 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
 
     /// When the window was last in use, for "Archive Little Kites after:" (`archiveIfStale`).
     private(set) var lastActiveAt = Date()
+    /// Why the window is closing, for its archive entry: Auto-Closed when "Archive Little Kites after:" closed it.
+    private var closeReason = ArchiveReason.manual
 
     /// Called once the window has closed, so the app delegate can let go of it.
     var didClose: ((LittleKiteWindowController) -> Void)?
@@ -388,7 +392,8 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         move(to: host.currentSpace().id)
     }
 
-    /// File → Archive Tab (⌘W) and Close Window in a Little Kite window both just close it.
+    /// File → Archive Tab (⌘W) and Close Window in a Little Kite window both close it; its page goes into
+    /// the archive (`windowWillClose`).
     @objc func closeTab(_ sender: Any?) { window?.performClose(sender) }
 
     /// ⌘L, like the main window's location field.
@@ -507,6 +512,8 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         if let page {
             page.onEvent = nil
             page.close()
+            // Still here, so it wasn't moved to a space: archived, as Arc's Little Arcs are.
+            host.archive(url, pageTitle, closeReason)
         }
         page = nil
         stopFollowingDownloads()
@@ -523,6 +530,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         let inUse = window?.isKeyWindow == true && NSApp.isActive
         if inUse { lastActiveAt = now }
         guard threshold.isStale(lastActive: lastActiveAt, inUse: inUse, now: now) else { return false }
+        closeReason = .auto
         close()
         return true
     }

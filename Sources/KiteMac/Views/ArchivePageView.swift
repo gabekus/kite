@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Arc's archive (Archive › View Archive…), from Arc 1.171's strings: the archived tabs newest first
 /// under "Today", "Yesterday" and "Earlier This Week"; a search field; a "Filter Archived Tabs" menu with
-/// "Where was the tab?" (a space) and "How was the tab closed?" (Auto-Closed / Manually Closed), whose
+/// "Where was the tab?" (a space, or Little Kite: Arc's Little Arc filter) and "How was the tab closed?" (Auto-Closed / Manually Closed), whose
 /// picks show as removable chips; Restore and Delete as hover buttons and in each row's context menu; and
 /// "Nothing here yet!" when empty. Shown in the Library (`LibraryView`, as in Arc) and as a tab at
 /// kite://archive.
@@ -66,10 +66,10 @@ struct ArchivePageView: View {
         Menu {
             Section("Where was the tab?") {
                 ForEach(spaces) { space in
-                    Toggle("\(space.icon) \(space.name)", isOn: Binding(
-                        get: { filter.spaceID == space.id },
-                        set: { filter.spaceID = $0 ? space.id : nil }))
+                    Toggle("\(space.icon) \(space.name)", isOn: sourceBinding(.space(space.id)))
                 }
+                // Arc's "Little Arc" filter: pages archived from Little Kite windows.
+                Toggle(Self.littleKiteTitle, isOn: sourceBinding(.littleKite))
             }
             Section("How was the tab closed?") {
                 ForEach([ArchiveReason.auto, .manual], id: \.self) { reason in
@@ -79,7 +79,7 @@ struct ArchivePageView: View {
                 }
             }
         } label: {
-            Image(systemName: filter.spaceID == nil && filter.reason == nil
+            Image(systemName: filter.source == nil && filter.reason == nil
                   ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                 .font(.system(size: 16))
         }
@@ -90,11 +90,23 @@ struct ArchivePageView: View {
         .accessibilityLabel("Filter Archived Tabs")
     }
 
+    static let littleKiteTitle = "Little Kite"
+
+    private func sourceBinding(_ source: ArchiveFilter.Source) -> Binding<Bool> {
+        Binding(get: { filter.source == source },
+                set: { filter.source = $0 ? source : nil })
+    }
+
     private var chips: [(title: String, remove: () -> Void)] {
         var chips: [(String, () -> Void)] = []
-        if let id = filter.spaceID {
+        switch filter.source {
+        case .space(let id):
             let name = spaces.first { $0.id == id }.map { "\($0.icon) \($0.name)" } ?? "Space"
-            chips.append((name, { filter.spaceID = nil }))
+            chips.append((name, { filter.source = nil }))
+        case .littleKite:
+            chips.append((Self.littleKiteTitle, { filter.source = nil }))
+        case nil:
+            break
         }
         if let reason = filter.reason { chips.append((reason.title, { filter.reason = nil })) }
         return chips
@@ -174,7 +186,7 @@ struct ArchivePageView: View {
             ForEach(section.items, id: \.tab.id) { item in
                 ArchiveRow(
                     item: item,
-                    space: spaces.first { $0.id == item.spaceID },
+                    space: item.isLittleKite ? nil : spaces.first { $0.id == item.spaceID },
                     open: open,
                     restore: { restore(item.tab.id) },
                     delete: { store.mutate { $0.deleteArchived([item.tab.id]) } })
@@ -210,7 +222,8 @@ private struct ArchiveRow: View {
 
     private var subtitle: String {
         let host = (item.tab.url?.host() ?? "").replacingOccurrences(of: "www.", with: "", options: .anchored)
-        return [host, space.map { "\($0.icon) \($0.name)" }].compactMap { $0 }.filter { !$0.isEmpty }
+        let place = item.isLittleKite ? ArchivePageView.littleKiteTitle : space.map { "\($0.icon) \($0.name)" }
+        return [host, place].compactMap { $0 }.filter { !$0.isEmpty }
             .joined(separator: " · ")
     }
 

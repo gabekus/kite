@@ -299,7 +299,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 main?.adopt(page, url: url, title: title, in: spaceID, profileDirectory: profile)
             },
             openTab: { url in store.mutate { _ = $0.openTab(url: url) } },
-            adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) }
+            adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) },
+            archive: { url, title, reason in
+                store.mutate { _ = $0.archiveLittleKite(url: url, title: title ?? "", reason: reason) }
+            }
         )
         let controller = LittleKiteWindowController(url: url, host: host)
         controller.didClose = { [weak self] closed in self?.littleControllers.removeAll { $0 === closed } }
