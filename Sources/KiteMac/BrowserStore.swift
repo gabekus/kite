@@ -40,6 +40,12 @@ enum CommandBarMode: Equatable {
     case editCurrent
 }
 
+/// The page a tab's Peek shows, for the badge on the tab's sidebar row.
+struct LinkPeekBadge: Equatable {
+    var page: URL?
+    var icon: URL?
+}
+
 /// Owns the `BrowserState` for the app. SwiftUI views observe it directly; the
 /// AppKit window controller gets explicit callbacks so it can swap web views.
 @MainActor
@@ -92,6 +98,10 @@ final class BrowserStore {
             if self?.aiRenames[id] == rename { self?.aiRenames[id] = nil }
         }
     }
+
+    /// Tabs with a Peek open over them (on screen or parked while another tab is shown), and the Peek's page:
+    /// their sidebar rows show Arc's Peek badge with its icon (TabCellState `modalIcon`).
+    var linkPeekBadges: [UUID: LinkPeekBadge] = [:]
 
     @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored var onPageChange: ((UUID) -> Void)?

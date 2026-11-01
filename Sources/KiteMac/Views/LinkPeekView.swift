@@ -17,6 +17,9 @@ final class LinkPeekView: NSView {
     /// Everything that moves when the card opens and closes.
     private let motion = FlippedView()
     private(set) var page: NSView?
+    /// Arc's `transitionSourceImageView`: the clicked element's picture over the page, faded out as the card
+    /// opens and back in as it closes (`LinkPeek.snapshotFadeOut` / `snapshotFadeIn`).
+    private let snapshot = PassThroughImageView()
     var onControl: ((Control) -> Void)?
     var onBackgroundClick: (() -> Void)?
 
@@ -52,6 +55,11 @@ final class LinkPeekView: NSView {
         motion.addSubview(cardShadow)
         motion.addSubview(card)
         attach(page)
+        snapshot.setAccessibilityIdentifier("LinkPeekSnapshot")
+        snapshot.imageScaling = .scaleAxesIndependently
+        snapshot.wantsLayer = true
+        snapshot.isHidden = true
+        card.addSubview(snapshot)
 
         controls.setAccessibilityIdentifier("LinkPeekControls")
         let shown: [(Control, String, String)] = [
@@ -75,7 +83,7 @@ final class LinkPeekView: NSView {
         page.removeFromSuperview()
         page.autoresizingMask = [.width, .height]
         page.frame = card.bounds
-        card.addSubview(page)
+        card.addSubview(page, positioned: .below, relativeTo: snapshot.superview === card ? snapshot : nil)
     }
 
     /// Takes the page out (to become a tab); the card is left empty.
@@ -100,7 +108,19 @@ final class LinkPeekView: NSView {
             roundedRect: cardShadow.bounds, cornerWidth: LinkPeek.cornerRadius, cornerHeight: LinkPeek.cornerRadius, transform: nil
         )
         controls.frame = controlsRect
+        layoutSnapshot()
         if tug != .zero { applyTug() }
+    }
+
+    private func layoutSnapshot() {
+        let rect = cardFrame
+        guard let source, let frame = LinkPeek.snapshotFrame(
+            source: .init(x: source.minX, y: source.minY, width: source.width, height: source.height),
+            cardWidth: rect.width, cardHeight: rect.height
+        ) else { return }
+        // The card isn't flipped: put the frame (from the card's top) into its bottom-up space.
+        let y = card.isFlipped ? frame.y : rect.height - frame.y - frame.height
+        snapshot.frame = NSRect(x: frame.x, y: y, width: frame.width, height: frame.height)
     }
 
     /// The buttons' column, slid back under the card by the swipe's tug.
@@ -125,10 +145,11 @@ final class LinkPeekView: NSView {
     /// A swipe took over: Arc stops the card's running animations (the open spring) where they are.
     func beginTug() {
         stopTugSpring()
-        for layer in [motion.layer, card.layer, cardShadow.layer].compactMap({ $0 }) {
+        for layer in [motion.layer, card.layer, cardShadow.layer, snapshot.layer].compactMap({ $0 }) {
             layer.removeAllAnimations()
         }
         motion.layer?.opacity = 1
+        snapshot.layer?.opacity = 0
     }
 
     func setTug(_ tug: LinkPeek.Swipe.Vector) {
@@ -208,7 +229,9 @@ final class LinkPeekView: NSView {
 
     /// Opens with Arc's open spring from `source` (the clicked element's frame in this view, Arc's
     /// `tweenFromSource`), or when that isn't known, from a fifth of the card at `point` (the pointer).
-    func animateIn(from source: NSRect?, pointer point: NSPoint?) {
+    /// `image` is the clicked element's picture (Arc's `sourceSnapshot`): the card starts as it and crossfades
+    /// to the page. Without one the card fades in.
+    func animateIn(from source: NSRect?, pointer point: NSPoint?, image: NSImage? = nil) {
         layoutSubtreeIfNeeded()
         guard let layer = motion.layer else { return }
         layer.opacity = 1
@@ -225,7 +248,14 @@ final class LinkPeekView: NSView {
             from = Self.transform(scale: 0.2, around: center, to: point ?? center, in: bounds, flipped: layerSpaceIsBottomUp)
         }
         add(spring: LinkPeek.openSpring, keyPath: "transform", from: NSValue(caTransform3D: from), to: NSValue(caTransform3D: CATransform3DIdentity), on: layer)
-        // Arc crossfades from a snapshot of the source (`sourceSnapshot`); Kite fades the card in instead.
+        if let image, self.source != nil {
+            // Arc's card doesn't fade in: the snapshot over the page fades out instead.
+            snapshot.image = image
+            snapshot.isHidden = false
+            layoutSnapshot()
+            fadeSnapshot(LinkPeek.snapshotFadeOut)
+            return
+        }
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
         fade.toValue = 1
@@ -259,6 +289,15 @@ final class LinkPeekView: NSView {
             to = Self.transform(scale: 0.95, around: center, to: center, in: bounds, flipped: layerSpaceIsBottomUp)
         }
         let duration = add(spring: LinkPeek.closeSpring, keyPath: "transform", from: NSValue(caTransform3D: start), to: NSValue(caTransform3D: to), on: layer)
+        if source != nil, snapshot.image != nil {
+            // Arc fades the card out with the close spring while the snapshot comes back over the page.
+            fadeSnapshot(LinkPeek.snapshotFadeIn)
+            let fade = springAnimation(LinkPeek.closeSpring, keyPath: "opacity", from: 1, to: 0)
+            fade.isRemovedOnCompletion = false
+            layer.add(fade, forKey: "linkPeekFade")
+            CATransaction.commit()
+            return
+        }
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 1
         fade.toValue = 0
@@ -282,8 +321,20 @@ final class LinkPeekView: NSView {
         )
     }
 
-    @discardableResult
-    private func add(spring: LinkPeek.Spring, keyPath: String, from: Any, to: Any, on layer: CALayer) -> CFTimeInterval {
+    /// The snapshot's opacity spring (`LinkPeek.SnapshotFade`), from its delay on; the layer keeps the end value.
+    private func fadeSnapshot(_ fade: LinkPeek.SnapshotFade) {
+        guard let layer = snapshot.layer else { return }
+        let animation = springAnimation(fade.spring, keyPath: "opacity", from: fade.from, to: fade.to)
+        animation.beginTime = CACurrentMediaTime() + fade.delay
+        animation.fillMode = .both
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.opacity = Float(fade.to)
+        CATransaction.commit()
+        layer.add(animation, forKey: "linkPeekSnapshot")
+    }
+
+    private func springAnimation(_ spring: LinkPeek.Spring, keyPath: String, from: Any, to: Any) -> CASpringAnimation {
         let animation = CASpringAnimation(keyPath: keyPath)
         animation.mass = 1
         animation.stiffness = spring.stiffness
@@ -292,6 +343,12 @@ final class LinkPeekView: NSView {
         animation.toValue = to
         animation.duration = animation.settlingDuration
         animation.fillMode = .forwards
+        return animation
+    }
+
+    @discardableResult
+    private func add(spring: LinkPeek.Spring, keyPath: String, from: Any, to: Any, on layer: CALayer) -> CFTimeInterval {
+        let animation = springAnimation(spring, keyPath: keyPath, from: from, to: to)
         // Opening ends at the layer's own values; closing holds the end state until the view is removed.
         let ends: Bool
         if keyPath == "transform" {
@@ -314,6 +371,11 @@ final class LinkPeekView: NSView {
         m = CATransform3DScale(m, scale, scale, 1)
         return CATransform3DTranslate(m, -c.x, -c.y, 0)
     }
+}
+
+/// The Peek's source snapshot: drawn over the page, never in the way of its clicks.
+private final class PassThroughImageView: NSImageView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// Lays its subviews out from the top, like the host.

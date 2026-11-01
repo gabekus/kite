@@ -121,6 +121,48 @@ public enum LinkPeek {
     /// caller sets; its value wasn't found. **[unverified]**
     public static let sourceCornerRadius = 0.0
 
+    // MARK: Source snapshot crossfade (g119)
+
+    /// Arc's `ModalV2HostView.transitionSourceImageView`: a picture of the clicked element (`sourceSnapshot`)
+    /// over the page inside the card, which fades with its own spring while the card tweens (FUN_101713230).
+    /// Opening, it goes 1 → 0 straight away; closing, 0 → 1 after a delay. Both use damping 0.95 and a share of
+    /// the transition's response: 0.5 of the open spring's (no delay), 0.65 of the close spring's (after 0.35 of it).
+    public struct SnapshotFade: Equatable, Sendable {
+        public var spring: Spring
+        public var delay: Double
+        public var from, to: Double
+    }
+
+    public static let snapshotFadeOut = SnapshotFade(
+        spring: Spring(dampingRatio: 0.95, response: 0.5 * openSpring.response), delay: 0, from: 1, to: 0
+    )
+    public static let snapshotFadeIn = SnapshotFade(
+        spring: Spring(dampingRatio: 0.95, response: 0.65 * closeSpring.response), delay: 0.35 * closeSpring.response, from: 0, to: 1
+    )
+
+    /// Where the snapshot sits in the card (card-local, flipped): as wide as the card, as tall as the source at
+    /// that width, centred. Under the tween's uniform scale it then covers the source exactly. **[inferred]**
+    public static func snapshotFrame(source: Frame, cardWidth: Double, cardHeight: Double) -> Frame? {
+        guard source.width >= 1, source.height >= 1, cardWidth >= 1 else { return nil }
+        let height = source.height * cardWidth / source.width
+        return Frame(x: 0, y: (cardHeight - height) / 2, width: cardWidth, height: height)
+    }
+
+    // MARK: Sidebar badge (g115)
+
+    /// Arc's `ModalV2SidebarBadgeView` on the source tab's sidebar row while it has a Peek (TabCellState
+    /// `modalIcon`): a 24pt square, corner radius 6, filled with ARCUI's `GrayA4`, the Peek page's icon
+    /// centred at 16pt with corner radius 4. It's the row's last view (sort key 8, after the close button's 7).
+    public enum Badge {
+        public static let side = 24.0
+        public static let cornerRadius = 6.0
+        public static let iconSize = 16.0
+        public static let iconCornerRadius = 4.0
+        /// `GrayA4`: black at 0.071 (light), white at 0.077 (dark).
+        public static let fillOpacityLight = 0.071
+        public static let fillOpacityDark = 0.077
+    }
+
     /// Nil when the source is too small to tween from (the caller falls back).
     public static func sourceTween(source: Frame, card: Frame, cornerRadius: Double = sourceCornerRadius) -> SourceTween? {
         guard source.width >= 1, source.height >= 1, card.width >= 1 else { return nil }
