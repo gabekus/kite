@@ -31,6 +31,41 @@ public enum AskOnPage {
         return inConversation
     }
 
+    /// Arc's label when a finished search found nothing (disassembly `0x10215ae18`): the same
+    /// slot as the n/N counter, with Ask on Page on or off.
+    public static let noMatchesLabel = "No matches"
+
+    /// The text right of the query, as Arc's find view picks it: nothing for an empty query or
+    /// before the search comes back, "No matches" for none, else "active/total". `matches` is nil
+    /// when the engine only says found or not (WebKit), which shows nothing when found.
+    public static func matchLabel(query: String, found: Bool, matches: Int?, activeMatch: Int?) -> String {
+        guard !query.isEmpty else { return "" }
+        guard let total = matches ?? (found ? nil : 0) else { return "" }
+        return total < 1 ? noMatchesLabel : "\(activeMatch ?? 0)/\(total)"
+    }
+
+    /// Each tab's conversation while the tab isn't shown, so it's still there when you come back
+    /// (Arc keeps its `askInPageState` with each window content). Esc, or ⌘F in the field, still
+    /// ends a conversation; closing the tab drops it.
+    public struct Conversations<Value> {
+        private var stored: [UUID: Value] = [:]
+
+        public init() {}
+
+        public var tabs: Set<UUID> { Set(stored.keys) }
+
+        public mutating func keep(_ value: Value, for tab: UUID) { stored[tab] = value }
+
+        /// The tab's conversation, taken out to be shown again.
+        public mutating func take(for tab: UUID) -> Value? { stored.removeValue(forKey: tab) }
+
+        /// Drops the conversations of tabs that are gone and returns them (to stop their answers).
+        public mutating func prune(keeping live: Set<UUID>) -> [Value] {
+            let gone = stored.keys.filter { !live.contains($0) }
+            return gone.compactMap { stored.removeValue(forKey: $0) }
+        }
+    }
+
     /// How much of the page's text goes to Claude. Arc counts tokens; Kite counts characters
     /// (about 15k tokens), which is plenty for an article and keeps the answer quick.
     public static let maxPageCharacters = 60_000

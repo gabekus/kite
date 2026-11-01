@@ -1314,6 +1314,24 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   panel was never opened here, so none of its geometry, colours, fonts or animation is measured); Kite doesn't
   find-as-you-type while in a conversation; one question at a time. Arc's context limit is in tokens (Tiktoken);
   Kite sends the first 60,000 characters of `document.body.innerText`.
+- "No matches" (g62; disassembly of Arc 1.171, `arc.s`): the find view's match slot (function at `0x10215a348`) shows
+  nothing while the query is empty or `numMatches` is nil, "No matches" (small-string immediate at `0x10215ae18`)
+  when `numMatches < 1`, else an interpolated "n/N" ("/" literal). There's no Ask on Page check on that path, so it
+  shows with the feature on or off. Both texts are `.system(size: 13, weight: .medium, design: .rounded)` with the
+  same theme foreground and a 0.5 stored next to it (likely opacity). Kite puts "No matches" in its existing counter
+  label (11.5pt medium, `#E8EAEF`, tuned from captures in #108's era), so it matches Kite's n/N, not Arc's 13pt
+  rounded: unmeasured in pixels. Arc's older AppKit `FindInPageView` says "Not Found" (`0x100329330`); Kite follows
+  the AskInPage view.
+- Per-tab conversations (g62): `askInPageState` is a field of the per-window-content view state, next to
+  `windowContent`, `sidebarItemID` and `findInPage` (arc-strings.txt ~150470-150503), and find state lives in
+  `WindowContents/WindowContentState+FindInPage.swift` (~80945): so it's kept per tab content, not per window.
+  **Inferred:** what Arc shows on returning to the tab. Kite brings back the bar and the conversation, placeholder
+  "Ask a question…", with the page keeping the keyboard; an answer that arrives while the tab is away lands in its
+  conversation. Esc ends it (as #108); ⌘F ends it only when typed in the field (Arc's `CommandFTextField.onCommandF`
+  belongs to the field), and from the page it just focuses the field. Closing the tab drops it.
+- New chat: Arc has one (`askOnPageNewChatButtonImmediateTooltipClickCount`, `askToolNewChatButtonClicked`, ~64046,
+  ~160726), but no symbol or label for it turns up in the AskInPage code (`0x10214e000-0x10216ffff`: only
+  `arrow.forward`, `arrow.up`, `arrow.down`), so its look and place are unknown and Kite doesn't add it.
 
 ## Import from Another Browser → `BrowserImport` (KiteCore), `BrowserImportController` (Arc 1.171 menu bar, strings, assets, 1 Nov 2026)
 

@@ -3,7 +3,7 @@ import KiteCore
 
 /// Find in page (⌘F), matching Arc 1.169: a 300×32 navy bar at the content
 /// card's top-right corner with a magnifier, the query, an n/N counter,
-/// previous / next arrows, a divider and close. Return / ⇧Return step through matches; Esc closes it.
+/// previous / next arrows, a divider and close ("No matches" in the counter's place when nothing is found). Return / ⇧Return step through matches; Esc closes it.
 /// With Ask on Page on (Arc Max), it reads "Find or ask…" and Return on a query the page has no
 /// match for asks Claude instead (`onAsk`); the answer shows in an `AskOnPagePanel` under the bar.
 @MainActor
@@ -168,11 +168,15 @@ final class FindBar: NSView, NSTextFieldDelegate {
 
     func show(_ result: FindResult) {
         matches = result.matches ?? (result.found ? 1 : 0)
-        if let matches = result.matches {
-            countLabel.stringValue = matches == 0 ? "0/0" : "\(result.activeMatch ?? 0)/\(matches)"
-        } else {
-            countLabel.stringValue = result.found ? "" : "0/0"
-        }
+        // Arc's "No matches" sits where the n/N counter goes, Ask on Page on or off.
+        countLabel.stringValue = AskOnPage.matchLabel(query: query, found: result.found,
+                                                      matches: result.matches, activeMatch: result.activeMatch)
+    }
+
+    /// The query field is being typed in (Arc's `CommandFTextField` takes ⌘F only then).
+    var fieldHasFocus: Bool {
+        guard let editor = field.currentEditor() else { return false }
+        return window?.firstResponder === editor
     }
 
     func step(forward: Bool) {
