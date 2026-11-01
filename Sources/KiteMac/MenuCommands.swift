@@ -13,13 +13,17 @@ struct MenuCommand: Hashable {
         item.keyEquivalent.isEmpty ? nil : ShortcutsWindow.describe(item.keyEquivalent, item.keyEquivalentModifierMask)
     }
 
-    /// Commands matching `query`, best first. Only enabled, visible commands, as the menu would show them.
+    /// Marks a hidden menu item that the command bar still offers (`representedObject`).
+    static let commandBarOnly = "kite.commandBarOnly"
+
+    /// Commands matching `query`, best first. Only enabled, visible commands, as the menu would show them,
+    /// plus hidden ones marked `commandBarOnly`.
     @MainActor
     static func search(_ query: String, in menu: NSMenu?, limit: Int = 3) -> [(command: MenuCommand, score: Int)] {
         var results: [(MenuCommand, Int)] = []
         func walk(_ menu: NSMenu, path: [String]) {
             menu.update()
-            for item in menu.items where !item.isHidden && !item.isSeparatorItem {
+            for item in menu.items where (!item.isHidden || item.representedObject as? String == commandBarOnly) && !item.isSeparatorItem {
                 if let submenu = item.submenu {
                     walk(submenu, path: path + [item.title])
                 } else if item.action != nil, item.isEnabled, !item.title.isEmpty,

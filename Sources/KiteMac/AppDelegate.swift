@@ -37,6 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #endif
 
 
+    /// Every browser window: the first, ⌘N and blank windows, and incognito windows.
+    var browserControllers: [BrowserWindowController] {
+        (windowController.map { [$0] } ?? []) + (windows?.all ?? []) + incognitoControllers
+    }
+
     static var supportDirectory: URL {
         if let override = ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] {
             return URL(fileURLWithPath: override, isDirectory: true)
@@ -129,8 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KCRuntime.extensionDialogAnchor = { [weak self] window in
             MainActor.assumeIsolated {
                 guard let self else { return .zero }
-                let controllers = [self.windowController!] + self.windows.all + self.incognitoControllers
-                return controllers.first { $0.window === window }?.webAreaInWindow ?? .zero
+                return self.browserControllers.first { $0.window === window }?.webAreaInWindow ?? .zero
             }
         }
         #endif
@@ -150,6 +154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         open(pendingURLs)
         pendingURLs = []
+        // A test run can open the Zap picker, which has no menu item until Kite has Arc's Boost editor.
+        if UIDiagnostics.enabledByEnvironment, ProcessInfo.processInfo.environment["KITE_TEST_ZAP_PICKER"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.windowController.showZapPicker(nil) }
+        }
 
         diagnostics = DiagnosticsRecorder(directory: Self.supportDirectory.appendingPathComponent("Diagnostics", isDirectory: true))
         diagnostics.start()
@@ -247,6 +255,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!TidyTabs.isEnabled(in: .standard), forKey: TidyTabs.enabledKey)
         // The sidebar reads the setting when it redraws.
         store.mutate { _ in }
+    }
+
+    /// Kite menu → Tidy Tab Titles: Arc Max's AI names for tabs you pin (Arc's `renamePinnedTabsEnabled`).
+    @objc func toggleTidyTabTitles(_ sender: Any?) {
+        UserDefaults.standard.set(!TidyTabTitles.isEnabled(in: .standard), forKey: TidyTabTitles.enabledKey)
     }
 
     /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
@@ -439,6 +452,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleTidyTabs(_:)) {
             item.state = TidyTabs.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleTidyTabTitles(_:)) {
+            item.state = TidyTabTitles.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleLittleKiteLinks(_:)) {
             item.state = LittleKite.opensExternalLinks(in: .standard) ? .on : .off

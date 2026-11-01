@@ -162,6 +162,9 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic) BOOL audioMuted;
 /// Requests the ad blocker stopped since the page started loading.
 @property (nonatomic, readonly) NSInteger blockedCount;
+/// The pid of the renderer showing the main frame, as the renderer last reported it; 0 when
+/// unknown (no page has run yet, or the renderer died).
+@property (nonatomic, readonly) int renderProcessIdentifier;
 
 - (void)loadURL:(NSURL *)url;
 - (void)goBack;
@@ -178,8 +181,9 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) BOOL focusBlocked;
 /// Tells Chromium the tab is offscreen so it throttles rendering and timers.
 - (void)setHidden:(BOOL)hidden;
-/// Opens Chrome DevTools in its own window.
-- (void)showDevTools;
+/// Opens (or brings forward) Chrome DevTools in its own window, then runs `frontendScript` in the DevTools
+/// frontend page: on its load event when it opens, right away when it's already open.
+- (void)showDevToolsRunningFrontendScript:(nullable NSString *)frontendScript;
 /// `findNext` continues through the same search; results arrive on the delegate.
 - (void)find:(NSString *)text forward:(BOOL)forward findNext:(BOOL)findNext;
 - (void)stopFinding;

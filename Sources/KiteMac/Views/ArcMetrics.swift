@@ -132,6 +132,12 @@ enum ArcMetrics {
         static let gripFadeDuration: Double = 0.16
         /// Narrowest a pane can be dragged. Unverified.
         static let minimumPaneWidth: CGFloat = 200
+        /// How far in from each outer edge of the content area a dragged link counts as "open in a split".
+        /// Not measured: Arc's drop regions aren't traced.
+        static let dropEdge: CGFloat = 64
+        /// The drop placeholder's outline (`SplitViewContentPlaceholderView.BorderView`, Arc 1.169 binary).
+        static let dropBorderWidth: CGFloat = 2
+        static let dropCornerRadius: CGFloat = 6
 
         // The sidebar row: one item per pane, side by side.
         static let rowItemSpacing: CGFloat = 4

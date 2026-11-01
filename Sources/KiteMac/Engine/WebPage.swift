@@ -90,7 +90,8 @@ protocol WebPage: AnyObject {
     func allowFocus()
     /// Offscreen pages should throttle rendering and timers.
     func setVisible(_ visible: Bool)
-    func showDevTools()
+    /// Opens DevTools (Web Inspector on WebKit) on `panel`.
+    func showDevTools(_ panel: DevToolsPanel)
     /// Highlights matches of `text`. `findNext` moves through matches of the same text;
     /// `completion` may run more than once as results come in.
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void)
@@ -120,6 +121,8 @@ protocol WebPage: AnyObject {
     func runMediaCommand(_ command: MediaCommand)
     /// The browser's tab mute: the page keeps playing, silently, and isn't told.
     var isAudioMuted: Bool { get set }
+    /// The pid of the process rendering the page, for the Task Manager; nil when unknown.
+    var processIdentifier: pid_t? { get }
     func close()
 }
 
