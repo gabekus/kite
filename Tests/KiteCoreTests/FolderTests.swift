@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import KiteCore
 
-@Suite struct FolderTests {
+@Suite struct FolderEditingTests {
     private func stateWithFolder() throws -> (BrowserState, UUID, UUID, [UUID]) {
         var state = BrowserState(spaces: [Space(name: "Home", icon: "🏠", theme: Theme.presets[0])])
         let space = state.spaces[0].id
@@ -10,9 +10,11 @@ import Testing
         let inner = state.createFolder(name: "Inner", inSpace: 0)
         let a = state.openTab(url: URL(string: "https://a.example"), in: space, select: true)
         let b = state.openTab(url: URL(string: "https://b.example"), in: space, select: false)
-        #expect(state.moveTab(a, toFolder: folder) && state.moveTab(b, toFolder: inner))
+        let movedA = state.moveTab(a, toFolder: folder), movedB = state.moveTab(b, toFolder: inner)
+        #expect(movedA && movedB)
         // Nest Inner inside Reading.
-        let moved = try #require(state.spaces[0].pinnedItems.removeFolder(inner))
+        let removed = state.spaces[0].pinnedItems.removeFolder(inner)
+        let moved = try #require(removed)
         state.spaces[0].pinnedItems.updateFolder(folder) { $0.items.append(.folder(moved)) }
         return (state, space, folder, [a, b])
     }
@@ -21,19 +23,22 @@ import Testing
         var (state, space, folder, tabs) = try stateWithFolder()
         let kept = state.openTab(url: URL(string: "https://kept.example"), in: space, select: false)
         state.spaces[0].selectedTabID = tabs[0]
-        #expect(state.deleteFolder(folder).map(\.id) == tabs)
+        let archived = state.deleteFolder(folder)
+        #expect(archived.map(\.id) == tabs)
         #expect(state.folders(inSpace: 0).isEmpty)
         #expect(tabs.allSatisfy { state.tab($0) == nil })
         #expect(state.archived.map(\.tab.id).suffix(2) == tabs)
         #expect(state.archived.allSatisfy { $0.spaceID == space })
         #expect(state.spaces[0].selectedTabID == kept)
-        #expect(state.deleteFolder(folder).isEmpty)
+        let again = state.deleteFolder(folder)
+        #expect(again.isEmpty)
     }
 
     @Test func deletingAnEmptyFolderArchivesNothing() {
         var state = BrowserState(spaces: [Space(name: "Home", icon: "🏠", theme: Theme.presets[0])])
         let folder = state.createFolder(name: "Empty", inSpace: 0)
-        #expect(state.deleteFolder(folder).isEmpty)
+        let archived = state.deleteFolder(folder)
+        #expect(archived.isEmpty)
         #expect(state.folders(inSpace: 0).isEmpty && state.archived.isEmpty)
     }
 
@@ -51,10 +56,13 @@ import Testing
         let folder = state.createFolder(name: "Task", inSpace: 0)
         let a = state.openTab(url: URL(string: "https://a.example"), in: space, select: false)
         let b = state.openTab(url: URL(string: "https://b.example"), in: space, select: false)
-        #expect(state.moveTab(a, toFolder: folder) && state.moveTab(b, toFolder: folder))
-        #expect(state.removePinnedTab(a, droppingEmptyFolder: true))
+        let movedA = state.moveTab(a, toFolder: folder), movedB = state.moveTab(b, toFolder: folder)
+        #expect(movedA && movedB)
+        let removedA = state.removePinnedTab(a, droppingEmptyFolder: true)
+        #expect(removedA)
         #expect(state.folder(matching: folder.uuidString) != nil)
-        #expect(state.removePinnedTab(b, droppingEmptyFolder: true))
+        let removedB = state.removePinnedTab(b, droppingEmptyFolder: true)
+        #expect(removedB)
         #expect(state.folder(matching: folder.uuidString) == nil)
     }
 
@@ -63,8 +71,10 @@ import Testing
         let space = state.spaces[0].id
         let folder = state.createFolder(name: "Mine", inSpace: 0)
         let a = state.openTab(url: URL(string: "https://a.example"), in: space, select: false)
-        #expect(state.moveTab(a, toFolder: folder))
-        #expect(state.removePinnedTab(a))
+        let moved = state.moveTab(a, toFolder: folder)
+        #expect(moved)
+        let removed = state.removePinnedTab(a)
+        #expect(removed)
         #expect(state.folder(matching: folder.uuidString) != nil)
     }
 }
