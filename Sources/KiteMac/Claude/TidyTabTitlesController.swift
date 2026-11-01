@@ -32,12 +32,30 @@ final class TidyTabTitlesController {
               let location = store.state.location(of: id), location.section == .pinned,
               let tab = store.state.tab(id), tab.customTitle == nil
         else { return }
+        let oldTitle = tab.displayTitle
         store.mutate { $0.renameTab(id, to: name) }
+        // Arc wipes the old title out and the new one in, with sparks, as the name lands.
+        if let renamed = store.state.tab(id), renamed.displayTitle != oldTitle {
+            store.animateAIRename(id, from: oldTitle)
+        }
+    }
+
+    /// A test build's stand-in reply (`KITE_TEST_TIDY_TITLE`, only with a test profile), so the
+    /// rename and its animation can be checked without asking Claude.
+    nonisolated private static func testReply() -> String? {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["KITE_SUPPORT_PATH"] != nil, let name = environment["KITE_TEST_TIDY_TITLE"], !name.isEmpty
+        else { return nil }
+        return name
     }
 
     /// Runs Claude Code once and reads the name from its reply. Nil if it isn't set up, fails or
     /// takes too long.
     nonisolated private static func ask(_ prompt: String) -> String? {
+        if let stub = testReply() {
+            Thread.sleep(forTimeInterval: 1)
+            return stub
+        }
         guard let claude = ClaudeConnect.findClaude() else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: claude)

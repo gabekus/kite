@@ -1686,9 +1686,8 @@ Nothing in Arc was pressed, run or captured; no Arc geometry was measured (the b
   font's point size, `NSFontWeightBold` (FUN_1001aac84). No background.
 - **Two modes** (FUN_1001abeac, driven by `clearTabAction`: `clearOthers`, `clearAll`, arc-strings.txt
   176319–176320): `clearAll` shows the arrow and "Clear Today tabs"; `clearOthers` drops the arrow and uses
-  "Clear unselected Today tabs" ("Tooltip; Clear unselected tabs in this list", `0x100187498`). Which windows use
-  `clearOthers` isn't known from the binary ("this list" suggests a non-main tab list); Kite's main sidebar uses
-  `clearAll`.
+  "Clear unselected Today tabs" ("Tooltip; Clear unselected tabs in this list", `0x100187498`). When: see
+  "Clear's `clearOthers` mode" below.
 - **Shown state** (FUN_1001abbc8, FUN_1001ac59c): a three-way state, 0 = Clear only, 1 = Tidy and Clear,
   2 = neither. `tidyAndClear` (176321) is the name of state 1, next to the field `buttons` (176318): it is when
   both buttons show, not a combined action, setting or long press. Both buttons start hidden at alpha 0
@@ -1702,7 +1701,26 @@ Nothing in Arc was pressed, run or captured; no Arc geometry was measured (the b
   Clear Today for the divider's space: archives every Today tab, "Archived N tabs" toast.
 - **Kite's own, unverified against Arc:** label font (11 semibold, Kite's Tidy text) and opacity (0.75, 0.5 while
   pressed), the gap to Tidy (6), the trailing inset (Kite's divider inset, not 18), showing the row when Today
-  has tabs and there are no pinned tabs, and hiding Clear when Today is empty. Not built: the `clearOthers` mode.
+  has tabs and there are no pinned tabs, and hiding Clear when Today is empty.
+
+### Clear's `clearOthers` mode → `BrowserState.todayClearAction`, `clearUnselectedToday` (Arc 1.171 Ghidra, 1 Nov 2026, g107)
+
+Nothing in Arc was pressed, run or captured; decompiles are under `~/rea-arc/decomp/out-g107/` (scope.txt, st*.txt).
+
+- **Where it's decided:** the divider cell's store is scoped from the space's sidebar state (SidebarSpaceState.swift)
+  by FUN_10034f9f0 → FUN_102833b38, which builds `UnpinnedSectionDividerState`; its `clearTabAction` byte comes from
+  FUN_102833c10. That returns `clearAll` (1) unless the space state's optional selected item (`selectedItemInfo`,
+  read as an ID string) is set, the space's Today list doesn't hold exactly one item, and the list contains that ID
+  (FUN_1001e357c, a string `contains`); then `clearOthers` (0). So: **the selected tab is one of two or more Today
+  tabs → "Clear" without the arrow, tooltip "Clear unselected Today tabs"**; a lone Today tab, or a pinned tab or
+  favorite selected → "↓ Clear", "Clear Today tabs". Field identification (selectedItemInfo) is from the field-name
+  order in the Swift metadata strings (arc-strings.txt 176249ff), not a symbol.
+- **What it keeps:** the selected tab. The click sends `didTapClearUnpinnedItems(itemIDs:nextItemToSelect:…)`
+  (176402ff); that clearOthers passes every Today tab but the selected one is inferred from the name and the
+  tooltip, not traced in the reducer. The ⇧⌘K Clear Today menu item (`clearUnpinnedTabs`) isn't this button and
+  stays Clear All in Kite.
+- **Kite:** the same rule per space; in `clearOthers` the button has no arrow and archives the other Today tabs
+  ("Archived N tabs" toast), keeping the selected tab selected.
 ## Tidy Downloads → `TidyDownloads` (KiteCore), `DownloadTidier` (Arc 1.171 strings, defaults and disassembly, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 43295, 174650-174675, 160610, 73907,
@@ -1912,9 +1930,43 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   "User renamed the tab before the automatic tab name could be generated." (82736) means a manual rename wins.
   Undoing it is the ordinary Rename (an empty name shows the page's title again). Kite also drops the name if the tab
   was unpinned before the reply.
-- Not copied: `isAnimatingAiRename` (an animation on the title; not measured), `TidyTitleConfiguration` /
+- Not copied: `TidyTitleConfiguration` /
   `BundledTidyTitles` (per-site title rules from content.arc.net; data not inspected), the feedback report
   (`submitTidyTabTitleFeedback`, 82961). Model: Arc's provider isn't known; Kite uses Claude haiku, no tools.
+
+### Tidy Tab Titles: the rename animation → `TidyTabTitleAnimation` (KiteCore), `AIRenameTitle`, `AIRenameSparks` (Arc 1.171 Ghidra, arc.s, Assets.car, 1 Nov 2026, g108)
+
+Nothing in Arc was pressed, run or captured; decompiles are under `~/rea-arc/decomp/out-g107/` (sym.txt, agv.txt,
+callers.txt).
+
+- **While the model works:** nothing. TabCellView's only rename fields are `isAnimatingAiRename`,
+  `animatedGradientView`, `sparksView` (arc-strings.txt 150444ff); the AI state has no per-tab pending flag that
+  the cell reads (inferred from those fields; not every observer was traced).
+- **When the name lands** (FUN_100154818, run when the cell's title differs from the new one): it builds a label of
+  the old title (same font and colour) and a stack with the new title, puts both in an `AnimatedGradientView` the
+  title stack's width, sets `isAnimatingAiRename` (didSet FUN_10035b2f8 hides the real title stack, alpha 0), and
+  adds a `SparksView` over the whole cell. When the gradient finishes (FUN_100155100) it sends the store the new
+  title and clears the flag, which shows the title stack again. Subtitle changes lose their 0.08 s animation while
+  it runs (FUN_100364944).
+- **AnimatedGradientView** (init FUN_100181ce8, start FUN_100182134, animations FUN_100182c7c/FUN_100182eb4):
+  duration 0.5 s, delay 0, fade width 70 (the tab cell keeps these defaults; a list header uses 0.6 s, delay 0.1,
+  fade 10). Two `CAGradientLayer` masks, start (-1.5, 0.5), end (1.5, 0.5), locations [0, w/(2w+f), (w+f)/(2w+f), 1]
+  for the view's width w and fade f: the new title's mask is white, white, clear, clear; the old title's clear,
+  clear, white, white. `startPoint.x` animates to 1 and `endPoint.x` to 3 (key paths read from arc.s at
+  `0x100182c98` and `0x100182da4`), no timing function (linear), fill forwards. So the new title wipes in from the
+  left behind a soft edge as the old one wipes out, the new title's left part already half there at the start.
+- **SparksView** (FUN_1000eb298, FUN_1000ebb70, FUN_1000eb740, FUN_1000ebec4): a `CAEmitterLayer`, circle shape,
+  size h/2, one cell "Spark" with Arc's "Spark" image (Assets.car: 18 pt template, 36 px at 2x) tinted a theme
+  colour; lifetime 1, velocity 100 ± 30, emission range 2π, scale 0.09 ± 0.05, scale speed −0.2, alpha speed −1,
+  y acceleration −200, birth rate 75 × cell width ÷ title width. The emitter position animates from the cell's minX
+  to maxX at mid-height over the gradient's 0.5 s (linear in a tab cell); then birth rate 0, and after the fade-out
+  (0 here) it removes itself. Not clipped (`masksToBounds` false). A list header's variant adds a haptic; the tab
+  cell's doesn't.
+- **Kite:** the name is set at once and the row plays the animation for 0.5 s (+1 s for the last sparks): both
+  titles masked by SwiftUI linear gradients with Arc's points and stops, and a Canvas of sparks worked out from
+  Arc's emitter numbers. Kite's own: sparks are dots in the title colour (Arc's image and tint colour not copied or
+  resolved; their size assumes the 36 px rendition at scale 1), and they are clipped to the row (the sidebar list's
+  rows clip). Test builds can stub the name with `KITE_TEST_TIDY_TITLE` (test profile only).
 
 ## Instant Links → `InstantLinks` (KiteCore), `InstantLinksController` (Arc 1.171 strings and disassembly, 1 Nov 2026)
 

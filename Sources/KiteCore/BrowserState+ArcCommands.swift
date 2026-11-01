@@ -35,6 +35,30 @@ extension BrowserState {
         return cleared
     }
 
+    /// What the Today divider's Clear button does for a space (Arc's UnpinnedSectionDividerState
+    /// `clearTabAction`): `clearOthers` ("Clear unselected Today tabs", no arrow) when the
+    /// space's selected tab is one of two or more Today tabs, else `clearAll`.
+    public func todayClearAction(inSpace spaceID: UUID) -> TodayClearAction {
+        guard let s = spaceIndex(spaceID), let selected = spaces[s].selectedTabID,
+              spaces[s].tabs.count != 1, spaces[s].tabs.contains(where: { $0.id == selected })
+        else { return .clearAll }
+        return .clearOthers
+    }
+
+    /// The divider's Clear in `clearOthers` mode: archives the space's Today tabs except the
+    /// selected one, which stays selected. Falls back to Clear Today otherwise.
+    @discardableResult
+    public mutating func clearUnselectedToday(inSpace spaceID: UUID) -> [BrowserTab] {
+        guard todayClearAction(inSpace: spaceID) == .clearOthers, let s = spaceIndex(spaceID),
+              let selected = spaces[s].selectedTabID
+        else { return clearToday(inSpace: spaceID) }
+        let cleared = spaces[s].tabs.enumerated().filter { $1.id != selected }
+        appendToArchive(cleared.map { ClosedTab(tab: $1, spaceID: spaces[s].id, index: $0) })
+        spaces[s].tabs.removeAll { $0.id != selected }
+        normalizeSplits()
+        return cleared.map(\.element)
+    }
+
     /// Opens a copy of the tab just below it in the unpinned list and selects it.
     @discardableResult
     public mutating func duplicate(tab id: UUID, now: Date = Date()) -> UUID? {
@@ -148,4 +172,12 @@ extension BrowserState {
         let space = spaces.remove(at: s)
         spaces.insert(space, at: min(max(index, 0), spaces.count))
     }
+}
+
+/// Arc's ClearTabAction for the Today divider's Clear button.
+public enum TodayClearAction: Equatable, Sendable {
+    /// "↓ Clear", tooltip "Clear Today tabs": archives every Today tab.
+    case clearAll
+    /// "Clear" without the arrow, tooltip "Clear unselected Today tabs": keeps the selected tab.
+    case clearOthers
 }
