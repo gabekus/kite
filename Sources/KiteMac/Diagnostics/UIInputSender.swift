@@ -44,15 +44,21 @@ struct UIInputSender {
             send(down, then: rest, at: point, flags: flags)
             try? await Task.sleep(for: .milliseconds(50))
             return "\(count == 1 ? "Clicked" : "\(count)× clicked") \(button.rawValue) at (\(UIReport.number(point.x)), \(UIReport.number(point.y))) on \(hit)." + note
-        case let .drag(from, to, steps):
+        case let .drag(from, to, steps, hold):
             let hit = hitName(from), note = firstMouseNote(at: from)
             let moves = (1...steps).map { step -> Gesture in
                 let t = Double(step) / Double(steps)
                 return (.leftMouseDragged, UIPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t), 1)
             }
-            send(.leftMouseDown, then: moves + [(.leftMouseUp, to, 1)], at: from, flags: [])
+            send(.leftMouseDown, then: moves + (hold > 0 ? [] : [(.leftMouseUp, to, 1)]), at: from, flags: [])
+            if hold > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [self] in
+                    if let up = mouseEvent(.leftMouseUp, at: to, flags: [], clickCount: 1) { NSApp.postEvent(up, atStart: false) }
+                }
+            }
             try? await Task.sleep(for: .milliseconds(50))
-            return "Dragged from (\(UIReport.number(from.x)), \(UIReport.number(from.y))) to (\(UIReport.number(to.x)), \(UIReport.number(to.y))) in \(steps) steps, starting on \(hit)." + note
+            return "Dragged from (\(UIReport.number(from.x)), \(UIReport.number(from.y))) to (\(UIReport.number(to.x)), \(UIReport.number(to.y))) in \(steps) steps, starting on \(hit)"
+                + (hold > 0 ? ", holding \(UIReport.number(hold))s before releasing." : ".") + note
         case let .scroll(point, dx, dy):
             let event = try scrollEvent(at: point, dx: dx, dy: dy, phase: nil)
             window.sendEvent(event)
