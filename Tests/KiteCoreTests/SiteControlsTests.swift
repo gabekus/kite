@@ -51,6 +51,22 @@ import Testing
         #expect(InternalPage.siteSettings.title == "Site Settings")
     }
 
+    @Test func boostsWordsAreArcs() {
+        #expect(SiteControls.boostsTitle == "Boosts")
+        #expect(SiteControls.boostsHoverText == "Manage")
+        #expect(SiteControls.boostSubtitle(true) == "Enabled")
+        #expect(SiteControls.boostSubtitle(false) == "Disabled")
+        #expect(SiteControls.newBoostTitle == "New Boost")
+        #expect(SiteControls.manageBoostsMenuTitle == "Manage Boosts\u{2026}")
+        #expect(SiteControls.newBoostMenuTitle == "New Boost\u{2026}")
+    }
+
+    @Test func footerMenuOffersBoostsOnlyWithoutABoostsSection() {
+        #expect(SiteControls.includesBoostsInMenu(siteBoostCount: 0, boostsAvailable: true))
+        #expect(!SiteControls.includesBoostsInMenu(siteBoostCount: 2, boostsAvailable: true))
+        #expect(!SiteControls.includesBoostsInMenu(siteBoostCount: 0, boostsAvailable: false))
+    }
+
     @Test func clickingAPermissionFlipsIt() {
         #expect(SitePermissionValue.allow.toggled == .block)
         #expect(SitePermissionValue.block.toggled == .allow)

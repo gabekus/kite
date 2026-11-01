@@ -19,6 +19,13 @@ final class SiteControlsModel {
         var toggleDeveloperMode: () -> Void
         /// "All Site Settings…" and the Settings header: the site's settings page in a new tab.
         var openSiteSettings: () -> Void
+        /// New Boost (the action button and the footer item): a Boost for this site, in its editor.
+        var newBoost: () -> Void
+        /// A Boost row's edit button: that Boost in its editor.
+        var editBoost: (UUID) -> Void
+        var setBoostEnabled: (UUID, Bool) -> Void
+        /// The Boosts header and "Manage Boosts…": Window › View Boosts….
+        var manageBoosts: () -> Void
     }
 
     let url: URL
@@ -29,6 +36,8 @@ final class SiteControlsModel {
     var isInDeveloperMode = false
     /// Nil on WebKit, which keeps no per-site permissions Kite can read.
     var permissions: [SitePermission: SitePermissionValue]?
+    /// This site's Boosts; nil where Boosts can't run (incognito, or a page with no domain).
+    var boosts: [Boost]?
     @ObservationIgnored var actions: Actions
     @ObservationIgnored var read: (SiteControlsModel) -> Void
     @ObservationIgnored var dismiss: () -> Void = {}
@@ -53,8 +62,9 @@ final class SiteControlsModel {
 /// a 262pt popover; a row of 48.75×32.75 action buttons; a "Settings" section of 208×33 rows
 /// (icon, title, and an On/Off or Allowed/Blocked subtitle; a click flips it) on a 43pt pitch;
 /// and a footer with the 82×32 security button on the left and a 32×32 "…" menu (Clear Cache,
-/// Clear Cookies, All Site Settings…) on the right. Kite has no Boosts, capture or extensions
-/// section here yet.
+/// Clear Cookies, Manage Boosts… / New Boost…, All Site Settings…) on the right. Between the
+/// actions and Settings, the Boosts section lists the site's Boosts (Enabled / Disabled). Kite
+/// has no capture buttons or extensions section here.
 struct SiteControlsView: View {
     let model: SiteControlsModel
 
@@ -81,10 +91,37 @@ struct SiteControlsView: View {
             HStack(spacing: Metrics.actionPitch - Metrics.actionSize.width) {
                 ActionButton(symbol: "link", help: "Copy URL") { _ in model.actions.copyURL() }
                 ActionButton(symbol: "square.and.arrow.up", help: "Share") { view in model.actions.share(view) }
+                if model.boosts != nil {
+                    ActionButton(symbol: "wand.and.stars", help: SiteControls.newBoostTitle) { _ in
+                        model.dismiss(); model.actions.newBoost()
+                    }
+                }
             }
             .padding(.bottom, Metrics.sectionGap)
 
-            SettingsHeader { model.dismiss(); model.actions.openSiteSettings() }
+            if let boosts = model.boosts, !boosts.isEmpty {
+                ControlsSectionHeader(title: SiteControls.boostsTitle, hoverText: SiteControls.boostsHoverText,
+                              hint: SiteControls.manageBoostsMenuTitle) {
+                    model.dismiss(); model.actions.manageBoosts()
+                }
+                .padding(.bottom, Metrics.headerToRows)
+                VStack(alignment: .leading, spacing: Metrics.rowPitch - Metrics.rowSize.height) {
+                    ForEach(boosts) { boost in
+                        SiteBoostRow(boost: boost) {
+                            model.perform { model.actions.setBoostEnabled(boost.id, !boost.isEnabled) }
+                        } edit: {
+                            model.dismiss(); model.actions.editBoost(boost.id)
+                        }
+                    }
+                }
+                .padding(.leading, (Metrics.width - 2 * Metrics.inset - Metrics.rowSize.width) / 2)
+                .padding(.bottom, Metrics.sectionGap)
+            }
+
+            ControlsSectionHeader(title: SiteControls.settingsTitle, hoverText: SiteControls.settingsHoverText,
+                          hint: SiteControls.allSiteSettingsTitle) {
+                model.dismiss(); model.actions.openSiteSettings()
+            }
                 .padding(.bottom, Metrics.headerToRows)
 
             VStack(alignment: .leading, spacing: Metrics.rowPitch - Metrics.rowSize.height) {
@@ -194,18 +231,22 @@ private struct SettingRow: View {
     }
 }
 
-/// The Settings section's header. Arc's shows "More" on hover, and a click opens the site's
-/// settings (`onSiteSettingsTitleClick`).
-private struct SettingsHeader: View {
+/// A section's header: the title, and a word shown at its right on hover. Arc's Settings
+/// header shows "More" and opens the site's settings (`onSiteSettingsTitleClick`); its Boosts
+/// header shows "Manage" and manages Boosts (`onManageBoostsClick`).
+private struct ControlsSectionHeader: View {
+    let title: String
+    let hoverText: String
+    let hint: String
     let action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 0) {
-                Text(SiteControls.settingsTitle)
+                Text(title)
                 Spacer(minLength: 0)
-                Text(SiteControls.settingsHoverText).opacity(hovering ? 1 : 0)
+                Text(hoverText).opacity(hovering ? 1 : 0)
             }
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.secondary)
@@ -215,8 +256,62 @@ private struct SettingsHeader: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .accessibilityLabel(SiteControls.settingsTitle)
-        .accessibilityHint(SiteControls.allSiteSettingsTitle)
+        .accessibilityLabel(title)
+        .accessibilityHint(hint)
+    }
+}
+
+/// A row of the Boosts section (Arc's Boost row: `onToggleClick`, `onEditClick`, hovered state):
+/// the Boost's name, subtitled Enabled / Disabled; a click turns it on or off, and the pencil
+/// shown on hover opens it in the editor.
+private struct SiteBoostRow: View {
+    let boost: Boost
+    let toggle: () -> Void
+    let edit: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        let subtitle = SiteControls.boostSubtitle(boost.isEnabled)
+        ZStack(alignment: .trailing) {
+            Button(action: toggle) {
+                HStack(spacing: 8) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(boost.isEnabled ? Color.accentColor : Color.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Color.primary.opacity(0.08)))
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(boost.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, 4)
+                .padding(.trailing, 32)
+                .frame(width: SiteControlsView.Metrics.rowSize.width, height: SiteControlsView.Metrics.rowSize.height)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(hovering ? 0.08 : 0)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(boost.name)
+            .accessibilityValue(subtitle)
+
+            Button(action: edit) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(hovering ? 1 : 0)
+            .padding(.trailing, 4)
+            .help("Edit Boost")
+            .accessibilityLabel("Edit Boost")
+        }
+        .frame(width: SiteControlsView.Metrics.rowSize.width, height: SiteControlsView.Metrics.rowSize.height)
+        .onHover { hovering = $0 }
+        .help(boost.name)
     }
 }
 
@@ -237,9 +332,10 @@ private struct SecurityLabel: View {
     }
 }
 
-/// The footer's "…": Arc's menu has Clear Cache, Clear Cookies, Boosts and extensions items,
-/// and All Site Settings… last. Kite has Clear Cache, Clear Cookies (its clear-and-refresh, as
-/// in the View menu) and All Site Settings….
+/// The footer's "…": Arc's menu has Clear Cache, Clear Cookies, Manage Boosts…, New Boost… (only
+/// some of the time: `includeBoostsInContextMenu`), the extensions items, and All Site Settings…
+/// last. Kite has all but the extensions items; Clear Cache and Clear Cookies are its
+/// clear-and-refresh, as in the View menu.
 private struct FooterMenu: View {
     let model: SiteControlsModel
 
@@ -247,6 +343,11 @@ private struct FooterMenu: View {
         Menu {
             Button("Clear Cache") { model.dismiss(); model.actions.clearCache() }
             Button("Clear Cookies") { model.dismiss(); model.actions.clearCookies() }
+            if SiteControls.includesBoostsInMenu(siteBoostCount: model.boosts?.count ?? 0,
+                                                 boostsAvailable: model.boosts != nil) {
+                Button(SiteControls.manageBoostsMenuTitle) { model.dismiss(); model.actions.manageBoosts() }
+                Button(SiteControls.newBoostMenuTitle) { model.dismiss(); model.actions.newBoost() }
+            }
             Button(SiteControls.allSiteSettingsTitle) { model.dismiss(); model.actions.openSiteSettings() }
         } label: {
             Image(systemName: "ellipsis")

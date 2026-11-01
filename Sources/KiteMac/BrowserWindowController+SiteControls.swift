@@ -3,8 +3,8 @@ import KiteCore
 
 /// Site Controls (Arc's Site Control Center): the popover from the sliders button in the
 /// sidebar's address field and in the page toolbar. It gathers Kite's per-site switches in
-/// one place: the ad blocker, Developer Mode, the default mail app, permissions (Chromium only),
-/// clearing the site's cache or cookies, and the site's settings page.
+/// one place: the site's Boosts, the ad blocker, Developer Mode, the default mail app, permissions
+/// (Chromium only), clearing the site's cache or cookies, and the site's settings page.
 extension BrowserWindowController {
     func toggleSiteControls(from view: NSView, overlap: CGFloat = 0) {
         SiteControlsPopover.toggle(makeSiteControls(), from: view, overlap: overlap)
@@ -21,7 +21,11 @@ extension BrowserWindowController {
             setPermission: { [weak self] permission, value in self?.shownPage?.setSitePermission(permission, value, for: url) },
             removeMailHandler: { MailHandlers.shared.remove(host: url.host) },
             toggleDeveloperMode: { [weak self] in self?.store.mutate { $0.toggleDeveloperMode(for: url) } },
-            openSiteSettings: { [weak self] in self?.openSiteSettings(for: url) }
+            openSiteSettings: { [weak self] in self?.openSiteSettings(for: url) },
+            newBoost: { [weak self] in self?.newBoost(nil) },
+            editBoost: { [weak self] id in self?.editSiteBoost(id) },
+            setBoostEnabled: { id, enabled in BoostsModel.shared.setEnabled(id, enabled) },
+            manageBoosts: { [weak self] in self?.viewBoosts(nil) }
         )
         return SiteControlsModel(url: url, actions: actions) { [weak self] model in
             guard let self else { return }
@@ -29,6 +33,8 @@ extension BrowserWindowController {
             model.blocksAds = Adblocker.isAvailable ? store.state.blocksAds(on: url) : nil
             model.isMailHandler = MailHandlers.shared.isDefault(host: url.host) ? true : nil
             model.isInDeveloperMode = store.state.isInDeveloperMode(url)
+            model.boosts = isIncognito || BoostLibrary.domain(of: url) == nil
+                ? nil : BoostsModel.shared.library.boosts(for: url)
             if let page = shownPage, page.sitePermission(.camera, for: url) != nil {
                 var values: [SitePermission: SitePermissionValue] = [:]
                 for permission in SitePermission.allCases {
@@ -39,6 +45,12 @@ extension BrowserWindowController {
                 model.permissions = nil
             }
         }
+    }
+
+    /// A Boost row's edit button: the Boost in its editor, refreshing the current tab.
+    private func editSiteBoost(_ id: UUID) {
+        guard let tabID = store.state.selectedTab?.id else { return }
+        BoostEditorWindowController.show(id, refresh: { [weak self] in self?.pool.loadedPage(tabID)?.reload() }, browser: self)
     }
 
     /// Site Controls' "All Site Settings…" (and its Settings header): the site's settings page in a
