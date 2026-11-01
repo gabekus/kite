@@ -49,19 +49,16 @@ extension BrowserWindowController {
     /// the pinned URL (placeholder "Enter a URL…"), and Save and Cancel.
     func editPinnedURL(_ id: UUID) {
         guard let window, let tab = store.state.tab(id), let pinned = tab.pinnedURL else { return }
-        let alert = NSAlert()
-        alert.messageText = "Edit Pinned URL"
-        alert.informativeText = "This is what opens first when you click this tab or its favicon."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(string: pinned.absoluteString)
-        field.placeholderString = "Enter a URL…"
-        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn, let self else { return }
-            if !self.store.mutate({ $0.editPinnedURL(id, to: field.stringValue) }) { NSSound.beep() }
+        ArcDialog.present(
+            on: window,
+            title: "Edit Pinned URL",
+            message: "This is what opens first when you click this tab or its favicon.",
+            field: .init(text: pinned.absoluteString, placeholder: "Enter a URL…"),
+            actions: [.init(title: "Cancel", role: .cancel), .init(title: "Save", role: .primary)],
+            width: 393
+        ) { [weak self] action, text in
+            guard action == 1, let self else { return }
+            if !self.store.mutate({ $0.editPinnedURL(id, to: text) }) { NSSound.beep() }
         }
     }
 
@@ -106,21 +103,17 @@ extension BrowserWindowController {
     }
 
     /// Arc's dialog (WindowData+Dialogs): "Rename Tab…", placeholder "Keep it short and sweet!",
-    /// Rename and Cancel.
+    /// Rename and Cancel, in Arc's own dialog sheet.
     private func showRenameTabDialog(_ id: UUID) {
         guard let window, let tab = store.state.tab(id) else { return }
-        let alert = NSAlert()
-        alert.messageText = "Rename Tab…"
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(string: tab.displayTitle)
-        field.placeholderString = "Keep it short and sweet!"
-        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            self?.store.mutate { $0.renameTab(id, to: field.stringValue) }
+        ArcDialog.present(
+            on: window,
+            title: "Rename Tab…",
+            field: .init(text: tab.displayTitle, placeholder: "Keep it short and sweet!"),
+            actions: [.init(title: "Cancel", role: .cancel), .init(title: "Rename", role: .primary)]
+        ) { [weak self] action, text in
+            guard action == 1 else { return }
+            self?.store.mutate { $0.renameTab(id, to: text) }
         }
     }
 
@@ -155,20 +148,10 @@ extension BrowserWindowController {
         }
     }
 
+    /// A folder's Rename…: edits its name in place in its sidebar row, like a tab's title.
     func renameFolder(_ id: UUID) {
-        guard let window, let found = store.state.folder(matching: id.uuidString) else { return }
-        let alert = NSAlert()
-        alert.messageText = "Rename Folder"
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(string: found.folder.name)
-        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
-            self?.store.mutate { $0.renameFolder(id, to: field.stringValue) }
-        }
+        guard store.state.folder(matching: id.uuidString) != nil else { return }
+        store.beginRenaming(folder: id)
     }
 
     /// Arc's folder Delete: asks first (Arc's wording), archives the tabs inside, then

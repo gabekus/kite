@@ -52,6 +52,8 @@ final class BrowserStore {
     private(set) var renamingSpaceID: UUID?
     /// The tab whose sidebar title is being edited in place (Arc's Rename… / double-click).
     private(set) var renamingTabID: UUID?
+    /// The folder whose name is being edited in place in the sidebar.
+    private(set) var renamingFolderID: UUID?
     private(set) var isSidebarVisible = true
     private(set) var revealRequest: RevealRequest?
     /// macOS light/dark, which dark pages follow in `.matchSystem`.
@@ -189,6 +191,13 @@ final class BrowserStore {
     }
 
     func endRenamingTab() { renamingTabID = nil }
+
+    func beginRenaming(folder id: UUID) {
+        if !isSidebarVisible { toggleSidebar() }
+        renamingFolderID = id
+    }
+
+    func endRenamingFolder() { renamingFolderID = nil }
 
     func showCommandBar(_ mode: CommandBarMode) {
         commandBar = mode

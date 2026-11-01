@@ -21,18 +21,17 @@ enum BoostAlerts {
         run(alert, in: window) { completion($0 == .alertFirstButtonReturn) }
     }
 
-    /// Arc's "Rename this Boost" alert with the name in a text field.
+    /// Arc's "Rename this Boost", with the name in Arc's own dialog sheet (`ArcDialog`) rather
+    /// than an NSAlert.
     static func rename(_ boost: Boost, in window: NSWindow?, completion: @escaping (String) -> Void) {
-        let alert = NSAlert()
-        alert.messageText = "Rename this Boost"
-        let field = NSTextField(string: boost.name)
-        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Done")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        run(alert, in: window) { response in
-            if response == .alertFirstButtonReturn { completion(field.stringValue) }
+        guard let window else { return NSSound.beep() }
+        ArcDialog.present(
+            on: window,
+            title: "Rename this Boost",
+            field: .init(text: boost.name, placeholder: ""),
+            actions: [.init(title: "Cancel", role: .cancel), .init(title: "Done", role: .primary)]
+        ) { action, text in
+            if action == 1 { completion(text) }
         }
     }
 
