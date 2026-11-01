@@ -30,7 +30,8 @@ public enum TabSearch {
     }
 
     static func score(_ q: String, _ tab: BrowserTab) -> Int? {
-        let title = tab.title.lowercased()
+        // A renamed tab is found by its name as well as its page's title.
+        let title = [tab.customTitle, tab.title].compactMap { $0 }.joined(separator: " ").lowercased()
         let host = (tab.url?.host() ?? "").lowercased().replacingOccurrences(of: "www.", with: "")
         let url = tab.url?.absoluteString.lowercased() ?? ""
 

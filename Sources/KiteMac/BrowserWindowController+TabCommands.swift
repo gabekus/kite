@@ -16,6 +16,47 @@ extension BrowserWindowController {
         store.mutate { _ = $0.duplicate(tab: id) }
     }
 
+    /// Arc's "Rename Current Tab…": edits the tab's title in place in the sidebar, or, with the
+    /// sidebar hidden (or the tab a favorite or split pane), in Arc's "Rename Tab…" dialog.
+    @objc func renameCurrentTab(_ sender: Any?) {
+        guard let tab = store.state.selectedTab else { return NSSound.beep() }
+        renameTab(tab.id)
+    }
+
+    func renameTab(_ id: UUID) {
+        // Favorites and split panes have no title row to edit in.
+        let hasRow = !store.state.favorites.contains { $0.id == id } && store.state.split(containing: id) == nil
+        if store.isSidebarVisible && hasRow {
+            store.beginRenaming(tab: id)
+        } else {
+            showRenameTabDialog(id)
+        }
+    }
+
+    /// Arc's dialog (WindowData+Dialogs): "Rename Tab…", placeholder "Keep it short and sweet!",
+    /// Rename and Cancel.
+    private func showRenameTabDialog(_ id: UUID) {
+        guard let window, let tab = store.state.tab(id) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename Tab…"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: tab.displayTitle)
+        field.placeholderString = "Keep it short and sweet!"
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.store.mutate { $0.renameTab(id, to: field.stringValue) }
+        }
+    }
+
+    /// View → Collapse / Expand Pinned Tabs for the current space.
+    @objc func togglePinnedSection(_ sender: Any?) {
+        store.mutate { $0.togglePinnedSection($0.selectedSpaceID) }
+    }
+
     /// Renames the space in place in its header, like Arc.
     @objc func renameSpace(_ sender: Any?) { store.beginRenaming(space: store.state.selectedSpaceID) }
 

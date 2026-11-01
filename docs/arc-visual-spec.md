@@ -507,6 +507,30 @@ windows ("Archive Little Arcs after:"); no global hotkey.
   the command bar (`showCommandBar` is among `initialAppearanceActions`), the blank window's look, and what
   Arc does when two windows select the same tab (`ContentPlaceholderSourceData` hints at a placeholder).
 
+## Rename tab and Collapse Pinned Tabs (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
+
+- View menu (AX, nothing pressed): "Collapse Pinned Tabs", no shortcut, right after Show Toolbar ⇧⌘D. Strings
+  "Collapse Pinned Tabs" / "Expand Pinned Tabs" (menu item titles), selectors `collapsePinnedSection:` and
+  `expandPinnedSection:`, `collapsePinnedSectionEnabled`. State: window data key
+  `spacesWithCollapsedPinnedSections` (per space), `PinnedSectionExpansionState`, toggle sources
+  `PinnedSectionToggledSource`, sidebar action `didClickPinnedTabsExpansionToggler`, AX id
+  `sidebarSpacePinnedTabsExpansionToggler`. The space header view has `pinnedSectionExpansionState`,
+  `chevronContainerView`, `chevronWidthConstraint` and `chevronView`, so the toggle is a chevron in the header.
+- Rename: the sidebar item menu has "Rename…" (comment "Rename a tab"), decoded from Swift small-string
+  immediates near `ContextMenus/SidebarMenu+PlatformGeneration.swift` in `~/rea-arc/decomp/arc.s`
+  (around line 12252170). Command-bar action "Rename Current Tab…" ("Action to rename current tab in the
+  sidebar"), action id `renameCurrentTab` (`RenameCurrentTabCodingKeys`), shortcut-list description "Rename the
+  current tab." (arc-strings.txt ~80753); not in the menu bar and no default key found. Dialog
+  (`WindowData+Dialogs.swift`, arc.s ~`0x10292bfa0`): title "Rename Tab…", placeholder "Keep it short and
+  sweet!", buttons "Rename" and "Cancel". In-place hint "Double-click to rename" ("Subtitle shown on tab with
+  hint on how to rename tab", `RenameTabHint`, `WindowData+RenameHints.swift`).
+- Kite: in-place edit in the row (Rename…, double-click, or the command when the sidebar shows); Arc's dialog
+  when the sidebar is hidden or the tab is a favorite or split pane. The name lives in `BrowserTab.customTitle`.
+- Inferred, not observed (Arc's sidebar was hidden in every open window, and Arc isn't driven): the chevron's
+  place and look, that it shows on hover, that a collapsed section still shows the selected pinned tab (Kite
+  does, as Arc's collapsed folders do), whether Arc's in-place editor selects the text, what an empty name
+  does (Kite goes back to the page title), the hover hint's timing (not built), and whether Arc keeps the
+  collapsed set per window (Kite saves it with the shared sidebar).
 ## Import from Arc: what Arc keeps where (Arc 1.171 files, defaults and strings, 1 Nov 2026)
 
 Key names and structure only, read from Arc's files in ~/Library/Application Support/Arc; nothing of the
