@@ -105,6 +105,14 @@ final class SidebarDragModel {
 
     func forget(_ row: Row) { rows[row.key] = nil }
 
+    /// A row whose kind or place changed without moving (a folder collapsing): keep its frame.
+    func refresh(_ row: Row) {
+        guard let frame = rows[row.key]?.frame else { return }
+        var row = row
+        row.frame = frame
+        report(row)
+    }
+
     private func row(_ id: UUID) -> Row? {
         rows[id.uuidString] ?? rows.values.first { $0.members.contains(id) }
     }
@@ -467,6 +475,7 @@ struct SidebarDragSource<Ghost: View>: ViewModifier {
                 drag?.report(row)
             }
             .onDisappear { drag?.forget(row) }
+            .onChange(of: row) { _, row in drag?.refresh(row) }
             .gesture(draggable ? gesture : nil)
     }
 
