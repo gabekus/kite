@@ -77,13 +77,13 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
         self.boostID = boostID
         zapTool = BoostZapTool(boostID: boostID, browser: browser)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 720),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: true
         )
         window.title = "Boost"
-        window.minSize = NSSize(width: 380, height: 320)
+        window.minSize = NSSize(width: 420, height: 520)
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("BoostEditor")
         if window.frame.origin == .zero { window.center() }
@@ -158,7 +158,8 @@ final class BoostZapTool: ObservableObject {
     }
 }
 
-/// Arc's code input panel: CSS and JavaScript tabs over one editor.
+/// Arc's Boost editor: the simple controls (colours, font, text size and case) over its code
+/// input panel, CSS and JavaScript tabs over one editor.
 struct BoostEditorView: View {
     enum CodeType: String, CaseIterable, Identifiable {
         case css = "CSS"
@@ -196,6 +197,8 @@ struct BoostEditorView: View {
         if let boost = model.library.boost(boostID) {
             VStack(spacing: 0) {
                 header(boost)
+                Divider()
+                BoostStyleControls(boostID: boostID)
                 Divider()
                 editor(boost)
                 if codeType == .js, !js.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,

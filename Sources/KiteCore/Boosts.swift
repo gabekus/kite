@@ -1,7 +1,7 @@
 import Foundation
 
-/// One Boost: Arc's per-site customisation. Kite keeps Arc's code Boost (CSS and JavaScript)
-/// and its zaps for one domain; Arc's colour, font and text size/case options come later.
+/// One Boost: Arc's per-site customisation for one domain: its code (CSS and JavaScript), its
+/// zaps, and the simple controls (colours, font, text size and case; see BoostStyles.swift).
 public struct Boost: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
     public var name: String
@@ -12,6 +12,14 @@ public struct Boost: Codable, Equatable, Identifiable, Sendable {
     /// Arc's Zap: selectors of elements hidden on the site, oldest first. Part of the Boost's
     /// data in Arc (`BoostData`), so turning the Boost off shows them again.
     public var zaps: [String]
+    /// Arc's `BoostFont.family`; nil keeps the page's fonts.
+    public var fontFamily: String?
+    /// Arc's `BoostTextTransform`; nil keeps the page's case.
+    public var textCase: BoostTextCase?
+    /// Arc's `BoostTextZoom.level`, a percent from `BoostTextZoom.levels`; nil is 100.
+    public var textZoom: Int?
+    /// Arc's colour-wheel colour scheme; nil keeps the page's colours.
+    public var colors: BoostColorWheel?
     /// Arc lets you switch a Boost off without deleting it.
     public var isEnabled: Bool
     public var createdAt: Date
@@ -19,7 +27,8 @@ public struct Boost: Codable, Equatable, Identifiable, Sendable {
 
     public init(
         id: UUID = UUID(), name: String, domain: String, css: String = "", js: String = "",
-        zaps: [String] = [], isEnabled: Bool = true, createdAt: Date = Date(), updatedAt: Date? = nil
+        zaps: [String] = [], fontFamily: String? = nil, textCase: BoostTextCase? = nil, textZoom: Int? = nil,
+        colors: BoostColorWheel? = nil, isEnabled: Bool = true, createdAt: Date = Date(), updatedAt: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -27,6 +36,10 @@ public struct Boost: Codable, Equatable, Identifiable, Sendable {
         self.css = css
         self.js = js
         self.zaps = zaps
+        self.fontFamily = fontFamily
+        self.textCase = textCase
+        self.textZoom = textZoom
+        self.colors = colors
         self.isEnabled = isEnabled
         self.createdAt = createdAt
         self.updatedAt = updatedAt ?? createdAt
@@ -36,14 +49,21 @@ public struct Boost: Codable, Equatable, Identifiable, Sendable {
     public var isEmpty: Bool {
         css.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && js.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && zaps.isEmpty
+            && zaps.isEmpty && !hasStyle
+    }
+
+    /// Whether any of the simple controls (colours, font, text size or case) is set.
+    public var hasStyle: Bool {
+        !(fontFamily ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || textCase != nil
+            || (textZoom != nil && textZoom != BoostTextZoom.normal) || colors != nil
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, domain, css, js, zaps, isEnabled, createdAt, updatedAt
+        case id, name, domain, css, js, zaps, fontFamily, textCase, textZoom, colors, isEnabled, createdAt, updatedAt
     }
 
-    /// boosts.json written before Boosts held zaps has no `zaps`.
+    /// boosts.json written before Boosts held zaps has no `zaps`, and none before the simple
+    /// controls has their keys.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -52,6 +72,11 @@ public struct Boost: Codable, Equatable, Identifiable, Sendable {
         css = try container.decode(String.self, forKey: .css)
         js = try container.decode(String.self, forKey: .js)
         zaps = try container.decodeIfPresent([String].self, forKey: .zaps) ?? []
+        fontFamily = try container.decodeIfPresent(String.self, forKey: .fontFamily)
+        // A case or colour scheme from a newer Kite that this one can't read is dropped, not fatal.
+        textCase = (try? container.decodeIfPresent(BoostTextCase.self, forKey: .textCase)) ?? nil
+        textZoom = try container.decodeIfPresent(Int.self, forKey: .textZoom)
+        colors = (try? container.decodeIfPresent(BoostColorWheel.self, forKey: .colors)) ?? nil
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
@@ -201,15 +226,27 @@ public enum BoostScript {
     /// JavaScript doesn't is left out, so one typo can't break the other document-start
     /// scripts it's joined with. Its CSS still applies.
     public static func source(for boosts: [Boost], isValidJS: (String) -> Bool = { _ in true }) -> String? {
-        let styles = boosts.filter { !$0.css.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        // A Boost's font and text case rules come before its own CSS, so its CSS wins a tie.
+        let styles: [(Boost, String)] = boosts.compactMap { boost in
+            let css = [BoostStyle.css(for: boost), boost.css]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+            return css.isEmpty ? nil : (boost, css)
+        }
         let scripts = boosts.filter {
             !$0.js.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && isValidJS(wrapped($0.js))
         }
         var seen = Set<String>()
         let zapCSS = ZapLibrary.css(boosts.flatMap(\.zaps).filter { seen.insert($0).inserted })
-        guard !styles.isEmpty || !scripts.isEmpty || !zapCSS.isEmpty else { return nil }
+        // One Boost owns a site's text size and colours, as in Arc (textZoomOwnerMap,
+        // colorSchemeOwnerMap): the newest that sets them.
+        let zoom = boosts.last { $0.textZoom != nil && $0.textZoom != BoostTextZoom.normal }?.textZoom
+        let colors = boosts.last { $0.colors != nil }?.colors
+        let lookCSS = [BoostStyle.zoomCSS(zoom), BoostStyle.colorCSS(colors)].filter { !$0.isEmpty }.joined(separator: "\n")
+        let tables = colors.map(BoostStyle.filterTables)
+        guard !styles.isEmpty || !scripts.isEmpty || !zapCSS.isEmpty || !lookCSS.isEmpty else { return nil }
 
-        let styleList = styles.map { "[\(literal("kite-boost-" + $0.id.uuidString.lowercased())), \(literal($0.css))]" }
+        let styleList = styles.map { "[\(literal("kite-boost-" + $0.0.id.uuidString.lowercased())), \(literal($0.1))]" }
         let functions = scripts.map { "    () => \(wrapped($0.js))," }
         return """
         (() => {
@@ -217,6 +254,8 @@ public enum BoostScript {
           window.__kiteBoosts = true;
           const styles = [\(styleList.joined(separator: ", "))];
           const zaps = \(literal(zapCSS));
+          const look = \(literal(lookCSS));
+          const tables = \(tables.map { "[\(literal($0.r)), \(literal($0.g)), \(literal($0.b))]" } ?? "null");
           const addStyles = () => {
             const root = document.head || document.documentElement;
             for (const [id, css] of styles) {
@@ -232,6 +271,32 @@ public enum BoostScript {
               style.setAttribute('\(ZapScript.styleAttribute)', '');
               style.textContent = zaps;
               root.append(style);
+            }
+            // Text size and colours: one style, and the SVG filter the colour rule points at.
+            if (look && !document.querySelector('style[\(lookAttribute)]')) {
+              const style = document.createElement('style');
+              style.setAttribute('\(lookAttribute)', '');
+              style.textContent = look;
+              root.append(style);
+            }
+            // Built node by node: innerHTML is blocked on pages with Trusted Types.
+            if (tables && !document.querySelector('[\(filterAttribute)]')) {
+              const ns = 'http://www.w3.org/2000/svg';
+              const node = (name, attributes, children = []) => {
+                const element = document.createElementNS(ns, name);
+                for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
+                element.append(...children);
+                return element;
+              };
+              const svg = node('svg', {
+                '\(filterAttribute)': '', width: '0', height: '0', 'aria-hidden': 'true',
+                style: 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none'
+              }, [node('filter', { id: '\(BoostStyle.filterID)', 'color-interpolation-filters': 'sRGB' }, [
+                node('feColorMatrix', { type: 'matrix', values: \(literal(BoostStyle.meanMatrix)) }),
+                node('feComponentTransfer', {}, ['feFuncR', 'feFuncG', 'feFuncB'].map((name, i) =>
+                  node(name, { type: 'table', tableValues: tables[i] })))
+              ])]);
+              document.documentElement.append(svg);
             }
           };
           if (document.documentElement) addStyles();
@@ -249,6 +314,11 @@ public enum BoostScript {
         })();
         """
     }
+
+    /// The attribute on the style that holds a site's Boost text size and colour rules.
+    public static let lookAttribute = "data-kite-boost-look"
+    /// The attribute on the SVG that holds a site's Boost colour filter.
+    public static let filterAttribute = "data-kite-boost-filter"
 
     /// A Boost's JavaScript as a function expression, so `return` works and its names stay local.
     public static func wrapped(_ js: String) -> String {

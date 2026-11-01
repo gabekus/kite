@@ -1192,6 +1192,52 @@ title string is inlined, so unknown); the editor's sizes and layout are Kite's (
 leaves out a Boost's JavaScript when it doesn't parse (shown under the editor), since its document-start
 scripts share one source with the ad blocker's.
 
+## Boost style controls → `BoostStyles.swift` (KiteCore), `BoostStyleControls` (Arc 1.171 strings, disassembly and assets, 1 Nov 2026)
+
+Nothing in Arc was pressed or watched. Line numbers are `~/rea-arc/arc-strings.txt`; addresses are `decomp/Arc-arm64`
+(`arc.s`).
+
+- **Data** (`BoostData`, strings 37300–37311, 163100–163130): `BoostFont` (`family`), `BoostTextTransform`
+  (`capitalize`, `uppercase`, `lowercase`), `BoostTextZoom` (`level`), `BoostColorScheme` = `colorWheelDriven`
+  (`primaryHueDegrees`, `primarySaturation`, `secondaryHueOffset`, `invertLightness`, `baseAppearance`,
+  `advancedSettings`: `preservedSaturation`, `preservedLightness`, `lightnessShift`) or `themeDriven` (light/dark
+  curves). Kite stores `fontFamily`, `textCase`, `textZoom` and `colors` (the colour-wheel fields) on each Boost.
+- **Font and case** (BoostsClient.applyToWebContent, 0x10117645c): stylesheets
+  `*:not(i, .material-symbols-outlined, .material-icons) { font-family: "<family>" !important; }` and
+  `… { text-transform: <case> !important; }` (strings 71516–71517; the tails are inline small strings at 0x101176734
+  and 0x101176ce4). Kite writes the same rules before the Boost's own CSS.
+- **Fonts offered** (strings 199697–199714, in order): Helvetica Neue, Avenir, Futura, DIN Alternate, PT Mono,
+  Courier, Times New Roman, Charter, Baskerville, Hoefler Text, Palatino, Chalkboard, SignPainter, Snell Roundhand,
+  Papyrus, Apple Chancery, Luminari, Wingdings. The picker is a grid (`GridItem`) of `FontButton`s labelled "Aa"
+  (0x1012b4dc8).
+- **Text size**: `BoostTextZoomOption` cases small, normal, medium, large, larger (strings 163622–163626) with raw
+  values 90, 100, 110, 125, 150 (Int table at 0x103719a58, read by its hash/rawValue functions at 0x101293c4c–
+  0x101293d48). Arc registers a zoom factor of level / 100 for the host (`registerZoomFactor:forHostPattern:`,
+  0x101176d3c divides by 100.0). Kite uses `html { zoom: level/100 }` instead (same look, no native per-host zoom).
+- **Colours**: Arc builds four rows of five floats (hue, saturation, lightness, alpha; columns h, s, l, a, offset)
+  and registers them as a colour filter for the host (`registerColorFilter:forHostPattern:`, 0x10117683c):
+  hue' = (hue − second)·L + second, with hue = primaryHueDegrees/360 and second = (primaryHueDegrees +
+  secondaryHueOffset)/360; S' = p·S + (1 − p)·primarySaturation, p = preservedSaturation ?? 0.5;
+  L' = a·L + b + shift, with k = (1 − (preservedLightness ?? 0.5))·0.2·clamp(primarySaturation), (a, b) = (1 − 3k, 2k),
+  or (3k − 1, 1 − k) inverted, shift = lightnessShift·0.2 (helper 0x101146d14). Kite computes the same matrix
+  (`BoostColorWheel.matrix`, tested) but applies it with an SVG filter on the root: lightness is estimated as the
+  mean of R, G, B and looked up in 33-sample tables made from the matrix, so greys map exactly and coloured pixels
+  map as if grey (their own saturation isn't seen). Images and video are filtered too; whether Arc's filter touches
+  them is unverified.
+- **Wheel**: hue ring (`HueRing` 256×256 asset), pucks (`DraggablePuck`, `isSecondary`), angle = atan2 of the point
+  from the centre in degrees 0–360, saturation = (distance/radius − 0.1)/0.9 clamped (0x1012d2560, 0x1012d15f0).
+  Buttons with their tooltips: "Invert lightness" (SF `lightbulb`), "Reset to original colors" (`nosign`),
+  "Advanced color controls" (`slider.horizontal.3`) with sliders in Arc's order "Contrast"
+  (preservedLightness), "Brightness" (lightnessShift), "Original Saturation" (preservedSaturation) (strings
+  73411–73426, 0x1012ca198–0x1012ca3a0). Other tooltips: "Change text size" (FontSizeIcon asset), "Change text case".
+- **Inferred in Kite:** the editor layout and sizes (wheel 132 pt, font grid 6 columns; Arc's weren't measured),
+  the text size and case buttons cycling on click (Arc's interaction unseen), clicking the chosen font again to
+  clear it, the slider ranges (0–1, Brightness −1–1, from the maths), a new scheme starting at hue 0,
+  saturation 0.5 and a 180° second hue, and the secondary puck being dragged to change the offset.
+- **Left out:** the analogous/complementary control (`ComplementaryColorControl`, Analogous/ComplementaryColorScheme
+  assets; its offsets weren't found), theme-driven schemes, `baseAppearance`, the editor menu's Shuffle and Reset
+  all Edits, and applying changes live (g51; changes show after Refresh this Page).
+
 ## Sound effects → `SoundEffects` (KiteCore), `SoundEffectPlayer` (Arc 1.171 strings, files, defaults and disassembly, 1 Nov 2026)
 
 - Setting: "Play Arc sound effects" next to "Haptic feedback when reordering tabs" (strings 80425–80426). Keys
