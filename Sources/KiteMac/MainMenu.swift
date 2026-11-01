@@ -334,6 +334,9 @@ enum MainMenu {
             item("Essential Keyboard Shortcuts", #selector(BrowserWindowController.showKeyboardShortcuts(_:)), id: "essentialKeyboardShortcuts"),
             .separator(),
             submenuItem("Troubleshooting", [
+                // Arc: Record Trace, Open Task Manager, —, Reveal Arc Data, Copy Arc Info (no shortcuts).
+                item("Open Task Manager", #selector(BrowserWindowController.openTaskManager(_:)), id: "openTaskManager"),
+                .separator(),
                 item("Reveal Kite Data", #selector(BrowserWindowController.revealDataFolder(_:)), id: "revealKiteData"),
                 item("Copy Kite Info", #selector(BrowserWindowController.copyKiteInfo(_:)), id: "copyKiteInfo"),
             ]),

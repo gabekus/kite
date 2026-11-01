@@ -37,6 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #endif
 
 
+    /// Every browser window: the first, ⌘N and blank windows, and incognito windows.
+    var browserControllers: [BrowserWindowController] {
+        (windowController.map { [$0] } ?? []) + (windows?.all ?? []) + incognitoControllers
+    }
+
     static var supportDirectory: URL {
         if let override = ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] {
             return URL(fileURLWithPath: override, isDirectory: true)
@@ -129,8 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KCRuntime.extensionDialogAnchor = { [weak self] window in
             MainActor.assumeIsolated {
                 guard let self else { return .zero }
-                let controllers = [self.windowController!] + self.windows.all + self.incognitoControllers
-                return controllers.first { $0.window === window }?.webAreaInWindow ?? .zero
+                return self.browserControllers.first { $0.window === window }?.webAreaInWindow ?? .zero
             }
         }
         #endif
