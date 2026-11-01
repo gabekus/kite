@@ -78,6 +78,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         super.init()
         browser.delegate = self
         prepareVerificationCodes()
+        ZapInjection.attach(to: self)
         historySwipe = HistorySwipeController(
             view: browser.view,
             canNavigate: { [weak browser] in $0 == .back ? browser?.canGoBack == true : browser?.canGoForward == true },
@@ -193,6 +194,34 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func archive(completion: @escaping (Data?, String) -> Void) {
         browser.executeDevToolsMethod("Page.captureSnapshot", params: ["format": "mhtml"]) { result in
             completion((result?["data"] as? String)?.data(using: .utf8), "mhtml")
+        }
+    }
+
+    func captureImage(area: CGRect?, completion: @escaping (Data?) -> Void) {
+        let viewWidth = Double(browser.view.bounds.width)
+        let deviceScale = Double(browser.view.window?.backingScaleFactor ?? 2)
+        browser.callDevToolsMethod("Page.getLayoutMetrics", params: nil) { [weak self] metrics, _ in
+            guard let self, let metrics else { return completion(nil) }
+            let visual = metrics["cssVisualViewport"] as? [String: Any] ?? [:]
+            let pageX = visual["pageX"] as? Double ?? 0, pageY = visual["pageY"] as? Double ?? 0
+            let cssWidth = visual["clientWidth"] as? Double ?? viewWidth
+            var params: [String: Any] = ["format": "png"]
+            if let area {
+                // View points to CSS pixels (page zoom); clip scale 1 keeps device resolution.
+                let k = viewWidth > 0 ? cssWidth / viewWidth : 1
+                params["clip"] = ["x": pageX + Double(area.minX) * k, "y": pageY + Double(area.minY) * k,
+                                  "width": Double(area.width) * k, "height": Double(area.height) * k, "scale": 1]
+            } else {
+                let content = metrics["cssContentSize"] as? [String: Any] ?? [:]
+                let width = content["width"] as? Double ?? cssWidth
+                let height = content["height"] as? Double ?? (visual["clientHeight"] as? Double ?? 0)
+                let scale = Capture.fullPageScale(contentHeight: height, deviceScale: deviceScale)
+                params["clip"] = ["x": 0, "y": 0, "width": width, "height": height, "scale": scale]
+                params["captureBeyondViewport"] = true
+            }
+            self.browser.callDevToolsMethod("Page.captureScreenshot", params: params) { result, _ in
+                completion((result?["data"] as? String).flatMap { Data(base64Encoded: $0) })
+            }
         }
     }
 
