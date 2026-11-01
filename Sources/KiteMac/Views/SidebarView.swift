@@ -396,7 +396,6 @@ private struct AddressPill: View {
     let toggleDark: () -> Void
     var showExtensions: ((NSView) -> Void)?
     var accessory: AnyView?
-    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -411,22 +410,21 @@ private struct AddressPill: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            // Arc 1.169 reveals its Site Control Center button (30×30, with the extensions)
-            // at the field's right end while the pointer is over the field.
-            // Arc's buttons there are 30pt wide on a 28pt pitch.
+            // Arc's buttons at the field's right end are 30pt wide on a 28pt pitch. Arc 1.169
+            // shows its Site Control Center button (with the extensions) only on hover; Kite
+            // always shows the extensions button, rightmost (Gabe's call, 2026-11-01).
             HStack(spacing: -2) {
                 if let accessory { accessory }
-                if let showExtensions, hovering {
+                if let isDark {
+                    DarkPageToggle(isDark: isDark, action: toggleDark)
+                }
+                if let showExtensions {
                     ExtensionsFieldButton(action: showExtensions)
                 }
             }
-            if let isDark {
-                DarkPageToggle(isDark: isDark, action: toggleDark)
-                    .padding(.trailing, 4)
-            }
+            .padding(.trailing, isDark != nil || showExtensions != nil ? 4 : 0)
         }
         .modifier(ChromeFill(strength: M.fieldFill))
-        .onHover { hovering = $0 }
     }
 }
 
