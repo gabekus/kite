@@ -67,6 +67,30 @@ import Testing
         #expect(!SiteControls.includesBoostsInMenu(siteBoostCount: 0, boostsAvailable: false))
     }
 
+    @Test func actionRowFollowsArc() {
+        #expect(SiteControls.actions(boostsEnabled: true, captureEnabled: true, optionKeyDown: false)
+            == [.share, .newBoost, .capture, .captureFullPage])
+        #expect(SiteControls.actions(boostsEnabled: false, captureEnabled: true, optionKeyDown: false)
+            == [.share, .copyURL, .capture, .captureFullPage])
+        #expect(SiteControls.actions(boostsEnabled: true, captureEnabled: true, optionKeyDown: true)
+            == [.share, .newBoost, .capture, .capturePortraitMode])
+        #expect(SiteControls.actions(boostsEnabled: false, captureEnabled: false, optionKeyDown: true) == [.share, .copyURL])
+        #expect(SiteControlsAction.capture.title == "Capture a portion of this page")
+        #expect(SiteControlsAction.captureFullPage.title == "Capture the full page")
+        #expect(SiteControlsAction.capturePortraitMode.title == "Capture in Portrait Mode")
+        #expect(!SiteControlsAction.share.dismissesPopover && SiteControlsAction.capture.dismissesPopover)
+    }
+
+    @Test func extensionsSectionStrings() {
+        #expect(SiteControls.pinButtonTitle(isPinned: true) == "Unpin")
+        #expect(SiteControls.pinButtonTitle(isPinned: false) == "Pin")
+        #expect(SiteControls.manageExtensionsMenuTitle == "Manage Extensions\u{2026}")
+        #expect(SiteControls.addExtensionMenuTitle == "Add Extension\u{2026}")
+        #expect(SiteControls.showsPinButton(isPinned: true, isHovered: false))
+        #expect(SiteControls.showsPinButton(isPinned: false, isHovered: true))
+        #expect(!SiteControls.showsPinButton(isPinned: false, isHovered: false))
+    }
+
     @Test func clickingAPermissionFlipsIt() {
         #expect(SitePermissionValue.allow.toggled == .block)
         #expect(SitePermissionValue.block.toggled == .allow)

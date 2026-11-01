@@ -60,6 +60,66 @@ public enum SiteControls {
     public static func includesBoostsInMenu(siteBoostCount: Int, boostsAvailable: Bool) -> Bool {
         boostsAvailable && siteBoostCount == 0
     }
+
+    // MARK: Action row (Arc's `SiteControlCenterActionButton`, g127)
+
+    /// The row of buttons at the top, in Arc's order. Arc 1.171 builds it at 0x101388a14:
+    /// Share; New Boost where Boosts are on (`boostsEnabled`), else Copy URL; then, while capture
+    /// is available (`captureEnabled`), Capture and Capture Full Page, which becomes Capture in
+    /// Portrait Mode while ⌥ is held (the view's `_optionKeyDown`).
+    public static func actions(boostsEnabled: Bool, captureEnabled: Bool, optionKeyDown: Bool) -> [SiteControlsAction] {
+        var actions: [SiteControlsAction] = [.share, boostsEnabled ? .newBoost : .copyURL]
+        if captureEnabled { actions += [.capture, optionKeyDown ? .capturePortraitMode : .captureFullPage] }
+        return actions
+    }
+
+    // MARK: Extensions (Arc's `SiteControlCenterExtensionsView`, g126)
+
+    /// The Extensions section's header, and the word shown on it on hover; clicking it manages extensions.
+    public static let extensionsTitle = "Extensions"
+    public static let extensionsHoverText = "Manage"
+    /// The plus tile after the extensions: its tooltip and accessibility label.
+    public static let addExtensionTitle = "Add Extension"
+    /// A tile's pin button tooltip.
+    public static func pinButtonTitle(isPinned: Bool) -> String { isPinned ? "Unpin" : "Pin" }
+    /// The footer menu's extension items, after the Boost items and before All Site Settings….
+    public static let manageExtensionsMenuTitle = "Manage Extensions\u{2026}"
+    public static let addExtensionMenuTitle = "Add Extension\u{2026}"
+
+    /// Arc's tile shows its pin button while the extension is pinned, or while the pointer is over it.
+    public static func showsPinButton(isPinned: Bool, isHovered: Bool) -> Bool { isPinned || isHovered }
+}
+
+/// One of the action row's buttons. Raw values are Arc's case order.
+public enum SiteControlsAction: Int, CaseIterable, Sendable {
+    case share
+    case copyURL
+    case newBoost
+    case capture
+    case captureFullPage
+    case capturePortraitMode
+
+    /// The button's tooltip and accessibility label: Arc's tooltip strings (arc-strings 73694–73699,
+    /// short ones decoded at 0x101373f58).
+    public var title: String {
+        switch self {
+        case .share: "Share"
+        case .copyURL: "Copy URL"
+        case .newBoost: SiteControls.newBoostTitle
+        case .capture: "Capture a portion of this page"
+        case .captureFullPage: "Capture the full page"
+        case .capturePortraitMode: "Capture in Portrait Mode"
+        }
+    }
+
+    /// Whether the button closes the popover before it acts (everything but Share, whose
+    /// picker hangs from the button, and Copy URL, which only shows a toast).
+    public var dismissesPopover: Bool {
+        switch self {
+        case .share, .copyURL: false
+        case .newBoost, .capture, .captureFullPage, .capturePortraitMode: true
+        }
+    }
 }
 
 /// A permission the site can be given, as Chromium stores it per site (content settings).

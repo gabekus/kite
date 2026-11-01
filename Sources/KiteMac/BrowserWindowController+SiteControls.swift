@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import KiteCore
 
 /// Site Controls (Arc's Site Control Center): the popover from the sliders button in the
@@ -7,12 +8,14 @@ import KiteCore
 /// (Chromium only), clearing the site's cache or cookies, and the site's settings page.
 extension BrowserWindowController {
     func toggleSiteControls(from view: NSView, overlap: CGFloat = 0) {
-        SiteControlsPopover.toggle(makeSiteControls(), from: view, overlap: overlap)
+        SiteControlsPopover.toggle(makeSiteControls(anchor: view), from: view, overlap: overlap)
     }
 
-    private func makeSiteControls() -> SiteControlsModel? {
+    private func makeSiteControls(anchor: NSView) -> SiteControlsModel? {
         guard let url = store.state.selectedTab?.url, SiteControls.applies(to: url), shownPage != nil else { return nil }
-        let actions = SiteControlsModel.Actions(
+        // Capture waits for the popover to go, so it isn't in the picture or over the overlay.
+        let later = { (body: @escaping () -> Void) in DispatchQueue.main.async(execute: body) }
+        var actions = SiteControlsModel.Actions(
             copyURL: { [weak self] in self?.copyURL(nil) },
             share: { view in NSSharingServicePicker(items: [url]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY) },
             toggleAdblock: { [weak self] in self?.toggleAdblockForSite(nil) },
@@ -27,7 +30,17 @@ extension BrowserWindowController {
             setBoostEnabled: { id, enabled in BoostsModel.shared.setEnabled(id, enabled) },
             manageBoosts: { [weak self] in self?.viewBoosts(nil) }
         )
-        return SiteControlsModel(url: url, actions: actions) { [weak self] model in
+        actions.capture = { later { [weak self] in self?.capturePage(nil) } }
+        actions.captureFullPage = { later { [weak self] in self?.captureFullPage(nil) } }
+        actions.capturePortraitMode = { later { [weak self] in self?.capturePortraitMode(nil) } }
+        #if canImport(CEFBridge)
+        let extensions = isIncognito ? nil : extensionsSelection?.model
+        if let extensions {
+            addExtensionActions(to: &actions, model: extensions, anchor: anchor)
+            extensions.refresh()
+        }
+        #endif
+        let siteControls = SiteControlsModel(url: url, actions: actions) { [weak self] model in
             guard let self else { return }
             let url = model.url
             model.blocksAds = Adblocker.isAvailable ? store.state.blocksAds(on: url) : nil
@@ -45,8 +58,53 @@ extension BrowserWindowController {
             } else {
                 model.permissions = nil
             }
+            model.captureEnabled = shownPage != nil
+            #if canImport(CEFBridge)
+            if let extensions = isIncognito ? nil : extensionsSelection?.model {
+                // Arc lists its toolbar actions, which Chromium keeps for extensions that are on.
+                model.extensions = extensions.extensions.filter(\.enabled)
+                model.pinnedExtensionIDs = extensions.pinnedIDs
+            } else {
+                model.extensions = nil
+            }
+            #endif
+        }
+        #if canImport(CEFBridge)
+        // The list arrives from Chromium after the popover opens; pins change from the tiles.
+        if let extensions {
+            siteControls.subscriptions.append(extensions.objectWillChange.sink { [weak siteControls] _ in
+                DispatchQueue.main.async { siteControls?.refresh() }
+            })
+        }
+        #endif
+        return siteControls
+    }
+
+    #if canImport(CEFBridge)
+    /// The Extensions section's actions, through the window's extensions model. Popups and the
+    /// extensions popover hang from the button that opened Site Controls, which outlives it.
+    private func addExtensionActions(to actions: inout SiteControlsModel.Actions, model: ExtensionsModel, anchor: NSView) {
+        actions.openExtension = { [weak anchor] item in
+            guard let anchor, let url = item.popupURL ?? item.optionsURL else { return }
+            DispatchQueue.main.async { ExtensionPopover.show(url, engine: model.engine, relativeTo: anchor.bounds, of: anchor) }
+        }
+        actions.setExtensionPinned = { id, pinned in model.setPinned(id, pinned) }
+        actions.setExtensionEnabled = { id, enabled in model.setEnabled(id, enabled) }
+        actions.openExtensionOptions = { item in
+            guard let options = item.optionsURL else { return }
+            NSApp.sendAction(#selector(AppDelegate.openURLFromExtensionsMenu(_:)), to: nil, from: options as NSURL)
+        }
+        actions.removeExtension = { id in model.remove(id) }
+        actions.manageExtensions = { [weak anchor] in
+            guard let anchor else { return }
+            DispatchQueue.main.async { ExtensionsMenu.present(model: model, from: anchor) }
+        }
+        actions.addExtension = {
+            guard let url = URL(string: "https://chromewebstore.google.com/") else { return }
+            NSApp.sendAction(#selector(AppDelegate.openURLFromExtensionsMenu(_:)), to: nil, from: url as NSURL)
         }
     }
+    #endif
 
     /// A Boost row's edit button: the Boost in its editor, refreshing the current tab.
     private func editSiteBoost(_ id: UUID) {

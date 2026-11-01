@@ -26,6 +26,20 @@ final class SiteControlsModel {
         var setBoostEnabled: (UUID, Bool) -> Void
         /// The Boosts header and "Manage Boosts…": Window › View Boosts….
         var manageBoosts: () -> Void
+        /// The capture buttons: File › Capture…, Capture Full Page and Capture in Portrait Mode.
+        var capture: () -> Void = {}
+        var captureFullPage: () -> Void = {}
+        var capturePortraitMode: () -> Void = {}
+        /// An extension tile: the extension's popup (or options page).
+        var openExtension: (InstalledExtension) -> Void = { _ in }
+        var setExtensionPinned: (String, Bool) -> Void = { _, _ in }
+        var setExtensionEnabled: (String, Bool) -> Void = { _, _ in }
+        var openExtensionOptions: (InstalledExtension) -> Void = { _ in }
+        var removeExtension: (String) -> Void = { _ in }
+        /// The Extensions header and "Manage Extensions…": Kite's extensions popover.
+        var manageExtensions: () -> Void = {}
+        /// The plus tile and "Add Extension…": the Chrome Web Store in a new tab.
+        var addExtension: () -> Void = {}
     }
 
     let url: URL
@@ -38,6 +52,19 @@ final class SiteControlsModel {
     var permissions: [SitePermission: SitePermissionValue]?
     /// This site's Boosts; nil where Boosts can't run (incognito, or a page with no domain).
     var boosts: [Boost]?
+    /// Arc's `captureEnabled`: the capture buttons show while the page can be captured.
+    var captureEnabled = false
+    /// ⌥ is held: Capture Full Page's button becomes Capture in Portrait Mode (Arc's `_optionKeyDown`).
+    var optionKeyDown = false
+    /// The extensions the tiles show, in Kite's order; nil where extensions don't run (WebKit,
+    /// no Chromium build). Arc hides the section when there are none.
+    var extensions: [InstalledExtension]?
+    var pinnedExtensionIDs: [String] = []
+    /// The action row, as Arc builds it (`SiteControls.actions`).
+    var actionList: [SiteControlsAction] {
+        SiteControls.actions(boostsEnabled: boosts != nil, captureEnabled: captureEnabled, optionKeyDown: optionKeyDown)
+    }
+    @ObservationIgnored var subscriptions: [Any] = []
     @ObservationIgnored var actions: Actions
     @ObservationIgnored var read: (SiteControlsModel) -> Void
     @ObservationIgnored var dismiss: () -> Void = {}
@@ -63,8 +90,9 @@ final class SiteControlsModel {
 /// (icon, title, and an On/Off or Allowed/Blocked subtitle; a click flips it) on a 43pt pitch;
 /// and a footer with the 82×32 security button on the left and a 32×32 "…" menu (Clear Cache,
 /// Clear Cookies, Manage Boosts… / New Boost…, All Site Settings…) on the right. Between the
-/// actions and Settings, the Boosts section lists the site's Boosts (Enabled / Disabled). Kite
-/// has no capture buttons or extensions section here.
+/// actions and Settings, the Boosts section lists the site's Boosts (Enabled / Disabled), then the
+/// Extensions section tiles the extensions (pin buttons, a plus tile to add one). The action row
+/// is Arc's: Share, New Boost or Copy URL, Capture, Capture Full Page (⌥: Portrait Mode).
 struct SiteControlsView: View {
     let model: SiteControlsModel
 
@@ -84,16 +112,33 @@ struct SiteControlsView: View {
         static let rowsToFooter: CGFloat = 26
         static let securitySize = CGSize(width: 82, height: 32)
         static let menuSize: CGFloat = 32
+        /// Extension tiles (probe, 25 Oct 2026): 48×32 in four columns on a 56 × 40 pitch, the next
+        /// header 15 below the last row; the pin button 14×14 at the tile's (37, 21), past its corner.
+        static let tileSize = CGSize(width: 48, height: 32)
+        static let tilePitch = CGSize(width: 56, height: 40)
+        static let tilesToNext: CGFloat = 15
+        static let pinSize: CGFloat = 14
+        static let pinOrigin = CGPoint(x: 37, y: 21)
+    }
+
+    private func perform(_ action: SiteControlsAction, from view: NSView) {
+        switch action {
+        case .share: model.actions.share(view)
+        case .copyURL: model.actions.copyURL()
+        case .newBoost: model.actions.newBoost()
+        case .capture: model.actions.capture()
+        case .captureFullPage: model.actions.captureFullPage()
+        case .capturePortraitMode: model.actions.capturePortraitMode()
+        }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Metrics.actionPitch - Metrics.actionSize.width) {
-                ActionButton(symbol: "link", help: "Copy URL") { _ in model.actions.copyURL() }
-                ActionButton(symbol: "square.and.arrow.up", help: "Share") { view in model.actions.share(view) }
-                if model.boosts != nil {
-                    ActionButton(symbol: "wand.and.stars", help: SiteControls.newBoostTitle) { _ in
-                        model.dismiss(); model.actions.newBoost()
+                ForEach(model.actionList, id: \.self) { action in
+                    ActionButton(symbol: action.symbol, help: action.title) { view in
+                        if action.dismissesPopover { model.dismiss() }
+                        perform(action, from: view)
                     }
                 }
             }
@@ -116,6 +161,26 @@ struct SiteControlsView: View {
                 }
                 .padding(.leading, (Metrics.width - 2 * Metrics.inset - Metrics.rowSize.width) / 2)
                 .padding(.bottom, Metrics.sectionGap)
+            }
+
+            if let extensions = model.extensions, !extensions.isEmpty {
+                ControlsSectionHeader(title: SiteControls.extensionsTitle, hoverText: SiteControls.extensionsHoverText,
+                              hint: SiteControls.manageExtensionsMenuTitle) {
+                    model.dismiss(); model.actions.manageExtensions()
+                }
+                .padding(.bottom, Metrics.headerToRows)
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.fixed(Metrics.tileSize.width), spacing: Metrics.tilePitch.width - Metrics.tileSize.width,
+                                                       alignment: .leading), count: 4),
+                    alignment: .leading,
+                    spacing: Metrics.tilePitch.height - Metrics.tileSize.height
+                ) {
+                    ForEach(extensions) { item in
+                        ExtensionTile(item: item, model: model)
+                    }
+                    AddExtensionTile { model.dismiss(); model.actions.addExtension() }
+                }
+                .padding(.bottom, Metrics.tilesToNext)
             }
 
             ControlsSectionHeader(title: SiteControls.settingsTitle, hoverText: SiteControls.settingsHoverText,
@@ -315,6 +380,108 @@ private struct SiteBoostRow: View {
     }
 }
 
+private extension SiteControlsAction {
+    /// Kite's symbols. Arc draws its own `copy-url`, `window-screenshot-icon`, `capture-full-page`
+    /// and `boost.sparkle` images; Share is `square.and.arrow.up` and Portrait Mode `camera` there too.
+    var symbol: String {
+        switch self {
+        case .share: "square.and.arrow.up"
+        case .copyURL: "link"
+        case .newBoost: "wand.and.stars"
+        case .capture: "viewfinder"
+        case .captureFullPage: "rectangle.expand.vertical"
+        case .capturePortraitMode: "camera"
+        }
+    }
+}
+
+/// An extension in the Extensions section (Arc's `SiteControlCenterExtensionButton`): a click
+/// opens it, the right-click menu has Kite's extension actions (Arc shows Chromium's), and the
+/// pin button at the bottom-right corner shows while it's pinned or hovered.
+private struct ExtensionTile: View {
+    let item: InstalledExtension
+    let model: SiteControlsModel
+    @State private var hovering = false
+    private typealias M = SiteControlsView.Metrics
+
+    var body: some View {
+        let pinned = model.pinnedExtensionIDs.contains(item.id)
+        Button {
+            model.dismiss(); model.actions.openExtension(item)
+        } label: {
+            SiteExtensionIcon(file: item.iconFile, size: 20)
+                .frame(width: M.tileSize.width, height: M.tileSize.height)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(hovering ? 0.1 : 0.05)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(item.name)
+        .accessibilityLabel(item.name)
+        .overlay(alignment: .topLeading) {
+            if SiteControls.showsPinButton(isPinned: pinned, isHovered: hovering) {
+                Button {
+                    model.perform { model.actions.setExtensionPinned(item.id, !pinned) }
+                } label: {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 8, weight: .black))
+                        .frame(width: M.pinSize, height: M.pinSize)
+                        .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .offset(x: M.pinOrigin.x, y: M.pinOrigin.y)
+                .help(SiteControls.pinButtonTitle(isPinned: pinned))
+                .accessibilityLabel(SiteControls.pinButtonTitle(isPinned: pinned))
+            }
+        }
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button(pinned ? "Unpin" : "Pin to Toolbar") { model.perform { model.actions.setExtensionPinned(item.id, !pinned) } }
+            Button("Turn Off") { model.perform { model.actions.setExtensionEnabled(item.id, false) } }
+                .disabled(!item.mayDisable)
+            if item.optionsURL != nil {
+                Button("Options") { model.dismiss(); model.actions.openExtensionOptions(item) }
+            }
+            Divider()
+            Button("Remove…") { model.dismiss(); model.actions.removeExtension(item.id) }
+        }
+    }
+}
+
+/// The plus tile after the extensions (Arc's Add Extension button).
+private struct AddExtensionTile: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: SiteControlsView.Metrics.tileSize.width, height: SiteControlsView.Metrics.tileSize.height)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(hovering ? 0.1 : 0.05)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(SiteControls.addExtensionTitle)
+        .accessibilityLabel(SiteControls.addExtensionTitle)
+    }
+}
+
+/// An extension's icon from its folder, or a puzzle piece.
+private struct SiteExtensionIcon: View {
+    let file: URL?
+    let size: CGFloat
+
+    var body: some View {
+        if let file, let image = NSImage(contentsOf: file) {
+            Image(nsImage: image).resizable().interpolation(.high).frame(width: size, height: size)
+        } else {
+            Image(systemName: "puzzlepiece.extension").font(.system(size: size * 0.75)).frame(width: size, height: size)
+        }
+    }
+}
+
 /// Arc's footer button: "Secure" with a lock, "Insecure" with a struck-through one.
 private struct SecurityLabel: View {
     let title: String
@@ -334,8 +501,7 @@ private struct SecurityLabel: View {
 
 /// The footer's "…": Arc's menu has Clear Cache, Clear Cookies, Manage Boosts…, New Boost… (only
 /// some of the time: `includeBoostsInContextMenu`), the extensions items, and All Site Settings…
-/// last. Kite has all but the extensions items; Clear Cache and Clear Cookies are its
-/// clear-and-refresh, as in the View menu.
+/// last. Clear Cache and Clear Cookies are Kite's clear-and-refresh, as in the View menu.
 private struct FooterMenu: View {
     let model: SiteControlsModel
 
@@ -347,6 +513,10 @@ private struct FooterMenu: View {
                                                  boostsAvailable: model.boosts != nil) {
                 Button(SiteControls.manageBoostsMenuTitle) { model.dismiss(); model.actions.manageBoosts() }
                 Button(SiteControls.newBoostMenuTitle) { model.dismiss(); model.actions.newBoost() }
+            }
+            if model.extensions != nil {
+                Button(SiteControls.manageExtensionsMenuTitle) { model.dismiss(); model.actions.manageExtensions() }
+                Button(SiteControls.addExtensionMenuTitle) { model.dismiss(); model.actions.addExtension() }
             }
             Button(SiteControls.allSiteSettingsTitle) { model.dismiss(); model.actions.openSiteSettings() }
         } label: {
@@ -376,6 +546,8 @@ enum SiteControlsPopover {
     /// button acts; that click mustn't open it again.
     private static var closed: (anchor: ObjectIdentifier, at: Date)?
     private static var observer: NSObjectProtocol?
+    /// Watches ⌥ while the popover is shown, as Arc's view controller does (a flagsChanged monitor).
+    private static var optionMonitor: Any?
 
     /// Observable, so the address field keeps its hover button while the popover hangs from it.
     @Observable final class Presence { var isShown = false }
@@ -406,7 +578,16 @@ enum SiteControlsPopover {
             MainActor.assumeIsolated {
                 closed = (anchor, Date())
                 presence.isShown = false
+                if let optionMonitor { NSEvent.removeMonitor(optionMonitor) }
+                optionMonitor = nil
             }
+        }
+        if let optionMonitor { NSEvent.removeMonitor(optionMonitor) }
+        model.optionKeyDown = NSEvent.modifierFlags.contains(.option)
+        optionMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak model] event in
+            let down = event.modifierFlags.contains(.option)
+            if model?.optionKeyDown != down { model?.optionKeyDown = down }
+            return event
         }
         var rect = view.bounds
         if overlap > 0 {
