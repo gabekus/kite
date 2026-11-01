@@ -656,6 +656,15 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   Favorites and Pinned tabs", "Open a Peek window when clicking on links with Shift held". The shift setting is
   `disableShiftClickToOpenLinksInModal` (absent from Gabe's defaults, so shift-click peeks). How Arc defines
   "other site" isn't in the strings; Kite compares registrable domains (`SignInHandoff.site`). **[inferred]**
+- The two Links switches (g85, g86): Arc's preference keys table (`decomp/out3/warnquit.txt` lines 90 and 155)
+  names `modalEnabled` and `disableShiftClickToOpenLinksInModal`; the Links pane's state has `modalEnabled`
+  (`onToggleModalEnabled`) next to `shiftClickModalEntryPointEnabled` (`onToggleShiftClickModalEntryPointEnabled`)
+  (strings ~171036, ~171305), so "links to other sites" is `modalEnabled` and "Shift held" is the inverted
+  disable key. Defaults: both keys are absent from Gabe's Arc defaults and the recorded Links pane
+  (`~/rea-arc/settings/pane-4.txt`) shows both switches at Value=1, so unset = on. Kite reads the same keys
+  (`LinkPeek.Options`): off, a ⇧-click is left to the engine (Chromium's new window, WebKit's normal
+  navigation) and a cross-site link from a Favorite or Pinned tab navigates the tab. That Arc's
+  `modalEnabled` gates only the cross-site case and not ⇧-click is **[inferred]** from the pane's wording.
 - Card (FUN_101715a98): 80% of the host's width, centred, 12pt from its top and bottom (height − 24). Kite's
   host is the content card's area. Whether Arc's host is the content card or the whole window: **unverified**.
 - Corner radius 8 (popover; 10 fullbleed) (FUN_101717608, FUN_101716678).
@@ -2535,3 +2544,35 @@ doing it: a live folder needs a signed-in GitHub session, which an incognito win
   follows NSApp (command bar, Settings, alerts) follows the choice, as it would in Arc. Dark Pages' "Match System"
   reads `NSApp.effectiveAppearance`, so it now follows this choice (Light: no forced dark; Dark: forced dark on
   sites without their own dark theme); "Always" and the per-site toggle work regardless.
+
+## Menu bar titles → `MainMenu`, `ShortcutMirror` (KeyBindingsStore) (Arc 1.171 menu bar and MainMenu.nib, 1 Nov 2026)
+
+Sources: Arc 1.171's menu bar read with `menudump` (read-only, `~/rea-arc/notes/arc-menu-1.171.txt`), and
+`strings` on `Arc.app/Contents/Resources/Base.lproj/MainMenu.nib` (titles, `arcKeyBindingID`s, type-travel
+triggers). Kite's menu bar checked the same way (an AX read of the test Kite, plus `kite ui menu`).
+
+- View › Show/Hide Sidebar (nib title, id `toggleSidebar`, trigger "Toggle Sidebar") shows "Hide Sidebar"
+  while the sidebar is visible (menudump). "Show Sidebar" while hidden comes from the string table's
+  "Show sidebar menu item title" / "Hide sidebar menu item title" **[inferred wording]**.
+- Refresh the Page (`reloadPage`, trigger "Reload Page"), Force Refresh the Page (`forceReloadPage`, triggers
+  "Force Reload; Force Refresh"), Zoom to Actual Size (`actualSize`, trigger "Reset Zoom").
+- The history menu is titled "Archive" and sits after Spaces and Tabs: Go Back ⌘[ (`goBack`, triggers "Go Back;
+  Back; Navigate Back"), Go Forward ⌘] (`goForward`), —, View History ⌘Y, View Archive…, Clear Archive. Kite
+  keeps its Tabs-before-Spaces order (the Spaces menu belongs to another thread).
+- File: New Tab… ⌘T, New Window, Blank Window, New Incognito Window, New Little Arc Window, Restore Last Closed
+  Tab ⇧⌘T (`reopenClosedTab`, trigger "Reopen Closed Tab"), —, Open Command Bar (`addressBar`, no key), —, New
+  Profile, New Easel, —, Close Window, —, Share…, Capture…, Capture Full Page, Capture in Portrait Mode, Save Page
+  As (no ellipsis; triggers "Save Page; Save File"), Print. The nib's actions include `toggleOpenOmnibox:`, so
+  Open Command Bar toggles the command bar in Kite **[inferred: which nib item uses that action isn't read]**.
+  Kite keeps Open Location…, Import from Arc…, Archive Tab, Install Page as App… and 1Password… in place.
+- Tabs opens with New Tab… ⌘T, then Pin Tab ⌘D (nib "Pin/Unpin Tab", retitled by state). Kite's copy of New
+  Tab… is a `ShortcutMirror`: no ID of its own, shows File › New Tab…'s shortcut (overrides included), and the
+  command bar and Settings → Shortcuts list the command once. `kite ui menu` doesn't flag two items on one
+  shortcut as a conflict when they run the same action.
+- Window: Stay On Top, Minimize Window ⌘M (`minimize`), Zoom, no separator between. AppKit adds Minimize All ⌥⌘M
+  and Zoom All as ⌥ alternates, Fill, Center, Move & Resize, Full Screen Tile, Remove Window from Set and Arrange
+  in Front for both apps (none of them is in Arc's nib; Kite's AX read shows the same items).
+- App menu: Hide Other Windows ⌥⌘H (`hideOthers`, trigger "Hide Others").
+- Arc's type-travel triggers for these items are Kite `CommandBarKeywords`, so the command bar still finds the
+  old titles ("Reload Page", "Toggle Sidebar", "Back").
+

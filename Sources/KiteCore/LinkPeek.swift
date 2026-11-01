@@ -10,13 +10,39 @@ public enum LinkPeek {
     /// commented "Undo prompt for re-opening a closed Peek").
     public static let closeUndoActionName = "Close Peek"
 
+    /// Settings › Links "Open a Peek window when clicking on links with Shift held": Arc 1.171's defaults key
+    /// (inverted, so unset means on).
+    public static let shiftClickDisabledKey = "disableShiftClickToOpenLinksInModal"
+    /// Settings › Links "Open a Peek window when clicking on links to other sites": Arc 1.171's defaults key
+    /// (unset means on).
+    public static let otherSitesEnabledKey = "modalEnabled"
+
+    /// The two Links switches, both on by default as in Arc.
+    public struct Options: Equatable, Sendable {
+        public var shiftClick: Bool
+        public var otherSites: Bool
+        public init(shiftClick: Bool = true, otherSites: Bool = true) {
+            self.shiftClick = shiftClick
+            self.otherSites = otherSites
+        }
+
+        public init(defaults: UserDefaults) {
+            self.init(
+                shiftClick: !defaults.bool(forKey: LinkPeek.shiftClickDisabledKey),
+                otherSites: defaults.object(forKey: LinkPeek.otherSitesEnabledKey) as? Bool ?? true
+            )
+        }
+    }
+
     /// Arc's Links settings: "Open a Peek window when clicking on links to other sites" (Favorites and
-    /// Pinned tabs only), and "… on links with Shift held" (any tab).
-    public static func opensInPeek(section: TabSection?, from source: URL?, to target: URL, shift: Bool) -> Bool {
+    /// Pinned tabs only), and "… on links with Shift held" (any tab). A switched-off case leaves the click
+    /// to the page's normal handling (a ⇧-click then opens a window, as in Chromium).
+    public static func opensInPeek(section: TabSection?, from source: URL?, to target: URL, shift: Bool,
+                                   options: Options = Options()) -> Bool {
         guard let scheme = target.scheme?.lowercased(), scheme == "http" || scheme == "https",
               target.host() != nil else { return false }
-        if shift { return true }
-        guard section == .pinned || section == .favorite else { return false }
+        if shift { return options.shiftClick }
+        guard options.otherSites, section == .pinned || section == .favorite else { return false }
         guard let sourceSite = SignInHandoff.site(source?.host()) else { return false }
         return sourceSite != SignInHandoff.site(target.host())
     }

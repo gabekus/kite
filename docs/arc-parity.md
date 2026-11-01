@@ -33,7 +33,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Set as Default Browser | | ✅ (opens links from other apps in a new tab) | |
 | Import from Another Browser… | | 🟡 Arc: spaces, pinned tabs, folders, favorites, themes, split views, archive (latest 500), history, Site Search, shortcut changes, and the settings Kite has (warn before quitting, Little Arc for links, archive interval). Kite › Import from Another Browser…: bookmarks (a space per browser, as pinned tabs and folders) and history from Safari (explains Full Disk Access), Chrome, Brave, Edge, Vivaldi, Opera, Opera GX and Firefox, from the source profile you pick (Chromium Local State, Firefox profiles.ini) | Thread: import. Not yet: passwords, cookies, autofill, Arc’s bookmark picker; from Arc: link routing, boosts, easels/notes, extensions, other profiles |
 | Check for Updates… | | 🟡 checks GitHub releases, opens the release; no auto-install or sidebar banner yet | Sparkle once releases are signed and notarised |
-| Hide / Hide Others / Show All | ⌘H / ⌥⌘H | ✅ | |
+| Hide / Hide Other Windows / Show All | ⌘H / ⌥⌘H | ✅ Arc 1.171's "Hide Other Windows" title (g76) | |
 | Quit, with optional warn-before-quit | ⌘Q | 🟡 "Quit Kite?" with Arc's three buttons; look unmeasured, Kite menu toggle until Settings | B5 |
 | Share Arc, Privacy Policy, Sign Out | | ❌ | Skip? (sign-out comes with sync) |
 
@@ -41,20 +41,20 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| New Tab… (opens the command bar) | ⌘T | ✅ | |
+| New Tab… (opens the command bar) | ⌘T | ✅ "New Tab…", also first in the Tabs menu as Arc's (g74, g75) | |
 | New Window | ⌘N | 🟡 Another window on the shared sidebar (spaces, pinned, favourites, tabs) with its own space and tab, opening on the command bar; restored on relaunch (windows.json). A tab selected in two windows has one page: it moves to the window that selected it last (or comes forward), and the other shows a blurred snapshot, as Arc's content placeholder | |
 | Blank Window | ⌃⌘N | 🟡 Arc's standalone-sidebar window: its own "Explore" tabs outside the spaces, restored on relaunch. Moving its tabs into a space not built | |
 | New Incognito Window | ⇧⌘N | ✅ in-memory profile per window (New Space moved off ⇧⌘N) | |
 | New Little Arc Window | ⌥⌘N | ✅ "New Little Kite Window" (`newLittleBrowserWindow`) | |
-| Restore Last Closed Tab | ⇧⌘T | ✅ | |
-| Open Command Bar | (none) | ✅ via ⌘T/⌘L | |
+| Restore Last Closed Tab | ⇧⌘T | ✅ Arc's title and place, right after New Little Kite Window (g74) | |
+| Open Command Bar | (none) | ✅ File › Open Command Bar (`addressBar`, no key) between Restore Last Closed Tab and New Profile: opens the command bar on the current page, closes it when open (g77). Kite keeps Open Location… under it | |
 | New Profile | | ✅ Arc's two-step Create a new Profile sheet (name, then which spaces) | Sheet layout not measured from Arc |
 | New Easel | ⌃⇧E | ❌ | Thread: Easels (Skip?) |
 | Close Window | ⇧⌘W | ✅ | |
 | Archive Tab | ⌘W | ✅ "Archive Tab" (`archiveTab`); closed unpinned tabs go to the archive. "Undo Archive Tab" (⌘Z) still to do | B3 |
 | Share… | | ✅ | |
 | Capture… / Full Page / Portrait | (none) | 🟡 Capture… (`capturePage`) and Capture Full Page (`captureFullPage`); Portrait Mode, click-to-capture an element and ⌘⇧-drag still to do | Thread: Capture |
-| Save Page As | | ✅ MHTML (Chromium) / web archive (WebKit) | |
+| Save Page As | | ✅ "Save Page As", no ellipsis (g74): MHTML (Chromium) / web archive (WebKit) | |
 | Print | ⌘P | ✅ "Print": the macOS print sheet with a page preview, both engines (Chromium via a PDF). Arc likely shows Chromium's print preview instead (see arc-visual-spec) | |
 
 ### Edit
@@ -78,15 +78,15 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | Appearance: Automatic / Light / Dark (websites) | | ✅ View › Appearance ("Websites, Easels, and Notes will use:"), Automatic by default: sets the app appearance as Arc does, so CEF and WebKit pages get that `prefers-color-scheme` live; kept in session.json. Dark Pages (Kite's forced dark) stays separate; its Match System now follows this choice | g82 |
-| Show Sidebar | ⌘S | ✅ | |
+| Hide Sidebar / Show Sidebar | ⌘S | ✅ titled by state, as Arc's Show/Hide Sidebar (g70) | |
 | Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host, Site Controls and Split View; the sidebar drops its nav buttons and URL field. Kite menu → Show Full URL in Toolbar (Arc's "Show full URL when Toolbar is enabled", off by default) prints the whole address instead of the host. No right-click menu on the toolbar yet (Arc's has Show/Hide Full URL) | B5 (`topBarURLEnabled`) |
 | Collapse Pinned Tabs | | ✅ View › "Collapse Pinned Tabs" ("Expand Pinned Tabs" while collapsed) and a chevron in the space header | B3 |
 | Stop Loading | ⌘. | ✅ | |
-| Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
+| Refresh the Page / Force Refresh the Page | ⌘R / ⇧⌘R | ✅ Arc 1.171's titles (g71) | |
 | Clear Cookies and Refresh / Clear Cache and Refresh | | ✅ per site | |
 | Add Split View | ⌘L (Gabe) / ⌃⇧= (default) | ✅ `addSplitView`, empty pane + command bar (live check pending) | Thread: Split view |
 | Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | ✅ Expand Current Split (no key, as Arc) fills the split with the focused pane; one-way, as Arc (focusing another pane restores, inferred) | Thread: Split view |
-| Zoom Actual / In / Out | ⌘0 / ⌘+ / ⌘- | ✅ | |
+| Zoom to Actual Size / Zoom In / Zoom Out | ⌘0 / ⌘+ / ⌘- | ✅ Arc 1.171's titles (g72) | |
 | Cast | | ❌ | Skip? |
 | Developer → View Source | ⌥⌘U | ✅ Chromium (new `view-source:` tab) | |
 | Developer → Developer Tools | ⌥⌘I | ✅ | |
@@ -119,7 +119,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| Pin / Unpin Tab | ⌘D | ✅ | |
+| New Tab… / Pin Tab (Unpin Tab) | ⌘T / ⌘D | ✅ Tabs menu opens with New Tab… (same command and shortcut as File's); Pin Tab / Unpin Tab by state (g75) | |
 | New Folder… | | 🟡 imported folders only | B3 |
 | Next / Previous Tab | ⌥⌘↓ / ⌥⌘↑ | ✅ (⌃⇧Tab also goes to the previous tab) | |
 | Toggle recent tabs (MRU) | ⌃Tab | ✅ toggles the two most recent | Hold-⌃ cycling deeper later |
@@ -135,9 +135,9 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| Go Back / Go Forward | ⌘[ / ⌘] (also ⌘← / ⌘→ in a page) | ✅ ⌘←/⌘→ as hidden alternates; text fields keep them for caret moves (seen in Arc; not in its binding table) | B3 |
-| View History | ⌘Y | 🟡 History › View History opens kite://history in a new tab (Arc: chrome://history "in a new Today tab"): search, one card per day, Open in New Tab / Copy Link / More from This Site / Remove from History, Clear History…. One row per URL (last visit), not one per visit; Chromium's page sizes not measured | |
-| View Archive… / Clear Archive | | 🟡 History › View Archive… opens the Library on its Archive page (kite://archive still works as a tab): Today / Yesterday / Earlier This Week, then by month; search; Filter Archived Tabs by space and Auto-Closed / Manually Closed, with removable chips; Restore and Delete on hover and in the context menu; "Tab restored to <space>" toast. Clear Archive asks Arc's "Are you sure you'd like to Clear Archive?" first. Sizes are Kite's | |
+| Go Back / Go Forward | ⌘[ / ⌘] (also ⌘← / ⌘→ in a page) | ✅ an "Archive" menu with Arc's titles, after Spaces (g73); ⌘←/⌘→ as hidden alternates; text fields keep them for caret moves (seen in Arc; not in its binding table) | B3 |
+| View History | ⌘Y | 🟡 Archive › View History opens kite://history in a new tab (Arc: chrome://history "in a new Today tab"): search, one card per day, Open in New Tab / Copy Link / More from This Site / Remove from History, Clear History…. One row per URL (last visit), not one per visit; Chromium's page sizes not measured | |
+| View Archive… / Clear Archive | | 🟡 Archive › View Archive… opens the Library on its Archive page (kite://archive still works as a tab): Today / Yesterday / Earlier This Week, then by month; search; Filter Archived Tabs by space and Auto-Closed / Manually Closed, with removable chips; Restore and Delete on hover and in the context menu; "Tab restored to <space>" toast. Clear Archive asks Arc's "Are you sure you'd like to Clear Archive?" first. Sizes are Kite's | |
 
 ### Extensions
 
@@ -149,7 +149,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| Minimize / Zoom | ⌘M | ✅ | macOS adds Fill, Center, tiling for free |
+| Minimize Window / Zoom | ⌘M | ✅ Arc 1.171's order and titles, no separator after Stay On Top; AppKit adds Minimize All / Zoom All (⌥), Arrange in Front, Fill, Center, Move & Resize, Full Screen Tile (g76) | |
 | Stay On Top | | ✅ checkmark in the menu, window floats, no in-window indicator (as in Arc) | |
 | Open Library… | ⇧⌘L | 🟡 Window › Open Library… toggles the window's Library over the sidebar and card: Downloads, Archive, Media and Boosts pages, last page remembered, "Exit the Library" button; switching tab or space leaves it | Easels, Spaces pages (Kite has none of them); sizes, icons and animation unmeasured |
 | View Downloads… | ⇧⌘J | ✅ Window menu, opens the Library on its Downloads page, as Arc's `toggleDownloads:` ("Opens the Downloads section of your Library"); again closes it | — |
@@ -173,7 +173,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Sidebar | Favorites grid, pinned, unpinned "Today", folders, space switcher | 🟡 | Other session (favorites, folders, resize) |
 | Sidebar hover reveal | Hidden sidebar slides in at the left edge | ❌ | Thread: sidebar left-edge peek |
 | Auto-archive | "Archive tabs after": Never / 1 hour / 6 hours / 12 hours / 24 hours / 7 days / 30 days, per profile | ✅ Kite menu → Archive tabs after (moves to Settings; no profiles yet) | B5 |
-| Peek | Links from pinned tabs/favorites open in an overlay | 🟡 Links from a pinned tab or favorite to another site, and ⇧-clicked links, open in a card over the page (Arc's size, corner, shadow and spring), growing from the clicked element's own frame and closing back to it; close (Esc, ⌘W, button, click outside, two-finger swipe right with Arc's tug, thresholds and springs), Edit › Undo Close Peek (⌘Z) reopens it (page reloads) and Redo closes it again, Open as Tab, Create/Add to Split View | Not yet: the source snapshot crossfade (Kite fades the card in), the peeked item in the sidebar, the Links settings toggles; button look unmeasured |
+| Peek | Links from pinned tabs/favorites open in an overlay | 🟡 Links from a pinned tab or favorite to another site, and ⇧-clicked links, open in a card over the page (Arc's size, corner, shadow and spring), growing from the clicked element's own frame and closing back to it; close (Esc, ⌘W, button, click outside, two-finger swipe right with Arc's tug, thresholds and springs), Edit › Undo Close Peek (⌘Z) reopens it (page reloads) and Redo closes it again, Open as Tab, Create/Add to Split View. Settings › Links has Arc's two Peek switches (Shift held; other sites from Favorites and Pinned), both on by default, under Arc's keys (g85, g86) | Not yet: the source snapshot crossfade (Kite fades the card in), the peeked item in the sidebar; button look unmeasured |
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | ❌ | Thread: Peek |
 | Peek | Links from pinned tabs/favorites open in an overlay | ❌ | Thread: Peek |
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | 🟡 ⇧-hover shows a card (title, description, image, site) sized and timed from Arc's binary; `LinkPreviewController`. Off by default as in Arc; Kite menu › Link Previews | No AI summary (Arc's quickSummary + detail rows), no instant cards on HN/X/Google, no share button yet |

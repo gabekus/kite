@@ -215,7 +215,7 @@ struct SettingsRow<Control: View>: View {
 }
 
 /// Arc's switches are the mini size (26×15).
-private struct SettingsSwitch: View {
+struct SettingsSwitch: View {
     let isOn: Binding<Bool>
 
     var body: some View {

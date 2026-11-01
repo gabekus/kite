@@ -53,6 +53,12 @@ enum MainMenu {
             item.representedObject = CommandBarKeywords(keywords)
             return item
         }
+        /// Words the command bar also matches a visible item by: Arc's type-travel triggers for it (MainMenu.nib),
+        /// which keep the older titles findable.
+        func keywords(_ item: NSMenuItem, _ words: [String]) -> NSMenuItem {
+            item.representedObject = CommandBarKeywords(words)
+            return item
+        }
         let boostKeywords = ["Boost", "New Boost", "Create boost", "extension", "Boost the Current Page", "Edit Boost"]
 
         func submenuItem(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
@@ -67,12 +73,6 @@ enum MainMenu {
         let right = String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
         let up = String(Character(UnicodeScalar(NSUpArrowFunctionKey)!))
         let down = String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
-
-        func appearanceItem(_ title: String, _ action: Selector, id: String, keywords: [String]) -> NSMenuItem {
-            let menuItem = item(title, action, toTarget: false, id: id)
-            menuItem.representedObject = CommandBarKeywords(keywords)
-            return menuItem
-        }
 
         func darkPagesMenu() -> NSMenuItem {
             let menu = TypingSafeMenu(title: "Dark Pages")
@@ -129,7 +129,8 @@ enum MainMenu {
             item("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)), toTarget: false, id: "checkForUpdates"),
             .separator(),
             item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false, id: "hideKite"),
-            item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false, id: "hideOthers"),
+            // Arc 1.171: "Hide Other Windows" (MainMenu.nib title; "Hide Others" is its type-travel trigger).
+            keywords(item("Hide Other Windows", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false, id: "hideOthers"), ["Hide Others"]),
             item("Show All", #selector(NSApplication.unhideAllApplications(_:)), toTarget: false, id: "showAll"),
             .separator(),
             item("Warn Before Quitting", #selector(AppDelegate.toggleQuitWarning(_:)), toTarget: false),
@@ -138,18 +139,25 @@ enum MainMenu {
         ])
 
         submenu("File", [
-            item("New Tab", #selector(BrowserWindowController.newTab(_:)), "t", id: "newTab"),
+            // Arc 1.171's File menu: "New Tab…" ⌘T (menudump), then the window items, Restore Last Closed Tab,
+            // —, Open Command Bar, —, New Profile.
+            item("New Tab…", #selector(BrowserWindowController.newTab(_:)), "t", id: "newTab"),
             // Arc's File menu: New Window ⌘N, Blank Window ⌃⌘N, New Incognito Window ⇧⌘N (read from its menu bar).
             item("New Window", #selector(MenuRouter.newWindow(_:)), "n", id: "newWindow"),
             item("Blank Window", #selector(MenuRouter.newBlankWindow(_:)), "n", [.command, .control], id: "newBlankWindow"),
             item("New Incognito Window", #selector(MenuRouter.newIncognitoWindow(_:)), "n", [.command, .shift], id: "newIncognitoWindow"),
             // Arc's File menu: "New Little Arc Window", ⌥⌘N, id newLittleBrowserWindow (MainMenu.nib).
             item("New Little Kite Window", #selector(MenuRouter.newLittleKiteWindow(_:)), "n", [.command, .option], id: "newLittleBrowserWindow"),
+            // Arc's title for reopenClosedTab; "Reopen Closed Tab" is its type-travel trigger.
+            keywords(item("Restore Last Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift], id: "reopenClosedTab"), ["Reopen Closed Tab"]),
+            .separator(),
+            // Arc's "Open Command Bar" (id addressBar, action toggleOpenOmnibox:), no key in Arc 1.171's menu bar.
+            item("Open Command Bar", #selector(BrowserWindowController.openCommandBar(_:)), id: "addressBar"),
+            // A Kite item. No key, like Gabe's Arc: ⌘L is Add Split View. Clicking the URL pill still edits the URL.
+            item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), id: "openLocation"),
+            .separator(),
             // Arc's MainMenu.nib: "New Profile", action newProfile:.
             item("New Profile", #selector(BrowserWindowController.newProfile(_:)), id: "newProfile"),
-            // No key, like Gabe's Arc: ⌘L is Add Split View. Clicking the URL pill still edits the URL.
-            item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), id: "openLocation"),
-            item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift], id: "reopenClosedTab"),
             .separator(),
             // Temporary: remove with ArcImportController.swift after Arc shuts down (2026-12-22).
             item("Import from Arc…", #selector(BrowserWindowController.importFromArc(_:)), id: "importFromArc"),
@@ -161,7 +169,8 @@ enum MainMenu {
             // Arc's File menu: Capture…, Capture Full Page (no shortcuts; ids from Arc's shortcut table).
             item("Capture…", #selector(BrowserWindowController.capturePage(_:)), id: "capturePage"),
             item("Capture Full Page", #selector(BrowserWindowController.captureFullPage(_:)), id: "captureFullPage"),
-            item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"),
+            // "Save Page As", no ellipsis, as in Arc 1.171's File menu.
+            keywords(item("Save Page As", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"), ["Save Page", "Save File"]),
             // A Kite addition (Arc has no installed apps): Chrome's "Install page as app…", for the current site.
             item("Install Page as App…", #selector(BrowserWindowController.installPageAsApp(_:)), id: "installPageAsApp"),
             // "Print", no ellipsis, as in Arc's File menu.
@@ -230,23 +239,26 @@ enum MainMenu {
                     header.isEnabled = false
                     return header
                 }(),
-                appearanceItem("Automatic", #selector(AppDelegate.setAutomaticAppearance(_:)), id: "automaticMode",
-                               keywords: ["Switch to Automatic Appearance", "Switch Automatic Mode", "Automatic Mode"]),
-                appearanceItem("Light", #selector(AppDelegate.setLightAppearance(_:)), id: "lightMode",
-                               keywords: ["Switch to Light Mode", "Switch Light Mode", "Light Mode"]),
-                appearanceItem("Dark", #selector(AppDelegate.setDarkAppearance(_:)), id: "darkMode",
-                               keywords: ["Switch to Dark Mode", "Switch Dark Mode", "Dark Mode", "Night Mode"]),
+                keywords(item("Automatic", #selector(AppDelegate.setAutomaticAppearance(_:)), toTarget: false, id: "automaticMode"),
+                         ["Switch to Automatic Appearance", "Switch Automatic Mode", "Automatic Mode"]),
+                keywords(item("Light", #selector(AppDelegate.setLightAppearance(_:)), toTarget: false, id: "lightMode"),
+                         ["Switch to Light Mode", "Switch Light Mode", "Light Mode"]),
+                keywords(item("Dark", #selector(AppDelegate.setDarkAppearance(_:)), toTarget: false, id: "darkMode"),
+                         ["Switch to Dark Mode", "Switch Dark Mode", "Dark Mode", "Night Mode"]),
             ]),
             .separator(),
-            item("Toggle Sidebar", #selector(BrowserWindowController.toggleSidebar(_:)), "s", id: "toggleSidebar"),
+            // Arc's Show/Hide Sidebar: "Hide Sidebar" while the sidebar shows, "Show Sidebar" while hidden (retitled
+            // when validated). "Toggle Sidebar" is its type-travel trigger.
+            keywords(item("Hide Sidebar", #selector(BrowserWindowController.toggleSidebar(_:)), "s", id: "toggleSidebar"), ["Toggle Sidebar"]),
             // Retitled "Hide Toolbar" while shown.
             item("Show Toolbar", #selector(BrowserWindowController.toggleToolbar(_:)), "d", [.command, .shift], id: "toggleToolbar"),
             // Arc 1.171's View menu, no shortcut; retitled "Expand Pinned Tabs" while collapsed.
             item("Collapse Pinned Tabs", #selector(BrowserWindowController.togglePinnedSection(_:)), id: "collapsePinnedSection"),
             .separator(),
             item("Stop Loading", #selector(BrowserWindowController.stopLoading(_:)), ".", id: "stopLoading"),
-            item("Reload Page", #selector(BrowserWindowController.reload(_:)), "r", id: "reloadPage"),
-            item("Force Reload Page", #selector(BrowserWindowController.forceReload(_:)), "r", [.command, .shift], id: "forceReloadPage"),
+            // Arc 1.171's titles; the old ones are its type-travel triggers.
+            keywords(item("Refresh the Page", #selector(BrowserWindowController.reload(_:)), "r", id: "reloadPage"), ["Reload Page"]),
+            keywords(item("Force Refresh the Page", #selector(BrowserWindowController.forceReload(_:)), "r", [.command, .shift], id: "forceReloadPage"), ["Force Reload", "Force Refresh"]),
             item("Clear Cookies and Refresh", #selector(BrowserWindowController.clearCookiesAndRefresh(_:)), id: "clearCookiesAndRefresh"),
             item("Clear Cache and Refresh", #selector(BrowserWindowController.clearCacheAndRefresh(_:)), id: "clearCacheAndRefresh"),
             .separator(),
@@ -286,7 +298,7 @@ enum MainMenu {
             commandBarOnly(item("Add Top Split", #selector(BrowserWindowController.addTopSplit(_:)), id: "addTopSplit"), keywords: ["New Top Split"]),
             commandBarOnly(item("Add Bottom Split", #selector(BrowserWindowController.addBottomSplit(_:)), id: "addBottomSplit"), keywords: ["New Bottom Split"]),
             .separator(),
-            item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0", id: "actualSize"),
+            keywords(item("Zoom to Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0", id: "actualSize"), ["Reset Zoom", "Actual Size"]),
             item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "=", id: "zoomIn"),
             item("Zoom Out", #selector(BrowserWindowController.zoomOut(_:)), "-", id: "zoomOut"),
             .separator(),
@@ -312,22 +324,12 @@ enum MainMenu {
             item("Enter Full Screen", #selector(BrowserWindowController.toggleFullScreenMode(_:)), "f", [.command, .control], id: "fullscreen"),
         ])
 
-        submenu("History", [
-            item("Back", #selector(BrowserWindowController.goBack(_:)), "[", id: "goBack"),
-            item("Forward", #selector(BrowserWindowController.goForward(_:)), "]", id: "goForward"),
-            // Arc 1.169 goes back/forward on ⌘← / ⌘→ in a page (seen on the Mac; not in its binding table,
-            // so not remappable there). Chromium offers key equivalents to the page first, so a page
-            // text field still moves its caret.
-            alternate(#selector(BrowserWindowController.goBack(_:)), left, .command),
-            alternate(#selector(BrowserWindowController.goForward(_:)), right, .command),
-            .separator(),
-            item("View History", #selector(BrowserWindowController.viewHistory(_:)), "y", id: "viewHistory"),
-            item("View Archive…", #selector(BrowserWindowController.viewArchive(_:)), id: "viewArchive"),
-            item("Clear Archive", #selector(BrowserWindowController.clearArchive(_:)), id: "clearArchive"),
-        ])
-
         submenu("Tabs", [
-            item("Pin / Unpin Tab", #selector(BrowserWindowController.togglePin(_:)), "d", id: "pinTab"),
+            // Arc 1.171's Tabs menu opens with File's New Tab… ⌘T again. One command: the copy has no ID and
+            // follows the File item's shortcut (KeyBindingsStore).
+            ShortcutMirror.copy(of: item("New Tab…", #selector(BrowserWindowController.newTab(_:)), "t"), id: "newTab"),
+            // Arc's Pin/Unpin Tab, retitled "Pin Tab" or "Unpin Tab" when validated.
+            item("Pin Tab", #selector(BrowserWindowController.togglePin(_:)), "d", id: "pinTab"),
             item("Duplicate Tab", #selector(BrowserWindowController.duplicateTab(_:)), id: "duplicate"),
             // Arc's command-bar action (no menu bar item or default shortcut there); here so the
             // command bar and shortcut overrides find it.
@@ -387,10 +389,26 @@ enum MainMenu {
         + [commandBarOnly(item("Add to Favorites", #selector(BrowserWindowController.toggleFavoriteTab(_:)), id: "toggleFavorite"),
                           keywords: ["Move to Top Apps", "Remove from Top Apps", "Favorite"])])
 
-        submenu("Window", [
-            item("Stay On Top", #selector(BrowserWindowController.toggleStayOnTop(_:)), id: "stayOnTop"),
+        // Arc's "Archive" menu (history), after Spaces and Tabs.
+        submenu("Archive", [
+            keywords(item("Go Back", #selector(BrowserWindowController.goBack(_:)), "[", id: "goBack"), ["Back", "Navigate Back"]),
+            keywords(item("Go Forward", #selector(BrowserWindowController.goForward(_:)), "]", id: "goForward"), ["Forward", "Navigate Forward"]),
+            // Arc 1.169 goes back/forward on ⌘← / ⌘→ in a page (seen on the Mac; not in its binding table,
+            // so not remappable there). Chromium offers key equivalents to the page first, so a page
+            // text field still moves its caret.
+            alternate(#selector(BrowserWindowController.goBack(_:)), left, .command),
+            alternate(#selector(BrowserWindowController.goForward(_:)), right, .command),
             .separator(),
-            item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m", toTarget: false, id: "minimize"),
+            item("View History", #selector(BrowserWindowController.viewHistory(_:)), "y", id: "viewHistory"),
+            item("View Archive…", #selector(BrowserWindowController.viewArchive(_:)), id: "viewArchive"),
+            item("Clear Archive", #selector(BrowserWindowController.clearArchive(_:)), id: "clearArchive"),
+        ])
+
+        submenu("Window", [
+            // Arc 1.171: Stay On Top, Minimize Window, (Minimize All), Zoom, (Zoom All), no separator between.
+            // AppKit adds the ⌥ alternates and Arrange in Front to the windows menu itself.
+            item("Stay On Top", #selector(BrowserWindowController.toggleStayOnTop(_:)), id: "stayOnTop"),
+            keywords(item("Minimize Window", #selector(NSWindow.performMiniaturize(_:)), "m", toTarget: false, id: "minimize"), ["Minimize"]),
             item("Zoom", #selector(NSWindow.performZoom(_:)), toTarget: false, id: "zoomWindow"),
             .separator(),
             // Arc: Open Library… ⇧⌘L, then View Downloads… ⇧⌘J (MainMenu.nib ids viewLibrary, viewDownloads).

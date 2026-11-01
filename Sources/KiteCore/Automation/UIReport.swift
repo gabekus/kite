@@ -205,14 +205,17 @@ public enum UIReport {
             if !flags.isEmpty { parts.append("(\(flags.joined(separator: ", ")))") }
             return parts.joined(separator: "  ")
         }
-        // Two enabled items on one shortcut: only the first in menu order ever fires.
-        var seen: [String: String] = [:]
+        // Two enabled items on one shortcut: only the first in menu order ever fires. Not a conflict when both
+        // run the same action (Arc repeats File › New Tab… ⌘T in its Tabs menu).
+        var seen: [String: (name: String, action: String?)] = [:]
         for item in items where !item.shortcut.isEmpty && item.isEnabled {
             let name = item.path.joined(separator: " > ")
             if let first = seen[item.shortcut] {
-                lines.append("CONFLICT \(item.shortcut): \(first) wins over \(name)")
+                if first.action == nil || first.action != item.action {
+                    lines.append("CONFLICT \(item.shortcut): \(first.name) wins over \(name)")
+                }
             } else {
-                seen[item.shortcut] = name
+                seen[item.shortcut] = (name, item.action)
             }
         }
         if lines.isEmpty { return match.map { "No menu item matches \"\($0)\"." } ?? "The menu bar is empty." }
