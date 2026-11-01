@@ -972,6 +972,38 @@ a click, scroll, Esc or other key, or when the window resigns key. Inferred, not
 alignment, flipping, the popover material and 0.5pt border, fonts (Arc's view uses 11–16pt sizes; which goes where
 is unknown) and the `linkPreviewsEnabled` default (off, as Arc's `hoverCardsEnabled` and Gabe's Arc; Kite menu › Link Previews turns it on).
 
+### Hover card share button (g118) → `LinkPreviewShareButton`, `LinkPreviewShareMenu` (Arc 1.171 binary and assets, 1 Nov 2026)
+
+Binary and assets only; Arc wasn't driven (its cards are off in Gabe's Arc).
+
+- Names: `HoverCardShareButton` and `HoverCardViewShareSnapshot` (strings 42016, 42023; type descriptors at
+  `0x103d091c0` / `0x103d09308`, both with fields `url`, `favicon`, `summary`, `image`); remote flag
+  `hover-cards-share-enabled` (73879) → `hoverCardsShareEnabled` (171858). The flag's value is unknown; Kite shows the button.
+- Look (`0x1020aba5c`, `0x1020abc10`): `Label("Share")` with icon `Image(systemName: "square.and.arrow.up")`
+  `.frame(32, 32).padding(.bottom, 3).padding(.leading, 0.5)`, `Font.system(size: 14, weight: .semibold)`;
+  `.labelStyle(.iconOnly)`, `.buttonStyle(SkeuPrimaryButtonStyle(…))` (ARCUI, descriptor `0x103cb797c`),
+  `.frame(height: 32)`, `.padding(.all, 7.5)`, `.padding(.bottom, 1)`, transition `.offset(x: 0, y: 10)` combined with
+  `.opacity` (`0x1020a5958`–`0x1020a5b84`). Placed by `overlay(alignment: .bottomTrailing)` on the card
+  (`0x1020a31a4`), shown when the share setting is on and the card has loaded (`0x1020a3238`).
+- SkeuPrimaryButtonStyle colours (ARCUI_ARCUI.bundle Assets.car): face `PrimaryButtonFace` #3139FB (hovered #2C33E2,
+  pressed #2A30D5), foreground white, border white 0 % light / 20 % dark, shadow #3438B2 light / #5A61FC 50 % dark.
+  Its shape and shadow geometry weren't decoded; Kite uses radius 10 (a `RoundedRectangle` constant near the
+  style's body), a 1pt border, shadow radius 0 y 1 and a 0.95 press scale: inferred.
+- Action (`0x1020ab52c`, decompiled): `ImageRenderer(content: HoverCardViewShareSnapshot(url, favicon, summary,
+  image))` at the screen scale → `nsImage`; items `[image, url]` (one attributed-text item when rendering fails) go
+  to Arc's `ShareMenu` (ShareMenu/ShareMenu.swift, `0x1012f4b8c` / `0x1012f5474`), popped up with
+  `popUpMenuPositioningItem:atLocation:inView:` at `NSEvent.mouseLocation`. ShareMenu adds one "Copy as %@" item per
+  item (icons `photo.on.rectangle` for an image, `link` for a URL, `doc.on.doc` / `doc.on.clipboard` for text), then a
+  "Share" item (`square.and.arrow.up`) whose submenu lists the `NSSharingService`s with their own icons.
+- Kite: the same button, corner and transition; the menu is Copy as Image, Copy as Link, Share ▸ (services for the
+  link and the image). The words after "Copy as" come from the share items and weren't decoded: "Image" and "Link"
+  are inferred. Kite's snapshot is the card's content (image, title, description, site) on the window background;
+  Arc's snapshot view layout wasn't decoded. Kite also keeps 32pt clear at the end of the card's site row.
+- Verified on a test build (temporary hook, removed, that sent a ⇧ hover for a 127.0.0.1 link): `ui tree` on the card
+  window showed the button at the card's bottom-right, 8pt in from the right and 8.5pt up, face #3139FB, radius 10;
+  `ui input` clicking it built the menu "Copy as Image", "Copy as Link", "Share" (6 services), and Copy as Image /
+  Copy as Link put a 300×120 image / the link on a test pasteboard (`KITE_TEST_PASTEBOARD`).
+
 ## Rename tab and Collapse Pinned Tabs (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
 
 - View menu (AX, nothing pressed): "Collapse Pinned Tabs", no shortcut, right after Show Toolbar ⇧⌘D. Strings
@@ -1474,6 +1506,36 @@ Peek; on WebKit only camera and mic, asked every time.
 - Not observed (no Arc mini player was on screen; Arc wasn't driven): its position in the sidebar (Kite puts it above
   the space bar), the card fill colour (Kite uses the address field's fill), the title font (a CTFont; Kite uses 12 pt
   medium), button hover fills, which controls drop at 160 / 126, and whether closing the player pauses (Kite pauses).
+
+### Mini Player marquee title (g117) → `MarqueeText`, `Marquee` (KiteCore) (Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+Binary only (`~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, Ghidra output in `~/rea-arc/decomp/out-g117/`);
+no Arc mini player was on screen and Arc wasn't driven.
+
+- Names: `ARCUI.MarqueeText` with a `ViewModel` (strings 33487–33491, `WidthPreferenceKey`, `MeasureWidth`);
+  MiniPlayerView's `usesMarqueeTextView`, state `miniPlayerMarqueeTitleEnabled` fed by the remote flag
+  `mini-player-marquee-title-enabled` (73979, 174098–174201). The flag's shipped value is unknown (it isn't in Gabe's
+  defaults); Kite always uses the marquee.
+- The call (`0x1024924b4`–`0x1024924e0`, MarqueeText init `0x100a9df78` stores d0–d4 at +0x20…+0x40):
+  `MarqueeText(title, leadingFade: 4, trailingFade: 8, gap: 32, delay: 3, speed: 1)` on the title `Text` (CTFont
+  from the app's font client, `.foregroundColor`).
+- Body (`0x100a9dfa4`, `0x100a9e080`, `0x100a9e4c0`): the title as a one-line `Text` (`lineLimit(1)`) for sizing, with
+  an overlay of `TimelineView(.animation)` (`AnimationTimelineSchedule(paused: false)`) → `Canvas`, masked by an
+  HStack of `LinearGradient([.clear, .black], .leading → .trailing).frame(width: 4)`, black, and
+  `LinearGradient([.black, .clear]).frame(width: 8)` (`0x100a9eaa0`), and padded by `EdgeInsets(0, −4, 0, −8)`
+  (`0x100a9e454`), so the fades sit just outside the title's frame. `.onAppear` sets `viewModel.startAt = now + 3`
+  (`0x100a9f51c`; `startAt` is an `@Published Date?`, `0x100a9de60`).
+- Draw (`0x100a9f21c`): measure the text at infinite width; `cycle = width + 32`; `elapsed = max(0, now − startAt)`;
+  `offset = fmod(cycle · elapsed / 20 · speed, cycle)` (the `fmov #20` at `0x100a9f35c`), so one loop always takes
+  20 s and the speed is (width + 32) / 20 pt/s; text vertically centred (`(h − textH) · 0.5`). If the text is wider
+  than the canvas less both fades, draw it at `4 − offset` and a second copy at `4 − offset + width + 32`;
+  otherwise draw it once at x 4 and push `startAt` to `now + 3` (`0x100a9f43c`), so a title that starts to overflow
+  later rests 3 s first. No pause at the end of a loop: it scrolls continuously.
+- Kite: same numbers and mask; it measures with geometry readers and pauses the timeline while the title fits
+  (Arc's keeps ticking). Verified on a test build with a 127.0.0.1 page looping a silent WAV and a 413pt title:
+  captures of the row showed the title resting ~3 s after the player appeared, then moving at ~22.4 pt/s (Arc's
+  formula: (413.5 + 32) / 20 = 22.3) with the second copy 32pt behind and the soft leading edge.
+  Inferred: the HStack mask's spacing (0) and that Arc's sizing `Text` is hidden.
 
 ### Settings › Advanced: auto PiP and Boosts switches (g90, g91; Arc 1.171 strings and disassembly, 1 Nov 2026)
 
