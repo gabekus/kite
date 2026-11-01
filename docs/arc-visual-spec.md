@@ -653,6 +653,21 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Kite has no link routing yet, so it isn't imported.
 
+## View › Developer: Inspect Elements, JavaScript Console, Network Inspector (Arc 1.171, 1 Nov 2026)
+
+- Menu (menudump, AX, nothing pressed): View › Developer = View Source ⌥⌘U, Developer Tools ⌥⌘I, Inspect
+  Elements ⌥⌘C, JavaScript Console ⌥⌘J, Network Inspector (no shortcut), Allow JavaScript from Apple Events,
+  Turn on Developer Mode for this site ⌃⌥⌘D.
+- Strings (`~/rea-arc/arc-strings.txt`): action ids `inspectElements`, `javaScriptConsole`, `networkInspector`
+  (~176572); shortcut descriptions "Opens the element inspector.", "Opens the JavaScript console." (~80689) and
+  "Opens the network inspector developer tool." (~80758); analytics `devToolsInspectElementsOpened`,
+  `devToolsJavascriptConsoleOpened`, `devToolsNetworkPanelOpened` (~160538).
+- Mechanism in Kite (not Arc's code): Chromium's DevTools frontend embedder API, the calls Chrome makes for
+  ⌥⌘C/⌥⌘J (`DevToolsAPI.enterInspectElementMode()`, `DevToolsAPI.showPanel('console' | 'network')`; both names
+  are in CEF 156's binary), run in the DevTools page after it calls `InspectorFrontendHost.loadCompleted()`.
+- Not observed in Arc (would need pressing its menu): whether Arc's DevTools is docked or a window, and which
+  panel Arc's picker leaves showing. Kite keeps its own DevTools window.
+
 ## Split View: top/bottom layout and drop-to-split → `SplitLayout.swift` (KiteCore), `SplitDropZonesView` (Arc strings and 1.169 decompile, 1 Nov 2026)
 
 Arc wasn't driven; nothing here is from a recording.
