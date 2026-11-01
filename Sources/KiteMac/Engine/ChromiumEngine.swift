@@ -75,6 +75,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         self.adblocker = adblocker
         super.init()
         browser.delegate = self
+        prepareVerificationCodes()
         historySwipe = HistorySwipeController(
             view: browser.view,
             canNavigate: { [weak browser] in $0 == .back ? browser?.canGoBack == true : browser?.canGoForward == true },
@@ -84,6 +85,23 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
                 browser.evaluateJavaScript(script, completion: completion)
             },
             zoomFactor: { [weak browser] in browser?.zoomFactor ?? 1 }
+        )
+    }
+
+    /// Every page gets Kite's code-field script in its own world (VerificationCodeScript);
+    /// the binding exists only there, so pages can't ask for codes themselves.
+    private func prepareVerificationCodes() {
+        browser.pageFeatureEventHandler = { [weak self] method, params in self?.handlePageFeatureEvent(method, params) }
+        browser.executeDevToolsMethod(
+            "Runtime.addBinding",
+            params: ["name": VerificationCodeScript.bindingName, "executionContextName": VerificationCodeScript.worldName],
+            completion: nil
+        )
+        browser.executeDevToolsMethod("Page.enable", params: nil, completion: nil)
+        browser.executeDevToolsMethod(
+            "Page.addScriptToEvaluateOnNewDocument",
+            params: ["source": VerificationCodeScript.source, "worldName": VerificationCodeScript.worldName],
+            completion: nil
         )
     }
 
@@ -202,6 +220,16 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
             if let id = params["executionContextId"] as? Int { kiteContexts[id] = nil }
         case "Runtime.executionContextsCleared":
             kiteContexts.removeAll()
+        case "Runtime.bindingCalled" where params["name"] as? String == VerificationCodeScript.bindingName:
+            guard let context = params["executionContextId"] as? Int,
+                  let payload = (params["payload"] as? String)?.data(using: .utf8),
+                  let request = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+                  let host = request["host"] as? String, host == address?.host else { return }
+            if request["done"] as? Bool == true {
+                VerificationCodeService.shared.codeUsed(by: self)
+            } else {
+                VerificationCodeService.shared.codeWanted(by: self, context: context, host: host)
+            }
         case "Runtime.bindingCalled":
             // Only from Kite's world, in the main frame of a Google results page.
             guard params["name"] as? String == GoogleResultsScript.bindingName,
