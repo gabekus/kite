@@ -4,7 +4,8 @@
   Kite's AppleScript dictionary. Same classes, terms and codes as Arc 1.171's (see
   docs/arc-visual-spec.md, "AppleScript"), so scripts written for Arc work after changing the
   application name. Written for Kite; the scripting objects are in Sources/KiteMac/AppleScript.swift.
-  Not here yet: setting a tab's location, and the space `focus` command.
+  A tab's `location` stays read only: Arc's sdef leaves its access unset, but Arc's scripting
+  object has no setter for it (a read-only property in its binary), so Arc can't set it either.
 -->
 <dictionary title="Kite Terminology">
   <suite name="Standard Suite" code="core" description="Kite's windows, tabs and spaces.">
@@ -176,6 +177,10 @@
       </responds-to>
     </class>
 
+    <command name="focus" code="SpaFocus" description="Switch the window to a space.">
+      <direct-parameter type="specifier" description="The space."/>
+    </command>
+
     <class name="space" code="sPaC" plural="spaces" description="A space.">
       <cocoa class="KiteScriptSpace"/>
       <property name="id" code="ID  " type="text" access="r" description="The space's unique identifier.">
@@ -184,9 +189,12 @@
       <property name="title" code="pnam" type="text" access="r" description="The space's name.">
         <cocoa key="title"/>
       </property>
-      <element type="tab" access="r" description="The space's pinned and unpinned tabs.">
+      <element type="tab" access="rw" description="The space's pinned and unpinned tabs. Making a tab here switches to the space and opens it at the top of its unpinned tabs.">
         <cocoa key="appleScriptTabs"/>
       </element>
+      <responds-to command="focus">
+        <cocoa method="handleFocusScriptCommand:"/>
+      </responds-to>
     </class>
   </suite>
 </dictionary>

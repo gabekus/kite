@@ -1671,7 +1671,25 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   (favorites, then the current space's pinned and unpinned tabs); a space lists its pinned and unpinned tabs.
   `make new tab` in a window opens it at the top of the unpinned tabs and selects it, like ⌘T. A window's `id`
   is its window number.
-- Not in Kite yet: setting a tab's `location`, and the space `focus` command (spaces belong to another thread).
+- g109 (`focus`, tab `location`, space tabs; Arc 1.171 sdef + `decomp/out7/objc.txt`, `funcs.txt`, `arc.s`, 1 Nov 2026):
+  - `focus` (`SpaFocus`) on a space: `AppleScriptSpaceWrapper::focus:` (`0x100455668`) calls `0x10045550c`, which
+    sends one store action (enum case 10, carrying the space's id) through the window's store (`0x100840128`). No
+    activation call. Kite: `focus space …` selects that space in the window (`BrowserState.selectSpace`), Kite stays
+    in the background.
+  - Space `tabs` is read-write in Arc (`appleScriptTabs` `T@"NSArray",N,C`, and the wrapper implements
+    `newScriptingObjectOfClass:forValueForKey:withContentsValue:properties:`, `0x1004551a0`). That method sends the
+    same case-10 action as `focus`, then calls the window's make-tab helper (`0x100452854`). So
+    `tell space 2 of window 1 to make new tab with properties {URL:…}` switches to the space and opens the tab there.
+    Kite does the same (`AppleScripting.openTab(url:inSpace:state:)`): top of the space's unpinned tabs, selected.
+    Differs: with a bad URL Arc has already switched spaces before it refuses; Kite refuses without switching.
+  - Tab `location`: Arc.sdef leaves its access unset (so read-write on paper), but `AppleScriptTabWrapper`'s
+    `location` property is `T@"NSString",N,R` (read only) and the class has no `setLocation:` (funcs.txt lists only
+    the getter at `0x100453d74`). Setting it can't work in Arc, so Kite keeps it read only (`set location …` →
+    error -10006). `URL` is settable in both (`setURL:` at `0x100453750`); Kite already had it.
+  - Window `spaces` is read only in Arc too (`appleScriptSpaces` `N,R`, no new-object method for it): no `make new space`.
+  - Neither dictionary has `make`'s `at` parameter (`insh`), so `make new tab at end of tabs of window 1` loses its
+    location and goes to the application, which opens Little Kite (seen in a Kite test; for Arc this is inferred from the same sdef, not run). Use
+    `tell window 1 to make new tab …`.
 ## Ask on Page → `AskOnPage` (KiteCore), `FindBar`, `AskOnPagePanel`, `AskOnPageClaude` (Arc 1.171 strings, defaults and disassembly, 1 Nov 2026)
 
 - Setting: `askOnPageEnabled` (plain boolean, `defaults read company.thebrowser.Browser`) is **0** in Gabe's Arc, so

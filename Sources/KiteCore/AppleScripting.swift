@@ -25,6 +25,15 @@ public enum AppleScripting {
         space.allTabs
     }
 
+    /// `make new tab` in a space (`tell space … to make new tab`): as Arc, the window switches to
+    /// the space (what `focus` does), then the tab opens at the top of its unpinned tabs, selected.
+    /// Nil when the space is gone.
+    public static func openTab(url: URL, inSpace spaceID: UUID, state: inout BrowserState) -> UUID? {
+        guard state.spaces.contains(where: { $0.id == spaceID }) else { return nil }
+        state.selectSpace(spaceID)
+        return state.openTab(url: url, in: spaceID)
+    }
+
     /// `make new tab with properties {URL:…}` needs a URL with a scheme, as in Arc.
     public static func newTabURL(_ value: Any?) -> URL? {
         guard let string = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !string.isEmpty,
