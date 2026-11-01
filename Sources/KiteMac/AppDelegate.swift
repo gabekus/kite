@@ -241,6 +241,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
     }
 
+    /// Kite menu → Play Kite Sound Effects: Arc's "Play Arc sound effects", on by default.
+    @objc func toggleSoundEffects(_ sender: Any?) {
+        UserDefaults.standard.set(!SoundEffects.isEnabled(in: .standard), forKey: SoundEffects.enabledKey)
+    }
+
     /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
     @objc func openURLFromExtensionsMenu(_ sender: Any?) {
         guard let url = sender as? URL else { return }
@@ -428,6 +433,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleSoundEffects(_:)) {
+            item.state = SoundEffects.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleLittleKiteLinks(_:)) {
             item.state = LittleKite.opensExternalLinks(in: .standard) ? .on : .off
