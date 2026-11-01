@@ -27,8 +27,8 @@ public struct MCPServer: Sendable {
         Call tabs_context first for tab ids, and read_page or find before click, type or form_input to get element refs; \
         screenshot pixels are the coordinates the computer tool clicks. Tools work on background tabs without switching to them. \
         \(UntrustedContent.notice) \
-        Kite asks the user before anything that submits a form, sends, posts, pays, buys or deletes, and before typing \
-        into password or payment fields; if they decline, the tool returns an error. \
+        Only submit forms, send, post, pay, buy or delete what the user asked for. If they turned on Kite's \
+        Ask Before Claude Acts, Kite asks them first; if they decline, the tool returns an error. \
         Don't retry a declined action. \
         When a page needs the user signed in, call sign_in: the user signs in (with their password manager) while you wait, and \
         you never see the password. Never ask for a password or type one yourself. \

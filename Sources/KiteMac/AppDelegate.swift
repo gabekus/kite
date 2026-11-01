@@ -493,6 +493,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         claudeTasks.runsIn = claudeTasks.runsIn == .desktop ? .kite : .desktop
     }
 
+    /// Kite menu → Ask Before Claude Acts: confirm commits, file opens and closing the user's tabs.
+    @objc func toggleAskBeforeClaudeActs(_ sender: Any?) {
+        automation.setAskBeforeActing(!automation.settings.askBeforeActing)
+    }
+
     @objc func toggleRecordNetwork(_ sender: Any?) {
         automation.setRecordNetwork(!automation.settings.recordNetwork)
     }
@@ -529,8 +534,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             Or choose Connect Claude… to have Kite do it, for Claude Code and the Claude app.
 
-            Kite asks you before Claude submits a form, sends, posts, pays, buys or deletes anything, and shows \
-            when Claude is controlling a tab. Turn this off in the Kite menu at any time.
+            Kite shows when Claude is controlling a tab. To be asked before Claude submits a form, sends, posts, \
+            pays, buys or deletes anything, turn on Ask Before Claude Acts. Turn this off in the Kite menu at any time.
             """
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Connect Claude…")
@@ -555,6 +560,9 @@ extension AppDelegate: NSMenuItemValidation {
         case #selector(toggleClaudeRunsInDesktop(_:)):
             item.state = claudeTasks?.runsIn == .desktop ? .on : .off
             return ClaudeDesktop.isInstalled
+        case #selector(toggleAskBeforeClaudeActs(_:)):
+            item.state = automation.settings.askBeforeActing ? .on : .off
+            return automation.isEnabled
         case #selector(toggleRecordNetwork(_:)):
             item.state = automation.settings.recordNetwork ? .on : .off
             return automation.isEnabled

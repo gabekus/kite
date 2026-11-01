@@ -356,7 +356,7 @@ struct ClaudeBubble: View {
         guard task != nil else {
             switch route {
             case let .project(_, name): return "Ask Claude… (posts in \(name))"
-            case let .folder(path): return "Ask Claude… (works in \(ClaudeRoute.folderName(path)))"
+            case .folder: return "Ask Claude…"
             case .newChat: break
             }
             return model.tasks?.runsIn == .desktop && ClaudeDesktop.isInstalled

@@ -208,6 +208,8 @@ final class AutomationController {
 
     func setUseClaudeSpace(_ use: Bool) { update { $0.useClaudeSpace = use } }
 
+    func setAskBeforeActing(_ ask: Bool) { update { $0.askBeforeActing = ask } }
+
     private func update(_ change: (inout AutomationSettings) -> Void) {
         change(&settings)
         do {
@@ -482,7 +484,9 @@ final class AutomationController {
     }
 
     /// Asks the user; throws if they say no. Inside a batch it stops the batch instead.
+    /// With Ask Before Claude Acts off (the default) it lets the action through.
     func require(_ request: ConfirmationRequest, tab id: UUID) async throws {
+        guard settings.askBeforeActing else { return }
         if Self.inBatch { throw NeedsConfirmation(request: request) }
         guard await confirm(request, tab: id) else {
             if revoked.contains(id) { throw AutomationError.stopped }
