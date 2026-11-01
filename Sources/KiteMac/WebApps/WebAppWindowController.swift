@@ -219,6 +219,11 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
             case .incognitoWindow: delegate?.openIncognitoWindow(url: url)
             case .newTab, .splitView, .littleKite: host.openTab(url)
             }
+        case .pageCommand(.viewPageSource):
+            if let url, let source = URL(string: "view-source:" + url.absoluteString) { host.openTab(source) }
+        case .pageCommand:
+            // Save As… and Print… act on a tab; Kite doesn't run them in a web app window yet.
+            NSSound.beep()
         case .popup(let popup):
             host.adoptPopup(popup)
         case .closeRequested:

@@ -117,6 +117,13 @@ extension BrowserWindowController {
             pool.openTab(with: popup)
         case let .openLink(url, target):
             openLinkFromPageMenu(url, target)
+        case .pageCommand(.viewPageSource):
+            if let url = session.url, let source = URL(string: "view-source:" + url.absoluteString) {
+                store.mutate { _ = $0.openTab(url: source) }
+            }
+        case .pageCommand:
+            // Save As… and Print… act on a tab; Kite doesn't run them on a Peek.
+            NSSound.beep()
         case .permissionRequest(let request):
             // Kite doesn't prompt over a Peek yet (where Arc shows it there wasn't read).
             request.respond(nil)

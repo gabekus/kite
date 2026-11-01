@@ -41,6 +41,8 @@ final class PagePool {
     var onLinkPeek: ((UUID, URL) -> Void)?
     /// The page menu's Open Link in New Window, Split View, Little Kite and Incognito Window.
     var onOpenLink: ((UUID, URL, PageContextMenu.LinkTarget) -> Void)?
+    /// The page menu's Save As…, Print… and View Page Source, for tab `UUID`.
+    var onPageCommand: ((UUID, PageContextMenu.PageCommand) -> Void)?
     /// What this window can do with a link, for the page menu.
     var contextMenuHost: (() -> PageContextMenu.Host)?
     /// Each tab's unanswered permission request (one at a time: a newer one dismisses the older).
@@ -289,6 +291,8 @@ final class PagePool {
         case let .openLink(url, target):
             // Chromium opens Open Link in New Tab in the background.
             if target == .newTab { store.mutate { $0.openTab(url: url, select: false) } } else { onOpenLink?(id, url, target) }
+        case .pageCommand(let command):
+            onPageCommand?(id, command)
         case .linkHover(let hover):
             guard let view = pages[id]?.view else { return }
             LinkPreviewController.shared.hover(hover, in: view)
