@@ -34,6 +34,7 @@ final class ToastView: NSView {
     private let shareButton = NSButton()
     private var labelTrailing: NSLayoutConstraint!
     private var shareURL: URL?
+    private var undo: (() -> Void)?
     private var hideTask: Task<Void, Never>?
 
     init() {
@@ -114,12 +115,18 @@ final class ToastView: NSView {
         return hit === shareButton ? hit : nil
     }
 
-    /// Shows `message`; with `shareURL`, Arc's share button sits on the right.
-    func show(_ message: String, shareURL: URL? = nil, for duration: Duration = Metrics.duration) {
+    /// Shows `message`; with `shareURL`, Arc's share button sits on the right; with `undo`, the
+    /// same button is Arc's Undo accessory (arrow.uturn.backward, as in "Download renamed!").
+    func show(_ message: String, shareURL: URL? = nil, undo: (() -> Void)? = nil, for duration: Duration = Metrics.duration) {
         label.stringValue = message
         self.shareURL = shareURL
-        shareBackground.isHidden = shareURL == nil
-        labelTrailing.constant = shareURL == nil
+        self.undo = undo
+        let hasButton = shareURL != nil || undo != nil
+        shareButton.image = undo != nil
+            ? NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "Undo")
+            : NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: "Share")
+        shareBackground.isHidden = !hasButton
+        labelTrailing.constant = !hasButton
             ? -Metrics.trailingPadding
             : -(Metrics.textToButton + Metrics.buttonSize.width + Metrics.buttonTrailing)
         isHidden = false
@@ -137,6 +144,10 @@ final class ToastView: NSView {
     }
 
     @objc private func share() {
+        if let undo {
+            self.undo = nil
+            return undo()
+        }
         guard let shareURL else { return }
         NSSharingServicePicker(items: [shareURL]).show(relativeTo: shareBackground.bounds, of: shareBackground, preferredEdge: .minY)
     }

@@ -195,7 +195,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Ask on Page | ⌘F asks AI about the page | ❌ | With Claude in the browser |
 | ChatGPT/AI in command bar | Ask from the command bar | ❌ | With Claude in the browser |
 | Tidy Tab Titles | Pinned tabs get short AI titles | ❌ | With Claude in the browser |
-| Tidy Downloads | Downloads renamed by AI | ❌ | With Claude in the browser |
+| Tidy Downloads | Downloads renamed by AI | 🟡 A finished download is renamed by Kite's Claude (`claude -p`, fast model), extension kept, never overwrites; "Download renamed!" toast with Undo. On by default (Gabe's `renameDownloadsEnabled`); Kite menu › Tidy Downloads | Renames after completion (Arc names it before it lands), no sidebar rename banner, no Settings row |
 | Tidy Tabs | Groups Today tabs automatically | ❌ | With Claude in the browser |
 | Browse for Me | AI builds a page from search results | ❌ | Skip? |
 | Custom tab names | Rename a pinned tab | ✅ any tab: Rename… in its menu, double-click, Tabs › Rename Current Tab…; kept when the page title changes, imported from Arc | B3 |

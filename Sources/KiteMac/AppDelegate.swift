@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         history = HistoryStore(fileURL: Self.supportDirectory.appendingPathComponent("history.json"))
         store.history = history
         DownloadsModel.shared.start(fileURL: Self.supportDirectory.appendingPathComponent("downloads.json"))
+        DownloadsModel.shared.currentTabTitle = { DownloadTidier.frontBrowser?.store.state.selectedTab?.title }
 
         adblocker = Adblocker(directory: Self.supportDirectory.appendingPathComponent("Adblock", isDirectory: true))
         adblocker.setPolicy(enabled: store.state.blocksAds, allowedHosts: store.state.adblockAllowedHosts)
@@ -241,6 +242,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
     }
 
+    /// Kite menu → Tidy Downloads: Arc Max's AI rename of finished downloads (Arc's `renameDownloadsEnabled`).
+    @objc func toggleTidyDownloads(_ sender: Any?) {
+        UserDefaults.standard.set(!TidyDownloads.isEnabled(in: .standard), forKey: TidyDownloads.enabledKey)
+    }
+
     /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
     @objc func openURLFromExtensionsMenu(_ sender: Any?) {
         guard let url = sender as? URL else { return }
@@ -425,6 +431,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(setArchiveInterval(_:)), let store {
             item.state = ArchiveInterval.allCases.firstIndex(of: store.state.archiveAfter) == item.tag ? .on : .off
+        }
+        if item.action == #selector(toggleTidyDownloads(_:)) {
+            item.state = TidyDownloads.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
