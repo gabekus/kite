@@ -45,6 +45,14 @@ enum MainMenu {
             return hidden
         }
 
+        /// A command Arc offers only in its command bar: hidden from the menu bar, still found by the command bar.
+        func commandBarOnly(_ item: NSMenuItem) -> NSMenuItem {
+            item.isHidden = true
+            item.allowsKeyEquivalentWhenHidden = true
+            item.representedObject = MenuCommand.commandBarOnly
+            return item
+        }
+
         func submenuItem(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
             let menu = TypingSafeMenu(title: title)
             items.forEach(menu.addItem)
@@ -211,6 +219,11 @@ enum MainMenu {
                 previous.isHidden = true
                 return previous
             }(),
+            // Arc's command bar actions for top/bottom splits: not in its menu bar, so hidden here too,
+            // but offered in the command bar.
+            commandBarOnly(item("Add Vertical Split View", #selector(BrowserWindowController.addVerticalSplitView(_:)), id: "newVerticalSplitView")),
+            commandBarOnly(item("Convert to Vertical Split View", #selector(BrowserWindowController.convertToVerticalSplitView(_:)), id: "convertToVerticalSplitView")),
+            commandBarOnly(item("Convert to Horizontal Split View", #selector(BrowserWindowController.convertToHorizontalSplitView(_:)), id: "convertToHorizontalSplitView")),
             .separator(),
             item("Actual Size", #selector(BrowserWindowController.actualSize(_:)), "0", id: "actualSize"),
             item("Zoom In", #selector(BrowserWindowController.zoomIn(_:)), "=", id: "zoomIn"),

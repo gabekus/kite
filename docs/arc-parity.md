@@ -171,7 +171,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | 🟡 ⇧-hover shows a card (title, description, image, site) sized and timed from Arc's binary; `LinkPreviewController`. Off by default as in Arc; Kite menu › Link Previews | No AI summary (Arc's quickSummary + detail rows), no instant cards on HN/X/Google, no share button yet |
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
 | Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | 🟡 Little Kite: own window, toolbar measured from Arc, "Open in <Space>" (⌘O) moves the live page into the main window, ⌘W closes, Kite menu → Open Links from Other Apps in Little Kite (on by default) | No profile indicator, extensions button, downloads tray, searchable space picker, auto-archive or global hotkey yet |
-| Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal panes, divider, sidebar row; no vertical layout or drag-to-split yet | Thread: Split view |
+| Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal and top/bottom panes, divider, sidebar row; command bar Add Vertical Split View and Convert to Horizontal/Vertical; drop a page link on a content edge to open it in a new pane (real drag pending a hands-on check). Not yet: Add Top/Bottom/Left/Right menu items, dragging sidebar tabs into a split, moving panes | Thread: Split view |
 | Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | ❌ | Thread: Mini player |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
 | Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |
