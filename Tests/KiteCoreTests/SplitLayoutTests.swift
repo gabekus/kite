@@ -83,3 +83,52 @@ import Testing
         #expect(decoded.selectedSplit?.orientation == .vertical)
     }
 }
+
+@Suite struct LinkClickTests {
+    private let link = URL(string: "https://clicked.example/page")!
+
+    private func makeState() -> (BrowserState, [UUID]) {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        var ids: [UUID] = []
+        for i in 0..<3 { ids.append(state.openTab(url: URL(string: "https://site\(i).com"))) }
+        ids.reverse()
+        state.select(tab: ids[0])
+        return (state, ids)
+    }
+
+    @Test func optionCommandClickOpensInSplitViewAndShiftWins() {
+        #expect(LinkClick.commandClickDestination(shift: false, option: false) == .backgroundTab)
+        #expect(LinkClick.commandClickDestination(shift: false, option: true) == .splitView)
+        #expect(LinkClick.commandClickDestination(shift: true, option: false) == .foregroundTab)
+        #expect(LinkClick.commandClickDestination(shift: true, option: true) == .foregroundTab)
+    }
+
+    @Test func aLinkFromAPageMakesATwoPaneSplitWithTheLinkFocused() throws {
+        var (state, ids) = makeState()
+        guard case .added(let pane) = state.openLinkInSplit(url: link, from: ids[0]) else { Issue.record("no pane"); return }
+        let split = try #require(state.selectedSplit)
+        #expect(split.tabIDs == [ids[0], pane])
+        #expect(state.selectedTab?.id == pane)
+        #expect(state.selectedTab?.url == link)
+    }
+
+    @Test func theNewPaneGoesNextToTheClickedPaneNotTheFocusedOne() throws {
+        var (state, ids) = makeState()
+        guard case .added(let second) = state.openLinkInSplit(url: link, from: ids[0]) else { Issue.record("no pane"); return }
+        // The click came from the first pane while the second has focus.
+        guard case .added(let third) = state.openLinkInSplit(url: link, from: ids[0]) else { Issue.record("no pane"); return }
+        let split = try #require(state.selectedSplit)
+        #expect(split.tabIDs == [ids[0], third, second])
+        #expect(state.selectedTab?.id == third)
+    }
+
+    @Test func aFullSplitTakesNothingAndKeepsFocus() throws {
+        var (state, ids) = makeState()
+        for _ in 1..<SplitView.maxPanes { _ = state.openLinkInSplit(url: link, from: ids[0]) }
+        let focused = state.selectedTab?.id
+        let before = state.selectedSplit?.tabIDs
+        #expect(state.openLinkInSplit(url: link, from: ids[0]) == .full)
+        #expect(state.selectedTab?.id == focused)
+        #expect(state.selectedSplit?.tabIDs == before)
+    }
+}

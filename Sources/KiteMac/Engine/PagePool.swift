@@ -168,6 +168,11 @@ final class PagePool {
                 guard let self else { return }
                 if let onLinkPeek { onLinkPeek(id, url) } else { store.mutate { $0.openTab(url: url) } }
             }
+        case .openInSplit(let url):
+            // Out of the engine's navigation callback before making another page.
+            DispatchQueue.main.async { [weak self] in
+                self?.store.mutate { $0.openLinkInSplit(url: url, from: id) }
+            }
         case .closeRequested:
             store.mutate { $0.close(tab: id) }
         case .linkHover(let hover):
