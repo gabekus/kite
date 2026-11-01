@@ -298,7 +298,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         libraryHost.sizingOptions = []
         libraryHost.isHidden = true
         library.onOpenChange = { [weak self] open in self?.libraryOpened(open) }
-        NotificationCenter.default.addObserver(self, selector: #selector(downloadDidStart(_:)), name: .kiteDownloadDidStart, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(downloadDidStart(_:)), name: DownloadsModel.didStartDownload, object: nil)
 
         var dragStartWidth: CGFloat = 0
         resizeHandle.onBegin = { [weak self] in
@@ -505,6 +505,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         materialView.appearance = appearance
         peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil)
         peekCard.material.appearance = appearance
+        if let shownSpaceID, shownSpaceID != space.id, let old = state.spaceIndex(shownSpaceID) {
+            spaceSwipe.spaceChanged(from: old, to: state.selectedSpaceIndex)
+        }
         shownSpaceID = space.id
         // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
         let title = state.selectedTab?.title ?? ""
@@ -1142,7 +1145,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             key.performClose(sender)
         } else if linkPeek != nil {
             // Arc: ⌘W closes the Peek, not the tab under it.
-            closeLinkPeek(animated: true)
+            closeLinkPeek(animated: true, undoable: true)
         } else if store.commandBar != nil {
             store.hideCommandBar()
         } else if let id = store.state.selectedTab?.id {
@@ -1351,7 +1354,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     @objc func nextSpace(_ sender: Any?) { store.mutate { $0.selectAdjacentSpace(offset: 1) } }
     @objc func previousSpace(_ sender: Any?) { store.mutate { $0.selectAdjacentSpace(offset: -1) } }
-    @objc func newSpace(_ sender: Any?) { store.addSpace() }
+    @objc func newSpace(_ sender: Any?) { store.beginNewSpace() }
     @objc func editTheme(_ sender: Any?) { editTheme(ofSpace: store.state.selectedSpaceID) }
 
     func editTheme(ofSpace id: UUID) {

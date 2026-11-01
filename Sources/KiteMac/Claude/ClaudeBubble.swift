@@ -225,7 +225,7 @@ struct ClaudeBubble: View {
                     routeItem(.project(id: project.id, name: project.name), current: route, tasks: tasks, space: space)
                 }
                 Button("Add Project…") {
-                    if let project = ClaudeRoutePicker.askForProject() { tasks.setRoute(project, for: space) }
+                    ClaudeRoutePicker.askForProject(over: nil) { tasks.setRoute($0, for: space) }
                     model.focusToken += 1
                 }
             }

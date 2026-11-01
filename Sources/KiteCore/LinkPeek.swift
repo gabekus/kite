@@ -6,6 +6,10 @@ import Foundation
 /// Numbers come from Arc 1.171's `ModalContent.ModalV2HostView` in the `popover` layout mode (decompiled);
 /// see docs/arc-visual-spec.md "Peek".
 public enum LinkPeek {
+    /// The undo action name for a closed Peek, so Edit shows "Undo Close Peek" (Arc's localized key "Close Peek",
+    /// commented "Undo prompt for re-opening a closed Peek").
+    public static let closeUndoActionName = "Close Peek"
+
     /// Arc's Links settings: "Open a Peek window when clicking on links to other sites" (Favorites and
     /// Pinned tabs only), and "… on links with Shift held" (any tab).
     public static func opensInPeek(section: TabSection?, from source: URL?, to target: URL, shift: Bool) -> Bool {

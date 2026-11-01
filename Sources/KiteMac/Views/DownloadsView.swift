@@ -7,11 +7,15 @@ import UniformTypeIdentifiers
 /// Arc's download colours, from its asset catalogs (`assetutil --info`): the Little Arc
 /// downloads tray's DownloadItemBackground / DownloadItemBackgroundHovered, and BaseAssets'
 /// DownloadProgressBarBackground.
-private enum DownloadColors {
-    static let rowHovered = Color(nsColor: NSColor(name: nil) { appearance in
+enum DownloadColors {
+    static let itemBackground = NSColor(name: nil) { appearance in
+        appearance.isDark ? NSColor(displayP3Red: 0.05, green: 0.05, blue: 0.05, alpha: 1) : NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+    }
+    static let itemBackgroundHovered = NSColor(name: nil) { appearance in
         appearance.isDark ? NSColor(displayP3Red: 0.12, green: 0.12, blue: 0.12, alpha: 1)
             : NSColor(displayP3Red: 0.96, green: 0.96, blue: 0.96, alpha: 1)
-    })
+    }
+    static let rowHovered = Color(nsColor: itemBackgroundHovered)
     static let progressTrack = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.isDark ? NSColor(srgbRed: 0.443, green: 0.467, blue: 0.51, alpha: 1)
             : NSColor(srgbRed: 0.808, green: 0.843, blue: 0.906, alpha: 1)
@@ -221,11 +225,16 @@ private struct DownloadRow: View {
         .accessibilityLabel(item.fileName)
     }
 
-    private var icon: NSImage {
-        if !item.path.isEmpty, FileManager.default.fileExists(atPath: item.path) {
-            return NSWorkspace.shared.icon(forFile: item.path)
+    private var icon: NSImage { item.icon }
+}
+
+extension DownloadItem {
+    /// The file's Finder icon, or its type's while it isn't on disk.
+    @MainActor var icon: NSImage {
+        if !path.isEmpty, FileManager.default.fileExists(atPath: path) {
+            return NSWorkspace.shared.icon(forFile: path)
         }
-        let ext = (item.fileName as NSString).pathExtension
+        let ext = (fileName as NSString).pathExtension
         return NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .data)
     }
 }

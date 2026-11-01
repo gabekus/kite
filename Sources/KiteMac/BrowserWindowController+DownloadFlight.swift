@@ -2,17 +2,13 @@ import AppKit
 import KiteCore
 import QuartzCore
 
-extension Notification.Name {
-    /// A download was just added to the list; `object` is the window it started in, when known.
-    static let kiteDownloadDidStart = Notification.Name("KiteDownloadDidStart")
-}
-
 /// Arc's `DownloadToLibrary`: when a download starts, an arrow flies from where it started (the
 /// pointer) into the sidebar's Library button. See `DownloadFlight` for the throw.
 extension BrowserWindowController {
     @objc func downloadDidStart(_ notification: Notification) {
         guard let window, window.isVisible else { return }
-        if let source = notification.object as? NSWindow {
+        // `object` is the view the download came from, when the engine says (WebKit does).
+        if let source = (notification.object as? NSView)?.window {
             guard source === window else { return }
         } else {
             // Chromium doesn't say which window: the frontmost browser window, as Arc's key window.

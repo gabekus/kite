@@ -25,6 +25,11 @@ final class DownloadsModel {
     /// The front window's current tab title: where a Chromium download most likely started.
     @ObservationIgnored var currentTabTitle: () -> String? = { nil }
 
+    /// Posted when a download first appears, with the page's view that started it (a Chromium
+    /// browser's view or the WKWebView) as the object and the item's id under "id". Little Kite
+    /// puts its own window's downloads in its tray.
+    static let didStartDownload = Notification.Name("KiteDownloadDidStart")
+
     private struct File: Codable {
         var version: Int
         var downloads: DownloadList
@@ -49,13 +54,13 @@ final class DownloadsModel {
                 receivedBytes: (info["receivedBytes"] as? NSNumber)?.int64Value ?? 0,
                 totalBytes: (info["totalBytes"] as? NSNumber)?.int64Value ?? -1,
                 speed: (info["speed"] as? NSNumber)?.int64Value ?? 0)
-            MainActor.assumeIsolated { DownloadsModel.shared.apply(update) }
+            let source = (note.object as? KCBrowser)?.view
+            MainActor.assumeIsolated { DownloadsModel.shared.apply(update, source: source) }
         }
         #endif
     }
 
-    /// `window`: where the download started, when the engine says (WebKit does, Chromium doesn't).
-    func apply(_ update: DownloadUpdate, sourceTitle: String? = nil, window: NSWindow? = nil) {
+    func apply(_ update: DownloadUpdate, sourceTitle: String? = nil, source: NSView? = nil) {
         let previous = list.items.first { $0.engineID == update.engineID }?.state
         // A finished download is final: a late progress tick (WebKit's KVO hops to the main queue)
         // would mark it in progress again, and a late repeat would put back a path Tidy Downloads
@@ -63,8 +68,7 @@ final class DownloadsModel {
         if previous == .complete { return }
         let (item, isNew) = list.apply(update)
         if isNew, let title = sourceTitle ?? currentTabTitle(), !title.isEmpty { sourceTitles[item.id] = title }
-        // The window's Library button catches it (Arc's DownloadToLibrary fly-in).
-        if isNew, update.state == .inProgress { NotificationCenter.default.post(name: .kiteDownloadDidStart, object: window) }
+        if isNew { NotificationCenter.default.post(name: Self.didStartDownload, object: source, userInfo: ["id": item.id]) }
         if update.state != .inProgress {
             let title = sourceTitles.removeValue(forKey: item.id)
             // Arc Max's Tidy Downloads: a finished download gets a readable name.
@@ -76,7 +80,7 @@ final class DownloadsModel {
 
     // MARK: WebKit
 
-    func track(_ download: WKDownload, destination: URL, sourceTitle: String?, window: NSWindow? = nil) {
+    func track(_ download: WKDownload, destination: URL, sourceTitle: String?) {
         let id = nextWebKitID
         nextWebKitID -= 1
         webKitDownloads[id] = download
@@ -89,7 +93,7 @@ final class DownloadsModel {
         let progress = download.progress
         apply(DownloadUpdate(engineID: id, url: url, path: destination.path, state: .inProgress,
                              receivedBytes: progress.completedUnitCount, totalBytes: progress.totalUnitCount),
-              sourceTitle: sourceTitle, window: window)
+              sourceTitle: sourceTitle, source: download.webView)
         webKitProgress[id] = download.progress.observe(\.completedUnitCount) { _, _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { report(.inProgress) } }
         }

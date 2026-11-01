@@ -78,25 +78,21 @@ final class WebAppsController: NSObject, NSMenuItemValidation {
         }
     }
 
+    /// Asks with the name editable, in Arc's dialog sheet (`ArcDialog`) rather than an NSAlert.
     private func confirm(_ app: WebApp, icon: NSImage, over window: NSWindow?, completion: @escaping (String?) -> Void) {
-        let alert = NSAlert()
-        alert.messageText = "Install App?"
-        alert.informativeText = "\(app.startURL.host ?? app.startURL.absoluteString) opens in its own window, "
-            + "and in Launchpad and Spotlight from ~/Applications/\(WebAppShim.folderName)."
-        alert.icon = icon
-        let field = NSTextField(string: app.name)
-        field.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
-        field.setAccessibilityLabel("App Name")
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Install")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        let finish: (NSApplication.ModalResponse) -> Void = { response in
-            let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            completion(response == .alertFirstButtonReturn ? (name.isEmpty ? app.name : name) : nil)
-        }
         // Always a sheet: an app-modal alert would block Kite (and its test bridge) with no window in front.
-        if let window = window ?? host?.mainWindow() { alert.beginSheetModal(for: window, completionHandler: finish) } else { finish(.cancel) }
+        guard let window = window ?? host?.mainWindow() else { return completion(nil) }
+        ArcDialog.present(
+            on: window,
+            title: "Install App?",
+            message: "\(app.startURL.host ?? app.startURL.absoluteString) opens in its own window, "
+                + "and in Launchpad and Spotlight from ~/Applications/\(WebAppShim.folderName).",
+            field: .init(text: app.name, placeholder: "App Name"),
+            actions: [.init(title: "Cancel", role: .cancel), .init(title: "Install", role: .primary)]
+        ) { action, text in
+            let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            completion(action == 1 ? (name.isEmpty ? app.name : name) : nil)
+        }
     }
 
     private func finishInstall(_ app: WebApp, icon: NSImage, opens: Bool = true) {

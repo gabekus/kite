@@ -8,6 +8,7 @@
 #include "include/cef_client.h"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_devtools_message_observer.h"
+#include "include/cef_jsdialog_handler.h"
 #include "include/cef_keyboard_handler.h"
 #include "include/cef_parser.h"
 #include "include/cef_permission_handler.h"
@@ -264,6 +265,7 @@ class KCClient : public CefClient,
                  public CefFocusHandler,
                  public CefContextMenuHandler,
                  public CefPermissionHandler,
+                 public CefJSDialogHandler,
                  public CefDevToolsMessageObserver {
  public:
     explicit KCClient(KCBrowser* owner) : owner_(owner), requests_(new NetworkCountingHandler(owner, KCAdblockRequestHandler(owner))) {}
@@ -278,6 +280,7 @@ class KCClient : public CefClient,
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
     CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+    CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
 
     // CefPermissionHandler: Kite's own prompt (Arc's) for camera, microphone, location and
     // notifications. Anything else keeps Chromium's default.
@@ -338,6 +341,52 @@ class KCClient : public CefClient,
                 case KCPermissionDecisionDismiss: callback->Continue(CEF_PERMISSION_RESULT_DISMISS); break;
             }
         });
+    }
+
+    /// window.alert, confirm and prompt go to Kite's own dialog (Arc's willRunJavaScript…Panel)
+    /// instead of Chromium's NSAlert.
+    bool OnJSDialog(CefRefPtr<CefBrowser> browser,
+                    const CefString& origin_url,
+                    JSDialogType dialog_type,
+                    const CefString& message_text,
+                    const CefString& default_prompt_text,
+                    CefRefPtr<CefJSDialogCallback> callback,
+                    bool& suppress_message) override {
+        KCJavaScriptDialogKind kind = dialog_type == JSDIALOGTYPE_CONFIRM ? KCJavaScriptDialogKindConfirm
+                                    : dialog_type == JSDIALOGTYPE_PROMPT ? KCJavaScriptDialogKindPrompt
+                                    : KCJavaScriptDialogKindAlert;
+        return RunDialog(kind, ToNSString(message_text), ToNSString(default_prompt_text), ToNSURL(origin_url), callback);
+    }
+
+    bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser> browser,
+                              const CefString& message_text,
+                              bool is_reload,
+                              CefRefPtr<CefJSDialogCallback> callback) override {
+        NSURL* origin = ToNSURL(browser->GetMainFrame()->GetURL());
+        return RunDialog(is_reload ? KCJavaScriptDialogKindReload : KCJavaScriptDialogKindLeave, @"", @"", origin, callback);
+    }
+
+    void OnResetDialogState(CefRefPtr<CefBrowser> browser) override {
+        KCBrowser* owner = owner_;
+        if ([owner.delegate respondsToSelector:@selector(browserDismissJavaScriptDialogs:)]) {
+            [owner.delegate browserDismissJavaScriptDialogs:owner];
+        }
+    }
+
+    bool RunDialog(KCJavaScriptDialogKind kind, NSString* message, NSString* defaultText, NSURL* origin,
+                   CefRefPtr<CefJSDialogCallback> callback) {
+        KCBrowser* owner = owner_;
+        id<KCBrowserDelegate> delegate = owner.delegate;
+        SEL run = @selector(browser:runJavaScriptDialog:message:defaultText:origin:completion:);
+        if (!owner || ![delegate respondsToSelector:run]) return false;
+        __block bool answered = false;
+        [delegate browser:owner runJavaScriptDialog:kind message:message ?: @"" defaultText:defaultText ?: @""
+                   origin:origin completion:^(BOOL ok, NSString* text) {
+            if (answered) return;
+            answered = true;
+            callback->Continue(ok, CefString(text.UTF8String ?: ""));
+        }];
+        return true;
     }
 
     void OnDismissPermissionPrompt(CefRefPtr<CefBrowser> browser,
