@@ -231,13 +231,14 @@ final class ClaudeTasksController {
 
     // MARK: Tabs
 
-    /// The Claude folder of the space the task was asked from (the selected one for older tasks).
-    /// It's shared by that space's tasks, and archives itself once its tabs go stale.
+    /// The task's own folder, inside the Claude folder of the space it was asked from (the
+    /// selected one for older tasks). Both archive themselves once their tabs go stale.
     private func file(_ tab: UUID, under id: UUID) {
         guard let i = index(id) else { return }
+        let title = tasks[i].title
         let existing = tasks[i].folderID.flatMap { folder in store.state.folder(matching: folder.uuidString)?.folder.id }
         let space = tasks[i].spaceID.flatMap { store.state.spaceIndex($0) != nil ? $0 : nil } ?? store.state.selectedSpaceID
-        guard let folder = existing ?? store.mutate({ $0.claudeFolder(inSpace: space) }) else { return }
+        guard let folder = existing ?? store.mutate({ $0.claudeTaskFolder(named: title, inSpace: space) }) else { return }
         store.mutate { _ = $0.moveTab(tab, toFolder: folder) }
         tasks[i].folderID = folder
         if !tasks[i].tabIDs.contains(tab) { tasks[i].tabIDs.append(tab) }
@@ -256,19 +257,11 @@ final class ClaudeTasksController {
         automation.host?.window?.makeKeyAndOrderFront(nil)
     }
 
-    /// Closes the task's tabs in its Claude folder (other tasks' tabs there stay), and the
-    /// folder once it's empty.
+    /// Closes the task's folder and every tab in it, and the space's Claude folder once it's empty.
     func closeTabs(_ id: UUID) {
         guard let i = index(id) else { return }
-        if let folder = tasks[i].folderID {
-            store.mutate { state in
-                let inFolder = Set(state.folder(matching: folder.uuidString)?.folder.items.tabs.map(\.id) ?? [])
-                // Tabs the user dragged out of the folder stay.
-                for tab in tasks[i].tabIDs where inFolder.contains(tab) {
-                    _ = state.removePinnedTab(tab, droppingEmptyFolder: true)
-                }
-            }
-        }
+        if let folder = tasks[i].folderID { store.mutate { _ = $0.removeFolder(folder) } }
+        // Tabs the user dragged out of the folder stay.
         tasks[i].folderID = nil
         tasks[i].tabIDs = tasks[i].tabIDs.filter { store.state.tab($0) != nil }
         scheduleSave()

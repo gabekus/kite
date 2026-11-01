@@ -73,6 +73,35 @@ import Testing
         #expect(state.folder(matching: kept.uuidString) != nil)
     }
 
+    @Test func eachTaskGetsItsOwnFolderInsideTheClaudeFolder() throws {
+        var state = state()
+        let work = state.spaces[1].id
+        let made = (state.claudeTaskFolder(named: "Source the parts", inSpace: work),
+                    state.claudeTaskFolder(named: "Is this open source?", inSpace: work))
+        let first = try #require(made.0), second = try #require(made.1)
+        let claude = try #require(state.spaces[1].pinnedItems.compactMap { item -> TabFolder? in
+            if case .folder(let folder) = item { return folder }
+            return nil
+        }.first)
+        #expect(state.spaces.count == 2)
+        #expect(claude.name == "Claude" && claude.ephemeral == true)
+        #expect(claude.items.map(\.id) == [first, second])
+
+        let a = state.openTab(url: URL(string: "https://jlcpcb.example"), in: work, select: false)
+        let b = state.openTab(url: URL(string: "https://eink.example"), in: work, select: false)
+        _ = state.moveTab(a, toFolder: first)
+        _ = state.moveTab(b, toFolder: second)
+        state.update(tab: a) { $0.lastActiveAt = now.addingTimeInterval(-7200) }
+        state.update(tab: b) { $0.lastActiveAt = now }
+        state.archiveStaleTabs(olderThan: 3600, now: now)
+        #expect(state.folder(matching: first.uuidString) == nil)
+        #expect(state.folder(matching: second.uuidString) != nil)
+
+        // Clearing the last task's folder takes the Claude folder with it.
+        state.removeFolder(second)
+        #expect(state.spaces[1].pinnedItems.isEmpty)
+    }
+
     @Test func sectionsAreNewestFirstInArcsBuckets() {
         var state = state()
         let today = archive(&state, "https://today.example", ago: 3600)
