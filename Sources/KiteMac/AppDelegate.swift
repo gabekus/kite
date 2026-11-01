@@ -10,6 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var engine: WebEngine!
 
     private var store: BrowserStore!
+    /// For Settings, which changes the search engine directly.
+    var browserStore: BrowserStore? { store }
     private var history: HistoryStore!
     private(set) var keyBindings: KeyBindingsStore!
     private var adblocker: Adblocker!
@@ -407,6 +409,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: Settings
+
+    /// Kite → Settings… (⌘,).
+    @objc func showSettings(_ sender: Any?) {
+        SettingsWindowController.shared.show()
+    }
 
     /// Chromium's Energy Saver (30fps on low battery). Off unless the user turns it on.
     static let energySaverKey = "chromiumEnergySaver"

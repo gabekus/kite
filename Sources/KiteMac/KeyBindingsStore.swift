@@ -40,6 +40,31 @@ final class KeyBindingsStore {
         apply(to: menu)
     }
 
+    /// Removes every override, so each command has its default shortcut again.
+    func resetAll(menu: NSMenu?) {
+        bindings = KeyBindings()
+        save()
+        apply(to: menu)
+    }
+
+    /// Every command with an ID and a title, in menu order, for Settings → Shortcuts.
+    /// Hidden commands are listed too: their shortcuts still work (Space 1–9, split panes).
+    func entries(in menu: NSMenu) -> [ShortcutEntry] {
+        apply(to: menu)
+        var seen = Set<String>()
+        func walk(_ menu: NSMenu, _ path: [String]) -> [ShortcutEntry] {
+            menu.items.flatMap { item -> [ShortcutEntry] in
+                if let submenu = item.submenu { return walk(submenu, path + [item.title]) }
+                guard let id = item.identifier?.rawValue, !item.title.isEmpty, item.hasDescribableShortcut,
+                      seen.insert(id).inserted
+                else { return [] }
+                let original = defaults[ObjectIdentifier(item)] ?? item.shortcut
+                return [ShortcutEntry(id: id, title: item.title, menuPath: path, shortcut: item.shortcut, defaultShortcut: original)]
+            }
+        }
+        return walk(menu, [])
+    }
+
     /// Sets every item's key equivalent from its default plus the overrides.
     func apply(to menu: NSMenu?) {
         guard let menu else { return }

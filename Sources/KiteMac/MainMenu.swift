@@ -82,6 +82,9 @@ enum MainMenu {
         submenu("Kite", [
             item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false, id: "aboutKite"),
             .separator(),
+            // Arc's app menu: Settings… ⌘, right after About and its separator (read from Arc's menu bar);
+            // "viewPreferences" is the item's arcKeyBindingID in Arc's MainMenu.nib.
+            item("Settings…", #selector(AppDelegate.showSettings(_:)), ",", toTarget: false, id: "viewPreferences"),
             // Claude's chat bubble at the bottom of the page; the menu item only carries the shortcut.
             item("Ask Claude", #selector(BrowserWindowController.toggleClaudeBubble(_:)), "j", id: "askClaude"),
             .separator(),
