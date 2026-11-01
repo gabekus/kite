@@ -127,3 +127,61 @@ import Testing
         #expect(LittleKite.carbonModifiers([.option, .command]) == 0x0900)
     }
 }
+
+@Suite struct LittleKiteMoveMenuTests {
+    private let work = LittleKite.MoveMenu.Option(id: UUID(), name: "Work")
+    private let home = LittleKite.MoveMenu.Option(id: UUID(), name: "Home")
+    private let cafe = LittleKite.MoveMenu.Option(id: UUID(), name: "Café")
+
+    private var menu: LittleKite.MoveMenu { .init(options: [work, home, cafe], primaryID: home.id) }
+
+    @Test func startsWithEverySpaceAndTheFirstHighlighted() {
+        #expect(menu.results == [work, home, cafe])
+        #expect(menu.highlighted == work)
+    }
+
+    @Test func searchIgnoresCaseAndAccentsAndHighlightsTheFirstMatch() {
+        var m = menu
+        m.updateQuery("CAFE")
+        #expect(m.results == [cafe])
+        #expect(m.highlighted == cafe)
+        m.updateQuery("o")
+        #expect(m.results == [work, home])
+        #expect(m.highlighted == work)
+        m.updateQuery("zzz")
+        #expect(m.results.isEmpty)
+        #expect(m.highlighted == nil)
+        m.updateQuery("  ")
+        #expect(m.results.count == 3)
+    }
+
+    @Test func arrowsMoveTheHighlightAndStopAtTheEnds() {
+        var m = menu
+        m.selectPrevious()
+        #expect(m.highlighted == work)
+        m.selectNext()
+        m.selectNext()
+        #expect(m.highlighted == cafe)
+        m.selectNext()
+        #expect(m.highlighted == cafe)
+        m.hover(home.id)
+        #expect(m.highlighted == home)
+        m.updateQuery("work")
+        m.hover(home.id)
+        #expect(m.highlighted == work)
+    }
+
+    @Test func heightGrowsWithRowsUpTo350() {
+        #expect(LittleKite.MoveMenu.listHeight(count: 0) == 0)
+        #expect(LittleKite.MoveMenu.listHeight(count: 3) == 138)
+        #expect(LittleKite.MoveMenu.listHeight(count: 20) == 350)
+        #expect(menu.height == 46 + 138)
+    }
+
+    @Test func indicatorAndChevronNeedMoreThanOne() {
+        #expect(!LittleKite.showsProfileIndicator(profileCount: 1))
+        #expect(LittleKite.showsProfileIndicator(profileCount: 2))
+        #expect(!LittleKite.hasAdditionalDestinations(spaceCount: 1))
+        #expect(LittleKite.hasAdditionalDestinations(spaceCount: 2))
+    }
+}

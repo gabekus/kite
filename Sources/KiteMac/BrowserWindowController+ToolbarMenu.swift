@@ -55,6 +55,7 @@ extension BrowserWindowController {
                 case .share: share(nil)
                 case .capture: capturePage(nil)
                 case .captureFullPage: captureFullPage(nil)
+                case .capturePortraitMode: capturePortraitMode(nil)
                 case .manageExtensions:
                     #if canImport(CEFBridge)
                     // Under the bar's right end, where its extensions sit.

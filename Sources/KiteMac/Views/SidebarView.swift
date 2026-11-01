@@ -1572,16 +1572,14 @@ private struct EditPinnedPageMenu: View {
 }
 
 /// Arc's audibility button (TabCellView.audibilityButton): a 24pt speaker that mutes or
-/// unmutes the tab. Arc draws its own animated speaker (SF `speaker` plus three sound waves
-/// and a slash); Kite uses the matching SF Symbols.
+/// unmutes the tab, drawn as Arc's animated speaker (`TabSpeakerIcon`: waves, slash).
 private struct TabAudioButtonView: View {
     let isMuted: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isMuted ? "speaker.slash" : "speaker.wave.3")
-                .font(.system(size: 14, weight: .medium))
+            TabSpeakerIcon(isMuted: isMuted)
                 .frame(width: TabAudioButton.side, height: TabAudioButton.side)
                 .contentShape(Rectangle())
         }
