@@ -60,6 +60,13 @@ extension BrowserWindowController {
         return Bundle(url: handler)?.bundleIdentifier == Bundle.main.bundleIdentifier
     }
 
+    /// Help › Troubleshooting › Open Task Manager (Arc opens Chromium's task manager).
+    @objc func openTaskManager(_ sender: Any?) {
+        TaskManagerWindow.show { [weak self] in
+            (NSApp.delegate as? AppDelegate)?.browserControllers ?? self.map { [$0] } ?? []
+        }
+    }
+
     @objc func revealDataFolder(_ sender: Any?) {
         NSWorkspace.shared.activateFileViewerSelecting([AppDelegate.supportDirectory])
     }

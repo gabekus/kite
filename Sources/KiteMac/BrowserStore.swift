@@ -61,11 +61,13 @@ final class BrowserStore {
     /// The URL each tab last recorded, so repeated reports of one page count once.
     @ObservationIgnored private var recordedURLs: [UUID: URL] = [:]
 
-    private static let spaceIcons = ["🌿", "🎨", "📚", "🎧", "🧪", "✈️", "🍳", "🎮"]
+    static let spaceIcons = ["🌿", "🎨", "📚", "🎧", "🧪", "✈️", "🍳", "🎮"]
 
     /// An incognito window's store: one dark space, never saved.
     static func incognito() -> BrowserStore {
-        BrowserStore(state: BrowserState(spaces: [Space(name: "Incognito", icon: "🕶️", theme: Theme.presets[3])]))
+        let store = BrowserStore(state: BrowserState(spaces: [Space(name: "Incognito", icon: "🕶️", theme: Theme.presets[3])]))
+        store.tidiesPinnedTabs = false
+        return store
     }
 
     /// Another normal window's store: a copy of the shared sidebar with its own selection,
@@ -86,6 +88,8 @@ final class BrowserStore {
     @ObservationIgnored weak var link: WindowLink?
     /// After every change: AppDelegate saves the extra windows (windows.json).
     @ObservationIgnored var didChangeState: (() -> Void)?
+    /// Tidy Tab Titles names the tabs pinned here; off in incognito, where nothing leaves the window.
+    @ObservationIgnored var tidiesPinnedTabs = true
 
     /// Takes a change made in another normal window, keeping this window's selection.
     func adopt(_ other: BrowserState) {
@@ -112,6 +116,7 @@ final class BrowserStore {
 
     @discardableResult
     func mutate<R>(_ body: (inout BrowserState) -> R) -> R {
+        let before = state
         let result = body(&state)
         // A tab pinned by any path (menu, drag into a folder, automation) remembers its page.
         state.syncPinnedURLs()
@@ -119,6 +124,11 @@ final class BrowserStore {
         onChange?()
         link?.propagate(from: self)
         didChangeState?()
+        // Tidy Tab Titles: a tab pinned by any path gets a short name from Claude.
+        if tidiesPinnedTabs, TidyTabTitles.isEnabled() {
+            let pinned = TidyTabTitles.newlyPinnedTabs(before: before, after: state)
+            if !pinned.isEmpty { TidyTabTitlesController.shared.tabsPinned(pinned, in: self) }
+        }
         return result
     }
 
