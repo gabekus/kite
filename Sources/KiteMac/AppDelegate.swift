@@ -250,6 +250,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(!LinkPreview.isEnabled(in: .standard), forKey: LinkPreview.enabledKey)
     }
 
+    /// Kite menu → Tidy Tabs: Arc Max's Tidy button on the Today divider (Arc's `tidyTabsEnabled`,
+    /// on in Gabe's Arc, so on by default).
+    @objc func toggleTidyTabs(_ sender: Any?) {
+        UserDefaults.standard.set(!TidyTabs.isEnabled(in: .standard), forKey: TidyTabs.enabledKey)
+        // The sidebar reads the setting when it redraws.
+        store.mutate { _ in }
+    }
+
     /// Kite menu → Tidy Downloads: Arc Max's AI rename of finished downloads (Arc's `renameDownloadsEnabled`).
     @objc func toggleTidyDownloads(_ sender: Any?) {
         UserDefaults.standard.set(!TidyDownloads.isEnabled(in: .standard), forKey: TidyDownloads.enabledKey)
@@ -484,6 +492,9 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleLinkPreviews(_:)) {
             item.state = LinkPreview.isEnabled(in: .standard) ? .on : .off
+        }
+        if item.action == #selector(toggleTidyTabs(_:)) {
+            item.state = TidyTabs.isEnabled(in: .standard) ? .on : .off
         }
         if item.action == #selector(toggleToolbarFullURLs(_:)) {
             item.state = ToolbarURL.showsFullURL(in: .standard) ? .on : .off
