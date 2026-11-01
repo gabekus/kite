@@ -70,6 +70,32 @@ final class ThemeView: MTKView, MTKViewDelegate {
     @available(*, unavailable)
     required init(coder: NSCoder) { fatalError() }
 
+    private var occlusionObserver: NSObjectProtocol?
+
+    /// A covered window's display link stops, so a crossfade started while it was covered stays on its
+    /// first frame: uncovered, the window would show the old space's colours until something redrew it,
+    /// and the next space swipe would then jump from them. Catch up as soon as it's on screen again.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+        occlusionObserver = nil
+        guard let window else { return }
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.windowVisibilityChanged() }
+        }
+    }
+
+    private func windowVisibilityChanged() {
+        guard window?.occlusionState.contains(.visible) == true else { return }
+        if transitionStart != nil {
+            clock.stop()
+            clock.start()
+        }
+        needsDisplay = true
+    }
+
     func setTheme(_ theme: Theme, animated: Bool) {
         guard interactiveProgress == nil else { return }
         guard theme != to else { return }
