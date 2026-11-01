@@ -559,9 +559,25 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   Help text: "Exit the current context. Such as closing a Peek window or exiting fullscreen."
 - Motion (FUN_101713230 + FUN_100a05154, a `CASpringAnimation` built from a damping ratio and response:
   stiffness (2π/response)², damping 4π·ratio/response): popover open 0.865 / 0.245s, close 0.895 / 0.225s
-  (fullbleed 0.885 / 0.18, 0.9 / 0.18). The transform tweens from the source (`tweenFromSource`:
-  `sourceRectInWindow`, `sourceCornerRadius`, `sourceSnapshot`), scale = source width / card width
-  (FUN_1017156ac). Kite has no link frame, so it grows from 20% at the pointer and fades in over 0.1s **[differs]**.
+  (fullbleed 0.885 / 0.18, 0.9 / 0.18).
+- Tween from the clicked element (g44). `ModalV2TransitionConfiguration` cases `tweenFromSource`
+  (`sourceSnapshot`, `sourceRectInWindow`, `sourceCornerRadius`), `immediate`, `crossFade` (arc-strings.txt
+  166539–166544). FUN_1017156ac (`out5/peek3.txt` 187–) builds the transition view's transform: translate by
+  source.midX − card.midX and source.midY − card.midY, then a **uniform** scale of source width / card width
+  (not a frame tween: the card keeps its own aspect ratio, as wide as the source and centred on it). With no
+  source (case 1) it's the identity. FUN_101717608 (`out5/peek1.txt`) gives the card's corner radius as
+  sourceCornerRadius / that scale, so it looks like the source's at the start and springs to 8; it's animated
+  on the card and content container with the same spring as the transform (`objc-setShadowOpacity.txt`
+  ~1712–1960). The source rect comes from the page: `ADK/WebContent+HoveredElementRect.swift` (strings
+  63760–63796) runs `document.elementFromPoint` at the mouse point (mapped through `visualViewport`), takes that
+  element's `getBoundingClientRect` (the element itself, its `closest('a[href]')` only for the URL), and returns
+  x/y/width/height scaled back by `visualViewport.scale`. Kite (`LinkPeek.sourceRectScript`, `sourceTween`)
+  asks the source page the same way when the Peek opens, and falls back to the link to that URL (focused, else
+  first visible) when the pointer isn't on it, then to the old 20%-at-the-pointer growth if the page doesn't
+  answer within 0.12s. The value of `sourceCornerRadius` isn't in the script's output; Kite uses 0
+  **[unverified]**. Arc crossfades from `sourceSnapshot`; Kite fades the card in over 0.1s instead
+  **[differs]**. Closing back to the source with the close spring is **[inferred]**: the dismiss path wasn't
+  decompiled, but the same transform function serves every non-presented state.
 - Not built yet: the peeked item in the sidebar (`peekedPinnedSidebarItemID`, `ModalV2SidebarBadgeView`),
   swipe right to dismiss (`minimumDismissTranslation`, `tugRubberbanding`), undo "re-opening a closed Peek",
   the dismiss confirmation for unsaved pages (`awaitingDismissConfirmation`), any scrim behind the card.
