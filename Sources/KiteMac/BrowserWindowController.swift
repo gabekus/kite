@@ -40,6 +40,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var claudeBubbleHost: NSHostingView<ClaudeBubble>!
     private var trafficLights: TrafficLights!
     private var commandBarHost: NSHostingView<CommandBarOverlay>!
+    private lazy var instantLinks = InstantLinksController(store: store, supportDirectory: AppDelegate.supportDirectory)
     private var contentLeading: NSLayoutConstraint!
     private var sidebarLeading: NSLayoutConstraint!
     private var sidebarWidthConstraint: NSLayoutConstraint!
@@ -905,7 +906,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func commit(_ suggestion: CommandSuggestion, mode: CommandBarMode) {
         // A page picked for a new split pane keeps the split; anything else leaves it to be cancelled.
         switch suggestion {
-        case .open, .search, .siteSearch, .history: store.pendingSplitPane = nil
+        case .open, .search, .siteSearch, .history, .instantLinks: store.pendingSplitPane = nil
         default: break
         }
         store.hideCommandBar()
@@ -919,6 +920,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         case .command(let command):
             // After the bar closes, so the command sees the page as first responder, not the bar's field.
             DispatchQueue.main.async { command.perform() }
+        case .instantLinks(let query):
+            instantLinks.open(query)
         }
     }
 

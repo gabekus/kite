@@ -936,6 +936,35 @@ Arc was not opened or driven, so no geometry was measured.
   ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
   deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
 
+## Instant Links → `InstantLinks` (KiteCore), `InstantLinksController` (Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+- **Key: ⇧⏎.** Arc's Max preferences description is stored XOR-obfuscated with the key "ObfuscatorString"
+  (decoder at `0x1007f6b0c`, called from `MaxPreferenceViewController` at `0x102024720`/`0x102024758`; data
+  `0x1045d9270` len 0x49 and `0x1045d92e8` len 0x25). Decoded, it tells you to press Shift + Enter on any web
+  search to open the top result, and adds that you can search multiple queries. Arc's command bar text field
+  has a `shiftReturn` command (strings 156140–156200: return, escape, backTab, optionReturn, commandReturn,
+  shiftReturn, commandShiftReturn).
+- **Setting:** `instantLinksEnabled` (strings 64169, 171070 `isInstantLinksEnabled`), one of the Arc Max
+  toggles; Gabe's Arc has it on (`defaults read company.thebrowser.Browser`), so Kite defaults it on
+  (`instantLinksEnabled` in Kite's defaults; no settings UI yet).
+- **Mechanism (V1):** an obfuscated prompt (decoded at `0x1045e83d0`, call `0x102280578`) asks a model to turn
+  the input into JSON `{title, queries[], format}` with format `tab` | `folder` | `split` (folder or split only
+  when asked; one query unless the input asks for several things; `site:` added when a site is named). Kite
+  uses the same schema with its own wording, run on Kite's Claude (`claude -p --model haiku`, no tools).
+- **Top result:** `WebSearch/GoogleSearchEngine.swift` loads Google in hidden WebKit web content
+  (`googleHiddenWebContentWebKit`, `document.documentElement.outerHTML`), reads results with `#search a`
+  (also `#tvcap a`, `#topstuff a`, `#botstuff a`), unwraps `https://www.google.com/url?q=`, and detects captchas
+  (`form[id='captcha-form']`, `iframe[title='reCAPTCHA']`, `div[id='recaptcha']`) (strings 200340–200375,
+  83515–83535). Kite uses a hidden `WKWebView` the same way (`#search a` links that hold an `h3`), and follows
+  Google's opaque `/goto?url=` redirect to the first page off Google.
+- **Also in the binary, not built:** `InstantLinksResponseV2` with typed actions (web with a count, image, map,
+  directions, flights, news, siteSearch on 15 named sites, history; URL templates at strings 81470–81495) behind
+  remote flag `instant-links-v2-enabled`; an intent prompt (navigate vs search) behind
+  `instant-links-intent-prototype-enabled` / `instant-links-suggestion-enabled` with a `SuggestionInstantLinksView`
+  row; and a sidebar cell `InstantLinksCellView` (`links`, `favicons`, `linkCount`, `isExpanded`) plus an
+  `instantLinks` item container. Which flags Arc's server turns on is unknown.
+- **Inferred:** ⇧⏎ only for a search (a typed URL opens as usual) and not in Site Search; results open in
+  query order with the first selected; what Arc shows while it works (probably the sidebar cell) is unverified.
 ## Zap → `ZapLibrary`, `ZapScript`, `ZapPickerScript` (KiteCore), `ZapsModel`, `ZapInjection`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, `ARC_BoostsEditor.bundle` (Assets.car, SelectorPicker.js;

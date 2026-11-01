@@ -194,7 +194,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | 🟡 Popover from the toolbar's sliders button and the sidebar URL field's hover button: Copy URL, Share, Block Ads & Trackers, camera/mic/location/notifications (Chromium content settings; not on WebKit), Secure/Insecure, Clear Cache / Clear Cookies. No Boosts, capture, extensions section, Developer Mode, All Site Settings | Gap 8 |
 | Native ad blocker | uBlock-style lists | ❌ | Ad blocker thread |
 | Translation | Translate page, "never translate" sites | ❌ | Later (Chromium translate isn't in CEF) |
-| Instant Links | Command bar goes straight to the top result | ❌ | With Claude in the browser |
+| Instant Links | Command bar goes straight to the top result | 🟡 ⇧⏎ on a search: Kite's Claude splits it into Google queries (Arc's V1 schema: title, queries, tab/folder/split), a hidden web view opens each top result; tabs, a split or a folder. Falls back to the input as the query without Claude Code, and to the results page on a captcha | No loading cell in the sidebar (Arc's `InstantLinksCellView`), no V2 typed actions (images, maps, news, counts), no intent suggestion row, no settings toggle |
 | Ask on Page | ⌘F asks AI about the page | ❌ | With Claude in the browser |
 | ChatGPT/AI in command bar | Ask from the command bar | ❌ | With Claude in the browser |
 | Tidy Tab Titles | Pinned tabs get short AI titles | ❌ | With Claude in the browser |
