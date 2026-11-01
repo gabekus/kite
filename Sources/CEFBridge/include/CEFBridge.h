@@ -79,6 +79,22 @@ extern NSString * const KCExtensionInstallDialogDidCloseNotification;
 
 @class KCBrowser;
 
+/// Per-site permissions Chromium stores as content settings (Site Controls).
+typedef NS_ENUM(NSInteger, KCSitePermission) {
+    KCSitePermissionCamera,
+    KCSitePermissionMicrophone,
+    KCSitePermissionLocation,
+    KCSitePermissionNotifications,
+};
+
+/// A content setting's value; Default means nothing is set for the site (it has to ask).
+typedef NS_ENUM(NSInteger, KCSitePermissionValue) {
+    KCSitePermissionValueDefault,
+    KCSitePermissionValueAllow,
+    KCSitePermissionValueBlock,
+    KCSitePermissionValueAsk,
+};
+
 /// A Chromium profile for a set of browsers. `incognitoContext` keeps cookies,
 /// cache and storage in memory only; they vanish when the last browser using it closes.
 NS_SWIFT_UI_ACTOR
@@ -142,6 +158,8 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) BOOL canGoForward;
 /// 1.0 = 100%.
 @property (nonatomic) double zoomFactor;
+/// Mutes the tab's audio in the browser (Chromium's tab mute); the page isn't told.
+@property (nonatomic) BOOL audioMuted;
 /// Requests the ad blocker stopped since the page started loading.
 @property (nonatomic, readonly) NSInteger blockedCount;
 
@@ -169,6 +187,11 @@ NS_SWIFT_UI_ACTOR
 - (void)print;
 /// Chromium's auto dark mode for this tab's pages.
 - (void)setForceDark:(BOOL)enabled;
+/// The permission stored for `url`'s site in this browser's profile; Default before the
+/// browser exists.
+- (KCSitePermissionValue)sitePermission:(KCSitePermission)permission forURL:(NSURL *)url;
+/// Stores a permission for `url`'s site in this browser's profile (Default clears it).
+- (void)setSitePermission:(KCSitePermission)permission value:(KCSitePermissionValue)value forURL:(NSURL *)url;
 /// Runs JavaScript in the main frame via the DevTools protocol. `result` is the
 /// JSON-decoded return value, or nil on error.
 - (void)evaluateJavaScript:(NSString *)script completion:(void (NS_SWIFT_UI_ACTOR ^)(id _Nullable result))completion;

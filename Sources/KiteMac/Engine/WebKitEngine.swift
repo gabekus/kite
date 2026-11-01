@@ -1,4 +1,5 @@
 import AppKit
+import KiteCore
 import WebKit
 import KiteCore
 
@@ -108,6 +109,7 @@ final class WebKitPage: NSObject, WebPage {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         observe()
+        WebKitMediaBridge.shared.attach(self)
     }
 
     var view: NSView { webView }
@@ -134,6 +136,9 @@ final class WebKitPage: NSObject, WebPage {
     func showDevTools() {}
     // No public force-dark API in WebKit.
     func setForceDark(_ enabled: Bool) {}
+    // WKWebView keeps no per-site permissions Kite can read or set.
+    func sitePermission(_ permission: SitePermission, for url: URL) -> SitePermissionValue? { nil }
+    func setSitePermission(_ permission: SitePermission, _ value: SitePermissionValue, for url: URL) {}
 
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
         let configuration = WKFindConfiguration()
@@ -150,6 +155,43 @@ final class WebKitPage: NSObject, WebPage {
         webView.createWebArchiveData { completion(try? $0.get(), "webarchive") }
     }
 
+    func captureImage(area: CGRect?, completion: @escaping (Data?) -> Void) {
+        let deviceScale = webView.window?.backingScaleFactor ?? 2
+        guard let area else {
+            // takeSnapshot stops at the viewport; a PDF of the page (no rect) holds all of it as one page.
+            webView.createPDF(configuration: WKPDFConfiguration()) { result in
+                guard let pdf = try? result.get(), let rep = NSPDFImageRep(data: pdf) else { return completion(nil) }
+                let size = rep.bounds.size
+                let scale = deviceScale * Capture.fullPageScale(contentHeight: size.height, deviceScale: deviceScale)
+                completion(Self.png(size: size, scale: scale) { rep.draw(in: NSRect(origin: .zero, size: size)) })
+            }
+            return
+        }
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = webView.isFlipped ? area
+            : CGRect(x: area.minX, y: webView.bounds.height - area.maxY, width: area.width, height: area.height)
+        configuration.snapshotWidth = NSNumber(value: Double(area.width))
+        webView.takeSnapshot(with: configuration) { image, _ in
+            guard let image else { return completion(nil) }
+            completion(Self.png(size: area.size, scale: deviceScale) { image.draw(in: NSRect(origin: .zero, size: area.size)) })
+        }
+    }
+
+    /// Draws into a bitmap of `size` points at `scale` pixels per point and encodes it.
+    private static func png(size: CGSize, scale: CGFloat, draw: () -> Void) -> Data? {
+        let width = Int((size.width * scale).rounded()), height = Int((size.height * scale).rounded())
+        guard width > 0, height > 0, let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return nil }
+        bitmap.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        draw()
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.representation(using: .png, properties: [:])
+    }
+
     func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void) {
         guard let host = url.host() else { return completion() }
         let store = webView.configuration.websiteDataStore
@@ -163,11 +205,15 @@ final class WebKitPage: NSObject, WebPage {
         }
     }
 
-    func printPage() {
-        guard let window = webView.window else { return }
-        let operation = webView.printOperation(with: .shared)
+    func makePrintOperation(_ completion: @escaping (NSPrintOperation?) -> Void) {
+        let info = NSPrintInfo.printInfoForPage()
+        // Fit the page's width to the paper and run it down the pages, like Safari.
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        let operation = webView.printOperation(with: info)
+        // Without a frame WebKit lays the page out at zero size and prints blank pages.
         operation.view?.frame = webView.bounds
-        operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        completion(operation)
     }
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
@@ -181,6 +227,23 @@ final class WebKitPage: NSObject, WebPage {
             return completion(true)
         }
         webView.requestMediaPlaybackState { completion($0 == .playing) }
+    }
+
+    func runMediaCommand(_ command: MediaCommand) {
+        // evaluateJavaScript counts as a user gesture, which play() and picture in picture need.
+        webView.evaluateJavaScript(command.script, in: nil, in: WebKitMediaBridge.world) { _ in }
+    }
+
+    /// WebKit's page mute (`_setPageMuted:`, private: there's no public API). Without it, does nothing.
+    var isAudioMuted = false {
+        didSet {
+            let selector = NSSelectorFromString("_setPageMuted:")
+            guard isAudioMuted != oldValue, webView.responds(to: selector) else { return }
+            typealias SetMuted = @convention(c) (AnyObject, Selector, Int) -> Void
+            let set = unsafeBitCast(webView.method(for: selector), to: SetMuted.self)
+            // _WKMediaAudioMuted = 1 << 0.
+            set(webView, selector, isAudioMuted ? 1 : 0)
+        }
     }
 
     func close() {
@@ -381,6 +444,32 @@ extension WebKitPage: WKUIDelegate {
         panel.canChooseDirectories = parameters.allowsDirectories
         panel.canChooseFiles = true
         completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+    }
+}
+
+/// Delivers MediaStateScript's reports to the page they came from. Installed once per content
+/// controller: popups share their opener's, and a controller takes only one handler per name.
+@MainActor
+final class WebKitMediaBridge: NSObject, WKScriptMessageHandler {
+    static let shared = WebKitMediaBridge()
+    static let world = WKContentWorld.world(name: MediaStateScript.worldName)
+    private let controllers = NSHashTable<WKUserContentController>.weakObjects()
+    private let pages = NSMapTable<WKWebView, WebKitPage>.weakToWeakObjects()
+
+    func attach(_ page: WebKitPage) {
+        pages.setObject(page, forKey: page.webView)
+        let controller = page.webView.configuration.userContentController
+        guard !controllers.contains(controller) else { return }
+        controllers.add(controller)
+        controller.addUserScript(WKUserScript(source: MediaStateScript.pageHook, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+        controller.addUserScript(WKUserScript(source: MediaStateScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: Self.world))
+        controller.add(self, contentWorld: Self.world, name: MediaStateScript.bindingName)
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, let webView = message.webView, let page = pages.object(forKey: webView),
+              let report = MediaState.parse(message.body as? String ?? "") else { return }
+        page.onEvent?(.media(report))
     }
 }
 

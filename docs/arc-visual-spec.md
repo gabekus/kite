@@ -653,6 +653,174 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Kite has no link routing yet, so it isn't imported.
 
+## Expand Current Split (Arc 1.171 menu bar; Arc 1.169 binary, decompiled; 1 Nov 2026)
+
+- View menu (AX via `menudump`, nothing pressed): Add Split View, Close this Split Pane, Separate Page from
+  Split View, **Expand Current Split**: no shortcut. MainMenu.nib: selector `maximizeCurrentSplitViewPane:`,
+  no key-binding ID; the command bar's ID is `expandSplitViewPane`, icon `arrow.up.left.and.arrow.down.right`,
+  search terms "Expand; Expand Split View; Maximize" (`~/rea-arc/notes/split-view.md` §2).
+- Mechanism (Ghidra, `~/rea-arc/decomp/ghidra`): `MainWindowController.maximizeCurrentSplitViewPane:`
+  (@10031b87c) only posts a notification. The window contents controller observes it
+  (`maximizeFocusedSplitViewNotificationToken`; registered in FUN_1004842f4, handler FUN_1004856b8) and calls a
+  split view controller method with `animated: true` and a per-pane closure (FUN_1004859cc) that returns
+  width factor **1.0 for the pane whose content ID is the focused one and 0.0 for every other pane**.
+- So the panes all stay in the split (unlike Separate); the focused one fills it. The handler reads no
+  state, so running it again does nothing new: it isn't a toggle.
+- Validation (`MainWindowController` menu validation, arc.s ~805743 / Ghidra FUN_102952338): the item is
+  enabled when the window's split has more than one pane (`count > 1`), whether or not it's expanded.
+- How Arc brings the other panes back, and the animation's duration, weren't traced; no string for
+  "Collapse"/"Restore" split exists. `ExpandedCodingKeys` belongs to other types (not split view).
+- Kite: `SplitView.expandedTabID` (per split, saved, decodes as nil from older sessions); the stored
+  `widthFactors` are left alone and the layout uses 1/0 (`layoutFactors`). The hidden panes and dividers are
+  hidden. Running it again does nothing, as in Arc. Inferred, so the user is never stuck: focusing another
+  pane of the split, dragging a divider, adding a pane, or closing the expanded pane brings the split back
+  with its old widths. The change is immediate (Arc animates; duration unknown).
+## Capture → `CaptureOverlayView`, `BrowserWindowController+Capture`, `KiteCore/Capture` (Arc 1.171, 1 Nov 2026)
+
+Nothing in Arc was pressed or watched: menu bar read through AX, the rest from the binary, its strings and
+ARC_Capture.bundle's asset catalog. Line numbers are `~/rea-arc/arc-strings.txt`; addresses are Arc-arm64.
+
+- Menu: File › Share…, Capture…, Capture Full Page, Capture in Portrait Mode, Save Page As, Print, no
+  shortcuts (menudump). Shortcut ids `capturePage`, `captureFullPage` (34939, 34995, in the shortcut-id list
+  beside `addSplitView`, `archiveTab`); descriptions "Capture a part of the page, then save it or add it to an
+  Easel.", "Capture full page.", "Capture in Portrait Mode." (80669–80754). Also "Hold Command and Shift to
+  start a Capture." (80630, setting `dragToCaptureDisabled`).
+- Area: tooltips "Click or drag to capture a portion of this page" / "Drag to capture a portion of this page"
+  (79199–79202) in `ContentCaptureOverlayBubble`; views `ContentCaptureView`, `DimmedBackgroundView`; cursor
+  image `camera-cross-cursor` (53×50 pt). Colour assets (ARC_Capture.bundle): BlurredBackground light white
+  33%, dark black 25%; OverlayBubbleBlue P3 (0, 0.278, 1, 0.5); OverlayBubblePink P3 (1, 0.6, 0.6, 0.5);
+  OverlayBubbleText P3 (0.204, 0.021, 0.58); ImageViewBackground white / sRGB (0.082, 0.11, 0.188);
+  Background white / (0.071, 0.059, 0.18). Clicking captures a hovered element
+  (`WebContentState+HoveredCapture.swift`).
+- After an area capture Arc shows `contentCapturePopover` (`ContentCaptureViewController`: `CapturedImageView`,
+  `CapturedImageActionsView`, `CaptureImageMenuView` for Easels). Action descriptions: copy, save as a file,
+  send via iMessage, retake, edit (62280–62287). Copy toast "Copied Image" (immediate string at 0x1018e4b10,
+  case `captureCopied`).
+- Save (FUN_100421970): `NSSavePanel` sheet, PNG only, title "Save Capture Image", name "Capture-" +
+  `yyyy-MM-dd-HHmmss` + ".png".
+- Full page (`handleCaptureAction(_:)` in WindowState+Capture.swift, from 0x1001ffbec): toast "Capture in
+  Progress", a Combine delay `FullPageCaptureDelay` of 0.5 s (0x100201f54), the PNG written to
+  `NSFileManager.temporaryDirectory` + a name built from the title with `[^a-zA-Z0-9\-_ ]` removed and the
+  date format `'·' h.mma '·' MM-dd`, then toast "Screenshot Copied to Clipboard" with a button "to save the
+  screenshot copied to a file" (76207–76209); failures "Failed to Save" (`failedToSaveCaptureToDisk`).
+- Portrait Mode: settings `portraitCaptureBackground` ("Use Website Color" / "Use Desktop Wallpaper"),
+  `portraitCaptureColorPercentage`, `portraitCaptureHidesWatermark`, image `ArcCaptureWatermark`; its frame,
+  padding and output size weren't found, so Kite doesn't have it yet.
+- Inferred, not seen: how the title and date join in the full-page name (Kite: "Title · 3.45PM · 11-01.png"),
+  the Save button's title (Kite: "Save"), that the clipboard gets the image and the file, the popover's layout and
+  button styles, the selection outline (Kite: 1 pt white 90%), where the hint bubble sits, and what the 0.5 s
+  delay is for.
+
+## Developer Mode for a site, ⌃D (Arc 1.171 menu bar, strings, assets and defaults key names, 1 Nov 2026)
+
+- Menu: View › Developer › "Turn on Developer Mode for this site", AXMenuItemCmdModifiers 12 (⌃, no ⌘) on D,
+  last in the submenu after Allow JavaScript from Apple Events (`menudump View`). The off title is "Turn off
+  Developer Mode for this site" (arc-strings.txt 62211–62214). Command name `toggleDeveloperMode` (67583).
+- State: per host. `DeveloperModeClient.setDeveloperModeStatusForHost` (73577), stored in
+  `StorableDeveloperModeState.json` as `state.enabledHosts[]` (key paths only read), app state
+  `developerModeEnabledForHosts` (64267). Kite keys by the URL's lowercased host without the port (inferred
+  from "ForHost"; Arc's port handling not checked).
+- What it changes, from the strings: `BrowserNavigationButtons` has `isInDeveloperMode` and `reloadState`
+  (150804) and buttons `reloadButton`, `thinReloadButton`, `forceReloadButton`, `reloadOptionsButton`
+  (150778–150781). Its strings (62987–62994): "Refresh options button" / "A button that shows a list of reload
+  options.", "Refresh (Ignore Cache)", "Clear Cookies and Refresh", `devModeReloadState`, "Reload this page".
+  `DeveloperTabReloadSetting` lives in `BrowserNavigationButtonsFeature.swift` with cases `reload`,
+  `forceReload` (82636–82638, 176095–176096); persisted as the user default `devModeReloadState`.
+  Assets: `icon-browser-navigation-reload` 26×26, `icon-browser-navigation-force-reload` 22×15 (a loop ending
+  in an arrow down to a bar). Site Controls also has a Developer Mode row with on/off subtitles (63725,
+  73687–73688); the subtitle text isn't in the strings dump.
+- Not found: nothing ties Developer Mode to a console pane, an error indicator or a full-URL/port display
+  (the full URL is the separate toolbar setting `toolbarShowFullURLsEnabledPreference`). Kite builds only what
+  the strings show.
+- Inferred, not seen: the options button sits right of reload as a chevron (Kite: 16×32 menu button, reload
+  shifts left); picking Reload or Refresh (Ignore Cache) both does it and makes it the button's action, with a
+  checkmark on the current one; Clear Cookies and Refresh is one-shot. Arc's geometry in Developer Mode was not
+  measured (no Arc window was in Developer Mode, and Arc isn't driven).
+## Print ⌘P (Arc 1.171 menu bar, strings and ArcCore, 1 Nov 2026)
+
+- Menu bar (`menudump File`): the last item of the File group is **Print**, no ellipsis, ⌘P (mods=0).
+  Kite's item is now "Print" too (it was "Print…").
+- `arc-strings.txt` 34978 `printPage` (key binding name), 80726 its description "Prints the current page, or save
+  it as a PDF.", 176531 `printCurrentTab` (command), 190604 `printPage:` (the menu action; `decomp/arc.s`
+  805358 only checks it in menu validation). No `printOperation`, `NSPrintOperation`, `NSPrintPanel`, `PDFKit`
+  or `PrintPreview` in Arc's own binary: Arc doesn't build its own print sheet.
+- ArcCore (Arc's Chromium) has Chromium's print stack, including its print preview: `PrintPreviewUI`,
+  `chrome://print`, `printing.print_preview_disabled`, `runModalWithPrintInfo:` (the system dialog), and
+  locale.pak has the preview's strings ("Save as PDF", "Pages per sheet", "Print using system dialog").
+  So Arc's ⌘P most likely opens Chromium's print preview (a dialog over the page, with "Save as PDF").
+  Not observed: Arc wasn't driven.
+- Kite (`printPage(_:)`, `makePrintOperation`): the standard macOS print sheet on the window, with a page
+  preview, on both engines. WebKit gives `WKWebView.printOperation(with:)`, paged to the paper's width like
+  Safari. Chromium prints the page to PDF over DevTools (`Page.printToPDF`, the sheet's paper size, Chrome's
+  0.4 in margins, no backgrounds or header/footer) and PDFKit prints that. CEF's own `Print()` for a child
+  browser opens an app-modal panel with no preview, which is what Kite had before.
+
+## Site Control Center → `SiteControlsView`, `SiteControlsPopover` (Arc 1.169 binary + masked probe, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` 73677–73738 (module `SiteControlCenter`: `SiteControlCenterActionButton`,
+`…BoostsView`, `…ExtensionsView`, `…SettingsView`, `…FooterView`, `SiteSetting+Display.swift`), 63716–63727, and
+62174–62181 / 63025 ("Site Control Center" button label). Short English strings are Swift immediates, decoded from
+`~/rea-arc/decomp/arc.s` at the `NSLocalizedString` calls next to each comment string (e.g. 0x10137d758, 0x1013722f4,
+0x10055d594). Geometry: `~/rea-arc/notes/extensions.md` (masked probe, the 262×486 popover) and
+`~/rea-arc/notes/arc-visual-pass2.md` (toolbar sliders icon). Arc was not driven for this.
+
+- Opened by the "Site Control Center" button: in the toolbar (the sliders icon), and in the sidebar URL row a 30×30
+  button revealed on hover at the row's right end (pitch 28, after a 16-char "Copy Current URL" button).
+- Popover 262 wide, hosting view inset 13, sections 10 further in (216 wide). Top to bottom: four 48.75×32.75 action
+  buttons on a 56 pitch (tooltips: Copy URL, Share, Capture / full-page capture / Portrait Mode, New Boost; assets
+  `copy-url`, `share`, `window-screenshot-icon`, `capture-full-page`); Boosts and Extensions sections; a "Settings"
+  section (header 216×17, hover text "More") of 208×33 rows on a 43 pitch; a footer with an 82×32 security button
+  ("Secure" / "Insecure", `lock.fill` / `lock.slash.fill`) and a 32×32 `ellipsis` menu: Clear Cache, Clear Cookies,
+  Manage Boosts…, New Boost, Manage Extensions…, Add Extension…, All Site Settings….
+- Settings rows (`SiteSetting+Display`): "Block Ads & Trackers" subtitled On / Off; "Developer Mode" On / Off;
+  "Block Pop-ups" (asserts "Popup blocking is not supported in Arc."); "Preview" (sidebar preview) Enabled /
+  Disabled; permissions subtitled "Allowed" / "Blocked". Permission names come from
+  `ArcPermissionRequestType+Utils` ("camera", "microphone", "location", "notifications", … lower case); how the
+  row capitalises them wasn't seen. A row click sends `didChangeSiteSetting`. Symbols in the settings view:
+  `shield.fill`, `hammer.fill`, `filemenu.and.cursorarrow`, `gearshape.fill`.
+- Toolbar placement (probe): popover top 4pt above the bar's bottom (y 38), right edge on the window's right edge.
+
+| | Arc | Kite (measured with `kite ui tree` / `kite probe`) |
+|---|---|---|
+| Popover | 262 wide, hosting inset 13 | 262 wide, hosting 236 at 13 |
+| Action buttons | 48.75×32.75, pitch 56, 23 from the popover's left | 49×33, pitch 56, at 23 |
+| Settings rows | 208×33, pitch 43 | 208×33 (same row view, measured before the Kite-only Zoom row was removed), pitch 43 |
+| Footer | 82×32 left, 32×32 right, both 23 from the edges | Same |
+| From the toolbar | top y 38, right edge = window's | top 38, right edge 1280 of 1280 |
+
+Kite differs: no Boosts, capture, Developer Mode or sidebar preview; extensions stay in their own popover; action row
+has only Copy URL and Share; the Settings rows are Arc's Block Ads & Trackers plus four permission rows, shown
+always (Arc's choice of rows wasn't observed); a permission that's still at "ask" says "Ask". Row styling (icon
+circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
+
+## Mini Player and auto picture in picture → `MiniPlayerView`, `MediaStateScript` (Arc 1.171 strings, assets, disassembly, 1 Nov 2026)
+
+- Modules (arc-strings.txt 82066-82130): `MediaControlsFeature` (`MiniPlayerFeature.swift`, `MiniPlayerView.swift`,
+  `MediaControlsView.swift`, `MiniPlayerState+Observations.swift`) and `PictureInPicture` (`PIPWindowController`,
+  `DocumentPiPWindowController`). Mini player media types `AudioVideo` and `Recording` (43012). Actions
+  `toggleMuteStatusRequested`, `backToTabRequested`, `backToPIPRequested`; state `activeMediaControls`,
+  `maxActiveMediaControls`, `miniPlayerMarqueeTitleEnabled` (174040-174130).
+- Strings in `MiniPlayerView.swift`: "Close Mini Player", "Open Picture in Picture", "Back to Tab", "Adjust Tab Volume",
+  "Toggle Microphone", "Toggle Camera", "Previous Track", "Next Track", "Play"/"Pause" (tooltips).
+- Disassembly (`~/rea-arc/decomp/arc.s` 9577000-9600000, the MiniPlayerView/MediaControlsView bodies; constants read off
+  `fmov`/`mov` before each SwiftUI call):
+  - card: `RoundedRectangle(cornerRadius: 8, style: .continuous)`, stroke 0.5 pt, `Color.white.opacity(0.1)` in dark,
+    clear in light; rows `frame(height: 33)` with `padding(.horizontal, 10)` (title row) and `8` (controls row);
+    `GeometryProxy` width compared with 160 and 126 (controls dropped when narrow).
+  - title row: artwork/favicon 16×16 clipped to radius 4 in a 24×24 frame; title Text; `pip` symbol at 12 pt and `xmark`
+    at 14 pt, whose opacity/width switch 0↔1 / 0↔24 (shown on hover).
+  - controls: 24×24 buttons, 16×16 symbol frames, `Font.system(size: 14, weight: .medium)`; symbols `backward.end.fill`,
+    `play.fill`/`pause.fill`, `forward.end.fill`, `speaker.slash.fill`/`speaker.wave.1/2/3.fill` (+ Slider for volume),
+    `mic.fill`/`mic.slash.fill`, `video.fill`/`video.slash.fill`.
+  - `MediaControlsView`: height 33, `Animation.spring(response: 0.25, dampingFraction: 0.9)`.
+  - `PlaybackControlForeground` (ARC_MediaControlsFeature.bundle Assets.car): light black 50%, dark white 66%.
+- Auto PiP settings (key names only): `autoPipGloballyDisabled` (absent from Gabe's defaults, so off: auto PiP on),
+  `autoPipDisabledForHosts`, `autoPipDisabledDeadlines`, `useChromiumAutoPiP`, `useChromiumAutoPiPForGMeetOnly`,
+  `autoPictureInPictureOnWindowOccluded`; PiP window toggle "Open automatically" next to "Picture-in-picture on <host>".
+- Not observed (no Arc mini player was on screen; Arc wasn't driven): its position in the sidebar (Kite puts it above
+  the space bar), the card fill colour (Kite uses the address field's fill), the title font (a CTFont; Kite uses 12 pt
+  medium), button hover fills, which controls drop at 160 / 126, and whether closing the player pauses (Kite pauses).
+
 ## Check for Updates (Arc 1.171 Info.plist, menu bar and strings, 1 Nov 2026)
 
 - Menu (read through AX, nothing pressed): Arc › … Import from Another Browser…, **Check for Updates…** (no
@@ -675,6 +843,7 @@ user's is copied. Test fixtures are made up.
   (`UpdaterWindow`): checking, up to date, no releases yet, a new version (notes, Remind Me Later, View Release,
   Download when a .dmg/.zip is attached, opened in a Kite tab), and errors (Download manually, Try Again). Window
   size and layout are Kite's; Arc's updater window wasn't measured. No background checks or banner yet.
+
 ## Air Traffic Control → `AirTrafficControl` (KiteCore), `AirTrafficControlWindow` (Arc 1.171 binary strings and disassembly, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt` and `~/rea-arc/decomp/arc.s` (short SwiftUI string literals decoded from the

@@ -1,4 +1,21 @@
 import AppKit
+import KiteCore
+
+extension NSPrintInfo {
+    /// A copy of the app's print settings (paper, printer) for printing one page, with Chrome's
+    /// margins, so the shared settings only change when someone picks Page Setup.
+    static func printInfoForPage() -> NSPrintInfo {
+        let info = NSPrintInfo.shared.copy() as! NSPrintInfo
+        let margin = PagePrint.marginInches * 72
+        info.topMargin = margin
+        info.bottomMargin = margin
+        info.leftMargin = margin
+        info.rightMargin = margin
+        info.isHorizontallyCentered = false
+        info.isVerticallyCentered = false
+        return info
+    }
+}
 
 /// What a page reports back to the browser.
 enum PageEvent {
@@ -21,6 +38,8 @@ enum PageEvent {
     /// Kite's own "Add to Kite" button on a Google result was clicked (checked by the
     /// engine): install that Chrome Web Store extension without leaving the page.
     case addExtension(id: String)
+    /// What the page is playing changed (MediaStateScript); nil when it has no media.
+    case media(MediaState?)
     /// The pointer moved onto a link (nil: off it). Drives ⇧-hover link previews.
     case linkHover(LinkHover?)
 }
@@ -76,17 +95,31 @@ protocol WebPage: AnyObject {
     /// `completion` may run more than once as results come in.
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void)
     func stopFinding()
-    func printPage()
+    /// File › Print: the page as an AppKit print operation, which the window runs as its print
+    /// sheet with a page preview. nil when the page can't be printed.
+    func makePrintOperation(_ completion: @escaping (NSPrintOperation?) -> Void)
     /// The page as one file for Save Page As: MHTML on Chromium, a web archive on WebKit.
     func archive(completion: @escaping (_ data: Data?, _ fileExtension: String) -> Void)
+    /// A PNG of the page for Capture: `area` (points from the view's top-left corner) at device
+    /// resolution, or with nil the whole page, beyond the viewport.
+    func captureImage(area: CGRect?, completion: @escaping (Data?) -> Void)
     /// Clears one site's cookies or cache (Arc's "Clear … and Refresh"). Reloading is up to the caller.
     func clearSiteData(_ kind: SiteDataKind, for url: URL, completion: @escaping () -> Void)
     func setForceDark(_ enabled: Bool)
+    /// The permission the profile stores for `url`'s site (Chromium content settings); nil
+    /// where the engine keeps none Kite can read (WebKit asks every time, through macOS).
+    func sitePermission(_ permission: SitePermission, for url: URL) -> SitePermissionValue?
+    func setSitePermission(_ permission: SitePermission, _ value: SitePermissionValue, for url: URL)
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void)
     /// Engine-specific state for restoring history after hibernation, if supported.
     func hibernationState() -> Any?
     /// Whether the page is playing media or using the camera or mic (don't hibernate it).
     func checkBusy(_ completion: @escaping (Bool) -> Void)
+    /// Asks the page's media (the element that played last) to play, pause, change track or
+    /// enter picture in picture, as if you'd clicked.
+    func runMediaCommand(_ command: MediaCommand)
+    /// The browser's tab mute: the page keeps playing, silently, and isn't told.
+    var isAudioMuted: Bool { get set }
     func close()
 }
 

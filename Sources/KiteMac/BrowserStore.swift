@@ -11,6 +11,13 @@ struct PageStatus: Equatable {
     var blockedCount = 0
     /// Set when the page's process crashed: the exit code shown on the crashed-tab page.
     var crashCode: Int?
+    /// What the page plays (MediaStateScript), and when it last started and stopped; nil without media.
+    var media: MediaActivity?
+    /// The browser's tab mute (WebPage.isAudioMuted).
+    var isAudioMuted = false
+
+    /// Whether the tab is playing media now (muted or not): the base for audio indicators.
+    var isPlayingAudio: Bool { media?.state.isPlaying == true }
 }
 
 /// Tabs › Reveal Tab in Sidebar: the sidebar row to scroll into view. `serial` changes on
@@ -226,6 +233,41 @@ final class BrowserStore {
     func clearPage(_ id: UUID) {
         pages[id] = nil
         recordedURLs[id] = nil
+        hiddenAt[id] = nil
+        miniPlayerDismissed.remove(id)
+    }
+
+    // MARK: Media
+
+    /// When each tab last left the screen, for the Mini Player.
+    private(set) var hiddenAt: [UUID: Date] = [:]
+    /// Tabs whose Mini Player was closed, until they play again.
+    private(set) var miniPlayerDismissed: Set<UUID> = []
+
+    func mediaChanged(_ id: UUID, _ state: MediaState?) {
+        let wasPlaying = pages[id]?.isPlayingAudio ?? false
+        updatePage(id) { $0.media = MediaActivity.update($0.media, with: state, now: Date()) }
+        if state?.isPlaying == true, !wasPlaying { miniPlayerDismissed.remove(id) }
+    }
+
+    func tabsLeftScreen(_ ids: some Sequence<UUID>, at date: Date = Date()) {
+        for id in ids { hiddenAt[id] = date }
+    }
+
+    func dismissMiniPlayer(_ id: UUID) {
+        miniPlayerDismissed.insert(id)
+    }
+
+    /// The tab whose media the sidebar's Mini Player shows, if any.
+    var miniPlayerTabID: UUID? {
+        let media = pages.compactMapValues(\.media).filter { state.tab($0.key) != nil }
+        guard !media.isEmpty else { return nil }
+        return MiniPlayer.tab(
+            media: media,
+            visible: Set(state.visibleTabs.map(\.id)),
+            hiddenAt: hiddenAt,
+            dismissed: miniPlayerDismissed
+        )
     }
 
     // MARK: Persistence

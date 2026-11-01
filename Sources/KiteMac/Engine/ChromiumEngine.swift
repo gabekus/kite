@@ -2,6 +2,7 @@
 import AppKit
 import CEFBridge
 import KiteCore
+import PDFKit
 
 /// Chromium via CEF: Chrome's engine, Chrome DevTools, and an optional CDP port.
 @MainActor
@@ -110,6 +111,38 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
             params: ["source": VerificationCodeScript.source, "worldName": VerificationCodeScript.worldName],
             completion: nil
         )
+        prepareMediaState()
+    }
+
+    /// The media script reports what the page plays (MediaStateScript) from its own world;
+    /// the page hook runs in the page's world to reach its Media Session handlers.
+    private func prepareMediaState() {
+        browser.executeDevToolsMethod(
+            "Runtime.addBinding",
+            params: ["name": MediaStateScript.bindingName, "executionContextName": MediaStateScript.worldName],
+            completion: nil
+        )
+        browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: ["source": MediaStateScript.pageHook], completion: nil)
+        browser.executeDevToolsMethod(
+            "Page.addScriptToEvaluateOnNewDocument",
+            params: ["source": MediaStateScript.source, "worldName": MediaStateScript.worldName],
+            completion: nil
+        )
+    }
+
+    /// The media script's execution context, from its latest report; commands run there.
+    private var mediaContext: Int?
+
+    func runMediaCommand(_ command: MediaCommand) {
+        guard let mediaContext else { return }
+        // As if you'd clicked: play() and requestPictureInPicture() need a user gesture.
+        let params: [String: Any] = ["expression": command.script, "contextId": mediaContext, "userGesture": true]
+        browser.callDevToolsMethod("Runtime.evaluate", params: params) { _, _ in }
+    }
+
+    var isAudioMuted: Bool {
+        get { browser.audioMuted }
+        set { browser.audioMuted = newValue }
     }
 
     var view: NSView { browser.view }
@@ -144,11 +177,56 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         browser.stopFinding()
     }
 
-    func printPage() { browser.print() }
+    /// Chromium's own print path for a child browser is an app-modal panel with no preview, so the
+    /// page is printed to PDF on the sheet's paper and PDFKit prints that, preview included.
+    func makePrintOperation(_ completion: @escaping (NSPrintOperation?) -> Void) {
+        let info = NSPrintInfo.printInfoForPage()
+        let params = PagePrint.pdfParameters(paperWidthPoints: Double(info.paperSize.width),
+                                             paperHeightPoints: Double(info.paperSize.height))
+        browser.executeDevToolsMethod("Page.printToPDF", params: params) { result in
+            guard let encoded = result?["data"] as? String,
+                  let data = Data(base64Encoded: encoded),
+                  let document = PDFDocument(data: data) else { return completion(nil) }
+            // The PDF already carries the margins.
+            info.topMargin = 0
+            info.bottomMargin = 0
+            info.leftMargin = 0
+            info.rightMargin = 0
+            completion(document.printOperation(for: info, scalingMode: .pageScaleDownToFit, autoRotate: true))
+        }
+    }
 
     func archive(completion: @escaping (Data?, String) -> Void) {
         browser.executeDevToolsMethod("Page.captureSnapshot", params: ["format": "mhtml"]) { result in
             completion((result?["data"] as? String)?.data(using: .utf8), "mhtml")
+        }
+    }
+
+    func captureImage(area: CGRect?, completion: @escaping (Data?) -> Void) {
+        let viewWidth = Double(browser.view.bounds.width)
+        let deviceScale = Double(browser.view.window?.backingScaleFactor ?? 2)
+        browser.callDevToolsMethod("Page.getLayoutMetrics", params: nil) { [weak self] metrics, _ in
+            guard let self, let metrics else { return completion(nil) }
+            let visual = metrics["cssVisualViewport"] as? [String: Any] ?? [:]
+            let pageX = visual["pageX"] as? Double ?? 0, pageY = visual["pageY"] as? Double ?? 0
+            let cssWidth = visual["clientWidth"] as? Double ?? viewWidth
+            var params: [String: Any] = ["format": "png"]
+            if let area {
+                // View points to CSS pixels (page zoom); clip scale 1 keeps device resolution.
+                let k = viewWidth > 0 ? cssWidth / viewWidth : 1
+                params["clip"] = ["x": pageX + Double(area.minX) * k, "y": pageY + Double(area.minY) * k,
+                                  "width": Double(area.width) * k, "height": Double(area.height) * k, "scale": 1]
+            } else {
+                let content = metrics["cssContentSize"] as? [String: Any] ?? [:]
+                let width = content["width"] as? Double ?? cssWidth
+                let height = content["height"] as? Double ?? (visual["clientHeight"] as? Double ?? 0)
+                let scale = Capture.fullPageScale(contentHeight: height, deviceScale: deviceScale)
+                params["clip"] = ["x": 0, "y": 0, "width": width, "height": height, "scale": scale]
+                params["captureBeyondViewport"] = true
+            }
+            self.browser.callDevToolsMethod("Page.captureScreenshot", params: params) { result, _ in
+                completion((result?["data"] as? String).flatMap { Data(base64Encoded: $0) })
+            }
         }
     }
 
@@ -161,6 +239,37 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         }
     }
     func setForceDark(_ enabled: Bool) { browser.setForceDark(enabled) }
+
+    func sitePermission(_ permission: SitePermission, for url: URL) -> SitePermissionValue? {
+        switch browser.sitePermission(Self.bridged(permission), for: Self.site(url)) {
+        case .allow: .allow
+        case .block: .block
+        default: .ask
+        }
+    }
+
+    func setSitePermission(_ permission: SitePermission, _ value: SitePermissionValue, for url: URL) {
+        let bridged: KCSitePermissionValue = switch value {
+        case .allow: .allow
+        case .block: .block
+        case .ask: .default
+        }
+        browser.setSitePermission(Self.bridged(permission), value: bridged, for: Self.site(url))
+    }
+
+    /// Content settings are per origin.
+    private static func site(_ url: URL) -> URL {
+        SiteControls.origin(of: url).flatMap(URL.init(string:)) ?? url
+    }
+
+    private static func bridged(_ permission: SitePermission) -> KCSitePermission {
+        switch permission {
+        case .camera: .camera
+        case .microphone: .microphone
+        case .location: .location
+        case .notifications: .notifications
+        }
+    }
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
         browser.evaluateJavaScript(script, completion: completion)
@@ -229,6 +338,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
             if let id = params["executionContextId"] as? Int { kiteContexts[id] = nil }
         case "Runtime.executionContextsCleared":
             kiteContexts.removeAll()
+        case "Runtime.bindingCalled" where params["name"] as? String == MediaStateScript.bindingName:
+            guard let context = params["executionContextId"] as? Int,
+                  let report = MediaState.parse(params["payload"] as? String ?? "") else { return }
+            mediaContext = context
+            onEvent?(.media(report))
         case "Runtime.bindingCalled" where params["name"] as? String == VerificationCodeScript.bindingName:
             guard let context = params["executionContextId"] as? Int,
                   let payload = (params["payload"] as? String)?.data(using: .utf8),

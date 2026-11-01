@@ -108,7 +108,10 @@ final class UIDiagnostics {
     }
 
     private func windowsReport() -> String {
-        let windows = NSApp.orderedWindows.filter { $0.isVisible || $0.isMiniaturized }
+        var windows = NSApp.orderedWindows.filter { $0.isVisible || $0.isMiniaturized }
+        // Popovers (Site Controls, extensions, downloads) aren't in orderedWindows; list them too
+        // so `{"window": N}` can reach them.
+        windows += NSApp.windows.filter { $0.isVisible && $0.className.contains("Popover") && !windows.contains($0) }
         guard !windows.isEmpty else { return "Kite has no windows open." }
         return windows.map { window in
             var flags: [String] = []
@@ -124,9 +127,15 @@ final class UIDiagnostics {
             if !window.occlusionState.contains(.visible) { flags.append("covered") }
             if !window.isOnActiveSpace { flags.append("other Space") }
             let screen = window.screen.map { "\(FrameClock.maximumRate(of: $0)) Hz" } ?? "no screen"
-            return "- window \(window.windowNumber) [\(flags.joined(separator: ", "))] "
+            var line = "- window \(window.windowNumber) [\(flags.joined(separator: ", "))] "
                 + "\(UIReport.number(window.frame.width))×\(UIReport.number(window.frame.height)) pt, "
                 + "\(UIReport.number(window.backingScaleFactor))×, \(screen)"
+            // orderedWindows leaves out sheets (the print sheet, save panels); pass the number as "window" to read one.
+            if let sheet = window.attachedSheet {
+                line += "\n  - sheet \(sheet.windowNumber) [\(String(describing: type(of: sheet)))\(sheet.isVisible ? "" : ", hidden")] "
+                    + "\(UIReport.number(sheet.frame.width))×\(UIReport.number(sheet.frame.height)) pt"
+            }
+            return line
         }.joined(separator: "\n") + "\nKite is \(NSApp.isActive ? "the active app" : "in the background")."
     }
 }

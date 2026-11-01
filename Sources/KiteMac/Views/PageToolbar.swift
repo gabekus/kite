@@ -8,6 +8,9 @@ import SwiftUI
 struct PageToolbar: View {
     let store: BrowserStore
     let actions: SidebarActions
+    /// Opens Site Controls under the button.
+    var showSiteControls: ((NSView) -> Void)?
+    @State private var siteControlsAnchor: NSView?
     #if canImport(CEFBridge)
     /// Pinned extensions and the extensions menu; nil where extensions don't run (incognito, WebKit).
     var extensions: ExtensionsModel?
@@ -47,7 +50,7 @@ struct PageToolbar: View {
             HStack(spacing: 0) {
                 button("arrow.left", "Back", enabled: page.canGoBack, action: actions.goBack)
                 button("arrow.right", "Forward", enabled: page.canGoForward, action: actions.goForward)
-                button(page.isLoading ? "xmark" : "arrow.clockwise", "Reload", enabled: selected != nil, action: actions.reload)
+                button(page.isLoading ? "xmark" : "arrow.clockwise", "Reload", enabled: selected != nil, action: actions.reloadButton)
                 Spacer()
                 #if canImport(CEFBridge)
                 if let extensions {
@@ -56,14 +59,21 @@ struct PageToolbar: View {
                         .padding(.trailing, ExtensionsToolbarItems.Metrics.siteControlsGap - (Metrics.buttonPitch - Metrics.siteControlsSize) / 2)
                 }
                 #endif
-                // Kite has no Site Controls yet: drawn as in Arc, but it does nothing.
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 8, weight: .semibold))
-                    .frame(width: Metrics.siteControlsSize, height: Metrics.siteControlsSize)
-                    .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(lineWidth: 1.25))
-                    .foregroundStyle(Metrics.enabled)
-                    .frame(width: Metrics.buttonPitch, height: Metrics.height)
-                    .help("Site Controls (not in Kite yet)")
+                let hasSite = SiteControls.applies(to: selected?.url)
+                Button { if let siteControlsAnchor { showSiteControls?(siteControlsAnchor) } } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 8, weight: .semibold))
+                        .frame(width: Metrics.siteControlsSize, height: Metrics.siteControlsSize)
+                        .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(lineWidth: 1.25))
+                        .foregroundStyle(hasSite ? Metrics.enabled : Metrics.disabled)
+                        .frame(width: Metrics.buttonPitch, height: Metrics.height)
+                        .background(AnchorView(view: $siteControlsAnchor))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .allowsHitTesting(hasSite)
+                .help("Site Control Center")
+                .accessibilityLabel("Site Control Center")
                 Button(action: actions.addSplitView) {
                     Image(systemName: "rectangle.split.2x1")
                         .resizable()

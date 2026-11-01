@@ -7,6 +7,11 @@ struct SidebarActions {
     var goForward: () -> Void
     var reload: () -> Void
     var forceReload: () -> Void
+    /// The reload button: on a Developer Mode site it does what `devModeReloadState` says.
+    var reloadButton: () -> Void
+    /// Developer Mode's reload options: remembers the choice for the button, then does it.
+    var developerReload: (DeveloperTabReloadSetting) -> Void
+    var clearCookiesAndRefresh: () -> Void
     var toggleSidebar: () -> Void
     var closeTab: (UUID) -> Void
     var addSplitView: () -> Void
@@ -39,8 +44,12 @@ struct SidebarView: View {
     /// Always shown at the address field's right end (1Password's key); hides itself when
     /// there's nothing to show.
     var fieldAccessory: AnyView?
+    /// Opens Site Controls from the address field's hover button.
+    var showSiteControls: ((NSView) -> Void)?
     /// Where a two-finger swipe between spaces has the pages.
     var swipe = SpaceSwipeModel()
+    /// The Mini Player's buttons; nil shows no Mini Player.
+    var miniPlayer: MiniPlayerActions?
 
     var body: some View {
         // The host's width, not the column's: the column must never be wider than the sidebar, or
@@ -71,7 +80,9 @@ struct SidebarView: View {
                 }
                 Spacer(minLength: 0)
                 if !state.showsToolbar {
-                    NavigationButtons(layout: header, page: page, hasTab: selectedID != nil, actions: actions)
+                    NavigationButtons(layout: header, page: page, hasTab: selectedID != nil,
+                                  developerReload: state.isInDeveloperMode(selectedTab?.url) ? state.devModeReloadState : nil,
+                                  actions: actions)
                 } else if header.isCompact {
                     NavigationMoreButton(size: header.buttonSize, page: page, hasTab: selectedID != nil, showsReload: false, actions: actions)
                 }
@@ -87,6 +98,7 @@ struct SidebarView: View {
                     action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
                     toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } },
                     showExtensions: showExtensions,
+                    showSiteControls: SiteControls.applies(to: selectedTab?.url) ? showSiteControls : nil,
                     accessory: fieldAccessory
                 )
                 .padding(.top, M.urlFieldTopGap)
@@ -106,6 +118,13 @@ struct SidebarView: View {
 
             SpacePages(store: store, swipe: swipe) { space in
                 spaceList(space)
+            }
+
+            if let miniPlayer, let id = store.miniPlayerTabID, let tab = state.tab(id), let page = store.pages[id],
+               let media = page.media {
+                MiniPlayerView(tab: tab, media: media.state, isMuted: page.isAudioMuted, actions: miniPlayer)
+                    .padding(.top, M.padding)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
             SpaceBar(store: store, actions: actions, claude: claude, downloads: downloads)
@@ -371,6 +390,8 @@ private struct NavigationButtons: View {
     let layout: HeaderLayout
     let page: PageStatus
     let hasTab: Bool
+    /// The reload setting when the page's site is in Developer Mode, nil otherwise.
+    let developerReload: DeveloperTabReloadSetting?
     let actions: SidebarActions
 
     var body: some View {
@@ -380,9 +401,47 @@ private struct NavigationButtons: View {
             if layout.isCompact {
                 NavigationMoreButton(size: layout.buttonSize, page: page, hasTab: hasTab, showsReload: true, actions: actions)
             } else {
-                ToolbarButton(symbol: page.isLoading ? "xmark" : "arrow.clockwise", help: "Reload", enabled: hasTab, size: layout.buttonSize, action: actions.reload)
+                ToolbarButton(symbol: page.isLoading ? "xmark" : developerReload == .forceReload ? "arrow.clockwise.circle" : "arrow.clockwise",
+                              help: developerReload == .forceReload ? "Refresh (Ignore Cache)" : "Reload",
+                              enabled: hasTab, size: layout.buttonSize, action: actions.reloadButton)
+                if let developerReload {
+                    DeveloperReloadOptionsButton(setting: developerReload, size: layout.buttonSize, hasTab: hasTab, actions: actions)
+                }
             }
         }
+    }
+}
+
+/// Arc's `reloadOptionsButton`, shown beside reload on a Developer Mode site ("A button that
+/// shows a list of reload options"). Items from the strings beside it in Arc's binary; the
+/// layout and the checkmark are Kite's guess.
+private struct DeveloperReloadOptionsButton: View {
+    let setting: DeveloperTabReloadSetting
+    let size: CGFloat
+    let hasTab: Bool
+    let actions: SidebarActions
+
+    var body: some View {
+        Menu {
+            Toggle("Reload this page", isOn: .init(get: { setting == .reload }, set: { _ in actions.developerReload(.reload) }))
+            Toggle("Refresh (Ignore Cache)", isOn: .init(get: { setting == .forceReload }, set: { _ in actions.developerReload(.forceReload) }))
+            Divider()
+            Button("Clear Cookies and Refresh", action: actions.clearCookiesAndRefresh)
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .frame(width: size / 2, height: size)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: size / 2, height: size)
+        .opacity(0.6)
+        .disabled(!hasTab)
+        .help("Refresh options")
+        .accessibilityLabel("Refresh options")
     }
 }
 
@@ -429,7 +488,9 @@ private struct AddressPill: View {
     let action: () -> Void
     let toggleDark: () -> Void
     var showExtensions: ((NSView) -> Void)?
+    var showSiteControls: ((NSView) -> Void)?
     var accessory: AnyView?
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -452,13 +513,19 @@ private struct AddressPill: View {
                 if let isDark {
                     DarkPageToggle(isDark: isDark, action: toggleDark)
                 }
+                // Arc reveals Site Control Center at the field's right end on hover.
+                if let showSiteControls {
+                    SiteControlsFieldButton(action: showSiteControls)
+                        .opacity(hovering || SiteControlsPopover.isShown ? 1 : 0)
+                }
                 if let showExtensions {
                     ExtensionsFieldButton(action: showExtensions)
                 }
             }
-            .padding(.trailing, isDark != nil || showExtensions != nil ? 4 : 0)
+            .padding(.trailing, isDark != nil || showExtensions != nil || showSiteControls != nil ? 4 : 0)
         }
         .modifier(ChromeFill(strength: M.fieldFill))
+        .onHover { hovering = $0 }
     }
 }
 
@@ -484,6 +551,29 @@ private struct ExtensionsFieldButton: View {
         .onHover { hovering = $0 }
         .help("Extensions")
         .accessibilityLabel("Extensions")
+    }
+}
+
+/// Site Control Center's sliders button in the address field.
+private struct SiteControlsFieldButton: View {
+    let action: (NSView) -> Void
+    @State private var anchor: NSView?
+    @State private var hovering = false
+
+    var body: some View {
+        Button { if let anchor { action(anchor) } } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: ExtensionsFieldButton.size, height: ExtensionsFieldButton.size)
+                .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0, cornerRadius: 6))
+                .background(AnchorView(view: $anchor))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(hovering ? 0.9 : 0.6)
+        .onHover { hovering = $0 }
+        .help("Site Control Center")
+        .accessibilityLabel("Site Control Center")
     }
 }
 

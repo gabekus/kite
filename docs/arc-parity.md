@@ -53,9 +53,9 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Close Window | ⇧⌘W | ✅ | |
 | Archive Tab | ⌘W | ✅ "Archive Tab" (`archiveTab`); closed unpinned tabs go to the archive. "Undo Archive Tab" (⌘Z) still to do | B3 |
 | Share… | | ✅ | |
-| Capture… / Full Page / Portrait | | ❌ | Thread: Capture |
+| Capture… / Full Page / Portrait | (none) | 🟡 Capture… (`capturePage`) and Capture Full Page (`captureFullPage`); Portrait Mode, click-to-capture an element and ⌘⇧-drag still to do | Thread: Capture |
 | Save Page As | | ✅ MHTML (Chromium) / web archive (WebKit) | |
-| Print | ⌘P | 🟡 Chromium's print opens its own window, no preview | Later: AppKit print sheet with preview |
+| Print | ⌘P | ✅ "Print": the macOS print sheet with a page preview, both engines (Chromium via a PDF). Arc likely shows Chromium's print preview instead (see arc-visual-spec) | |
 
 ### Edit
 
@@ -79,13 +79,13 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | Appearance: Automatic / Light / Dark (websites) | | 🟡 Dark Pages Off/Match/Always | Have it; the other session owns this |
 | Show Sidebar | ⌘S | ✅ | |
-| Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host and (disabled until built) Site Controls and Split View; the sidebar drops its nav buttons and URL field. "Show full URL" setting not yet | B5 (`topBarURLEnabled`) |
+| Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host, Site Controls and Split View; the sidebar drops its nav buttons and URL field. "Show full URL" setting not yet | B5 (`topBarURLEnabled`) |
 | Collapse Pinned Tabs | | ✅ View › "Collapse Pinned Tabs" ("Expand Pinned Tabs" while collapsed) and a chevron in the space header | B3 |
 | Stop Loading | ⌘. | ✅ | |
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
 | Clear Cookies and Refresh / Clear Cache and Refresh | | ✅ per site | |
 | Add Split View | ⌘L (Gabe) / ⌃⇧= (default) | ✅ `addSplitView`, empty pane + command bar (live check pending) | Thread: Split view |
-| Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | 🟡 all but Expand Current Split | Thread: Split view |
+| Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | ✅ Expand Current Split (no key, as Arc) fills the split with the focused pane; one-way, as Arc (focusing another pane restores, inferred) | Thread: Split view |
 | Zoom Actual / In / Out | ⌘0 / ⌘+ / ⌘- | ✅ | |
 | Cast | | ❌ | Skip? |
 | Developer → View Source | ⌥⌘U | ✅ Chromium (new `view-source:` tab) | |
@@ -94,7 +94,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Developer → JavaScript Console | ⌥⌘J | 🟡 opens DevTools, not on Console | Later |
 | Developer → Network Inspector | | ❌ | Later, with the two above |
 | Developer → Allow JavaScript from Apple Events | | ❌ | With AppleScript |
-| Turn on Developer Mode for this site | ⌃D | ❌ | Thread: Developer Mode |
+| Turn on Developer Mode for this site | ⌃D | 🟡 Per-host switch (title flips to "Turn off…"), remembered across relaunches; on a Developer Mode site the sidebar's reload button gets Arc's reload options (Reload this page / Refresh (Ignore Cache) / Clear Cookies and Refresh) and reloads the way last chosen. No Site Controls row yet | Gap 16 |
 | Enter Full Screen | ⌃⌘F | ✅ | |
 | Dark Page for This Site (Kite only) | ⌥⌘D | ✅ | |
 
@@ -175,13 +175,13 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
 | Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | 🟡 Little Kite: own window, toolbar measured from Arc, "Open in <Space>" (⌘O) moves the live page into the main window, ⌘W closes, Kite menu → Open Links from Other Apps in Little Kite (on by default) | No profile indicator, extensions button, downloads tray, searchable space picker, auto-archive or global hotkey yet |
 | Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal panes, divider, sidebar row; no vertical layout or drag-to-split yet | Thread: Split view |
-| Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | ❌ | Thread: Mini player |
+| Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | 🟡 | Sidebar Mini Player (play/pause, prev/next, tab mute, PiP, close, back to tab); auto PiP on leaving a playing video. No volume slider, mic/camera, marquee, Arc PiP window |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
 | Boosts | Per-site CSS/JS/zap elements, shareable | 🟡 Code Boosts: New Boost / Edit Boost in the command bar (Arc's hidden menu actions and keywords) open an editor window with CSS and JS for the site's domain; boosts.json in the profile; applied at page load on both engines, top frame, never in incognito | Not yet: colours, fonts, text size/case, Zap (gap 22), site control centre entry, live apply without reload, sharing/gallery, Arc import |
-| Developer Mode | Per-site: URL bar shows localhost info, console pane | ❌ | Thread: Developer Mode |
+| Developer Mode | Per-site switch and dev reload options (Arc's strings show no console pane or URL change) | 🟡 See the Developer menu row | Gap 16 |
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
-| Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
+| Capture | Screenshot tool for an area/full page | 🟡 Area (drag) and full page: Copy / Save; no Easels, no Portrait Mode | Thread: Capture |
 | Library | Downloads, archive, easels, media, boosts in one window | ❌ | Thread: Library |
 | Air Traffic Control | Rules to route links from other apps to a space | 🟡 | Kite menu → Air Traffic Control…: URL "Is equal to"/"Contains" routes to a space or Little Kite, plus a default. No profile destination; editor lives in its own window until Settings exists |
 | Live folders | GitHub PRs/issues, RSS etc. as an auto-updating folder | ❌ | Later |
@@ -189,7 +189,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Share spaces, folders, splits | Public link or collaborator | ❌ | Roadmap: sync + sharing |
 | Profiles | Separate cookies per space | ❌ | Thread: profiles |
 | Incognito | Private window | ✅ | |
-| Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | ❌ | Thread: Site controls (ad blocker thread owns the toggle) |
+| Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | 🟡 Popover from the toolbar's sliders button and the sidebar URL field's hover button: Copy URL, Share, Block Ads & Trackers, camera/mic/location/notifications (Chromium content settings; not on WebKit), Secure/Insecure, Clear Cache / Clear Cookies. No Boosts, capture, extensions section, Developer Mode, All Site Settings | Gap 8 |
 | Native ad blocker | uBlock-style lists | ❌ | Ad blocker thread |
 | Translation | Translate page, "never translate" sites | ❌ | Later (Chromium translate isn't in CEF) |
 | Instant Links | Command bar goes straight to the top result | ❌ | With Claude in the browser |
