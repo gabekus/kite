@@ -46,7 +46,7 @@ final class SplitPanesView: NSView {
             clip.layer?.cornerRadius = ArcMetrics.Content.cornerRadius
             clip.layer?.cornerCurve = .continuous
             clip.layer?.masksToBounds = true
-            clip.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            clip.layer?.backgroundColor = NSColor.pageBackdrop.cgColor
             clip.autoresizingMask = [.width, .height]
             card.addSubview(clip)
             view.autoresizingMask = []

@@ -205,7 +205,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         contentClip.layer?.cornerRadius = Layout.cornerRadius
         contentClip.layer?.cornerCurve = .continuous
         contentClip.layer?.masksToBounds = true
-        contentClip.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        contentClip.layer?.backgroundColor = NSColor.pageBackdrop.cgColor
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.font = .systemFont(ofSize: 15, weight: .medium)
 
@@ -689,7 +689,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     /// A split's panes are cards of their own, so the shared card stops drawing while one is shown.
     private func setSplitChrome(_ split: Bool) {
-        contentClip.layer?.backgroundColor = split ? NSColor.clear.cgColor : NSColor.windowBackgroundColor.cgColor
+        contentClip.layer?.backgroundColor = split ? NSColor.clear.cgColor : NSColor.pageBackdrop.cgColor
         contentFrame.layer?.shadowOpacity = split ? 0 : ShadowView.opacity
         layoutChanged()
     }
