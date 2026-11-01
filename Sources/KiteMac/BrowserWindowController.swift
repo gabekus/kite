@@ -455,7 +455,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             show(visible, focused: selected?.id)
         }
         if let split = state.selectedSplit {
-            splitPanes.setLayout(factors: split.normalizedFactors, orientation: split.orientation)
+            splitPanes.setLayout(factors: split.layoutFactors, orientation: split.orientation)
         }
         let live = state.allTabIDs
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))

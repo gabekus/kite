@@ -653,6 +653,28 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Kite has no link routing yet, so it isn't imported.
 
+## Expand Current Split (Arc 1.171 menu bar; Arc 1.169 binary, decompiled; 1 Nov 2026)
+
+- View menu (AX via `menudump`, nothing pressed): Add Split View, Close this Split Pane, Separate Page from
+  Split View, **Expand Current Split**: no shortcut. MainMenu.nib: selector `maximizeCurrentSplitViewPane:`,
+  no key-binding ID; the command bar's ID is `expandSplitViewPane`, icon `arrow.up.left.and.arrow.down.right`,
+  search terms "Expand; Expand Split View; Maximize" (`~/rea-arc/notes/split-view.md` §2).
+- Mechanism (Ghidra, `~/rea-arc/decomp/ghidra`): `MainWindowController.maximizeCurrentSplitViewPane:`
+  (@10031b87c) only posts a notification. The window contents controller observes it
+  (`maximizeFocusedSplitViewNotificationToken`; registered in FUN_1004842f4, handler FUN_1004856b8) and calls a
+  split view controller method with `animated: true` and a per-pane closure (FUN_1004859cc) that returns
+  width factor **1.0 for the pane whose content ID is the focused one and 0.0 for every other pane**.
+- So the panes all stay in the split (unlike Separate); the focused one fills it. The handler reads no
+  state, so running it again does nothing new: it isn't a toggle.
+- Validation (`MainWindowController` menu validation, arc.s ~805743 / Ghidra FUN_102952338): the item is
+  enabled when the window's split has more than one pane (`count > 1`), whether or not it's expanded.
+- How Arc brings the other panes back, and the animation's duration, weren't traced; no string for
+  "Collapse"/"Restore" split exists. `ExpandedCodingKeys` belongs to other types (not split view).
+- Kite: `SplitView.expandedTabID` (per split, saved, decodes as nil from older sessions); the stored
+  `widthFactors` are left alone and the layout uses 1/0 (`layoutFactors`). The hidden panes and dividers are
+  hidden. Running it again does nothing, as in Arc. Inferred, so the user is never stuck: focusing another
+  pane of the split, dragging a divider, adding a pane, or closing the expanded pane brings the split back
+  with its old widths. The change is immediate (Arc animates; duration unknown).
 ## Capture → `CaptureOverlayView`, `BrowserWindowController+Capture`, `KiteCore/Capture` (Arc 1.171, 1 Nov 2026)
 
 Nothing in Arc was pressed or watched: menu bar read through AX, the rest from the binary, its strings and
@@ -821,6 +843,7 @@ circle, fonts, hover fill) is Kite's: Arc's text and pixels weren't read.
   (`UpdaterWindow`): checking, up to date, no releases yet, a new version (notes, Remind Me Later, View Release,
   Download when a .dmg/.zip is attached, opened in a Kite tab), and errors (Download manually, Try Again). Window
   size and layout are Kite's; Arc's updater window wasn't measured. No background checks or banner yet.
+
 ## Air Traffic Control → `AirTrafficControl` (KiteCore), `AirTrafficControlWindow` (Arc 1.171 binary strings and disassembly, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt` and `~/rea-arc/decomp/arc.s` (short SwiftUI string literals decoded from the

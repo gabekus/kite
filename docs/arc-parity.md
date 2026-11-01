@@ -85,7 +85,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
 | Clear Cookies and Refresh / Clear Cache and Refresh | | ✅ per site | |
 | Add Split View | ⌘L (Gabe) / ⌃⇧= (default) | ✅ `addSplitView`, empty pane + command bar (live check pending) | Thread: Split view |
-| Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | 🟡 all but Expand Current Split | Thread: Split view |
+| Close Split Pane / Separate / Expand / focus pane N | ⌃⇧- / ⌃⇧1… | ✅ Expand Current Split (no key, as Arc) fills the split with the focused pane; one-way, as Arc (focusing another pane restores, inferred) | Thread: Split view |
 | Zoom Actual / In / Out | ⌘0 / ⌘+ / ⌘- | ✅ | |
 | Cast | | ❌ | Skip? |
 | Developer → View Source | ⌥⌘U | ✅ Chromium (new `view-source:` tab) | |
