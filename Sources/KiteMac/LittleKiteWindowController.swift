@@ -64,6 +64,9 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     private var extensionsChanges: AnyCancellable?
     #endif
 
+    /// When the window was last in use, for "Archive Little Kites after:" (`archiveIfStale`).
+    private(set) var lastActiveAt = Date()
+
     /// Called once the window has closed, so the app delegate can let go of it.
     var didClose: ((LittleKiteWindowController) -> Void)?
 
@@ -248,6 +251,9 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
             updateBackButton()
         case .openInNewTab(let url, _), .openInLinkPeek(let url), .openInSplit(let url):
             host.openTab(url)
+        case .openInLittleKite(let url):
+            // Out of the engine's navigation callback before making another page.
+            DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.openLittleKiteWindow(url: url) }
         case let .openLink(url, target):
             let app = NSApp.delegate as? AppDelegate
             switch target {
@@ -433,6 +439,20 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         page = nil
         stopFollowingDownloads()
         didClose?(self)
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) { lastActiveAt = Date() }
+    func windowDidResignKey(_ notification: Notification) { lastActiveAt = Date() }
+
+    /// Settings › Links › "Archive Little Kites after:": closes the window once it has gone unused that
+    /// long (Arc's `autoArchiveLittleArcTimeThreshold`). In use means key while Kite is the active app.
+    @discardableResult
+    func archiveIfStale(_ threshold: LittleKite.ArchiveThreshold, now: Date = Date()) -> Bool {
+        let inUse = window?.isKeyWindow == true && NSApp.isActive
+        if inUse { lastActiveAt = now }
+        guard threshold.isStale(lastActive: lastActiveAt, inUse: inUse, now: now) else { return false }
+        close()
+        return true
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }

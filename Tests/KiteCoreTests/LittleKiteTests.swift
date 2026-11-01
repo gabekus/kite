@@ -84,3 +84,46 @@ import Testing
         #expect(Tray.contentWidth(count: 3) == 810.0)
     }
 }
+
+@Suite struct LittleKiteLinksSettingsTests {
+    private func makeDefaults() throws -> UserDefaults {
+        try #require(UserDefaults(suiteName: "LittleKiteLinks-\(UUID().uuidString)"))
+    }
+
+    @Test func switchesDefaultToOnAsArcs() throws {
+        let defaults = try makeDefaults()
+        #expect(LittleKite.globalHotkeyEnabled(in: defaults))
+        #expect(LittleKite.opensOnOptionCommandClick(in: defaults))
+        defaults.set(false, forKey: LittleKite.globalHotkeyKey)
+        defaults.set(false, forKey: LittleKite.optionCommandClickKey)
+        #expect(!LittleKite.globalHotkeyEnabled(in: defaults))
+        #expect(!LittleKite.opensOnOptionCommandClick(in: defaults))
+    }
+
+    @Test func archiveThresholdIsArcsThreeChoicesWithSixHoursByDefault() throws {
+        #expect(LittleKite.ArchiveThreshold.allCases.map(\.title) == ["1 hour", "6 hours (default)", "12 hours"])
+        let defaults = try makeDefaults()
+        #expect(LittleKite.ArchiveThreshold.current(in: defaults) == .sixHours)
+        defaults.set("oneHour", forKey: LittleKite.ArchiveThreshold.key)
+        #expect(LittleKite.ArchiveThreshold.current(in: defaults) == .oneHour)
+        defaults.set("bogus", forKey: LittleKite.ArchiveThreshold.key)
+        #expect(LittleKite.ArchiveThreshold.current(in: defaults) == .sixHours)
+    }
+
+    @Test func aWindowGoesOnlyOnceUnusedPastTheThreshold() {
+        let now = Date()
+        let t = LittleKite.ArchiveThreshold.oneHour
+        #expect(!t.isStale(lastActive: now.addingTimeInterval(-3599), inUse: false, now: now))
+        #expect(t.isStale(lastActive: now.addingTimeInterval(-3600), inUse: false, now: now))
+        #expect(!t.isStale(lastActive: now.addingTimeInterval(-90000), inUse: true, now: now))
+    }
+
+    @Test func hotkeyCodesMatchCarbon() {
+        #expect(LittleKite.virtualKeyCode(for: "n") == 0x2D)
+        #expect(LittleKite.virtualKeyCode(for: "N") == 0x2D)
+        #expect(LittleKite.virtualKeyCode(for: "left") == 0x7B)
+        #expect(LittleKite.virtualKeyCode(for: "§") == nil)
+        // cmdKey | optionKey
+        #expect(LittleKite.carbonModifiers([.option, .command]) == 0x0900)
+    }
+}

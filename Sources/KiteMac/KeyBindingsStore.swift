@@ -66,9 +66,13 @@ final class KeyBindingsStore {
         return walk(menu, [])
     }
 
+    /// Called after `apply`, so the Little Kite hotkey can follow its menu item.
+    var didApply: (() -> Void)?
+
     /// Sets every item's key equivalent from its default plus the overrides.
     func apply(to menu: NSMenu?) {
         guard let menu else { return }
+        defer { didApply?() }
         // Items whose shortcut KeyShortcut can't describe stay as they are: AppKit's own
         // Emoji & Symbols (fn E) would otherwise lose fn and fire on a bare E while typing.
         let all = Self.items(in: menu)

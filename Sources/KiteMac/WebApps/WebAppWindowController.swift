@@ -210,7 +210,7 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
             self.canGoBack = canGoBack
             self.canGoForward = canGoForward
             updateButtons()
-        case .openInLinkPeek(let url), .openInNewTab(let url, _), .openInSplit(let url):
+        case .openInLinkPeek(let url), .openInNewTab(let url, _), .openInSplit(let url), .openInLittleKite(let url):
             host.openTab(url)
         case let .openLink(url, target):
             let delegate = NSApp.delegate as? AppDelegate

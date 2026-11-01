@@ -41,6 +41,9 @@ final class PagePool {
     var onLinkPeek: ((UUID, URL) -> Void)?
     /// The page menu's Open Link in New Window, Split View, Little Kite and Incognito Window.
     var onOpenLink: ((UUID, URL, PageContextMenu.LinkTarget) -> Void)?
+    /// A link ⌥⌘-clicked in tab `id` with Settings › Links' Little Kite switch on. Without a handler
+    /// (incognito windows: Little Kite runs on the normal profile) it opens in Split View instead.
+    var onOpenLittleKite: ((UUID, URL) -> Void)?
     /// The page menu's Save As…, Print… and View Page Source, for tab `UUID`.
     var onPageCommand: ((UUID, PageContextMenu.PageCommand) -> Void)?
     /// What this window can do with a link, for the page menu.
@@ -286,6 +289,11 @@ final class PagePool {
             // Out of the engine's navigation callback before making another page.
             DispatchQueue.main.async { [weak self] in
                 self?.store.mutate { $0.openLinkInSplit(url: url, from: id) }
+            }
+        case .openInLittleKite(let url):
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if let onOpenLittleKite { onOpenLittleKite(id, url) } else { store.mutate { $0.openLinkInSplit(url: url, from: id) } }
             }
         case .closeRequested:
             store.mutate { $0.close(tab: id) }
