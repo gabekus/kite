@@ -128,7 +128,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
             root.addSubview(view)
         }
         webContainer.wantsLayer = true
-        webContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        webContainer.layer?.backgroundColor = NSColor.pageBackdrop.cgColor
         root.addSubview(webContainer)
 
         trafficLights = TrafficLights(window: window, host: root,

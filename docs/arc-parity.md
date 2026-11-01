@@ -69,9 +69,9 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Paste and Match Style | ⇧⌘V | ✅ | |
 | Delete | | ✅ | |
 | Find… / Find Next / Find Previous | ⌘F / ⌘G / ⇧⌘G | ✅ find bar (match count on Chromium) | |
-| Find and Replace | ⌥⌘F | ❌ | Skip? (text fields only) |
+| Find and Replace | ⌥⌘F | ✅ Edit › Find, after Find…. As in Arc it is off on web pages and in Kite's fields: Arc enables it only in its Notes editor, which Kite doesn't have (g78) | |
 | Use Selection to Find / Jump to Selection | ⌘E / ⌘J | 🟡 ⌘E only | ⌘J later |
-| Spelling, Substitutions, Transformations, Speech, Format, AutoFill, Dictation, Emoji | system | 🟡 all but Format and AutoFill | Later |
+| Spelling, Substitutions, Transformations, Speech, Format, AutoFill, Dictation, Emoji | system | ✅ Arc's items. Substitutions › Data Detectors (g81). Format › Font › Bold ⌘B / Italic ⌘I / Underline ⌘U (g79): a page sees the key first, WebKit pages also take the menu items, Chromium pages only the keys, as in Arc. AutoFill › Contact… / Passwords… (g80) come from AppKit, as in Arc: native fields only | |
 
 ### View
 

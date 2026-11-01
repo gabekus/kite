@@ -46,6 +46,11 @@ NSString* const KCDownloadDidUpdateNotification = @"KCDownloadDidUpdateNotificat
 
 namespace {
 
+/// What a tab shows before its page first draws: the dark grey of the card holding it (NSColor.pageBackdrop),
+/// not Chromium's white. Chromium also uses it as the page's default background, so
+/// attachBrowser puts that back to white.
+const cef_color_t KCPageBackdropColor = 0xFF323232;
+
 NSString* ToNSString(const CefString& string) {
     return [NSString stringWithUTF8String:string.ToString().c_str()] ?: @"";
 }
@@ -450,6 +455,7 @@ class KCClient : public CefClient,
         windowInfo.SetAsChild((__bridge CefWindowHandle)popup.view,
                               CefRect(0, 0, (int)NSWidth(bounds), (int)NSHeight(bounds)));
         client = new KCClient(popup);
+        settings.background_color = KCPageBackdropColor;
         [delegate browser:owner didCreatePopup:popup url:ToNSURL(target_url)];
         [popup prepareFirstPage:ToNSURL(target_url)];
         return false;
@@ -858,6 +864,7 @@ class KCClient : public CefClient,
         CefWindowInfo windowInfo;
         windowInfo.SetAsChild((__bridge CefWindowHandle)_view, CefRect(0, 0, 800, 600));
         CefBrowserSettings settings;
+        settings.background_color = KCPageBackdropColor;
         // Start empty and load once attached: DevTools calls (dark pages, the ad
         // blocker's document-start script) need the browser before the first navigation.
         _pendingURL = url ?: [NSURL URLWithString:@"about:blank"];
@@ -905,6 +912,11 @@ class KCClient : public CefClient,
     }
     // Before the first load, so a Network.enable made while the tab was opening sees its document.
     for (void (^call)(void) in queued) call();
+    // The dark backdrop covers only the moments before a page draws: a page that sets no background
+    // of its own still gets Chromium's white (dark pages darken it as before).
+    [self executeDevToolsMethod:@"Emulation.setDefaultBackgroundColorOverride"
+                         params:@{@"color": @{@"r": @255, @"g": @255, @"b": @255, @"a": @1}}
+                     completion:nil];
     if (_documentScriptSource && _documentScripts.count == 0 && !_pendingURL) {
         [self addDocumentScript:_documentScriptSource navigation:_navigationCount completion:nil];
     }

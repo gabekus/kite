@@ -47,7 +47,7 @@ final class LinkPeekView: NSView {
             layer.cornerRadius = LinkPeek.cornerRadius
             layer.cornerCurve = .continuous
             layer.masksToBounds = true
-            layer.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            layer.backgroundColor = NSColor.pageBackdrop.cgColor
         }
         motion.addSubview(cardShadow)
         motion.addSubview(card)

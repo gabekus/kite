@@ -101,7 +101,7 @@ final class WebAppWindowController: NSWindowController, NSWindowDelegate, NSMenu
         root.addSubview(toolbar)
 
         webContainer.wantsLayer = true
-        webContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        webContainer.layer?.backgroundColor = NSColor.pageBackdrop.cgColor
         root.addSubview(webContainer)
 
         trafficLights = TrafficLights(window: window, host: root, center: Metrics.trafficLightCenter,

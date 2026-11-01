@@ -1,6 +1,12 @@
 import AppKit
 import KiteCore
 
+extension NSColor {
+    /// The colour behind a page until it first draws: always dark, so a new tab never
+    /// flashes white. Chromium tabs start on the same grey (KCBrowser's KCPageBackdropColor).
+    static let pageBackdrop = NSColor(srgbRed: 0x32 / 255, green: 0x32 / 255, blue: 0x32 / 255, alpha: 1)
+}
+
 extension NSPrintInfo {
     /// A copy of the app's print settings (paper, printer) for printing one page, with Chrome's
     /// margins, so the shared settings only change when someone picks Page Setup.
