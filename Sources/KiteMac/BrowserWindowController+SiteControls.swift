@@ -33,7 +33,8 @@ extension BrowserWindowController {
             model.blocksAds = Adblocker.isAvailable ? store.state.blocksAds(on: url) : nil
             model.isMailHandler = MailHandlers.shared.isDefault(host: url.host) ? true : nil
             model.isInDeveloperMode = store.state.isInDeveloperMode(url)
-            model.boosts = isIncognito || BoostLibrary.domain(of: url) == nil
+            // Nil hides the Boost parts: incognito, no site, or Boosts off in Settings.
+            model.boosts = isIncognito || !BoostsModel.shared.isOn || BoostLibrary.domain(of: url) == nil
                 ? nil : BoostsModel.shared.library.boosts(for: url)
             if let page = shownPage, page.sitePermission(.camera, for: url) != nil {
                 var values: [SitePermission: SitePermissionValue] = [:]

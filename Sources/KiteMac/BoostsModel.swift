@@ -31,6 +31,30 @@ final class BoostsModel {
     /// sites whose styles changed.
     @ObservationIgnored private var announcedStyles: [String: BoostLiveStyles] = [:]
 
+    /// Settings › Advanced › "Enable Boosts on websites you visit". Arc's
+    /// `hasDisabledBoostsInPreferences` (unset, so Boosts are on). Off, no Boost runs on any
+    /// page: open pages drop their Boosts' styles and zaps live (a Boost's JavaScript that already
+    /// ran stays until a reload), and New Boost / Edit Boost and the site control centre's Boost
+    /// parts are hidden. The Boosts themselves are kept, and Library › Boosts still lists them.
+    static let boostsDisabledKey = "boostsDisabled"
+
+    private(set) var isOn = !UserDefaults.standard.bool(forKey: BoostsModel.boostsDisabledKey)
+
+    func setOn(_ on: Bool) {
+        guard on != isOn else { return }
+        isOn = on
+        if on {
+            UserDefaults.standard.removeObject(forKey: Self.boostsDisabledKey)
+        } else {
+            UserDefaults.standard.set(true, forKey: Self.boostsDisabledKey)
+        }
+        announceZapsIfChanged()
+        announceStylesIfChanged()
+    }
+
+    /// What runs on pages: the library, or nothing while Boosts are switched off in Settings.
+    private var applied: BoostLibrary { isOn ? library : BoostLibrary() }
+
     func start(fileURL: URL) {
         self.fileURL = fileURL
         if let data = try? Data(contentsOf: fileURL) {
@@ -126,15 +150,16 @@ final class BoostsModel {
     func applyZapsLive(to page: WebPage, except: String? = nil) {
         page.evaluateJavaScript(ZapScript.hostScript) { [weak self, weak page] host in
             guard let self, let page, let domain = ZapLibrary.domain(ofHost: host as? String) else { return }
-            let css = ZapLibrary.css(self.library.activeZaps(forDomain: domain).filter { $0 != except })
+            let css = ZapLibrary.css(self.applied.activeZaps(forDomain: domain).filter { $0 != except })
             page.evaluateJavaScript(ZapScript.apply(css: css)) { _ in }
         }
     }
 
     private func zapTable() -> [String: String] {
         var table: [String: String] = [:]
-        for domain in Set(library.boosts.map(\.domain)) {
-            let css = library.zapCSS(forDomain: domain)
+        let source = applied
+        for domain in Set(source.boosts.map(\.domain)) {
+            let css = source.zapCSS(forDomain: domain)
             if !css.isEmpty { table[domain] = css }
         }
         return table
@@ -145,14 +170,15 @@ final class BoostsModel {
         page.evaluateJavaScript(ZapScript.hostScript) { [weak self, weak page] host in
             guard let self, let page, let domain = ZapLibrary.domain(ofHost: host as? String),
                   domains?.contains(domain) ?? true else { return }
-            page.evaluateJavaScript(BoostScript.applyLive(self.library.liveStyles(forDomain: domain))) { _ in }
+            page.evaluateJavaScript(BoostScript.applyLive(self.applied.liveStyles(forDomain: domain))) { _ in }
         }
     }
 
     private func styleTable() -> [String: BoostLiveStyles] {
         var table: [String: BoostLiveStyles] = [:]
-        for domain in Set(library.boosts.map(\.domain)) {
-            var styles = library.liveStyles(forDomain: domain)
+        let source = applied
+        for domain in Set(source.boosts.map(\.domain)) {
+            var styles = source.liveStyles(forDomain: domain)
             styles.zaps = ""  // zaps have their own announcement and live path
             if !styles.isEmpty { table[domain] = styles }
         }
@@ -178,7 +204,7 @@ final class BoostsModel {
 
     /// The document-start script for a page about to load `url`, or nil when no Boost runs there.
     func script(for url: URL?) -> String? {
-        let boosts = library.activeBoosts(for: url)
+        let boosts = applied.activeBoosts(for: url)
         guard !boosts.isEmpty else { return nil }
         return BoostScript.source(for: boosts, isValidJS: Self.isValidJS)
     }

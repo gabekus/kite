@@ -1286,6 +1286,26 @@ Peek; on WebKit only camera and mic, asked every time.
   the space bar), the card fill colour (Kite uses the address field's fill), the title font (a CTFont; Kite uses 12 pt
   medium), button hover fills, which controls drop at 160 / 126, and whether closing the player pauses (Kite pauses).
 
+### Settings › Advanced: auto PiP and Boosts switches (g90, g91; Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+Nothing in Arc was pressed or toggled; Gabe's Arc defaults were read for key presence only.
+
+- Row titles "Enable Picture in Picture when you leave a video tab" and "Enable Boosts on websites you visit" are in
+  `AdvancedPreferencesViewController.swift`'s strings (arc-strings 80405–80416).
+- Keys: the preferences key enum's raw values `autoPipGloballyDisabled` (arc.s 0x1005a26f0) and
+  `hasDisabledBoostsInPreferences` (0x1005a276c; also arc-strings 64262, 152502). Both are absent from Gabe's Arc
+  defaults, so both switches are on by default. Settings state `autoPipGloballyDisabled`, `isBoostsPreferenceEnabled`,
+  actions `onToggleAutoPipGloballyDisabled`, `onToggleBoostsEnabled` (171280–171372).
+- Turning Boosts off, from the names only (flow not traced in code): the app delegate's `onBoostsEnabledStateChange`
+  (179118) feeds `areBoostsEnabled` in the windows' state, the window, sidebar header and main window view
+  (149076, 149872, 150391, 150507), and `BoostsClient.setEnabled` next to `applyToAllWebContents` (71489–71502).
+  Inferred: open pages lose their Boosts without a reload and the Boost UI goes. Which UI exactly wasn't traced;
+  Kite hides New Boost / Edit Boost (command bar) and the site control centre's Boost button, section and footer
+  items, and keeps Window › View Boosts… and Library › Boosts (to manage Boosts while off). Unknown whether Arc
+  also stops a Boost's already-run JavaScript; Kite leaves it until a reload (JS isn't undoable).
+- Kite: `autoPictureInPictureDisabled` (read each time a tab leaves the screen) and `boostsDisabled`
+  (`BoostsModel.isOn`); Kite's own key names, Arc's meanings.
+
 ### Mini Player tab volume ("Adjust Tab Volume") → `MiniPlayerView.volumeRow`, `TabVolume`, `MediaStateScript` (Arc 1.171, 1 Nov 2026)
 
 - Strings (arc-strings.txt): MiniPlayer actions `setVolume`, `toggleVolumeDrawer`, `toggleMuted` (174130-174145); state
