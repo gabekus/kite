@@ -40,6 +40,8 @@ struct SidebarActions {
     var newProfile: (UUID) -> Void = { _ in }
     /// False in incognito windows, which have no profiles.
     var showsProfiles = true
+    /// Instant Links' loading row's close button.
+    var dismissInstantLinks: (UUID) -> Void = { _ in }
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -199,6 +201,11 @@ struct SidebarView: View {
                 }
                 NewTabRow { store.showCommandBar(.newTab) }
                     .sidebarRow()
+                // Where Instant Links' results will open (Arc's SidebarInstantLinks item).
+                ForEach(store.instantLinksRows.filter { $0.spaceID == space.id }) { row in
+                    InstantLinksRow(row: row) { actions.dismissInstantLinks(row.id) }
+                        .sidebarRow()
+                }
                 let unpinnedGroups = SidebarGroup.group(space.tabs.map(\.id), splits: space.splits)
                 ForEach(unpinnedGroups) { group in
                     unpinnedGroup(group, in: space.tabs, selectedID: space.selectedTabID)
@@ -371,7 +378,7 @@ private struct ChromeFill: ViewModifier {
 /// A tab or split row's pill. Arc's colours for these come in light and dark pairs
 /// rather than one white scaled up, so on a light theme a hovered tab gets a faint
 /// dark wash instead of a white haze.
-private struct TabPillFill: ViewModifier {
+struct TabPillFill: ViewModifier {
     @Environment(\.colorScheme) private var scheme
     let isSelected: Bool
     let isHovered: Bool

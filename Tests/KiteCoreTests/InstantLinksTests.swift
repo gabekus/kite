@@ -51,6 +51,21 @@ import Testing
         #expect(!InstantLinks.applies(to: "github.com"))
         #expect(InstantLinks.googleURL(for: "a & b")?.absoluteString == "https://www.google.com/search?q=a%20%26%20b")
     }
+
+    @Test func testBuildsCanReadAnotherResultsPage() {
+        #expect(InstantLinks.googleURL(for: "a & b+c", template: "http://127.0.0.1:8000/results?q=%s")?.absoluteString
+            == "http://127.0.0.1:8000/results?q=a%20%26%20b%2Bc")
+        // A template without a placeholder is ignored.
+        #expect(InstantLinks.googleURL(for: "x", template: "http://127.0.0.1/")?.host() == "www.google.com")
+    }
+
+    @Test func pendingRowTitles() {
+        var row = InstantLinks.Pending(spaceID: UUID())
+        #expect(row.status == .loading)
+        #expect(row.title == "Searching the web for you")
+        row.status = .error
+        #expect(row.title == "Oops, something went wrong.")
+    }
 }
 
 @Suite struct InstantLinksOpeningTests {
@@ -77,5 +92,17 @@ import Testing
         #expect(folder != nil)
         #expect(ids.allSatisfy { id in state.selectedSpace.tabs.allSatisfy { $0.id != id } })
         #expect(state.selectedTab?.id == ids[0])
+    }
+
+    @Test func opensInTheSpaceItStartedIn() {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0]),
+                                          Space(name: "B", icon: "b", theme: Theme.presets[0])])
+        let a = state.spaces[0].id
+        state.selectedSpaceID = state.spaces[1].id
+        let ids = state.openInstantLinks(Array(urls.prefix(2)), title: "t", format: .tab, inSpace: a)
+        #expect(state.spaces[0].tabs.prefix(2).map(\.id) == ids)
+        #expect(state.spaces[0].selectedTabID == ids[0])
+        // The space showing stays put.
+        #expect(state.selectedSpaceID == state.spaces[1].id)
     }
 }

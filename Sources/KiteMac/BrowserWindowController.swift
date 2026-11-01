@@ -226,7 +226,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             toggleMute: { [weak self] id in self?.toggleMute(id) },
             setProfile: { [weak self] id, profile in self?.setProfile(profile, forSpace: id) },
             newProfile: { [weak self] id in self?.presentCreateProfile(for: id) },
-            showsProfiles: !isIncognito
+            showsProfiles: !isIncognito,
+            dismissInstantLinks: { [weak self] id in self?.instantLinks.dismiss(id) }
         )
         spaceSwipe = SpaceSwipeController(
             store: store,

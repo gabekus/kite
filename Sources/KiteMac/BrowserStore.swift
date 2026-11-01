@@ -54,6 +54,8 @@ final class BrowserStore {
     private(set) var systemIsDark = false
     /// Spaces whose Tidy Tabs request is out with Claude (the Tidy button spins).
     var tidyingSpaceIDs: Set<UUID> = []
+    /// Instant Links at work, newest first: each shows a row at the top of its space's Today.
+    var instantLinksRows: [InstantLinks.Pending] = []
 
     @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored var onPageChange: ((UUID) -> Void)?

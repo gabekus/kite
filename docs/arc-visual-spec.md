@@ -1398,10 +1398,36 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   directions, flights, news, siteSearch on 15 named sites, history; URL templates at strings 81470–81495) behind
   remote flag `instant-links-v2-enabled`; an intent prompt (navigate vs search) behind
   `instant-links-intent-prototype-enabled` / `instant-links-suggestion-enabled` with a `SuggestionInstantLinksView`
-  row; and a sidebar cell `InstantLinksCellView` (`links`, `favicons`, `linkCount`, `isExpanded`) plus an
-  `instantLinks` item container. Which flags Arc's server turns on is unknown.
+  row. Which flags Arc's server turns on is unknown. (The `links`/`favicons`/`linkCount`/`isExpanded` fields
+  near string 178607 belong to a SwiftUI view, not to `InstantLinksCellView`; see the loading row below.)
 - **Inferred:** ⇧⏎ only for a search (a typed URL opens as usual) and not in Site Search; results open in
-  query order with the first selected; what Arc shows while it works (probably the sidebar cell) is unverified.
+  query order with the first selected.
+
+### Instant Links loading row → `InstantLinks.Pending` (KiteCore), `InstantLinksRow` (Arc 1.171 strings, Ghidra, assets, 1 Nov 2026)
+
+- **What it is:** a sidebar item. `instantLinks` is one of `SidebarItemData`'s cases next to `splitView` and
+  `sharedObject` (strings 66882, 157305, 157484); its model `SidebarInstantLinks` (34519) has a `status` with
+  cases `loading` and `error` (157293–157295). Its titles (strings 66872–66875): "Searching the web for you"
+  ("Title for an in progress web search item") and "Oops, something went wrong." ("… that failed").
+- **The cell (`InstantLinksCellView`, ivars in `decomp/out7/objc.txt` 4100–4170, functions 0x1000ef124–0x1000f1c90):**
+  a tab-like row: `iconContainerView` (a `SidebarCellImageContainerView`, the favicon's slot), `titleView` (a plain
+  label, one line, tail truncation; no shimmer), `selectionStateView` (hover/selected fill) and a `closeButton`
+  shown only on hover (`setHidden(!hovered)` at 0x1000f11a4). The title stack starts 6pt after the icon container
+  (constant at 0x10380c7b0). While loading, the container's child is the `loadingIndicator`, an
+  `AnimatedFlowerView`; otherwise it's the `iconView` (0x1000f09e4).
+- **`AnimatedFlowerView` (0x100185600, 0x100185b28):** the template image `MaxFlowerIcon` (ARCClients_BaseAssets,
+  22pt: outline of four round petals around a hollow diamond, a stalk into each petal) at 16×16 (0x10380c918),
+  anchor in the middle. `transform.rotation` 0 → −2π, 1 s, repeat forever (clockwise), and `position.y` keyframes
+  midY, −1.5, 0, +1.5, 0 at 0/0.25/0.5/0.75/1 with ease-out, ease-in, ease-out, ease-in, 2 s, repeat forever.
+- **Kite:** the row goes at the top of the Today list of the space it was started in (where the results open,
+  replacing it), shows Kite's own drawing of the flower (proportions measured from the asset at 10×: petals 5.5pt
+  out, 5pt outer radius, 1.3pt lines, diamond corners 2.7pt out; Arc's image isn't copied) and turns/bobs like
+  Arc's. The close button cancels: the results never open. "Oops, something went wrong." shows when nothing at
+  all could be opened (Kite falls back to the input and to the results page, so this is rare).
+- **Unverified:** the flower's tint (Arc takes it from a palette; Kite uses the title's colour); what the
+  error state's icon is (Kite shows the still flower); what a click on the row and its context menu
+  (`menuForEvent:`) do (Kite has neither); where Arc puts the row when the results will go to a folder.
+  No Arc pixels: the row wasn't captured in Arc (it needs a live Arc Max search).
 
 ## Zap → `Boost.zaps`, `ZapLibrary.css`, `ZapScript`, `ZapPickerScript` (KiteCore), `BoostsModel`, `LiveZaps`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
 
