@@ -70,6 +70,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Every tab on screen in pane order, and its page: one, or a split's panes.
     private var shownTabIDs: [UUID] = []
     private var shownPages: [UUID: WebPage] = [:]
+    /// Shown tabs whose page another normal window has (`pageTaken`), by tab.
+    private var placeholders: [UUID: PagePlaceholderView] = [:]
     /// Tabs Kite put into picture in picture when you left them; it ends when you come back.
     var autoPictureInPictureTabs: Set<UUID> = []
     private let splitPanes = SplitPanesView()
@@ -101,12 +103,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     let isIncognito: Bool
 
     /// `autosaveName` keeps the window's frame across launches; only the first normal window has one.
+    /// `sharedPages` links this window's pages with the other normal windows' (one page per tab).
     init(store: BrowserStore, engine: WebEngine, adblocker: Adblocker, incognito: Bool = false,
-         autosaveName: String? = "KiteMainWindow") {
+         autosaveName: String? = "KiteMainWindow", sharedPages: SharedPages? = nil) {
         self.store = store
         self.adblocker = adblocker
         self.isIncognito = incognito
         self.pool = PagePool(engine: engine, store: store)
+        if let sharedPages { pool.join(sharedPages) }
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
         let window = BrowserWindow(
@@ -131,6 +135,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         buildViews()
         store.onChange = { [weak self] in self?.sync() }
         store.onPageChange = { [weak self] id in self?.pageChanged(id) }
+        pool.onPageTaken = { [weak self] id in self?.pageTaken(id) }
+        pool.onLinkedWindowClosing = { [weak self] owner in self?.reclaimPages(from: owner) }
         // Dark pages in "Match System" follow macOS switching light/dark.
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.initial, .new]) { [weak self] app, _ in
             MainActor.assumeIsolated {
@@ -165,6 +171,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         paneClickMonitor = nil
         store.saveNow()
         if isIncognito { pool.retain(live: [], restorable: []) }
+        // Windows showing a placeholder for one of this window's pages take it back.
+        pool.leaveShared()
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
@@ -529,22 +537,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if ids != shownTabIDs {
             tabsChangedOnScreen(left: shownTabIDs.filter { !ids.contains($0) }, arrived: ids.filter { !shownTabIDs.contains($0) })
             hideZapPicker()
-            for page in shownPages.values { page.view.removeFromSuperview() }
-            splitPanes.setPanes([])
-            splitPanes.removeFromSuperview()
-            shownPages = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, pool.page(for: $0)) })
+            removePaneViews()
+            placeholders = [:]
             shownTabIDs = ids
-            if tabs.count > 1 {
-                splitPanes.setPanes(ids.map { ($0, shownPages[$0]!.view) })
-                contentClip.addSubview(splitPanes, positioned: .below, relativeTo: toolbarHost)
-                contentClip.page = splitPanes
-            } else if let id = ids.first, let page = shownPages[id] {
-                page.view.autoresizingMask = []
-                contentClip.addSubview(page.view, positioned: .below, relativeTo: toolbarHost)
-                contentClip.page = page.view
-            } else {
-                contentClip.page = nil
-            }
+            // Taking a page from another window puts a placeholder there (`pageTaken`).
+            shownPages = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, pool.claim($0)) })
+            installPaneViews()
             setSplitChrome(tabs.count > 1)
             updateToolbar()
         }
@@ -563,6 +561,76 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             shownPage?.focus()
         }
         pageChanged(focused)
+    }
+
+    /// What fills tab `id`'s pane: its page, or the placeholder left when another window took the page.
+    private func paneView(_ id: UUID) -> NSView? {
+        shownPages[id]?.view ?? placeholders[id]
+    }
+
+    /// Takes the panes' views out of the card. A page another window has taken stays where it is now.
+    private func removePaneViews() {
+        for page in shownPages.values where page.view.window == nil || page.view.window === window {
+            page.view.removeFromSuperview()
+        }
+        for placeholder in placeholders.values { placeholder.removeFromSuperview() }
+        splitPanes.setPanes([])
+        splitPanes.removeFromSuperview()
+    }
+
+    /// Puts `shownTabIDs`' views into the card: side by side when there are several.
+    private func installPaneViews() {
+        let ids = shownTabIDs
+        if ids.count > 1 {
+            splitPanes.setPanes(ids.compactMap { id in paneView(id).map { (id, $0) } })
+            contentClip.addSubview(splitPanes, positioned: .below, relativeTo: toolbarHost)
+            contentClip.page = splitPanes
+        } else if let id = ids.first, let view = paneView(id) {
+            view.autoresizingMask = []
+            contentClip.addSubview(view, positioned: .below, relativeTo: toolbarHost)
+            contentClip.page = view
+        } else {
+            contentClip.page = nil
+        }
+    }
+
+    /// Another normal window took tab `id`'s page to show it there (Arc's normal windows share one
+    /// sidebar, and a tab has one web content). This window shows a blurred snapshot of it instead,
+    /// as Arc's `WindowContentPlaceholderViewController` does, until it comes forward again.
+    private func pageTaken(_ id: UUID) {
+        guard let page = shownPages.removeValue(forKey: id) else { return }
+        let placeholder = PagePlaceholderView(frame: page.view.frame)
+        placeholders[id] = placeholder
+        page.captureImage(area: page.view.bounds) { [weak placeholder] data in placeholder?.setSnapshot(data) }
+        if page.view.window === window { page.view.removeFromSuperview() }
+        removePaneViews()
+        installPaneViews()
+        if shownTabID == id {
+            shownPage = nil
+            updateSadTab()
+            updatePermissionPrompt()
+        }
+    }
+
+    /// Brings back the pages of tabs this window shows a placeholder for: it came forward, or the
+    /// window holding them is closing (`from`; nil takes them from any window).
+    func reclaimPages(from owner: PagePool? = nil) {
+        let ids = placeholders.keys.filter { owner?.loadedPage($0) != nil || owner == nil }
+        guard !ids.isEmpty else { return }
+        removePaneViews()
+        for id in ids {
+            placeholders[id] = nil
+            if let tab = store.state.tab(id) { shownPages[id] = pool.claim(tab) }
+        }
+        installPaneViews()
+        shownPage = shownTabID.flatMap { shownPages[$0] }
+        pool.didShow(shownTabIDs)
+        applyDarkPage()
+        if let shownTabID { pageChanged(shownTabID) }
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        reclaimPages()
     }
 
     /// How far the focused pane's top and trailing edges sit inside the content card (zero without a split).
