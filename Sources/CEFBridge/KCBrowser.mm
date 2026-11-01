@@ -614,6 +614,44 @@ class KCClient : public CefClient,
     if (_browser) [self applyForceDark];
 }
 
+static cef_content_setting_types_t KCContentSettingType(KCSitePermission permission) {
+    switch (permission) {
+        case KCSitePermissionCamera: return CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_CAMERA;
+        case KCSitePermissionMicrophone: return CEF_CONTENT_SETTING_TYPE_MEDIASTREAM_MIC;
+        case KCSitePermissionLocation: return CEF_CONTENT_SETTING_TYPE_GEOLOCATION;
+        case KCSitePermissionNotifications: return CEF_CONTENT_SETTING_TYPE_NOTIFICATIONS;
+    }
+    return CEF_CONTENT_SETTING_TYPE_NOTIFICATIONS;
+}
+
+- (KCSitePermissionValue)sitePermission:(KCSitePermission)permission forURL:(NSURL*)url {
+    if (!_browser || !url.absoluteString) return KCSitePermissionValueDefault;
+    CefRefPtr<CefRequestContext> context = _browser->GetHost()->GetRequestContext();
+    if (!context) return KCSitePermissionValueDefault;
+    CefString site(url.absoluteString.UTF8String);
+    switch (context->GetContentSetting(site, site, KCContentSettingType(permission))) {
+        case CEF_CONTENT_SETTING_VALUE_ALLOW: return KCSitePermissionValueAllow;
+        case CEF_CONTENT_SETTING_VALUE_BLOCK: return KCSitePermissionValueBlock;
+        case CEF_CONTENT_SETTING_VALUE_ASK: return KCSitePermissionValueAsk;
+        default: return KCSitePermissionValueDefault;
+    }
+}
+
+- (void)setSitePermission:(KCSitePermission)permission value:(KCSitePermissionValue)value forURL:(NSURL*)url {
+    if (!_browser || !url.absoluteString) return;
+    CefRefPtr<CefRequestContext> context = _browser->GetHost()->GetRequestContext();
+    if (!context) return;
+    cef_content_setting_values_t setting = CEF_CONTENT_SETTING_VALUE_DEFAULT;
+    switch (value) {
+        case KCSitePermissionValueAllow: setting = CEF_CONTENT_SETTING_VALUE_ALLOW; break;
+        case KCSitePermissionValueBlock: setting = CEF_CONTENT_SETTING_VALUE_BLOCK; break;
+        case KCSitePermissionValueAsk: setting = CEF_CONTENT_SETTING_VALUE_ASK; break;
+        case KCSitePermissionValueDefault: break;
+    }
+    CefString site(url.absoluteString.UTF8String);
+    context->SetContentSetting(site, site, KCContentSettingType(permission), setting);
+}
+
 - (void)applyForceDark {
     [self executeDevToolsMethod:@"Emulation.setAutoDarkModeOverride"
                          params:_forceDark ? @{@"enabled": @YES} : @{}
