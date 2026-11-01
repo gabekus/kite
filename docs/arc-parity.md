@@ -147,9 +147,10 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | Minimize / Zoom | ⌘M | ✅ | macOS adds Fill, Center, tiling for free |
 | Stay On Top | | ✅ checkmark in the menu, window floats, no in-window indicator (as in Arc) | |
-| Open Library… | ⇧⌘L | 🟡 Window › Open Library… toggles the window's Library over the sidebar and card: Downloads and Archive pages, last page remembered, "Exit the Library" button; switching tab or space leaves it | Easels, Media, Boosts, Spaces pages (Kite has none of them); sizes, icons and animation unmeasured |
+| Open Library… | ⇧⌘L | 🟡 Window › Open Library… toggles the window's Library over the sidebar and card: Downloads, Archive and Media pages, last page remembered, "Exit the Library" button; switching tab or space leaves it | Easels, Boosts, Spaces pages (Kite has none of them); sizes, icons and animation unmeasured |
 | View Downloads… | ⇧⌘J | ✅ Window menu, opens the downloads list (Arc opens Library › Downloads) | Follow-up: open Library › Downloads instead, as Arc does |
-| View Easels… / Media… / Boosts… | | ❌ | Their threads |
+| View Easels… / Boosts… | | ❌ | Their threads |
+| View Media… | | 🟡 Window › View Media… opens the Library's Media page, as in Arc: pictures and videos from Documents, Desktop, Downloads and screenshots after Arc's "Your Media in the Library" / Allow Access card, plus Kite's own Captures (now kept in Captures/); Today / Yesterday / Earlier This Week, then by month; search; "Show media from:" toggles; preview on click (Esc closes); Copy, Show in Finder, Open in Preview, Open/Copy Source URL, Delete (Capture), Hide from Kite. Sizes are Kite's | AirDrop / Send via iMessage; Hide Media toggle title |
 
 ### Help
 
@@ -176,13 +177,13 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal and top/bottom panes, divider, sidebar row; command bar Add Vertical Split View and Convert to Horizontal/Vertical; drop a page link on a content edge to open it in a new pane (real drag pending a hands-on check). Not yet: Add Top/Bottom/Left/Right menu items, dragging sidebar tabs into a split, moving panes | Thread: Split view |
 | Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | 🟡 | Sidebar Mini Player (play/pause, prev/next, tab mute, PiP, close, back to tab); auto PiP on leaving a playing video. No volume slider, mic/camera, marquee, Arc PiP window |
 | Zap (Boosts) | Pick elements on a page; they stay hidden on that site | 🟡 Picker overlay over the page (hover highlight, click → Zap this / Zap all related elements / Cancel), shelf listing the site's zaps with remove; per-site selectors in zaps.json injected at document start (Chromium isolated world, WebKit content world) | No entry point until the Boost editor (gap 21) calls `showZapPicker`; no candidate slider, zap preview images or Copy selector mode; highlight colour/cursor unmeasured. Gap 22 |
-| Media pane | All tabs playing media | ❌ | Thread: Mini player |
+| Media pane | All tabs playing media | ✅ n/a: Arc has no such pane: its "Media" is the Library's gallery of pictures, videos and Captures (see View Media…) | — |
 | Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |
 | Developer Mode | Per-site switch and dev reload options (Arc's strings show no console pane or URL change) | 🟡 See the Developer menu row | Gap 16 |
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
 | Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
-| Library | Downloads, archive, easels, media, boosts (Arc: in the browser window, not a separate one) | 🟡 Downloads and Archive pages in the window (⇧⌘L) | Easels & Notes, Media, Boosts, Spaces pages; Library button in the sidebar with download badge and fly-in |
+| Library | Downloads, archive, easels, media, boosts (Arc: in the browser window, not a separate one) | 🟡 Downloads, Archive and Media pages in the window (⇧⌘L) | Easels & Notes, Boosts, Spaces pages; Library button in the sidebar with download badge and fly-in |
 | Capture | Screenshot tool for an area/full page | 🟡 Area (drag) and full page: Copy / Save; no Easels, no Portrait Mode | Thread: Capture |
 | Library | Downloads, archive, easels, media, boosts in one window | ❌ | Thread: Library |
 | Air Traffic Control | Rules to route links from other apps to a space | 🟡 | Kite menu → Air Traffic Control…: URL "Is equal to"/"Contains" routes to a space or Little Kite, plus a default. No profile destination; editor lives in its own window until Settings exists |

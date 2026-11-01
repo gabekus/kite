@@ -967,6 +967,42 @@ read only for its function names, nothing copied).
   `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped
   element again while its cell is hovered), and Arc's selector heuristics (Kite has its own).
 
+## Media page → `MediaPageView`, `MediaLibraryModel`, `KiteCore/MediaLibrary` (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
+
+Nothing in Arc was pressed or watched. Line numbers are `~/rea-arc/arc-strings.txt`; addresses are Arc-arm64.
+Short titles (≤15 bytes) are Swift immediates, decoded from the `mov`/`movk` pairs before each
+`NSLocalizedString` call.
+
+- What it is: a gallery, not a list of tabs playing media. `HomeButton/Pages/Media/MediaReducer.swift`
+  (82570), `MediaPage`, `MediaPageReducer`, `ScreenshotCell`, `HomeScreenshotPageDelegateAction`,
+  `MediaPagePreviewPresenter`, `AirDropContent`, `PermissionID`, `MediaObservationID` (43796–43810). Its
+  `HomePageID` case is `screenshotsAndCaptures` (174994 area). Library tooltip: "Opens your Library, which is
+  like your Camera Roll within Arc. Screenshots, Captures, Downloads, and more can appear here." (80704).
+- Menu: Window › View Media…, no shortcut, after View Easels… (`menudump Window`); title when shown is
+  "Hide Media" ("Menu item title to hide all Screenshots & Captures", 62223; decoded).
+- Sources: file flags `isScreenshot`, `isScreenRecording`, `isDownload`; `sourceFolders` downloads, desktop,
+  documents, screenshotsAndScreenRecordings, custom (166112 area); `ignoredFilePaths` in IgnoredPaths.json.
+  "Show media from:" (82453) toggles, decoded at 0x1025d7620: Documents, Desktop, Screenshots, Arc Captures,
+  Downloads (enum order 0–4 via 0x1025d7588).
+- Captures: `CaptureClient` (`storeCapture`, `deleteCapture`, `getImageCachePath`, StorableCaptures.json;
+  76364–76370), so Arc keeps its Captures and lists them here.
+- Welcome (before any folder is read; `isOnboardedToMediaPage`): symbol `photo.on.rectangle.angled`, "Your Media in
+  the Library", "Quickly grab screenshots, images, and videos from your computer by showing them in the Arc
+  Library!", "Media never leaves your computer and is not viewable by anyone but you." (82560–82566).
+  Empty-state action titles "Allow Access" / "Learn more"; denied copy "Allow Arc to show your Documents,
+  Desktop, and Download Folders to see them here alongside your Captures."; empty copy "Save media to your
+  Documents, Desktop, and Download Folders to see them here, alongside your Captures in Arc." (82551–82553).
+- Sections "Today", "Yesterday", "Earlier This Week" (shared Home strings); item kinds Image, Video, generic.
+- Item menu (decoded): Copy (inferred; its title wasn't decoded), Show in Finder, Open in Preview, Hide from Arc
+  (a screenshot/file), Delete (a Capture), Open Source URL / Copy Source URL (a Capture), AirDrop, Send via
+  iMessage. Preview: `BaseHomeComponents.MediaPreviewWindow` with `Backdrop`.
+- Kite: Arc → Kite in the copy ("Kite Captures", "Hide from Kite"). Inferred, not seen: that "Allow Access"
+  is the welcome card's button, which folders a non-screenshot lands under, that only a folder's own files
+  (not subfolders) are read, when Arc stores a Capture (Kite: every area and full-page capture), the grid,
+  tile and preview sizes, the filter icon, and that the preview is drawn in the page (Arc uses a window).
+  Not built yet: AirDrop, Send via iMessage, Learn more, the denied-permission state, custom folders, the
+  Hide Media title (View Media… opens the Library's Media page; it doesn't toggle).
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
