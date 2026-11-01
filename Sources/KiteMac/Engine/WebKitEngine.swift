@@ -332,7 +332,7 @@ extension WebKitPage: WKUIDelegate {
     }
 }
 
-/// Saves WebKit downloads to ~/Downloads without overwriting existing files.
+/// Saves WebKit downloads to ~/Downloads without overwriting existing files, and lists them.
 @MainActor
 final class DownloadCoordinator: NSObject, WKDownloadDelegate {
     func download(
@@ -341,12 +341,24 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
         suggestedFilename: String,
         completionHandler: @escaping @MainActor (URL?) -> Void
     ) {
-        let directory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        completionHandler(Self.uniqueURL(in: directory, name: suggestedFilename))
+        var directory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        // Test runs on a throwaway profile save into their own folder, never the user's Downloads.
+        let environment = ProcessInfo.processInfo.environment
+        if let test = environment["KITE_TEST_DOWNLOADS_PATH"], !test.isEmpty, environment["KITE_SUPPORT_PATH"] != nil {
+            directory = URL(fileURLWithPath: test, isDirectory: true)
+        }
+        let destination = Self.uniqueURL(in: directory, name: suggestedFilename)
+        DownloadsModel.shared.track(download, destination: destination)
+        completionHandler(destination)
     }
 
     func downloadDidFinish(_ download: WKDownload) {
         NSApp.requestUserAttention(.informationalRequest)
+        DownloadsModel.shared.webKitDownload(download, finished: .complete)
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: any Error, resumeData: Data?) {
+        DownloadsModel.shared.webKitDownload(download, finished: .interrupted)
     }
 
     private static func uniqueURL(in directory: URL, name: String) -> URL {

@@ -72,8 +72,10 @@ enum MainMenu {
         submenu("Kite", [
             item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false, id: "aboutKite"),
             .separator(),
+            // Claude's chat bubble at the bottom of the page; the menu item only carries the shortcut.
+            item("Ask Claude", #selector(BrowserWindowController.toggleClaudeBubble(_:)), "j", id: "askClaude"),
+            .separator(),
             item("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)), toTarget: false),
-            item("Allow Claude to Run JavaScript Without Asking", #selector(AppDelegate.toggleClaudeJavaScript(_:)), toTarget: false),
             item("Open Claude’s Tabs in a Claude Space", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),
             item("Record Network for Claude", #selector(AppDelegate.toggleRecordNetwork(_:)), toTarget: false),
             item("Connect Claude Code…", #selector(AppDelegate.connectClaudeCode(_:)), toTarget: false),
@@ -111,6 +113,9 @@ enum MainMenu {
             item("Share…", #selector(BrowserWindowController.share(_:)), id: "share"),
             item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"),
             item("Print…", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
+            .separator(),
+            // 1Password's own shortcut for its popup.
+            item("1Password…", #selector(BrowserWindowController.showOnePassword(_:)), "x", [.command, .shift], id: "onePassword"),
         ])
 
         submenu("Edit", [
@@ -263,6 +268,8 @@ enum MainMenu {
             .separator(),
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m", toTarget: false, id: "minimize"),
             item("Zoom", #selector(NSWindow.performZoom(_:)), toTarget: false, id: "zoomWindow"),
+            .separator(),
+            item("View Downloads…", #selector(BrowserWindowController.viewDownloads(_:)), "j", [.command, .shift], id: "viewDownloads"),
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), toTarget: false, id: "bringAllToFront"),
         ])

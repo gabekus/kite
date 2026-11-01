@@ -64,6 +64,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     /// away, then a few more times to catch ads that arrive late.
     private static let cosmeticPolls: [TimeInterval] = [0, 1, 3, 8]
     private var findCompletion: ((FindResult) -> Void)?
+    private var historySwipe: HistorySwipeController?
 
     /// Media elements that are currently playing; used to keep music tabs alive.
     private static let playingMediaScript =
@@ -74,6 +75,16 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         self.adblocker = adblocker
         super.init()
         browser.delegate = self
+        historySwipe = HistorySwipeController(
+            view: browser.view,
+            canNavigate: { [weak browser] in $0 == .back ? browser?.canGoBack == true : browser?.canGoForward == true },
+            navigate: { [weak browser] in $0 == .back ? browser?.goBack() : browser?.goForward() },
+            evaluate: { [weak browser] script, completion in
+                guard let browser else { return completion(nil) }
+                browser.evaluateJavaScript(script, completion: completion)
+            },
+            zoomFactor: { [weak browser] in browser?.zoomFactor ?? 1 }
+        )
     }
 
     var view: NSView { browser.view }
@@ -128,6 +139,20 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     func evaluateJavaScript(_ script: String, completion: @escaping (Any?) -> Void) {
         browser.evaluateJavaScript(script, completion: completion)
+    }
+
+    /// Like evaluateJavaScript, awaiting a returned promise, and optionally as if the user
+    /// had just clicked (APIs such as chrome.management.uninstall require that). Only for
+    /// Kite's own pages: the result is the value, or nil with the protocol's error.
+    func evaluate(_ expression: String, userGesture: Bool, completion: @escaping (Any?, String?) -> Void) {
+        let params: [String: Any] = ["expression": expression, "awaitPromise": true, "returnByValue": true, "userGesture": userGesture]
+        browser.callDevToolsMethod("Runtime.evaluate", params: params) { result, error in
+            if let error { return completion(nil, error) }
+            if let exception = result?["exceptionDetails"] as? [String: Any] {
+                return completion(nil, (exception["exception"] as? [String: Any])?["description"] as? String ?? "exception")
+            }
+            completion((result?["result"] as? [String: Any])?["value"], nil)
+        }
     }
 
     func hibernationState() -> Any? { nil }
@@ -254,7 +279,8 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     @objc(browser:documentStartScriptForURL:)
     func browser(_ browser: KCBrowser, documentStartScriptFor url: URL) -> String? {
-        let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url)].compactMap { $0 }
+        let scripts = [adblocker?.documentStartScript(for: url), WebStoreScript.script(for: url), ExtensionTabsScript.script(for: url)]
+            .compactMap { $0 }
         return scripts.isEmpty ? nil : scripts.joined(separator: "\n")
     }
 

@@ -50,7 +50,7 @@ bottom bar. The back/forward/reload buttons end at 359, which is 6pt from the ed
 | URL field | 8, 46, 349×36 | Corner about 11 (a circle fit gives 12.5; Kite's 11 continuous fits 12.75). Fill is white at 10% over the tint. Text starts at x 20 (12pt in), 13pt regular, white at 60% |
 | Favourites grid | 8, 90, 349×102 | 4 columns of 81.25×47 tiles, 8pt apart both ways (x 8, 97.5, 186.5, 276; y 90, 145). 18pt favicon. Same corner and fill as the URL field. 8pt above and below the grid |
 | Space header | row y 200 to 239 | 26pt icon at 13, 205. Name at x 41, 13pt semibold, white at 45%, centred at y 218. Rows start 3pt below the header (y 239) |
-| Tab row | 41pt apart | 36pt pill from x 8 to 357, centred in its row. 18pt favicon at x 17 (9pt inside the pill). Title at x 43 (8pt gap), 14pt regular, 86.5% grey. The selected pill is white at 20% (19 to 20.5% in Gabe's screenshot, and the same in an incognito window); a hover pill is about 10% |
+| Tab row | 41pt apart | 36pt pill from x 8 to 357, centred in its row. 18pt favicon at x 17 (9pt inside the pill). Title at x 43 (8pt gap), 14pt regular, 86.5% grey. The selected pill is white at 20% (19 to 20.5% in Gabe's screenshot, and the same in an incognito window); a hover pill is about 10%. Light themes differ: see *Tab pill fills* below |
 | Folder row | as a tab row | Title 14pt semibold |
 | Divider row | 25pt tall | 0.5pt line from x 18 to 347 (10pt inside the pills), white at about 8%, centred |
 | New Tab row | as a tab row | `plus` glyph in the 18pt icon slot |
@@ -95,21 +95,14 @@ Measured on 2026-10-23 by moving the pointer 0.5pt at a time across Arc 1.169's 
   - **Gradient:** very soft. The red channel rises from 37 to 44 between the top and bottom of the sidebar, and to
     51 next to the card's right edge.
   - **Grain:** a standard deviation of about 0.5 levels per channel, so it's barely visible.
-  - **Glow:** a soft white light under the pointer, not a fixed part of the gradient. With the pointer off the
-    sidebar there is none. A 2D Gaussian fitted to Gabe's screenshot (RMS error 1.5 levels):
-    - **Size:** σ 110pt wide by 34pt tall, so its half-maximum ellipse is about 260×80pt.
-    - **Strength:** it adds about 29 levels of neutral white at its centre, about 14% over a grey-green theme of
-      `#30342D`.
-    - **Position:** centred on the pointer.
+  - **No pointer light:** Arc draws no light or glow that follows the pointer over the sidebar (Gabe, 31 Oct
+    2026). An earlier pass fitted a Gaussian (σ 110×34pt, 14% white) to a bright patch in one screenshot and
+    took it for one. Kite drew it until PR "Remove the sidebar pointer light"; don't add it back.
 - **Kite:** the theme shader now draws translucently (premultiplied, alpha `Theme.tint`, default 0.55) over the
   system `.sidebar` behind-window material, which also darkens inactive windows.
   - Each space keeps its own `Theme`. The space button's context menu gets **Theme Color** (presets) and **Theme
     Intensity** (the tint).
   - `Theme.accent` gives the colour of the command bar's selected row.
-  - **Pointer light:** `ThemeView` follows the pointer over the sidebar with a tracking area. It draws the same
-    Gaussian (σ 110×34pt, 14% white) in the theme shader and fades in and out over about 0.15s. It only shows in
-    the key window, and only redraws when the pointer moves or the light is fading. On a light preset in Kite it
-    added 30 levels at its centre.
 
 ## Arc's theme shader, from its metallib (decompiled)
 
@@ -263,6 +256,62 @@ most values can't be tied to a specific screen.
   - a 0.2s relayout on the same curve when the home view's width changes;
   - a 0.12s linear, auto-reversing 1.015× scale "bump" of the window contents when a Bool state turns on.
 
+## Traffic lights and tab drag (Arc incognito window, 31 Oct 2026)
+
+**Tab pill fills → `TabPillFill` in `SidebarView.swift`, `ArcMetrics.Sidebar`** (31 Oct 2026)
+- **Hover, measured:** a flat fill with no blur or material, there in the first capture after the pointer
+  arrives (captures are about 0.15s apart, so a fade shorter than that can't be ruled out) and gone the same way.
+  Incognito window: (12,15,20) under the pill becomes (36,39,44), white at 10%. Gabe's grey space: 79 becomes 96,
+  also 10%, with its selected tab at 113 (20%). The × appears on hover.
+- **Colours, from the binary:** the tab cell's background picks `TabCellBackgroundCurrent` for the selected tab
+  and, on hover, a colour its caller passes in, which is `SidebarItemBackground`. Their asset values:
+  - `SidebarItemBackground` (hover): dark (0.98,0.984,1) at 10%; light (0.055,0.059,0.063) at 5%.
+  - `TabCellBackgroundCurrent` (selected): dark (0.98,0.984,1) at 20%; light white at 85%.
+- So on a light theme a hovered tab gets a faint dark wash, not white. Kite used to scale its dark-theme white up
+  3.5 times on light themes (35% on hover, 70% selected), which read as a light frosted patch.
+- **Not observed:** Arc on a light theme. Incognito is always dark and Gabe's Arc spaces are all dark or grey,
+  so the light values come from the assets only.
+
+**Traffic lights → `ArcMetrics.Window.trafficLightHoverArea`, `TrafficLights.swift`**
+- **Away from the lights:** all three are grey, (89,90,89) over the sidebar's (14,15,19). That holds whether
+  or not Arc is frontmost.
+- **Pointer anywhere in one rectangle:** all three show colour and their marks, whether or not Arc is
+  frontmost. The rectangle runs from window x 12 to 72 and y 17 to 30 inclusive, gaps between buttons
+  included. Colours: close (140,26,16), minimize (143,89,28), zoom (97,197,85).
+- **Binary:** next to the standalone buttons Arc calls `setAlphaValue:`. The value is picked from
+  `currentDrawingAppearance` (0.33 or 0.1), and is 1.0 on hover.
+
+**Tab drag** (three recordings plus a window-list poll; the recorder skips frames where only the cursor moves,
+so timings are ±0.3s)
+- **Inside the sidebar:** one run showed a translucent full-width copy of the row, × included, following the
+  pointer, and a white insertion line with a small circle at its left end marking the slot. The other rows
+  don't slide apart, and on drop the list reorders in a frame or two. Another run showed nothing but the
+  cursor, so this may depend on speed or start point.
+- **Out over the page:**
+  - About 1.1s after the pointer crosses the sidebar edge, a portrait card replaces the row copy in a single
+    frame. It's about 170×250pt, near-black, with rounded corners, a favicon square and the bold white title,
+    centred.
+  - The pointer stays on the title line, about 25pt left of centre.
+  - No soft shadow shows, but the binary's drag window sets one (y −30, radius 19).
+  - The page dims in that same frame, and a thin light line appears at the sidebar edge.
+- **Back into the sidebar:** at the edge the card turns back into a translucent row-sized pill. The page
+  brightens only after the drop.
+- **Dropped over the page:** cancelled. No new window and no split; the tab stays where it was.
+- **Windows during a drag:** 0.5 to 0.9s after mouse-down, Arc opens three, all gone after the drop:
+  - a full-screen window at layer 500, which is where the card is drawn;
+  - a 30pt strip on the sidebar's right edge;
+  - an 80pt strip just off the window's left edge.
+- **Binary:**
+  - A real `NSDraggingSession` with a bitmap of the row (`cacheDisplayInRect:toBitmapImageRep:`).
+  - A borderless, mouse-transparent `ArcDraggingWindow` showing a snapshot, with a rounded shadow path.
+  - Two clear floating child panels registered for drags (`SidebarDragRegionWindow`,
+    `SidebarItemDragTargetWindow`).
+- **Not observed yet:**
+  - What the edge strips accept: other windows, other spaces, split view.
+  - What triggers the card: time or distance.
+  - The return animation.
+  - Kite's own drag, which needs Kite in front.
+
 ## Animations, from 60fps recordings of Arc
 
 Recorded on Gabe's main Arc window, capturing only thin strips with no titles (the space-header row, and a 6pt
@@ -276,10 +325,47 @@ the springs and eases in Arc's binary (see the vocabulary table above).
 | Sidebar show | 10 → 145 → 292 → 340 → 362 → 365pt. Re-recorded: 10 → 113.5 → 275.5 → 331 → 362 → 365pt | Same | Same, RMS 0.004 |
 | ⌘T open and close | Instant | — | Instant |
 
+## Extensions in the toolbar → `ExtensionsToolbarItems`, `ExtensionsMenu`
+
+Measured on Arc 1.169 with the masked probe (roles and frames only) on a window with the content toolbar showing
+(sidebar hidden), Oct 2026. Window points; the toolbar row is y 10–42.
+
+| | Arc | Kite |
+|---|---|---|
+| Pinned extension icon | 16×16 at y=18, pitch 36 | Same: 16pt icons in 36×32 slots |
+| Extensions button | 32×28 at y=12, left edge 12 after the last icon | Same (Kite: 1148 → 1160) |
+| Button to Site Controls' icon | 12 (1973 → 1985) | 12 (1192 → 1204) |
+| Menu | AXPopover 262×486 hanging from the button, content inset 13 | SwiftUI popover, 262 wide, inset 13 |
+| Menu tiles | 48×32, 4 columns on a 56 pitch, rows on a 40 pitch; pinned tiles carry a 14×14 button at the tile's (37, 21) | Same grid; pinned tiles show a 14pt pin badge there |
+| Cursor over the items | Arrow (cursorprobe) | Arrow (`kite ui pointer`) |
+
+Not measured (text wasn't read): what the menu's top row of four 48.75×32.75 buttons, its second section (three
+208×33 rows) and its two bottom buttons (82×32, 32×32) do. Kite leaves them out; pin, on/off, options and remove
+are in each tile's right-click menu instead. Arc's hover reveal in the sidebar URL row: none found.
+
+## Downloads (Arc 1.171 binary, assets and menu bar, 31 Oct 2026)
+
+- Menu: Window › **View Downloads…** ⇧⌘J, next to Open Library… ⇧⌘L (read from Arc's menu bar through AX, no
+  items pressed). Arc's own copy: "Opens the Downloads section of your Library", so ⇧⌘J lands on the Library's
+  Downloads page (`HomeButton/DownloadsPageReducer`, `DownloadsContentView`, `DownloadCell`).
+- Sidebar: `DownloadsUI.DownloadToLibrary` animates a file icon (`DownloadIconView`,
+  `ProjectileIconKeyframeAnimation`, `animateDownload(source:destination:)`, SF Symbol `arrow.down.circle` nearby)
+  into the Library button (`DownloadBin`), which carries a `DownloadProgressBadge`. Geometry and timing: unknown.
+- Context menu ("Download Context Menu"): Open, Copy, Show in Finder, Hide from Arc, Move to Trash, Cancel download
+  (from the localisation comments; exact titles are short inline strings not in the dump).
+- Row text: subtitles for generic / paused / cancelled / failed downloads, "Failed to Download", speed "e.g. 3 MB/s",
+  "Download from [source domain]", file-type copy for PDF, disk image, movie, video, image, audio, archive, zip,
+  empty-state "File deleted or moved".
+- Colours (Assets.car): `DownloadItemBackgroundHovered` light p3 0.96 grey / dark p3 0.12;
+  `DownloadItemBackground` light sRGB white / dark p3 0.05 (Little Arc tray); `DownloadProgressBarBackground` light sRGB
+  (0.808, 0.843, 0.906) / dark (0.443, 0.467, 0.510).
+- Quit with downloads running: alert "Downloads in progress" (not built in Kite yet).
+
+Kite (`DownloadsView.swift`): no Library yet, so the bottom bar's leading button (where Arc's Library button sits)
+shows the progress ring and opens a popover list. Row size, ring size and popover width are Kite's, unmeasured.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
-- The pointer light's fade timing and whether it eases toward the pointer. Kite fades it over 0.15s and sticks it
-  to the pointer.
 - The ⌘T panel's exact shadow parameters (only its effect was measured).
 - Arc's default sidebar width, light-theme fill opacities, and the space-switch animation timing.

@@ -4,7 +4,7 @@
 // - Chrome-style browser windows (tab strip, omnibox) opened for browsers Chromium
 //   created itself never appear; KCDefaultClient sends their pages to Kite tabs.
 // - The "X has been added to Chromium" bubble never appears; Kite says so itself.
-// - The "Add "X"?" install dialog stays Chrome's own: its text, buttons and click
+// - The "Add "X"?" install and "Remove "X"?" uninstall dialogs stay Chrome's own: their text, buttons and click
 //   protection are untouched (Chrome won't enable its button while the dialog is
 //   hidden, and fades it back in, so it can't be replaced). It becomes a child of the
 //   front Kite window, placed like a sheet at the top of the web area, so it moves
@@ -53,9 +53,22 @@ BOOL IsInstalledBubble(NSWindow* window) {
     return IsViewsWindow(window) && [TitleOf(window) hasSuffix:@" has been added to Chromium"];
 }
 
-BOOL IsInstallDialog(NSWindow* window) {
+/// Chrome's "Add "X"?" (install) and "Remove "X"?" (uninstall) dialogs.
+BOOL IsExtensionDialog(NSWindow* window) {
     NSString* title = TitleOf(window);
-    return IsViewsWindow(window) && ([title hasPrefix:@"Add “"] || [title hasPrefix:@"Add \""]) && [title hasSuffix:@"?"];
+    if (!IsViewsWindow(window) || ![title hasSuffix:@"?"]) return NO;
+    for (NSString* verb in @[@"Add", @"Remove"]) {
+        if ([title hasPrefix:[verb stringByAppendingString:@" “"]] || [title hasPrefix:[verb stringByAppendingString:@" \""]]) return YES;
+    }
+    return NO;
+}
+
+/// KITE_TEST_BLOCK_VIEWS_WINDOWS=1 (with KITE_SUPPORT_PATH, for automated tests): no
+/// Chromium Views window ever reaches the screen; each one is logged instead.
+BOOL BlocksViewsWindowsForTests() {
+    static BOOL blocks = [NSProcessInfo.processInfo.environment[@"KITE_TEST_BLOCK_VIEWS_WINDOWS"] isEqualToString:@"1"] &&
+                         NSProcessInfo.processInfo.environment[@"KITE_SUPPORT_PATH"].length > 0;
+    return blocks;
 }
 
 /// The Kite window in front: key or main, else the frontmost that isn't Chrome's.
@@ -104,6 +117,10 @@ char kAttachedKey;
 /// NO keeps the window off screen.
 BOOL ShouldOrderIn(NSWindow* window) {
     if (!IsViewsWindow(window)) return YES;
+    if (BlocksViewsWindowsForTests()) {
+        NSLog(@"KiteTest: blocked Views window \"%@\" %@ (%@)", TitleOf(window), NSStringFromRect(window.frame), window.className);
+        return NO;
+    }
     if (IsChromeBrowserWindow(window)) return NO;
     if (IsInstalledBubble(window)) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -111,7 +128,7 @@ BOOL ShouldOrderIn(NSWindow* window) {
         });
         return NO;
     }
-    if (!objc_getAssociatedObject(window, &kAttachedKey) && IsInstallDialog(window)) {
+    if (!objc_getAssociatedObject(window, &kAttachedKey) && IsExtensionDialog(window)) {
         objc_setAssociatedObject(window, &kAttachedKey, @YES, OBJC_ASSOCIATION_RETAIN);
         AttachInstallDialog(window);
     }

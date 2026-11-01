@@ -14,6 +14,10 @@ protocol AutomationHost: AnyObject {
     /// The tab's page, created in the background if it isn't live.
     func automationPage(for tab: BrowserTab) -> WebPage
     func closeAutomatedTab(_ id: UUID)
+    /// Whether 1Password can fill in this window, for sign_in.
+    var canOpenPasswordManager: Bool { get }
+    /// Opens 1Password's popup over the selected tab. False if it couldn't.
+    func openPasswordManager() -> Bool
 }
 
 /// "Claude in the browser", the local half: runs Claude's tool calls against
@@ -44,6 +48,8 @@ final class AutomationController {
     var isEnabled: Bool { settings.allowClaudeControl }
     /// Tabs Claude is driving right now, for the "Claude is controlling this tab" banner.
     private(set) var controlledTabs: [UUID: ControlledTab] = [:]
+    /// Tabs handed to the user to sign in (sign_in), for the banner's Done and Cancel.
+    var signIns: [UUID: SignInRequest] = [:]
 
     @ObservationIgnored weak var host: AutomationHost?
     @ObservationIgnored let store: BrowserStore
@@ -67,6 +73,8 @@ final class AutomationController {
     @ObservationIgnored private var nextWaiterID = 0
     /// Tabs Claude opened itself; closing any other tab asks first.
     @ObservationIgnored var claudeOpened: Set<UUID> = []
+    /// The tabs each Claude task opened, newest last, so a placeholder tab id can mean the task's only tab.
+    @ObservationIgnored var taskTabs: [UUID: [UUID]] = [:]
     @ObservationIgnored private(set) var downloads: [Int: Download] = [:]
     @ObservationIgnored private var downloadObserver: NSObjectProtocol?
     /// Each tab's last read, the baseline for change-only reads.
@@ -77,6 +85,15 @@ final class AutomationController {
 
     /// True while a batch runs: a step that would need confirmation stops the batch instead of asking.
     @TaskLocal static var inBatch = false
+    /// The Claude task (Claude Tasks panel) the running call comes from, if Kite started its client.
+    @TaskLocal static var agentTask: UUID?
+
+    /// TypeSafe's Jev, when the user has a key: quick typed decisions (see `Jev`).
+    @ObservationIgnored var jev: JevClient?
+
+    /// Claude Tasks: whether a task id is one of Kite's running tasks, and where its new tabs go.
+    @ObservationIgnored var isRunningTask: ((UUID) -> Bool)?
+    @ObservationIgnored var taskOpenedTab: ((_ task: UUID, _ tab: UUID) -> Void)?
 
     struct NeedsConfirmation: Error {
         let request: ConfirmationRequest
@@ -123,6 +140,7 @@ final class AutomationController {
             activities.removeAll()
             snapshots.removeAll()
             claudeOpened.removeAll()
+            taskTabs.removeAll()
             if let downloadObserver { NotificationCenter.default.removeObserver(downloadObserver) }
             downloadObserver = nil
         }
@@ -186,7 +204,6 @@ final class AutomationController {
         }
     }
 
-    func setAllowJavaScript(_ allow: Bool) { update { $0.allowJavaScript = allow } }
     func setUseClaudeSpace(_ use: Bool) { update { $0.useClaudeSpace = use } }
 
     private func update(_ change: (inout AutomationSettings) -> Void) {
@@ -279,6 +296,11 @@ final class AutomationController {
         entry.lastActive = Date()
         entry.connections.insert(connection)
         controlledTabs[id] = entry
+    }
+
+    /// Refreshes a controlled tab's idle clock without adding a connection.
+    func touchControlled(_ id: UUID) {
+        controlledTabs[id]?.lastActive = Date()
     }
 
     private func disconnected(_ connection: Int) {
@@ -404,7 +426,8 @@ final class AutomationController {
         guard isEnabled else { return .failure(.disabled) }
         do {
             let command = try AutomationCommand(tool: request.tool, arguments: request.arguments)
-            return try await run(command, connection: connection)
+            let task = request.task.flatMap(UUID.init(uuidString:)).flatMap { isRunningTask?($0) == true ? $0 : nil }
+            return try await Self.$agentTask.withValue(task) { try await run(command, connection: connection) }
         } catch let error as AutomationError {
             return .failure(error)
         } catch let error as AutomationCommand.InvalidArguments {
@@ -418,7 +441,18 @@ final class AutomationController {
         let tab: BrowserTab?
         if let string {
             guard let id = UUID(uuidString: string.trimmingCharacters(in: .whitespaces)) else {
-                throw AutomationError(.invalidArguments, "\"\(string)\" isn't a tab id. Call tabs_context for ids.")
+                // Models sometimes send a placeholder ("${tab}"). When the task has one tab open, that's the tab it
+                // means: use it rather than spend a turn on the retry.
+                if let task = Self.agentTask,
+                   case let open = (taskTabs[task] ?? []).filter({ store.state.tab($0) != nil && !revoked.contains($0) }),
+                   open.count == 1, let only = store.state.tab(open[0]) {
+                    return only
+                }
+                // Otherwise name the real ids so the retry needs no extra call.
+                let opened = claudeOpened.filter { store.state.tab($0) != nil }.prefix(5).map(\.uuidString)
+                let hint = opened.isEmpty ? "" : " Tabs you opened: " + opened.joined(separator: ", ") + "."
+                throw AutomationError(.invalidArguments,
+                    "\"\(string)\" isn't a tab id. Pass the id itself (a UUID, as tabs_create or tabs_context gave it), or omit tab for the front tab.\(hint) Call tabs_context for every id.")
             }
             tab = store.state.tab(id)
         } else {
@@ -426,6 +460,8 @@ final class AutomationController {
         }
         guard let tab else { throw AutomationError(.notFound, "That tab isn't open. Call tabs_context for the open tabs.") }
         if revoked.contains(tab.id) { throw AutomationError.stopped }
+        // Nothing reads or touches a tab while the user types a password into it.
+        if signIns[tab.id] != nil { throw AutomationError(.failed, SignInHandoff.busyMessage) }
         return tab
     }
 

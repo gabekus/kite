@@ -38,6 +38,8 @@ extension AutomationController {
                     + "(test builds: launch with KITE_DIAGNOSTICS=1 and a KITE_SUPPORT_PATH profile).")
             }
             return try await UIDiagnostics.shared.run(inspection)
+        case let .signIn(tab, reason):
+            return try await signIn(tab: tab, reason: reason, connection: connection)
         case .batch(let steps):
             return await runBatch(steps, connection: connection)
         default:
@@ -119,7 +121,17 @@ extension AutomationController {
 
         case .find(_, let query):
             let nodes = try await act().allNodes()
-            return .text(AutomationReport.find(ElementFinder.find(nodes, query: query), query: query, url: store.state.tab(tab.id)?.url))
+            var matches = ElementFinder.find(nodes, query: query)
+            // Jev reads meaning, not just words ("checkout" finds "Proceed to payment"), in well under a second.
+            if let jev {
+                let candidates = ElementFinder.candidates(nodes, query: query, limit: Jev.maxOptions)
+                if candidates.count > 1, let answers = try? await jev.ask(state: query, questions: Jev.finding(query, among: candidates)) {
+                    let picked = Jev.found(answers, among: candidates)
+                    let refs = Set(picked.map(\.ref))
+                    matches = Array((picked + matches.filter { !refs.contains($0.ref) }).prefix(20))
+                }
+            }
+            return .text(AutomationReport.find(matches, query: query, url: store.state.tab(tab.id)?.url))
 
         case .getPageText(_, let limit):
             let (source, text) = try await driver.mainText()
@@ -172,7 +184,7 @@ extension AutomationController {
             return try await computer(action, tab: tab, driver: driver, actions: actions)
 
         case .javascript(_, let code):
-            try await authorize(.javascript(code: code, allowedInSettings: settings.allowJavaScript), tab: tab)
+            try await authorize(.javascript(code: code), tab: tab)
             let actions = try act()
             var result = "(a dialog opened before the script finished)"
             try await untilDialog(tab.id) { result = try await actions.run(code) }
@@ -414,10 +426,14 @@ extension AutomationController {
         if let url, case .deny(let reason) = AutomationPolicy.evaluate(.navigate(url), host: nil) {
             throw AutomationError(.denied, reason)
         }
+        // A Claude task's tabs go in its folder in the Claude space, out of the user's way.
+        let task = Self.agentTask
+        var placement = placement
+        if task != nil, case .currentSpace = placement { placement = .claudeSpace }
         let spaceID: UUID?
         switch placement {
         case .currentSpace: spaceID = nil
-        case .claudeSpace: spaceID = store.mutate { $0.claudeSpace(theme: Theme.presets[Theme.presets.count - 1]) }
+        case .claudeSpace: spaceID = store.mutate { $0.claudeSpace() }
         case .space(let name):
             guard let index = store.state.space(matching: name) else {
                 throw AutomationError(.notFound, "There's no space called \(name). Call list_spaces.")
@@ -425,6 +441,10 @@ extension AutomationController {
             spaceID = store.state.spaces[index].id
         }
         let id = store.mutate { $0.openTab(url: url, in: spaceID, select: false) }
+        if let task {
+            taskOpenedTab?(task, id)
+            taskTabs[task, default: []].append(id)
+        }
         if active { store.mutate { $0.select(tab: id) } }
         claudeOpened.insert(id)
         markControlled(id, connection: connection)
@@ -450,7 +470,10 @@ extension AutomationController {
                 action: "close a tab it didn't open",
                 detail: "Tab: “\(tab.displayTitle)”. You can reopen it with ⇧⌘T."), tab: tab.id)
         }
-        host?.closeAutomatedTab(tab.id)
+        // A task's tabs are pinned in its folder, where closing would only unload them.
+        if Self.agentTask == nil || !store.mutate({ $0.removePinnedTab(tab.id) }) {
+            host?.closeAutomatedTab(tab.id)
+        }
         claudeOpened.remove(tab.id)
         return .text("Closed tab \(tab.id.uuidString).")
     }
@@ -463,6 +486,9 @@ extension AutomationController {
         frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
         frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
         window.setFrame(frame, display: true, animate: false)
+        // Auto Layout can push back (minimum sizes, constraints); report where it settled,
+        // not the size asked for.
+        window.layoutIfNeeded()
         return .text("The window is now \(Int(window.frame.width))×\(Int(window.frame.height)) points.")
     }
 

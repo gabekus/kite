@@ -24,6 +24,9 @@ cp Resources/Info.plist "$CONTENTS/Info.plist"
 # Built from Resources/AppIcon.svg (1024 canvas, 824 body, the macOS icon grid).
 cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 cp Sources/KiteMac/Shaders/*.metal "$CONTENTS/Resources/Shaders/"
+# Kite's helper extension (lists and manages extensions), loaded at launch.
+rm -rf "$CONTENTS/Resources/KiteHelperExtension"
+cp -R Resources/KiteHelperExtension "$CONTENTS/Resources/KiteHelperExtension"
 
 # Precompiled shaders mean no Metal compile at launch. Falls back to runtime
 # compilation if the Metal toolchain isn't installed.
@@ -55,12 +58,14 @@ fi
 # identity keeps the code identity the same across rebuilds, so the keychain
 # remembers "Always Allow" for Kite. Ad-hoc signing changes it on every build,
 # and macOS asks for your password again. Order: KITE_SIGN_IDENTITY, then a
-# valid Apple Development cert, then "Kite Local Signing" (make-signing-cert.sh).
+# valid Developer ID Application cert (1Password only trusts a browser signed
+# with one), then Apple Development, then "Kite Local Signing" (make-signing-cert.sh).
 SIGN_ID="${KITE_SIGN_IDENTITY:-}"
-if [[ -z "$SIGN_ID" ]]; then
+for kind in "Developer ID Application" "Apple Development"; do
+    [[ -n "$SIGN_ID" ]] && break
     # By SHA-1, since an expired copy of the same cert would make the name ambiguous.
-    SIGN_ID="$(security find-identity -v -p codesigning | awk '/"Apple Development: / { print $2; exit }')"
-fi
+    SIGN_ID="$(security find-identity -v -p codesigning | awk -v kind="\"$kind: " 'index($0, kind) { print $2; exit }')"
+done
 if [[ -z "$SIGN_ID" ]] && security find-certificate -c "Kite Local Signing" >/dev/null 2>&1; then
     SIGN_ID="Kite Local Signing"
 fi

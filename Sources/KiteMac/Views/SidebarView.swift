@@ -6,6 +6,7 @@ struct SidebarActions {
     var goBack: () -> Void
     var goForward: () -> Void
     var reload: () -> Void
+    var forceReload: () -> Void
     var toggleSidebar: () -> Void
     var closeTab: (UUID) -> Void
     var addSplitView: () -> Void
@@ -18,8 +19,26 @@ struct SidebarView: View {
     let actions: SidebarActions
     /// False on WebKit, which can't force pages dark.
     let supportsDarkPages: Bool
+    let claude: ClaudeButtonModel
+    let downloads: DownloadsButtonModel
+    /// Opens the extensions popover from the address field's hover button; nil where
+    /// extensions don't run (incognito, WebKit).
+    var showExtensions: ((NSView) -> Void)?
+    /// Always shown at the address field's right end (1Password's key); hides itself when
+    /// there's nothing to show.
+    var fieldAccessory: AnyView?
 
     var body: some View {
+        // The host's width, not the column's: the column must never be wider than the sidebar, or
+        // SwiftUI centres it and everything spills off both edges.
+        GeometryReader { proxy in
+            column(width: proxy.size.width)
+        }
+        .ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private func column(width: CGFloat) -> some View {
         let state = store.state
         let space = state.selectedSpace
         let selectedID = space.selectedTabID
@@ -29,14 +48,18 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 0) {
             // One row with the traffic lights: sidebar toggle after them, navigation at the far end.
             // With View → Show Toolbar, navigation and the URL move to the bar over the page.
-            HStack(spacing: M.navButtonSpacing) {
-                ToolbarButton(symbol: "sidebar.left", help: "Toggle Sidebar", enabled: true, action: actions.toggleSidebar)
-                    .padding(.leading, M.toggleX - M.padding)
-                Spacer()
+            let header = HeaderLayout(sidebarWidth: width)
+            HStack(spacing: 0) {
+                // Arc's compact header drops the toggle into the More menu.
+                if !header.isCompact {
+                    ToolbarButton(symbol: "sidebar.left", help: "Toggle Sidebar", enabled: true, action: actions.toggleSidebar)
+                        .padding(.leading, M.toggleX - M.padding)
+                }
+                Spacer(minLength: 0)
                 if !state.showsToolbar {
-                    ToolbarButton(symbol: "arrow.left", help: "Back", enabled: page.canGoBack, action: actions.goBack)
-                    ToolbarButton(symbol: "arrow.right", help: "Forward", enabled: page.canGoForward, action: actions.goForward)
-                    ToolbarButton(symbol: page.isLoading ? "xmark" : "arrow.clockwise", help: "Reload", enabled: selectedID != nil, action: actions.reload)
+                    NavigationButtons(layout: header, page: page, hasTab: selectedID != nil, actions: actions)
+                } else if header.isCompact {
+                    NavigationMoreButton(size: header.buttonSize, page: page, hasTab: selectedID != nil, showsReload: false, actions: actions)
                 }
             }
             .frame(height: M.topRowHeight)
@@ -48,7 +71,9 @@ struct SidebarView: View {
                     text: selectedTab?.url?.host() ?? "Search or enter URL",
                     isDark: darkPageState(for: selectedTab),
                     action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
-                    toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } }
+                    toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } },
+                    showExtensions: showExtensions,
+                    accessory: fieldAccessory
                 )
                 .padding(.top, M.urlFieldTopGap)
             }
@@ -104,15 +129,17 @@ struct SidebarView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            // With a mouse connected macOS shows a legacy scroller, which took 15pt from every pill
+            // and drew a track in the sidebar. Scrolling still works; only the indicator goes.
+            .scrollIndicators(.never)
             .environment(\.defaultMinListRowHeight, 1)
 
-            SpaceBar(store: store)
+            SpaceBar(store: store, claude: claude, downloads: downloads)
                 .frame(height: M.bottomBarHeight)
         }
         .padding(.horizontal, M.padding)
+        .frame(width: width, alignment: .leading)
         .foregroundStyle(.primary)
-        // Arc measures from the window's top edge, under the transparent titlebar.
-        .ignoresSafeArea()
     }
 
     /// Nil hides the moon: nothing to darken, or the engine can't.
@@ -231,23 +258,119 @@ private struct ChromeFill: ViewModifier {
     }
 }
 
+/// A tab or split row's pill. Arc's colours for these come in light and dark pairs
+/// rather than one white scaled up, so on a light theme a hovered tab gets a faint
+/// dark wash instead of a white haze.
+private struct TabPillFill: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    let isSelected: Bool
+    let isHovered: Bool
+
+    func body(content: Content) -> some View {
+        content.background(
+            RoundedRectangle(cornerRadius: M.cornerRadius, style: .continuous).fill(fill)
+        )
+    }
+
+    private var fill: Color {
+        let dark = scheme == .dark
+        if isSelected { return .white.opacity(dark ? M.selectedFill : M.selectedFillLight) }
+        if isHovered { return dark ? .white.opacity(M.hoverFill) : Color(red: 0.055, green: 0.059, blue: 0.063).opacity(M.hoverFillLight) }
+        return .clear
+    }
+}
+
 private struct ToolbarButton: View {
     let symbol: String
     let help: String
     let enabled: Bool
+    var size: CGFloat = M.navButtonSize
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .regular))
-                .frame(width: M.navButtonSize, height: M.navButtonSize)
+                .frame(width: size, height: size)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .opacity(enabled ? 0.6 : 0.25)
         .disabled(!enabled)
         .help(help)
+        // Otherwise VoiceOver and the ui tree read the SF Symbol's own name.
+        .accessibilityLabel(help)
+    }
+}
+
+/// Arc's header layouts by sidebar width (see `ArcMetrics.Sidebar.headerCompactBelow`).
+struct HeaderLayout: Equatable {
+    let isCompact: Bool
+    let buttonSize: CGFloat
+    let spacing: CGFloat
+
+    init(sidebarWidth: CGFloat) {
+        isCompact = sidebarWidth < M.headerCompactBelow
+        buttonSize = isCompact ? M.compactNavButtonSize : M.navButtonSize
+        spacing = isCompact ? M.compactNavButtonSpacing : M.navButtonSpacing
+    }
+}
+
+/// Back, forward and reload at the header's right end. Arc 1.169's compact layout (from its
+/// binary, `BrowserNavigationButtons`) shrinks them to 28pt with no gap and swaps the sidebar
+/// toggle and reload for a More menu, which fits down to Arc's 164pt minimum.
+private struct NavigationButtons: View {
+    let layout: HeaderLayout
+    let page: PageStatus
+    let hasTab: Bool
+    let actions: SidebarActions
+
+    var body: some View {
+        HStack(spacing: layout.spacing) {
+            ToolbarButton(symbol: "arrow.left", help: "Back", enabled: page.canGoBack, size: layout.buttonSize, action: actions.goBack)
+            ToolbarButton(symbol: "arrow.right", help: "Forward", enabled: page.canGoForward, size: layout.buttonSize, action: actions.goForward)
+            if layout.isCompact {
+                NavigationMoreButton(size: layout.buttonSize, page: page, hasTab: hasTab, showsReload: true, actions: actions)
+            } else {
+                ToolbarButton(symbol: page.isLoading ? "xmark" : "arrow.clockwise", help: "Reload", enabled: hasTab, size: layout.buttonSize, action: actions.reload)
+            }
+        }
+    }
+}
+
+/// Arc's `navigationButtonsMore`: reload, the sidebar toggle and force reload, from the strings
+/// beside it in Arc's binary. Item order and wording are unverified.
+private struct NavigationMoreButton: View {
+    let size: CGFloat
+    let page: PageStatus
+    let hasTab: Bool
+    /// False while View → Show Toolbar has reload over the page.
+    let showsReload: Bool
+    let actions: SidebarActions
+
+    var body: some View {
+        Menu {
+            if showsReload {
+                Button(page.isLoading ? "Stop" : "Reload", action: actions.reload).disabled(!hasTab)
+            }
+            Button("Toggle Sidebar", action: actions.toggleSidebar)
+            if showsReload {
+                Button("Force Reload", action: actions.forceReload).disabled(!hasTab)
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 15, weight: .regular))
+                .frame(width: size, height: size)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: size, height: size)
+        .opacity(0.6)
+        .help("More")
+        .accessibilityLabel("More")
     }
 }
 
@@ -257,6 +380,9 @@ private struct AddressPill: View {
     let isDark: Bool?
     let action: () -> Void
     let toggleDark: () -> Void
+    var showExtensions: ((NSView) -> Void)?
+    var accessory: AnyView?
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -271,12 +397,47 @@ private struct AddressPill: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // Arc 1.169 reveals its Site Control Center button (30×30, with the extensions)
+            // at the field's right end while the pointer is over the field.
+            // Arc's buttons there are 30pt wide on a 28pt pitch.
+            HStack(spacing: -2) {
+                if let accessory { accessory }
+                if let showExtensions, hovering {
+                    ExtensionsFieldButton(action: showExtensions)
+                }
+            }
             if let isDark {
                 DarkPageToggle(isDark: isDark, action: toggleDark)
                     .padding(.trailing, 4)
             }
         }
         .modifier(ChromeFill(strength: M.fieldFill))
+        .onHover { hovering = $0 }
+    }
+}
+
+/// The address field's extensions button: opens the extensions popover under it.
+private struct ExtensionsFieldButton: View {
+    let action: (NSView) -> Void
+    @State private var anchor: NSView?
+    @State private var hovering = false
+
+    static let size: CGFloat = 30
+
+    var body: some View {
+        Button { if let anchor { action(anchor) } } label: {
+            Image(systemName: "puzzlepiece.extension")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: Self.size, height: Self.size)
+                .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0, cornerRadius: 6))
+                .background(AnchorView(view: $anchor))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(hovering ? 0.9 : 0.6)
+        .onHover { hovering = $0 }
+        .help("Extensions")
+        .accessibilityLabel("Extensions")
     }
 }
 
@@ -398,9 +559,9 @@ private struct FolderRow: View {
     }
 }
 
-/// A favicon plus its gap per level, like Arc's folder nesting.
+/// Arc's folder nesting per level (see `ArcMetrics.Sidebar.nestingIndent`).
 private func indent(_ depth: Int) -> CGFloat {
-    CGFloat(depth) * (M.iconSize + M.iconTextGap)
+    CGFloat(depth) * M.nestingIndent
 }
 
 private func copyLink(_ url: URL?) {
@@ -469,7 +630,7 @@ private struct TabRow: View {
         .padding(.leading, M.iconInset + indent(depth))
         .padding(.trailing, 6)
         .frame(height: M.pillHeight)
-        .modifier(ChromeFill(strength: isSelected ? M.selectedFill : hovering ? M.hoverFill : 0))
+        .modifier(TabPillFill(isSelected: isSelected, isHovered: hovering))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onSelect)
@@ -512,7 +673,7 @@ private struct SplitRow: View {
         }
         .padding(.leading, indent(depth))
         .frame(height: M.pillHeight)
-        .modifier(ChromeFill(strength: focusedID != nil ? M.selectedFill : hovering ? M.hoverFill : 0))
+        .modifier(TabPillFill(isSelected: focusedID != nil, isHovered: hovering))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { onSelect(nil) }
@@ -522,9 +683,15 @@ private struct SplitRow: View {
 
     private func item(_ tab: BrowserTab, width: CGFloat) -> some View {
         let compact = width <= S.rowCompactWidth
+        // Like Arc's SplitViewCellChildItemView: a title with 20pt or less to show is hidden
+        // rather than cut to a letter and an ellipsis.
+        // The HStack's gap comes twice: favicon to title, and title to the spacer after it.
+        let titleWidth = width - 2 * M.iconInset - M.iconSize - 2 * M.iconTextGap
+        let showsTitle = !compact && titleWidth > S.rowTitleMinWidth
         return HStack(spacing: M.iconTextGap) {
             FaviconView(tab: tab, size: M.iconSize)
-            if !compact {
+            if !showsTitle && !compact { Spacer(minLength: 0) }
+            if showsTitle {
                 Text(tab.displayTitle)
                     .font(.system(size: M.tabFontSize))
                     .opacity(M.tabTextOpacity)
@@ -551,15 +718,51 @@ private struct SplitRow: View {
             Button("Close this Split Pane") { onClose(tab.id) }
         }
         .accessibilityElement(children: .combine)
+        // Icon-only items would otherwise read as the favicon's symbol name.
+        .accessibilityLabel(tab.displayTitle)
         .accessibilityAddTraits(tab.id == focusedID ? [.isButton, .isSelected] : .isButton)
     }
 }
 
 private struct SpaceBar: View {
     let store: BrowserStore
+    let claude: ClaudeButtonModel
+    let downloads: DownloadsButtonModel
 
     var body: some View {
         let state = store.state
+        HStack(spacing: 4) {
+            // Arc's Library button sits at the bar's leading end and carries download progress.
+            DownloadsSidebarButton(model: downloads, size: M.bottomButtonSize)
+            // Too many spaces to fit scroll rather than widen the bar: an over-wide bar pushes the whole
+            // sidebar off its left edge. While they fit they stay a plain row, so the bar's empty part
+            // still drags the window (a scroll view never does).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 0) {
+                    spaceIcons(state)
+                    Spacer(minLength: 0)
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    spaceIcons(state)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            ClaudeSidebarButton(model: claude, size: M.bottomButtonSize)
+            Button {
+                store.addSpace()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .regular))
+                    .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(0.7)
+            .help("New Space")
+        }
+    }
+
+    private func spaceIcons(_ state: BrowserState) -> some View {
         HStack(spacing: 4) {
             ForEach(state.spaces) { space in
                 Button {
@@ -575,18 +778,6 @@ private struct SpaceBar: View {
                 .help(space.name)
                 .contextMenu { ThemeMenu(store: store, space: space) }
             }
-            Spacer()
-            Button {
-                store.addSpace()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .regular))
-                    .frame(width: M.bottomButtonSize, height: M.bottomButtonSize)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .opacity(0.7)
-            .help("New Space")
         }
     }
 }

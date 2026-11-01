@@ -8,6 +8,10 @@ import SwiftUI
 struct PageToolbar: View {
     let store: BrowserStore
     let actions: SidebarActions
+    #if canImport(CEFBridge)
+    /// Pinned extensions and the extensions menu; nil where extensions don't run (incognito, WebKit).
+    var extensions: ExtensionsModel?
+    #endif
 
     enum Metrics {
         static let height: CGFloat = 32
@@ -45,6 +49,13 @@ struct PageToolbar: View {
                 button("arrow.right", "Forward", enabled: page.canGoForward, action: actions.goForward)
                 button(page.isLoading ? "xmark" : "arrow.clockwise", "Reload", enabled: selected != nil, action: actions.reload)
                 Spacer()
+                #if canImport(CEFBridge)
+                if let extensions {
+                    // Site Controls' icon sits 10.5pt into its 37pt slot; Arc leaves 12pt to it.
+                    ExtensionsToolbarItems(model: extensions)
+                        .padding(.trailing, ExtensionsToolbarItems.Metrics.siteControlsGap - (Metrics.buttonPitch - Metrics.siteControlsSize) / 2)
+                }
+                #endif
                 // Kite has no Site Controls yet: drawn as in Arc, but it does nothing.
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 8, weight: .semibold))
@@ -64,6 +75,7 @@ struct PageToolbar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Add Split View")
+                .accessibilityLabel("Add Split View")
             }
             .padding(.leading, Metrics.leading)
             .padding(.trailing, Metrics.trailing)
@@ -105,5 +117,6 @@ struct PageToolbar: View {
         // Not .disabled(), which dims the icon further than Arc's disabled grey.
         .allowsHitTesting(enabled)
         .help(help)
+        .accessibilityLabel(help)
     }
 }

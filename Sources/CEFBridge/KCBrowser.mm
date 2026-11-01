@@ -27,6 +27,7 @@
 - (NSMutableArray<NSString *> *)documentScriptIdentifiers;
 - (void)addDocumentScript:(NSString *)script navigation:(NSUInteger)navigation completion:(nullable void (^)(void))completion;
 - (void)deliverDevToolsEvent:(NSString *)method data:(NSData *)data;
+- (BOOL)deliverSessionMessage:(NSData *)data;
 @property (nonatomic, readwrite) BOOL isLoading;
 @property (nonatomic, readwrite) BOOL canGoBack;
 @property (nonatomic, readwrite) BOOL canGoForward;
@@ -45,8 +46,20 @@ NSURL* ToNSURL(const CefString& string) {
     return [NSURL URLWithString:ToNSString(string)];
 }
 
+// Live downloads' callbacks, by Chromium's download id, so the downloads list can cancel them.
+// Download callbacks run on the main (UI) thread.
+std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>>& DownloadCallbacks() {
+    static std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>> callbacks;
+    return callbacks;
+}
+
 NSURL* UniqueDownloadURL(NSString* name) {
     NSURL* directory = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
+    // Test runs on a throwaway profile save into their own folder, never the user's Downloads.
+    NSString* testDirectory = NSProcessInfo.processInfo.environment[@"KITE_TEST_DOWNLOADS_PATH"];
+    if (testDirectory.length && NSProcessInfo.processInfo.environment[@"KITE_SUPPORT_PATH"].length) {
+        directory = [NSURL fileURLWithPath:testDirectory isDirectory:YES];
+    }
     NSString* base = name.stringByDeletingPathExtension;
     NSString* extension = name.pathExtension;
     NSURL* candidate = [directory URLByAppendingPathComponent:name];
@@ -276,6 +289,8 @@ class KCClient : public CefClient,
         // A store install's package isn't the user's download: no bounce, not listed.
         if (IsExtensionPackage(download_item, download_item->GetSuggestedFileName())) return;
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
+        if (download_item->IsInProgress()) DownloadCallbacks()[download_item->GetId()] = callback;
+        else DownloadCallbacks().erase(download_item->GetId());
         NSString* state = download_item->IsComplete() ? @"complete"
             : download_item->IsCanceled() ? @"canceled"
             : download_item->IsInterrupted() ? @"interrupted" : @"in-progress";
@@ -286,6 +301,7 @@ class KCClient : public CefClient,
             @"state": state,
             @"receivedBytes": @(download_item->GetReceivedBytes()),
             @"totalBytes": @(download_item->GetTotalBytes()),
+            @"speed": @(download_item->GetCurrentSpeed()),
         }];
     }
 
@@ -324,6 +340,12 @@ class KCClient : public CefClient,
     }
 
     // CefDevToolsMessageObserver
+
+    bool OnDevToolsMessage(CefRefPtr<CefBrowser> browser, const void* message, size_t message_size) override {
+        KCBrowser* owner = owner_;
+        if (!owner.sessionMessageHandler) return false;
+        return [owner deliverSessionMessage:[NSData dataWithBytes:message length:message_size]];
+    }
 
     void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser, int message_id, bool success,
                                 const void* result, size_t result_size) override {
@@ -602,6 +624,22 @@ class KCClient : public CefClient,
     }
 }
 
+- (BOOL)deliverSessionMessage:(NSData*)data {
+    // Cheap check first: most messages belong to the browser's own session.
+    static NSData* marker = [@"\"sessionId\"" dataUsingEncoding:NSUTF8StringEncoding];
+    if ([data rangeOfData:marker options:0 range:NSMakeRange(0, data.length)].location == NSNotFound) return NO;
+    NSDictionary* message = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![message isKindOfClass:NSDictionary.class] || ![message[@"sessionId"] isKindOfClass:NSString.class]) return NO;
+    self.sessionMessageHandler(message);
+    return YES;
+}
+
+- (void)sendDevToolsMessage:(NSDictionary<NSString*, id>*)message {
+    if (!_browser) return;
+    NSData* data = [NSJSONSerialization dataWithJSONObject:message options:0 error:nil];
+    if (data) _browser->GetHost()->SendDevToolsMessage(data.bytes, data.length);
+}
+
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData*)data {
     auto it = _pendingDevTools->find(messageID);
     if (it == _pendingDevTools->end()) return;
@@ -709,6 +747,13 @@ class KCClient : public CefClient,
     _closed = YES;
     _delegate = nil;
     if (_browser) _browser->GetHost()->CloseBrowser(true);
+}
+
++ (BOOL)cancelDownloadWithID:(NSInteger)downloadID {
+    auto it = DownloadCallbacks().find((uint32_t)downloadID);
+    if (it == DownloadCallbacks().end()) return NO;
+    it->second->Cancel();
+    return YES;
 }
 
 @end

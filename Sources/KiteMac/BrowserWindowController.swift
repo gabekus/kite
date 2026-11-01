@@ -8,7 +8,7 @@ import SwiftUI
 final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
     private enum Layout {
         static let defaultSidebarWidth: CGFloat = 240
-        static let sidebarWidths: ClosedRange<CGFloat> = 180...400
+        static let sidebarWidths = ArcMetrics.Sidebar.widths
         static let inset = ArcMetrics.Content.inset
         static let cornerRadius = ArcMetrics.Content.cornerRadius
         static let glowMargin: CGFloat = 28
@@ -29,6 +29,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
     private var sidebarHost: NSHostingView<SidebarView>!
+    /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
+    let claudeButton = ClaudeButtonModel()
+    let downloadsButton = DownloadsButtonModel()
+    /// Claude's chat bubble over the page; AppDelegate connects it to Claude Tasks.
+    let claudeBubble = ClaudeBubbleModel()
+    private var claudeBubbleHost: NSHostingView<ClaudeBubble>!
     private var trafficLights: TrafficLights!
     private var commandBarHost: NSHostingView<CommandBarOverlay>!
     private var contentLeading: NSLayoutConstraint!
@@ -64,6 +70,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var paneClickMonitor: Any?
     /// The page card, in window coordinates: where Chrome's extension install dialog hangs.
     var webAreaInWindow: NSRect { contentFrame.convert(contentFrame.bounds, to: nil) }
+    /// After every sync: tabs, selection or pages may have changed.
+    var didSync: (() -> Void)?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
     private var commandBarVisible = false
@@ -123,6 +131,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// True while closing the window should only hide it: Claude tasks are working in its tabs.
+    var hidesInsteadOfClosing: (() -> Bool)?
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard !isIncognito, hidesInsteadOfClosing?() == true else { return true }
+        sender.orderOut(nil)
+        return false
+    }
+
     func windowWillClose(_ notification: Notification) {
         if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
         paneClickMonitor = nil
@@ -152,16 +169,30 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             goBack: { [weak self] in self?.goBack(nil) },
             goForward: { [weak self] in self?.goForward(nil) },
             reload: { [weak self] in self?.reload(nil) },
+            forceReload: { [weak self] in self?.forceReload(nil) },
             toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
             closeTab: { [weak self] id in self?.close(tab: id) },
             addSplitView: { [weak self] in self?.addSplitView(nil) }
         )
-        sidebarHost = NSHostingView(rootView: SidebarView(
+        var sidebar = SidebarView(
             store: store,
             actions: actions,
-            supportsDarkPages: pool.engine.supportsDarkPages
-        ))
-        toolbarHost = NSHostingView(rootView: PageToolbar(store: store, actions: actions))
+            supportsDarkPages: pool.engine.supportsDarkPages,
+            claude: claudeButton,
+            downloads: downloadsButton
+        )
+        var toolbar = PageToolbar(store: store, actions: actions)
+        #if canImport(CEFBridge)
+        // Extensions run in the persistent Chromium profile only.
+        if !isIncognito, pool.engine is ChromiumEngine {
+            let extensions = ExtensionsModel.shared(engine: pool.engine)
+            toolbar.extensions = extensions
+            sidebar.showExtensions = { view in ExtensionsMenu.present(model: extensions, from: view) }
+            sidebar.fieldAccessory = AnyView(OnePasswordFieldButton(model: extensions))
+        }
+        #endif
+        sidebarHost = NSHostingView(rootView: sidebar)
+        toolbarHost = NSHostingView(rootView: toolbar)
         toolbarHost.sizingOptions = []
         toolbarHost.isHidden = true
         contentClip.toolbar = toolbarHost
@@ -173,6 +204,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             (host as? NSHostingView<CommandBarOverlay>)?.sizingOptions = []
         }
         commandBarHost.isHidden = true
+        claudeBubbleHost = NSHostingView(rootView: ClaudeBubble(model: claudeBubble, store: store))
+        claudeBubbleHost.isHidden = true
+        claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
 
         var dragStartWidth: CGFloat = 0
         resizeHandle.onBegin = { [weak self] in
@@ -192,7 +226,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         materialView.blendingMode = .behindWindow
         materialView.state = .followsWindowActiveState
 
-        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, commandBarHost!, peekEdge, peekZone] as [NSView] {
+        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, claudeBubbleHost!, commandBarHost!, peekEdge, peekZone] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -266,6 +300,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             glowView.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: -Layout.glowMargin),
             glowView.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor, constant: Layout.glowMargin),
 
+            // Bottom centre of the page, as wide as the bubble wants up to the page's width.
+            claudeBubbleHost.centerXAnchor.constraint(equalTo: contentFrame.centerXAnchor),
+            claudeBubbleHost.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor),
+            claudeBubbleHost.widthAnchor.constraint(lessThanOrEqualTo: contentFrame.widthAnchor),
+            claudeBubbleHost.topAnchor.constraint(greaterThanOrEqualTo: contentFrame.topAnchor),
+            { let width = claudeBubbleHost.widthAnchor.constraint(equalToConstant: ClaudeBubble.Metrics.maxWidth + 32)
+              // Below the window's own size priorities (490/500), or the bubble's 652pt holds
+              // the window open at sidebar + 662 and the window can't shrink to its minimum.
+              width.priority = .defaultLow
+              return width }(),
+
             commandBarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             commandBarHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
             commandBarHost.topAnchor.constraint(equalTo: rootView.topAnchor),
@@ -275,8 +320,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         // The peeking sidebar draws over the page; its views are raised by z-position rather
         // than reordered, which would drop their constraints.
-        for view in [peekCard, sidebarHost!, resizeHandle, commandBarHost!] as [NSView] { view.wantsLayer = true }
+        for view in [peekCard, sidebarHost!, resizeHandle, claudeBubbleHost!, commandBarHost!] as [NSView] { view.wantsLayer = true }
         commandBarHost.layer?.zPosition = 20
+        claudeBubbleHost.layer?.zPosition = 15
         peekCard.isHidden = true
         peekEdge.onHover = { [weak self] inside in self?.edgeHovered(inside) }
         peekZone.onHover = { [weak self] inside in
@@ -324,10 +370,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let frame = shownTabIDs.count > 1 ? .zero : cardCoverDuringToggle ?? contentFrame.frame
         themeView.cutoutRect = CGRect(x: frame.minX, y: rootView.bounds.height - frame.maxY, width: frame.width, height: frame.height)
         themeView.cutoutCornerRadius = Layout.cornerRadius
-        let sidebar = sidebarHost.frame
-        themeView.glowRegion = sidebarVisible
-            ? CGRect(x: sidebar.minX, y: rootView.bounds.height - sidebar.maxY, width: sidebar.width, height: sidebar.height)
-            : .zero
     }
 
     // MARK: Sync with the store
@@ -368,6 +410,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         updateCommandBar()
         updateSidebar()
         updateToolbar()
+        didSync?()
     }
 
     /// Puts `tabs` on screen, side by side when there are several, and focuses `focused`.
@@ -467,6 +510,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let visible = store.state.showsToolbar && shownTabIDs.count <= 1
         toolbarHost.isHidden = !visible
         contentClip.topInset = visible ? PageToolbar.Metrics.inset : 0
+    }
+
+    /// ⌘J: Claude's chat bubble.
+    @objc func toggleClaudeBubble(_ sender: Any?) {
+        claudeBubble.toggle()
+    }
+
+    private func claudeBubbleOpened(_ open: Bool) {
+        claudeBubbleHost.isHidden = !open
+        if open {
+            window?.makeFirstResponder(claudeBubbleHost)
+        } else {
+            shownPage?.focus()
+        }
     }
 
     @objc func toggleToolbar(_ sender: Any?) {
@@ -831,6 +888,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):
             return shownPage?.isLoading ?? false
+        case #selector(showOnePassword(_:)):
+            #if canImport(CEFBridge)
+            return !isIncognito
+            #else
+            return false
+            #endif
         case #selector(toggleFullScreenMode(_:)):
             item.title = window?.styleMask.contains(.fullScreen) == true ? "Exit Full Screen" : "Enter Full Screen"
         default:

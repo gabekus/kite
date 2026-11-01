@@ -31,7 +31,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | `get_page_text` | `get_page_text` | `kite text` | `<article>` or `<main>` when present. |
 | `computer` | `computer` | `kite key KEYS` | See below. |
 | `form_input` | `form_input` | | Text, checkbox/radio (true/false), `<select>` by option text or value. |
-| `javascript_tool` | `javascript` | `kite js CODE` | Asks every time unless "Allow Claude to Run JavaScript Without Asking" is on. |
+| `javascript_tool` | `javascript` | `kite js CODE` | Runs without asking, like Claude in Chrome. |
 | `read_console_messages` | `read_console_messages` | `kite console [--errors]` | Regex `pattern`, `only_errors`, `clear`. |
 | `read_network_requests` | `read_network_requests` | | Regex `url_pattern`, `clear`. |
 | (none) | `network_log`, `network_request`, `export_har` | `kite network [--follow]`, `kite request ID`, `kite har` | HAR-style log across tabs with a cursor. See below. |
@@ -40,6 +40,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | (none) | `wait_for` | | load, navigation, selector, text, network_idle. Event-driven. |
 | (none) | `handle_dialog` | | alert / confirm / prompt / beforeunload. |
 | (none) | `list_downloads` | | Downloads since control was turned on. |
+| (none) | `sign_in` | `kite call sign_in` | Hands a login page to the user, with 1Password. See below. |
 | (none) | `list_spaces`, `switch_space`, `create_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces` | Kite's own organization. |
 | `gif_creator`, `shortcuts_*`, `switch_browser` | not yet | | |
 
@@ -111,7 +112,7 @@ names the device pixel whose top-left it is, so a point on a rect's top or left 
 | `tree` | Views with frames, `NSVisualEffectView` material and blending, layer fill, corner radius and curve, border, shadow, text colour and font, hidden and alpha; SwiftUI's accessibility elements (role, id, label, frame, selected) inside hosting views; with `layers`, Core Animation sublayers. `root` starts at a node path, `match` lists matching nodes flat, `depth` and `max_nodes` bound it. |
 | `capture` | The window's pixels through ScreenCaptureKit, as on screen, even when covered or in the background, in sRGB. `region` crops at full resolution, `pixels` reads colours as hex, `save` writes a PNG. Without Screen Recording permission it falls back to a view render and says what that misses. |
 | `pointer` | Synthetic mouse moves (`points`, or `from`/`to`/`steps`) sent to the window only. At each point: the view hit, cursor rects, tracking areas (flagged when inactive because Kite is in the background), and the cursor Kite sets. Identical points fold into runs. |
-| `input` | One synthetic event for the window: `keys`, `text`, `click` (with `button`, `count`, `modifiers`), a drag (`from`/`to`) or `scroll` (`dx`, `dy`). With Kite in front keys take AppKit's exact path; in the background they take the same steps by hand (view key equivalents, menu bar, first responder). Says where each key went. |
+| `input` | One synthetic event for the window: `keys`, `text`, `click` (with `button`, `count`, `modifiers`), a drag (`from`/`to`) or `scroll` (`dx`, `dy`; add `phase` for a trackpad scroll with gesture phases: `gesture` sends began, `steps` changed events and ended, or `began`/`changed`/`ended`/`cancelled` one at a time to hold a gesture mid-way. Phased scrolls go through swipe-to-navigate first, as real ones do, and the result says what it decided). With Kite in front keys take AppKit's exact path; in the background they take the same steps by hand (view key equivalents, menu bar, first responder). Says where each key went. |
 | `menu` | Every menu item: path, shortcut, action and target, id, enabled, hidden. Flags shortcuts with no ⌘/⌃/⌥/fn ("FIRES WHILE TYPING", the emoji-on-e bug) and two enabled items on one shortcut. |
 | `key_log` | The last keys pressed in Kite: window, first responder chain, input source, and any menu item each one fired. Plain typing shows only its kind (letter, digit), unless it fired a menu item. |
 | `trace` | Records for `seconds` (default 1.5), after pressing optional `keys`: each Core Animation animation (key path, duration, curve control points or spring, from/to), every layer whose on-screen frame or opacity changed with progress samples, SwiftUI elements matching `match`, and frame intervals with late frames. |
@@ -196,7 +197,7 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
 ## Safety
 
 - **Off by default.** The setting is stored per profile in `<profile>/automation.json` (`allowClaudeControl`,
-  `allowJavaScript`, `useClaudeSpace`, `recordNetwork`). While it's off there's no socket, and no DevTools events are collected.
+  `useClaudeSpace`, `recordNetwork`). While it's off there's no socket, and no DevTools events are collected.
 - **Local only.** A Unix socket at `<profile>/Automation/kite.sock`. Its folder is 0700 and the socket 0600, and the
   peer uid is checked. A profile too deep for a socket path (over 103 bytes, e.g. a test profile in a nested temp
   folder) uses `/tmp/kite-<uid>/<hash of the profile path>.sock` instead. The app refuses that folder unless it can
@@ -210,7 +211,6 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   - Return (or Space) on such a button;
   - Return in a text field, except search boxes. ⌘/Ctrl-Return counts too.
   - typing or `form_input` into password, card, one-time-code and similar fields;
-  - running JavaScript, unless the user allowed it in the menu;
   - uploading files;
   - answering OK to a `confirm`, `prompt` or leave-page dialog;
   - closing a tab Claude didn't open;
@@ -227,6 +227,19 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   - form values.
 - **Indicator.** A "Claude is controlling this tab" pill floats over the page, with Show and **Stop**. Stop revokes
   the tab: it ends its event collection and fails pending confirmations and waits.
+- **Sign-in handoff (`sign_in`).** Claude never types or sees passwords. When a page needs the user signed in,
+  Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and swaps the
+  pill for "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the
+  page itself, so the password goes from the vault into the form and never through Kite's tools or the model.
+  - While it waits, every other tool on that tab fails ("The user is signing in on this tab"), so nothing can read
+    the filled fields.
+  - It ends when the page has moved to a different URL and shows no visible password or one-time-code field (two
+    checks 0.5 s apart), when the user presses Done or Cancel, on Stop, or after 5 minutes.
+  - On Cancel or timeout, Kite empties the page's password and code fields before handing the tab back.
+  - Claude gets only "signed in / cancelled / timed out" and the tab's new URL and title.
+  - Limits: only the top frame is checked (a login inside an iframe needs Done), and after sign-in Claude can still
+    run `javascript` on the page as usual. This is the same model as 1Password's own agentic autofill: the agent never
+    holds the credential.
 
 ## Events, waits and dialogs
 
@@ -270,6 +283,33 @@ How dialogs work:
   - `callDevToolsMethod:params:completion:` returns DevTools errors;
   - `devToolsEventHandler` delivers DevTools events;
   - `KCDownloadDidUpdateNotification` reports downloads.
+
+## Claude Tasks: Kite's own Claude
+
+Kite menu → **Claude Tasks…** (or **Ask Claude About This Tab…**) gives Claude a goal without leaving Kite.
+Kite runs Claude Code headless on the user's own Claude login (no API key):
+
+```
+claude -p --output-format stream-json --verbose --include-partial-messages \
+  --mcp-config '{"mcpServers":{"kite":{"command":".../Helpers/kite","args":["mcp"],"env":{"KITE_AGENT_TASK":"<task id>"}}}}' \
+  --strict-mcp-config --tools "" --allowedTools mcp__kite --permission-mode dontAsk --append-system-prompt …
+```
+
+- **Only Kite's tools.** `--strict-mcp-config` skips the user's other MCP servers and `--tools ""` removes Claude Code's
+  shell, file and web tools. Every Kite safety rule still applies: the confirmation sheets, untrusted-content blocks
+  and the Stop button. Starting a task turns on Allow Claude to Control the Browser.
+- **Background.** `kite mcp` sends `KITE_AGENT_TASK` with each call. Tabs that task opens go into a folder named after
+  the task in the Claude space, never in front of the user. Tabs it closes are removed from the folder for good.
+  **Close Tabs** removes the folder.
+- **Keeps going.** While a task runs, Kite holds an idle-sleep assertion, and closing the main window only hides it
+  (the Dock icon brings it back). A closed lid still sleeps the Mac.
+- **Finishing.** The task posts a notification (clicking it opens the task) and badges the Dock icon until it's read.
+  **Follow up** runs another turn in the same Claude Code session (`--resume`).
+- **What's kept.** `<profile>/Claude/tasks.json` (0600, last 50 tasks) holds the goal, Claude's replies, one line per
+  tool call and errors. Tool results (page content) are never stored. Claude Code runs in `<profile>/Claude/Work`, so
+  no project's CLAUDE.md applies.
+- **Pieces.** `ClaudeTask`, `ClaudeStream` (stream-json parser) and `ClaudeInvocation` live in `KiteCore/Claude`.
+  `ClaudeTasksController` (processes, tabs, notifications) and `ClaudeTasksWindow` live in `KiteMac/Claude`.
 
 ## Not done yet
 
