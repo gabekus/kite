@@ -321,7 +321,7 @@ extension [PinnedItem] {
         folder(id) != nil
     }
 
-    func folder(_ id: UUID) -> TabFolder? {
+    public func folder(_ id: UUID) -> TabFolder? {
         for item in self {
             guard case .folder(let folder) = item else { continue }
             if folder.id == id { return folder }
