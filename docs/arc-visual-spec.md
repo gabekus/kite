@@ -580,7 +580,7 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   going back to a website"): "Back to Pinned URL" and "Separate From Pinned Tab". The same file has the
   fallback title "Pinned URL" ("Fallback title for a page's pinned URL title").
 - Context menu strings (`SidebarMenu+MoveMenu.swift` area, 84933): Edit Pinned Page / "Edit the pinned URL",
-  "Replace Pinned URL with Current" (not built here).
+  "Replace Pinned URL with Current" (built later, see "Edit Pinned Page" below).
 - Kite: `BrowserTab.pinnedURL` (set when a tab is pinned or favorited, cleared when unpinned; old sessions take
   the current page), `BrowserState.resetTab`, `resetPinnedTabs`, `separateFromPinnedTab`, `revealTab`
   (`KiteCore/PinnedURL.swift`).
@@ -590,6 +590,30 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   trigger unknown); Reveal opening enclosing folders and showing a hidden sidebar; no highlight on reveal
   (TabCellState has `shouldPerformUserAttentionAnimation` and `tabHighlightState`, use unknown). Arc had no
   window open, so none of this was seen on screen.
+## Edit Pinned Page: Edit… and Replace Pinned URL with Current (Arc 1.171 binary, 1 Nov 2026)
+
+Strings and disassembly only (`~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`; short titles are Swift
+immediates decoded from the `mov`/`movk` pairs before each `NSLocalizedString` call). Arc wasn't touched.
+
+- Submenu: `SidebarMenu+TabContextMenu.swift` builds a submenu titled **Edit Pinned Page** (comment "Title of
+  pinned URL submenu", `0x102ec7348`) behind a condition on the item (`b.ne` at `0x102ec7310`, not decoded), and
+  fills it from one function (`0x102eb73c0`, its only caller is `0x102ec7498`): **Edit…** (immediate, comment
+  "Edit the pinned URL") and **Replace Pinned URL with Current** (comment "Replace the Pinned Tab with the current
+  page"). Both items are built with the same arguments and no branch between them, so Replace is always listed.
+- Dialog (`SharedWindowFeature/WindowData+Dialogs.swift`, `0x10292b86c`–`0x10292bc54`), built like Arc's Rename
+  Tab… dialog next to it: title **Edit Pinned URL** (comment "Title of Edit Pinned URL dialog."), a line **This is
+  what opens first when you click this tab or its favicon.** (passed as the text field's first argument; Rename
+  passes nil there), a field with placeholder **Enter a URL…** holding the URL, and buttons **Save** ("Button that
+  updates the pinned URL") and **Cancel**. A 392.0 constant sits in the call that shows it (the width, inferred).
+- Command bar (not built): "Replace Pin with Current Page" ("Action to replace a pinned tab with a different url")
+  and "Replace Pinned Tab with the Current Site" (strings ~79423, ~79443).
+- Kite: `BrowserState.editPinnedURL(_:to:)` (a URL or bare host, never a search: `URLInput.url`),
+  `replacePinnedURLWithCurrent(_:)`, `hasPinnedURL(tab:)` (`KiteCore/PinnedURL.swift`); `EditPinnedPageMenu` in the
+  pinned tab row's and favorite tile's context menus; the dialog is an `NSAlert` sheet like Kite's Rename Tab….
+- Inferred, not observed: favorites get the submenu too (Arc has one tab context menu and favorites keep a pinned
+  URL); the submenu's place in the menu; Save leaving the tab on its current page (so "Back to Pinned URL" then
+  offers the new one); what Arc does with input that isn't a URL (Kite beeps and keeps the old one).
+
 ## Hover cards / 5-Second Previews → `LinkPreview` (KiteCore), `LinkPreviewController` (Arc 1.171 binary, 1 Nov 2026)
 
 Strings, settings key names and disassembly only (`~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, selector
