@@ -28,27 +28,31 @@ private extension NSAppearance {
 
 /// Arc's Library button at the leading end of the sidebar's bottom bar (`HomeBadging.HomeButton`,
 /// tooltip "open Library"): clicking it opens the Library, which covers the sidebar until it's
-/// exited. While files download, Arc's `DownloadProgressBadge` sits on it.
+/// exited. While files download, Arc's `DownloadProgressBadge` sits on it; when the last one finishes the
+/// badge plays its completion (a checkmark, a dip and a fade) before it goes.
 struct LibrarySidebarButton: View {
     let library: LibraryModel
     let size: CGFloat
     private var downloads: DownloadsModel { .shared }
+    /// The downloads ended with one complete: the badge stays at 100% for its completion.
+    @State private var finishing = false
+    @State private var finishTask: Task<Void, Never>?
+    /// A new badge (fresh arrow) for each batch of downloads.
+    @State private var batch = 0
 
     var body: some View {
         let list = downloads.list
+        let showsBadge = !list.active.isEmpty || finishing
         Button { library.toggle() } label: {
             ZStack {
-                // Arc draws its own LibraryIcon (a template PDF); Kite uses the SF Symbol Arc's
-                // MainMenu.nib gives the Library menu item.
-                Image(systemName: "archivebox")
-                    .font(.system(size: 15, weight: .regular))
-                    .opacity(0.7)
-                if !list.active.isEmpty {
-                    DownloadProgressBadge(progress: list.activeFraction)
+                LibraryIcon()
+                if showsBadge {
+                    DownloadProgressBadge(progress: list.active.isEmpty ? 1 : list.activeFraction)
+                        .id(batch)
                         .transition(.scale.combined(with: .opacity))
                 }
             }
-            .animation(.easeOut(duration: 0.2), value: list.active.isEmpty)
+            .animation(.easeOut(duration: 0.2), value: showsBadge)
             .frame(width: size, height: size)
             .contentShape(Rectangle())
         }
@@ -56,13 +60,40 @@ struct LibrarySidebarButton: View {
         .help("Library")
         .accessibilityLabel("Library")
         .accessibilityValue(list.active.isEmpty ? "" : "Downloading")
+        .onChange(of: list.active.map(\.id)) { old, new in
+            finishTask?.cancel()
+            if !new.isEmpty {
+                if finishing || old.isEmpty { batch += 1 }
+                finishing = false
+                return
+            }
+            // Arc's badge completes when its progress reaches 1; a batch that was only cancelled or failed
+            // just goes.
+            finishing = old.contains { id in list.items.first { $0.id == id }?.state == .complete }
+            guard finishing else { return }
+            finishTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(DownloadBadgeCompletion.duration))
+                if !Task.isCancelled { finishing = false }
+            }
+        }
+    }
+}
+
+/// The Library button's icon. Arc draws its own LibraryIcon (a template PDF); Kite uses the SF Symbol
+/// Arc's MainMenu.nib gives the Library menu item. The download bin shows the same view.
+struct LibraryIcon: View {
+    var body: some View {
+        Image(systemName: "archivebox")
+            .font(.system(size: 15, weight: .regular))
+            .opacity(0.7)
     }
 }
 
 /// Arc's `DownloadProgressBadge` (BaseHomeComponents, decompiled): a 24pt disc with a 1pt edge, a heavy
 /// 10pt `arrow.down`, and a 21.5pt ring 2.5pt wide: a faint track (0.2) under the progress, which
 /// eases out as it grows. The ring turns once every 1.5 s unless Reduce Motion is on. Arc takes the
-/// colours from its palette (not resolved); Kite uses the sidebar's primary colour.
+/// colours from its palette (not resolved); Kite uses the sidebar's primary colour. At 100% it plays
+/// `DownloadBadgeCompletion`.
 struct DownloadProgressBadge: View {
     enum Metrics {
         static let size: CGFloat = 24
@@ -77,6 +108,13 @@ struct DownloadProgressBadge: View {
     let progress: Double?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var turning = false
+    // Arc's badge state: `iconName`, `iconSize`, `progressRingOpacity`, `overallScale`, `overallOpacity`.
+    @State private var iconName = "arrow.down"
+    @State private var iconSize = Metrics.iconSize
+    @State private var ringOpacity = 1.0
+    @State private var scale = 1.0
+    @State private var opacity = 1.0
+    @State private var completed = false
 
     var body: some View {
         ZStack {
@@ -84,8 +122,8 @@ struct DownloadProgressBadge: View {
                 .fill(Color(nsColor: .windowBackgroundColor))
             Circle()
                 .strokeBorder(Color.primary.opacity(0.2), lineWidth: Metrics.edgeWidth)
-            Image(systemName: "arrow.down")
-                .font(.system(size: Metrics.iconSize, weight: .heavy))
+            Image(systemName: iconName)
+                .font(.system(size: iconSize, weight: .heavy))
             Group {
                 Circle()
                     .stroke(Color.primary.opacity(0.2), lineWidth: Metrics.ringWidth)
@@ -96,11 +134,18 @@ struct DownloadProgressBadge: View {
                     .animation(.easeOut, value: progress)
             }
             .frame(width: Metrics.ringSize, height: Metrics.ringSize)
+            .opacity(ringOpacity)
             .rotationEffect(.degrees(turning ? 360 : 0))
         }
         .frame(width: Metrics.size, height: Metrics.size)
-        .onAppear { spin() }
+        .scaleEffect(scale)
+        .opacity(opacity)
+        .onAppear {
+            spin()
+            completeIfDone()
+        }
         .onChange(of: reduceMotion) { spin() }
+        .onChange(of: progress) { completeIfDone() }
     }
 
     private func spin() {
@@ -109,6 +154,29 @@ struct DownloadProgressBadge: View {
             return
         }
         withAnimation(.linear(duration: Metrics.turn).repeatForever(autoreverses: false)) { turning = true }
+    }
+
+    private func completeIfDone() {
+        guard !completed, let progress, progress >= 1 else { return }
+        completed = true
+        iconName = DownloadBadgeCompletion.iconName
+        iconSize = DownloadBadgeCompletion.iconSize
+        ringOpacity = DownloadBadgeCompletion.ringOpacity
+        for step in DownloadBadgeCompletion.steps {
+            withAnimation(animation(step.curve).delay(step.delay)) {
+                scale = step.scale
+                if let value = step.opacity { opacity = value }
+            }
+        }
+    }
+
+    private func animation(_ curve: DownloadBadgeCompletion.Curve) -> Animation {
+        switch curve {
+        case .standard: .default
+        case .easeOut(let duration): .easeOut(duration: duration)
+        case .easeIn(let duration): .easeIn(duration: duration)
+        case .spring(let response, let ratio): .spring(response: response, dampingFraction: ratio)
+        }
     }
 }
 

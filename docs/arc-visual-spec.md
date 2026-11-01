@@ -514,8 +514,8 @@ progress badge and catches the fly-in (next section). Row sizes are Kite's, unme
   completionOpacity, iconName = "arrow.down", iconSize = 10): a 24pt disc with a 1pt edge (a palette colour at 0.5),
   a heavy 10pt `arrow.down`, and a 21.5pt ring 2.5pt wide (track at 0.2 under the progress, `easeOut` as it grows),
   the ring turning `linear(1.5).repeatForever` unless Reduce Motion. Palette colours unresolved (Kite: primary
-  colour, window background disc). Not built: the completion animation (completionScale/Opacity) and an
-  `interpolatingSpring(0.1, 0.5, 1.2, 0.5).repeatForever` on the icon whose property wasn't identified.
+  colour, window background disc). Not built: an `interpolatingSpring(0.1, 0.5, 1.2, 0.5).repeatForever` on the
+  icon whose property wasn't identified. Completion: see below.
 - Fly-in (`DownloadsUI.DownloadToLibrary`, FUN_101cd9ce0 `animateDownload(source:destination:)`, FUN_101cdae38 view
   model init, FUN_101cdb214 keyframes, lazy vx0/vy0/apexTime/projectileMotionDuration; caller in
   `WindowViewController`, FUN_1002efce0): a borderless clear child window over the browser window shows a 30pt
@@ -526,8 +526,37 @@ progress badge and catches the fly-in (next section). Row sizes are Kite's, unme
   landing at the later root, vx constant. Keyframes every 1/60 s until landing + 0.1333 s (sidebar showing): scale
   (0.8, 1.2) → (1.6, 1.6) linearly up to the apex, then uniform 1.6 → 0.3 at landing (→ 0.7 into the bin), and
   smaller while it sinks. Kite: the same numbers, a `CAKeyframeAnimation` group (position, scale x/y, linear) on a
-  layer in a click-through view over the window; source = the pointer (Kite's engines don't report the link's rect);
-  no fly-in while the sidebar is hidden (no bin yet).
+  layer in a click-through view over the window; source = the pointer (Kite's engines don't report the link's rect).
+  With the sidebar hidden it flies into the DownloadBin (below).
+- DownloadBin (g110; `DownloadsUI.DownloadToLibrary.DownloadBin`, Arc 1.169 binary in ~/rea-arc/decomp: Ghidra dumps
+  out-g55/range1.txt, disassembly arc.s, constants read from the saved Arc-arm64): shown only while the sidebar is
+  hidden (the caller passes `showsBin`). Body `FUN_101cd764c`: a `RoundedRectangle(cornerRadius: 12, style:
+  .continuous)` filled with a palette colour (palette offset 0xd0, unresolved; Kite: window background), shadow
+  radius 12 at (0, 0), white 0.15 in dark mode / black 0.3 in light; on it the same view the Library button uses
+  (`FUN_100aef494`, called with identical arguments from `HomeBadging.HomeButton` at 0x1026a3270; Kite: its
+  `LibraryIcon`). `FUN_101cd7a9c`: padding 8, frame 62×62, so a 46pt tile. `FUN_101cd6240`: placed at
+  (binPositionX, window height - 53), i.e. its centre 53pt above the bottom edge. `binPositionX` starts at -80,
+  springs to 53 when the first arrow is thrown (`FUN_101cda2dc`, constants 0x404a8… = 53, 0xc054… = -80) on Arc's
+  animator with (0.9, 0.82) (read as damping 0.9, response 0.82: Arc's spring type has `dampingRatio` then
+  `frequencyResponse`; the order is inferred). Each throw holds the bin until its landing time + 1.0 s
+  (`FUN_101cda450`: `.now() + projectileMotionDuration + 1.0`); when the last one is done it springs back to -80
+  and the landed arrows ride along (`iconOffsetX` → -133, constant at 0x103778110, same spring). Into the bin the
+  arrow aims at (70, 70) but lands at (62, 70) (`FUN_101cdae38`: destination.x - 8), shrinks 1.6 → 0.7 (slope 0.9,
+  not 1.3), doesn't sink, then bounces to (70, 70) on a (0.48, 0.72) spring starting with its landing velocity,
+  sampled at 60 fps and appended to the keyframes at the landing scale (`FUN_101cdb214`). Kite (`DownloadBin`,
+  `DownloadBinView`): the same numbers; CASpringAnimation for the slides; the bounce sampled from an analytic
+  spring until it's within 0.01pt (Arc's stop rule for its 60 fps samples wasn't read). A throw while the bin is
+  leaving starts a new bin (Arc ignores throws while `status == ending`; inferred harmless).
+- Badge completion (g111; `FUN_1025d69bc` onChange of progress, `FUN_1025d6a2c`, closures `FUN_1025d747c`…`7554`,
+  initial values `FUN_1025d5018`): when progress reaches 1, `iconName` = "checkmark", `iconSize` = 9 and
+  `progressRingOpacity` = 0.5 at once; `overallScale` → 0.9 (`Animation.default`), → 1.0 (`spring(response 0.5,
+  damping 1)` delayed 0.15 s), → 1.03 (`easeOut(0.15)` delayed 1.15 s), → 0.97 with `overallOpacity` → 0
+  (`easeIn(0.15)` delayed 1.3 s), so the badge is gone 1.45 s after completing. The wrapper `FUN_1025d520c` applies
+  `scaleEffect(overallScale)` and `opacity(overallOpacity)`. `completionScale` → 1.5 / `completionOpacity` → 0
+  (`easeOut(0.8)` delayed 0.15 s) is animated too, but no view in 1.169 reads them (disassembly of the badge's body
+  loads only offsets 0x0–0x20, 0x78 and 0x90), so Kite leaves it out. Kite keeps the badge up for those 1.45 s when
+  the last download completes; a batch that was only cancelled or failed drops it straight away (Arc's behaviour
+  there wasn't read).
 - ⇧⌘J: Arc's selector `toggleDownloads:`, "Opens the Downloads section of your Library" → Kite opens the Library on
   Downloads, or closes it when Downloads is showing. The popover Kite had before is gone: Arc has none.
 
