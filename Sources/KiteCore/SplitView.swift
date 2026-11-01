@@ -51,6 +51,16 @@ public struct SplitView: Identifiable, Hashable, Codable, Sendable {
         return tabIDs.map { $0 == expandedTabID ? 1 : 0 }
     }
 
+    /// Where a dragged divider goes, as a fraction of its two panes: Arc's divider snaps to the pair's
+    /// middle while it's within `snapDistance` points of it (`canSnapToCenter`, 14pt in Arc).
+    /// `position` is the divider's distance from the start of the leading pane and `pairLength` the two
+    /// panes' combined length, both in points.
+    public static func dividerFraction(position: Double, pairLength: Double, snapDistance: Double) -> (fraction: Double, snapped: Bool) {
+        guard pairLength > 0 else { return (0.5, false) }
+        if abs(position - pairLength / 2) < snapDistance { return (0.5, true) }
+        return (min(max(position / pairLength, 0), 1), false)
+    }
+
     /// Drops a pane and gives its share to the others in proportion.
     mutating func remove(_ tabID: UUID) {
         guard let i = tabIDs.firstIndex(of: tabID) else { return }

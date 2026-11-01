@@ -13,6 +13,8 @@
 void KCRegisterBrowser(CefRefPtr<CefBrowser> browser);
 void KCUnregisterBrowser(CefRefPtr<CefBrowser> browser);
 bool KCRuntimeIsQuitting();
+/// CefSettings.root_cache_path: every profile folder sits directly inside it.
+NSString* KCRootCachePath();
 
 // Browsers Chromium creates itself (KCDefaultClient.mm). The app's CefApp gives them
 // a client that sends their pages to Kite tabs and closes them.

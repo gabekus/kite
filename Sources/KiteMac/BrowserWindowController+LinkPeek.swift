@@ -2,8 +2,8 @@ import AppKit
 import KiteCore
 
 /// Arc's Peek: a link from a pinned tab or favorite to another site (or any ⇧-clicked link) opens in a card
-/// over the page instead of navigating the tab. Esc, ⌘W, the close button or a click outside the card close
-/// it; the other buttons turn its page into a tab or a split pane. (`setPeeking` is the sidebar's reveal.)
+/// over the page instead of navigating the tab. Esc, ⌘W, the close button, a click outside the card or a
+/// two-finger swipe right close it; the other buttons turn its page into a tab or a split pane. (`setPeeking` is the sidebar's reveal.)
 @MainActor
 final class LinkPeekSession {
     let sourceTabID: UUID
@@ -12,6 +12,7 @@ final class LinkPeekSession {
     var url: URL?
     var title: String?
     var keyMonitor: Any?
+    var swipe: LinkPeekSwipeController?
 
     init(sourceTabID: UUID, page: WebPage, url: URL, splitTitle: String?) {
         self.sourceTabID = sourceTabID
@@ -55,16 +56,63 @@ extension BrowserWindowController {
             return nil
         }
         installOverContent(session.view)
-        let pointer = session.view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        session.view.animateIn(from: session.view.bounds.contains(pointer) ? pointer : nil)
+        session.swipe = LinkPeekSwipeController(
+            view: session.view,
+            evaluate: { [weak page] script, completion in
+                guard let page else { return completion(nil) }
+                page.evaluateJavaScript(script, completion: completion)
+            },
+            zoomFactor: { [weak page] in page?.zoomFactor ?? 1 },
+            dismiss: { [weak self, weak session] in
+                guard let self, let session, linkPeek === session else { return }
+                closeLinkPeek(animated: true)
+            }
+        )
+        let pointerInWindow = window.mouseLocationOutsideOfEventStream
+        let pointer = session.view.convert(pointerInWindow, from: nil)
+        let fallback = session.view.bounds.contains(pointer) ? pointer : nil
         page.setVisible(true)
         page.focus()
+        // Arc tweens the card from the clicked element: ask the source page what is under the pointer.
+        guard let sourcePage = pool.loadedPage(tabID), sourcePage.view.window === window else {
+            return session.view.animateIn(from: nil, pointer: fallback)
+        }
+        session.view.prepareToAnimateIn()
+        var started = false
+        let start: (NSRect?) -> Void = { [weak self, weak session] source in
+            guard !started, let session, self?.linkPeek === session else { return }
+            started = true
+            session.view.animateIn(from: source, pointer: fallback)
+        }
+        linkPeekSource(in: sourcePage, to: url, atWindowPoint: pointerInWindow, convertedTo: session.view) { start($0) }
+        // The page answers within a frame or two; don't hold the card back for a busy one.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { start(nil) }
+    }
+
+    /// The frame (in `view`) of the clicked element in `page`, from the page itself: the element under
+    /// `point` (window points) when it's in a link to `url`, else that link (`LinkPeek.sourceRectScript`).
+    private func linkPeekSource(in page: WebPage, to url: URL, atWindowPoint point: NSPoint, convertedTo view: NSView,
+                                completion: @escaping (NSRect?) -> Void) {
+        let pageView = page.view
+        var local = pageView.convert(point, from: nil)
+        if !pageView.isFlipped { local.y = pageView.bounds.height - local.y }
+        let zoom = page.zoomFactor > 0 ? page.zoomFactor : 1
+        let at = pageView.bounds.contains(local) ? (x: Double(local.x / zoom), y: Double(local.y / zoom)) : nil
+        page.evaluateJavaScript(LinkPeek.sourceRectScript(point: at, url: url.absoluteString)) { [weak pageView, weak view] result in
+            guard let pageView, let view, let frame = LinkPeek.sourceFrame(scriptResult: result, zoom: zoom) else {
+                return completion(nil)
+            }
+            var rect = NSRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
+            if !pageView.isFlipped { rect.origin.y = pageView.bounds.height - rect.maxY }
+            completion(view.convert(rect, from: pageView))
+        }
     }
 
     func closeLinkPeek(animated: Bool) {
         guard let session = linkPeek else { return }
         linkPeek = nil
         if let monitor = session.keyMonitor { NSEvent.removeMonitor(monitor) }
+        session.swipe?.stop()
         session.page.onEvent = nil
         let finish = {
             session.view.removeFromSuperview()
@@ -117,10 +165,17 @@ extension BrowserWindowController {
             pool.openTab(with: popup)
         case let .openLink(url, target):
             openLinkFromPageMenu(url, target)
+        case .pageCommand(.viewPageSource):
+            if let url = session.url, let source = URL(string: "view-source:" + url.absoluteString) {
+                store.mutate { _ = $0.openTab(url: source) }
+            }
+        case .pageCommand:
+            // Save As… and Print… act on a tab; Kite doesn't run them on a Peek.
+            NSSound.beep()
         case .permissionRequest(let request):
             // Kite doesn't prompt over a Peek yet (where Arc shows it there wasn't read).
             request.respond(nil)
-        case .favicon, .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover, .media,
+        case .favicon, .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover, .media, .callControls, .capturing,
              .permissionRequestCancelled:
             break
         }

@@ -1,6 +1,7 @@
 #import "CEFBridge.h"
 #import "KCInternal.h"
 
+#include <atomic>
 #include <cmath>
 #include <map>
 
@@ -34,6 +35,7 @@
 - (void)devToolsFrontendDidLoad;
 - (void)devToolsFrontendDidClose;
 - (BOOL)deliverSessionMessage:(NSData *)data;
+- (void)addNetworkBytes:(uint64_t)bytes;
 @property (nonatomic, readwrite) BOOL isLoading;
 @property (nonatomic, readwrite) BOOL canGoBack;
 @property (nonatomic, readwrite) BOOL canGoForward;
@@ -52,6 +54,73 @@ NSURL* ToNSURL(const CefString& string) {
     if (string.empty()) return nil;
     return [NSURL URLWithString:ToNSString(string)];
 }
+
+/// Counts each tab's network bytes for the Task Manager's Network column, and passes everything
+/// else to the tab's ad blocker (null when Kite is built without one). Chromium's task manager
+/// gets these numbers from its network service; CEF only reports a request's bytes when it
+/// finishes, so a long download or stream counts at its end.
+class NetworkCountingHandler : public CefResourceRequestHandler {
+ public:
+    NetworkCountingHandler(KCBrowser* owner, CefRefPtr<CefResourceRequestHandler> inner) : owner_(owner), inner_(inner) {}
+
+    CefRefPtr<CefCookieAccessFilter> GetCookieAccessFilter(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                                                           CefRefPtr<CefRequest> request) override {
+        return inner_ ? inner_->GetCookieAccessFilter(browser, frame, request) : nullptr;
+    }
+
+    ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                                     CefRefPtr<CefRequest> request, CefRefPtr<CefCallback> callback) override {
+        return inner_ ? inner_->OnBeforeResourceLoad(browser, frame, request, callback) : RV_CONTINUE;
+    }
+
+    CefRefPtr<CefResourceHandler> GetResourceHandler(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                                                     CefRefPtr<CefRequest> request) override {
+        return inner_ ? inner_->GetResourceHandler(browser, frame, request) : nullptr;
+    }
+
+    void OnResourceRedirect(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                            CefRefPtr<CefResponse> response, CefString& new_url) override {
+        if (inner_) inner_->OnResourceRedirect(browser, frame, request, response, new_url);
+    }
+
+    bool OnResourceResponse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                            CefRefPtr<CefResponse> response) override {
+        return inner_ ? inner_->OnResourceResponse(browser, frame, request, response) : false;
+    }
+
+    CefRefPtr<CefResponseFilter> GetResourceResponseFilter(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                                                           CefRefPtr<CefRequest> request,
+                                                           CefRefPtr<CefResponse> response) override {
+        return inner_ ? inner_->GetResourceResponseFilter(browser, frame, request, response) : nullptr;
+    }
+
+    void OnResourceLoadComplete(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                                CefRefPtr<CefResponse> response, URLRequestStatus status,
+                                int64_t received_content_length) override {
+        if (inner_) inner_->OnResourceLoadComplete(browser, frame, request, response, status, received_content_length);
+        // Received and sent, as Chromium counts them; uploads are their in-memory bytes.
+        uint64_t bytes = received_content_length > 0 ? (uint64_t)received_content_length : 0;
+        if (CefRefPtr<CefPostData> post = request ? request->GetPostData() : nullptr) {
+            CefPostData::ElementVector elements;
+            post->GetElements(elements);
+            for (const auto& element : elements) {
+                if (element->GetType() == PDE_TYPE_BYTES) bytes += element->GetBytesCount();
+            }
+        }
+        KCBrowser* owner = owner_;
+        if (bytes && owner) [owner addNetworkBytes:bytes];
+    }
+
+    void OnProtocolExecution(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                             bool& allow_os_execution) override {
+        if (inner_) inner_->OnProtocolExecution(browser, frame, request, allow_os_execution);
+    }
+
+ private:
+    __weak KCBrowser* owner_;
+    CefRefPtr<CefResourceRequestHandler> inner_;
+    IMPLEMENT_REFCOUNTING(NetworkCountingHandler);
+};
 
 // Live downloads' callbacks, by Chromium's download id, so the downloads list can cancel them.
 // Download callbacks run on the main (UI) thread.
@@ -199,7 +268,7 @@ class KCClient : public CefClient,
                  public CefJSDialogHandler,
                  public CefDevToolsMessageObserver {
  public:
-    explicit KCClient(KCBrowser* owner) : owner_(owner), adblock_(KCAdblockRequestHandler(owner)) {}
+    explicit KCClient(KCBrowser* owner) : owner_(owner), requests_(new NetworkCountingHandler(owner, KCAdblockRequestHandler(owner))) {}
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -482,7 +551,7 @@ class KCClient : public CefClient,
                                                                    bool is_download,
                                                                    const CefString& request_initiator,
                                                                    bool& disable_default_handling) override {
-        return is_download ? nullptr : adblock_;
+        return is_download ? nullptr : requests_;
     }
 
     bool OnOpenURLFromTab(CefRefPtr<CefBrowser> browser,
@@ -577,40 +646,90 @@ class KCClient : public CefClient,
 
     // CefContextMenuHandler
 
-    /// A right-click on a link: Arc's link items (from the delegate) at the top, in place of the
-    /// page items (Back, Forward, Print, View Source), which Chromium's menu leaves out for a link.
+    /// What was right-clicked, for the delegate: "linkURL", "imageURL" (a media image's source),
+    /// "selectionText", "editable", "pageURL" and the point ("x", "y", view points from the top left).
+    static NSDictionary<NSString*, id>* MenuParams(CefRefPtr<CefContextMenuParams> params) {
+        NSMutableDictionary<NSString*, id>* info = [NSMutableDictionary dictionary];
+        if (NSURL* link = ToNSURL(params->GetLinkUrl())) info[@"linkURL"] = link;
+        if (params->GetMediaType() == CM_MEDIATYPE_IMAGE) {
+            if (NSURL* image = ToNSURL(params->GetSourceUrl())) info[@"imageURL"] = image;
+        }
+        if (NSURL* page = ToNSURL(params->GetPageUrl())) info[@"pageURL"] = page;
+        info[@"selectionText"] = ToNSString(params->GetSelectionText()) ?: @"";
+        info[@"editable"] = @((params->GetTypeFlags() & CM_TYPEFLAG_EDITABLE) != 0);
+        info[@"x"] = @(params->GetXCoord());
+        info[@"y"] = @(params->GetYCoord());
+        return info;
+    }
+
+    static void AddMenuEntries(CefRefPtr<CefMenuModel> model, NSArray<NSDictionary<NSString*, id>*>* items) {
+        for (NSDictionary<NSString*, id>* item in items) {
+            int command = [item[@"id"] intValue];
+            if (command == 0) {
+                model->AddSeparator();
+                continue;
+            }
+            NSString* title = item[@"title"] ?: @"";
+            NSArray* children = item[@"children"];
+            if (children.count) {
+                CefRefPtr<CefMenuModel> submenu = model->AddSubMenu(MENU_ID_USER_FIRST + command, title.UTF8String);
+                AddMenuEntries(submenu, children);
+            } else {
+                model->AddItem(MENU_ID_USER_FIRST + command, title.UTF8String);
+            }
+            model->SetEnabled(MENU_ID_USER_FIRST + command, [item[@"enabled"] boolValue]);
+        }
+    }
+
+    /// Arc's menu (from the delegate) in place of Alloy's, except in editable content, on video,
+    /// audio and plugins, and in a plugin's own menu, which keep Chromium's.
     void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
                              CefRefPtr<CefFrame> frame,
                              CefRefPtr<CefContextMenuParams> params,
                              CefRefPtr<CefMenuModel> model) override {
         KCBrowser* owner = owner_;
         id<KCBrowserDelegate> delegate = owner.delegate;
-        NSURL* link = ToNSURL(params->GetLinkUrl());
-        if (!link || (params->GetTypeFlags() & CM_TYPEFLAG_EDITABLE) ||
-            ![delegate respondsToSelector:@selector(browser:contextMenuItemsForLinkURL:)]) {
+        CefContextMenuParams::MediaType media = params->GetMediaType();
+        if (params->IsCustomMenu() || (media != CM_MEDIATYPE_NONE && media != CM_MEDIATYPE_IMAGE) ||
+            ![delegate respondsToSelector:@selector(browser:contextMenuItemsForParams:)]) {
             return;
         }
-        NSArray<NSDictionary<NSString*, id>*>* items = [delegate browser:owner contextMenuItemsForLinkURL:link];
+        NSArray<NSDictionary<NSString*, id>*>* items = [delegate browser:owner contextMenuItemsForParams:MenuParams(params)];
         if (!items.count) return;
-        for (int page_item : {MENU_ID_BACK, MENU_ID_FORWARD, MENU_ID_PRINT, MENU_ID_VIEW_SOURCE}) model->Remove(page_item);
-        size_t index = 0;
-        for (NSDictionary<NSString*, id>* item in items) {
-            int command = [item[@"id"] intValue];
-            if (command == 0) {
-                model->InsertSeparatorAt(index++);
+        model->Clear();
+        AddMenuEntries(model, items);
+    }
+
+    /// The delegate may answer the menu itself (Kite's test hook): it returns the command to run,
+    /// -1 to cancel, or nil to let Chromium show the menu.
+    static void AppendForTest(CefRefPtr<CefMenuModel> model, NSMutableArray<NSDictionary<NSString*, id>*>* entries) {
+        for (size_t i = 0; i < model->GetCount(); i++) {
+            if (model->GetTypeAt(i) == MENUITEMTYPE_SEPARATOR) {
+                [entries addObject:@{}];
                 continue;
             }
-            NSString* title = item[@"title"] ?: @"";
-            model->InsertItemAt(index, MENU_ID_USER_FIRST + command, title.UTF8String);
-            model->SetEnabledAt(index, [item[@"enabled"] boolValue]);
-            index++;
+            [entries addObject:@{@"id": @(model->GetCommandIdAt(i)),
+                                 @"title": ToNSString(model->GetLabelAt(i)) ?: @"",
+                                 @"enabled": @(model->IsEnabledAt(i))}];
+            if (CefRefPtr<CefMenuModel> submenu = model->GetSubMenuAt(i)) AppendForTest(submenu, entries);
         }
-        // No separator first, last or twice in a row.
-        for (size_t i = model->GetCount(); i-- > 0;) {
-            bool separator = model->GetTypeAt(i) == MENUITEMTYPE_SEPARATOR;
-            bool redundant = i == 0 || i + 1 == model->GetCount() || model->GetTypeAt(i - 1) == MENUITEMTYPE_SEPARATOR;
-            if (separator && redundant) model->RemoveAt(i);
-        }
+    }
+
+    bool RunContextMenu(CefRefPtr<CefBrowser> browser,
+                        CefRefPtr<CefFrame> frame,
+                        CefRefPtr<CefContextMenuParams> params,
+                        CefRefPtr<CefMenuModel> model,
+                        CefRefPtr<CefRunContextMenuCallback> callback) override {
+        KCBrowser* owner = owner_;
+        id<KCBrowserDelegate> delegate = owner.delegate;
+        if (![delegate respondsToSelector:@selector(browser:answerContextMenuForTest:)]) return false;
+        NSMutableArray<NSDictionary<NSString*, id>*>* entries = [NSMutableArray array];
+        AppendForTest(model, entries);
+        NSNumber* pick = [delegate browser:owner answerContextMenuForTest:entries];
+        if (!pick) return false;
+        if (pick.intValue < 0) callback->Cancel();
+        else callback->Continue(pick.intValue, EVENTFLAG_NONE);
+        return true;
     }
 
     bool OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
@@ -621,9 +740,8 @@ class KCClient : public CefClient,
         if (command_id < MENU_ID_USER_FIRST || command_id > MENU_ID_USER_LAST) return false;
         KCBrowser* owner = owner_;
         id<KCBrowserDelegate> delegate = owner.delegate;
-        NSURL* link = ToNSURL(params->GetLinkUrl());
-        if (link && [delegate respondsToSelector:@selector(browser:performContextMenuItem:linkURL:)]) {
-            [delegate browser:owner performContextMenuItem:command_id - MENU_ID_USER_FIRST linkURL:link];
+        if ([delegate respondsToSelector:@selector(browser:performContextMenuItem:params:)]) {
+            [delegate browser:owner performContextMenuItem:command_id - MENU_ID_USER_FIRST params:MenuParams(params)];
         }
         return true;
     }
@@ -654,7 +772,7 @@ class KCClient : public CefClient,
     /// Ids for getUserMedia prompts, counting down so they never meet Chromium's prompt ids.
     NSInteger media_prompt_id_ = 0;
     CefRefPtr<CefRegistration> devtools_registration_;
-    CefRefPtr<CefResourceRequestHandler> adblock_;
+    CefRefPtr<CefResourceRequestHandler> requests_;
     IMPLEMENT_REFCOUNTING(KCClient);
 };
 
@@ -671,6 +789,20 @@ class KCClient : public CefClient,
     // An empty cache_path makes Chromium keep this profile in memory only.
     CefRequestContextSettings settings;
     context->_context = CefRequestContext::CreateContext(settings, KCAdblockContextHandler());
+    return context;
+}
+
++ (instancetype)contextForProfileDirectory:(NSString*)directory {
+    static NSMutableDictionary<NSString*, KCRequestContext*>* contexts = [NSMutableDictionary dictionary];
+    if (KCRequestContext* existing = contexts[directory]) return existing;
+    KCRequestContext* context = [[self alloc] initPrivate];
+    CefRequestContextSettings settings;
+    settings.persist_session_cookies = true;
+    // A cache_path inside root_cache_path is a full Chromium profile: Chromium keeps one
+    // per folder, with its own extensions, prefs and history.
+    CefString(&settings.cache_path) = [KCRootCachePath() stringByAppendingPathComponent:directory].UTF8String;
+    context->_context = CefRequestContext::CreateContext(settings, KCAdblockContextHandler());
+    contexts[directory] = context;
     return context;
 }
 
@@ -699,6 +831,8 @@ class KCClient : public CefClient,
     std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
     NSInteger _blockedCount;
     BOOL _blockedCountPending;
+    /// Network bytes so far (NetworkCountingHandler adds to it on Chromium's IO thread).
+    std::atomic<uint64_t> _networkBytes;
     /// Page.addScriptToEvaluateOnNewDocument identifiers to remove when the script changes.
     NSMutableArray<NSString*>* _documentScripts;
     NSUInteger _navigationCount;
@@ -911,6 +1045,28 @@ class KCClient : public CefClient,
     if (_browser) _browser->GetHost()->Print();
 }
 
+- (void)copySelection {
+    if (!_browser) return;
+    CefRefPtr<CefFrame> frame = _browser->GetFocusedFrame();
+    if (!frame) frame = _browser->GetMainFrame();
+    if (frame) frame->Copy();
+}
+
+- (void)inspectElementAtPoint:(NSPoint)point {
+    if (!_browser) return;
+    CefWindowInfo windowInfo;
+    CefBrowserSettings settings;
+    CefPoint at((int)point.x, (int)point.y);
+    CefRefPtr<CefBrowserHost> host = _browser->GetHost();
+    if (_devToolsFrontend && host->HasDevTools()) {
+        host->ShowDevTools(windowInfo, nullptr, settings, at);
+        return;
+    }
+    _pendingFrontendScript = nil;
+    _devToolsFrontendLoaded = NO;
+    host->ShowDevTools(windowInfo, new KCDevToolsClient(self), settings, at);
+}
+
 - (void)setForceDark:(BOOL)enabled {
     if (enabled == _forceDark) return;
     _forceDark = enabled;
@@ -1034,6 +1190,14 @@ static cef_content_setting_types_t KCContentSettingType(KCSitePermission permiss
         NSString* message = [object[@"message"] isKindOfClass:NSString.class] ? object[@"message"] : @"DevTools method failed.";
         completion(nil, message);
     }
+}
+
+- (uint64_t)networkBytes {
+    return _networkBytes.load(std::memory_order_relaxed);
+}
+
+- (void)addNetworkBytes:(uint64_t)bytes {
+    _networkBytes.fetch_add(bytes, std::memory_order_relaxed);
 }
 
 - (NSInteger)blockedCount {

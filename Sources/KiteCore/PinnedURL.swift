@@ -44,8 +44,11 @@ extension BrowserState {
         func adopt(_ tab: inout BrowserTab) {
             if tab.pinnedURL == nil, let url = tab.url, InternalPage(url) == nil { tab.pinnedURL = url }
         }
-        for i in favorites.indices where favorites[i].pinnedURL == nil && favorites[i].url != nil {
-            adopt(&favorites[i])
+        for profile in favoritesByProfile.keys {
+            for i in favoritesByProfile[profile]!.indices {
+                let tab = favoritesByProfile[profile]![i]
+                if tab.pinnedURL == nil && tab.url != nil { adopt(&favoritesByProfile[profile]![i]) }
+            }
         }
         for s in spaces.indices {
             for tab in spaces[s].pinned where tab.pinnedURL == nil && tab.url != nil {

@@ -16,9 +16,25 @@ final class ChromiumEngine: WebEngine {
     private let context: KCRequestContext?
     /// Incognito pages don't run Boosts.
     private var appliesBoosts = true
+    let profileDirectory: String?
+    /// The default profile's engine keeps the others, so every window gets the same one.
+    private var profileEngines: [String: ChromiumEngine] = [:]
+    private weak var defaultEngine: ChromiumEngine?
 
-    init(context: KCRequestContext? = nil) {
+    init(context: KCRequestContext? = nil, profileDirectory: String? = Profile.defaultDirectory) {
         self.context = context
+        self.profileDirectory = profileDirectory
+    }
+
+    func forProfile(_ profile: Profile) -> WebEngine {
+        let root = defaultEngine ?? self
+        if profile.isDefault || root.profileDirectory == nil { return root }
+        if let engine = root.profileEngines[profile.directory] { return engine }
+        let engine = ChromiumEngine(context: KCRequestContext(profileDirectory: profile.directory), profileDirectory: profile.directory)
+        engine.adblocker = root.adblocker
+        engine.defaultEngine = root
+        root.profileEngines[profile.directory] = engine
+        return engine
     }
 
     func makePage(url: URL?, restoring state: Any?) -> WebPage {
@@ -32,7 +48,7 @@ final class ChromiumEngine: WebEngine {
 
     /// Shares the ad blocker, whose engine and policy are already wired up process-wide.
     func makeEphemeral() -> WebEngine {
-        let engine = ChromiumEngine(context: .incognito())
+        let engine = ChromiumEngine(context: .incognito(), profileDirectory: nil)
         engine.adblocker = adblocker
         engine.appliesBoosts = false
         return engine
@@ -161,6 +177,9 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         let pid = browser.renderProcessIdentifier
         return pid > 0 ? pid : nil
     }
+
+    /// Counted in the bridge as each request finishes (KCBrowser's NetworkCountingHandler).
+    var networkBytes: UInt64? { browser.networkBytes }
 
     var isAudioMuted: Bool {
         get { browser.audioMuted }
@@ -372,6 +391,10 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         case "Runtime.executionContextsCleared":
             kiteContexts.removeAll()
         case "Runtime.bindingCalled" where params["name"] as? String == MediaStateScript.bindingName:
+            if let call = CallControls.parse(params["payload"] as? String ?? "") {
+                if let context = params["executionContextId"] as? Int { mediaContext = context }
+                return onEvent?(.callControls(call)) ?? ()
+            }
             guard let context = params["executionContextId"] as? Int,
                   let report = MediaState.parse(params["payload"] as? String ?? "") else { return }
             mediaContext = context
@@ -451,7 +474,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         }
     }
 
-    func browser(_ browser: KCBrowser, mediaAccessDidChange inUse: Bool) { mediaInUse = inUse }
+    func browser(_ browser: KCBrowser, mediaAccessDidChange inUse: Bool) {
+        guard inUse != mediaInUse else { return }
+        mediaInUse = inUse
+        onEvent?(.capturing(inUse))
+    }
 
     func browser(_ browser: KCBrowser, requestsPermissions permissions: [NSNumber], origin: URL, promptID: Int,
                  decisionHandler: @escaping (KCPermissionDecision) -> Void) {
@@ -541,19 +568,84 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         findCompletion?(FindResult(found: count > 0, matches: Int(count), activeMatch: Int(activeMatch)))
     }
 
-    @objc(browser:contextMenuItemsForLinkURL:)
-    func browser(_ browser: KCBrowser, contextMenuItemsForLinkURL url: URL) -> [[String: Any]]? {
+    // MARK: Right-click menu (Arc's, PageContextMenu)
+
+    private func menuContext(_ params: [String: Any]) -> PageContextMenu.Context {
         let host = contextMenuHost?() ?? PageContextMenu.Host()
-        return PageContextMenu.linkItems(for: url, host: host).map { item in
-            ["id": PageContextMenu.commandID(item), "title": PageContextMenu.title(item),
-             "enabled": PageContextMenu.isEnabled(item, host: host)]
+        return PageContextMenu.Context(
+            linkURL: params["linkURL"] as? URL, imageURL: params["imageURL"] as? URL,
+            selectionText: params["selectionText"] as? String ?? "", isEditable: params["editable"] as? Bool ?? false,
+            pageURL: params["pageURL"] as? URL, canGoBack: browser.canGoBack, canGoForward: browser.canGoForward,
+            searchEngine: host.searchEngine, isSpeaking: PageContextMenuItems.isSpeaking
+        )
+    }
+
+    @objc(browser:contextMenuItemsForParams:)
+    func browser(_ browser: KCBrowser, contextMenuItemsForParams params: [String: Any]) -> [[String: Any]]? {
+        let host = contextMenuHost?() ?? PageContextMenu.Host()
+        func encode(_ entry: PageContextMenu.Entry) -> [String: Any] {
+            ["id": PageContextMenu.commandID(entry.item), "title": entry.title, "enabled": entry.isEnabled,
+             "children": entry.children.map(encode)]
+        }
+        return PageContextMenu.menu(for: menuContext(params), host: host)?.map(encode)
+    }
+
+    @objc(browser:performContextMenuItem:params:)
+    func browser(_ browser: KCBrowser, performContextMenuItem itemID: Int, params: [String: Any]) {
+        guard let item = PageContextMenu.item(commandID: itemID) else { return }
+        let context = menuContext(params)
+        let point = NSPoint(x: params["x"] as? Double ?? 0, y: params["y"] as? Double ?? 0)
+        let send: (PageEvent) -> Void = { [weak self] in self?.onEvent?($0) }
+        switch item {
+        case .open, .saveLinkAs, .copyLinkAddress, .copyEmailAddress:
+            guard let link = context.linkURL else { return }
+            PageContextMenuItems.perform(item, url: link, send: send, download: { browser.downloadURL($0) })
+        case .back: browser.goBack()
+        case .forward: browser.goForward()
+        case .reload: browser.reload()
+        case .savePageAs: send(.pageCommand(.savePageAs))
+        case .print: send(.pageCommand(.print))
+        case .viewPageSource: send(.pageCommand(.viewPageSource))
+        case .inspect: browser.inspectElement(at: point)
+        case .openImageInNewTab:
+            // Chromium opens it in the background.
+            if let image = context.imageURL { send(.openInNewTab(image, foreground: false)) }
+        case .saveImageAs:
+            if let image = context.imageURL { browser.downloadURL(image) }
+        case .copyImage:
+            if let image = context.imageURL { PageContextMenuItems.copyImage(at: image, referrer: context.pageURL) }
+        case .copyImageAddress:
+            if let image = context.imageURL { PageContextMenuItems.copy(image.absoluteString, asURL: true) }
+        case .lookUp:
+            PageContextMenuItems.lookUp(context.selectionText, in: browser.view, at: point)
+        case .searchSelection:
+            // Chromium opens the search (or the address) in a new foreground tab.
+            if let url = PageContextMenu.searchURL(context: context) { send(.openInNewTab(url, foreground: true)) }
+        case .copy:
+            // A test profile's own pasteboard gets the plain text; Chromium's Copy writes the general one.
+            if PageContextMenuItems.pasteboard != .general {
+                PageContextMenuItems.copy(context.selectionText, asURL: false)
+            } else {
+                browser.copySelection()
+            }
+        case .copyLinkToHighlight:
+            guard let page = context.pageURL,
+                  let link = TextFragment.link(to: page, selection: context.selectionText) else { return NSSound.beep() }
+            PageContextMenuItems.copy(link.absoluteString, asURL: true)
+        case .startSpeaking: PageContextMenuItems.startSpeaking(context.selectionText)
+        case .stopSpeaking: PageContextMenuItems.stopSpeaking()
+        case .speech, .separator: break
         }
     }
 
-    @objc(browser:performContextMenuItem:linkURL:)
-    func browser(_ browser: KCBrowser, performContextMenuItem itemID: Int, linkURL url: URL) {
-        guard let item = PageContextMenu.item(commandID: itemID) else { return }
-        PageContextMenuItems.perform(item, url: url, send: { onEvent?($0) }, download: { browser.downloadURL($0) })
+    @objc(browser:answerContextMenuForTest:)
+    func browser(_ browser: KCBrowser, answerContextMenuForTest entries: [[String: Any]]) -> NSNumber? {
+        guard PageContextMenuItems.testMode != nil else { return nil }
+        let pick = PageContextMenuItems.logForTest(entries.map { entry in
+            (title: entry["title"] as? String, enabled: entry["enabled"] as? Bool ?? false)
+        })
+        guard let pick, let id = entries[pick]["id"] as? Int else { return -1 }
+        return NSNumber(value: id)
     }
 }
 

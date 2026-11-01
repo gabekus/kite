@@ -16,12 +16,17 @@ final class SiteControlsModel {
         var clearCookies: () -> Void
         var setPermission: (SitePermission, SitePermissionValue) -> Void
         var removeMailHandler: () -> Void
+        var toggleDeveloperMode: () -> Void
+        /// "All Site Settings…" and the Settings header: the site's settings page in a new tab.
+        var openSiteSettings: () -> Void
     }
 
     let url: URL
     var blocksAds: Bool?
     /// True while this site is the default mail app (MailHandlers); nil hides the row.
     var isMailHandler: Bool?
+    /// The site's Developer Mode switch (View › Developer, ⌃D).
+    var isInDeveloperMode = false
     /// Nil on WebKit, which keeps no per-site permissions Kite can read.
     var permissions: [SitePermission: SitePermissionValue]?
     @ObservationIgnored var actions: Actions
@@ -48,7 +53,8 @@ final class SiteControlsModel {
 /// a 262pt popover; a row of 48.75×32.75 action buttons; a "Settings" section of 208×33 rows
 /// (icon, title, and an On/Off or Allowed/Blocked subtitle; a click flips it) on a 43pt pitch;
 /// and a footer with the 82×32 security button on the left and a 32×32 "…" menu (Clear Cache,
-/// Clear Cookies) on the right. Kite has no Boosts, capture or extensions section here yet.
+/// Clear Cookies, All Site Settings…) on the right. Kite has no Boosts, capture or extensions
+/// section here yet.
 struct SiteControlsView: View {
     let model: SiteControlsModel
 
@@ -78,10 +84,7 @@ struct SiteControlsView: View {
             }
             .padding(.bottom, Metrics.sectionGap)
 
-            Text("Settings")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(height: Metrics.headerHeight)
+            SettingsHeader { model.dismiss(); model.actions.openSiteSettings() }
                 .padding(.bottom, Metrics.headerToRows)
 
             VStack(alignment: .leading, spacing: Metrics.rowPitch - Metrics.rowSize.height) {
@@ -89,6 +92,9 @@ struct SiteControlsView: View {
                     SettingRow(symbol: "shield.fill", title: SiteControls.adblockTitle, subtitle: SiteControls.onOff(blocksAds),
                                isOn: blocksAds) { model.perform(model.actions.toggleAdblock) }
                 }
+                SettingRow(symbol: "hammer.fill", title: SiteControls.developerModeTitle,
+                           subtitle: SiteControls.onOff(model.isInDeveloperMode),
+                           isOn: model.isInDeveloperMode) { model.perform(model.actions.toggleDeveloperMode) }
                 if model.isMailHandler == true {
                     SettingRow(symbol: "envelope.fill", title: "Default Mail App", subtitle: SiteControls.onOff(true),
                                isOn: true) { model.perform(model.actions.removeMailHandler) }
@@ -188,6 +194,32 @@ private struct SettingRow: View {
     }
 }
 
+/// The Settings section's header. Arc's shows "More" on hover, and a click opens the site's
+/// settings (`onSiteSettingsTitleClick`).
+private struct SettingsHeader: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 0) {
+                Text(SiteControls.settingsTitle)
+                Spacer(minLength: 0)
+                Text(SiteControls.settingsHoverText).opacity(hovering ? 1 : 0)
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: SiteControlsView.Metrics.width - 2 * SiteControlsView.Metrics.inset,
+                   height: SiteControlsView.Metrics.headerHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel(SiteControls.settingsTitle)
+        .accessibilityHint(SiteControls.allSiteSettingsTitle)
+    }
+}
+
 /// Arc's footer button: "Secure" with a lock, "Insecure" with a struck-through one.
 private struct SecurityLabel: View {
     let title: String
@@ -205,8 +237,9 @@ private struct SecurityLabel: View {
     }
 }
 
-/// The footer's "…": Arc's menu has Clear Cache and Clear Cookies (and Boosts, extensions and
-/// All Site Settings…, which Kite doesn't have). Kite's clear-and-refresh, as in the View menu.
+/// The footer's "…": Arc's menu has Clear Cache, Clear Cookies, Boosts and extensions items,
+/// and All Site Settings… last. Kite has Clear Cache, Clear Cookies (its clear-and-refresh, as
+/// in the View menu) and All Site Settings….
 private struct FooterMenu: View {
     let model: SiteControlsModel
 
@@ -214,6 +247,7 @@ private struct FooterMenu: View {
         Menu {
             Button("Clear Cache") { model.dismiss(); model.actions.clearCache() }
             Button("Clear Cookies") { model.dismiss(); model.actions.clearCookies() }
+            Button(SiteControls.allSiteSettingsTitle) { model.dismiss(); model.actions.openSiteSettings() }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 13, weight: .semibold))

@@ -21,10 +21,12 @@ final class ArcDialog {
 
     /// What was picked: the action's index, and the field's text (empty without a field).
     typealias Completion = (_ action: Int?, _ text: String) -> Void
+    /// What was picked, and each field's text in order.
+    typealias FormCompletion = (_ action: Int?, _ texts: [String]) -> Void
 
     private let sheet: SheetWindow
     private weak var parent: NSWindow?
-    private var completion: Completion?
+    private var completion: FormCompletion?
     private let model: Model
     /// Holds the dialog while it's up, since callers needn't keep it.
     private var retainedWhileShown: ArcDialog?
@@ -41,7 +43,22 @@ final class ArcDialog {
         width: CGFloat = ArcDialogMetrics.defaultWidth,
         completion: @escaping Completion
     ) -> ArcDialog {
-        let dialog = ArcDialog(title: title, message: message, field: field, actions: actions, width: width,
+        present(on: window, title: title, message: message, fields: field.map { [$0] } ?? [], actions: actions,
+                width: width) { action, texts in completion(action, texts.first ?? "") }
+    }
+
+    /// The same with several fields, stacked (a form).
+    @discardableResult
+    static func present(
+        on window: NSWindow,
+        title: String,
+        message: String? = nil,
+        fields: [Field],
+        actions: [Action],
+        width: CGFloat = ArcDialogMetrics.defaultWidth,
+        completion: @escaping FormCompletion
+    ) -> ArcDialog {
+        let dialog = ArcDialog(title: title, message: message, fields: fields, actions: actions, width: width,
                                completion: completion)
         dialog.parent = window
         dialog.retainedWhileShown = dialog
@@ -49,10 +66,10 @@ final class ArcDialog {
         return dialog
     }
 
-    private init(title: String, message: String?, field: Field?, actions: [Action], width: CGFloat,
-                 completion: @escaping Completion) {
+    private init(title: String, message: String?, fields: [Field], actions: [Action], width: CGFloat,
+                 completion: @escaping FormCompletion) {
         self.completion = completion
-        model = Model(title: title, message: message, field: field, actions: actions)
+        model = Model(title: title, message: message, fields: fields, actions: actions)
         sheet = SheetWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: 160),
             styleMask: [.titled, .fullSizeContentView],
@@ -82,10 +99,10 @@ final class ArcDialog {
     private func finish(_ index: Int?) {
         guard let completion else { return }
         self.completion = nil
-        let text = model.text
+        let texts = model.texts
         if let parent { parent.endSheet(sheet) } else { sheet.orderOut(nil) }
         retainedWhileShown = nil
-        completion(index, text)
+        completion(index, texts)
     }
 
     @Observable
@@ -93,17 +110,17 @@ final class ArcDialog {
     fileprivate final class Model {
         let title: String
         let message: String?
-        let field: Field?
+        let fields: [Field]
         let actions: [Action]
-        var text: String
+        var texts: [String]
         var choose: (Int) -> Void = { _ in }
 
-        init(title: String, message: String?, field: Field?, actions: [Action]) {
+        init(title: String, message: String?, fields: [Field], actions: [Action]) {
             self.title = title
             self.message = message
-            self.field = field
+            self.fields = fields
             self.actions = actions
-            text = field?.text ?? ""
+            texts = fields.map(\.text)
         }
 
         var cancelIndex: Int? { actions.firstIndex { $0.role == .cancel } }
@@ -184,7 +201,7 @@ private typealias M = ArcDialogMetrics
 private struct DialogView: View {
     @Bindable var model: ArcDialog.Model
     let width: CGFloat
-    @FocusState private var fieldFocused: Bool
+    @FocusState private var focusedField: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -203,12 +220,12 @@ private struct DialogView: View {
                         .textSelection(.enabled)
                         .padding(.top, 8)
                 }
-                if let field = model.field {
-                    TextField("", text: $model.text, prompt: Text(field.placeholder).foregroundStyle(.white.opacity(0.4)))
+                ForEach(Array(model.fields.enumerated()), id: \.offset) { index, field in
+                    TextField("", text: $model.texts[index], prompt: Text(field.placeholder).foregroundStyle(.white.opacity(0.4)))
                         .textFieldStyle(.plain)
                         .font(.system(size: M.fieldFontSize, weight: .medium))
                         .foregroundStyle(.white)
-                        .focused($fieldFocused)
+                        .focused($focusedField, equals: index)
                         .onSubmit(submit)
                         .padding(.horizontal, M.fieldTextInset)
                         .frame(height: M.fieldHeight)
@@ -217,9 +234,9 @@ private struct DialogView: View {
                             RoundedRectangle(cornerRadius: M.fieldCornerRadius, style: .continuous)
                                 .strokeBorder(M.fieldBorder, lineWidth: 1)
                         )
-                        .padding(.top, M.titleToField)
-                        .accessibilityLabel(model.title)
-                        .onAppear { fieldFocused = true }
+                        .padding(.top, index == 0 ? M.titleToField : M.buttonSpacing)
+                        .accessibilityLabel(field.placeholder.isEmpty ? model.title : field.placeholder)
+                        .onAppear { if index == 0 { focusedField = 0 } }
                 }
             }
             .padding(.horizontal, M.contentInset)
@@ -231,7 +248,7 @@ private struct DialogView: View {
                     }
                 }
             }
-            .padding(.top, model.field == nil ? M.titleToField : M.fieldToButtons)
+            .padding(.top, model.fields.isEmpty ? M.titleToField : M.fieldToButtons)
         }
         .padding(.top, M.topPadding)
         .padding(.horizontal, M.horizontalPadding)

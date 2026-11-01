@@ -409,6 +409,19 @@ import Testing
         #expect(state.selectedTab?.id == ids[2])
     }
 
+    @Test func clearTodayInSpaceLeavesOtherSpacesAlone() {
+        var (state, ids) = makeState(tabs: 2)
+        let first = state.selectedSpaceID
+        let second = state.addSpace(name: "B", icon: "b", theme: Theme.presets[0])
+        let other = state.openTab(url: URL(string: "https://b.example"))
+        let cleared = state.clearToday(inSpace: first)
+        #expect(Set(cleared.map(\.id)) == Set(ids))
+        #expect(state.spaces[0].tabs.isEmpty)
+        #expect(state.spaces[1].tabs.map(\.id) == [other])
+        #expect(state.selectedSpaceID == second)
+        #expect(state.clearToday(inSpace: UUID()).isEmpty)
+    }
+
     @Test func duplicateGoesBelowTheOriginal() {
         var (state, ids) = makeState(tabs: 2)
         let copy = state.duplicate(tab: ids[0])

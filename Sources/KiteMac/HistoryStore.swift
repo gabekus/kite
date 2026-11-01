@@ -9,6 +9,8 @@ import Observation
 final class HistoryStore {
     private(set) var history = History()
     @ObservationIgnored private let fileURL: URL
+    /// Other profiles' histories, made from the default profile's store.
+    @ObservationIgnored private var profileStores: [String: HistoryStore] = [:]
     @ObservationIgnored private var saveTask: Task<Void, Never>?
 
     private struct File: Codable {
@@ -28,6 +30,20 @@ final class HistoryStore {
                 .appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970)).json")
             try? FileManager.default.moveItem(at: fileURL, to: backup)
         }
+    }
+
+    /// `directory`'s history: this store for the default profile, else one kept in that profile's
+    /// Chromium folder, so deleting the profile deletes it.
+    func forProfile(_ directory: String) -> HistoryStore {
+        if directory == Profile.defaultDirectory { return self }
+        if let store = profileStores[directory] { return store }
+        let file = fileURL.deletingLastPathComponent()
+            .appendingPathComponent("Chromium", isDirectory: true)
+            .appendingPathComponent(directory, isDirectory: true)
+            .appendingPathComponent("Kite History.json")
+        let store = HistoryStore(fileURL: file)
+        profileStores[directory] = store
+        return store
     }
 
     func recordVisit(_ url: URL, title: String) {
@@ -72,8 +88,14 @@ final class HistoryStore {
         }
     }
 
+    /// A deleted profile's history: dropped unsaved, since its folder is going.
+    func forgetProfile(_ directory: String) {
+        profileStores.removeValue(forKey: directory)?.saveTask?.cancel()
+    }
+
     func saveNow() {
         saveTask?.cancel()
+        profileStores.values.forEach { $0.saveNow() }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(File(version: History.currentVersion, history: history))

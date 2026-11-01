@@ -18,6 +18,8 @@ final class ClaudeBubbleModel {
     /// Bumped to move focus into the text field.
     var focusToken = 0
     @ObservationIgnored var onOpenChange: (Bool) -> Void = { _ in }
+    /// Opens a Claude Project's page in a Peek and posts the message there.
+    @ObservationIgnored var postToProject: (_ page: URL, _ message: String) -> Void = { _, _ in }
 
     /// Opens on `task`, or on the task it showed last (a fresh composer once that's done and read).
     func open(task: UUID? = nil, attachTab: Bool = false) {
@@ -39,11 +41,31 @@ final class ClaudeBubbleModel {
         focusToken += 1
     }
 
-    func start(frontTab: BrowserTab?) {
+    /// Sends the draft where the space's route says.
+    func start(frontTab: BrowserTab?, space: UUID) {
         guard let tasks else { return }
         let goal = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !goal.isEmpty else { return }
         let tab = attachTab ? frontTab : nil
+        switch tasks.route(for: space) {
+        case let .project(id, _):
+            let context = tab.map {
+                ClaudeInvocation.TabContext(id: $0.id, title: $0.displayTitle, url: $0.url?.absoluteString ?? "")
+            }
+            draft = ""
+            attachTab = false
+            close()
+            postToProject(ClaudeRoute.projectURL(id: id), ClaudeRoute.projectMessage(goal: goal, tab: context))
+            return
+        case let .folder(path):
+            tasks.start(goal: goal, tab: tab, directory: path)
+            taskID = tasks.selectedID
+            draft = ""
+            attachTab = false
+            return
+        case .newChat:
+            break
+        }
         // In the Claude app it's the same Claude as the user's other chats, with its memory.
         if tasks.runsIn == .desktop, tasks.handOffToDesktop(goal: goal, tab: tab) {
             draft = ""
@@ -136,6 +158,8 @@ struct ClaudeBubble: View {
     private func field(task: ClaudeTask?, tasks: ClaudeTasksController, isRunning: Bool) -> some View {
         @Bindable var model = model
         let frontTab = store.state.selectedTab
+        let space = store.state.selectedSpace.id
+        let route = tasks.route(for: space)
         return HStack(alignment: .center, spacing: 0) {
             ClaudeMark()
                 .stroke(Color.claude, style: StrokeStyle(lineWidth: Metrics.markStroke, lineCap: .round))
@@ -144,7 +168,7 @@ struct ClaudeBubble: View {
                 .padding(.leading, C.iconX)
                 .padding(.trailing, C.textX - C.iconX - C.iconSize)
             TextField("", text: $model.draft,
-                      prompt: Text(placeholder(task: task, isRunning: isRunning)).foregroundStyle(.primary.opacity(C.placeholderOpacity)),
+                      prompt: Text(placeholder(task: task, route: route, isRunning: isRunning)).foregroundStyle(.primary.opacity(C.placeholderOpacity)),
                       axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: C.fieldFontSize, weight: .medium))
@@ -153,10 +177,13 @@ struct ClaudeBubble: View {
                 .padding(.vertical, 8)
                 .focused($focused)
                 .disabled(isRunning)
-                .onSubmit { task == nil ? model.start(frontTab: frontTab) : model.followUp() }
+                .onSubmit { task == nil ? model.start(frontTab: frontTab, space: space) : model.followUp() }
                 .onExitCommand { model.close() }
             HStack(spacing: Metrics.buttonGap) {
-                if task == nil, ClaudeDesktop.isInstalled {
+                if task == nil {
+                    routeMenu(tasks, route: route, space: space)
+                }
+                if task == nil, route == .newChat, ClaudeDesktop.isInstalled {
                     let desktop = tasks.runsIn == .desktop
                     barButton(desktop ? "Opens in the Claude app (click to run here in Kite)" : "Runs here in Kite (click to open in the Claude app)",
                               symbol: desktop ? "arrow.up.forward.app.fill" : "arrow.up.forward.app",
@@ -187,6 +214,72 @@ struct ClaudeBubble: View {
             .padding(.trailing, C.iconX - (Metrics.buttonSize - C.iconSize) / 2)
         }
         .frame(minHeight: C.fieldHeight)
+    }
+
+    /// The space's route, and a menu to change it: a new chat, a Claude Project, or a folder.
+    private func routeMenu(_ tasks: ClaudeTasksController, route: ClaudeRoute, space: UUID) -> some View {
+        Menu {
+            routeItem(.newChat, current: route, tasks: tasks, space: space)
+            Section("Claude Projects") {
+                ForEach(tasks.routes.projects, id: \.id) { project in
+                    routeItem(.project(id: project.id, name: project.name), current: route, tasks: tasks, space: space)
+                }
+                Button("Add Project…") {
+                    ClaudeRoutePicker.askForProject(over: nil) { tasks.setRoute($0, for: space) }
+                    model.focusToken += 1
+                }
+            }
+            Section("Folders") {
+                ForEach(ClaudeRoutePicker.folders(including: route), id: \.self) { path in
+                    routeItem(.folder(path: path), current: route, tasks: tasks, space: space)
+                }
+                Button("Choose Folder…") {
+                    if let path = ClaudeRoutePicker.chooseFolder() { tasks.setRoute(.folder(path: path), for: space) }
+                    model.focusToken += 1
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: Self.symbol(for: route))
+                    .font(.system(size: 11, weight: .semibold))
+                Text(route.label)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(Capsule().fill(Color.primary.opacity(route == .newChat ? 0.06 : 0)))
+            .background(Capsule().fill(Color.claude.opacity(route == .newChat ? 0 : 0.14)))
+            .contentShape(Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(maxWidth: 160)
+        .foregroundStyle(route == .newChat ? Color.secondary : Color.claude)
+        .help("Where requests from this space go: \(route.label)")
+        .accessibilityLabel("Route: \(route.label)")
+    }
+
+    private func routeItem(_ item: ClaudeRoute, current: ClaudeRoute, tasks: ClaudeTasksController, space: UUID) -> some View {
+        Button {
+            tasks.setRoute(item, for: space)
+            model.focusToken += 1
+        } label: {
+            if item == current {
+                Label(item.label, systemImage: "checkmark")
+            } else {
+                Text(item.label)
+            }
+        }
+    }
+
+    static func symbol(for route: ClaudeRoute) -> String {
+        switch route {
+        case .newChat: "bubble.left"
+        case .project: "square.grid.2x2"
+        case .folder: "folder"
+        }
     }
 
     private func barButton(_ help: String, symbol: String, active: Bool = false, action: @escaping () -> Void) -> some View {
@@ -259,8 +352,13 @@ struct ClaudeBubble: View {
         }
     }
 
-    private func placeholder(task: ClaudeTask?, isRunning: Bool) -> String {
+    private func placeholder(task: ClaudeTask?, route: ClaudeRoute, isRunning: Bool) -> String {
         guard task != nil else {
+            switch route {
+            case let .project(_, name): return "Ask Claude… (posts in \(name))"
+            case let .folder(path): return "Ask Claude… (works in \(ClaudeRoute.folderName(path)))"
+            case .newChat: break
+            }
             return model.tasks?.runsIn == .desktop && ClaudeDesktop.isInstalled
                 ? "Ask Claude… (opens in the Claude app)" : "Ask Claude to do something in your browser…"
         }

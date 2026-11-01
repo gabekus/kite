@@ -1,11 +1,11 @@
 import AppKit
 import KiteCore
 
-/// Arc's link items of the page's right-click menu, shared by both engines: WebKit adds them as
-/// AppKit menu items, Chromium as CEF menu entries (KCBrowser asks ChromiumPage for them).
+/// The page's right-click menu, shared by both engines: WebKit adds Arc's link items as AppKit
+/// menu items, Chromium gets the whole menu as CEF menu entries (KCBrowser asks ChromiumPage).
 @MainActor
 enum PageContextMenuItems {
-    /// Runs `item` for `url`: copies the address itself, or hands the rest to the page's owner.
+    /// Runs a link item for `url`: copies the address itself, or hands the rest to the page's owner.
     static func perform(_ item: PageContextMenu.Item, url: URL, send: (PageEvent) -> Void, download: (URL) -> Void) {
         switch item {
         case .open(let target):
@@ -13,14 +13,63 @@ enum PageContextMenuItems {
         case .saveLinkAs:
             download(url)
         case .copyLinkAddress, .copyEmailAddress:
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            let text = PageContextMenu.copiedText(for: item, url: url)
-            pasteboard.setString(text, forType: .string)
-            if item == .copyLinkAddress { pasteboard.setString(text, forType: .URL) }
-        case .separator:
+            copy(PageContextMenu.copiedText(for: item, url: url), asURL: item == .copyLinkAddress)
+        default:
             break
         }
+    }
+
+    /// The general pasteboard, or KITE_TEST_PASTEBOARD's on a test profile.
+    static var pasteboard: NSPasteboard { BrowserWindowController.capturePasteboard }
+
+    static func copy(_ text: String, asURL: Bool) {
+        let pasteboard = pasteboard
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        if asURL { pasteboard.setString(text, forType: .URL) }
+    }
+
+    /// Copy Image: fetches the image (it isn't handed over by the engine) and puts it on the
+    /// pasteboard as an image, with its address, as Chromium's Copy Image does.
+    static func copyImage(at url: URL, referrer: URL?) {
+        var request = URLRequest(url: url)
+        if let referrer, url.scheme?.hasPrefix("http") == true {
+            request.setValue(referrer.absoluteString, forHTTPHeaderField: "Referer")
+        }
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            DispatchQueue.main.async {
+                guard let data, let image = NSImage(data: data) else { return NSSound.beep() }
+                let pasteboard = pasteboard
+                pasteboard.clearContents()
+                pasteboard.writeObjects([image])
+                if url.scheme?.hasPrefix("http") == true { pasteboard.setString(url.absoluteString, forType: .URL) }
+            }
+        }.resume()
+    }
+
+    // MARK: Speech (ui::TextServicesContextMenu: NSApplication's speakString:, the system voice)
+
+    static var isSpeaking: Bool {
+        let selector = NSSelectorFromString("isSpeaking")
+        guard NSApp.responds(to: selector) else { return false }
+        return NSApp.value(forKey: "speaking") as? Bool ?? false
+    }
+
+    static func startSpeaking(_ text: String) {
+        stopSpeaking()
+        let selector = NSSelectorFromString("speakString:")
+        if NSApp.responds(to: selector) { NSApp.perform(selector, with: text) }
+    }
+
+    static func stopSpeaking() {
+        let selector = NSSelectorFromString("stopSpeaking:")
+        if NSApp.responds(to: selector) { NSApp.perform(selector, with: nil) }
+    }
+
+    /// Look Up: macOS's dictionary panel for `text`, at `point` in `view` (top-left origin).
+    static func lookUp(_ text: String, in view: NSView, at point: NSPoint) {
+        let local = view.isFlipped ? point : NSPoint(x: point.x, y: view.bounds.height - point.y)
+        view.showDefinition(for: NSAttributedString(string: text), at: local)
     }
 
     /// AppKit menu items for the link section, each running `perform` when chosen.

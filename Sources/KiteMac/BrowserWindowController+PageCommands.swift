@@ -17,9 +17,10 @@ extension BrowserWindowController {
     @objc func showFind(_ sender: Any?) {
         guard shownPage != nil else { return NSSound.beep() }
         let bar = findBar ?? makeFindBar()
-        // Arc's find field takes ⌘F itself (CommandFTextField.onCommandF): in a conversation it
-        // goes back to plain find (`onShouldResetToFindInPage`).
-        if !bar.isHidden, bar.inConversation {
+        // Arc's find field takes ⌘F itself (CommandFTextField.onCommandF): typed in the field during
+        // a conversation it goes back to plain find (`onShouldResetToFindInPage`). From the page it
+        // only focuses the field, so a conversation brought back with its tab isn't lost.
+        if !bar.isHidden, bar.inConversation, bar.fieldHasFocus {
             askPanel?.reset()
             bar.clearQuery()
         }
@@ -53,6 +54,37 @@ extension BrowserWindowController {
         shownPage?.focus()
     }
 
+    /// The shown tab is changing: a conversation stays with its tab (Arc keeps `askInPageState`
+    /// per window content); otherwise the bar closes as before.
+    func findBarLeavesTab(_ tab: UUID?) {
+        guard let bar = findBar, !bar.isHidden else { return }
+        guard let tab, let panel = askPanel, panel.inConversation else { return hideFindBar() }
+        askConversations.keep(panel, for: tab)
+        panel.removeFromSuperview()
+        attach(AskOnPagePanel(), to: bar)
+        bar.isHidden = true
+        bar.clearQuery()
+        shownPage?.stopFinding()
+    }
+
+    /// Back on a tab that had a conversation: the bar and its answers come back, the field reading
+    /// "Ask a question…". The page keeps the keyboard; ⌘F goes to the field.
+    func restoreAskConversation(_ tab: UUID) {
+        guard let panel = askConversations.take(for: tab) else { return }
+        guard shownPage != nil, AskOnPage.isEnabled(in: .standard) else { return panel.reset() }
+        let bar = findBar ?? makeFindBar()
+        askPanel?.removeFromSuperview()
+        attach(panel, to: bar)
+        bar.askEnabled = true
+        bar.updatePlaceholder()
+        bar.isHidden = false
+    }
+
+    /// Closed tabs take their conversations (and any answer still coming) with them.
+    func pruneAskConversations(live: Set<UUID>) {
+        for panel in askConversations.prune(keeping: live) { panel.reset() }
+    }
+
     private func stepFind(forward: Bool) {
         guard let bar = findBar, !bar.isHidden, !bar.query.isEmpty else { return showFind(nil) }
         bar.step(forward: forward)
@@ -82,27 +114,31 @@ extension BrowserWindowController {
                 // In a card narrower than the bar, it narrows rather than spilling over the sidebar.
                 bar.leadingAnchor.constraint(greaterThanOrEqualTo: contentFrame.leadingAnchor, constant: FindBar.Metrics.inset),
             ])
-            // Ask on Page's answers, under the bar and as wide as it.
-            let panel = AskOnPagePanel()
-            panel.translatesAutoresizingMaskIntoConstraints = false
-            root.addSubview(panel, positioned: .above, relativeTo: bar)
-            NSLayoutConstraint.activate([
-                panel.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: AskOnPagePanel.Metrics.gap),
-                panel.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-                panel.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-                panel.bottomAnchor.constraint(lessThanOrEqualTo: contentFrame.bottomAnchor, constant: -FindBar.Metrics.inset),
-            ])
-            panel.onFindQuote = { [weak self, weak bar] quote, found in
-                guard let page = self?.shownPage else { return found(false) }
-                page.find(quote, forward: true, findNext: false) { result in
-                    let hit = (result.matches ?? (result.found ? 1 : 0)) > 0
-                    if hit { bar?.show(result) }
-                    found(hit)
-                }
-            }
-            bar.askPanel = panel
+            attach(AskOnPagePanel(), to: bar)
         }
         return bar
+    }
+
+    /// Ask on Page's answers, under the bar and as wide as it.
+    private func attach(_ panel: AskOnPagePanel, to bar: FindBar) {
+        guard let root = window?.contentView else { return }
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(panel, positioned: .above, relativeTo: bar)
+        NSLayoutConstraint.activate([
+            panel.topAnchor.constraint(equalTo: bar.bottomAnchor, constant: AskOnPagePanel.Metrics.gap),
+            panel.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            panel.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            panel.bottomAnchor.constraint(lessThanOrEqualTo: contentFrame.bottomAnchor, constant: -FindBar.Metrics.inset),
+        ])
+        panel.onFindQuote = { [weak self, weak bar] quote, found in
+            guard let page = self?.shownPage else { return found(false) }
+            page.find(quote, forward: true, findNext: false) { result in
+                let hit = (result.matches ?? (result.found ? 1 : 0)) > 0
+                if hit { bar?.show(result) }
+                found(hit)
+            }
+        }
+        bar.askPanel = panel
     }
 
     /// Ask on Page: sends the question with the page's text to Kite's built-in Claude.

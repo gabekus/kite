@@ -99,11 +99,87 @@ final class LinkPeekView: NSView {
         cardShadow.layer?.shadowPath = CGPath(
             roundedRect: cardShadow.bounds, cornerWidth: LinkPeek.cornerRadius, cornerHeight: LinkPeek.cornerRadius, transform: nil
         )
+        controls.frame = controlsRect
+        if tug != .zero { applyTug() }
+    }
+
+    /// The buttons' column, slid back under the card by the swipe's tug.
+    private var controlsRect: NSRect {
+        let cardRect = cardFrame
         let column = LinkPeek.controlsFrame(
             card: .init(x: cardRect.minX, y: cardRect.minY, width: cardRect.width, height: cardRect.height),
             buttons: buttons.count
         )
-        controls.frame = NSRect(x: column.x, y: column.y, width: column.width, height: column.height)
+        return NSRect(x: column.x - LinkPeek.Swipe.controlsOffset(tug: tug), y: column.y, width: column.width, height: column.height)
+    }
+
+    // MARK: Swipe to dismiss
+
+    /// How far the card follows a swipe right (`LinkPeek.Swipe`), in this view's points.
+    private(set) var tug = LinkPeek.Swipe.Vector.zero
+    private var tugTransform = CATransform3DIdentity
+    private var tugSpring: Timer?
+    /// The Peek is animating closed; a new swipe leaves it alone.
+    private(set) var isClosing = false
+
+    /// A swipe took over: Arc stops the card's running animations (the open spring) where they are.
+    func beginTug() {
+        stopTugSpring()
+        for layer in [motion.layer, card.layer, cardShadow.layer].compactMap({ $0 }) {
+            layer.removeAllAnimations()
+        }
+        motion.layer?.opacity = 1
+    }
+
+    func setTug(_ tug: LinkPeek.Swipe.Vector) {
+        self.tug = tug
+        applyTug()
+    }
+
+    /// The card moves with the tug and shrinks a little along it, its hairline fades, and the buttons tuck
+    /// back toward it (Arc's `ModalV2HostView` layout).
+    private func applyTug() {
+        guard let layer = motion.layer else { return }
+        let rect = cardFrame
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // AppKit owns a view's layer transform (it puts a model value back), but not the transform it applies
+        // to the layer's sublayers: the card, its hairline and the buttons.
+        tugTransform = tug == .zero ? CATransform3DIdentity : Self.transform(
+            scale: LinkPeek.Swipe.scale(tug: tug), around: center,
+            to: NSPoint(x: center.x + tug.x, y: center.y + tug.y), in: bounds, flipped: layerSpaceIsBottomUp
+        )
+        layer.sublayerTransform = tugTransform
+        cardShadow.layer?.borderColor = NSColor.black.withAlphaComponent(LinkPeek.Swipe.borderOpacity(tug: tug)).cgColor
+        controls.frame = controlsRect
+        CATransaction.commit()
+    }
+
+    /// Springs the card back from the tug with Arc's tug spring, starting at `velocity` (tug points per second).
+    func springTugBack(velocity: LinkPeek.Swipe.Vector) {
+        stopTugSpring()
+        let start = ProcessInfo.processInfo.systemUptime
+        let from = tug
+        let spring = LinkPeek.Swipe.tugSpring
+        let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { return timer.invalidate() }
+                let t = ProcessInfo.processInfo.systemUptime - start
+                let x = spring.settle(value: from.x, velocity: velocity.x, after: t)
+                let y = spring.settle(value: from.y, velocity: velocity.y, after: t)
+                let done = abs(x.value) < 0.01 && abs(y.value) < 0.01 && abs(x.velocity) < 0.1 && abs(y.velocity) < 0.1
+                self.setTug(done ? .zero : .init(x: x.value, y: y.value))
+                if done { self.stopTugSpring() }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        tugSpring = timer
+    }
+
+    private func stopTugSpring() {
+        tugSpring?.invalidate()
+        tugSpring = nil
     }
 
     // MARK: Clicks outside the card
@@ -122,16 +198,34 @@ final class LinkPeekView: NSView {
 
     // MARK: Motion
 
-    /// Opens from `point` (in this view; the clicked link's spot, when known) with Arc's open spring.
-    func animateIn(from point: NSPoint?) {
+    /// Where the card opened from (the clicked element, in this view), so it closes back there.
+    private var source: NSRect?
+
+    /// Hidden until `animateIn`, while the window asks the page where the clicked link is.
+    func prepareToAnimateIn() {
+        motion.layer?.opacity = 0
+    }
+
+    /// Opens with Arc's open spring from `source` (the clicked element's frame in this view, Arc's
+    /// `tweenFromSource`), or when that isn't known, from a fifth of the card at `point` (the pointer).
+    func animateIn(from source: NSRect?, pointer point: NSPoint?) {
         layoutSubtreeIfNeeded()
         guard let layer = motion.layer else { return }
+        layer.opacity = 1
         let rect = cardFrame
-        let origin = point ?? NSPoint(x: rect.midX, y: rect.midY)
-        // Arc tweens from the link's own frame; Kite only knows the pointer, so it grows from a fifth of the card there.
-        let scale: CGFloat = 0.2
-        let from = Self.transform(scale: scale, around: NSPoint(x: rect.midX, y: rect.midY), to: origin, in: bounds, flipped: true)
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+        let from: CATransform3D
+        if let source, let tween = Self.tween(from: source, card: rect) {
+            self.source = source
+            from = Self.transform(scale: tween.scale, around: center, to: NSPoint(x: center.x + tween.dx, y: center.y + tween.dy), in: bounds, flipped: layerSpaceIsBottomUp)
+            for corner in [card.layer, cardShadow.layer].compactMap({ $0 }) {
+                add(spring: LinkPeek.openSpring, keyPath: "cornerRadius", from: tween.cornerRadius, to: LinkPeek.cornerRadius, on: corner)
+            }
+        } else {
+            from = Self.transform(scale: 0.2, around: center, to: point ?? center, in: bounds, flipped: layerSpaceIsBottomUp)
+        }
         add(spring: LinkPeek.openSpring, keyPath: "transform", from: NSValue(caTransform3D: from), to: NSValue(caTransform3D: CATransform3DIdentity), on: layer)
+        // Arc crossfades from a snapshot of the source (`sourceSnapshot`); Kite fades the card in instead.
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
         fade.toValue = 1
@@ -139,22 +233,53 @@ final class LinkPeekView: NSView {
         layer.add(fade, forKey: "linkPeekFade")
     }
 
-    /// Shrinks a little and fades with Arc's close spring, then runs `completion`.
+    /// Closes with Arc's close spring back toward where it opened from (or shrinks a little in place when
+    /// that isn't known), fading out, then runs `completion`.
     func animateOut(completion: @escaping () -> Void) {
+        stopTugSpring()
+        isClosing = true
         guard let layer = motion.layer else { return completion() }
+        // A swipe closes it from wherever the tug left the card.
+        let start = tugTransform
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.sublayerTransform = CATransform3DIdentity
+        CATransaction.commit()
         let rect = cardFrame
-        let to = Self.transform(scale: 0.95, around: NSPoint(x: rect.midX, y: rect.midY), to: NSPoint(x: rect.midX, y: rect.midY), in: bounds, flipped: true)
+        let center = NSPoint(x: rect.midX, y: rect.midY)
         CATransaction.begin()
         CATransaction.setCompletionBlock(completion)
-        let duration = add(spring: LinkPeek.closeSpring, keyPath: "transform", from: NSValue(caTransform3D: CATransform3DIdentity), to: NSValue(caTransform3D: to), on: layer)
+        let to: CATransform3D
+        if let source, let tween = Self.tween(from: source, card: rect) {
+            to = Self.transform(scale: tween.scale, around: center, to: NSPoint(x: center.x + tween.dx, y: center.y + tween.dy), in: bounds, flipped: layerSpaceIsBottomUp)
+            for corner in [card.layer, cardShadow.layer].compactMap({ $0 }) {
+                add(spring: LinkPeek.closeSpring, keyPath: "cornerRadius", from: LinkPeek.cornerRadius, to: tween.cornerRadius, on: corner)
+            }
+        } else {
+            to = Self.transform(scale: 0.95, around: center, to: center, in: bounds, flipped: layerSpaceIsBottomUp)
+        }
+        let duration = add(spring: LinkPeek.closeSpring, keyPath: "transform", from: NSValue(caTransform3D: start), to: NSValue(caTransform3D: to), on: layer)
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 1
         fade.toValue = 0
-        fade.duration = min(duration, 0.15)
+        fade.duration = min(duration, source == nil ? 0.15 : LinkPeek.closeSpring.response)
         fade.fillMode = .forwards
         fade.isRemovedOnCompletion = false
         layer.add(fade, forKey: "linkPeekFade")
         CATransaction.commit()
+    }
+
+    /// Whether `motion`'s layer is positioned bottom-up in its superlayer. AppKit flips the layers of
+    /// flipped views (`geometryFlipped`), so this host's is top-down like the view.
+    private var layerSpaceIsBottomUp: Bool {
+        !(motion.layer?.superlayer?.isGeometryFlipped ?? false) && !(motion.layer?.isGeometryFlipped ?? false)
+    }
+
+    private static func tween(from source: NSRect, card: NSRect) -> LinkPeek.SourceTween? {
+        LinkPeek.sourceTween(
+            source: .init(x: source.minX, y: source.minY, width: source.width, height: source.height),
+            card: .init(x: card.minX, y: card.minY, width: card.width, height: card.height)
+        )
     }
 
     @discardableResult
@@ -167,15 +292,22 @@ final class LinkPeekView: NSView {
         animation.toValue = to
         animation.duration = animation.settlingDuration
         animation.fillMode = .forwards
-        animation.isRemovedOnCompletion = keyPath != "transform" || (to as? NSValue)?.caTransform3DValue.isIdentity == true
-        layer.add(animation, forKey: "linkPeekSpring")
+        // Opening ends at the layer's own values; closing holds the end state until the view is removed.
+        let ends: Bool
+        if keyPath == "transform" {
+            ends = (to as? NSValue)?.caTransform3DValue.isIdentity == true
+        } else {
+            ends = (to as? Double) == LinkPeek.cornerRadius
+        }
+        animation.isRemovedOnCompletion = ends
+        layer.add(animation, forKey: "linkPeekSpring." + keyPath)
         return animation.duration
     }
 
-    /// Scales by `scale` about `center` and moves `center` to `target`. The layer's anchor is its
-    /// bottom-left corner (AppKit's), so the scale is done about the centre by hand.
+    /// Scales by `scale` about `center` and moves `center` to `target` (points in the flipped view). The
+    /// layer's anchor is its origin corner (AppKit's), so the scale is done about the centre by hand.
+    /// `flipped`: the layer's space is bottom-up, so y is mirrored first.
     private static func transform(scale: CGFloat, around center: NSPoint, to target: NSPoint, in bounds: NSRect, flipped: Bool) -> CATransform3D {
-        // Layer space is bottom-up even when the view is flipped.
         let c = CGPoint(x: center.x, y: flipped ? bounds.height - center.y : center.y)
         let t = CGPoint(x: target.x, y: flipped ? bounds.height - target.y : target.y)
         var m = CATransform3DMakeTranslation(t.x, t.y, 0)

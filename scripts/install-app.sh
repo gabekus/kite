@@ -27,7 +27,25 @@ if [[ -e "$DEST" ]]; then
     fi
 fi
 
+# Package.swift links the ad blocker only when its static library exists, and leaves it out
+# silently otherwise, so a fresh checkout (like ../kite-release) used to ship with no ad
+# blocking at all. Build the library first, then check the binary really links it.
+ADBLOCK_LIB="Sources/KiteAdblock/rust/target/lib/libkite_adblock.a"
+if [[ ! -f "$ADBLOCK_LIB" ]]; then
+    scripts/build-adblock.sh
+fi
+links_adblock() { nm build/Kite.app/Contents/MacOS/Kite 2>/dev/null | grep -q ka_engine_; }
 scripts/bundle-app.sh release
+if ! links_adblock; then
+    # SwiftPM can reuse a manifest evaluated before the library existed.
+    echo "note: Kite built without the ad blocker; rebuilding with a fresh manifest" >&2
+    swift build -c release --manifest-cache none --product Kite
+    scripts/bundle-app.sh release
+fi
+if ! links_adblock; then
+    echo "error: build/Kite.app doesn't link the ad blocker (no ka_engine_ symbols); not installing" >&2
+    exit 1
+fi
 # Copy aside first, then rename, so a waiting swap never sees a half-copied app.
 rm -rf "$STAGED.tmp"
 ditto build/Kite.app "$STAGED.tmp"
