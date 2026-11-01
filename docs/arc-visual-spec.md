@@ -2614,7 +2614,6 @@ triggers). Kite's menu bar checked the same way (an AX read of the test Kite, pl
 - Arc's type-travel triggers for these items are Kite `CommandBarKeywords`, so the command bar still finds the
   old titles ("Reload Page", "Toggle Sidebar", "Back").
 
-
 ## Settings › Links: Little Arc rows → `LittleKite` (KiteCore), `LittleKiteHotkey`, `LinksPane` (Arc 1.171 AX tree, defaults key names, strings and disassembly, 1 Nov 2026)
 
 - **Defaults.** Arc's keys are `globalLittleBrowserHotkeyEnabled`, `optionCommandClickLittleArcEntryPointEnabled` and
