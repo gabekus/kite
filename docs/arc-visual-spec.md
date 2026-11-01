@@ -438,7 +438,7 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
 - Colours (Assets.car): `DownloadItemBackgroundHovered` light p3 0.96 grey / dark p3 0.12;
   `DownloadItemBackground` light sRGB white / dark p3 0.05 (Little Arc tray); `DownloadProgressBarBackground` light sRGB
   (0.808, 0.843, 0.906) / dark (0.443, 0.467, 0.510).
-- Quit with downloads running: alert "Downloads in progress" (not built in Kite yet).
+- Quit with downloads running: "Downloads in progress" (see its own section below).
 
 Kite (`DownloadsView.swift`): no Library yet, so the bottom bar's leading button (where Arc's Library button sits)
 shows the progress ring and opens a popover list. Row size, ring size and popover width are Kite's, unmeasured.
@@ -580,7 +580,7 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   going back to a website"): "Back to Pinned URL" and "Separate From Pinned Tab". The same file has the
   fallback title "Pinned URL" ("Fallback title for a page's pinned URL title").
 - Context menu strings (`SidebarMenu+MoveMenu.swift` area, 84933): Edit Pinned Page / "Edit the pinned URL",
-  "Replace Pinned URL with Current" (not built here).
+  "Replace Pinned URL with Current" (built later, see "Edit Pinned Page" below).
 - Kite: `BrowserTab.pinnedURL` (set when a tab is pinned or favorited, cleared when unpinned; old sessions take
   the current page), `BrowserState.resetTab`, `resetPinnedTabs`, `separateFromPinnedTab`, `revealTab`
   (`KiteCore/PinnedURL.swift`).
@@ -590,6 +590,30 @@ Not to be confused with Kite's sidebar peek (`Peek`, `PeekCard`), the hidden sid
   trigger unknown); Reveal opening enclosing folders and showing a hidden sidebar; no highlight on reveal
   (TabCellState has `shouldPerformUserAttentionAnimation` and `tabHighlightState`, use unknown). Arc had no
   window open, so none of this was seen on screen.
+## Edit Pinned Page: Edit… and Replace Pinned URL with Current (Arc 1.171 binary, 1 Nov 2026)
+
+Strings and disassembly only (`~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`; short titles are Swift
+immediates decoded from the `mov`/`movk` pairs before each `NSLocalizedString` call). Arc wasn't touched.
+
+- Submenu: `SidebarMenu+TabContextMenu.swift` builds a submenu titled **Edit Pinned Page** (comment "Title of
+  pinned URL submenu", `0x102ec7348`) behind a condition on the item (`b.ne` at `0x102ec7310`, not decoded), and
+  fills it from one function (`0x102eb73c0`, its only caller is `0x102ec7498`): **Edit…** (immediate, comment
+  "Edit the pinned URL") and **Replace Pinned URL with Current** (comment "Replace the Pinned Tab with the current
+  page"). Both items are built with the same arguments and no branch between them, so Replace is always listed.
+- Dialog (`SharedWindowFeature/WindowData+Dialogs.swift`, `0x10292b86c`–`0x10292bc54`), built like Arc's Rename
+  Tab… dialog next to it: title **Edit Pinned URL** (comment "Title of Edit Pinned URL dialog."), a line **This is
+  what opens first when you click this tab or its favicon.** (passed as the text field's first argument; Rename
+  passes nil there), a field with placeholder **Enter a URL…** holding the URL, and buttons **Save** ("Button that
+  updates the pinned URL") and **Cancel**. A 392.0 constant sits in the call that shows it (the width, inferred).
+- Command bar (not built): "Replace Pin with Current Page" ("Action to replace a pinned tab with a different url")
+  and "Replace Pinned Tab with the Current Site" (strings ~79423, ~79443).
+- Kite: `BrowserState.editPinnedURL(_:to:)` (a URL or bare host, never a search: `URLInput.url`),
+  `replacePinnedURLWithCurrent(_:)`, `hasPinnedURL(tab:)` (`KiteCore/PinnedURL.swift`); `EditPinnedPageMenu` in the
+  pinned tab row's and favorite tile's context menus; the dialog is an `NSAlert` sheet like Kite's Rename Tab….
+- Inferred, not observed: favorites get the submenu too (Arc has one tab context menu and favorites keep a pinned
+  URL); the submenu's place in the menu; Save leaving the tab on its current page (so "Back to Pinned URL" then
+  offers the new one); what Arc does with input that isn't a URL (Kite beeps and keeps the old one).
+
 ## Hover cards / 5-Second Previews → `LinkPreview` (KiteCore), `LinkPreviewController` (Arc 1.171 binary, 1 Nov 2026)
 
 Strings, settings key names and disassembly only (`~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, selector
@@ -1380,12 +1404,35 @@ Arc-arm64 (1.171). Nothing was run in Arc.
   staggered springs, response 0.3, damping 0.6) and a `SlashShape` (springs 0.25/0.7 out, 0.3/0.65 in). The speaker
   shifts 4pt left while the waves show. No speaker asset in any Assets.car.
 - **Menu bar:** no Mute item in Arc's File/Edit/View/Tabs/Archive/Window menus (menudump). The command bar has
-  "Mute all tabs" / "Unmute all tabs" (not built here).
+  "Mute All Tabs" / "Unmute All Tabs" (see the next section).
 
 Kite: same size, place, gap, tooltips, menu titles and 0.18s show/hide (SwiftUI ease-in-out with an opacity
 transition rather than Arc's width collapse). The icon is SF `speaker.wave.3` / `speaker.slash` at 14pt medium,
 swapped without Arc's wave and slash animation; its 0.6 opacity copies Kite's close button (Arc's tint unmeasured).
 "Audible" is Kite's media script (playing and not muted by the page), not Chromium's audio-output signal.
+
+## Mute / Unmute All Tabs → `MuteAllTabs` (KiteCore), `muteAllTabs(_:)` in `BrowserWindowController+Media` (Arc 1.171 binary, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt`, `strings` and `otool` disassembly (`decomp/arc.s`) of Arc-arm64 (1.171),
+`menudump` of Arc's menu bar. Nothing was pressed or run in Arc.
+
+- **Command-bar actions:** `muteAllTabs` / `unmuteAllTabs` sit in Arc's command-bar action list next to
+  `toggleSidebar`, `resetCurrentTab`, `addLeftSplit`… (strings ~69893, ~161128, ~169671; coding keys
+  `MuteAllTabsCodingKeys` / `UnmuteAllTabsCodingKeys` ~41029). Descriptions "Action to mute all tabs" / "Action to
+  unmute all tabs" (~79415).
+- **Titles:** "Mute All Tabs" / "Unmute All Tabs", built as small-string immediates ("Mute All" + " Tabs", at
+  0x101d874f8 and 0x101d895f4, next to the "Action to mute all tabs" literal). No extra trigger phrases were found
+  next to them (Add Bottom Split, two entries on, has "New Bottom Split"); the title is also matched lowercased.
+- **Not elsewhere:** no Mute item in Arc's File/Edit/View/Tabs/Archive/Window/Help menus (menudump). The sidebar
+  context menu (`SidebarMenu+PlatformGeneration.swift`) has only the per-tab "Mute" / "Unmute"; no space, Today or
+  all-tabs mute string exists.
+- **Scope:** not traced. Kite mutes every live page in the window, in all its spaces (Arc's command bar acts on
+  its window); whether Arc's reaches other windows, or tabs that load later, is unverified. Whether Arc offers
+  both actions at all times or only when they'd change something is unverified; Kite always offers both.
+
+Kite: hidden Tabs-menu items (`commandBarOnly`, ids `muteAllTabs` / `unmuteAllTabs`, so a shortcut can be set in
+keybindings.json), found by the command bar. Each live page's engine mute is set and its sidebar speaker updates.
+Hibernated tabs aren't touched (they have no page and make no sound).
 ## Task Manager → `TaskManager` (KiteCore), `TaskManagerWindow` (Arc 1.171 menu bar, strings and ArcCore, 1 Nov 2026)
 
 - Menu (`menudump Help`): Help › Troubleshooting holds Record Trace, Open Task Manager, a separator, Reveal Arc
@@ -1499,6 +1546,47 @@ ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-stri
   clicked tab, focused. On a full split Kite does nothing, which matches Gabe's choice for Add Split View; Arc shows "Cannot Add New Pane".
 - No settings text mentions this click. The only Links-pane modifier settings are Peek (⇧) and Little Arc (⌥⌘).
 
+## One page per tab across windows → `SharedPages` (PagePool), `PagePlaceholderView` (Arc 1.171 strings and decomp, 1 Nov 2026)
+
+- Arc has a content placeholder system: `ContentPlaceholderClient` (`registerPlaceholder`, `unregisterPlaceholder`,
+  `currentPlaceholders`, `placeholderSnapshots`; arc-strings 82622–82627, 176059–176062) with `ContentPlaceholderData`,
+  `ContentPlaceholderSourceData` (43898–43900), fields `contentSnapshotClient`, `sources`, `placeholders` and a `sidebarItemID`
+  (176063–176068). So placeholders are keyed by tab and drawn from content snapshots.
+- The window side is `WindowContentPlaceholderViewController` (30684, 61654) with `ViewModel`, `Snapshot`, `BlurredSnapshotView`,
+  `ViewState` (30685–30688), an `NSHostingController` (`init(rootView:)`). Decomp around FUN_1001ad81c
+  (`~/rea-arc/decomp/out3/g65wcp.txt`): the SwiftUI view is `Image(nsImage:).resizable()` with `.stretch`, a flexible frame
+  centred, ignoring all safe areas; snapshots sit in a top-aligned `ForEach`, and a new one comes in with
+  `withAnimation(.easeInOut(duration: 0.2))`, the old one going 0.2 s later. `WebContentPlaceholderView` (30633, 61512) is a
+  layer-backed view whose `updateLayer` only sets a background colour (decomp @1001693a0–1001694c8, `out3/g65placeholder.txt`).
+- No user-visible string mentions a tab open in another window, and no "Bring here"/"Move here" action exists in the strings
+  (searched "another window", "other window", "open here", "move here", "this tab is"). So the placeholder has no text or
+  button; Kite adds none.
+- **[inferred]** Which window holds the live page: the one that put the tab on screen last (selected it), and a window coming
+  forward (becoming key) takes its pages back. The decomp doesn't show the trigger; Arc wasn't driven to watch it.
+- **[unmeasured]** The blur radius (Kite: Gaussian sigma 20 px on the 2× snapshot) and the placeholder's background colour
+  (Kite: the card's `windowBackgroundColor`).
+## Downloads in progress → `AppDelegate.applicationShouldTerminate`, `QuitDialog.runDownloadsInProgress` (Arc 1.171 strings, 1.169 disassembly, 1 Nov 2026)
+
+- Strings (`~/rea-arc/arc-strings.txt` 61957–61966, inside `applicationShouldTerminate(_:)` / `handleTerminateReply(_:allowTerminateLater:)`):
+  title "Downloads in progress" ("Alert title; Confirmation dialog when closing application while downloads are in progress."),
+  text "There are downloads in progress. Closing the application will cancel them." ("Alert informative text"). No count
+  or per-download wording exists: the text is the same for one download or many.
+- Buttons, decoded from inline Swift small strings in `~/rea-arc/decomp/arc.s` at 0x100232558 and 0x100232604 (fn 0x100232404):
+  **"Close " + app name** (so "Close Arc"; the name comes from fn 0x1005a4a94 and is appended) and **"Keep browsing"**
+  (comment "Alert button; Cancel closing app action."), in that order.
+- Mechanism: `applicationShouldTerminate(_:)` (0x10023e2b8…) asks ArcCore for a terminate decision (three cases;
+  "Unknown ArcCore terminate decision" asserts on others) and replies later; the dialog is built from the decision's
+  publisher (0x10023225c → closure 0x10023fa64 → 0x100232404). The same path cancels a pending auto-update relaunch
+  ("Auto update was cancelled because in progress download was detected.").
+- It's Arc's own SwiftUI dialog, like "Quit Arc?": presented through 0x100fc1948, a sibling of the quit dialog's
+  0x100fc2a50 (title, message, two button/action pairs). Its look isn't measured; Kite uses the "Quit Kite?" layout with a
+  message line.
+- With the warn-before-quitting dialog: that one is shown by the ⌘Q action before `terminate`; this one comes from
+  `applicationShouldTerminate`, so ⌘Q shows "Quit Arc?" first, then this **[inferred from where each lives; not traced
+  end to end]**. Quits that skip ⌘Q (Dock, logout, scripts) get only this one.
+- Which button Return/Escape pick isn't known; Kite makes Close Kite the default and Keep browsing the cancel button
+  **[Kite's choice]**.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
@@ -1544,6 +1632,40 @@ ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-stri
   the name of this Profile:".
 - Not yet measured: the sheets' layout and chrome (Kite uses macOS sheets), the one-space count string, and
   which characters Arc rejects as invalid.
+
+## Split View: Add Left / Right / Top / Bottom Split → `SplitSides.swift` (KiteCore), `BrowserWindowController+SplitSides` (Arc 1.171 menu bar, strings and disassembly, 1 Nov 2026)
+
+Arc wasn't driven; nothing here is from a recording. Titles shorter than 16 bytes are Swift small strings, so they're not in
+arc-strings.txt; they were read from the `mov`/`movk` immediates in `~/rea-arc/decomp/arc.s` (the 1.169 arm64 slice).
+
+- **Menu bar** [menudump View, Arc 1.171]: only Add Split View (⌘L, Gabe's), Close this Split Pane (⌃⇧-), Separate Page from
+  Split View, Expand Current Split. No side items in the menu bar.
+- **Command bar actions** [str + dis]: coding keys `AddLeftSplitCodingKeys`, `AddRightSplitCodingKeys`, `AddTopSplitCodingKeys`,
+  `AddBottomSplitCodingKeys` (arc-strings.txt 41024–41027) sit with the other command bar actions (`NewVerticalSplitViewPane`,
+  `ConvertTo…SplitView`, `JoinNextMeeting`). Raw IDs `addLeftSplit`, `addRightSplit`, `addTopSplit`, `addBottomSplit`
+  (@101d8dce0 area). Titles "Add Left Split" (@101d87574), "Add Right Split" (@101d86a78), "Add Top Split" (@101d86760),
+  "Add Bottom Split" (cstring, 79400), with comments "Action to add new left/right/top/bottom split". Trigger phrases
+  "New Left/Right/Top/Bottom Split" (@101d897cc, @101d882fc, @101d87a04, cstring 79450).
+- **Split View Controls Menu** [dis, `ContextMenus/SplitScreenButtonMenu.swift`, @102ed2acc–102ed4df0]: the pane's split button
+  menu. Move Left / Move Right / Move Up / Move Down; Add Left Split / Add Right Split (one function) and Add Top Split /
+  Add Bottom Split (another), icons `icon-split-add-{left,right,top,bottom}`; Separate Tab from Split; Share Split View…;
+  Convert to Vertical / Horizontal Split View. Which pair shows when wasn't traced (the split into two functions matches one
+  axis per split, inferred).
+- **Sidebar plus menu** [dis, `ARC_SidebarPlusButton`, @1027c8f00–1027cae34]: New Tab, Note, Easel, Folder, Boost, Space, and
+  "New Right Split" / "New Bottom Split" (icons `split-add-right` / `split-add-bottom`; comments "add a right/bottom split view
+  pane"). A second layout titles both "New Split".
+- **Sidebar tab context menu** [dis, `ContextMenus/SidebarMenu+PlatformGeneration.swift`, @102eba2e0]: "Add Split View" ("Add a
+  new split view") and "Open in Split View" ("Open item in split view"); no side items. A split row's own menu ("Split View
+  Context Menu", @102ec23fc) has Share Split View…, Separate All Tabs, add a tab, Convert to Vertical/Horizontal Split View,
+  and per-tab "Separate from Split View".
+- **Kite:** the four command bar actions, hidden in View like Arc's other command-bar-only split actions, with the "New … Split"
+  phrases as keywords. A single page takes all four sides (left/right → side by side, top/bottom → top/bottom); a split takes the
+  two sides along its axis; four panes take none (validation greys the rest out). The empty pane goes right next to the focused
+  one on that side, takes half its share, and gets the command bar, as Add Split View; Esc takes it away again.
+  **Inferred:** next to the focused pane (not at the split's far end), half its share, and off-axis sides disabled rather than
+  converting the split. **Not built:** the Split View Controls Menu (needs Arc's pane split button; its Move items are pane
+  rearranging), the sidebar plus menu (Kite's + makes a space directly), and the tab context menu's Add Split View / Open in Split
+  View (no side items there in Arc).
 
 ## Installed web apps (PWAs) → `WebApps`, `WebAppInstallability` (KiteCore), `WebAppsController`, `WebAppInstallDialog` (Kite addition; Chrome as the reference, 1 Nov 2026)
 

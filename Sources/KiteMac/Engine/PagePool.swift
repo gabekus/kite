@@ -72,16 +72,65 @@ final class PagePool {
         return engine.forProfile(state.profile(state.selectedProfileDirectory))
     }
 
+    /// The normal windows' pools this one shares tabs with, so a tab has one page between them.
+    private(set) weak var shared: SharedPages?
+    /// Another window took tab `UUID`'s page to show it there (`claim`).
+    var onPageTaken: ((UUID) -> Void)?
+
+    /// A linked window is closing: take back what this window shows a placeholder for from its pool.
+    var onLinkedWindowClosing: ((PagePool) -> Void)?
+
+    func join(_ shared: SharedPages) {
+        self.shared = shared
+        shared.add(self)
+    }
+
+    /// This window is closing: the linked windows take the pages they show placeholders for.
+    func leaveShared() {
+        guard let shared else { return }
+        shared.closing(self)
+        self.shared = nil
+    }
+
+    /// The tab's page wherever it is, made here when no linked window has one (automation, extensions).
     func page(for tab: BrowserTab) -> WebPage {
-        let engine = engine(forTab: tab.id)
         if let existing = pages[tab.id] {
-            if pageProfiles[tab.id] == engine.profileDirectory { return existing }
+            if pageProfiles[tab.id] == engine(forTab: tab.id).profileDirectory { return existing }
             // Its space moved to another profile: nothing of the old page's session carries over.
             discard(tab.id, keepHistory: false)
         }
+        if let elsewhere = shared?.livePage(tab.id, excluding: self) { return elsewhere.page }
+        return makePage(for: tab)
+    }
+
+    /// The tab's page, to put on screen in this window: taken from the linked window showing it, so
+    /// a tab never loads twice (Arc keeps one web content per tab and puts a placeholder where it was).
+    func claim(_ tab: BrowserTab) -> WebPage {
+        if let existing = pages[tab.id] {
+            if pageProfiles[tab.id] == engine(forTab: tab.id).profileDirectory { return existing }
+            discard(tab.id, keepHistory: false)
+        }
+        guard let (owner, page) = shared?.livePage(tab.id, excluding: self) else { return makePage(for: tab) }
+        let profile = owner.pageProfiles[tab.id]
+        let status = owner.store.pages[tab.id]
+        let request = owner.release(tab.id)
+        register(page, id: tab.id)
+        pageProfiles[tab.id] = profile
+        if let status { store.updatePage(tab.id) { $0 = status } }
+        if let request {
+            permissionRequests[tab.id] = request
+            onPermissionRequestsChanged?()
+        }
+        return page
+    }
+
+    private func makePage(for tab: BrowserTab) -> WebPage {
+        let engine = engine(forTab: tab.id)
         // A tab on one of Kite's own pages gets a blank page; the window draws the page over it.
         let url = InternalPage(tab.url) == nil ? tab.url : nil
-        let page = engine.makePage(url: url, restoring: savedState.removeValue(forKey: tab.id))
+        // History saved when the page hibernated, here or in a linked window.
+        let restoring = savedState.removeValue(forKey: tab.id) ?? shared?.takeSavedState(tab.id, excluding: self)
+        let page = engine.makePage(url: url, restoring: restoring)
         register(page, id: tab.id)
         pageProfiles[tab.id] = engine.profileDirectory
         return page
@@ -96,6 +145,21 @@ final class PagePool {
             if engine(forTab: id).profileDirectory != made { discard(id, keepHistory: false) }
         }
     }
+
+    /// Lets go of tab `id`'s page without closing it, for another window that shows it now.
+    /// Returns its unanswered permission request, which goes with it.
+    fileprivate func release(_ id: UUID) -> PermissionRequest? {
+        guard pages.removeValue(forKey: id) != nil else { return nil }
+        pageProfiles[id] = nil
+        lastShown[id] = nil
+        visibleIDs.remove(id)
+        let request = permissionRequests.removeValue(forKey: id)
+        if request != nil { onPermissionRequestsChanged?() }
+        onPageTaken?(id)
+        return request
+    }
+
+    fileprivate func takeSavedState(_ id: UUID) -> Any? { savedState.removeValue(forKey: id) }
 
     /// Takes over a page made elsewhere (a Little Kite window's), for a new tab. Returns the tab's id.
     func adopt(_ page: WebPage) -> UUID {
@@ -278,5 +342,41 @@ final class PagePool {
         }
         source.resume()
         memoryPressure = source
+    }
+}
+
+/// The pages of the normal windows, which share one sidebar: each tab has at most one live page
+/// between them, held by the window that last put it on screen. Incognito and Blank windows keep
+/// their own tabs and don't join.
+@MainActor
+final class SharedPages {
+    private struct Weak { weak var pool: PagePool? }
+    private var pools: [Weak] = []
+
+    func add(_ pool: PagePool) {
+        pools.removeAll { $0.pool == nil || $0.pool === pool }
+        pools.append(Weak(pool: pool))
+    }
+
+    /// `pool`'s window is closing: the others take back the pages they show placeholders for, then
+    /// it leaves.
+    fileprivate func closing(_ pool: PagePool) {
+        for case let other? in pools.map(\.pool) where other !== pool { other.onLinkedWindowClosing?(pool) }
+        pools.removeAll { $0.pool == nil || $0.pool === pool }
+    }
+
+    /// The pool holding tab `id`'s page, other than `pool`.
+    fileprivate func livePage(_ id: UUID, excluding pool: PagePool) -> (owner: PagePool, page: WebPage)? {
+        for case let other? in pools.map(\.pool) where other !== pool {
+            if let page = other.loadedPage(id) { return (other, page) }
+        }
+        return nil
+    }
+
+    fileprivate func takeSavedState(_ id: UUID, excluding pool: PagePool) -> Any? {
+        for case let other? in pools.map(\.pool) where other !== pool {
+            if let state = other.takeSavedState(id) { return state }
+        }
+        return nil
     }
 }

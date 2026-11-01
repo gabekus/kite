@@ -75,6 +75,32 @@ extension BrowserState {
         return home
     }
 
+    /// Whether the tab is a pinned tab or favorite, so it has Arc's "Edit Pinned Page" submenu.
+    public func hasPinnedURL(tab id: UUID) -> Bool {
+        guard let location = location(of: id), location.section != .unpinned else { return false }
+        return self[location].pinnedURL != nil
+    }
+
+    /// "Edit Pinned Page › Edit…", saved: the tab's pinned URL becomes `input` (a URL or a bare
+    /// host, never a search). The page the tab is on stays put, so a tab that isn't on the new
+    /// pinned URL offers "Back to Pinned URL". Returns false when the input isn't a URL.
+    @discardableResult
+    public mutating func editPinnedURL(_ id: UUID, to input: String) -> Bool {
+        guard hasPinnedURL(tab: id), let url = URLInput.url(input), let location = location(of: id) else { return false }
+        self[location].pinnedURL = url
+        return true
+    }
+
+    /// "Edit Pinned Page › Replace Pinned URL with Current": the page the tab is on becomes its
+    /// pinned URL. Returns false when there's nothing to replace.
+    @discardableResult
+    public mutating func replacePinnedURLWithCurrent(_ id: UUID) -> Bool {
+        guard hasPinnedURL(tab: id), let location = location(of: id), let url = self[location].url,
+              InternalPage(url) == nil else { return false }
+        self[location].pinnedURL = url
+        return true
+    }
+
     /// Tabs › "Reset all tabs in this Space": every pinned tab in the current space (folders
     /// included) goes back to its pinned page. Returns what changed, for the shell to load.
     @discardableResult

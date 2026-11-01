@@ -6,6 +6,17 @@ import CEFBridge
 
 MainActor.assumeIsolated {
     let environment = ProcessInfo.processInfo.environment
+    if environment["KITE_SUPPORT_PATH"] != nil {
+        // A test run shares UserDefaults with whatever app has its bundle ID. Debug bundles are
+        // dev.gabek.Kite.dev (bundle-app.sh); as dev.gabek.Kite it would write the installed Kite's settings.
+        if Bundle.main.bundleIdentifier == "dev.gabek.Kite" {
+            NSLog("Kite: warning: a KITE_SUPPORT_PATH run as dev.gabek.Kite writes the installed Kite's settings; use a debug bundle")
+        }
+        // scripts/check-test-defaults.sh: shows where a test run's settings land.
+        if let key = environment["KITE_TEST_DEFAULTS_PROBE"], !key.isEmpty {
+            UserDefaults.standard.set(true, forKey: key)
+        }
+    }
     let delegate = AppDelegate()
     // Folders of profiles deleted last run, before Chromium (or WebKit) opens any profile.
     ProfileFolders.deletePending()
