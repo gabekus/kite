@@ -394,6 +394,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         if let window = window as? BrowserWindow { spaceSwipe.install(in: window) }
         pool.onLinkPeek = { [weak self] id, url in self?.openLinkPeek(url, from: id) }
+        installPageMenu()
     }
 
     /// Puts `view` over the content card, above the page and glow and below ⌘J and the command bar.

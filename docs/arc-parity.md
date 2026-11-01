@@ -179,6 +179,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
 | Tab audio button | Speaker on a sidebar tab that is playing or muted; click (or context menu Mute/Unmute) to toggle | 🟡 24pt button between favicon and title, Arc's tooltips and menu titles | Arc's animated speaker (waves, slash) is SF Symbols here; Mute/Unmute all tabs (command bar) not built |
 | Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |
+| Page right-click menu | Chromium's page menu with Arc's Open Link in Split View / Little Arc and Capture Image... | 🟡 Link section as Arc on both engines (New Tab, New Window, Split View, Little Kite, Incognito Window, Save Link As…, Copy Link/Email Address); WebKit image section (Open Image in New Tab, Save Image As…, Copy Image, Copy Image Address) | Gap 36. Not yet: Chromium selection and page sections (WebKit keeps its own), Copy Link Text, Capture Image..., image items on Chromium; Customize Page › Boosts needs Boosts |
 | Developer Mode | Per-site switch and dev reload options (Arc's strings show no console pane or URL change) | 🟡 See the Developer menu row | Gap 16 |
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |

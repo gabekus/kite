@@ -33,6 +33,10 @@ final class PagePool {
     var onLoadFinished: ((UUID) -> Void)?
     /// A link clicked in tab `UUID` opens in Arc's Peek card (`LinkPeek`); nil opens it as a new tab.
     var onLinkPeek: ((UUID, URL) -> Void)?
+    /// The page menu's Open Link in New Window, Split View, Little Kite and Incognito Window.
+    var onOpenLink: ((UUID, URL, PageContextMenu.LinkTarget) -> Void)?
+    /// What this window can do with a link, for the page menu.
+    var contextMenuHost: (() -> PageContextMenu.Host)?
 
     func loadedPage(_ id: UUID) -> WebPage? { pages[id] }
     var livePages: [UUID: WebPage] { pages }
@@ -96,6 +100,7 @@ final class PagePool {
         lastShown[id] = nil
         page.onEvent = nil
         page.linkPeekPolicy = nil
+        page.contextMenuHost = nil
         page.close()
         store.clearPage(id)
     }
@@ -106,6 +111,7 @@ final class PagePool {
         pages[id] = page
         lastShown[id] = Date()
         page.onEvent = { [weak self] event in self?.handle(event, from: id) }
+        page.contextMenuHost = { [weak self] in self?.contextMenuHost?() ?? PageContextMenu.Host() }
         page.linkPeekPolicy = { [weak self] url, shift in
             guard let self, self.onLinkPeek != nil else { return false }
             let state = self.store.state
@@ -153,6 +159,9 @@ final class PagePool {
             }
         case .closeRequested:
             store.mutate { $0.close(tab: id) }
+        case let .openLink(url, target):
+            // Chromium opens Open Link in New Tab in the background.
+            if target == .newTab { store.mutate { $0.openTab(url: url, select: false) } } else { onOpenLink?(id, url, target) }
         case .linkHover(let hover):
             guard let view = pages[id]?.view else { return }
             LinkPreviewController.shared.hover(hover, in: view)

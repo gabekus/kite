@@ -112,6 +112,8 @@ extension BrowserWindowController {
             store.mutate { $0.openTab(url: url) }
         case .popup(let popup):
             pool.openTab(with: popup)
+        case let .openLink(url, target):
+            openLinkFromPageMenu(url, target)
         case .favicon, .progress, .navigationState, .blockedCount, .crashed, .addExtension, .linkHover, .media:
             break
         }

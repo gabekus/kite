@@ -133,6 +133,11 @@ NS_SWIFT_UI_ACTOR
 - (void)browser:(KCBrowser *)browser renderProcessDidTerminateWithCode:(int)code;
 /// The status text changed. While the pointer is over a link it's the link's URL; nil when it clears.
 - (void)browser:(KCBrowser *)browser statusMessageDidChange:(nullable NSString *)message;
+/// Arc's link items for a right-click on `url`, top to bottom: dictionaries with "id" (an
+/// NSNumber; 0 is a separator), "title" and "enabled". Nil or empty keeps Chromium's menu.
+- (nullable NSArray<NSDictionary<NSString *, id> *> *)browser:(KCBrowser *)browser contextMenuItemsForLinkURL:(NSURL *)url;
+/// One of those items was chosen, by its "id".
+- (void)browser:(KCBrowser *)browser performContextMenuItem:(NSInteger)itemID linkURL:(NSURL *)url;
 /// YES for a store install's extension package (.crx): it's saved to a temporary
 /// folder for Chromium's installer and isn't reported as a download.
 - (BOOL)browser:(KCBrowser *)browser
@@ -170,6 +175,8 @@ NS_SWIFT_UI_ACTOR
 - (void)goBack;
 - (void)goForward;
 - (void)reload;
+/// Downloads `url` like a link's Save Link As (the delegate's download handling applies).
+- (void)downloadURL:(NSURL *)url;
 - (void)reloadIgnoringCache;
 - (void)stopLoading;
 - (void)focus;

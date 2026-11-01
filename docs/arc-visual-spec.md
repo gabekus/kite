@@ -1129,6 +1129,37 @@ swapped without Arc's wave and slash animation; its 0.6 opacity copies Kite's cl
   over the older "End Process"), the window size, the row order, the utility names, and double-click to show a
   tab. Network reads N/A: Kite has no per-tab network counter yet.
 
+## Page context menu → `PageContextMenu` (KiteCore), `PageContextMenuItems`, WebKit/CEF hooks (Arc 1.171 ArcCore, 1 Nov 2026)
+
+Sources: ArcCore.framework (arm64 slice): UTF-16 literals and a disassembly of the code that references them;
+ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-strings.txt` (main binary).
+
+- **Where it's built.** Arc's web page menu is Chromium's `RenderViewContextMenu`, built inside ArcCore and handed
+  to Swift as an `ArcMenuModel` with an `ArcContextMenuElementInfo` (`linkURL`, `srcURL`, `selectionText`,
+  `mediaType`… selectors near ArcCore strings 1218229). The main binary's `ContextMenus` module only builds the
+  sidebar menus; its "Copy link as Markdown" (strings 84947) is a sidebar item, not a page item.
+- **Arc's own items.** Three hard-coded UTF-16 titles in ArcCore `__ustring` (vm 0xd75a3aa / 0xd75a3da /
+  0xd75a40a): "Open Link in Split View" (command 53250), "Open Link in Little Arc" (53249), "Capture Image..."
+  (53248). Referenced from ArcCore 0x4282600–0x42828d8.
+- **Link order** (ArcCore 0x4282754–0x4282b50, AddItem calls with Chromium command and string ids): Open Link in New
+  Tab (50100, IDS 8931) · Open Link in New Window (50101, 8932) · Open Link in Split View (53250, behind a check at
+  0x42827ec) · Open Link in Little Arc (53249, behind an embedder check, kind 18, at 0x4282874) · Open Link in
+  Incognito Window (50102, 8933) · separator · Save Link As… (50103, 8948) · Copy Link Address (Chromium; Copy
+  Email Address for mailto:) · Copy Link Text (50107, 8951, only with link text in some cases) · separator.
+- **Image order** (0x42824d4–0x42826a0): Open Image in New Tab (50123, 8961) · Save Image As… (50120, 8958) ·
+  Capture Image... (53248, embedder check kind 19) · Copy Image (50122, 8960) · Copy Image Address (50121, 8959).
+- **Kite.** The link section above, with "Little Kite" for "Little Arc", on both engines; Open Link in New Tab opens
+  in the background (Chromium's disposition). Split View adds a pane after the focused one with the link (Kite's
+  Add Split View pane). WebKit: the image section too (WebKit's Copy Image does the copying). Chromium (Alloy): link
+  items replace Alloy's page items (Back, Forward, Print, View Source) when the click is on a link.
+- **Left out:** "Capture Image..." (its action isn't in the evidence); "Customize Page" › Boosts (Boosts aren't in
+  Kite); Copy Link Text.
+- **Inferred / unverified:** what the checks before Split View and Little Arc test (Kite: Split View hidden in Little
+  Kite and disabled when the split already has 4 panes; Little Kite hidden in Little Kite and incognito windows);
+  Open Link in Incognito Window disabled in incognito (Chromium's `IsOpenLinkOTREnabled`); which side of the
+  focused pane Arc's split opens on. Selection and page-level sections are still WebKit's own (Look Up, Search
+  With Google, Back/Reload…), not Chromium's.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

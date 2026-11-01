@@ -145,6 +145,12 @@ What works with Kite in the background (checked on a test build behind other win
 - `trace`: animation `from`/`to` values are the layer's own (position in its superlayer, bottom-left), while
   the sampled frames are window points. SwiftUI's accessibility frames follow the model, not the animation, so
   `match` shows only start and end; the layers show the curve.
+- Page right-click menus are modal, so they can't be read from the background. Launch a test build with
+  `KITE_TEST_CONTEXT_MENU=1` (on a `KITE_SUPPORT_PATH` profile): a right-click (`input` with `"button":"right"`)
+  writes the menu it built to stderr as `KITE_TEST_CONTEXT_MENU: Open Link in New Tab | … | ---` (disabled items
+  in parentheses) instead of showing it. Put an item's title in `test-context-menu-pick` in the profile folder
+  and the next right-click chooses it. WebKit only: it also keeps a covered test window's page answering, which
+  the menu needs. Despite `input`'s first-mouse note, right-clicks on a page reach WebKit in the background.
 - `menu`: AppKit ignores fn when matching a key against the menu bar, so a system item on fn E (Emoji &
   Symbols) or fn F (Enter Full Screen) fires on a plain "e" or "f" that reaches the menu bar, and is flagged.
 
