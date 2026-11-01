@@ -2422,3 +2422,30 @@ an Arc incognito window captured at 2× (1 Nov 2026).
   orientation work as in a space. Child corner radius and the selected child's look are unmeasured.
 - **Folders under a drag**: Kite opens a collapsed folder after the system spring-loading delay (0.5s unless changed).
   Arc's interval (`DraggingTimerState`) wasn't found; unverified.
+## Live Folders (GitHub pull requests) → `KiteCore.LiveFolder`, `LiveFoldersController`, `LiveFolderViews.swift` (Arc 1.171 strings and binary, 1 Nov 2026)
+
+Read from Arc's binary only (its English text is compiled in at each localized call site). Arc wasn't recorded
+doing it: a live folder needs a signed-in GitHub session, which an incognito window doesn't have.
+
+- **Adding it.** The space menu has "Live Folders" ("Menu item to manage which live folders are active in this
+  space") after New Folder. It toggles a data source per space (`toggleLiveFolderActive(dataSource:in:)`); GitHub is
+  the only working one (Bitbucket is stubbed). Arc also offers the folder when you open a pull request
+  (`githubLiveFolderCreatedForOpenedPR`) with an intro popover, "Pull Requests" / "Pull requests from you and your team
+  will show up here automatically". Kite has the menu, not the automatic offer or the popover.
+- **Source.** No API or token: a hidden browser loads github.com with the profile's cookies and reads the HTML
+  (`HTMLClient`, XPath). Searches: `is:pr is:open sort:updated-desc` with `author:@me`, `review-requested:@me`,
+  `user-review-requested:@me`. Kite loads `github.com/pulls?q=…` in a hidden window-sized page and reads each row's
+  title link (`data-testid="listitem-title-link"`, checked on GitHub's list on 1 Nov 2026).
+- **Filter.** Option set 1 "Created by Me", 2 "Review Requests", 4 "Team Review Requests"; any other mix reads "Mixed".
+- **Refresh.** Event-driven (`LiveFolderFetchReason`: app foregrounded, space focused, item selected/unselected,
+  filter change, manual, sign-in). Automatic ones are throttled by `automatic-live-folders-min-refresh-interval-in-seconds`,
+  10. No periodic timer was found. New items arrive unread (`showNewItemsAsUnread`; items carry `isRead`).
+- **Removed rows.** A row the user deletes goes into `hiddenItems` and later refreshes leave it out.
+- **Folder menu.** "Refresh"; a status line "Initializing...", "Last fetch: …" or "Failed to update"; a "Repositories"
+  submenu of per-repo toggles ending "This list is generated based on your currently active pull requests."; the three
+  filters, checked when on; "Delete Live Folder". Order and the "Single Sign-On" submenu are unverified (Kite has no SSO item).
+- **Delete alert.** "Delete your %@ Live Folder?" / "You can restore this folder at any time by right-clicking the
+  sidebar." The folder's title is "Pull Requests".
+- **Errors.** "Not signed in to GitHub", "We're having trouble connecting to GitHub…".
+- **Unverified, Kite's choice:** the folder icon (Kite: SF Symbol `arrow.triangle.pull`; Arc's own art isn't copied),
+  the unread marker (Kite: a 5pt accent dot left of the favicon), the alert's button titles, and the "Last fetch" date format.

@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #endif
     private var automation: AutomationController!
     private var claudeTasks: ClaudeTasksController!
+    private var liveFolders: LiveFoldersController!
     private var diagnostics: DiagnosticsRecorder!
     /// Links opened before launch finished (Kite as the default browser).
     private var pendingURLs: [URL] = []
@@ -178,6 +179,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         diagnostics = DiagnosticsRecorder(directory: Self.supportDirectory.appendingPathComponent("Diagnostics", isDirectory: true))
         diagnostics.start()
+
+        liveFolders = LiveFoldersController(store: store, engine: windowController.pool.engine) { [weak self] in
+            self?.windowController.window?.contentView
+        }
+        LiveFoldersController.shared = liveFolders
 
         archiveTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.store.archiveStaleTabs() }
