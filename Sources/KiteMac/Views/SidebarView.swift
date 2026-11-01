@@ -27,6 +27,8 @@ struct SidebarActions {
     var separateFromPinnedTab: (UUID) -> Void = { _ in }
     /// A tab's Rename…: in place in its row, or Arc's dialog where there's no row.
     var renameTab: (UUID) -> Void
+    /// A tab row's speaker button and Mute / Unmute menu item.
+    var toggleMute: (UUID) -> Void = { _ in }
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -283,7 +285,10 @@ struct SidebarView: View {
                 store.mutate { $0.renameTab(tab.id, to: name) }
                 store.endRenamingTab()
             },
-            onCancelRename: { store.endRenamingTab() }
+            onCancelRename: { store.endRenamingTab() },
+            isAudible: store.pages[tab.id]?.isAudible ?? false,
+            isMuted: store.pages[tab.id]?.isAudioMuted ?? false,
+            onToggleMute: { actions.toggleMute(tab.id) }
         )
     }
 }
@@ -762,13 +767,25 @@ private struct TabRow: View {
     let onRename: () -> Void
     let onCommitRename: (String) -> Void
     let onCancelRename: () -> Void
+    /// Arc's TabCellState.isAudible / isMuted: the speaker button between favicon and title.
+    var isAudible = false
+    var isMuted = false
+    var onToggleMute: () -> Void = {}
     @State private var hovering = false
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
+    private var showsAudio: Bool { TabAudioButton.isShown(isAudible: isAudible, isMuted: isMuted) }
+
     var body: some View {
         HStack(spacing: M.iconTextGap) {
             FaviconView(tab: tab, size: M.iconSize)
+            if showsAudio {
+                TabAudioButtonView(isMuted: isMuted, action: onToggleMute)
+                    // Arc: 2pt after the button, not the row's favicon-to-title gap.
+                    .padding(.trailing, TabAudioButton.spacingAfter - M.iconTextGap)
+                    .transition(.opacity)
+            }
             if isRenaming {
                 // In place, like the space name (Arc: "Double-click to rename").
                 TextField("Keep it short and sweet!", text: $draft)
@@ -815,6 +832,7 @@ private struct TabRow: View {
                 .help(isPinned ? "Unload" : "Close Tab")
             }
         }
+        .animation(.easeInOut(duration: TabAudioButton.showHideDuration), value: showsAudio)
         .padding(.leading, M.iconInset + indent(depth))
         .padding(.trailing, 6)
         .frame(height: M.pillHeight)
@@ -833,9 +851,34 @@ private struct TabRow: View {
             }
             Button("Copy Link") { copyLink(tab.url) }
             Button("Rename…", action: onRename)
+            if showsAudio {
+                Button(TabAudioButton.menuTitle(isMuted: isMuted), action: onToggleMute)
+            }
             Divider()
             Button(isPinned ? "Unload Tab" : "Close Tab", action: onClose)
         }
+    }
+}
+
+/// Arc's audibility button (TabCellView.audibilityButton): a 24pt speaker that mutes or
+/// unmutes the tab. Arc draws its own animated speaker (SF `speaker` plus three sound waves
+/// and a slash); Kite uses the matching SF Symbols.
+private struct TabAudioButtonView: View {
+    let isMuted: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isMuted ? "speaker.slash" : "speaker.wave.3")
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: TabAudioButton.side, height: TabAudioButton.side)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(0.6)
+        .help(TabAudioButton.tooltip(isMuted: isMuted))
+        .accessibilityLabel(TabAudioButton.tooltip(isMuted: isMuted))
+        .accessibilityIdentifier("sidebarTabCellMuteButton")
     }
 }
 
