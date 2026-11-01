@@ -44,6 +44,8 @@ enum PageEvent {
     case media(MediaState?)
     /// The pointer moved onto a link (nil: off it). Drives ⇧-hover link previews.
     case linkHover(LinkHover?)
+    /// An "Open Link in …" item of the page's right-click menu (Arc's link items).
+    case openLink(URL, PageContextMenu.LinkTarget)
     /// The site asks for the camera, microphone, location or notifications: Arc's prompt.
     case permissionRequest(PermissionRequest)
     /// The engine dropped the prompt with this id itself (the page navigated or closed).
@@ -89,6 +91,9 @@ protocol WebPage: AnyObject {
     /// Asked when the user clicks a link to `url` (in this page or a new one, `shift` held or not): true
     /// cancels it and reports `.openInLinkPeek`. Nil (the default) never peeks.
     var linkPeekPolicy: ((_ url: URL, _ shift: Bool) -> Bool)? { get set }
+    /// What the page's window can do with a link, asked as the right-click menu opens. Nil: a
+    /// tab in a normal window.
+    var contextMenuHost: (() -> PageContextMenu.Host)? { get set }
     var isLoading: Bool { get }
     /// 1.0 = 100%.
     var zoomFactor: Double { get set }

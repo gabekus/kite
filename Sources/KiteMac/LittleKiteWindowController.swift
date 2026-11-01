@@ -184,6 +184,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     private func attach(_ page: WebPage) {
         self.page = page
         page.onEvent = { [weak self] event in self?.handle(event) }
+        page.contextMenuHost = { .littleKite }
         page.view.frame = webContainer.bounds
         page.view.autoresizingMask = [.width, .height]
         webContainer.addSubview(page.view)
@@ -205,6 +206,14 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
             updateBackButton()
         case .openInNewTab(let url, _), .openInLinkPeek(let url), .openInSplit(let url):
             host.openTab(url)
+        case let .openLink(url, target):
+            let app = NSApp.delegate as? AppDelegate
+            switch target {
+            case .newWindow: app?.openNewWindow(url: url)
+            case .incognitoWindow: app?.openIncognitoWindow(url: url)
+            // Little Kite's menu has no Split View or Little Kite items.
+            case .newTab, .splitView, .littleKite: host.openTab(url)
+            }
         case .popup(let popup):
             host.adoptPopup(popup)
         case .closeRequested:

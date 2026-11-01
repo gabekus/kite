@@ -398,6 +398,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         if let window = window as? BrowserWindow { spaceSwipe.install(in: window) }
         pool.onLinkPeek = { [weak self] id, url in self?.openLinkPeek(url, from: id) }
+        installPageMenu()
         pool.onPermissionRequestsChanged = { [weak self] in self?.updatePermissionPrompt() }
     }
 

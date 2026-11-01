@@ -5,6 +5,7 @@
 #include <map>
 
 #include "include/cef_client.h"
+#include "include/cef_context_menu_handler.h"
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_keyboard_handler.h"
 #include "include/cef_parser.h"
@@ -172,6 +173,7 @@ class KCClient : public CefClient,
                  public CefFindHandler,
                  public CefKeyboardHandler,
                  public CefFocusHandler,
+                 public CefContextMenuHandler,
                  public CefPermissionHandler,
                  public CefDevToolsMessageObserver {
  public:
@@ -185,6 +187,7 @@ class KCClient : public CefClient,
     CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+    CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
 
     // CefPermissionHandler: Kite's own prompt (Arc's) for camera, microphone, location and
@@ -502,6 +505,59 @@ class KCClient : public CefClient,
         return (ns_event.modifierFlags & shortcutModifiers) == 0;
     }
 
+    // CefContextMenuHandler
+
+    /// A right-click on a link: Arc's link items (from the delegate) at the top, in place of the
+    /// page items (Back, Forward, Print, View Source), which Chromium's menu leaves out for a link.
+    void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
+                             CefRefPtr<CefFrame> frame,
+                             CefRefPtr<CefContextMenuParams> params,
+                             CefRefPtr<CefMenuModel> model) override {
+        KCBrowser* owner = owner_;
+        id<KCBrowserDelegate> delegate = owner.delegate;
+        NSURL* link = ToNSURL(params->GetLinkUrl());
+        if (!link || (params->GetTypeFlags() & CM_TYPEFLAG_EDITABLE) ||
+            ![delegate respondsToSelector:@selector(browser:contextMenuItemsForLinkURL:)]) {
+            return;
+        }
+        NSArray<NSDictionary<NSString*, id>*>* items = [delegate browser:owner contextMenuItemsForLinkURL:link];
+        if (!items.count) return;
+        for (int page_item : {MENU_ID_BACK, MENU_ID_FORWARD, MENU_ID_PRINT, MENU_ID_VIEW_SOURCE}) model->Remove(page_item);
+        size_t index = 0;
+        for (NSDictionary<NSString*, id>* item in items) {
+            int command = [item[@"id"] intValue];
+            if (command == 0) {
+                model->InsertSeparatorAt(index++);
+                continue;
+            }
+            NSString* title = item[@"title"] ?: @"";
+            model->InsertItemAt(index, MENU_ID_USER_FIRST + command, title.UTF8String);
+            model->SetEnabledAt(index, [item[@"enabled"] boolValue]);
+            index++;
+        }
+        // No separator first, last or twice in a row.
+        for (size_t i = model->GetCount(); i-- > 0;) {
+            bool separator = model->GetTypeAt(i) == MENUITEMTYPE_SEPARATOR;
+            bool redundant = i == 0 || i + 1 == model->GetCount() || model->GetTypeAt(i - 1) == MENUITEMTYPE_SEPARATOR;
+            if (separator && redundant) model->RemoveAt(i);
+        }
+    }
+
+    bool OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
+                              CefRefPtr<CefFrame> frame,
+                              CefRefPtr<CefContextMenuParams> params,
+                              int command_id,
+                              EventFlags event_flags) override {
+        if (command_id < MENU_ID_USER_FIRST || command_id > MENU_ID_USER_LAST) return false;
+        KCBrowser* owner = owner_;
+        id<KCBrowserDelegate> delegate = owner.delegate;
+        NSURL* link = ToNSURL(params->GetLinkUrl());
+        if (link && [delegate respondsToSelector:@selector(browser:performContextMenuItem:linkURL:)]) {
+            [delegate browser:owner performContextMenuItem:command_id - MENU_ID_USER_FIRST linkURL:link];
+        }
+        return true;
+    }
+
     // CefDevToolsMessageObserver
 
     bool OnDevToolsMessage(CefRefPtr<CefBrowser> browser, const void* message, size_t message_size) override {
@@ -687,6 +743,7 @@ class KCClient : public CefClient,
 - (void)goBack { if (_browser) _browser->GoBack(); }
 - (void)goForward { if (_browser) _browser->GoForward(); }
 - (void)reload { if (_browser) _browser->Reload(); }
+- (void)downloadURL:(NSURL *)url { if (_browser) _browser->GetHost()->StartDownload(url.absoluteString.UTF8String); }
 - (void)reloadIgnoringCache { if (_browser) _browser->ReloadIgnoreCache(); }
 - (void)stopLoading { if (_browser) _browser->StopLoad(); }
 

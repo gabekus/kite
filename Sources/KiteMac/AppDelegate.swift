@@ -296,15 +296,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UpdaterWindow.shared.checkForUpdates()
     }
 
-    /// ⌘N: another window on the shared sidebar.
-    func openNewWindow() { windows.openNewWindow() }
+    /// ⌘N: another window on the shared sidebar; with `url`, showing it instead of the command bar.
+    func openNewWindow(url: URL? = nil) { windows.openNewWindow(url: url) }
 
     /// ⌃⌘N: a window with a sidebar of its own.
     func openBlankWindow() { windows.openBlankWindow() }
 
-    /// ⇧⌘N. Each incognito window gets its own in-memory profile, gone when it closes.
+    /// ⇧⌘N. Each incognito window gets its own in-memory profile, gone when it closes. With `url`
+    /// (the page menu's Open Link in Incognito Window) it shows that page instead of the command bar.
     @discardableResult
-    func openIncognitoWindow() -> BrowserWindowController {
+    func openIncognitoWindow(url: URL? = nil) -> BrowserWindowController {
         let controller = BrowserWindowController(
             store: .incognito(), engine: engine.makeEphemeral(), adblocker: adblocker, incognito: true
         )
@@ -317,11 +318,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Offset from the window in front so the two don't stack exactly. Read it
         // before showWindow, which makes the new window main.
         let front = NSApp.mainWindow ?? windowController.window
-        controller.showWindow(nil)
+        // Test runs stay behind the user's windows.
+        if UIDiagnostics.enabledByEnvironment { controller.window?.orderBack(nil) } else { controller.showWindow(nil) }
         if let front, front !== controller.window {
             controller.window?.setFrameTopLeftPoint(NSPoint(x: front.frame.minX + 28, y: front.frame.maxY - 28))
         }
-        controller.newTab(nil)
+        if let url { controller.store.mutate { _ = $0.openTab(url: url) } } else { controller.newTab(nil) }
         return controller
     }
 
