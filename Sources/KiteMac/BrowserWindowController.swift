@@ -105,6 +105,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var sidebarToggles = 0
     /// Arc's Peek over the page, while one is open (BrowserWindowController+LinkPeek).
     var linkPeek: LinkPeekSession?
+    /// Ask on Page conversations of tabs that aren't shown, back when the tab is.
+    var askConversations = AskOnPage.Conversations<AskOnPagePanel>()
 
     /// Incognito windows keep nothing: no saved frame, and every page closes with the window.
     let isIncognito: Bool
@@ -526,6 +528,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         updateSplitDropZones()
         let live = state.allTabIDs
+        pruneAskConversations(live: live)
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
         syncProfile()
         applyDarkPage()
@@ -553,7 +556,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     /// Puts `tabs` on screen, side by side when there are several, and focuses `focused`.
     private func show(_ tabs: [BrowserTab], focused: UUID?) {
-        hideFindBar()
+        findBarLeavesTab(shownTabID)
         let ids = tabs.map(\.id)
         // Capture… belongs to the page it was started on.
         if ids != shownTabIDs || focused != shownTabID { cancelCapture() }
@@ -579,6 +582,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return
         }
         pool.didShow(ids)
+        restoreAskConversation(focused)
         // A new split pane's command bar is about to open and takes the focus.
         if store.commandBar == nil, store.pendingSplitPane == nil {
             shownPage?.focus()

@@ -85,4 +85,25 @@ import Testing
         let tools = arguments.firstIndex(of: "--tools")!
         #expect(arguments[tools + 1] == "")
     }
+
+    @Test func matchLabelFollowsArc() {
+        #expect(AskOnPage.matchLabel(query: "", found: false, matches: 0, activeMatch: nil) == "")
+        #expect(AskOnPage.matchLabel(query: "sky", found: false, matches: 0, activeMatch: nil) == "No matches")
+        #expect(AskOnPage.matchLabel(query: "sky", found: true, matches: 3, activeMatch: 2) == "2/3")
+        // WebKit only says found or not.
+        #expect(AskOnPage.matchLabel(query: "sky", found: false, matches: nil, activeMatch: nil) == "No matches")
+        #expect(AskOnPage.matchLabel(query: "sky", found: true, matches: nil, activeMatch: nil) == "")
+    }
+
+    @Test func conversationsAreKeptPerTab() {
+        var conversations = AskOnPage.Conversations<String>()
+        let a = UUID(), b = UUID()
+        conversations.keep("about a", for: a)
+        conversations.keep("about b", for: b)
+        #expect(conversations.take(for: a) == "about a")
+        #expect(conversations.take(for: a) == nil)
+        conversations.keep("about a", for: a)
+        #expect(conversations.prune(keeping: [a]) == ["about b"])
+        #expect(conversations.tabs == [a])
+    }
 }
