@@ -324,6 +324,28 @@ the springs and eases in Arc's binary (see the vocabulary table above).
 | Sidebar hide (⌘S), card edge | 365 → 236 → 106 → 46 → 20 → 10pt, 1 frame apart (about 80ms). Re-recorded: 365 → 289 → 115.5 → 42 → 10pt | Arc's own 0.08s on (0.25, 0.46, 0.45, 0.94), see above | Same group, 0.08s on that curve. Recorded at 120fps: 0.17 / 0.36 / 0.54 / 0.68 / 0.86 / 0.92 / 0.96 / 0.99 / 1, RMS 0.004 to Arc's curve |
 | Sidebar show | 10 → 145 → 292 → 340 → 362 → 365pt. Re-recorded: 10 → 113.5 → 275.5 → 331 → 362 → 365pt | Same | Same, RMS 0.004 |
 | ⌘T open and close | Instant | — | Instant |
+| New tab row | Rows below slide 41pt down; the new row fades in | 0.12s on (0.25, 0.1, 0.25, 1), RMS 0.018 | Same (`SidebarRowsAnimator`), traced: 0.12s on that curve, plus a 0.12s opacity 0→1 on the new row |
+| Closed tab row | The row fades out in place while the rows below slide 41pt up over it | Same curve, RMS 0.011 | Same, traced: 0.12s slide, 0.12s opacity 1→0 on the closed row |
+
+### Sidebar rows (Arc 1.171, 1 Nov 2026)
+
+- **Mechanism** (the Arc 1.169 binary in the existing Ghidra project, `~/rea-arc/decomp/out6`; recorded on 1.171): the sidebar is an `NSOutlineView` fed by
+  `ARCUI.OutlineViewDiffableDataSource`. `applySnapshot(_:animatingDifferences:)` runs
+  `NSAnimationContext.runAnimationGroup` with `setDuration:` 0.12 and no timing function of its own (so the
+  default, (0.25, 0.1, 0.25, 1)), and inside it `beginUpdates`, the diff, `endUpdates`. Inserts pass
+  `NSTableViewAnimationEffectFade` (1). Removals pass `effectFade | slideUp` (0x11), or `effectFade` alone when a
+  count in the diff is under 2 (what it counts isn't pinned down). Moves use `moveItemAtIndex:` in the same group.
+- **Recording** (Arc incognito window, a ScreenCaptureKit capture of the sidebar at 120Hz, test pages only,
+  frames under `~/rea-arc/recordings/tab-anim`): a tab added by AppleScript at the top pushed the rows below 41pt down
+  in about 0.11s; a selected tab closed by AppleScript faded in place while the next row slid up over it, and the
+  selection pill jumped to the next tab at once and slid with it. Fits: 0.12s on the default curve, RMS 0.018 (insert)
+  and 0.011 (close); easeInEaseOut fits at 0.034 to 0.040.
+- **Not observed:** the × button and ⌘T paths (both go through the same snapshot, but weren't recorded), the
+  `slideUp` case on removal, and a drag reorder.
+- **Kite:** SwiftUI's `List` inserts and removes rows with no animation even inside `withAnimation` (a logging build
+  showed options 0, outside any animation group), so `SidebarRowsAnimator` gives the sidebar's table Arc's group and
+  options after any state change that adds, removes or moves rows. SwiftUI makes a new row's view after the table has
+  animated, so the new row gets its own 0.12s opacity animation on the group's curve.
 
 ## Extensions in the toolbar → `ExtensionsToolbarItems`, `ExtensionsMenu`
 

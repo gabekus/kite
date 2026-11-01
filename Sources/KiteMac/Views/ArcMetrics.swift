@@ -160,6 +160,12 @@ enum ArcMetrics {
         /// animation group and lets Core Animation draw the frames between.
         static let sidebarToggleDuration: Double = 0.08
         static let sidebarToggleCurve: (x1: Float, y1: Float, x2: Float, y2: Float) = (0.25, 0.46, 0.45, 0.94)
+        /// Sidebar rows coming and going (a new tab, a closed or archived one, a move): Arc applies its
+        /// outline's snapshot inside an `NSAnimationContext` group of 0.12s with the default timing
+        /// function, (0.25, 0.1, 0.25, 1). New rows fade in, removed rows fade out in place, and the
+        /// rows below slide to their new places.
+        static let sidebarRowsDuration: Double = 0.12
+        static let sidebarRowsCurve: (x1: Float, y1: Float, x2: Float, y2: Float) = (0.25, 0.1, 0.25, 1)
     }
 
     /// Arc's Edit Theme popover (Arc 1.169 accessibility tree and one capture, 31 Oct 2026). Points

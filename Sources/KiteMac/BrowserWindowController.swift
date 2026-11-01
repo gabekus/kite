@@ -246,6 +246,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         #endif
         sidebarHost = NSHostingView(rootView: sidebar)
+        SidebarRowsAnimator.register(sidebarHost)
         toolbarHost = NSHostingView(rootView: toolbar)
         toolbarHost.sizingOptions = []
         toolbarHost.isHidden = true
