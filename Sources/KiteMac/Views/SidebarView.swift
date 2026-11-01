@@ -1745,14 +1745,15 @@ private struct SpaceHeader: View {
         .onChange(of: store.iconPickerRequest) { _, request in
             guard request == space.id else { return }
             store.iconPickerShown()
-            openPicker()
+            // From the context menu: wait for the menu to finish closing, or the popover won't show.
+            openPicker(after: 0.15)
         }
     }
 
-    private func openPicker() {
+    private func openPicker(after delay: Double = 0) {
         pickerOpen = true
-        // Next turn, so the placeholder it hangs from exists.
-        DispatchQueue.main.async {
+        // Next turn at the earliest, so the placeholder it hangs from exists.
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard let iconAnchor else { return }
             SpaceIconPicker.present(store: store, spaceID: space.id, from: iconAnchor) { pickerOpen = false }
         }
