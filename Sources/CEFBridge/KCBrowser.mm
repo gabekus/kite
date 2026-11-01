@@ -8,6 +8,7 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_keyboard_handler.h"
 #include "include/cef_parser.h"
+#include "include/cef_permission_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_context_handler.h"
 
@@ -27,10 +28,14 @@
 - (NSMutableArray<NSString *> *)documentScriptIdentifiers;
 - (void)addDocumentScript:(NSString *)script navigation:(NSUInteger)navigation completion:(nullable void (^)(void))completion;
 - (void)deliverDevToolsEvent:(NSString *)method data:(NSData *)data;
+- (void)devToolsFrontendDidOpen:(CefRefPtr<CefBrowser>)frontend;
+- (void)devToolsFrontendDidLoad;
+- (void)devToolsFrontendDidClose;
 - (BOOL)deliverSessionMessage:(NSData *)data;
 @property (nonatomic, readwrite) BOOL isLoading;
 @property (nonatomic, readwrite) BOOL canGoBack;
 @property (nonatomic, readwrite) BOOL canGoForward;
+@property (nonatomic, readwrite) int renderProcessIdentifier;
 @end
 
 NSString* const KCDownloadDidUpdateNotification = @"KCDownloadDidUpdateNotification";
@@ -102,12 +107,59 @@ CefRefPtr<CefValue> ToCefValue(id object) {
     return value;
 }
 
+/// Client for a tab's DevTools window. It keeps the frontend browser so View ›
+/// Developer can pick a panel (showDevToolsRunningFrontendScript:).
+class KCDevToolsClient : public CefClient, public CefLifeSpanHandler, public CefLoadHandler {
+ public:
+    explicit KCDevToolsClient(KCBrowser* owner) : owner_(owner) {}
+
+    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+    CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+
+    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override { [owner_ devToolsFrontendDidOpen:browser]; }
+    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override { [owner_ devToolsFrontendDidClose]; }
+    void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, int httpStatusCode) override {
+        if (frame->IsMain()) [owner_ devToolsFrontendDidLoad];
+    }
+
+ private:
+    __weak KCBrowser* owner_;
+    IMPLEMENT_REFCOUNTING(KCDevToolsClient);
+};
+
 /// Whether the delegate opens a clicked link in Arc's Peek card instead (it reports the link itself).
 static bool AskLinkPeek(KCBrowser* owner, const CefString& target, bool shift) {
     id<KCBrowserDelegate> delegate = owner.delegate;
     NSURL* url = ToNSURL(target);
     if (!url || ![delegate respondsToSelector:@selector(browser:opensLinkInPeek:shift:)]) return false;
     return [delegate browser:owner opensLinkInPeek:url shift:shift];
+}
+
+/// Asks the delegate about a site's permission request. `done` runs at most once, with the
+/// answer already stored for the site (Allow or Block; Dismiss stores nothing). False when the
+/// delegate doesn't show prompts, so Chromium's default applies.
+static bool AskPermissions(KCBrowser* owner, NSArray<NSNumber*>* permissions, NSURL* origin, NSInteger promptID,
+                           void (^done)(KCPermissionDecision)) {
+    id<KCBrowserDelegate> delegate = owner.delegate;
+    SEL ask = @selector(browser:requestsPermissions:origin:promptID:decisionHandler:);
+    if (!owner || !origin || !permissions.count || ![delegate respondsToSelector:ask]) return false;
+    __weak KCBrowser* weakOwner = owner;
+    __block bool answered = false;
+    [delegate browser:owner requestsPermissions:permissions origin:origin promptID:promptID
+      decisionHandler:^(KCPermissionDecision decision) {
+        if (answered) return;
+        answered = true;
+        KCBrowser* browser = weakOwner;
+        if (browser && decision != KCPermissionDecisionDismiss) {
+            KCSitePermissionValue value = decision == KCPermissionDecisionAllow ? KCSitePermissionValueAllow
+                                                                                : KCSitePermissionValueBlock;
+            for (NSNumber* permission in permissions) {
+                [browser setSitePermission:(KCSitePermission)permission.integerValue value:value forURL:origin];
+            }
+        }
+        done(decision);
+    }];
+    return true;
 }
 
 /// Per-browser CEF client: forwards Chromium callbacks to the Objective-C KCBrowser.
@@ -120,6 +172,7 @@ class KCClient : public CefClient,
                  public CefFindHandler,
                  public CefKeyboardHandler,
                  public CefFocusHandler,
+                 public CefPermissionHandler,
                  public CefDevToolsMessageObserver {
  public:
     explicit KCClient(KCBrowser* owner) : owner_(owner), adblock_(KCAdblockRequestHandler(owner)) {}
@@ -132,6 +185,89 @@ class KCClient : public CefClient,
     CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+    CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+
+    // CefPermissionHandler: Kite's own prompt (Arc's) for camera, microphone, location and
+    // notifications. Anything else keeps Chromium's default.
+
+    /// getUserMedia. A site with a stored answer isn't asked again.
+    bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser,
+                                        CefRefPtr<CefFrame> frame,
+                                        const CefString& requesting_origin,
+                                        uint32_t requested_permissions,
+                                        CefRefPtr<CefMediaAccessCallback> callback) override {
+        const uint32_t audio = CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE;
+        const uint32_t video = CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
+        if (!requested_permissions || (requested_permissions & ~(audio | video))) return false;
+        KCBrowser* owner = owner_;
+        NSURL* origin = ToNSURL(requesting_origin);
+        if (!owner || !origin) return false;
+        NSMutableArray<NSNumber*>* permissions = [NSMutableArray array];
+        if (requested_permissions & video) [permissions addObject:@(KCSitePermissionCamera)];
+        if (requested_permissions & audio) [permissions addObject:@(KCSitePermissionMicrophone)];
+        bool allAllowed = true;
+        for (NSNumber* permission in permissions) {
+            KCSitePermissionValue stored = [owner sitePermission:(KCSitePermission)permission.integerValue forURL:origin];
+            if (stored == KCSitePermissionValueBlock) {
+                callback->Continue(CEF_MEDIA_PERMISSION_NONE);
+                return true;
+            }
+            allAllowed = allAllowed && stored == KCSitePermissionValueAllow;
+        }
+        if (allAllowed) {
+            callback->Continue(requested_permissions);
+            return true;
+        }
+        return AskPermissions(owner, permissions, origin, --media_prompt_id_, ^(KCPermissionDecision decision) {
+            callback->Continue(decision == KCPermissionDecisionAllow ? requested_permissions : CEF_MEDIA_PERMISSION_NONE);
+        });
+    }
+
+    /// Geolocation, notifications (and camera or mic when Chromium routes them here). Chromium
+    /// itself only asks when nothing is stored for the site.
+    bool OnShowPermissionPrompt(CefRefPtr<CefBrowser> browser,
+                                uint64_t prompt_id,
+                                const CefString& requesting_origin,
+                                uint32_t requested_permissions,
+                                CefRefPtr<CefPermissionPromptCallback> callback) override {
+        const uint32_t camera = CEF_PERMISSION_TYPE_CAMERA_STREAM, mic = CEF_PERMISSION_TYPE_MIC_STREAM;
+        const uint32_t location = CEF_PERMISSION_TYPE_GEOLOCATION, notifications = CEF_PERMISSION_TYPE_NOTIFICATIONS;
+        if (!requested_permissions || (requested_permissions & ~(camera | mic | location | notifications))) return false;
+        NSMutableArray<NSNumber*>* permissions = [NSMutableArray array];
+        if (requested_permissions & camera) [permissions addObject:@(KCSitePermissionCamera)];
+        if (requested_permissions & mic) [permissions addObject:@(KCSitePermissionMicrophone)];
+        if (requested_permissions & location) [permissions addObject:@(KCSitePermissionLocation)];
+        if (requested_permissions & notifications) [permissions addObject:@(KCSitePermissionNotifications)];
+        return AskPermissions(owner_, permissions, ToNSURL(requesting_origin), (NSInteger)prompt_id,
+                              ^(KCPermissionDecision decision) {
+            switch (decision) {
+                case KCPermissionDecisionAllow: callback->Continue(CEF_PERMISSION_RESULT_ACCEPT); break;
+                case KCPermissionDecisionBlock: callback->Continue(CEF_PERMISSION_RESULT_DENY); break;
+                case KCPermissionDecisionDismiss: callback->Continue(CEF_PERMISSION_RESULT_DISMISS); break;
+            }
+        });
+    }
+
+    void OnDismissPermissionPrompt(CefRefPtr<CefBrowser> browser,
+                                   uint64_t prompt_id,
+                                   cef_permission_request_result_t result) override {
+        KCBrowser* owner = owner_;
+        if ([owner.delegate respondsToSelector:@selector(browser:permissionPromptDidCancel:)]) {
+            [owner.delegate browser:owner permissionPromptDidCancel:(NSInteger)prompt_id];
+        }
+    }
+
+    // CefClient
+
+    /// The renderer reports its pid for the Task Manager (KiteHelper's kite.rendererPID).
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefFrame> frame,
+                                  CefProcessId source_process,
+                                  CefRefPtr<CefProcessMessage> message) override {
+        if (message->GetName() != "kite.rendererPID" || !frame->IsMain()) return false;
+        owner_.renderProcessIdentifier = message->GetArgumentList()->GetInt(0);
+        return true;
+    }
 
     // CefFocusHandler
 
@@ -260,6 +396,7 @@ class KCClient : public CefClient,
                                    int error_code,
                                    const CefString& error_string) override {
         KCBrowser* owner = owner_;
+        owner.renderProcessIdentifier = 0;
         if ([owner.delegate respondsToSelector:@selector(browser:renderProcessDidTerminateWithCode:)]) {
             [owner.delegate browser:owner renderProcessDidTerminateWithCode:error_code];
         }
@@ -388,6 +525,8 @@ class KCClient : public CefClient,
 
  private:
     __weak KCBrowser* owner_;
+    /// Ids for getUserMedia prompts, counting down so they never meet Chromium's prompt ids.
+    NSInteger media_prompt_id_ = 0;
     CefRefPtr<CefRegistration> devtools_registration_;
     CefRefPtr<CefResourceRequestHandler> adblock_;
     IMPLEMENT_REFCOUNTING(KCClient);
@@ -443,6 +582,11 @@ class KCClient : public CefClient,
     /// DevTools calls made before the browser exists; sent ahead of the first navigation.
     NSMutableArray<void (^)(void)>* _queuedDevTools;
     BOOL _attached;
+    /// The DevTools window's frontend, while it's open and Kite opened it.
+    CefRefPtr<CefBrowser> _devToolsFrontend;
+    BOOL _devToolsFrontendLoaded;
+    /// Runs in the frontend once it has loaded.
+    NSString* _pendingFrontendScript;
 }
 
 - (instancetype)initWithURL:(NSURL*)url delegate:(id<KCBrowserDelegate>)delegate {
@@ -586,11 +730,45 @@ class KCClient : public CefClient,
     if (_browser) _browser->GetHost()->SetAudioMuted(audioMuted);
 }
 
-- (void)showDevTools {
+- (void)showDevToolsRunningFrontendScript:(NSString*)frontendScript {
     if (!_browser) return;
+    CefRefPtr<CefBrowserHost> host = _browser->GetHost();
     CefWindowInfo windowInfo;
     CefBrowserSettings settings;
-    _browser->GetHost()->ShowDevTools(windowInfo, nullptr, settings, CefPoint());
+    if (_devToolsFrontend && host->HasDevTools()) {
+        // Already open: ShowDevTools just brings it forward.
+        host->ShowDevTools(windowInfo, nullptr, settings, CefPoint());
+        if (!frontendScript) return;
+        if (_devToolsFrontendLoaded) [self runFrontendScript:frontendScript];
+        else _pendingFrontendScript = frontendScript;
+        return;
+    }
+    _pendingFrontendScript = frontendScript;
+    _devToolsFrontendLoaded = NO;
+    host->ShowDevTools(windowInfo, new KCDevToolsClient(self), settings, CefPoint());
+}
+
+- (void)runFrontendScript:(NSString*)script {
+    if (!_devToolsFrontend) return;
+    CefRefPtr<CefFrame> frame = _devToolsFrontend->GetMainFrame();
+    if (frame) frame->ExecuteJavaScript(script.UTF8String, frame->GetURL(), 0);
+}
+
+- (void)devToolsFrontendDidOpen:(CefRefPtr<CefBrowser>)frontend {
+    _devToolsFrontend = frontend;
+}
+
+- (void)devToolsFrontendDidLoad {
+    _devToolsFrontendLoaded = YES;
+    NSString* script = _pendingFrontendScript;
+    _pendingFrontendScript = nil;
+    if (script) [self runFrontendScript:script];
+}
+
+- (void)devToolsFrontendDidClose {
+    _devToolsFrontend = nullptr;
+    _devToolsFrontendLoaded = NO;
+    _pendingFrontendScript = nil;
 }
 
 - (void)find:(NSString*)text forward:(BOOL)forward findNext:(BOOL)findNext {

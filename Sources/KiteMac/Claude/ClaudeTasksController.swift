@@ -386,7 +386,7 @@ final class ClaudeTasksController {
     }
 
     /// GUI apps get a bare PATH. Claude Code may be a Node script, so give it the login shell's.
-    nonisolated private static func environment() -> [String: String] {
+    nonisolated static func environment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         let (status, output) = ClaudeConnect.run("/bin/zsh", ["-lc", "printf %s \"$PATH\""])
         let path = output.trimmingCharacters(in: .whitespacesAndNewlines)

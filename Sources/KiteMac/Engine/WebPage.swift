@@ -42,6 +42,20 @@ enum PageEvent {
     case media(MediaState?)
     /// The pointer moved onto a link (nil: off it). Drives ⇧-hover link previews.
     case linkHover(LinkHover?)
+    /// The site asks for the camera, microphone, location or notifications: Arc's prompt.
+    case permissionRequest(PermissionRequest)
+    /// The engine dropped the prompt with this id itself (the page navigated or closed).
+    case permissionRequestCancelled(id: Int)
+}
+
+/// A site's permission request waiting for an answer. `respond(true)` allows and `false` blocks,
+/// both stored for the site where the engine keeps them (Chromium; Site Controls shows them); nil
+/// dismisses without storing anything. Call it once.
+struct PermissionRequest {
+    let id: Int
+    let origin: URL
+    let permissions: [SitePermission]
+    let respond: (Bool?) -> Void
 }
 
 /// The link under the pointer, as the engine reports it.
@@ -90,7 +104,8 @@ protocol WebPage: AnyObject {
     func allowFocus()
     /// Offscreen pages should throttle rendering and timers.
     func setVisible(_ visible: Bool)
-    func showDevTools()
+    /// Opens DevTools (Web Inspector on WebKit) on `panel`.
+    func showDevTools(_ panel: DevToolsPanel)
     /// Highlights matches of `text`. `findNext` moves through matches of the same text;
     /// `completion` may run more than once as results come in.
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void)
@@ -120,6 +135,8 @@ protocol WebPage: AnyObject {
     func runMediaCommand(_ command: MediaCommand)
     /// The browser's tab mute: the page keeps playing, silently, and isn't told.
     var isAudioMuted: Bool { get set }
+    /// The pid of the process rendering the page, for the Task Manager; nil when unknown.
+    var processIdentifier: pid_t? { get }
     func close()
 }
 
