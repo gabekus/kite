@@ -247,6 +247,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.mutate { _ = $0.openTab(url: url) }
     }
 
+    /// Kite › Check for Updates…: asks GitHub releases; a release opens in a new tab.
+    @objc func checkForUpdates(_ sender: Any?) {
+        UpdaterWindow.shared.openURL = { [weak self] url in self?.store.mutate { _ = $0.openTab(url: url) } }
+        UpdaterWindow.shared.checkForUpdates()
+    }
+
     /// ⌘N: another window on the shared sidebar.
     func openNewWindow() { windows.openNewWindow() }
 
