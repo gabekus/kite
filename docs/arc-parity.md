@@ -77,7 +77,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
-| Appearance: Automatic / Light / Dark (websites) | | 🟡 Dark Pages Off/Match/Always | Have it; the other session owns this |
+| Appearance: Automatic / Light / Dark (websites) | | ✅ View › Appearance ("Websites, Easels, and Notes will use:"), Automatic by default: sets the app appearance as Arc does, so CEF and WebKit pages get that `prefers-color-scheme` live; kept in session.json. Dark Pages (Kite's forced dark) stays separate; its Match System now follows this choice | g82 |
 | Hide Sidebar / Show Sidebar | ⌘S | ✅ titled by state, as Arc's Show/Hide Sidebar (g70) | |
 | Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host, Site Controls and Split View; the sidebar drops its nav buttons and URL field. Kite menu → Show Full URL in Toolbar (Arc's "Show full URL when Toolbar is enabled", off by default) prints the whole address instead of the host. No right-click menu on the toolbar yet (Arc's has Show/Hide Full URL) | B5 (`topBarURLEnabled`) |
 | Collapse Pinned Tabs | | ✅ View › "Collapse Pinned Tabs" ("Expand Pinned Tabs" while collapsed) and a chevron in the space header | B3 |

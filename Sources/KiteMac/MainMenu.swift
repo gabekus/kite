@@ -232,6 +232,22 @@ enum MainMenu {
         ])
 
         submenu("View", [
+            // Arc 1.171's View › Appearance (MainMenu.nib): a disabled header, then its items with their
+            // type-travel keywords and command bar titles ("Switch to … Mode").
+            submenuItem("Appearance", [
+                {
+                    let header = NSMenuItem(title: "Websites, Easels, and Notes will use:", action: nil, keyEquivalent: "")
+                    header.isEnabled = false
+                    return header
+                }(),
+                keywords(item("Automatic", #selector(AppDelegate.setAutomaticAppearance(_:)), toTarget: false, id: "automaticMode"),
+                         ["Switch to Automatic Appearance", "Switch Automatic Mode", "Automatic Mode"]),
+                keywords(item("Light", #selector(AppDelegate.setLightAppearance(_:)), toTarget: false, id: "lightMode"),
+                         ["Switch to Light Mode", "Switch Light Mode", "Light Mode"]),
+                keywords(item("Dark", #selector(AppDelegate.setDarkAppearance(_:)), toTarget: false, id: "darkMode"),
+                         ["Switch to Dark Mode", "Switch Dark Mode", "Dark Mode", "Night Mode"]),
+            ]),
+            .separator(),
             // Arc's Show/Hide Sidebar: "Hide Sidebar" while the sidebar shows, "Show Sidebar" while hidden (retitled
             // when validated). "Toggle Sidebar" is its type-travel trigger.
             keywords(item("Hide Sidebar", #selector(BrowserWindowController.toggleSidebar(_:)), "s", id: "toggleSidebar"), ["Toggle Sidebar"]),

@@ -46,6 +46,29 @@ public enum DarkPagesMode: String, Hashable, Codable, CaseIterable, Sendable {
     case always
 }
 
+/// View › Appearance ("Websites, Easels, and Notes will use:"): the colour scheme pages see
+/// (`prefers-color-scheme`). Arc keeps it as the app's appearance, saved under its `appearance`
+/// defaults key as an NSAppearanceName; with no key it follows macOS (Automatic).
+public enum PageAppearance: String, Hashable, Codable, CaseIterable, Sendable {
+    case automatic
+    case light
+    case dark
+
+    /// Arc's `appearance` value (an NSAppearanceName), nil for Automatic.
+    public var appearanceName: String? {
+        switch self {
+        case .automatic: nil
+        case .light: "NSAppearanceNameAqua"
+        case .dark: "NSAppearanceNameDarkAqua"
+        }
+    }
+
+    /// The mode for an app appearance name; nil (no appearance set) is Automatic.
+    public init(appearanceName: String?) {
+        self = Self.allCases.first { $0.appearanceName == appearanceName } ?? .automatic
+    }
+}
+
 /// Everything that survives a relaunch. Pure value type: shells mutate it and
 /// render it, which keeps the behavior identical across platforms and testable.
 public struct BrowserState: Hashable, Codable, Sendable {
@@ -77,6 +100,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public var darkPages: DarkPagesMode
     /// Sites flipped from the mode's default (darkened when the default is light, and vice versa).
     public var darkPageHosts: Set<String>
+    /// View › Appearance: what colour scheme pages see. Automatic (follow macOS) by default, as Arc.
+    public var pageAppearance: PageAppearance
     /// The built-in ad and tracker blocker, on by default.
     public var blocksAds: Bool
     /// Sites the blocker leaves alone (the shield's per-site off switch).
@@ -126,6 +151,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.searchEngine = searchEngine
         self.darkPages = .matchSystem
         self.darkPageHosts = []
+        self.pageAppearance = .automatic
         self.blocksAds = true
         self.adblockAllowedHosts = []
         self.siteSearches = []
@@ -148,7 +174,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter, showsToolbar
         case warnsBeforeQuitting, spacesWithCollapsedPinnedSections
         case developerModeEnabledForHosts, devModeReloadState, allowsJavaScriptFromAppleEvents
-        case liveFoldersTurnedOff, hasSeenLiveFolderIntro
+        case liveFoldersTurnedOff, hasSeenLiveFolderIntro, pageAppearance
         case profiles, profileFavorites, retiredProfileDirectories, favoriteSplits
     }
 
@@ -170,6 +196,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         archived = try c.decodeIfPresent([ClosedTab].self, forKey: .archived) ?? []
         darkPages = try c.decodeIfPresent(DarkPagesMode.self, forKey: .darkPages) ?? .matchSystem
         darkPageHosts = try c.decodeIfPresent(Set<String>.self, forKey: .darkPageHosts) ?? []
+        pageAppearance = (try? c.decodeIfPresent(PageAppearance.self, forKey: .pageAppearance)) ?? .automatic
         blocksAds = try c.decodeIfPresent(Bool.self, forKey: .blocksAds) ?? true
         adblockAllowedHosts = try c.decodeIfPresent(Set<String>.self, forKey: .adblockAllowedHosts) ?? []
         siteSearches = try c.decodeIfPresent([SiteSearch].self, forKey: .siteSearches) ?? []
@@ -199,6 +226,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         try c.encode(searchEngine, forKey: .searchEngine)
         try c.encode(darkPages, forKey: .darkPages)
         try c.encode(darkPageHosts, forKey: .darkPageHosts)
+        try c.encode(pageAppearance, forKey: .pageAppearance)
         try c.encode(blocksAds, forKey: .blocksAds)
         try c.encode(adblockAllowedHosts, forKey: .adblockAllowedHosts)
         try c.encode(siteSearches, forKey: .siteSearches)

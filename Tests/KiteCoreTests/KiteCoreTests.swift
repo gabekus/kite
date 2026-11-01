@@ -218,6 +218,31 @@ import Testing
     }
 }
 
+@Suite struct PageAppearanceTests {
+    @Test func defaultsToAutomaticAndSurvivesARelaunch() throws {
+        var state = BrowserState.makeDefault(seedURL: nil)
+        #expect(state.pageAppearance == .automatic)
+
+        state.pageAppearance = .dark
+        let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
+        #expect(decoded.pageAppearance == .dark)
+
+        // Sessions saved before View › Appearance follow macOS.
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as! [String: Any]
+        json["pageAppearance"] = nil
+        let old = try JSONDecoder().decode(BrowserState.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(old.pageAppearance == .automatic)
+    }
+
+    @Test func mapsArcsAppearanceNames() {
+        #expect(PageAppearance(appearanceName: nil) == .automatic)
+        #expect(PageAppearance(appearanceName: "NSAppearanceNameAqua") == .light)
+        #expect(PageAppearance(appearanceName: "NSAppearanceNameDarkAqua") == .dark)
+        #expect(PageAppearance(appearanceName: "NSAppearanceNameVibrantDark") == .automatic)
+        #expect(PageAppearance.allCases.map { PageAppearance(appearanceName: $0.appearanceName) } == PageAppearance.allCases)
+    }
+}
+
 @Suite struct FolderTests {
     @Test func tabsInsideFoldersBehaveLikePinnedTabs() {
         var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
