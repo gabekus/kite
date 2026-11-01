@@ -119,6 +119,9 @@ NS_SWIFT_UI_ACTOR
 /// The page called window.close().
 - (void)browserDidRequestClose:(KCBrowser *)browser;
 @optional
+/// A link the user clicked to `url` (in the page, target=_blank, or ⇧-click when `shift`): YES means the
+/// delegate opens it in Arc's Peek card, and the click goes no further.
+- (BOOL)browser:(KCBrowser *)browser opensLinkInPeek:(NSURL *)url shift:(BOOL)shift;
 /// Requests blocked since the page started loading.
 - (void)browser:(KCBrowser *)browser blockedCountDidChange:(NSInteger)count;
 /// Asked before each main-frame navigation; the script runs at document start

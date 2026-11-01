@@ -85,12 +85,15 @@ enum MainMenu {
             item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:)), id: "defaultBrowser"),
             // Until there's a Settings window.
             item("Open Links from Other Apps in Little Kite", #selector(AppDelegate.toggleLittleKiteLinks(_:)), toTarget: false),
+            item("Air Traffic Control…", #selector(AppDelegate.showAirTrafficControl(_:)), toTarget: false, id: "openAirTrafficControl"),
             // Arc Max's "5-Second Previews" (hoverCardsEnabled), off by default as in Arc.
             item("Link Previews (Hold ⇧ over a Link)", #selector(AppDelegate.toggleLinkPreviews(_:)), toTarget: false),
             item("Low Battery Energy Saver (30 fps)", #selector(AppDelegate.toggleEnergySaver(_:)), toTarget: false),
             submenuItem("Archive tabs after", ArchiveInterval.allCases.enumerated().map { i, interval in
                 item(interval.title, #selector(AppDelegate.setArchiveInterval(_:)), tag: i, toTarget: false)
             }),
+            // Arc's Arc menu: "Check for Updates…", no shortcut, last item before Services (read from its menu bar).
+            item("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)), toTarget: false, id: "checkForUpdates"),
             .separator(),
             item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false, id: "hideKite"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option], toTarget: false, id: "hideOthers"),
@@ -258,8 +261,19 @@ enum MainMenu {
             item("Previous Tab", #selector(BrowserWindowController.previousTab(_:)), up, [.command, .option], id: "previousTab"),
             item("Switch to Recent Tab", #selector(BrowserWindowController.selectRecentTab(_:)), "\t", .control, id: "nextRecentTabItem"),
             alternate(#selector(BrowserWindowController.previousTab(_:)), "\t", [.control, .shift]),
+            // Arc 1.171's Tabs menu: no shortcut by default; Arc's binding name.
+            item("Reveal Tab in Sidebar", #selector(BrowserWindowController.revealTabInSidebar(_:)), id: "revealTabInSidebar"),
             .separator(),
             item("Clear Today", #selector(BrowserWindowController.clearToday(_:)), "k", [.command, .shift], id: "clearUnpinnedTabs"),
+            item("Reset all tabs in this Space", #selector(BrowserWindowController.resetAllTabsInSpace(_:)), id: "resetSpace"),
+            {
+                // Arc has a `resetTab` binding ("Reset tab to original URL.") but no menu item for it:
+                // hidden, so a shortcut set for it (or brought over from Arc) still works.
+                let reset = item("Reset Tab to Original URL", #selector(BrowserWindowController.resetTab(_:)), id: "resetTab")
+                reset.isHidden = true
+                reset.allowsKeyEquivalentWhenHidden = true
+                return reset
+            }(),
             .separator(),
         ] + (1...9).map { n in
             item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n, id: n == 9 ? "lastTab" : "tab\(n)")

@@ -102,6 +102,14 @@ CefRefPtr<CefValue> ToCefValue(id object) {
     return value;
 }
 
+/// Whether the delegate opens a clicked link in Arc's Peek card instead (it reports the link itself).
+static bool AskLinkPeek(KCBrowser* owner, const CefString& target, bool shift) {
+    id<KCBrowserDelegate> delegate = owner.delegate;
+    NSURL* url = ToNSURL(target);
+    if (!url || ![delegate respondsToSelector:@selector(browser:opensLinkInPeek:shift:)]) return false;
+    return [delegate browser:owner opensLinkInPeek:url shift:shift];
+}
+
 /// Per-browser CEF client: forwards Chromium callbacks to the Objective-C KCBrowser.
 class KCClient : public CefClient,
                  public CefLifeSpanHandler,
@@ -156,6 +164,9 @@ class KCClient : public CefClient,
         KCBrowser* owner = owner_;
         id<KCBrowserDelegate> delegate = owner.delegate;
         if (!delegate) return true;
+        // A target=_blank link (or ⇧-click) the delegate opens in Arc's Peek card: no popup.
+        bool linkClick = target_disposition == CEF_WOD_NEW_FOREGROUND_TAB || target_disposition == CEF_WOD_NEW_WINDOW;
+        if (user_gesture && linkClick && AskLinkPeek(owner, target_url, target_disposition == CEF_WOD_NEW_WINDOW)) return true;
         // Host the popup in a Kite tab instead of a separate native window.
         KCBrowser* popup = [[KCBrowser alloc] initPopupWithDelegate:delegate];
         NSRect bounds = owner.view.bounds;
@@ -235,6 +246,11 @@ class KCClient : public CefClient,
                         CefRefPtr<CefRequest> request,
                         bool user_gesture,
                         bool is_redirect) override {
+        if (frame->IsMain() && user_gesture && !is_redirect &&
+            (request->GetTransitionType() & TT_SOURCE_MASK) == TT_LINK &&
+            AskLinkPeek(owner_, request->GetURL(), false)) {
+            return true;
+        }
         if (frame->IsMain()) [owner_ willNavigateMainFrame:request];
         return false;
     }
@@ -267,6 +283,8 @@ class KCClient : public CefClient,
         bool background = target_disposition == CEF_WOD_NEW_BACKGROUND_TAB;
         bool foreground = target_disposition == CEF_WOD_NEW_FOREGROUND_TAB;
         NSURL* url = ToNSURL(target_url);
+        // ⇧-click: Arc's "Open a Peek window when clicking on links with Shift held".
+        if (user_gesture && target_disposition == CEF_WOD_NEW_WINDOW && AskLinkPeek(owner_, target_url, true)) return true;
         if (!user_gesture || !(background || foreground) || !url) return false;
         [owner_.delegate browser:owner_ openURLInNewTab:url foreground:foreground];
         return true;

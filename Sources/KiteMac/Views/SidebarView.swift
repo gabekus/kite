@@ -17,6 +17,9 @@ struct SidebarActions {
     /// A folder's context menu.
     var renameFolder: (UUID) -> Void
     var deleteFolder: (UUID) -> Void
+    /// A pinned tab that left its pinned page: "Back to Pinned URL" and "Separate From Pinned Tab".
+    var resetTab: (UUID) -> Void = { _ in }
+    var separateFromPinnedTab: (UUID) -> Void = { _ in }
     /// A tab's Rename…: in place in its row, or Arc's dialog where there's no row.
     var renameTab: (UUID) -> Void
 }
@@ -118,6 +121,17 @@ struct SidebarView: View {
 
     /// One space's page: its header, pinned items, new tab and today's tabs.
     private func spaceList(_ space: Space) -> some View {
+        ScrollViewReader { proxy in
+            spaceRows(space)
+                // Tabs › Reveal Tab in Sidebar. Next turn, so a sidebar that was just shown has laid out.
+                .onChange(of: store.revealRequest) { _, request in
+                    guard let request, space.id == store.state.selectedSpaceID else { return }
+                    DispatchQueue.main.async { withAnimation { proxy.scrollTo(request.rowID) } }
+                }
+        }
+    }
+
+    private func spaceRows(_ space: Space) -> some View {
         List {
             Section {
                 // A row rather than a section header: a plain List paints headers with an opaque bar.
@@ -244,6 +258,9 @@ struct SidebarView: View {
             onClose: { actions.closeTab(tab.id) },
             onTogglePin: { store.mutate { $0.togglePin(tab: tab.id) } },
             onFavorite: { store.mutate { $0.toggleFavorite(tab: tab.id) } },
+            canReset: pinned && tab.hasLeftPinnedURL,
+            onReset: { actions.resetTab(tab.id) },
+            onSeparate: { actions.separateFromPinnedTab(tab.id) },
             onRename: { actions.renameTab(tab.id) },
             onCommitRename: { name in
                 guard store.renamingTabID == tab.id else { return }
@@ -682,6 +699,10 @@ private struct TabRow: View {
     let onClose: () -> Void
     let onTogglePin: () -> Void
     let onFavorite: () -> Void
+    /// A pinned tab away from its pinned page (Arc's TabCellState.canResetTab).
+    var canReset = false
+    var onReset: () -> Void = {}
+    var onSeparate: () -> Void = {}
     let onRename: () -> Void
     let onCommitRename: (String) -> Void
     let onCancelRename: () -> Void
@@ -713,6 +734,19 @@ private struct TabRow: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 0)
+            if hovering && canReset && !isRenaming {
+                // Arc's tooltip; its icon and placement are unverified (see arc-visual-spec.md).
+                Button(action: onReset) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(0.6)
+                .help("Back to Pinned URL")
+                .accessibilityLabel("Back to Pinned URL")
+            }
             if hovering && !isRenaming {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -737,6 +771,10 @@ private struct TabRow: View {
         .contextMenu {
             Button("Add to Favorites", action: onFavorite)
             Button(isPinned ? "Unpin Tab" : "Pin Tab", action: onTogglePin)
+            if canReset {
+                Button("Back to Pinned URL", action: onReset)
+                Button("Separate From Pinned Tab", action: onSeparate)
+            }
             Button("Copy Link") { copyLink(tab.url) }
             Button("Rename…", action: onRename)
             Divider()
