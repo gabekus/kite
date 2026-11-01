@@ -56,6 +56,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     let browser: KCBrowser
     var onEvent: ((PageEvent) -> Void)?
     var linkPeekPolicy: ((URL, Bool) -> Bool)?
+    var contextMenuHost: (() -> PageContextMenu.Host)?
     private var mediaInUse = false
     private let adblocker: Adblocker?
     private var address: URL?
@@ -457,6 +458,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     func browser(_ browser: KCBrowser, openURLInNewTab url: URL, foreground: Bool) {
+        // CEF reports only the disposition (⌘-click: background, ⇧⌘: foreground); ⌥ is read from the
+        // keyboard, as Arc reads NSEvent.modifierFlags. ⌥⌘-click opens in Split View.
+        if !foreground, LinkClick.commandClickDestination(shift: false, option: NSEvent.modifierFlags.contains(.option)) == .splitView {
+            return onEvent?(.openInSplit(url)) ?? ()
+        }
         onEvent?(.openInNewTab(url, foreground: foreground))
     }
 
@@ -504,6 +510,21 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
 
     func browser(_ browser: KCBrowser, findResultCount count: Int32, activeMatch: Int32, final: Bool) {
         findCompletion?(FindResult(found: count > 0, matches: Int(count), activeMatch: Int(activeMatch)))
+    }
+
+    @objc(browser:contextMenuItemsForLinkURL:)
+    func browser(_ browser: KCBrowser, contextMenuItemsForLinkURL url: URL) -> [[String: Any]]? {
+        let host = contextMenuHost?() ?? PageContextMenu.Host()
+        return PageContextMenu.linkItems(for: url, host: host).map { item in
+            ["id": PageContextMenu.commandID(item), "title": PageContextMenu.title(item),
+             "enabled": PageContextMenu.isEnabled(item, host: host)]
+        }
+    }
+
+    @objc(browser:performContextMenuItem:linkURL:)
+    func browser(_ browser: KCBrowser, performContextMenuItem itemID: Int, linkURL url: URL) {
+        guard let item = PageContextMenu.item(commandID: itemID) else { return }
+        PageContextMenuItems.perform(item, url: url, send: { onEvent?($0) }, download: { browser.downloadURL($0) })
     }
 }
 

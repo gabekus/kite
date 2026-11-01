@@ -204,6 +204,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             resetTab: { [weak self] id in self?.backToPinnedURL(id) },
             separateFromPinnedTab: { [weak self] id in self?.separateFromPinnedTab(id) },
             renameTab: { [weak self] id in self?.renameTab(id) },
+            tidyTabs: { [weak self] id in self?.tidyTabs(inSpace: id) },
+            removeTabGroupHeader: { [weak self] id in self?.removeTabGroupHeader(id) },
             toggleMute: { [weak self] id in self?.toggleMute(id) }
         )
         spaceSwipe = SpaceSwipeController(
@@ -396,6 +398,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         if let window = window as? BrowserWindow { spaceSwipe.install(in: window) }
         pool.onLinkPeek = { [weak self] id, url in self?.openLinkPeek(url, from: id) }
+        installPageMenu()
         pool.onPermissionRequestsChanged = { [weak self] in self?.updatePermissionPrompt() }
     }
 

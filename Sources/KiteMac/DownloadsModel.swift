@@ -20,6 +20,10 @@ final class DownloadsModel {
     @ObservationIgnored private var webKitDownloads: [Int: WKDownload] = [:]
     @ObservationIgnored private var webKitProgress: [Int: NSKeyValueObservation] = [:]
     @ObservationIgnored private var nextWebKitID = -1
+    /// The title of the tab each live download came from, for Tidy Downloads.
+    @ObservationIgnored private var sourceTitles: [UUID: String] = [:]
+    /// The front window's current tab title: where a Chromium download most likely started.
+    @ObservationIgnored var currentTabTitle: () -> String? = { nil }
 
     private struct File: Codable {
         var version: Int
@@ -50,16 +54,26 @@ final class DownloadsModel {
         #endif
     }
 
-    func apply(_ update: DownloadUpdate) {
+    func apply(_ update: DownloadUpdate, sourceTitle: String? = nil) {
         let previous = list.items.first { $0.engineID == update.engineID }?.state
-        list.apply(update)
+        // A finished download is final: a late progress tick (WebKit's KVO hops to the main queue)
+        // would mark it in progress again, and a late repeat would put back a path Tidy Downloads
+        // has since renamed.
+        if previous == .complete { return }
+        let (item, isNew) = list.apply(update)
+        if isNew, let title = sourceTitle ?? currentTabTitle(), !title.isEmpty { sourceTitles[item.id] = title }
+        if update.state != .inProgress {
+            let title = sourceTitles.removeValue(forKey: item.id)
+            // Arc Max's Tidy Downloads: a finished download gets a readable name.
+            if update.state == .complete, previous != .complete { DownloadTidier.shared.tidy(item, sourceTitle: title) }
+        }
         // Progress ticks don't need a write each; a download starting or finishing does.
         if previous != update.state { saveSoon(after: .milliseconds(200)) } else { saveSoon(after: .seconds(5)) }
     }
 
     // MARK: WebKit
 
-    func track(_ download: WKDownload, destination: URL) {
+    func track(_ download: WKDownload, destination: URL, sourceTitle: String?) {
         let id = nextWebKitID
         nextWebKitID -= 1
         webKitDownloads[id] = download
@@ -69,7 +83,10 @@ final class DownloadsModel {
             self?.apply(DownloadUpdate(engineID: id, url: url, path: destination.path, state: state,
                                        receivedBytes: progress.completedUnitCount, totalBytes: progress.totalUnitCount))
         }
-        report(.inProgress)
+        let progress = download.progress
+        apply(DownloadUpdate(engineID: id, url: url, path: destination.path, state: .inProgress,
+                             receivedBytes: progress.completedUnitCount, totalBytes: progress.totalUnitCount),
+              sourceTitle: sourceTitle)
         webKitProgress[id] = download.progress.observe(\.completedUnitCount) { _, _ in
             DispatchQueue.main.async { MainActor.assumeIsolated { report(.inProgress) } }
         }
@@ -142,6 +159,12 @@ final class DownloadsModel {
 
     func clearFinished() {
         list.clearFinished()
+        saveSoon(after: .milliseconds(200))
+    }
+
+    /// The file moved (Tidy Downloads renamed it, or Undo put it back): the list follows.
+    func moved(_ id: UUID, to path: String) {
+        guard list.setPath(path, for: id) else { return }
         saveSoon(after: .milliseconds(200))
     }
 

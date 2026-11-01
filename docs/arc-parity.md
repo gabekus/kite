@@ -79,7 +79,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | Appearance: Automatic / Light / Dark (websites) | | 🟡 Dark Pages Off/Match/Always | Have it; the other session owns this |
 | Show Sidebar | ⌘S | ✅ | |
-| Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host, Site Controls and Split View; the sidebar drops its nav buttons and URL field. "Show full URL" setting not yet | B5 (`topBarURLEnabled`) |
+| Show Toolbar (URL bar on top) | ⇧⌘D | ✅ View → Show/Hide Toolbar: a 32pt bar over the page with back/forward/reload, the host, Site Controls and Split View; the sidebar drops its nav buttons and URL field. Kite menu → Show Full URL in Toolbar (Arc's "Show full URL when Toolbar is enabled", off by default) prints the whole address instead of the host. No right-click menu on the toolbar yet (Arc's has Show/Hide Full URL) | B5 (`topBarURLEnabled`) |
 | Collapse Pinned Tabs | | ✅ View › "Collapse Pinned Tabs" ("Expand Pinned Tabs" while collapsed) and a chevron in the space header | B3 |
 | Stop Loading | ⌘. | ✅ | |
 | Refresh / Force Refresh | ⌘R / ⇧⌘R | ✅ | |
@@ -179,12 +179,14 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
 | Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | 🟡 Little Kite: own window, toolbar measured from Arc, "Open in <Space>" (⌘O) moves the live page into the main window, ⌘W closes, Kite menu → Open Links from Other Apps in Little Kite (on by default) | No profile indicator, extensions button, downloads tray, searchable space picker, auto-archive or global hotkey yet |
 | Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal and top/bottom panes, divider, sidebar row; command bar Add Vertical Split View and Convert to Horizontal/Vertical; drop a page link on a content edge to open it in a new pane (real drag pending a hands-on check). Not yet: Add Top/Bottom/Left/Right menu items, dragging sidebar tabs into a split, moving panes | Thread: Split view |
+| ⌥⌘-click a link into Split View | A ⌘-click with ⌥ held opens the link in a new pane | 🟡 WebKit and Chromium: the link opens in a pane next to the clicked tab and takes focus; ⇧⌘ stays a foreground tab, ⇧ stays Peek, a full split does nothing. Kite has no ⌥⌘ Little Arc entry point, so ⌥⌘ always splits (Arc with that toggle off). Not yet: ⌥-middle-click on WebKit, ⌥⌘ on a `target=_blank` link in Chromium | Gap 37 |
 | Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | 🟡 | Sidebar Mini Player (play/pause, prev/next, tab mute, PiP, close, back to tab); auto PiP on leaving a playing video. No volume slider, mic/camera, marquee, Arc PiP window |
 | Zap (Boosts) | Pick elements on a page; they stay hidden on that site | 🟡 Picker overlay over the page (hover highlight, click → Zap this / Zap all related elements / Cancel), shelf listing the site's zaps with remove; per-site selectors in zaps.json injected at document start (Chromium isolated world, WebKit content world) | No entry point until the Boost editor (gap 21) calls `showZapPicker`; no candidate slider, zap preview images or Copy selector mode; highlight colour/cursor unmeasured. Gap 22 |
 | Media pane | All tabs playing media | ✅ n/a: Arc has no such pane: its "Media" is the Library's gallery of pictures, videos and Captures (see View Media…) | — |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
 | Tab audio button | Speaker on a sidebar tab that is playing or muted; click (or context menu Mute/Unmute) to toggle | 🟡 24pt button between favicon and title, Arc's tooltips and menu titles | Arc's animated speaker (waves, slash) is SF Symbols here; Mute/Unmute all tabs (command bar) not built |
 | Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |
+| Page right-click menu | Chromium's page menu with Arc's Open Link in Split View / Little Arc and Capture Image... | 🟡 Link section as Arc on both engines (New Tab, New Window, Split View, Little Kite, Incognito Window, Save Link As…, Copy Link/Email Address); WebKit image section (Open Image in New Tab, Save Image As…, Copy Image, Copy Image Address) | Gap 36. Not yet: Chromium selection and page sections (WebKit keeps its own), Copy Link Text, Capture Image..., image items on Chromium; Customize Page › Boosts needs Boosts |
 | Developer Mode | Per-site switch and dev reload options (Arc's strings show no console pane or URL change) | 🟡 See the Developer menu row | Gap 16 |
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
@@ -207,12 +209,14 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | ChatGPT/AI in command bar | Ask from the command bar | ❌ | With Claude in the browser |
 | Tidy Tab Titles | Pinned tabs get short AI titles | 🟡 pinning a tab (any path) asks Kite's Claude (`claude -p`, haiku, no tools) for a 1–3 word name, set as the tab's custom name; renaming or unpinning first wins; on by default as in Gabe's Arc, Kite menu › Tidy Tab Titles; `TidyTabTitles`, `TidyTabTitlesController` | No title animation (Arc's isAnimatingAiRename), no per-site rules (Arc's TidyTitleConfiguration), no feedback report, no settings row |
 | Tidy Downloads | Downloads renamed by AI | ❌ | With Claude in the browser |
+| Tidy Tabs | Groups Today tabs automatically | 🟡 Tidy button on the Today divider (on hover) asks Kite's Claude, then shows each group under a header with Close tab group and Remove header; Undo Tidy Tabs; Kite menu toggle (on, like Gabe's Arc). Button and header sizes are Kite's | Gap 27: measure Arc's divider buttons; Clear button; tidyAndClear |
+| Tidy Downloads | Downloads renamed by AI | 🟡 A finished download is renamed by Kite's Claude (`claude -p`, fast model), extension kept, never overwrites; "Download renamed!" toast with Undo. On by default (Gabe's `renameDownloadsEnabled`); Kite menu › Tidy Downloads | Renames after completion (Arc names it before it lands), no sidebar rename banner, no Settings row |
 | Tidy Tabs | Groups Today tabs automatically | ❌ | With Claude in the browser |
 | Browse for Me | AI builds a page from search results | ❌ | Skip? |
 | Custom tab names | Rename a pinned tab | ✅ any tab: Rename… in its menu, double-click, Tabs › Rename Current Tab…; kept when the page title changes, imported from Arc | B3 |
 | Themes | Space colors, grain, light/dark, gradient editor | 🟡 presets + imported | Thread: space theme editor |
 | App icons | Alternate Dock icons | ❌ | Skip? (we draw our own) |
-| Sound effects | Subtle UI sounds | ❌ | Later, our own sounds |
+| Sound effects | Subtle UI sounds | 🟡 Kite › Play Kite Sound Effects (on, like Arc); Kite's own capture sound made in code, played at Arc's 0.7 volume when Capture… or Capture Full Page takes an image | Gap 30. Not yet: tab-reorder haptics (tab-drag thread) |
 | Remappable shortcuts | Settings → Shortcuts | 🟡 overrides in keybindings.json, keyed by Arc-style action IDs on every menu item; Import from Arc brings over Arc's StorableKeyBindings.json; the Settings editor is to come | B6 |
 | AppleScript dictionary | windows, tabs (URL, title, execute JS), spaces | 🟡 Arc’s sdef: windows, tabs (id, title, URL, loading, location; make, select, close, go back/forward, reload, stop, execute), spaces read only, Little Kite tabs; no `focus` or settable `location` yet | Gap 28 |
 | Sync | Sidebar via CloudKit/Firebase | ❌ | Roadmap: sync |

@@ -990,6 +990,90 @@ Arc was not opened or driven, so no geometry was measured.
   ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
   deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
 
+## Sound effects → `SoundEffects` (KiteCore), `SoundEffectPlayer` (Arc 1.171 strings, files, defaults and disassembly, 1 Nov 2026)
+
+- Setting: "Play Arc sound effects" next to "Haptic feedback when reordering tabs" (strings 80425–80426). Keys
+  `playUserInterfaceSoundsDisabled` and `tabReorderingHapticsDisabled` (strings 64175, 64204), stored in Arc's
+  defaults beside `machineID`, `hoverCardsEnabled` and friends. Neither key is set in Gabe's Arc, so both are at
+  Arc's default: sounds on, haptics on. Kite's `soundEffectsEnabled` is on unless turned off.
+- Sound files in `ARC_SoundEffects.bundle` (names and `afinfo` only; nothing copied): `capture.wav` (WAVE, 2 ch,
+  48 kHz, 24-bit, 0.634 s) and `event.m4a` (AAC, 2 ch, 44.1 kHz, 3.52 s).
+- One effect. `sound(forEffect:)` (SoundEffectClientImpl.swift, 0x101cb7c38) doesn't branch on the effect: it
+  builds the URL for the small string "capture" with type "audio/vnd.wave" and caches the player by filename
+  (`soundsByFilename`). Nothing loads `event.m4a` through this client; where it's used, if anywhere, wasn't found.
+- Playing (0x101cb8190): get the player, `setVolume:` 0.7 (`0x3f333333`), play. The client also has `preload`,
+  `setIsEnabled` and `isEnabled`.
+- Who plays it: `WindowState` holds the `soundEffectClient` dependency, used from WindowState+Capture.swift (its
+  unimplemented-dependency stub sits among the capture code, 0x10020b870). So the sound goes with Capture.
+  Which capture paths play it (region, full page) and at what moment wasn't traced. Kite plays it, inferred, when
+  either Capture… or Capture Full Page has the image.
+- Kite's capture sound is its own, made in code (`SoundEffects.shutter`): two clicks 70 ms apart, each high-passed
+  noise from a fixed-seed generator with a 6 / 9 ms exponential decay over a 210 / 160 Hz sine thump, 0.5 ms
+  fade-in, peak 0.9, 48 kHz 16-bit mono, the same 0.634 s as Arc's file. Rendered to a WAV in memory at first use.
+- Haptics: Arc's `tabReorderingHapticsDisabled` sits next to `dropHapticSubject` and `dropHapticSubscription`
+  (strings 154777–154779; presumably the drop haptic when reordering). Not built in Kite: tab reordering belongs to the tab-drag work.
+## Tidy Tabs → `TidyTabs`, `TodayTabGroup` (KiteCore), `TodayDivider`, `TabGroupHeaderRow` (Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+Nothing in Arc was pressed or run. The only open Arc window had its sidebar hidden, so no Arc geometry was measured.
+
+- **Setting:** `tidyTabsEnabled` (arc-strings.txt 64303), toggled by `onToggleTidyTabsEnabled` (69096), feature id
+  `tidy_tabs` (69679). Gabe's Arc: `tidyTabsEnabled = 1`, so Kite defaults it on (Kite menu → Tidy Tabs).
+- **Button:** `SidebarTidyButton` with a `TidyTabsButtonImageView` (30863) in `UnpinnedSectionHeaderCellView`, the
+  Today divider row, next to `SidebarClearButton`. Title "Tidy" (inline string at `0x100187624`, comment "Button
+  Title; Tidy unpinned tabs in this space"), tooltip "Organize Today Tabs" ("Tooltip; Use LLM to organize unpinned
+  tabs in this space", `0x100187548`). The button runs `rotationAnimation` / `rotationBackAnimation` on
+  `transform.rotation.z` (`0x10030f9c4`). State: `canAutoOrganizeTodayTabs`, `shouldShowAutoOrgButton`,
+  `autoOrgTabsEnabled` (176294–176317); action `onDidClickAutoOrganize` (176650). Clear Today's button option list
+  includes `tidyAndClear` (176321).
+- **Mechanism:** `WindowData+TabGroups.swift` `createUnpinnedTabGroups()` (`0x1029f13c8`) builds a prompt with
+  "Here are my tabs, in the format 'id: title':" (`0x1029f15a0`) and asks for "Your array of group assignments, as
+  valid JSON within a ```code block```:" (`0x1029f1678`). The rest of the prompt is an obfuscated string ("Failed
+  to decode obfuscated string.") and wasn't decoded; Kite's prompt is its own. Leftover tabs go to a group named
+  "Other" (inline `0x1029f2f6c`, comment "Tab group of miscellaneous tabs"). Error type `TabGroupingWithAIError`.
+- **Result: headers, not folders.** Groups show as `TabGroupHeaderCellView` rows (sidebar item kind
+  `tabGroupHeader`, 161196) in Today. Header menu "Remove header" (`0x102ecb8e0`, menu "Tab Group Context Menu"),
+  undo "Remove Header" (`0x102a07b90`); a close button with tooltip "Close tab group" (`0x100048650`, "Tooltip for
+  the button to close a group of tabs in the sidebar.", action `clearTabGroup`). Undo of a tidy is "Tidy Tabs"
+  (`0x102a07ac4`, "Undo prompt for tidying explore tabs"). Toast "No tab groups found" (`0x1018e5af8`) when the
+  model returns none. Analytics `auto_organize_tab_groups_completed`, `remove_tab_group_header_tapped`.
+- **Kite:** the divider row shows a "Tidy" button while the pointer is on it (and spins while Claude works). It
+  sends the unpinned tabs that aren't under a header (title and host, numbered, wrapped as untrusted) to Kite's
+  built-in Claude (`claude -p --model haiku`, no tools, no session kept), then moves each group's tabs together,
+  in the model's order, under a header. Tabs opened meanwhile stay on top. A header's tabs are members by id; the
+  header sits above the first member and goes when its last tab leaves Today. Edit › Undo Tidy Tabs and Undo
+  Remove Header restore the order and headers.
+- **Kite's own, unverified against Arc:** the button's size, icon (SF `wand.and.stars`; Arc's image isn't known),
+  colours and hover reveal; the header row's height (25, the divider's), font and close button; the minimum of 3
+  tabs (`canAutoOrganizeTodayTabs`'s rule isn't in the strings); showing the divider row with no pinned tabs so the
+  button has somewhere to be. Arc's Clear button on the same row isn't in Kite yet.
+## Tidy Downloads → `TidyDownloads` (KiteCore), `DownloadTidier` (Arc 1.171 strings, defaults and disassembly, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 43295, 174650-174675, 160610, 73907,
+75911; `~/rea-arc/decomp/arc.s` 738300-739230 (the request builder, in `AppState+OnDeterminingFilename.swift`);
+`defaults read company.thebrowser.Browser` (key names and booleans only).
+
+- Setting: `renameDownloadsEnabled` (Arc Max, "Auto-Renamed Tabs and Downloads"); **1 in Gabe's Arc**, so Kite's
+  `tidyDownloadsEnabled` defaults on. Kite menu › Tidy Downloads (Rename with Claude) turns it off until there's a
+  Settings window. Feature flag `rename-downloads-using-ai`.
+- Request: `beginRename(browserContextID:downloadID:defaultFilename:sourceUrl:webContentsTitle:referrerTitle:)`
+  sends the original filename, the source tab title and the source domain, asks for a "helpful, concise and
+  readable" name of 2-4 words (keep informative names, drop IDs and "(1)"/"(copy)" cruft, shorten dates and drop
+  seconds, fix casing and spacing, add context from the tab title when the name says nothing), answers as JSON
+  `{newName}` in the user's language. Kite's prompt follows those rules in its own words and examples.
+- Guard: Arc refuses an empty name or one starting with "." ("Tried to auto-rename file to empty filename or
+  filename starting with '.'"). Kite also keeps the original extension exactly (tar.gz as one), strips `/ : \`,
+  caps the name at 120 characters, and renames with `renamex_np(RENAME_EXCL)` to a free "Name 2.ext", so nothing
+  is ever overwritten.
+- Feedback: toast "Download renamed!" with an Undo accessory (`arrow.uturn.backward`,
+  `DownloadRenamedToastContentOptions`); Undo shows "Download name reverted!". Kite reuses its toast with that
+  symbol in the share button's place.
+- When: Arc builds the request while Chromium determines the filename (`AppState+OnDeterminingFilename`), so the
+  file lands under the new name. **Kite renames after the download completes** (the engines pick the path
+  synchronously today), then shows the toast. Inferred, not verified: that Arc holds the download for the answer.
+- Not built: Arc's sidebar banner for renamed downloads (`DownloadRenameItemState`, `didClickUndoDownloadRename`,
+  `didDismissDownloadRenameBanner`), the `DownloadRenamePreview` settings illustration, rename analytics.
+  Arc's model runs on its server; Kite's is Claude Code on the fast model (`claude -p --model haiku`, no tools, no
+  MCP servers, 30 s limit).
 ## AppleScript dictionary → `Resources/Kite.sdef`, `AppleScript.swift` (Arc 1.171 sdef, Info.plist, nib, strings, 1 Nov 2026)
 
 - `Arc.app/Contents/Info.plist`: `NSAppleScriptEnabled` 1, `OSAScriptingDefinition` `Arc.sdef` (read with
@@ -1298,9 +1382,84 @@ swapped without Arc's wave and slash animation; its 0.6 opacity copies Kite's cl
   "Click the lock" suggests its site control center; Kite shows a Default Mail App row only on the handler's
   site). Schemes other than mailto aren't registered.
 
+## Page context menu → `PageContextMenu` (KiteCore), `PageContextMenuItems`, WebKit/CEF hooks (Arc 1.171 ArcCore, 1 Nov 2026)
+
+Sources: ArcCore.framework (arm64 slice): UTF-16 literals and a disassembly of the code that references them;
+ArcCore's `en.lproj/locale.pak` for Chromium's stock titles; `~/rea-arc/arc-strings.txt` (main binary).
+
+- **Where it's built.** Arc's web page menu is Chromium's `RenderViewContextMenu`, built inside ArcCore and handed
+  to Swift as an `ArcMenuModel` with an `ArcContextMenuElementInfo` (`linkURL`, `srcURL`, `selectionText`,
+  `mediaType`… selectors near ArcCore strings 1218229). The main binary's `ContextMenus` module only builds the
+  sidebar menus; its "Copy link as Markdown" (strings 84947) is a sidebar item, not a page item.
+- **Arc's own items.** Three hard-coded UTF-16 titles in ArcCore `__ustring` (vm 0xd75a3aa / 0xd75a3da /
+  0xd75a40a): "Open Link in Split View" (command 53250), "Open Link in Little Arc" (53249), "Capture Image..."
+  (53248). Referenced from ArcCore 0x4282600–0x42828d8.
+- **Link order** (ArcCore 0x4282754–0x4282b50, AddItem calls with Chromium command and string ids): Open Link in New
+  Tab (50100, IDS 8931) · Open Link in New Window (50101, 8932) · Open Link in Split View (53250, behind a check at
+  0x42827ec) · Open Link in Little Arc (53249, behind an embedder check, kind 18, at 0x4282874) · Open Link in
+  Incognito Window (50102, 8933) · separator · Save Link As… (50103, 8948) · Copy Link Address (Chromium; Copy
+  Email Address for mailto:) · Copy Link Text (50107, 8951, only with link text in some cases) · separator.
+- **Image order** (0x42824d4–0x42826a0): Open Image in New Tab (50123, 8961) · Save Image As… (50120, 8958) ·
+  Capture Image... (53248, embedder check kind 19) · Copy Image (50122, 8960) · Copy Image Address (50121, 8959).
+- **Kite.** The link section above, with "Little Kite" for "Little Arc", on both engines; Open Link in New Tab opens
+  in the background (Chromium's disposition). Split View adds a pane after the focused one with the link (Kite's
+  Add Split View pane). WebKit: the image section too (WebKit's Copy Image does the copying). Chromium (Alloy): link
+  items replace Alloy's page items (Back, Forward, Print, View Source) when the click is on a link.
+- **Left out:** "Capture Image..." (its action isn't in the evidence); "Customize Page" › Boosts (Boosts aren't in
+  Kite); Copy Link Text.
+- **Inferred / unverified:** what the checks before Split View and Little Arc test (Kite: Split View hidden in Little
+  Kite and disabled when the split already has 4 panes; Little Kite hidden in Little Kite and incognito windows);
+  Open Link in Incognito Window disabled in incognito (Chromium's `IsOpenLinkOTREnabled`); which side of the
+  focused pane Arc's split opens on. Selection and page-level sections are still WebKit's own (Look Up, Search
+  With Google, Back/Reload…), not Chromium's.
+## ⌥⌘-click opens a link in Split View → `LinkClick` (KiteCore) (Arc 1.169 decomp, 1.171 strings, 1 Nov 2026)
+
+- The routing is in `decidePolicyForWebContentFrameNavigation(windowID:windowContentID:action:disposition:modifierFlags:response:)`
+  (arc-strings ~83229, `WindowsData+WebContentFrame.swift`). The helper is FUN_102add204 (`~/rea-arc/decomp/out5/g37-policy.txt`) and
+  its caller is FUN_102ad9450 (`out5/g37-caller.txt`).
+- The disposition is a single-payload Swift enum: `littleWindow(…)`, then the empty cases `ignoreAction, currentTab, newBackgroundTab,
+  newForegroundTab, newWindow, popup, splitView, incognito, newPictureInPicture`. These come from the `__swift5_fieldmd` record.
+  Their tags are 2…10 **[inferred]**: that numbering puts the "opening a new window should be handled separately" log on tag 6 (newWindow), and the
+  caller's `0x5bc` mask leaves out exactly newWindow and incognito.
+- Modifiers are Arc's own option set, mapped from NSEvent at 0x1009a223c: shift 1, control 2, option 4, command 8. The constants are at
+  0x103698b10…b48.
+- `newBackgroundTab` (Chromium's ⌘-click or middle-click) at 0x102add4a8:
+  - If `optionCommandClickLittleArcEntryPointEnabled` (settings key index 0x3f) is on and ⌥⌘ are held, the link opens in Little Arc
+    ("Open Little Arc when clicking on links with ⌥⌘ held").
+  - Otherwise, if ⌥ is held, the disposition becomes `splitView` (tag 8).
+  - Otherwise it opens a background tab, or the current tab.
+  - `newForegroundTab` (⇧⌘) passes through unchanged.
+  - ⇧ alone is Peek (the caller tests shift, `disableShiftClickToOpenLinksInModal`).
+- That Little Arc key isn't in Gabe's defaults or among the `registerDefaults` keys found, so it is probably off by default **[inferred]**. Kite has
+  no ⌥⌘ Little Arc entry point, so in Kite ⌥⌘-click always splits.
+- What the split looks like (which pane, focus, what a full split does) isn't traced. Kite follows Add Split View: a new pane after the
+  clicked tab, focused. On a full split Kite does nothing, which matches Gabe's choice for Add Split View; Arc shows "Cannot Add New Pane".
+- No settings text mentions this click. The only Links-pane modifier settings are Peek (⇧) and Little Arc (⌥⌘).
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
 - The ⌘T panel's exact shadow parameters (only its effect was measured).
 - Arc's default sidebar width, light-theme fill opacities, and the space-switch animation timing.
 - The space swipe's physics and settle, and what Arc's space strip shows (see *Spaces*).
+
+## Show full URL in the toolbar → `ToolbarURL`, `PageToolbar` (Arc 1.171 strings and binary, 1 Nov 2026)
+
+- Setting text "Show full URL when Toolbar is enabled" (`~/rea-arc/arc-strings.txt` 80422), in the preferences list
+  next to window dragging and Shared Quotes. Key `toolbarShowFullURLsEnabledPreference` (64221, 148552, 171077;
+  `onToggleToolbarShowFullURLsEnabledPreference` 171281, `toolbarShowFullURLsEnabledPreferenceDidChange` 176743).
+- Gabe's value: the key is absent from `defaults read company.thebrowser.Browser` (his `topBarURLEnabled` is 0,
+  toolbar off). Arc reads settings through `UserDefaultsClient.boolForSetting` (arc.s 100d80e34); the key's only
+  two references in arc.s are its raw-value switch (1005a1c50) and the key table (1005a3054), with no registered
+  default found, so a missing key reads as false. Kite defaults to off. Inferred from that, not seen in Arc's UI.
+- What it switches: the toolbar's view state holds `displayTitleShort` and `displayTitleLong` next to
+  `shouldToolbarShowFullURLs` and an `urlDomainWidth` frame (150859–150955). The exact text of each title was not
+  found in the binary (no symbols; the function that builds them wasn't located). Kite's short form stays the host
+  it already showed; the long form is the whole address (scheme, host, port, path, query, fragment), truncated at
+  the tail before the buttons. Whether Arc's long form drops the scheme or "www.", and what `urlDomainWidth` is
+  used for (keeping the domain visible or styling it), is unverified.
+- Arc also toggles it from the toolbar's right-click menu: `toggleToolbarFullURLs` in
+  `commandBarToolbarContextMenuActions` (172024), titled "Hide Full URL" (immediate string at arc.s 1003a7a08,
+  comment "Title for the 'Hide Full URL' context menu action." 62840) and "Show Full URL" (62841). Kite has no
+  toolbar context menu yet; until the settings window exists the toggle is Kite menu → Show Full URL in Toolbar
+  (command id `toggleToolbarFullURLs`, Arc's action name), not an Arc menu item.

@@ -28,6 +28,7 @@ extension BrowserWindowController {
             let tab = self.store.state.selectedTab
             page.captureImage(area: area) { [weak self, weak page] data in
                 guard let self, let page, let data, let image = NSImage(data: data) else { return NSSound.beep() }
+                SoundEffectPlayer.shared.play(.capture)
                 // Kept for the Media page, as Arc's CaptureClient keeps its Captures.
                 MediaLibraryModel.shared.storeCapture(png: data, sourceURL: tab?.url, title: tab?.title ?? "")
                 self.showCapturePreview(image: image, png: data, anchor: inPage, in: page.view)
@@ -50,6 +51,7 @@ extension BrowserWindowController {
                 let file = FileManager.default.temporaryDirectory.appendingPathComponent(name)
                 do { try data.write(to: file, options: .atomic) } catch { return self.showToast("Failed to Save") }
                 Self.copyCapture(png: data, file: file)
+                SoundEffectPlayer.shared.play(.capture)
                 MediaLibraryModel.shared.storeCapture(png: data, sourceURL: sourceURL, title: title)
                 self.showToast("Screenshot Copied to Clipboard", action: ("Save", { [weak self] in
                     self?.saveCapture(name: name) { try FileManager.default.copyItem(at: file, to: $0) }

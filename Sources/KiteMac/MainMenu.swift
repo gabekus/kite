@@ -94,8 +94,16 @@ enum MainMenu {
             // Until there's a Settings window.
             item("Open Links from Other Apps in Little Kite", #selector(AppDelegate.toggleLittleKiteLinks(_:)), toTarget: false),
             item("Air Traffic Control…", #selector(AppDelegate.showAirTrafficControl(_:)), toTarget: false, id: "openAirTrafficControl"),
+            // Arc's "Show full URL when Toolbar is enabled" (toolbarShowFullURLsEnabledPreference), off as in Gabe's Arc.
+            item("Show Full URL in Toolbar", #selector(AppDelegate.toggleToolbarFullURLs(_:)), toTarget: false, id: "toggleToolbarFullURLs"),
             // Arc Max's "5-Second Previews" (hoverCardsEnabled), off by default as in Arc.
             item("Link Previews (Hold ⇧ over a Link)", #selector(AppDelegate.toggleLinkPreviews(_:)), toTarget: false),
+            // Arc: Settings → "Play Arc sound effects" (playUserInterfaceSoundsDisabled), on by default.
+            item("Play Kite Sound Effects", #selector(AppDelegate.toggleSoundEffects(_:)), toTarget: false),
+            // Arc Max's Tidy Tabs (tidyTabsEnabled), on by default as in Gabe's Arc.
+            item("Tidy Tabs", #selector(AppDelegate.toggleTidyTabs(_:)), toTarget: false),
+            // Arc Max's Tidy Downloads (renameDownloadsEnabled), on as in Gabe's Arc.
+            item("Tidy Downloads (Rename with Claude)", #selector(AppDelegate.toggleTidyDownloads(_:)), toTarget: false),
             // Arc Max's "Ask on Page" (askOnPageEnabled), off by default as in Arc.
             item("Ask on Page (⌘F)", #selector(AppDelegate.toggleAskOnPage(_:)), toTarget: false),
             // Arc Max's Tidy Tab Titles (renamePinnedTabsEnabled), on as in Gabe's Arc.
