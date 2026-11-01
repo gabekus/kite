@@ -817,6 +817,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                     store.mutate { _ = $0.openTab(url: url, select: !newTab) }
                 },
                 restore: { [weak self] id in self?.restoreArchivedTab(id) }
+            ),
+            boostActions: .init(
+                open: { [weak self] boost in self?.openBoostFromLibrary(boost) },
+                openGallery: { [weak self] in
+                    guard let self else { return }
+                    store.mutate { _ = $0.openTab(url: BoostsListView.galleryURL) }
+                },
+                window: { [weak self] in self?.window }
             )
         )
     }

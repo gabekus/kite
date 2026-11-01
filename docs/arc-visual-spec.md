@@ -1270,6 +1270,36 @@ Nothing in Arc was pressed or watched. Line numbers are `~/rea-arc/arc-strings.t
   assets; its offsets weren't found), theme-driven schemes, `baseAppearance`, the editor menu's Shuffle and Reset
   all Edits, and applying changes live (g51; changes show after Refresh this Page).
 
+## Library › Boosts → `BoostsListView` (Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+Nothing in Arc was pressed or opened; Arc's Boosts page was never on screen, so no geometry was measured.
+
+- Page: `HomeButton.BoostsPage` (`HomePageID` `BoostsPage`, after `MediaPage`, before `SpacesPage`), views
+  `BoostsContentView`, `BoostsEmptyStateView`, `BoostCell`, reducer `BoostsPageReducer` (arc-strings 43733–43744).
+  Title "Boosts" ("Title for Boosts page in Arc Home.", NSLocalizedString key at arc.s 0x10276076c). Page icon:
+  the `boosts` Lottie in ARC_HomeButton.bundle (Kite: SF Symbol `paintbrush`).
+- Actions (arc-strings 175696–175733): `onSelectBoost` → `showBoostsEditorForURL`, `onRenameBoost` →
+  `showBoostsRenameDialog`, `onDeleteBoost` → `showBoostsDeleteConfirmationDialog`, `onToggleBoostIsActive`,
+  `onReportBoost` / `reportBoost`, `onBoostsGalleryButtonTapped` → `showBoostsGallery`.
+- Row buttons: "Rename", "Delete", "Enable", "Disable" (inline strings at arc.s 0x102760810–0x1027609fc, comments
+  "Button used to rename / delete / enable a disabled / disable an enabled boost."). The cell holds a SwiftUI
+  `Toggle` with a custom style framed 36 × 24, inside a 36 × 32 frame (arc.s 0x10275df54–0x10275e1f8). A subtitle
+  "<…> · by <author>" for Boosts written by someone else (0x102760a88; Kite has no shared Boosts).
+- Empty state (arc.s 0x10275e760–0x10275e9d0): image `BoostLarge` from the bundle, title "Nothing Boosted Yet!",
+  then "Click " + bold `Image(systemName: "paintbrush")` + " in URL bar to make your own, or grab one from the " +
+  underlined "Boost Gallery" + ".", with an `onTapGesture`. The gallery is `https://arc.net/boosts?ref=arc-app`
+  (arc-strings 63999).
+- Order: the reducer sorts with a comparator that compares a string field and, when equal, a `Date`, both
+  ascending (arc.s 0x102763f08–0x102763fac). Which fields wasn't traced. No Today / Yesterday grouping was found
+  for this page.
+
+Kite: the Library's Boosts page (`LibraryPage.boosts`, `BoostsListView`); Window › View Boosts… opens it instead
+of Kite's old Boosts window. Inferred or Kite's own: sort by site then oldest first; rows are one card in the style of
+Kite's Archive page (44 pt rows, favicon, name, site); Rename and Delete appear on hover (Arc's placement unknown)
+and the switch's tooltip is Enable / Disable; clicking a row opens `https://<site>/` in a new tab and the Boost's
+editor for that tab. The empty state's first half says "Choose New Boost in the command bar" because Kite has no
+paintbrush in its URL bar; the picture is the SF Symbol, not Arc's asset. No report action and no "by" subtitle.
+
 ## Sound effects → `SoundEffects` (KiteCore), `SoundEffectPlayer` (Arc 1.171 strings, files, defaults and disassembly, 1 Nov 2026)
 
 - Setting: "Play Arc sound effects" next to "Haptic feedback when reordering tabs" (strings 80425–80426). Keys

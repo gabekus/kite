@@ -125,15 +125,28 @@ import Testing
 
 @Suite struct LibraryPageTests {
     @Test func pagesFollowArcsOrderAndNames() {
-        #expect(LibraryPage.allCases == [.downloads, .archive, .media])
-        #expect(LibraryPage.allCases.map(\.rawValue) == ["DownloadsPage", "ArchivePage", "MediaPage"])
-        #expect(LibraryPage.allCases.map(\.title) == ["Downloads", "Archive", "Media"])
+        #expect(LibraryPage.allCases == [.downloads, .archive, .media, .boosts])
+        #expect(LibraryPage.allCases.map(\.rawValue) == ["DownloadsPage", "ArchivePage", "MediaPage", "BoostsPage"])
+        #expect(LibraryPage.allCases.map(\.title) == ["Downloads", "Archive", "Media", "Boosts"])
     }
 
     @Test func remembersTheLastPage() {
         #expect(LibraryPage(stored: "ArchivePage") == .archive)
         #expect(LibraryPage(stored: nil) == .downloads)
-        // A page Arc has and Kite doesn't yet.
-        #expect(LibraryPage(stored: "BoostsPage") == .downloads)
+        #expect(LibraryPage(stored: "BoostsPage") == .boosts)
+        // Pages Arc has and Kite doesn't yet.
+        #expect(LibraryPage(stored: "EaselsAndNotesPage") == .downloads)
+        #expect(LibraryPage(stored: "SpacesPage") == .downloads)
+    }
+
+    @Test func boostsListBySiteThenOldestFirst() {
+        let early = Date(timeIntervalSince1970: 1_000)
+        let late = Date(timeIntervalSince1970: 2_000)
+        let library = BoostLibrary(boosts: [
+            Boost(name: "Newer", domain: "b.com", createdAt: late),
+            Boost(name: "Z", domain: "a.com", createdAt: late),
+            Boost(name: "Older", domain: "b.com", createdAt: early),
+        ])
+        #expect(library.libraryOrder.map(\.name) == ["Z", "Older", "Newer"])
     }
 }

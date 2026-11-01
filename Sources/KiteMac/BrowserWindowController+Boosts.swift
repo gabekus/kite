@@ -18,8 +18,24 @@ extension BrowserWindowController {
         BoostEditorWindowController.show(boost.id, refresh: refreshAction(for: tab.id), browser: self)
     }
 
+    /// Window › View Boosts… ("Opens the Boosts section of your Library", arc-strings ~62221):
+    /// the Library's Boosts page.
     @objc func viewBoosts(_ sender: Any?) {
-        BoostsWindowController.show()
+        library.open(.boosts)
+    }
+
+    /// A Boost picked on Library › Boosts (Arc's onSelectBoost → showBoostsEditorForURL): its site
+    /// in a new tab, which leaves the Library, with the Boost's editor tied to that tab so Refresh
+    /// and Zap work on it.
+    func openBoostFromLibrary(_ boost: Boost) {
+        guard let url = URL(string: "https://\(boost.domain)/") else { return NSSound.beep() }
+        if isIncognito {
+            // Arc: "Boosts can't be installed or used in Incognito Mode"; edit without a page.
+            BoostEditorWindowController.show(boost.id, refresh: nil)
+            return
+        }
+        let tabID = store.mutate { $0.openTab(url: url) }
+        BoostEditorWindowController.show(boost.id, refresh: refreshAction(for: tabID), browser: self)
     }
 
     func validateBoostItem(_ item: NSMenuItem) -> Bool? {
