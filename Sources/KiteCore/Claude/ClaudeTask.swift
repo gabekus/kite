@@ -56,6 +56,9 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
     public var folderID: UUID?
     /// Tabs this task opened.
     public var tabIDs: [UUID]
+    /// The folder Claude Code runs in, when the space routes ⌘J to one (see `ClaudeRoute`).
+    /// Kept so a follow-up resumes there: Claude Code keeps a session with its folder.
+    public var directory: String?
     public var costUSD: Double
     /// Finished since the user last looked at it.
     public var unread: Bool
