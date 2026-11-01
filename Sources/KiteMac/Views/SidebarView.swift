@@ -48,6 +48,13 @@ struct SidebarActions {
     var didDrop: (SidebarDropOutcome) -> Void = { _ in }
 }
 
+/// Set from a tracking area over the sidebar's host (`BrowserWindowController`).
+@MainActor
+@Observable
+final class SidebarHoverModel {
+    var isHovered = false
+}
+
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
 /// the space's pinned items (with folders), new tab and today's tabs, spaces.
 struct SidebarView: View {
@@ -75,6 +82,8 @@ struct SidebarView: View {
     /// The Mini Player's buttons; nil shows no Mini Player.
     var miniPlayer: MiniPlayerActions?
     @State private var drag = SidebarDragModel()
+    /// Whether the pointer is over the sidebar: Arc's URL row reads `sidebarHovered` for its buttons.
+    var hover = SidebarHoverModel()
 
     var body: some View {
         // The host's width, not the column's: the column must never be wider than the sidebar, or
@@ -130,7 +139,8 @@ struct SidebarView: View {
                         showSiteControls: SiteControls.applies(to: selectedTab?.url) ? showSiteControls : nil,
                         accessory: fieldAccessory,
                         installAppName: installApp == nil ? nil : WebAppInstallOffers.shared.offer(for: selectedID)?.name,
-                        installApp: installApp
+                        installApp: installApp,
+                        sidebarHovered: hover.isHovered
                     )
                     .padding(.top, M.urlFieldTopGap)
                 }
@@ -607,7 +617,8 @@ private struct AddressPill: View {
     /// The installable app's name; nil hides the install icon.
     var installAppName: String?
     var installApp: ((NSView) -> Void)?
-    @State private var hovering = false
+    /// The field's buttons, all but extensions, show only while the pointer is over the sidebar.
+    var sidebarHovered = false
     // Settings → Advanced → Toolbar can hide each button; their commands still work from the menu bar.
     @AppStorage(ChromeButton.passwordManager.hiddenKey) private var hidesPasswordManager = false
     @AppStorage(ChromeButton.darkPage.hiddenKey) private var hidesDarkPage = false
@@ -627,26 +638,31 @@ private struct AddressPill: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            // Arc's buttons at the field's right end are 30pt wide on a 28pt pitch. Arc 1.169
-            // shows its Site Control Center button (with the extensions) only on hover; Kite
-            // always shows the extensions button, rightmost (Gabe's call, 2026-11-01).
+            // Arc's buttons at the field's right end are 30pt wide on a 28pt pitch. Arc shows them only
+            // while the sidebar is hovered (its URL row's `sidebarHovered`); Kite always shows the
+            // extensions button, rightmost (Gabe's call, 2026-11-01).
             let isDark = hidesDarkPage ? nil : isDark
             let showSiteControls = hidesSiteControls ? nil : showSiteControls
             let showExtensions = hidesExtensions ? nil : showExtensions
+            let revealed = sidebarHovered || SiteControlsPopover.isShown
             HStack(spacing: -2) {
-                if let accessory, !hidesPasswordManager { accessory }
-                if let isDark {
-                    DarkPageToggle(isDark: isDark, action: toggleDark)
+                HStack(spacing: -2) {
+                    if let accessory, !hidesPasswordManager { accessory }
+                    if let isDark {
+                        DarkPageToggle(isDark: isDark, action: toggleDark)
+                    }
+                    if let showSiteControls {
+                        SiteControlsFieldButton(action: showSiteControls)
+                    }
+                    // Chrome's install icon sits at the field's right end; the extensions button stays rightmost.
+                    if let installAppName, let installApp {
+                        InstallAppFieldButton(appName: installAppName, size: ExtensionsFieldButton.size, action: installApp)
+                    }
                 }
-                // Arc reveals Site Control Center at the field's right end on hover.
-                if let showSiteControls {
-                    SiteControlsFieldButton(action: showSiteControls)
-                        .opacity(hovering || SiteControlsPopover.isShown ? 1 : 0)
-                }
-                // Chrome's install icon sits at the field's right end; the extensions button stays rightmost.
-                if let installAppName, let installApp {
-                    InstallAppFieldButton(appName: installAppName, size: ExtensionsFieldButton.size, action: installApp)
-                }
+                .opacity(revealed ? 1 : 0)
+                .allowsHitTesting(revealed)
+                .accessibilityHidden(!revealed)
+                .animation(.easeInOut(duration: M.urlFieldButtonsFade), value: revealed)
                 if let showExtensions {
                     ExtensionsFieldButton(action: showExtensions)
                 }
@@ -654,7 +670,6 @@ private struct AddressPill: View {
             .padding(.trailing, isDark != nil || showExtensions != nil || showSiteControls != nil || installAppName != nil ? 4 : 0)
         }
         .modifier(ChromeFill(strength: M.fieldFill))
-        .onHover { hovering = $0 }
     }
 }
 
