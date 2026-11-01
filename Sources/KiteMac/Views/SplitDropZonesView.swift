@@ -40,6 +40,9 @@ final class SplitDropZonesView: NSView {
         placeholder.layer?.cornerRadius = M.dropCornerRadius
         placeholder.layer?.cornerCurve = .continuous
         placeholder.isHidden = true
+        placeholder.setAccessibilityElement(true)
+        placeholder.setAccessibilityRole(.group)
+        placeholder.setAccessibilityIdentifier("SplitDropPlaceholder")
         addSubview(placeholder)
         _ = strips
         setAccessibilityIdentifier("SplitDropZones")
@@ -80,6 +83,21 @@ final class SplitDropZonesView: NSView {
             }
         }
         if let placeholderEdge { placeholder.frame = placeholderFrame(placeholderEdge) }
+    }
+
+    /// A sidebar tab dragged over the pages: the new pane's slot, in this view's points, or nil.
+    /// The tab drag is the sidebar's own (not an AppKit drag), so it reports here directly.
+    func showTabPlaceholder(_ slot: CGRect?) {
+        placeholderEdge = nil
+        guard let slot else {
+            placeholder.isHidden = true
+            return
+        }
+        let accent = NSColor.controlAccentColor
+        placeholder.layer?.borderColor = accent.cgColor
+        placeholder.layer?.backgroundColor = accent.withAlphaComponent(0.12).cgColor
+        placeholder.frame = slot
+        placeholder.isHidden = false
     }
 
     /// The new pane's slot at `edge`: an equal share of the content, as Arc proposes it.
