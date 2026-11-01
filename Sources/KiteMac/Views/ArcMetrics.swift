@@ -47,6 +47,8 @@ enum ArcMetrics {
         static let urlFieldTextInset: CGFloat = 12
         static let urlFieldFontSize: CGFloat = 13
         static let urlFieldTextOpacity: Double = 0.6
+        /// The field's buttons fading in and out with the sidebar's hover. Unmeasured on Arc.
+        static let urlFieldButtonsFade: Double = 0.15
 
         // Favorites grid.
         static let favoritesTopGap: CGFloat = 8

@@ -60,6 +60,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let peekCard = PeekCard()
     private let peekEdge = HoverStrip()
     private let peekZone = HoverStrip()
+    /// Over the sidebar wherever it is (docked or peeking): the URL field's buttons show while it's hovered.
+    private let sidebarHoverZone = HoverStrip()
+    private let sidebarHover = SidebarHoverModel()
     private var peeking = false
     private var peekTimer: DispatchWorkItem?
     private var sidebarWidth: CGFloat
@@ -257,6 +260,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             library: library,
             swipe: spaceSwipe.model
         )
+        sidebar.hover = sidebarHover
         sidebar.miniPlayer = miniPlayerActions
         var toolbar = PageToolbar(store: store, actions: actions)
         toolbar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view, overlap: 4) }
@@ -318,7 +322,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         materialView.blendingMode = .behindWindow
         materialView.state = .followsWindowActiveState
 
-        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, libraryHost!, claudeBubbleHost!, commandBarHost!, peekEdge, peekZone] as [NSView] {
+        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, libraryHost!, claudeBubbleHost!, commandBarHost!, peekEdge, peekZone, sidebarHoverZone] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -367,6 +371,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             peekZone.topAnchor.constraint(equalTo: rootView.topAnchor),
             peekZone.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             peekZone.trailingAnchor.constraint(equalTo: sidebarHost.trailingAnchor, constant: ArcMetrics.Sidebar.peekHoverMargin),
+
+            sidebarHoverZone.leadingAnchor.constraint(equalTo: sidebarHost.leadingAnchor),
+            sidebarHoverZone.trailingAnchor.constraint(equalTo: sidebarHost.trailingAnchor),
+            sidebarHoverZone.topAnchor.constraint(equalTo: sidebarHost.topAnchor),
+            sidebarHoverZone.bottomAnchor.constraint(equalTo: sidebarHost.bottomAnchor),
 
             // Like Arc: straddles the card's edge and spans the card's height, above the page and glow.
             // Peeking, it moves to the floating card's right edge but keeps the content card's height.
@@ -418,6 +427,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         libraryHost.layer?.zPosition = 13
         peekCard.isHidden = true
         peekEdge.onHover = { [weak self] inside in self?.edgeHovered(inside) }
+        sidebarHoverZone.onHover = { [weak self] inside in self?.sidebarHover.isHovered = inside }
+        // Unclipped (macOS 14's default), its visible rect, and so its tracking area, would be the whole window.
+        sidebarHoverZone.clipsToBounds = true
+        sidebarHoverZone.isActive = true
         peekZone.onHover = { [weak self] inside in
             guard let self, !inside, !resizingSidebar else { return }
             setPeeking(false)

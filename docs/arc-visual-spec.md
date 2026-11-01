@@ -363,7 +363,20 @@ Measured on Arc 1.169 with the masked probe (roles and frames only) on a window 
 
 Not measured (text wasn't read): what the menu's top row of four 48.75×32.75 buttons, its second section (three
 208×33 rows) and its two bottom buttons (82×32, 32×32) do. Kite leaves them out; pin, on/off, options and remove
-are in each tile's right-click menu instead. Arc's hover reveal in the sidebar URL row: none found.
+are in each tile's right-click menu instead.
+
+**Sidebar URL row's buttons → `AddressPill`, `SidebarHoverModel`**
+- Observed (masked probe, 31 Oct 2026): at rest the URL row has no buttons; hovering it shows two 30×30 buttons at
+  its right end, the second Site Control Center, on a 28pt pitch ending at the row's right edge.
+- Binary: the URL row (the command bar placeholder) holds `sidebarHovered` beside `sidebarPresentation`, and the
+  copy-link and status buttons read `isSidebarHovered`, so the buttons follow the pointer over the whole sidebar,
+  not just the row.
+- Kite: a tracking area over the sidebar's host (docked or peeking) shows every field button but extensions
+  (password manager, dark page, Site Controls, install) while the pointer is over it, and while Site Controls is
+  open. Extensions stays visible and rightmost (Gabe's call, 1 Nov 2026), unlike Arc. Hidden buttons keep their
+  space, so the URL text doesn't move. Checked with `kite ui pointer`: shown at x 239, gone at x 240.
+- Not measured: Arc's fade (Kite uses 0.15s ease-in-out, `urlFieldButtonsFade`), and whether Arc's hidden buttons
+  keep their space.
 
 ## Spaces (Arc 1.169, 31 Oct 2026)
 
