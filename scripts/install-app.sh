@@ -58,8 +58,15 @@ version="$(git rev-parse --short HEAD)"
 # with a single rename: only one of them gets it, and the rest find nothing to do. Checking
 # for it and then deleting Kite.app let a second waiter delete the app the first had just
 # moved in.
+#
+# Never while a Kite from $DEST is running: deleting the bundle under a running Kite leaves it
+# on an unlinked executable, and macOS then can't resolve its path, so Kite turns away every
+# Accessibility client (window managers like Hammerspoon and Raycast stop moving its windows)
+# until it's relaunched. That happened when Kite was quit and reopened within the waiter's 1s poll.
+kite_running() { pgrep -f "^$DEST/Contents/MacOS/Kite( |\$)" >/dev/null; }
 swap() {
     local claimed="$DEST_DIR/.Kite.app.swapping.$$"
+    kite_running && return 1
     mv "$STAGED" "$claimed" 2>/dev/null || return 0
     rm -rf "$DEST"
     mv "$claimed" "$DEST"
@@ -68,34 +75,37 @@ swap() {
     touch "$DEST"
 }
 
-# Just this install's process: test builds elsewhere share the bundle id.
-pid="$(pgrep -f "^$DEST/Contents/MacOS/Kite( |\$)" | head -1 || true)"
-if [[ -z "$pid" ]]; then
-    swap
-    echo "Installed $DEST ($version)"
-    exit 0
-fi
-
-if [[ "$RESTART" == 0 ]]; then
-    # Swap once Kite quits. A later install replaces the staged build.
-    # One waiter is enough: an earlier one (from an install while this same Kite was open)
-    # would move in whatever is staged anyway, so it's replaced rather than joined.
-    WAITER="$DEST_DIR/.Kite.app.waiter"
+# Swaps in the background as soon as no Kite from $DEST is running. A later install replaces
+# the staged build. One waiter is enough: an earlier one would move in whatever is staged
+# anyway, so it's replaced rather than joined. It waits for every Kite from $DEST, not one pid:
+# a Kite reopened in the meantime runs the old build, so the swap waits for that one to quit too.
+WAITER="$DEST_DIR/.Kite.app.waiter"
+stage_for_quit() {
     if [[ -f "$WAITER" ]]; then
-        read -r old_pid old_kite < "$WAITER" || true
-        if [[ "${old_kite:-}" == "$pid" ]] && kill -0 "${old_pid:-0}" 2>/dev/null \
-            && ps -o command= -p "$old_pid" | grep -q "Kite.app.new"; then
+        read -r old_pid < "$WAITER" || true
+        if kill -0 "${old_pid:-0}" 2>/dev/null && ps -o command= -p "$old_pid" | grep -q "Kite.app.new"; then
             kill "$old_pid" 2>/dev/null || true
         fi
     fi
     nohup bash -c "
-        while kill -0 $pid 2>/dev/null; do sleep 1; done
-        $(declare -f swap)
-        DEST='$DEST' DEST_DIR='$DEST_DIR' STAGED='$STAGED' swap
+        $(declare -f kite_running swap)
+        DEST='$DEST' DEST_DIR='$DEST_DIR' STAGED='$STAGED'
+        until swap; do sleep 1; done
         rm -f '$WAITER'
     " >/dev/null 2>&1 &
-    echo "$! $pid" > "$WAITER"
+    echo "$!" > "$WAITER"
     disown
+}
+
+# Just this install's process: test builds elsewhere share the bundle id.
+pid="$(pgrep -f "^$DEST/Contents/MacOS/Kite( |\$)" | head -1 || true)"
+if [[ -z "$pid" ]] && swap; then
+    echo "Installed $DEST ($version)"
+    exit 0
+fi
+
+if [[ "$RESTART" == 0 || -z "$pid" ]]; then
+    stage_for_quit
     echo "Kite is open, so $version is staged and goes in when you quit Kite"
     exit 0
 fi
@@ -107,10 +117,10 @@ for _ in $(seq 60); do
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.5
 done
-if kill -0 "$pid" 2>/dev/null; then
-    echo "error: Kite didn't quit within 30s; the update is staged and goes in when it does" >&2
+if kill -0 "$pid" 2>/dev/null || ! swap; then
+    stage_for_quit
+    echo "error: Kite didn't quit (or was opened again); $version is staged and goes in when it quits" >&2
     exit 1
 fi
-swap
 echo "Installed $DEST ($version)"
 open "$DEST"
