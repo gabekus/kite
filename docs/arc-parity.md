@@ -121,8 +121,8 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | New Tab… / Pin Tab (Unpin Tab) | ⌘T / ⌘D | ✅ Tabs menu opens with New Tab… (same command and shortcut as File's); Pin Tab / Unpin Tab by state (g75) | |
 | New Folder… | | 🟡 imported folders only | B3 |
-| Next / Previous Tab | ⌥⌘↓ / ⌥⌘↑ | ✅ (⌃⇧Tab also goes to the previous tab) | |
-| Toggle recent tabs (MRU) | ⌃Tab | ✅ toggles the two most recent | Hold-⌃ cycling deeper later |
+| Next / Previous Tab | ⌥⌘↓ / ⌥⌘↑ | ✅ | |
+| Tab Switcher (forward / backward) | ⌃Tab / ⌃⇧Tab | ✅ hold ⌃ to cycle deeper through the space's recent tabs in Arc's "Recent Items" overlay (0.1 s delay, commit on ⌃ release, Esc, ← →, W closes, click picks) | Split items as one card per pane, exact card width and colours unverified |
 | Tab 1…8, last tab | ⌘1…⌘9 | ✅ | |
 | Reveal Tab in Sidebar | | ✅ shows the sidebar, opens enclosing folders, scrolls to the row | Arc's highlight on reveal unverified |
 | Clear Today (unpinned tabs) | ⇧⌘K | ✅ archives them, with a toast | |

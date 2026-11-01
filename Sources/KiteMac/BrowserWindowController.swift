@@ -16,6 +16,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     let store: BrowserStore
     let pool: PagePool
+    /// Tabs › Tab Switcher (forward) ⌃Tab / (backward) ⌃⇧Tab.
+    lazy var tabSwitcher = RecentTabSwitcherController(owner: self)
     #if canImport(CEFBridge)
     /// The current space's profile's extensions, for the toolbar, sidebar and menu bar.
     private(set) var extensionsSelection: ExtensionsSelection?
@@ -147,6 +149,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.delegate = self
 
         buildViews()
+        window.keyInterceptor = { [weak self] event in self?.tabSwitcher.intercept(event) ?? false }
         store.onChange = { [weak self] in self?.sync() }
         store.onPageChange = { [weak self] id in self?.pageChanged(id) }
         pool.onPageTaken = { [weak self] id in self?.pageTaken(id) }
@@ -552,7 +555,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             // A page coming forward (⌘T, a tab opened from the Archive, another space) leaves the Library.
             if library.isOpen, shownTabID != nil { library.close() }
             show(visible, focused: selected?.id)
+            tabSwitcher.shownTabChanged()
         }
+        tabSwitcher.storeChanged()
         if let split = state.selectedSplit {
             splitPanes.setLayout(factors: split.layoutFactors, orientation: split.orientation)
         }

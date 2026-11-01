@@ -3,7 +3,11 @@ import KiteCore
 
 /// Arc's Tabs and Spaces menu commands beyond plain selection.
 extension BrowserWindowController {
-    @objc func selectRecentTab(_ sender: Any?) { store.mutate { $0.selectRecentTab() } }
+    /// Tabs › Tab Switcher (forward) ⌃Tab: hold ⌃ and press Tab again to go deeper, let go to switch.
+    @objc func cycleToNextRecentTab(_ sender: Any?) { tabSwitcher.cycle(forward: true) }
+
+    /// Tabs › Tab Switcher (backward) ⌃⇧Tab: the same, starting from the least recent tab.
+    @objc func cycleToPreviousRecentTab(_ sender: Any?) { tabSwitcher.cycle(forward: false) }
 
     @objc func clearToday(_ sender: Any?) {
         clearToday(inSpace: store.state.selectedSpace.id)

@@ -72,6 +72,20 @@ struct UIInputSender {
             try? await Task.sleep(for: .milliseconds(50))
             return "Dragged from (\(UIReport.number(from.x)), \(UIReport.number(from.y))) to (\(UIReport.number(to.x)), \(UIReport.number(to.y))) in \(steps) steps, starting on \(hit)"
                 + (hold > 0 ? ", holding \(UIReport.number(hold))s before releasing." : ".") + note
+        case let .flags(modifiers):
+            // A modifier key going down or up, as AppKit sends it: the flags held afterwards.
+            let flags = Self.flags(modifiers)
+            guard let event = NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: flags,
+                                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                               context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false,
+                                               keyCode: Self.modifierKeyCode(modifiers)) else {
+                throw AutomationError(.failed, "Couldn't make a modifier change.")
+            }
+            window.sendEvent(event)
+            try? await Task.sleep(for: .milliseconds(50))
+            let names: [(KeyChord.Modifiers, String)] = [(.control, "ctrl"), (.alt, "alt"), (.shift, "shift"), (.meta, "cmd")]
+            let held = modifiers.isEmpty ? "nothing" : names.filter { modifiers.contains($0.0) }.map(\.1).joined(separator: "+")
+            return "Sent a modifier change to window \(window.windowNumber): holding \(held)."
         case let .scroll(point, dx, dy):
             let event = try scrollEvent(at: point, dx: dx, dy: dy, phase: nil)
             window.sendEvent(event)
@@ -229,6 +243,14 @@ struct UIInputSender {
 
     private func deliverUp(_ event: NSEvent) {
         if window.isKeyWindow && NSApp.isActive { NSApp.sendEvent(event) } else { window.sendEvent(event) }
+    }
+
+    /// The key code a modifier change names: the left key of the first modifier held (⌃ when none, as letting go of it).
+    private static func modifierKeyCode(_ modifiers: KeyChord.Modifiers) -> UInt16 {
+        if modifiers.contains(.meta) { return 55 }
+        if modifiers.contains(.shift) { return 56 }
+        if modifiers.contains(.alt) { return 58 }
+        return 59
     }
 
     static func flags(_ modifiers: KeyChord.Modifiers) -> NSEvent.ModifierFlags {
