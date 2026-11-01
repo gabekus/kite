@@ -31,7 +31,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | About | | ✅ | |
 | Settings… | ⌘, | ❌ | Thread: Settings window |
 | Set as Default Browser | | ✅ (opens links from other apps in a new tab) | |
-| Import from Another Browser… | | 🟡 Arc only | Thread: import (Chrome/Safari later) |
+| Import from Another Browser… | | 🟡 Arc only: spaces, pinned tabs, folders, favorites, themes, split views, archive (latest 500), history, Site Search, shortcut changes, and the settings Kite has (warn before quitting, Little Arc for links, archive interval) | Thread: import (Chrome/Safari later). Not yet: link routing, boosts, easels/notes, extensions, other profiles |
 | Check for Updates… | | ❌ | Roadmap: Sparkle |
 | Hide / Hide Others / Show All | ⌘H / ⌥⌘H | ✅ | |
 | Quit, with optional warn-before-quit | ⌘Q | 🟡 "Quit Kite?" with Arc's three buttons; look unmeasured, Kite menu toggle until Settings | B5 |
@@ -133,7 +133,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 |---|---|---|---|
 | Go Back / Go Forward | ⌘[ / ⌘] (also ⌘← / ⌘→ in a page) | ✅ ⌘←/⌘→ as hidden alternates; text fields keep them for caret moves (seen in Arc; not in its binding table) | B3 |
 | View History | ⌘Y | 🟡 History › View History opens kite://history in a new tab (Arc: chrome://history "in a new Today tab"): search, one card per day, Open in New Tab / Copy Link / More from This Site / Remove from History, Clear History…. One row per URL (last visit), not one per visit; Chromium's page sizes not measured | |
-| View Archive… / Clear Archive | | 🟡 archived tabs stored, no UI | Thread: Library |
+| View Archive… / Clear Archive | | 🟡 History › View Archive… opens kite://archive in a new tab (Arc: its Library window): Today / Yesterday / Earlier This Week, then by month; search; Filter Archived Tabs by space and Auto-Closed / Manually Closed, with removable chips; Restore and Delete on hover and in the context menu; "Tab restored to <space>" toast. Clear Archive asks Arc's "Are you sure you'd like to Clear Archive?" first. Sizes are Kite's | Move into the Library window when it exists |
 
 ### Extensions
 

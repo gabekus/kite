@@ -53,7 +53,11 @@ struct FaviconView: View {
 
     init(page: URL?, icon: URL? = nil, size: CGFloat = 16) {
         self.size = size
-        if InternalPage(page) == .history { symbol = "clock.arrow.circlepath" }
+        switch InternalPage(page) {
+        case .history: symbol = "clock.arrow.circlepath"
+        case .archive: symbol = "archivebox"
+        case nil: break
+        }
         if let icon {
             url = icon
         } else if let page, let scheme = page.scheme, ["http", "https"].contains(scheme), let host = page.host() {
@@ -63,7 +67,7 @@ struct FaviconView: View {
         }
     }
 
-    /// Kite's own pages show a symbol: a clock for History, like Chromium's history icon.
+    /// Kite's own pages show a symbol: a clock for History, like Chromium's history icon; a box for the Archive.
     private var symbol: String?
 
     var body: some View {
