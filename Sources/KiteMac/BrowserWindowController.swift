@@ -72,6 +72,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Tabs Kite put into picture in picture when you left them; it ends when you come back.
     var autoPictureInPictureTabs: Set<UUID> = []
     private let splitPanes = SplitPanesView()
+    private let splitDropZones = SplitDropZonesView()
     private var paneClickMonitor: Any?
     private var spaceSwipe: SpaceSwipeController!
     /// The page card, in window coordinates: where Chrome's extension install dialog hangs.
@@ -379,6 +380,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             setPeeking(false)
         }
 
+        splitDropZones.onDrop = { [weak self] url, edge in self?.openDroppedLink(url, on: edge) }
         splitPanes.onDividerDrag = { [weak self] index, fraction, minimum in
             guard let self, let split = store.state.selectedSplit else { return }
             store.mutate { $0.moveSplitDivider(split.id, index: index, fraction: fraction, minimum: minimum) }
@@ -473,6 +475,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if let split = state.selectedSplit {
             splitPanes.setLayout(factors: split.layoutFactors, orientation: split.orientation)
         }
+        updateSplitDropZones()
         let live = state.allTabIDs
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
         applyDarkPage()
@@ -485,6 +488,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         didSync?()
     }
 
+    /// The edge strips for dropping a link into a split: over everything in the content card, but they
+    /// take nothing except a drag.
+    private func updateSplitDropZones() {
+        let state = store.state
+        splitDropZones.edges = state.splitDropEdges
+        splitDropZones.paneCount = max(state.visibleTabs.count, 1)
+        if contentClip.subviews.last !== splitDropZones {
+            splitDropZones.frame = contentClip.bounds
+            splitDropZones.autoresizingMask = [.width, .height]
+            contentClip.addSubview(splitDropZones)
+        }
+    }
+
     /// Puts `tabs` on screen, side by side when there are several, and focuses `focused`.
     private func show(_ tabs: [BrowserTab], focused: UUID?) {
         hideFindBar()
@@ -493,6 +509,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if ids != shownTabIDs || focused != shownTabID { cancelCapture() }
         if ids != shownTabIDs {
             tabsChangedOnScreen(left: shownTabIDs.filter { !ids.contains($0) }, arrived: ids.filter { !shownTabIDs.contains($0) })
+            hideZapPicker()
             for page in shownPages.values { page.view.removeFromSuperview() }
             splitPanes.setPanes([])
             splitPanes.removeFromSuperview()
@@ -1050,6 +1067,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if let valid = validateSplitItem(item) { return valid }
         if let valid = validateBoostItem(item) { return valid }
+        if let valid = validateSplitLayoutItem(item) { return valid }
         switch item.action {
         case #selector(setDarkPagesMode(_:)):
             let modes = DarkPagesMode.allCases

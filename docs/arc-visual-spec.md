@@ -653,6 +653,32 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Kite has no link routing yet, so it isn't imported.
 
+## Split View: top/bottom layout and drop-to-split → `SplitLayout.swift` (KiteCore), `SplitDropZonesView` (Arc strings and 1.169 decompile, 1 Nov 2026)
+
+Arc wasn't driven; nothing here is from a recording.
+
+- **Orientation** [str]: `SplitViewLayoutOrientation` is `horizontal` / `vertical` (arc-strings.txt ~156440); one split is one row or
+  one column. Kite already stored and rendered both (`SplitView.orientation`, `SplitPanesView`); this adds ways to get a vertical one.
+- **Command bar actions** [str, arc-strings.txt 68850–68852 and 79417–79456]: IDs `newVerticalSplitView`, `convertToVerticalSplitView`,
+  `convertToHorizontalSplitView`; titles "Add Vertical Split View", "Convert to Vertical Split View", "Convert to Horizontal Split
+  View"; trigger phrases "New Vertical Split View", "Flip to vertical/horizontal split view". They aren't in MainMenu.nib's View menu, so
+  Kite keeps them as hidden menu items the command bar still finds (MainMenu's `commandBarOnly`, marked with `CommandBarKeywords`). Kite matches titles only, not the
+  trigger phrases. **Inferred:** Add Vertical Split View on a side-by-side split turns it top/bottom (a split has one orientation).
+- **Drop a link on the content** [str + dec]: the window-contents split delegate has `onDropURL`, `onDropSidebarItem`,
+  `onDidUpdateSplitViewProposedDropTarget` and `onDidAdjustLayoutOrientation` (arc-strings.txt ~176689). `ARCUI.SplitViewController`
+  registers its view (a `DraggingDestinationForwardingView`) for two pasteboard types (@100a496f8). Its `draggingEntered:` (@100a54404)
+  runs only with `allowInteractivePaneInsertion` on, asks the delegate whether to take an outside drag, and sizes the proposed pane
+  as **width / (panes + 1)** by full height. Fields `dropRegion`, `dropRegionInsertionIndex`, `insertContent` / `replaceContent`,
+  `verticalLayoutOrientationFromDragAllowed`, `shouldDisplayDraggerPaneForSecondaryAxis` (~155594). The placeholder is
+  `SplitViewContentPlaceholderView.BorderView`: border **2**, corner **6** (@1001da6d0; colour set by the caller, not traced).
+- **Kite:** four 64pt strips along the content card's edges take a dragged http(s) link (not files). A single page takes all four edges
+  (left/right → side by side, top/bottom → top/bottom); a split takes only the two ends of its own axis; four panes take none. The
+  new pane gets an equal 1/(n+1) share and focus. The strips answer hit tests only while the mouse button is held after the click,
+  so clicks and hovers reach the page (checked with `ui pointer` / `ui input`).
+- **Unverified / guessed:** the strip width (Arc's drop regions weren't traced), the placeholder colour (Kite uses the accent colour,
+  12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
+  top/bottom one on a top/bottom drop (Kite refuses it).
+
 ## Library: Open Library… ⇧⌘L (Arc 1.171 menu bar, strings, MainMenu.nib, assets, 1 Nov 2026) → `LibraryView`
 
 Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, so no geometry was measured.
@@ -681,6 +707,7 @@ Nothing in Arc was pressed or opened; Arc's Library itself was never on screen, 
   arrow at the bottom of the list), page icons (Kite: SF Symbols), and whether Arc leaves the Library when a tab is
   selected (Kite does). ⇧⌘J still opens Kite's downloads popover, though Arc's copy says it "Opens the Downloads
   section of your Library": follow-up.
+
 ## Expand Current Split (Arc 1.171 menu bar; Arc 1.169 binary, decompiled; 1 Nov 2026)
 
 - View menu (AX via `menudump`, nothing pressed): Add Split View, Close this Split Pane, Separate Page from
@@ -941,6 +968,37 @@ any web page and Edit Boost opens the site's newest Boost; the new Boost's name 
 title string is inlined, so unknown); the editor's sizes and layout are Kite's (Arc's weren't measured). Kite
 leaves out a Boost's JavaScript when it doesn't parse (shown under the editor), since its document-start
 scripts share one source with the ad blocker's.
+
+## Zap → `ZapLibrary`, `ZapScript`, `ZapPickerScript` (KiteCore), `ZapsModel`, `ZapInjection`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, `ARC_BoostsEditor.bundle` (Assets.car, SelectorPicker.js;
+read only for its function names, nothing copied).
+
+- **Where it lives.** Zap is a tool inside Arc's Boost editor (`BoostsEditor` module: `SelectorPicker`,
+  `SelectorPickerMode`, `HoveredElementTracker`, `PostClickOverlay`, `SelectorPreview`, `SelectorSpotlight`,
+  `SelectorVisualizer`, `HighlightRect`, `PinToRectView`, `BoostsEditorShelfView`, `IndividualZapCell`; strings
+  37721–37814). Editor actions include `showSelectorPicker`, `hideSelectorPicker`, `appendZap`, `removeZap`,
+  `setZapToPreview` (163640–163700). The editor opens from the site control center's New Boost button and the page
+  context menu's "Customize Page" › "Create a new boost" (73700–73727, 84896). No menu bar item or command bar
+  action for Zap (menudump: only Window › View Boosts…, disabled).
+- **Picker mechanism.** Native overlay over the web contents; page JS only answers geometry:
+  `getHoveredElement({x: …})`, `getSelectorCandidates({x: …})`, `rectsForSelector(…)` (JS.swift strings, 73424–73428;
+  the bundle's SelectorPicker.js defines these three window functions). Candidates are capped at 100 matches.
+- **Text.** Shelf: "Click elements on the page to " + bold "Zap" + " them" (arc.s 0x1012eef9c: literal, then inline
+  small strings `Zap` with `Text.bold()`, then ` them`). Post-click buttons: "Zap this" (inline small string at
+  0x1012d8d04), "Zap all related elements", "Cancel" (0x1012d8d6c); in copy mode "Copy selector for this" /
+  "Copy selector for related". Error: "Failed to run Zap JS". Editor button: "Hide Selector Picker".
+- **Sizes and colours.** Post-click overlay `.frame(width: 250)` (0x1012d8960, 250.0). `ZapPreviewBackground`
+  sRGB 0.851 grey (#D9D9D9) for zap cells; Boosts palette `BoostsRed` sRGB (1, 0.055, 0.055).
+- **Storage and CSS.** Zaps are part of a Boost's data (`BoostData`, stored locally and in Firestore); applied as
+  `<selector> { display: none !important; }` (BoostsClient string at 71515).
+- **Kite.** Per-site selectors in `zaps.json` (domain = host without `www.`, Boosts' rule); a document-start script
+  in an isolated world (Chromium `Page.addScriptToEvaluateOnNewDocument` with `worldName`, WebKit `WKUserScript` in a
+  `WKContentWorld`) adds one style element; a zap or removal replaces the CSS live in open pages.
+- **Unverified / not measured:** the highlight's colour, fill and stroke (Kite uses BoostsRed at 15% fill with a
+  2pt stroke), the cursor during picking, the shelf's position and look, the candidate slider in
+  `SelectorPreview` (Kite offers one "related" candidate), what `zapToPreview` shows on hover (Kite shows the zapped
+  element again while its cell is hovered), and Arc's selector heuristics (Kite has its own).
 
 ## Still unknown
 

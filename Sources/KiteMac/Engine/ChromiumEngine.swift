@@ -84,6 +84,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         super.init()
         browser.delegate = self
         prepareVerificationCodes()
+        ZapInjection.attach(to: self)
         historySwipe = HistorySwipeController(
             view: browser.view,
             canNavigate: { [weak browser] in $0 == .back ? browser?.canGoBack == true : browser?.canGoForward == true },

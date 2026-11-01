@@ -151,6 +151,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         open(pendingURLs)
         pendingURLs = []
+        // A test run can open the Zap picker, which has no menu item until Kite has Arc's Boost editor.
+        if UIDiagnostics.enabledByEnvironment, ProcessInfo.processInfo.environment["KITE_TEST_ZAP_PICKER"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.windowController.showZapPicker(nil) }
+        }
 
         diagnostics = DiagnosticsRecorder(directory: Self.supportDirectory.appendingPathComponent("Diagnostics", isDirectory: true))
         diagnostics.start()

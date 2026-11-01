@@ -1,8 +1,8 @@
 import AppKit
 import KiteCore
 
-/// Extra words the command bar matches a menu item by (Arc's type-travel keywords). An item
-/// carrying them is offered even while hidden from the menu bar.
+/// Marks a menu item the command bar offers even while it's hidden from the menu bar, with extra words
+/// it also matches by (Arc's type-travel keywords; may be empty).
 final class CommandBarKeywords: NSObject {
     let words: [String]
     init(_ words: [String]) { self.words = words }
@@ -20,7 +20,8 @@ struct MenuCommand: Hashable {
         item.keyEquivalent.isEmpty ? nil : ShortcutsWindow.describe(item.keyEquivalent, item.keyEquivalentModifierMask)
     }
 
-    /// Commands matching `query`, best first. Only enabled, visible commands, as the menu would show them.
+    /// Commands matching `query`, best first. Only enabled, visible commands, as the menu would show them,
+    /// plus hidden ones carrying `CommandBarKeywords` (MainMenu's `commandBarOnly`).
     @MainActor
     static func search(_ query: String, in menu: NSMenu?, limit: Int = 3) -> [(command: MenuCommand, score: Int)] {
         var results: [(MenuCommand, Int)] = []
