@@ -75,8 +75,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var didSync: (() -> Void)?
     /// The crashed-tab page over the shown tab, while its renderer is dead.
     private var sadTab: NSHostingView<SadTabView>?
-    /// Kite's own pages (kite://history) over the panes showing them, by tab.
-    private var internalPages: [UUID: NSHostingView<HistoryPageView>] = [:]
+    /// Kite's own pages (kite://history, kite://archive) over the panes showing them, by tab.
+    private var internalPages: [UUID: (page: InternalPage, host: NSView)] = [:]
     private var commandBarVisible = false
     private var sidebarVisible = true
     /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
@@ -528,16 +528,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     /// Draws Kite's own pages over the shown tabs on kite:// URLs. Their engine pages stay blank.
     private func updateInternalPages() {
-        let shown = shownTabIDs.filter { InternalPage(store.state.tab($0)?.url) != nil }
-        for (id, host) in internalPages where !shown.contains(id) {
-            host.removeFromSuperview()
+        let shown = shownTabIDs.compactMap { id in InternalPage(store.state.tab(id)?.url).map { (id, $0) } }
+        for (id, entry) in internalPages where !shown.contains(where: { $0.0 == id && $0.1 == entry.page }) {
+            entry.host.removeFromSuperview()
             internalPages[id] = nil
         }
-        for id in shown {
-            let view = HistoryPageView(store: store.history) { [weak self] url, newTab in
-                self?.openFromInternalPage(id, url, newTab: newTab)
-            }
-            let host = internalPages[id] ?? NSHostingView(rootView: view)
+        for (id, page) in shown {
+            let host = internalPages[id]?.host ?? makeInternalPage(page, for: id)
             if shownTabIDs.count > 1, let pane = splitPanes.frame(of: id) {
                 host.frame = splitPanes.convert(pane, to: contentClip)
                 host.autoresizingMask = []
@@ -546,10 +543,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 host.autoresizingMask = [.width, .height]
             }
             if host.superview == nil {
-                host.rootView = view
                 contentClip.addSubview(host, positioned: .below, relativeTo: toolbarHost)
             }
-            internalPages[id] = host
+            internalPages[id] = (page, host)
+        }
+    }
+
+    private func makeInternalPage(_ page: InternalPage, for id: UUID) -> NSView {
+        let open: (URL, Bool) -> Void = { [weak self] url, newTab in
+            self?.openFromInternalPage(id, url, newTab: newTab)
+        }
+        switch page {
+        case .history:
+            return NSHostingView(rootView: HistoryPageView(store: store.history, open: open))
+        case .archive:
+            return NSHostingView(rootView: ArchivePageView(store: store, open: open) { [weak self] tabID in
+                self?.restoreArchivedTab(tabID)
+            })
         }
     }
 
@@ -962,6 +972,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             // ⌘← / ⌘→ belong to a focused AppKit text field (the command bar) for line start/end.
             // A disabled key equivalent passes the key on.
             return !(window?.firstResponder is NSText)
+        case #selector(clearArchive(_:)):
+            return !store.state.archived.isEmpty
         case #selector(toggleToolbar(_:)):
             item.title = store.state.showsToolbar ? "Hide Toolbar" : "Show Toolbar"
             return store.state.selectedSplit == nil
