@@ -53,6 +53,11 @@ import Testing
             == .input(window: nil, event: .click(UIPoint(x: 20, y: 30), button: .left, count: 2, modifiers: .meta)))
         #expect(try ui(["action": "input", "scroll": [100, 200], "dy": -40])
             == .input(window: nil, event: .scroll(UIPoint(x: 100, y: 200), dx: 0, dy: -40)))
+        #expect(try ui(["action": "input", "scroll": [100, 200], "dx": 300, "phase": "gesture", "steps": 12])
+            == .input(window: nil, event: .phasedScroll(UIPoint(x: 100, y: 200), dx: 300, dy: 0, phase: .gesture, steps: 12)))
+        #expect(try ui(["action": "input", "scroll": [100, 200], "phase": "ended"])
+            == .input(window: nil, event: .phasedScroll(UIPoint(x: 100, y: 200), dx: 0, dy: 0, phase: .ended, steps: 10)))
+        #expect(throws: AutomationCommand.InvalidArguments.self) { try ui(["action": "input", "scroll": [1, 2], "phase": "wobble"]) }
         #expect(throws: AutomationCommand.InvalidArguments.self) { try ui(["action": "input"]) }
         #expect(throws: AutomationCommand.InvalidArguments.self) { try ui(["action": "input", "keys": "a", "text": "b"]) }
     }
