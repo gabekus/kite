@@ -123,8 +123,12 @@ enum MainMenu {
             item("Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift], toTarget: false, id: "closeWindow"),
             .separator(),
             item("Share…", #selector(BrowserWindowController.share(_:)), id: "share"),
+            // Arc's File menu: Capture…, Capture Full Page (no shortcuts; ids from Arc's shortcut table).
+            item("Capture…", #selector(BrowserWindowController.capturePage(_:)), id: "capturePage"),
+            item("Capture Full Page", #selector(BrowserWindowController.captureFullPage(_:)), id: "captureFullPage"),
             item("Save Page As…", #selector(BrowserWindowController.savePageAs(_:)), id: "savePageAs"),
-            item("Print…", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
+            // "Print", no ellipsis, as in Arc's File menu.
+            item("Print", #selector(BrowserWindowController.printPage(_:)), "p", id: "printPage"),
             .separator(),
             // 1Password's own shortcut for its popup.
             item("1Password…", #selector(BrowserWindowController.showOnePassword(_:)), "x", [.command, .shift], id: "onePassword"),
@@ -233,6 +237,8 @@ enum MainMenu {
                 // Both open DevTools for now; picking the element or panel needs the DevTools frontend.
                 item("Inspect Elements", #selector(BrowserWindowController.showDevTools(_:)), "c", [.command, .option], id: "inspectElements"),
                 item("JavaScript Console", #selector(BrowserWindowController.showDevTools(_:)), "j", [.command, .option], id: "javaScriptConsole"),
+                // Arc 1.169: ⌃D, no ⌘ (its menu's AXMenuItemCmdModifiers is 12).
+                item("Turn on Developer Mode for this site", #selector(BrowserWindowController.toggleDeveloperMode(_:)), "d", [.control], id: "toggleDeveloperMode"),
             ]),
             .separator(),
             item("Enter Full Screen", #selector(BrowserWindowController.toggleFullScreenMode(_:)), "f", [.command, .control], id: "fullscreen"),
