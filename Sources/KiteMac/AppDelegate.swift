@@ -252,6 +252,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Kite menu → Play Kite Sound Effects: Arc's "Play Arc sound effects", on by default.
     @objc func toggleSoundEffects(_ sender: Any?) {
         UserDefaults.standard.set(!SoundEffects.isEnabled(in: .standard), forKey: SoundEffects.enabledKey)
+    }
+
     /// Kite menu → Ask on Page: Arc Max's find-bar questions, off until turned on (Arc's `askOnPageEnabled`).
     @objc func toggleAskOnPage(_ sender: Any?) {
         UserDefaults.standard.set(!AskOnPage.isEnabled(in: .standard), forKey: AskOnPage.enabledKey)
@@ -452,6 +454,7 @@ extension AppDelegate: NSMenuItemValidation {
         }
         if item.action == #selector(toggleSoundEffects(_:)) {
             item.state = SoundEffects.isEnabled(in: .standard) ? .on : .off
+        }
         if item.action == #selector(toggleAskOnPage(_:)) {
             item.state = AskOnPage.isEnabled(in: .standard) ? .on : .off
         }
