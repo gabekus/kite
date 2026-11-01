@@ -15,7 +15,7 @@ struct PageToolbar: View {
     @AppStorage(ToolbarURL.showsFullURLKey) private var showsFullURL = false
     #if canImport(CEFBridge)
     /// Pinned extensions and the extensions menu; nil where extensions don't run (incognito, WebKit).
-    var extensions: ExtensionsModel?
+    var extensions: ExtensionsSelection?
     #endif
 
     enum Metrics {
@@ -60,7 +60,7 @@ struct PageToolbar: View {
                 #if canImport(CEFBridge)
                 if let extensions {
                     // Site Controls' icon sits 10.5pt into its 37pt slot; Arc leaves 12pt to it.
-                    ExtensionsToolbarItems(model: extensions)
+                    ExtensionsSelectionView(selection: extensions) { ExtensionsToolbarItems(model: $0) }
                         .padding(.trailing, ExtensionsToolbarItems.Metrics.siteControlsGap - (Metrics.buttonPitch - Metrics.siteControlsSize) / 2)
                 }
                 #endif

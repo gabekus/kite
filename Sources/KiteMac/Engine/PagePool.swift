@@ -9,11 +9,15 @@ import KiteCore
 /// can save). On launch nothing loads except the selected tab.
 @MainActor
 final class PagePool {
+    /// The window's engine: the default profile's, or incognito's. Tabs in a space with
+    /// another profile get that profile's engine (`engine(forTab:)`).
     let engine: WebEngine
     private unowned let store: BrowserStore
     private var policy = LiveTabPolicy(maxLiveTabs: 6)
 
     private var pages: [UUID: WebPage] = [:]
+    /// The profile folder each page was made in, so a space moved to another profile reloads.
+    private var pageProfiles: [UUID: String] = [:]
     private var lastShown: [UUID: Date] = [:]
     private var savedState: [UUID: Any] = [:]
     private var visibleIDs: Set<UUID> = []
@@ -52,19 +56,50 @@ final class PagePool {
     func loadedPage(_ id: UUID) -> WebPage? { pages[id] }
     var livePages: [UUID: WebPage] { pages }
 
+    /// The engine for tab `id`'s page: its space's profile (or, for a favorite, the current space's).
+    func engine(forTab id: UUID) -> WebEngine {
+        guard engine.profileDirectory != nil else { return engine }
+        let state = store.state
+        return engine.forProfile(state.profile(state.profileDirectory(ofTab: id)))
+    }
+
+    /// The engine for the current space's profile: extension popups and 1Password open in it.
+    var currentEngine: WebEngine {
+        guard engine.profileDirectory != nil else { return engine }
+        let state = store.state
+        return engine.forProfile(state.profile(state.selectedProfileDirectory))
+    }
+
     func page(for tab: BrowserTab) -> WebPage {
-        if let existing = pages[tab.id] { return existing }
+        let engine = engine(forTab: tab.id)
+        if let existing = pages[tab.id] {
+            if pageProfiles[tab.id] == engine.profileDirectory { return existing }
+            // Its space moved to another profile: nothing of the old page's session carries over.
+            discard(tab.id, keepHistory: false)
+        }
         // A tab on one of Kite's own pages gets a blank page; the window draws the page over it.
         let url = InternalPage(tab.url) == nil ? tab.url : nil
         let page = engine.makePage(url: url, restoring: savedState.removeValue(forKey: tab.id))
         register(page, id: tab.id)
+        pageProfiles[tab.id] = engine.profileDirectory
         return page
+    }
+
+    /// Pages whose tab now belongs to another profile (its space moved): they're closed, and
+    /// load again in the new profile when next shown.
+    func discardPagesInWrongProfile() {
+        guard engine.profileDirectory != nil else { return }
+        for id in Array(pages.keys) {
+            guard let made = pageProfiles[id], store.state.tab(id) != nil else { continue }
+            if engine(forTab: id).profileDirectory != made { discard(id, keepHistory: false) }
+        }
     }
 
     /// Takes over a page made elsewhere (a Little Kite window's), for a new tab. Returns the tab's id.
     func adopt(_ page: WebPage) -> UUID {
         let id = UUID()
         register(page, id: id)
+        pageProfiles[id] = currentEngine.profileDirectory
         return id
     }
 
@@ -97,16 +132,19 @@ final class PagePool {
         // Register before the tab exists so selecting it reuses this page.
         let newID = UUID()
         register(page, id: newID)
+        pageProfiles[newID] = currentEngine.profileDirectory
         store.mutate { $0.openTab(id: newID, url: url) }
     }
 
     /// Registers `page` (a Peek's) for a tab the caller is about to add with `id`.
     func register(existing page: WebPage, id: UUID) {
         register(page, id: id)
+        pageProfiles[id] = currentEngine.profileDirectory
     }
 
     func discard(_ id: UUID, keepHistory: Bool) {
         guard let page = pages.removeValue(forKey: id) else { return }
+        pageProfiles[id] = nil
         savedState[id] = keepHistory ? page.hibernationState() : nil
         lastShown[id] = nil
         page.onEvent = nil
@@ -162,7 +200,7 @@ final class PagePool {
             guard extensionInstalls[extensionID] == nil, let source = pages[id],
                   let storeURL = ChromeWebStore.detailURL(for: extensionID) else { return }
             extensionInstalls[extensionID] = BackgroundExtensionInstall(
-                extensionID: extensionID, storeURL: storeURL, engine: engine, source: source
+                extensionID: extensionID, storeURL: storeURL, engine: engine(forTab: id), source: source
             ) { [weak self] in self?.extensionInstalls[extensionID] = nil }
         case let .openInNewTab(url, foreground):
             store.mutate { $0.openTab(url: url, select: foreground) }
@@ -211,7 +249,7 @@ final class PagePool {
     /// On Google results, extensions that are already installed say "Added".
     private func markInstalledExtensions(in id: UUID) {
         guard let page = pages[id], GoogleSearch.isResultsPage(store.state.tab(id)?.url) else { return }
-        for extensionID in BackgroundExtensionInstall.installedIDs() {
+        for extensionID in BackgroundExtensionInstall.installedIDs(profile: engine(forTab: id).profileDirectory) {
             guard let script = GoogleResultsScript.label(extensionID, "Added", disabled: true) else { continue }
             page.evaluateJavaScript(script) { _ in }
         }

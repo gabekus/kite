@@ -51,6 +51,7 @@ namespace {
 std::unique_ptr<CefScopedLibraryLoader> gLibraryLoader;
 std::set<CefRefPtr<CefBrowser>>* gBrowsers;
 bool gInitialized = false;
+NSString* gRootCachePath = nil;
 bool gQuitting = false;
 bool gEnergySaverEnabled = false;
 bool gEnergySaverApplied = false;
@@ -97,6 +98,10 @@ void KCUnregisterBrowser(CefRefPtr<CefBrowser> browser) {
 
 bool KCRuntimeIsQuitting() {
     return gQuitting;
+}
+
+NSString* KCRootCachePath() {
+    return gRootCachePath;
 }
 
 // MARK: - KCRuntime
@@ -159,6 +164,7 @@ bool KCRuntimeIsQuitting() {
     cefSettings.log_severity = LOGSEVERITY_WARNING;
     cefSettings.persist_session_cookies = true;
     CefString(&cefSettings.root_cache_path) = settings.profilePath.UTF8String;
+    gRootCachePath = [settings.profilePath copy];
     CefString(&cefSettings.cache_path) = [settings.profilePath stringByAppendingPathComponent:@"Default"].UTF8String;
     CefString(&cefSettings.log_file) = [settings.profilePath stringByAppendingPathComponent:@"chromium.log"].UTF8String;
 

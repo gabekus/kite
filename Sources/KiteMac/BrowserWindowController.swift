@@ -16,6 +16,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     let store: BrowserStore
     let pool: PagePool
+    #if canImport(CEFBridge)
+    /// The current space's profile's extensions, for the toolbar, sidebar and menu bar.
+    private(set) var extensionsSelection: ExtensionsSelection?
+    #endif
+    /// Called when the window's current space moves to another profile (or another space with one).
+    var onProfileChange: ((WebEngine) -> Void)?
+    var shownProfileDirectory: String?
     private let adblocker: Adblocker
     private let rootView = RootView()
     /// The system's sidebar material under the space's tint, like Arc's translucent window.
@@ -233,12 +240,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         toolbar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view, overlap: 4) }
         sidebar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view) }
         #if canImport(CEFBridge)
-        // Extensions run in the persistent Chromium profile only.
+        // Extensions run in the persistent Chromium profiles only, each profile its own.
         if !isIncognito, pool.engine is ChromiumEngine {
-            let extensions = ExtensionsModel.shared(engine: pool.engine)
+            let extensions = ExtensionsSelection(ExtensionsModel.shared(engine: pool.currentEngine))
+            extensionsSelection = extensions
             toolbar.extensions = extensions
-            sidebar.showExtensions = { view in ExtensionsMenu.present(model: extensions, from: view) }
-            sidebar.fieldAccessory = AnyView(OnePasswordFieldButton(model: extensions))
+            sidebar.showExtensions = { view in ExtensionsMenu.present(model: extensions.model, from: view) }
+            sidebar.fieldAccessory = AnyView(ExtensionsSelectionView(selection: extensions) { OnePasswordFieldButton(model: $0) })
         }
         #endif
         sidebarHost = NSHostingView(rootView: sidebar)
@@ -486,6 +494,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         updateSplitDropZones()
         let live = state.allTabIDs
         pool.retain(live: live, restorable: live.union(state.recentlyClosed.map(\.tab.id)))
+        syncProfile()
         applyDarkPage()
         adblocker.setPolicy(enabled: state.blocksAds, allowedHosts: state.adblockAllowedHosts)
 

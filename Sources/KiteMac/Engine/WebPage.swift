@@ -159,4 +159,10 @@ protocol WebEngine: AnyObject {
     func makePage(url: URL?, restoring state: Any?) -> WebPage
     /// A sibling engine whose cookies, cache and storage live in memory only (incognito).
     func makeEphemeral() -> WebEngine
+    /// The engine for `profile`'s pages (Profiles.swift): its own cookies, logins, history and
+    /// extensions. The same object every time for one profile; the default profile's is the
+    /// app's own engine.
+    func forProfile(_ profile: Profile) -> WebEngine
+    /// The profile folder this engine's pages use; nil for incognito.
+    var profileDirectory: String? { get }
 }

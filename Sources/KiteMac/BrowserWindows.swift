@@ -16,6 +16,8 @@ final class BrowserWindows {
     private let engine: WebEngine
     private let adblocker: Adblocker
     private let history: HistoryStore
+    /// Each normal window as it's made (the main one excepted).
+    var didMakeController: ((BrowserWindowController) -> Void)?
     private let fileURL: URL
     let link = WindowLink()
     private(set) var controllers: [BrowserWindowController] = []
@@ -115,10 +117,11 @@ final class BrowserWindows {
     }
 
     private func show(_ store: BrowserStore, kind: SavedWindow.Kind, frame: NSRect?) -> BrowserWindowController {
-        store.history = history
+        store.historyRoot = history
         store.didChangeState = { [weak self] in self?.scheduleSave() }
         let controller = BrowserWindowController(store: store, engine: engine, adblocker: adblocker, autosaveName: nil)
         controllers.append(controller)
+        didMakeController?(controller)
         kinds[ObjectIdentifier(controller)] = kind
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: controller.window, queue: .main

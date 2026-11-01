@@ -16,6 +16,9 @@ final class WebKitEngine: WebEngine {
     private var contentRules: WebKitContentRules?
     /// Incognito pages don't run Boosts.
     private var appliesBoosts = true
+    private(set) var profileDirectory: String? = Profile.defaultDirectory
+    private var profileEngines: [String: WebKitEngine] = [:]
+    private weak var defaultEngine: WebKitEngine?
 
     init(dataStore: WKWebsiteDataStore = .default()) {
         let configuration = WKWebViewConfiguration()
@@ -34,6 +37,20 @@ final class WebKitEngine: WebEngine {
         let engine = WebKitEngine(dataStore: .nonPersistent())
         engine.contentRules = contentRules
         engine.appliesBoosts = false
+        engine.profileDirectory = nil
+        return engine
+    }
+
+    /// WebKit keeps each profile in a data store named by the profile's `dataStoreID`.
+    func forProfile(_ profile: Profile) -> WebEngine {
+        let root = defaultEngine ?? self
+        if profile.isDefault || root.profileDirectory == nil { return root }
+        if let engine = root.profileEngines[profile.directory] { return engine }
+        let engine = WebKitEngine(dataStore: WKWebsiteDataStore(forIdentifier: profile.dataStoreID))
+        engine.contentRules = root.contentRules
+        engine.profileDirectory = profile.directory
+        engine.defaultEngine = root
+        root.profileEngines[profile.directory] = engine
         return engine
     }
 

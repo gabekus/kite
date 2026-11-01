@@ -7,6 +7,8 @@ import CEFBridge
 MainActor.assumeIsolated {
     let environment = ProcessInfo.processInfo.environment
     let delegate = AppDelegate()
+    // Folders of profiles deleted last run, before Chromium (or WebKit) opens any profile.
+    ProfileFolders.deletePending()
 
     #if canImport(CEFBridge)
     // CEF requires its NSApplication subclass, so create it before anything touches NSApp.

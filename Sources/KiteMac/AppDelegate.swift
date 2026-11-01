@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var history: HistoryStore!
     private(set) var keyBindings: KeyBindingsStore!
     private var adblocker: Adblocker!
-    private var windowController: BrowserWindowController!
+    private(set) var windowController: BrowserWindowController!
     private var incognitoControllers: [BrowserWindowController] = []
     /// New and blank windows (⌘N, ⌃⌘N), restored on relaunch.
     private var windows: BrowserWindows!
@@ -24,7 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var archiveTimer: Timer?
     #if canImport(CEFBridge)
     /// Shows extensions Kite's tabs (tabs.query and friends).
-    private var extensionTabs: ExtensionTabsBridge?
+    /// One per Chromium profile in use: its extensions see the tabs in its profile.
+    var extensionTabs: [String: ExtensionTabsBridge] = [:]
     #endif
     private var automation: AutomationController!
     private var claudeTasks: ClaudeTasksController!
@@ -33,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingURLs: [URL] = []
     #if canImport(CEFBridge)
     /// The menu bar's Extensions menu.
-    private var extensionsMenu: ExtensionsMenuBar?
+    var extensionsMenu: ExtensionsMenuBar?
     #endif
 
 
@@ -53,8 +54,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
         store.archiveStaleTabs()
+        // Deleted profiles whose folders are gone (ProfileFolders) free their names.
+        let removed = Set(store.state.retiredProfileDirectories.filter { !ProfileFolders.exists($0) })
+        if !removed.isEmpty { store.mutate { $0.forgetRetiredProfiles(removed) } }
         history = HistoryStore(fileURL: Self.supportDirectory.appendingPathComponent("history.json"))
-        store.history = history
+        store.historyRoot = history
         DownloadsModel.shared.start(fileURL: Self.supportDirectory.appendingPathComponent("downloads.json"))
         DownloadsModel.shared.currentTabTitle = { DownloadTidier.frontBrowser?.store.state.selectedTab?.title }
         BoostsModel.shared.start(fileURL: Self.supportDirectory.appendingPathComponent("boosts.json"))
@@ -83,6 +87,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             main: store, mainController: windowController, engine: engine, adblocker: adblocker,
             history: history, fileURL: Self.supportDirectory.appendingPathComponent("windows.json")
         )
+        #if canImport(CEFBridge)
+        windows.didMakeController = { [weak self] controller in self?.followProfiles(of: controller) }
+        #endif
         windows.restore()
 
         automation = AutomationController(store: store, supportDirectory: Self.supportDirectory)
@@ -121,17 +128,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { _ = self?.store.mutate { $0.openTab(url: url, select: false) } }
         }
         if windowController.pool.engine is ChromiumEngine {
-            let bridge = ExtensionTabsBridge(host: windowController)
-            windowController.didSync = { [weak bridge] in bridge?.setNeedsUpdate() }
-            bridge.start(engine: windowController.pool.engine)
-            extensionTabs = bridge
-            // Once the window is up, so Chrome's "Add 1Password?" dialog has somewhere to hang.
+            windowController.didSync = { [weak self] in self?.extensionTabs.values.forEach { $0.setNeedsUpdate() } }
             let engine = windowController.pool.engine
             VerificationCodeService.shared.configure(engine: engine)
-            OnePasswordFieldButton.open = { view in
-                MainActor.assumeIsolated { OnePasswordIntegration.showPopup(engine: engine, relativeTo: view.bounds, of: view) }
+            // The popup of the profile the button's window is showing.
+            OnePasswordFieldButton.open = { [weak self] view in
+                MainActor.assumeIsolated {
+                    let controller = self?.browserControllers.first { $0.window === view.window }
+                    return OnePasswordIntegration.showPopup(engine: controller?.pool.currentEngine ?? engine, relativeTo: view.bounds, of: view)
+                }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { OnePasswordIntegration.installIfNeeded(engine: engine) }
+            prepareProfile(engine)
+            for controller in browserControllers where !controller.isIncognito { followProfiles(of: controller) }
         }
         KCRuntime.extensionDialogAnchor = { [weak self] window in
             MainActor.assumeIsolated {

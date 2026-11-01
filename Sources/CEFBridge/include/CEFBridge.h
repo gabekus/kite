@@ -108,6 +108,9 @@ typedef NS_ENUM(NSInteger, KCPermissionDecision) {
 NS_SWIFT_UI_ACTOR
 @interface KCRequestContext : NSObject
 + (instancetype)incognitoContext NS_SWIFT_NAME(incognito());
+/// The on-disk profile in `directory` (a folder name such as "Profile 1") inside the root
+/// profile path: its own cookies, storage, history and extensions. One object per folder.
++ (instancetype)contextForProfileDirectory:(NSString *)directory NS_SWIFT_NAME(init(profileDirectory:));
 - (instancetype)init NS_UNAVAILABLE;
 @end
 
