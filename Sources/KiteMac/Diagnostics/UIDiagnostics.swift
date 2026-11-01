@@ -48,9 +48,10 @@ final class UIDiagnostics {
         case let .capture(number, region, format, pixels, image, save):
             return try await UICapture.run(window: try window(number), region: region, format: format, pixels: pixels,
                                            image: image, save: save)
-        case let .pointer(number, points):
+        case let .pointer(number, points, modifiers):
             let window = try self.window(number)
-            return .text(header(window) + UIReport.pointer(UIPointerProbe(window: window).sweep(points)))
+            let probe = UIPointerProbe(window: window, modifiers: UIInputSender.flags(modifiers))
+            return .text(header(window) + UIReport.pointer(probe.sweep(points)))
         case let .input(number, event):
             let window = try self.window(number)
             let result = try await UIInputSender(window: window, keyLog: keyLog).send(event)
