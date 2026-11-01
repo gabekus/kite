@@ -1221,7 +1221,40 @@ Nothing in Arc was pressed or run. The only open Arc window had its sidebar hidd
 - **Kite's own, unverified against Arc:** the button's size, icon (SF `wand.and.stars`; Arc's image isn't known),
   colours and hover reveal; the header row's height (25, the divider's), font and close button; the minimum of 3
   tabs (`canAutoOrganizeTodayTabs`'s rule isn't in the strings); showing the divider row with no pinned tabs so the
-  button has somewhere to be. Arc's Clear button on the same row isn't in Kite yet.
+  button has somewhere to be. Clear on the same row: see below.
+
+### Today divider Clear button → `TodayDivider`, `ClearButtonStyle` (Arc 1.171 strings and Ghidra decompile, 1 Nov 2026)
+
+Nothing in Arc was pressed, run or captured; no Arc geometry was measured (the buttons are hidden until hover).
+
+- **Row:** `UnpinnedSectionDividerCellView` holds an `NSStackView` (FUN_1001aa688): `borderView` (the line),
+  `tidyButton`, `clearButton`, in that order, so Clear is at the right end and Tidy just left of it. Stack edge
+  insets 18 left and right; its spacing comes from a theme metric that wasn't resolved.
+- **Clear button:** `SidebarClearButton` (FUN_10030e084): an `NSImageView` whose right edge sits 2 pt left of a
+  stack holding an `NSTextField` (width 27.5, not editable or bezeled); the button is the row's height
+  (FUN_1001ab6f0). Title "Clear" (inline string at `0x1001872c4`, comment "Button Title; Clear unpinned tabs in
+  this space"), tooltip "Clear Today tabs" (`0x1001871e8`, "Tooltip; Clear unpinned tabs in this space").
+  Image: SF Symbol `arrow.down` (inline at `0x1001aacc0`, accessibility "arrow pointing down") at the label
+  font's point size, `NSFontWeightBold` (FUN_1001aac84). No background.
+- **Two modes** (FUN_1001abeac, driven by `clearTabAction`: `clearOthers`, `clearAll`, arc-strings.txt
+  176319–176320): `clearAll` shows the arrow and "Clear Today tabs"; `clearOthers` drops the arrow and uses
+  "Clear unselected Today tabs" ("Tooltip; Clear unselected tabs in this list", `0x100187498`). Which windows use
+  `clearOthers` isn't known from the binary ("this list" suggests a non-main tab list); Kite's main sidebar uses
+  `clearAll`.
+- **Shown state** (FUN_1001abbc8, FUN_1001ac59c): a three-way state, 0 = Clear only, 1 = Tidy and Clear,
+  2 = neither. `tidyAndClear` (176321) is the name of state 1, next to the field `buttons` (176318): it is when
+  both buttons show, not a combined action, setting or long press. Both buttons start hidden at alpha 0
+  (FUN_1001aa7fc, FUN_1001aa8e4) and fade with ease-out over 0.1 s. What drives the state (hover is the natural
+  reading, matching Kite's Tidy) wasn't decoded: the Combine key paths are anonymous.
+- **Press:** mouseDown (FUN_100310258) recolours label and image (a 0.66 factor on the colour) and animates the
+  arrow's centre-Y constraint to 3 over 0.175 s (FUN_10030e6a0); mouseUp animates it back to 0 (FUN_10030e860)
+  and calls `onClick` only if the pointer is still inside the button (FUN_10030e75c).
+- **Action:** `onClick` (FUN_1001aab98) sends the store action for the row; Arc's archive reasons include
+  `clearButton`, and the menu's Clear unpinned tabs action is `didTapClearUnpinnedItems` (176402). Kite runs its
+  Clear Today for the divider's space: archives every Today tab, "Archived N tabs" toast.
+- **Kite's own, unverified against Arc:** label font (11 semibold, Kite's Tidy text) and opacity (0.75, 0.5 while
+  pressed), the gap to Tidy (6), the trailing inset (Kite's divider inset, not 18), showing the row when Today
+  has tabs and there are no pinned tabs, and hiding Clear when Today is empty. Not built: the `clearOthers` mode.
 ## Tidy Downloads → `TidyDownloads` (KiteCore), `DownloadTidier` (Arc 1.171 strings, defaults and disassembly, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 43295, 174650-174675, 160610, 73907,
@@ -1416,10 +1449,36 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   directions, flights, news, siteSearch on 15 named sites, history; URL templates at strings 81470–81495) behind
   remote flag `instant-links-v2-enabled`; an intent prompt (navigate vs search) behind
   `instant-links-intent-prototype-enabled` / `instant-links-suggestion-enabled` with a `SuggestionInstantLinksView`
-  row; and a sidebar cell `InstantLinksCellView` (`links`, `favicons`, `linkCount`, `isExpanded`) plus an
-  `instantLinks` item container. Which flags Arc's server turns on is unknown.
+  row. Which flags Arc's server turns on is unknown. (The `links`/`favicons`/`linkCount`/`isExpanded` fields
+  near string 178607 belong to a SwiftUI view, not to `InstantLinksCellView`; see the loading row below.)
 - **Inferred:** ⇧⏎ only for a search (a typed URL opens as usual) and not in Site Search; results open in
-  query order with the first selected; what Arc shows while it works (probably the sidebar cell) is unverified.
+  query order with the first selected.
+
+### Instant Links loading row → `InstantLinks.Pending` (KiteCore), `InstantLinksRow` (Arc 1.171 strings, Ghidra, assets, 1 Nov 2026)
+
+- **What it is:** a sidebar item. `instantLinks` is one of `SidebarItemData`'s cases next to `splitView` and
+  `sharedObject` (strings 66882, 157305, 157484); its model `SidebarInstantLinks` (34519) has a `status` with
+  cases `loading` and `error` (157293–157295). Its titles (strings 66872–66875): "Searching the web for you"
+  ("Title for an in progress web search item") and "Oops, something went wrong." ("… that failed").
+- **The cell (`InstantLinksCellView`, ivars in `decomp/out7/objc.txt` 4100–4170, functions 0x1000ef124–0x1000f1c90):**
+  a tab-like row: `iconContainerView` (a `SidebarCellImageContainerView`, the favicon's slot), `titleView` (a plain
+  label, one line, tail truncation; no shimmer), `selectionStateView` (hover/selected fill) and a `closeButton`
+  shown only on hover (`setHidden(!hovered)` at 0x1000f11a4). The title stack starts 6pt after the icon container
+  (constant at 0x10380c7b0). While loading, the container's child is the `loadingIndicator`, an
+  `AnimatedFlowerView`; otherwise it's the `iconView` (0x1000f09e4).
+- **`AnimatedFlowerView` (0x100185600, 0x100185b28):** the template image `MaxFlowerIcon` (ARCClients_BaseAssets,
+  22pt: outline of four round petals around a hollow diamond, a stalk into each petal) at 16×16 (0x10380c918),
+  anchor in the middle. `transform.rotation` 0 → −2π, 1 s, repeat forever (clockwise), and `position.y` keyframes
+  midY, −1.5, 0, +1.5, 0 at 0/0.25/0.5/0.75/1 with ease-out, ease-in, ease-out, ease-in, 2 s, repeat forever.
+- **Kite:** the row goes at the top of the Today list of the space it was started in (where the results open,
+  replacing it), shows Kite's own drawing of the flower (proportions measured from the asset at 10×: petals 5.5pt
+  out, 5pt outer radius, 1.3pt lines, diamond corners 2.7pt out; Arc's image isn't copied) and turns/bobs like
+  Arc's. The close button cancels: the results never open. "Oops, something went wrong." shows when nothing at
+  all could be opened (Kite falls back to the input and to the results page, so this is rare).
+- **Unverified:** the flower's tint (Arc takes it from a palette; Kite uses the title's colour); what the
+  error state's icon is (Kite shows the still flower); what a click on the row and its context menu
+  (`menuForEvent:`) do (Kite has neither); where Arc puts the row when the results will go to a folder.
+  No Arc pixels: the row wasn't captured in Arc (it needs a live Arc Max search).
 
 ## Zap → `Boost.zaps`, `ZapLibrary.css`, `ZapScript`, `ZapPickerScript` (KiteCore), `BoostsModel`, `LiveZaps`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
 

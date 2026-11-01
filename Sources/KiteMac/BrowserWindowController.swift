@@ -224,11 +224,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             replacePinnedURL: { [weak self] id in self?.replacePinnedURLWithCurrent(id) },
             renameTab: { [weak self] id in self?.renameTab(id) },
             tidyTabs: { [weak self] id in self?.tidyTabs(inSpace: id) },
+            clearToday: { [weak self] id in self?.clearToday(inSpace: id) },
             removeTabGroupHeader: { [weak self] id in self?.removeTabGroupHeader(id) },
             toggleMute: { [weak self] id in self?.toggleMute(id) },
             setProfile: { [weak self] id, profile in self?.setProfile(profile, forSpace: id) },
             newProfile: { [weak self] id in self?.presentCreateProfile(for: id) },
             showsProfiles: !isIncognito,
+            dismissInstantLinks: { [weak self] id in self?.instantLinks.dismiss(id) },
             didDrop: { [weak self] outcome in self?.sidebarDropped(outcome) }
         )
         spaceSwipe = SpaceSwipeController(
