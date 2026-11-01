@@ -95,6 +95,14 @@ typedef NS_ENUM(NSInteger, KCSitePermissionValue) {
     KCSitePermissionValueAsk,
 };
 
+/// How a site's permission prompt was answered. Allow and Block are stored for the site
+/// (Chromium content settings, what Site Controls shows); Dismiss stores nothing.
+typedef NS_ENUM(NSInteger, KCPermissionDecision) {
+    KCPermissionDecisionAllow,
+    KCPermissionDecisionBlock,
+    KCPermissionDecisionDismiss,
+};
+
 /// A Chromium profile for a set of browsers. `incognitoContext` keeps cookies,
 /// cache and storage in memory only; they vanish when the last browser using it closes.
 NS_SWIFT_UI_ACTOR
@@ -133,12 +141,28 @@ NS_SWIFT_UI_ACTOR
 - (void)browser:(KCBrowser *)browser renderProcessDidTerminateWithCode:(int)code;
 /// The status text changed. While the pointer is over a link it's the link's URL; nil when it clears.
 - (void)browser:(KCBrowser *)browser statusMessageDidChange:(nullable NSString *)message;
+/// Arc's link items for a right-click on `url`, top to bottom: dictionaries with "id" (an
+/// NSNumber; 0 is a separator), "title" and "enabled". Nil or empty keeps Chromium's menu.
+- (nullable NSArray<NSDictionary<NSString *, id> *> *)browser:(KCBrowser *)browser contextMenuItemsForLinkURL:(NSURL *)url;
+/// One of those items was chosen, by its "id".
+- (void)browser:(KCBrowser *)browser performContextMenuItem:(NSInteger)itemID linkURL:(NSURL *)url;
 /// YES for a store install's extension package (.crx): it's saved to a temporary
 /// folder for Chromium's installer and isn't reported as a download.
 - (BOOL)browser:(KCBrowser *)browser
     isExtensionPackageWithMIMEType:(NSString *)mimeType
                      suggestedName:(NSString *)suggestedName
                                url:(nullable NSURL *)url;
+/// A site asks for camera, microphone, location or notifications (`permissions` holds
+/// KCSitePermission values) and nothing is stored for it yet. Call `decisionHandler` once.
+/// Without this method Chromium's own default applies (Alloy denies or ignores).
+- (void)browser:(KCBrowser *)browser
+    requestsPermissions:(NSArray<NSNumber *> *)permissions
+                 origin:(NSURL *)origin
+               promptID:(NSInteger)promptID
+        decisionHandler:(void (NS_SWIFT_UI_ACTOR ^)(KCPermissionDecision decision))decisionHandler;
+/// Chromium dropped prompt `promptID` itself (the page navigated or closed); its handler
+/// no longer does anything.
+- (void)browser:(KCBrowser *)browser permissionPromptDidCancel:(NSInteger)promptID;
 @end
 
 /// One Chromium browser (one tab), hosted in `view`.
@@ -170,6 +194,8 @@ NS_SWIFT_UI_ACTOR
 - (void)goBack;
 - (void)goForward;
 - (void)reload;
+/// Downloads `url` like a link's Save Link As (the delegate's download handling applies).
+- (void)downloadURL:(NSURL *)url;
 - (void)reloadIgnoringCache;
 - (void)stopLoading;
 - (void)focus;

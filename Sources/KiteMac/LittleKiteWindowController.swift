@@ -38,6 +38,9 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     private(set) var url: URL?
     private var pageTitle: String?
     private var canGoBack = false
+    /// The page's waiting permission request and Arc's prompt for it, over the page's top-leading corner.
+    private var permissionRequest: PermissionRequest?
+    private var permissionPrompt: PermissionPromptCard?
 
     private let root = LittleRootView()
     private let materialView = NSVisualEffectView()
@@ -181,6 +184,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     private func attach(_ page: WebPage) {
         self.page = page
         page.onEvent = { [weak self] event in self?.handle(event) }
+        page.contextMenuHost = { .littleKite }
         page.view.frame = webContainer.bounds
         page.view.autoresizingMask = [.width, .height]
         webContainer.addSubview(page.view)
@@ -200,17 +204,48 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         case let .navigationState(_, canGoBack, _):
             self.canGoBack = canGoBack
             updateBackButton()
-        case .openInNewTab(let url, _), .openInLinkPeek(let url):
+        case .openInNewTab(let url, _), .openInLinkPeek(let url), .openInSplit(let url):
             host.openTab(url)
+        case let .openLink(url, target):
+            let app = NSApp.delegate as? AppDelegate
+            switch target {
+            case .newWindow: app?.openNewWindow(url: url)
+            case .incognitoWindow: app?.openIncognitoWindow(url: url)
+            // Little Kite's menu has no Split View or Little Kite items.
+            case .newTab, .splitView, .littleKite: host.openTab(url)
+            }
         case .popup(let popup):
             host.adoptPopup(popup)
         case .closeRequested:
             close()
         case .linkHover(let hover):
             if let view = page?.view { LinkPreviewController.shared.hover(hover, in: view) }
+        case .permissionRequest(let request):
+            showPermissionPrompt(request)
+        case .permissionRequestCancelled(let id):
+            if permissionRequest?.id == id { showPermissionPrompt(nil) }
         case .favicon, .progress, .blockedCount, .crashed, .addExtension, .media:
             break
         }
+    }
+
+    /// Shows `request`'s prompt (nil removes it), dismissing any older request still waiting.
+    private func showPermissionPrompt(_ request: PermissionRequest?) {
+        if let old = permissionRequest, old.id != request?.id { old.respond(nil) }
+        permissionPrompt?.removeFromSuperview()
+        permissionPrompt = nil
+        permissionRequest = request
+        guard let request else { return }
+        let card = PermissionPromptCard(request: request) { [weak self] allow in
+            guard let self, self.permissionRequest?.id == request.id else { return }
+            self.permissionRequest = nil
+            request.respond(allow)
+            self.showPermissionPrompt(nil)
+        }
+        card.place(in: webContainer.bounds, of: webContainer)
+        webContainer.addSubview(card)
+        permissionPrompt = card
+        card.animateIn()
     }
 
     private func updateBackButton() {
@@ -249,6 +284,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
 
     private func move(to spaceID: UUID) {
         guard let page else { return NSSound.beep() }
+        showPermissionPrompt(nil)
         page.view.removeFromSuperview()
         page.onEvent = nil
         self.page = nil
@@ -300,6 +336,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
 
     func windowWillClose(_ notification: Notification) {
         window?.saveFrame(usingName: Self.frameName)
+        showPermissionPrompt(nil)
         if let page {
             page.onEvent = nil
             page.close()

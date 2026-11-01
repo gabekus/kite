@@ -33,6 +33,21 @@ final class PagePool {
     var onLoadFinished: ((UUID) -> Void)?
     /// A link clicked in tab `UUID` opens in Arc's Peek card (`LinkPeek`); nil opens it as a new tab.
     var onLinkPeek: ((UUID, URL) -> Void)?
+    /// The page menu's Open Link in New Window, Split View, Little Kite and Incognito Window.
+    var onOpenLink: ((UUID, URL, PageContextMenu.LinkTarget) -> Void)?
+    /// What this window can do with a link, for the page menu.
+    var contextMenuHost: (() -> PageContextMenu.Host)?
+    /// Each tab's unanswered permission request (one at a time: a newer one dismisses the older).
+    private(set) var permissionRequests: [UUID: PermissionRequest] = [:]
+    /// A tab's permission request arrived, was answered or went away.
+    var onPermissionRequestsChanged: (() -> Void)?
+
+    /// Answers tab `id`'s permission request: true allows, false blocks ("Not Now"), nil dismisses.
+    func answerPermissionRequest(_ id: UUID, allow: Bool?) {
+        guard let request = permissionRequests.removeValue(forKey: id) else { return }
+        request.respond(allow)
+        onPermissionRequestsChanged?()
+    }
 
     func loadedPage(_ id: UUID) -> WebPage? { pages[id] }
     var livePages: [UUID: WebPage] { pages }
@@ -96,6 +111,8 @@ final class PagePool {
         lastShown[id] = nil
         page.onEvent = nil
         page.linkPeekPolicy = nil
+        page.contextMenuHost = nil
+        answerPermissionRequest(id, allow: nil)
         page.close()
         store.clearPage(id)
     }
@@ -106,6 +123,7 @@ final class PagePool {
         pages[id] = page
         lastShown[id] = Date()
         page.onEvent = { [weak self] event in self?.handle(event, from: id) }
+        page.contextMenuHost = { [weak self] in self?.contextMenuHost?() ?? PageContextMenu.Host() }
         page.linkPeekPolicy = { [weak self] url, shift in
             guard let self, self.onLinkPeek != nil else { return false }
             let state = self.store.state
@@ -120,6 +138,11 @@ final class PagePool {
             store.pageTitleChanged(id, title)
         case .url(let url):
             store.pageURLChanged(id, url)
+            // A prompt belongs to the site that asked; leaving it drops the prompt (as Chromium does).
+            if let request = permissionRequests[id], let url,
+               SiteControls.origin(of: url) != SiteControls.origin(of: request.origin) {
+                answerPermissionRequest(id, allow: nil)
+            }
         case .favicon(let url):
             store.faviconChanged(id, url)
         case .progress(let progress):
@@ -151,8 +174,16 @@ final class PagePool {
                 guard let self else { return }
                 if let onLinkPeek { onLinkPeek(id, url) } else { store.mutate { $0.openTab(url: url) } }
             }
+        case .openInSplit(let url):
+            // Out of the engine's navigation callback before making another page.
+            DispatchQueue.main.async { [weak self] in
+                self?.store.mutate { $0.openLinkInSplit(url: url, from: id) }
+            }
         case .closeRequested:
             store.mutate { $0.close(tab: id) }
+        case let .openLink(url, target):
+            // Chromium opens Open Link in New Tab in the background.
+            if target == .newTab { store.mutate { $0.openTab(url: url, select: false) } } else { onOpenLink?(id, url, target) }
         case .linkHover(let hover):
             guard let view = pages[id]?.view else { return }
             LinkPreviewController.shared.hover(hover, in: view)
@@ -165,6 +196,15 @@ final class PagePool {
                 $0.crashCode = code
                 $0.isLoading = false
             }
+            answerPermissionRequest(id, allow: nil)
+        case .permissionRequest(let request):
+            permissionRequests.removeValue(forKey: id)?.respond(nil)
+            permissionRequests[id] = request
+            onPermissionRequestsChanged?()
+        case .permissionRequestCancelled(let requestID):
+            guard permissionRequests[id]?.id == requestID else { return }
+            permissionRequests[id] = nil
+            onPermissionRequestsChanged?()
         }
     }
 

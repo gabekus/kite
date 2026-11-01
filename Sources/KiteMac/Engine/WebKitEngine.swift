@@ -80,6 +80,7 @@ final class WebKitPage: NSObject, WebPage {
     let webView: WKWebView
     var onEvent: ((PageEvent) -> Void)?
     var linkPeekPolicy: ((URL, Bool) -> Bool)?
+    var contextMenuHost: (() -> PageContextMenu.Host)?
     private let downloads: DownloadCoordinator
     private let contentRules: WebKitContentRules?
     private let appliesBoosts: Bool
@@ -88,6 +89,8 @@ final class WebKitPage: NSObject, WebPage {
     private var boostScript: String?
     private var boostUserScript: WKUserScript?
     private var observations: [NSKeyValueObservation] = []
+    /// Ids for this page's permission prompts.
+    private var permissionPromptCount = 0
 
     private static let inPageSchemes: Set<String> = ["http", "https", "about", "blob", "data", "file", "javascript"]
     private static let faviconScript = """
@@ -116,6 +119,13 @@ final class WebKitPage: NSObject, WebPage {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         observe()
+        // The right-click test hook needs the page to answer while the test window is covered;
+        // WebKit stops serving an occluded window's page (private WKWebView setting).
+        let setOcclusion = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
+        if PageContextMenuItems.testMode != nil, webView.responds(to: setOcclusion) {
+            typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
+            unsafeBitCast(webView.method(for: setOcclusion), to: Setter.self)(webView, setOcclusion, false)
+        }
         WebKitMediaBridge.shared.attach(self)
         if appliesBoosts { LiveZaps.attach(to: self, owner: self) }
     }
@@ -330,8 +340,12 @@ extension WebKitPage: WKNavigationDelegate {
 
         let flags = navigationAction.modifierFlags
         if navigationAction.navigationType == .linkActivated && flags.contains(.command) {
-            // ⌘-click opens in the background, ⇧⌘-click opens and switches.
-            onEvent?(.openInNewTab(url, foreground: flags.contains(.shift)))
+            // ⌘-click opens in the background, ⇧⌘-click opens and switches, ⌥⌘-click opens in Split View.
+            switch LinkClick.commandClickDestination(shift: flags.contains(.shift), option: flags.contains(.option)) {
+            case .splitView: onEvent?(.openInSplit(url))
+            case .foregroundTab: onEvent?(.openInNewTab(url, foreground: true))
+            case .backgroundTab: onEvent?(.openInNewTab(url, foreground: false))
+            }
             return decisionHandler(.cancel)
         }
         // Arc's Peek: a click in this page or to a new one (target=_blank), not a subframe's own navigation.
@@ -414,6 +428,32 @@ extension WebKitPage: WKUIDelegate {
         onEvent?(.closeRequested)
     }
 
+    /// getUserMedia: Arc's prompt. WebKit keeps no per-site store Kite can read, so it asks
+    /// each time the page does; "Not Now" and closing both deny.
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void
+    ) {
+        let permissions: [SitePermission] = switch type {
+        case .camera: [.camera]
+        case .microphone: [.microphone]
+        case .cameraAndMicrophone: [.camera, .microphone]
+        @unknown default: []
+        }
+        var components = URLComponents()
+        components.scheme = origin.protocol
+        components.host = origin.host
+        if origin.port != 0 { components.port = origin.port }
+        guard let onEvent, !permissions.isEmpty, let url = components.url else { return decisionHandler(.deny) }
+        permissionPromptCount += 1
+        onEvent(.permissionRequest(PermissionRequest(id: permissionPromptCount, origin: url, permissions: permissions) { allow in
+            decisionHandler(allow == true ? .grant : .deny)
+        }))
+    }
+
     /// WebKit's private hover callback (WKUIDelegatePrivate): the element under the pointer after each
     /// move, with the move's modifier keys. Safari's status bar uses it. `hitTestResult` is a
     /// `_WKHitTestResult`, read by key so a missing property gives nil instead of a crash.
@@ -433,6 +473,92 @@ extension WebKitPage: WKUIDelegate {
         }
         let modifiers = NSEvent.ModifierFlags(rawValue: flags).intersection(.deviceIndependentFlagsMask)
         onEvent?(.linkHover(LinkHover(url: url, screenRect: screenRect, modifiers: modifiers)))
+    }
+
+    /// WebKit's private right-click hook (WKUIDelegatePrivate): the menu WebKit built for the
+    /// element under the pointer, returned with Arc's link and image items in place of WebKit's.
+    /// `element` is a `_WKContextMenuElementInfo`, read by key like the hover callback above.
+    @objc(_webView:contextMenu:forElement:)
+    func webView(_ webView: WKWebView, contextMenu menu: NSMenu, forElement element: NSObject?) -> NSMenu {
+        func value(_ object: NSObject?, _ key: String) -> Any? {
+            guard let object, object.responds(to: NSSelectorFromString(key)) else { return nil }
+            return object.value(forKey: key)
+        }
+        let hit = value(element, "hitTestResult") as? NSObject
+        let link = value(hit, "absoluteLinkURL") as? URL
+        let image = value(hit, "absoluteImageURL") as? URL
+        guard link != nil || image != nil else { return Self.menuForTest(menu) ?? menu }
+        let host = contextMenuHost?() ?? PageContextMenu.Host()
+
+        // WebKit's own identifiers (_WKMenuItemIdentifiers, private), so its items can be found.
+        let linkIDs: Set<NSUserInterfaceItemIdentifier> = [
+            .init("WKMenuItemIdentifierOpenLink"), .init("WKMenuItemIdentifierOpenLinkInNewWindow"),
+            .init("WKMenuItemIdentifierDownloadLinkedFile"), .init("WKMenuItemIdentifierCopyLink"),
+        ]
+        let imageIDs: Set<NSUserInterfaceItemIdentifier> = [
+            .init("WKMenuItemIdentifierOpenImageInNewWindow"), .init("WKMenuItemIdentifierDownloadImage"),
+            .init("WKMenuItemIdentifierCopyImage"),
+        ]
+        func webKitItem(_ id: String) -> NSMenuItem? {
+            menu.items.first { $0.identifier?.rawValue == id }
+        }
+
+        var items: [NSMenuItem] = []
+        if let link {
+            items += PageContextMenuItems.menuItems(for: link, host: host) { [weak self] item in
+                guard let self else { return }
+                PageContextMenuItems.perform(item, url: link, send: { self.onEvent?($0) }, download: self.download)
+            }
+        }
+        if let image {
+            // Chromium's order. WebKit's own Copy Image item copies the image itself.
+            items.append(PageContextMenuItems.action(PageContextMenu.imageTitles[0]) { [weak self] in
+                self?.onEvent?(.openInNewTab(image, foreground: false))
+            })
+            items.append(PageContextMenuItems.action(PageContextMenu.imageTitles[1]) { [weak self] in
+                self?.download(image)
+            })
+            if let copy = webKitItem("WKMenuItemIdentifierCopyImage") {
+                copy.title = PageContextMenu.imageTitles[2]
+                items.append(copy)
+            }
+            items.append(PageContextMenuItems.action(PageContextMenu.imageTitles[3]) {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(image.absoluteString, forType: .string)
+                pasteboard.setString(image.absoluteString, forType: .URL)
+            })
+            items.append(.separator())
+        }
+        let replaced = linkIDs.union(imageIDs)
+        let rest = menu.items.filter { item in
+            guard let id = item.identifier else { return true }
+            return !replaced.contains(id)
+        }
+        let result = NSMenu(title: menu.title)
+        for item in PageContextMenuItems.tidySeparators(items + rest) {
+            item.menu?.removeItem(item)
+            result.addItem(item)
+        }
+        return Self.menuForTest(result) ?? result
+    }
+
+    /// Under KITE_TEST_CONTEXT_MENU: logs `menu` (and runs the item asked for) and returns an empty
+    /// menu, which WebKit doesn't show. Nil otherwise.
+    private static func menuForTest(_ menu: NSMenu) -> NSMenu? {
+        guard PageContextMenuItems.testMode != nil else { return nil }
+        menu.update()  // runs menu validation, as showing it would
+        let pick = PageContextMenuItems.logForTest(menu.items.map {
+            (title: $0.isSeparatorItem ? nil : $0.title, enabled: $0.isEnabled)
+        })
+        if let pick { menu.performActionForItem(at: pick) }
+        return NSMenu()
+    }
+
+    private func download(_ url: URL) {
+        webView.startDownload(using: URLRequest(url: url)) { [downloads] download in
+            download.delegate = downloads
+        }
     }
 
     func webView(
@@ -536,7 +662,7 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
             directory = URL(fileURLWithPath: test, isDirectory: true)
         }
         let destination = Self.uniqueURL(in: directory, name: suggestedFilename)
-        DownloadsModel.shared.track(download, destination: destination)
+        DownloadsModel.shared.track(download, destination: destination, sourceTitle: download.webView?.title)
         completionHandler(destination)
     }
 
