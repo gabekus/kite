@@ -10,6 +10,8 @@ struct PageToolbar: View {
     let actions: SidebarActions
     /// Opens Site Controls under the button.
     var showSiteControls: ((NSView) -> Void)?
+    /// Chrome's install icon after the address, for an installable page; nil in incognito.
+    var installApp: ((NSView) -> Void)?
     @State private var siteControlsAnchor: NSView?
     /// Kite menu → Show Full URL in Toolbar (Arc: "Show full URL when Toolbar is enabled").
     @AppStorage(ToolbarURL.showsFullURLKey) private var showsFullURL = false
@@ -95,20 +97,27 @@ struct PageToolbar: View {
             .padding(.leading, Metrics.leading)
             .padding(.trailing, Metrics.trailing)
 
-            Button { store.showCommandBar(selected == nil ? .newTab : .editCurrent) } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "link")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Metrics.enabled)
-                    Text(ToolbarURL.text(for: selected?.url, full: showsFullURL))
-                        .font(.system(size: Metrics.fontSize))
-                        .foregroundStyle(Metrics.text)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+            HStack(spacing: 2) {
+                Button { store.showCommandBar(selected == nil ? .newTab : .editCurrent) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "link")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Metrics.enabled)
+                        Text(ToolbarURL.text(for: selected?.url, full: showsFullURL))
+                            .font(.system(size: Metrics.fontSize))
+                            .foregroundStyle(Metrics.text)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                // Chrome's install icon at the address's end (the extensions stay at the bar's right end).
+                if let installApp, let name = WebAppInstallOffers.shared.offer(for: selected?.id)?.name {
+                    InstallAppFieldButton(appName: name, size: 24, opacity: (0.8, 1), action: installApp)
+                        .foregroundStyle(Metrics.enabled)
+                }
             }
-            .buttonStyle(.plain)
             // A full URL truncates before it reaches the buttons on either side.
             .padding(.horizontal, Metrics.urlInset)
             .offset(x: Metrics.centerOffset)
