@@ -61,7 +61,8 @@ final class BoostEditorWindowController: NSWindowController, NSWindowDelegate {
         }
         let controller = BoostEditorWindowController(boostID: boostID, refresh: refresh, browser: browser)
         open[boostID] = controller
-        controller.showWindow(nil)
+        // A test run (KITE_DIAGNOSTICS=1 on a throwaway profile) stays behind other apps' windows.
+        if UIDiagnostics.enabledByEnvironment { controller.window?.orderBack(nil) } else { controller.showWindow(nil) }
     }
 
     /// Closes the Boost's editor, if open (it was deleted).
