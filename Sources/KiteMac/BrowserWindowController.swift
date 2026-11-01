@@ -40,6 +40,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var claudeBubbleHost: NSHostingView<ClaudeBubble>!
     private var trafficLights: TrafficLights!
     private var commandBarHost: NSHostingView<CommandBarOverlay>!
+    private lazy var instantLinks = InstantLinksController(store: store, supportDirectory: AppDelegate.supportDirectory)
     private var contentLeading: NSLayoutConstraint!
     private var sidebarLeading: NSLayoutConstraint!
     private var sidebarWidthConstraint: NSLayoutConstraint!
@@ -905,7 +906,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func commit(_ suggestion: CommandSuggestion, mode: CommandBarMode) {
         // A page picked for a new split pane keeps the split; anything else leaves it to be cancelled.
         switch suggestion {
-        case .open, .search, .siteSearch, .history: store.pendingSplitPane = nil
+        case .open, .search, .siteSearch, .history, .instantLinks: store.pendingSplitPane = nil
         default: break
         }
         store.hideCommandBar()
@@ -919,6 +920,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         case .command(let command):
             // After the bar closes, so the command sees the page as first responder, not the bar's field.
             DispatchQueue.main.async { command.perform() }
+        case .instantLinks(let query):
+            instantLinks.open(query)
         }
     }
 
@@ -1027,16 +1030,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     @objc func goBack(_ sender: Any?) { shownPage?.goBack() }
     @objc func goForward(_ sender: Any?) { shownPage?.goForward() }
 
-    @objc func showDevTools(_ sender: Any?) {
+    // View › Developer, like Arc 1.171.
+    @objc func showDevTools(_ sender: Any?) { showDevTools(on: .last) }
+    @objc func inspectElements(_ sender: Any?) { showDevTools(on: .inspectElement) }
+    @objc func showJavaScriptConsole(_ sender: Any?) { showDevTools(on: .console) }
+    @objc func showNetworkInspector(_ sender: Any?) { showDevTools(on: .network) }
+
+    private func showDevTools(on panel: DevToolsPanel) {
         guard let page = shownPage else { return NSSound.beep() }
-        if pool.engine.supportsDevTools {
-            page.showDevTools()
-        } else {
-            let alert = NSAlert()
-            alert.messageText = "Web Inspector"
-            alert.informativeText = "On the WebKit engine, right-click the page and choose Inspect Element."
-            alert.runModal()
-        }
+        page.showDevTools(panel)
     }
 
     @objc func toggleDarkPage(_ sender: Any?) {

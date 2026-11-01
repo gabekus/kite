@@ -90,9 +90,9 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Cast | | ❌ | Skip? |
 | Developer → View Source | ⌥⌘U | ✅ Chromium (new `view-source:` tab) | |
 | Developer → Developer Tools | ⌥⌘I | ✅ | |
-| Developer → Inspect Elements | ⌥⌘C | 🟡 opens DevTools, no picker yet | Later |
-| Developer → JavaScript Console | ⌥⌘J | 🟡 opens DevTools, not on Console | Later |
-| Developer → Network Inspector | | ❌ | Later, with the two above |
+| Developer → Inspect Elements | ⌥⌘C | ✅ Chromium: DevTools with the element picker on (WebKit: Web Inspector's element selection) | |
+| Developer → JavaScript Console | ⌥⌘J | ✅ DevTools on Console | |
+| Developer → Network Inspector | | ✅ Chromium: DevTools on Network (WebKit: opens Web Inspector as it was) | |
 | Developer → Allow JavaScript from Apple Events | | ❌ | With AppleScript |
 | Turn on Developer Mode for this site | ⌃D | 🟡 Per-host switch (title flips to "Turn off…"), remembered across relaunches; on a Developer Mode site the sidebar's reload button gets Arc's reload options (Reload this page / Refresh (Ignore Cache) / Clear Cookies and Refresh) and reloads the way last chosen. No Site Controls row yet | Gap 16 |
 | Enter Full Screen | ⌃⌘F | ✅ | |
@@ -195,7 +195,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | 🟡 Popover from the toolbar's sliders button and the sidebar URL field's hover button: Copy URL, Share, Block Ads & Trackers, camera/mic/location/notifications (Chromium content settings; not on WebKit), Secure/Insecure, Clear Cache / Clear Cookies. No Boosts, capture, extensions section, Developer Mode, All Site Settings | Gap 8 |
 | Native ad blocker | uBlock-style lists | ❌ | Ad blocker thread |
 | Translation | Translate page, "never translate" sites | ❌ | Later (Chromium translate isn't in CEF) |
-| Instant Links | Command bar goes straight to the top result | ❌ | With Claude in the browser |
+| Instant Links | Command bar goes straight to the top result | 🟡 ⇧⏎ on a search: Kite's Claude splits it into Google queries (Arc's V1 schema: title, queries, tab/folder/split), a hidden web view opens each top result; tabs, a split or a folder. Falls back to the input as the query without Claude Code, and to the results page on a captcha | No loading cell in the sidebar (Arc's `InstantLinksCellView`), no V2 typed actions (images, maps, news, counts), no intent suggestion row, no settings toggle |
 | Ask on Page | ⌘F asks AI about the page | ❌ | With Claude in the browser |
 | ChatGPT/AI in command bar | Ask from the command bar | ❌ | With Claude in the browser |
 | Tidy Tab Titles | Pinned tabs get short AI titles | ❌ | With Claude in the browser |
