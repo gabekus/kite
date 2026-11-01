@@ -465,6 +465,30 @@ windows ("Archive Little Arcs after:"); no global hotkey.
   "Today - Saturday, October 31, 2026", rows with time, icon, title and site, and a per-row menu. Sizes are
   Kite's; Chromium's page wasn't measured in Arc.
 
+## Archive: View Archive…, Clear Archive (Arc 1.171 menu bar and strings, 1 Nov 2026)
+
+- Menu (AX, nothing pressed): Archive › … View History ⌘Y, **View Archive…**, **Clear Archive**, neither with a
+  shortcut. Action ids `viewArchive`, `clearArchive` (arc-strings.txt ~34940, 34985). Descriptions: "Opens the
+  Archive, where all your closed tabs live.", "Clears all tabs in the Archive." (~80672, 80735).
+- Storage: `StorableArchive` / `ArchivedItem` with `archivedAt`, `ArchiveReason`, `ArchivedItemSource` (~38820,
+  74723); Kite now stamps `archivedAt` and a reason (manual / auto) on each archived tab.
+- The view lives in Arc's Library ("Arc Home"): `HomeButton/Pages/Archive/ArchiveReducer.swift`,
+  `ArchiveContentView.swift`, `ArchivePage.swift` (~82492–82516). Strings there: sections "Today", "Yesterday",
+  "Earlier This Week" (~82481–82490; `ArchiveUiTimeBucket`); filter button "Filter Archived Tabs" with
+  `line.3.horizontal.decrease.circle`, groups "Where was the tab?" (space, plus Little Arc) and "How was the tab
+  closed?" ("Auto-Closed", "Manually Closed"), active filters as "Remove %@ Filter" chips (~82455, 82509–82516);
+  search empty state "No results found for …"; row accessory buttons Restore (`arrow.uturn.left`) and Delete,
+  the same two in a row's menu ("Restore/Delete menu item in archive page"); empty state "Nothing here yet!" /
+  "Hover your mouse over a tab and press the [×] to archive it."
+- Restore toast "Tab restored to <space>" (with a ". Click to view." variant), so Restore puts the tab back in its
+  space without switching to it (~76150). Clear: "Are you sure you'd like to Clear Archive?" / "This action is
+  permanent." (~82747), then a toast confirming the clear (its text isn't in the strings; Kite says "Archive
+  cleared").
+- Inferred or unverified: headings past "Earlier This Week" (Kite groups by month); the unfiltered page title
+  (string value missing; Kite says "Archive"); what a plain click on a row does (Kite opens the page, like
+  History); where in the space a restored tab lands (Kite: its old position); the Delete icon (Kite: trash); all
+  sizes. Kite has no Little Arc filter (Little Kite doesn't archive).
+
 ## Windows: New Window ⌘N, Blank Window ⌃⌘N (Arc 1.171 menu bar and strings, 1 Nov 2026)
 
 - Menu (read through AX, nothing pressed): File › New Tab… ⌘T, New Window ⌘N, Blank Window ⌃⌘N, New Incognito
@@ -519,6 +543,30 @@ no cookies. Closes 0.2 s after the pointer leaves the link unless it's in the li
 a click, scroll, Esc or other key, or when the window resigns key. Inferred, not from Arc: the 8pt gap, left-edge
 alignment, flipping, the popover material and 0.5pt border, fonts (Arc's view uses 11–16pt sizes; which goes where
 is unknown) and the `linkPreviewsEnabled` default (off, as Arc's `hoverCardsEnabled` and Gabe's Arc; Kite menu › Link Previews turns it on).
+
+## Import from Arc: what Arc keeps where (Arc 1.171 files, defaults and strings, 1 Nov 2026)
+
+Key names and structure only, read from Arc's files in ~/Library/Application Support/Arc; nothing of the
+user's is copied. Test fixtures are made up.
+
+- `StorableSidebar.json`: a split view is a sidebar item whose `data` is `splitView` with `layoutOrientation`
+  (`horizontal` / `vertical`), `focusItemID`, `timeLastActiveAt` and `itemWidthFactors`, a flat
+  `[itemID, factor, ...]` list (Swift's encoding of a dictionary with non-string keys). On Gabe's Mac it held
+  one entry for a two-pane split, so Arc may leave panes out; Kite gives missing panes what's left of 1
+  (inferred). Children are the panes' tab items, in order.
+- `StorableArchiveItems.json` (`version` 1): `items` is a flat `[id, object, ...]` list. Each object has
+  `archivedAt` (seconds since 2001), `reason` (`manual`, `auto`, `clearButton`), `source` (`space` with the
+  space ID in `_0`, `littleArc`, `unknown`) and `sidebarItem`, a sidebar item whose `data` is `tab`
+  (`savedURL`, `savedTitle`, `timeLastActiveAt`). Only tab items were seen.
+- History is Chromium's: the `urls` table of `User Data/Default/History` (`url`, `title`, `visit_count`,
+  `last_visit_time` in microseconds since 1601, `hidden`).
+- Defaults (`company.thebrowser.Browser`, names and plain booleans only): `shouldWarnBeforeQuitting`,
+  `openExternalLinksInLittleBrowserEnabled`, `nativeAdBlockEnabled`, `topBarURLEnabled` (booleans), and
+  `autoArchiveTimeThresholdsPerProfile`, a JSON string `{"thresholds":[...]}`. The list was empty on Gabe's
+  Mac (Arc's default), so the element encoding (profile, then a case name such as `sevenDays`, next to
+  `thresholds` in arc-strings.txt ~165658) is inferred.
+- `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
+  `destination.space`). Kite has no link routing yet, so it isn't imported.
 
 ## Still unknown
 

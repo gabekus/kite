@@ -241,6 +241,8 @@ enum MainMenu {
             alternate(#selector(BrowserWindowController.goForward(_:)), right, .command),
             .separator(),
             item("View History", #selector(BrowserWindowController.viewHistory(_:)), "y", id: "viewHistory"),
+            item("View Archive…", #selector(BrowserWindowController.viewArchive(_:)), id: "viewArchive"),
+            item("Clear Archive", #selector(BrowserWindowController.clearArchive(_:)), id: "clearArchive"),
         ])
 
         submenu("Tabs", [
