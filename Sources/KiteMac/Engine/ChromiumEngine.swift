@@ -135,6 +135,12 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         browser.callDevToolsMethod("Runtime.evaluate", params: params) { _, _ in }
     }
 
+    /// As the renderer last reported it (KiteHelper sends its pid with each main-frame script context).
+    var processIdentifier: pid_t? {
+        let pid = browser.renderProcessIdentifier
+        return pid > 0 ? pid : nil
+    }
+
     var isAudioMuted: Bool {
         get { browser.audioMuted }
         set { browser.audioMuted = newValue }
@@ -158,7 +164,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func blur() { browser.blur() }
     func allowFocus() { browser.allowFocus() }
     func setVisible(_ visible: Bool) { browser.setHidden(!visible) }
-    func showDevTools() { browser.showDevTools() }
+    func showDevTools(_ panel: DevToolsPanel) { browser.showDevToolsRunningFrontendScript(panel.chromiumFrontendScript) }
 
     func find(_ text: String, forward: Bool, findNext: Bool, completion: @escaping (FindResult) -> Void) {
         findCompletion = completion
