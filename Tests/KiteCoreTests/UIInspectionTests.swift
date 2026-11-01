@@ -35,7 +35,7 @@ import Testing
     }
 
     @Test func pointerSweepsIncludeBothEnds() throws {
-        guard case .pointer(_, let points) = try ui(["action": "pointer", "from": [-4, 100], "to": [4, 100], "steps": 8]) else {
+        guard case .pointer(_, let points, _) = try ui(["action": "pointer", "from": [-4, 100], "to": [4, 100], "steps": 8]) else {
             Issue.record("not a pointer sweep")
             return
         }
@@ -44,6 +44,8 @@ import Testing
         #expect(points.last == UIPoint(x: 4, y: 100))
         #expect(points[4] == UIPoint(x: 0, y: 100))
         #expect(try ui(["action": "pointer", "from": [5, 5]]) == .pointer(window: nil, points: [UIPoint(x: 5, y: 5)]))
+        #expect(try ui(["action": "pointer", "from": [5, 5], "modifiers": "shift"])
+            == .pointer(window: nil, points: [UIPoint(x: 5, y: 5)], modifiers: .shift))
     }
 
     @Test func inputTakesExactlyOneEvent() throws {

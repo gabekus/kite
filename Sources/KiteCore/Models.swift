@@ -6,6 +6,9 @@ public struct BrowserTab: Identifiable, Hashable, Codable, Sendable {
     public var title: String
     public var faviconURL: URL?
     public var lastActiveAt: Date
+    /// Where a pinned tab or favorite belongs (Arc's `savedURL`): the page it was pinned at,
+    /// which "Back to Pinned URL" returns to. Nil for unpinned tabs. See `syncPinnedURLs()`.
+    public var pinnedURL: URL?
     /// A name the user gave the tab (Arc's Rename), shown instead of the page's title and kept
     /// when the page's title changes. nil shows the page's title. Older sessions decode it as nil.
     public var customTitle: String?
@@ -15,13 +18,15 @@ public struct BrowserTab: Identifiable, Hashable, Codable, Sendable {
         url: URL?,
         title: String = "",
         faviconURL: URL? = nil,
-        lastActiveAt: Date = Date()
+        lastActiveAt: Date = Date(),
+        pinnedURL: URL? = nil
     ) {
         self.id = id
         self.url = url
         self.title = title
         self.faviconURL = faviconURL
         self.lastActiveAt = lastActiveAt
+        self.pinnedURL = pinnedURL
     }
 
     public var displayTitle: String {

@@ -32,7 +32,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Settings… | ⌘, | ❌ | Thread: Settings window |
 | Set as Default Browser | | ✅ (opens links from other apps in a new tab) | |
 | Import from Another Browser… | | 🟡 Arc only: spaces, pinned tabs, folders, favorites, themes, split views, archive (latest 500), history, Site Search, shortcut changes, and the settings Kite has (warn before quitting, Little Arc for links, archive interval) | Thread: import (Chrome/Safari later). Not yet: link routing, boosts, easels/notes, extensions, other profiles |
-| Check for Updates… | | ❌ | Roadmap: Sparkle |
+| Check for Updates… | | 🟡 checks GitHub releases, opens the release; no auto-install or sidebar banner yet | Sparkle once releases are signed and notarised |
 | Hide / Hide Others / Show All | ⌘H / ⌥⌘H | ✅ | |
 | Quit, with optional warn-before-quit | ⌘Q | 🟡 "Quit Kite?" with Arc's three buttons; look unmeasured, Kite menu toggle until Settings | B5 |
 | Share Arc, Privacy Policy, Sign Out | | ❌ | Skip? (sign-out comes with sync) |
@@ -120,10 +120,10 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Next / Previous Tab | ⌥⌘↓ / ⌥⌘↑ | ✅ (⌃⇧Tab also goes to the previous tab) | |
 | Toggle recent tabs (MRU) | ⌃Tab | ✅ toggles the two most recent | Hold-⌃ cycling deeper later |
 | Tab 1…8, last tab | ⌘1…⌘9 | ✅ | |
-| Reveal Tab in Sidebar | | ❌ | B3 |
+| Reveal Tab in Sidebar | | ✅ shows the sidebar, opens enclosing folders, scrolls to the row | Arc's highlight on reveal unverified |
 | Clear Today (unpinned tabs) | ⇧⌘K | ✅ archives them, with a toast | |
-| Reset all tabs in this Space (pinned back to their saved URL) | | ❌ | B3 |
-| Pinned tab: "back to pinned URL" / reset | | ❌ | B3 |
+| Reset all tabs in this Space (pinned back to their saved URL) | | ✅ | |
+| Pinned tab: "back to pinned URL" / reset | | 🟡 hover button, context menu (with Separate From Pinned Tab), hidden `resetTab` command | Arc's icon and placement unverified; Edit / Replace Pinned URL later |
 | Duplicate tab, move tab to space | context menu | 🟡 Duplicate Tab in the Tabs menu | Move to space with the sidebar work |
 | Drag tabs between spaces / into folders | gesture | ❌ | Roadmap (other session owns sidebar) |
 
@@ -167,8 +167,10 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Sidebar | Favorites grid, pinned, unpinned "Today", folders, space switcher | 🟡 | Other session (favorites, folders, resize) |
 | Sidebar hover reveal | Hidden sidebar slides in at the left edge | ❌ | Thread: sidebar left-edge peek |
 | Auto-archive | "Archive tabs after": Never / 1 hour / 6 hours / 12 hours / 24 hours / 7 days / 30 days, per profile | ✅ Kite menu → Archive tabs after (moves to Settings; no profiles yet) | B5 |
-| Peek | Links from pinned tabs/favorites open in an overlay | ❌ | Thread: Peek |
+| Peek | Links from pinned tabs/favorites open in an overlay | 🟡 Links from a pinned tab or favorite to another site, and ⇧-clicked links, open in a card over the page (Arc's size, corner, shadow and spring); close (Esc, ⌘W, button, click outside), Open as Tab, Create/Add to Split View | Not yet: the tween from the link's own frame, the peeked item in the sidebar, swipe right to dismiss, reopen-closed-Peek undo, the Links settings toggles; button look unmeasured |
 | Hover cards / 5-second previews | ⇧ over a link shows a preview card | ❌ | Thread: Peek |
+| Peek | Links from pinned tabs/favorites open in an overlay | ❌ | Thread: Peek |
+| Hover cards / 5-second previews | ⇧ over a link shows a preview card | 🟡 ⇧-hover shows a card (title, description, image, site) sized and timed from Arc's binary; `LinkPreviewController`. Off by default as in Arc; Kite menu › Link Previews | No AI summary (Arc's quickSummary + detail rows), no instant cards on HN/X/Google, no share button yet |
 | Previews | Glance at favorites without switching | ❌ | Thread: Peek |
 | Little Arc | Small window for links from other apps, ⌥⌘N, "open external links in Little Arc" | 🟡 Little Kite: own window, toolbar measured from Arc, "Open in <Space>" (⌘O) moves the live page into the main window, ⌘W closes, Kite menu → Open Links from Other Apps in Little Kite (on by default) | No profile indicator, extensions button, downloads tray, searchable space picker, auto-archive or global hotkey yet |
 | Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal panes, divider, sidebar row; no vertical layout or drag-to-split yet | Thread: Split view |
@@ -180,7 +182,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
 | Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
 | Library | Downloads, archive, easels, media, boosts in one window | ❌ | Thread: Library |
-| Air Traffic Control | Rules to route links from other apps to a space | ❌ | Thread: Little Arc / routing |
+| Air Traffic Control | Rules to route links from other apps to a space | 🟡 | Kite menu → Air Traffic Control…: URL "Is equal to"/"Contains" routes to a space or Little Kite, plus a default. No profile destination; editor lives in its own window until Settings exists |
 | Live folders | GitHub PRs/issues, RSS etc. as an auto-updating folder | ❌ | Later |
 | Live calendars | Calendar favorite shows the next meeting | ❌ | Later |
 | Share spaces, folders, splits | Public link or collaborator | ❌ | Roadmap: sync + sharing |

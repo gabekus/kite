@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import KiteCore
 
 /// System WebKit. Small and light on battery; used for `swift run` and as a fallback.
 @MainActor
@@ -71,6 +72,7 @@ final class WebKitEngine: WebEngine {
 final class WebKitPage: NSObject, WebPage {
     let webView: WKWebView
     var onEvent: ((PageEvent) -> Void)?
+    var linkPeekPolicy: ((URL, Bool) -> Bool)?
     private let downloads: DownloadCoordinator
     private let contentRules: WebKitContentRules?
     private var observations: [NSKeyValueObservation] = []
@@ -226,6 +228,12 @@ extension WebKitPage: WKNavigationDelegate {
             onEvent?(.openInNewTab(url, foreground: flags.contains(.shift)))
             return decisionHandler(.cancel)
         }
+        // Arc's Peek: a click in this page or to a new one (target=_blank), not a subframe's own navigation.
+        if navigationAction.navigationType == .linkActivated, navigationAction.targetFrame?.isMainFrame != false,
+           linkPeekPolicy?(url, flags.contains(.shift)) == true {
+            onEvent?(.openInLinkPeek(url))
+            return decisionHandler(.cancel)
+        }
         if navigationAction.targetFrame?.isMainFrame == true {
             contentRules?.apply(to: webView.configuration.userContentController, url: url)
         }
@@ -275,6 +283,27 @@ extension WebKitPage: WKUIDelegate {
 
     func webViewDidClose(_ webView: WKWebView) {
         onEvent?(.closeRequested)
+    }
+
+    /// WebKit's private hover callback (WKUIDelegatePrivate): the element under the pointer after each
+    /// move, with the move's modifier keys. Safari's status bar uses it. `hitTestResult` is a
+    /// `_WKHitTestResult`, read by key so a missing property gives nil instead of a crash.
+    @objc(_webView:mouseDidMoveOverElement:withFlags:userInfo:)
+    func webView(_ webView: WKWebView, mouseDidMoveOverElement hitTestResult: NSObject?, withFlags flags: UInt,
+                 userInfo: AnyObject?) {
+        func value(_ key: String) -> Any? {
+            guard let hitTestResult, hitTestResult.responds(to: NSSelectorFromString(key)) else { return nil }
+            return hitTestResult.value(forKey: key)
+        }
+        guard let url = value("absoluteLinkURL") as? URL, LinkPreview.canPreview(url) else {
+            return onEvent?(.linkHover(nil)) ?? ()
+        }
+        var screenRect: NSRect?
+        if let box = (value("elementBoundingBox") as? NSValue)?.rectValue, !box.isEmpty, let window = webView.window {
+            screenRect = window.convertToScreen(webView.convert(box, to: nil))
+        }
+        let modifiers = NSEvent.ModifierFlags(rawValue: flags).intersection(.deviceIndependentFlagsMask)
+        onEvent?(.linkHover(LinkHover(url: url, screenRect: screenRect, modifiers: modifiers)))
     }
 
     func webView(

@@ -11,6 +11,8 @@ import ObjectiveC
 @MainActor
 struct UIPointerProbe {
     let window: NSWindow
+    /// Held through the moves, e.g. ⇧ for link previews.
+    var modifiers: NSEvent.ModifierFlags = []
 
     func sweep(_ points: [UIPoint]) -> [UIPointerSample] {
         let paths = UITreeBuilder.paths(in: window)
@@ -76,7 +78,7 @@ struct UIPointerProbe {
     /// the window server and the real pointer don't.
     private func move(to base: NSPoint) {
         guard let event = NSEvent.mouseEvent(
-            with: .mouseMoved, location: base, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            with: .mouseMoved, location: base, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0
         ) else { return }
         window.sendEvent(event)
