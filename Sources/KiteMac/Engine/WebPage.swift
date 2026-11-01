@@ -11,6 +11,9 @@ enum PageEvent {
     case openInNewTab(URL, foreground: Bool)
     /// A popup the page opened (window.open, target=_blank). It becomes a new tab.
     case popup(WebPage)
+    /// A link the user clicked opens in Arc's Peek card instead (`WebPage.linkPeekPolicy` said so); the
+    /// page didn't navigate.
+    case openInLinkPeek(URL)
     case closeRequested
     /// Requests the ad blocker stopped since the page started loading.
     case blockedCount(Int)
@@ -21,6 +24,17 @@ enum PageEvent {
     case addExtension(id: String)
     /// What the page is playing changed (MediaStateScript); nil when it has no media.
     case media(MediaState?)
+    /// The pointer moved onto a link (nil: off it). Drives ⇧-hover link previews.
+    case linkHover(LinkHover?)
+}
+
+/// The link under the pointer, as the engine reports it.
+struct LinkHover {
+    var url: URL
+    /// The link's box in screen coordinates, when the engine knows it (WebKit).
+    var screenRect: NSRect?
+    /// The modifier keys of the move that reported it, when the engine knows them (WebKit).
+    var modifiers: NSEvent.ModifierFlags?
 }
 
 /// Find-in-page progress. Counts are nil when the engine can't report them (WebKit).
@@ -40,6 +54,9 @@ enum SiteDataKind {
 protocol WebPage: AnyObject {
     var view: NSView { get }
     var onEvent: ((PageEvent) -> Void)? { get set }
+    /// Asked when the user clicks a link to `url` (in this page or a new one, `shift` held or not): true
+    /// cancels it and reports `.openInLinkPeek`. Nil (the default) never peeks.
+    var linkPeekPolicy: ((_ url: URL, _ shift: Bool) -> Bool)? { get set }
     var isLoading: Bool { get }
     /// 1.0 = 100%.
     var zoomFactor: Double { get set }

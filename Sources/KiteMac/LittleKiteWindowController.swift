@@ -200,12 +200,14 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         case let .navigationState(_, canGoBack, _):
             self.canGoBack = canGoBack
             updateBackButton()
-        case .openInNewTab(let url, _):
+        case .openInNewTab(let url, _), .openInLinkPeek(let url):
             host.openTab(url)
         case .popup(let popup):
             host.adoptPopup(popup)
         case .closeRequested:
             close()
+        case .linkHover(let hover):
+            if let view = page?.view { LinkPreviewController.shared.hover(hover, in: view) }
         case .favicon, .progress, .blockedCount, .crashed, .addExtension, .media:
             break
         }
