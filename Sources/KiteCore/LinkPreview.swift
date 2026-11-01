@@ -1,8 +1,8 @@
 import Foundation
 
 /// Arc's "5-Second Previews" (its `HoverCards` module): hold ⇧ while hovering a link and a card
-/// about the linked page appears next to it. Kite's card shows the page's own title, description
-/// and image; Arc's adds an AI summary. Numbers and sources are in docs/arc-visual-spec.md.
+/// about the linked page appears next to it: the page's own title, description and image, and an
+/// AI summary (`LinkPreviewSummary`). Numbers and sources are in docs/arc-visual-spec.md.
 public enum LinkPreview {
     /// Settings key. Arc's is `hoverCardsEnabled` (an Arc Max feature, off until you opt in, and
     /// off in Gabe's Arc), so Kite's is off too until turned on from the Kite menu.

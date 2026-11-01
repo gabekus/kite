@@ -107,15 +107,30 @@ final class LinkPreviewController {
 
     private func load(_ url: URL) {
         fetch?.cancel()
+        // Arc's card adds an AI summary; Kite's comes from its built-in Claude, when installed.
+        let summarizes = LinkPreviewSummarizer.mayBeAvailable
+        if summarizes, let cached = LinkPreviewSummarizer.cached(url) {
+            model.summary = cached.map { .loaded($0) } ?? .none
+        } else {
+            model.summary = summarizes ? .loading : .none
+        }
         fetch = Task { [model] in
-            let metadata = await LinkPreviewFetcher.metadata(for: url)
+            let page = await LinkPreviewFetcher.page(for: url, wantsText: summarizes)
             guard !Task.isCancelled, model.url == url else { return }
+            let metadata = page?.metadata
             model.metadata = metadata
             model.state = metadata.map { $0.isEmpty ? .failed : .loaded } ?? .failed
-            if let imageURL = metadata?.imageURL, let image = await LinkPreviewFetcher.image(at: imageURL),
-               !Task.isCancelled, model.url == url {
-                model.image = image
+            if let imageURL = metadata?.imageURL {
+                Task {
+                    if let image = await LinkPreviewFetcher.image(at: imageURL), model.url == url { model.image = image }
+                }
             }
+            guard model.summary == .loading else { return }
+            var summary: LinkPreviewSummary?
+            if let text = page?.text, model.state == .loaded {
+                summary = await LinkPreviewSummarizer.summary(for: url, metadata: metadata, pageText: text)
+            }
+            if !Task.isCancelled, model.url == url { model.summary = summary.map { .loaded($0) } ?? .none }
         }
     }
 
@@ -215,26 +230,32 @@ enum LinkPreviewFetcher {
     private static let cache = NSCache<NSURL, Box>()
 
     private final class Box {
-        let metadata: LinkPreviewMetadata
-        init(_ metadata: LinkPreviewMetadata) { self.metadata = metadata }
+        let page: Page
+        init(_ page: Page) { self.page = page }
     }
 
-    static func metadata(for url: URL) async -> LinkPreviewMetadata? {
-        if let cached = cache.object(forKey: url as NSURL) { return cached.metadata }
+    /// The page's metadata, and its readable text when `wantsText` (for the AI summary; else nil).
+    struct Page {
+        var metadata: LinkPreviewMetadata
+        var text: String?
+    }
+
+    static func page(for url: URL, wantsText: Bool) async -> Page? {
+        if let cached = cache.object(forKey: url as NSURL)?.page, cached.text != nil || !wantsText { return cached }
         var request = URLRequest(url: url)
         request.setValue("text/html,application/xhtml+xml;q=0.9,*/*;q=0.5", forHTTPHeaderField: "Accept")
         guard let (bytes, response) = try? await session.bytes(for: request) else { return nil }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { return nil }
         let type = response.mimeType ?? "text/html"
-        guard type.contains("html") else { return LinkPreviewMetadata(title: url.lastPathComponent) }
+        guard type.contains("html") else { return Page(metadata: LinkPreviewMetadata(title: url.lastPathComponent), text: nil) }
         var data = Data()
         var checked = 0
         do {
             for try await byte in bytes {
                 data.append(byte)
                 if data.count >= LinkPreviewMetadata.maxBytes { break }
-                // Stop once the head has arrived (checked every 4 KB).
-                if data.count - checked >= 4096 {
+                // Without the summary, stop once the head has arrived (checked every 4 KB).
+                if !wantsText, data.count - checked >= 4096 {
                     let window = data[max(0, checked - 8)...]
                     if window.range(of: Data("</head>".utf8)) != nil || window.range(of: Data("</HEAD>".utf8)) != nil { break }
                     checked = data.count
@@ -244,9 +265,10 @@ enum LinkPreviewFetcher {
             if data.isEmpty { return nil }
         }
         let html = String(decoding: data, as: UTF8.self)
-        let metadata = LinkPreviewMetadata.parse(html: html, baseURL: response.url ?? url)
-        cache.setObject(Box(metadata), forKey: url as NSURL)
-        return metadata
+        let page = Page(metadata: LinkPreviewMetadata.parse(html: html, baseURL: response.url ?? url),
+                        text: wantsText ? LinkPreviewSummary.pageText(html: html) : nil)
+        cache.setObject(Box(page), forKey: url as NSURL)
+        return page
     }
 
     static func image(at url: URL) async -> NSImage? {
@@ -266,12 +288,20 @@ final class LinkPreviewModel: ObservableObject {
     @Published var state: State = .loading
     @Published var metadata: LinkPreviewMetadata?
     @Published var image: NSImage?
+    @Published var summary: Summary = .none
+
+    /// The AI summary under the title: none (no Claude, or nothing to say), loading, or its rows.
+    enum Summary: Equatable {
+        case none, loading
+        case loaded(LinkPreviewSummary)
+    }
 
     func reset(for url: URL) {
         self.url = url
         state = .loading
         metadata = nil
         image = nil
+        summary = .none
     }
 }
 
@@ -434,6 +464,11 @@ struct LinkPreviewCardView: View {
                             .lineLimit(6)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    switch model.summary {
+                    case .none: EmptyView()
+                    case .loading: LinkPreviewSummaryLoadingView().padding(.top, 2)
+                    case .loaded(let summary): LinkPreviewSummaryView(summary: summary).padding(.top, 2)
+                    }
                 }
                 HStack(spacing: 6) {
                     FaviconView(page: model.url, size: 14)
@@ -463,6 +498,73 @@ struct LinkPreviewCardView: View {
     private var host: String {
         guard let host = model.url?.host() else { return model.url?.absoluteString ?? "" }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+}
+
+/// Arc's HoverCardSummaryView: the quick summary in bold, then the detail rows, all 13pt, 8pt apart,
+/// with a line spacing of 3 (the 3 is stored next to an environment key path; reading it as line
+/// spacing is inferred).
+struct LinkPreviewSummaryView: View {
+    let summary: LinkPreviewSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let quick = summary.quickSummary {
+                Text(Self.markdown(quick))
+                    .bold()
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("LinkPreviewQuickSummary")
+            }
+            ForEach(Array(summary.details.enumerated()), id: \.offset) { _, detail in
+                LinkPreviewDetailRow(detail: detail)
+            }
+        }
+        .font(.system(size: 13))
+        .lineSpacing(3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("LinkPreviewSummary")
+    }
+
+    /// Claude is asked for Markdown inside the strings (Arc asks for "markdown formatting" too).
+    static func markdown(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+}
+
+/// Arc's HoverCardDetailRow: HStack on the first text baseline, 12pt apart; the SF Symbol bold 16pt in a
+/// 12×12 frame; then the label in bold and the info, as one text.
+struct LinkPreviewDetailRow: View {
+    let detail: LinkPreviewSummary.Detail
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: detail.icon)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 12, height: 12)
+                // Arc: the icon's baseline is its centre plus 0.4 of its height.
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + $0.height * 0.4 }
+                .accessibilityHidden(true)
+            (Text(LinkPreviewSummaryView.markdown(detail.label)).bold() + Text(" ") + Text(LinkPreviewSummaryView.markdown(detail.info)))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("LinkPreviewDetailRow")
+    }
+}
+
+/// Arc's HoverCardLoadingView: 100 spaces of 13pt text, redacted as a placeholder.
+struct LinkPreviewSummaryLoadingView: View {
+    var body: some View {
+        Text(String(repeating: " ", count: 100))
+            .font(.system(size: 13))
+            .lineSpacing(3)
+            .redacted(reason: .placeholder)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel("Loading summary")
+            .accessibilityIdentifier("LinkPreviewSummaryLoading")
     }
 }
 
