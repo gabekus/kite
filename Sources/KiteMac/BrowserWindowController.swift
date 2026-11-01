@@ -213,7 +213,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             renameTab: { [weak self] id in self?.renameTab(id) },
             tidyTabs: { [weak self] id in self?.tidyTabs(inSpace: id) },
             removeTabGroupHeader: { [weak self] id in self?.removeTabGroupHeader(id) },
-            toggleMute: { [weak self] id in self?.toggleMute(id) }
+            toggleMute: { [weak self] id in self?.toggleMute(id) },
+            setProfile: { [weak self] id, profile in self?.setProfile(profile, forSpace: id) },
+            newProfile: { [weak self] id in self?.presentCreateProfile(for: id) },
+            showsProfiles: !isIncognito
         )
         spaceSwipe = SpaceSwipeController(
             store: store,
@@ -1112,6 +1115,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if let valid = validateSplitItem(item) { return valid }
+        if let valid = validateProfileItem(item) { return valid }
         if let valid = validateBoostItem(item) { return valid }
         if let valid = validateSplitLayoutItem(item) { return valid }
         switch item.action {

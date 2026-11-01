@@ -48,7 +48,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | New Little Arc Window | ⌥⌘N | ✅ "New Little Kite Window" (`newLittleBrowserWindow`) | |
 | Restore Last Closed Tab | ⇧⌘T | ✅ | |
 | Open Command Bar | (none) | ✅ via ⌘T/⌘L | |
-| New Profile | | ❌ | Thread: profiles |
+| New Profile | | ✅ Arc's two-step Create a new Profile sheet (name, then which spaces) | Sheet layout not measured from Arc |
 | New Easel | ⌃⇧E | ❌ | Thread: Easels (Skip?) |
 | Close Window | ⇧⌘W | ✅ | |
 | Archive Tab | ⌘W | ✅ "Archive Tab" (`archiveTab`); closed unpinned tabs go to the archive. "Undo Archive Tab" (⌘Z) still to do | B3 |
@@ -109,7 +109,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | New Space… | | ✅ | |
 | Edit Theme… | | ✅ popover laid out from Arc's | Grid mapping unmeasured |
 | Rename Space | | ✅ | |
-| Change Profile | | ❌ | Thread: profiles |
+| Change Profile | | ✅ profile picker with New Profile, Cancel / Change Profile; plus Spaces › Profiles… (rename, delete) until Settings exists | Sheet layout not measured from Arc |
 | Next / Previous Space | ⇧⌘S (Gabe) or ⌥⌘→ / ⌥⌘← | ✅ all three | |
 | Space 1…9 | ⌃1…⌃9 | ✅ | |
 | Manage Spaces… | | ❌ | B3 (reorder, delete) |
@@ -199,7 +199,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Live folders | GitHub PRs/issues, RSS etc. as an auto-updating folder | ❌ | Later |
 | Live calendars | Calendar favorite shows the next meeting | ❌ | Later |
 | Share spaces, folders, splits | Public link or collaborator | ❌ | Roadmap: sync + sharing |
-| Profiles | Separate cookies per space | ❌ | Thread: profiles |
+| Profiles | Separate cookies per space | 🟡 Each profile is its own Chromium profile folder (Default, Profile 1…), as Arc: cookies, logins, history, extensions, favorites and 1Password per profile; spaces point at one; space menu › Set Profile ("Switch it up" confirm); delete only unused profiles, typed-name confirm, folder removed next launch | Not yet: Arc import of profiles, Little Kite profile picker, per-profile search engine / auto-archive / downloads settings, dialogs measured from Arc |
 | Incognito | Private window | ✅ | |
 | Site control center | Per-site permissions, cookies, ad blocker toggle, Boosts | 🟡 Popover from the toolbar's sliders button and the sidebar URL field's hover button: Copy URL, Share, Block Ads & Trackers, camera/mic/location/notifications (Chromium content settings; not on WebKit), Secure/Insecure, Clear Cache / Clear Cookies. No Boosts, capture, extensions section, Developer Mode, All Site Settings | Gap 8 |
 | Site permission prompts | A site asks for camera, mic, location or notifications | 🟡 Arc's card at the page's top-leading corner: the permission's icon, "Allow <site> to access your camera?" / "…to send you notifications?", Not Now / Allow, "Click the lock 🔒 to change this any time"; pops in like Arc's. Chromium stores the answer per site (Site Controls shows it); WebKit asks each time, camera and mic only. Not over a Peek; other permission types (MIDI, downloads, storage…) keep Chromium's default | Gap 35 |

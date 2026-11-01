@@ -32,6 +32,11 @@ struct SidebarActions {
     var removeTabGroupHeader: (UUID) -> Void = { _ in }
     /// A tab row's speaker button and Mute / Unmute menu item.
     var toggleMute: (UUID) -> Void = { _ in }
+    /// A space's Set Profile (space id, profile folder) and its New Profile….
+    var setProfile: (UUID, String) -> Void = { _, _ in }
+    var newProfile: (UUID) -> Void = { _ in }
+    /// False in incognito windows, which have no profiles.
+    var showsProfiles = true
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -1149,6 +1154,8 @@ private struct SpaceContextMenu: View {
             store.mutate { _ = $0.createFolder(name: "New Folder", inSpace: index) }
         }
         Divider()
+        // Arc's binary lists "Set Profile" just before Edit Theme Color.
+        if actions.showsProfiles { SetProfileMenu(store: store, actions: actions, space: space) }
         Button("Edit Theme Color") { actions.editTheme(space.id) }
         Button("Change Space Icon") { actions.changeSpaceIcon(space.id) }
         Divider()

@@ -7,6 +7,8 @@ import WebKit
 @MainActor
 enum ProfileFolders {
     static var root: URL { AppDelegate.supportDirectory.appendingPathComponent("Chromium", isDirectory: true) }
+    /// Set when Kite runs on WebKit, which keeps each profile in a data store of its own.
+    static var usesWebKit = false
     private static var pendingFile: URL { root.appendingPathComponent("Kite Deleted Profiles.json") }
 
     static func folder(_ directory: String) -> URL { root.appendingPathComponent(directory, isDirectory: true) }
@@ -18,6 +20,8 @@ enum ProfileFolders {
     /// Everything a deleted profile kept: its Chromium folder (next launch) and its WebKit store.
     static func delete(_ profile: Profile) {
         markForDeletion(profile.directory)
+        // WebKit's store removal crashes in a Chromium run, where WebKit never started.
+        guard usesWebKit else { return }
         WKWebsiteDataStore.remove(forIdentifier: profile.dataStoreID) { error in
             if let error { NSLog("Kite: couldn't remove a profile's WebKit data: \(error)") }
         }

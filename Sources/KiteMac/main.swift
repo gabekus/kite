@@ -60,5 +60,6 @@ MainActor.assumeIsolated {
     #endif
 
     delegate.engine = WebKitEngine()
+    ProfileFolders.usesWebKit = true
     app.run()
 }

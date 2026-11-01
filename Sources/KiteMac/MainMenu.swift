@@ -136,6 +136,8 @@ enum MainMenu {
             item("New Incognito Window", #selector(MenuRouter.newIncognitoWindow(_:)), "n", [.command, .shift], id: "newIncognitoWindow"),
             // Arc's File menu: "New Little Arc Window", ⌥⌘N, id newLittleBrowserWindow (MainMenu.nib).
             item("New Little Kite Window", #selector(MenuRouter.newLittleKiteWindow(_:)), "n", [.command, .option], id: "newLittleBrowserWindow"),
+            // Arc's MainMenu.nib: "New Profile", action newProfile:.
+            item("New Profile", #selector(BrowserWindowController.newProfile(_:)), id: "newProfile"),
             // No key, like Gabe's Arc: ⌘L is Add Split View. Clicking the URL pill still edits the URL.
             item("Open Location…", #selector(BrowserWindowController.openLocation(_:)), id: "openLocation"),
             item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t", [.command, .shift], id: "reopenClosedTab"),
@@ -326,6 +328,9 @@ enum MainMenu {
             item("New Space", #selector(BrowserWindowController.newSpace(_:)), id: "newSpace"),
             item("Edit Theme…", #selector(BrowserWindowController.editTheme(_:)), id: "editTheme"),
             item("Rename Space", #selector(BrowserWindowController.renameSpace(_:)), id: "renameSpace"),
+            // Arc's MainMenu.nib: "Change Profile", action changeProfileForCurrentSpace:.
+            item("Change Profile", #selector(BrowserWindowController.changeProfileForCurrentSpace(_:)), id: "changeProfile"),
+            item("Profiles…", #selector(BrowserWindowController.showProfiles(_:)), id: "showProfiles"),
             .separator(),
             // ⇧⌘S is Gabe's Arc binding; ⌥⌘→ is Arc's default.
             item("Next Space", #selector(BrowserWindowController.nextSpace(_:)), "s", [.command, .shift], id: "nextSpace"),
