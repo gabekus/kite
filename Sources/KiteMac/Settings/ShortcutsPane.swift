@@ -5,14 +5,13 @@ import SwiftUI
 /// Settings → Shortcuts, measured from Arc 1.169's (AX tree and capture, ~/rea-arc/settings/pane-5):
 /// a "Start with the basics" pill centred at the top, a 340pt list on the left (search field over
 /// "Customized Shortcuts" and "Default Shortcuts", 48pt rows with a 64×24 keycap), and on the
-/// right "Custom Shortcuts" with Reset All Shortcuts at the bottom. Selecting a row in Arc (by AX)
-/// left that column unchanged, so its per-row actions are most likely the row's context menu, which
-/// Kite has too; showing the picked command on the right is Kite's own. Click a keycap to record;
-/// changes go straight to KeyBindingsStore (keybindings.json) and the menu bar.
+/// right "Custom Shortcuts" with Reset All Shortcuts at the bottom, which stays as it is whatever's
+/// picked (selecting a row in Arc by AX left it unchanged). Click a keycap to record; a clash shows
+/// under the row; reset and remove are the row's context menu (Arc's per-row actions are menu
+/// items). Changes go straight to KeyBindingsStore (keybindings.json) and the menu bar.
 struct ShortcutsPane: View {
     @EnvironmentObject private var model: SettingsModel
     @State private var query = ""
-    @State private var selection: String?
     /// The command being recorded, if any.
     @State private var recording: String?
     /// A recorded shortcut that another command already has, waiting for the user to choose.
@@ -55,7 +54,7 @@ struct ShortcutsPane: View {
             .padding(.top, SettingsMetrics.topMargin)
             HStack(alignment: .top, spacing: M.columnGap) {
                 list(sections, all: entries)
-                detail(entries.first { $0.id == selection }, all: entries)
+                intro
             }
             .frame(width: SettingsMetrics.sectionWidth, alignment: .topLeading)
             .padding(.top, M.listTop)
@@ -97,10 +96,9 @@ struct ShortcutsPane: View {
         ForEach(rows) { entry in
             ShortcutRow(
                 entry: entry,
-                isSelected: selection == entry.id,
                 isRecording: recording == entry.id,
                 pending: pending?.id == entry.id ? pending?.shortcut : nil,
-                select: { selection = entry.id },
+                conflicts: pending?.id == entry.id ? ShortcutsList.conflicts(for: pending?.shortcut, excluding: entry.id, in: all) : [],
                 startRecording: { recording = entry.id; pending = nil },
                 finishRecording: { shortcut in
                     recording = nil
@@ -108,10 +106,15 @@ struct ShortcutsPane: View {
                     if ShortcutsList.conflicts(for: shortcut, excluding: entry.id, in: all).isEmpty {
                         model.setShortcut(shortcut, for: entry.id)
                     } else {
-                        // The conflict and its choices are on the right, with the picked row.
-                        selection = entry.id
                         pending = (entry.id, shortcut)
                     }
+                },
+                resolveConflict: { keep in
+                    if keep, let pending {
+                        model.removeConflicts(with: pending.shortcut, keeping: entry.id)
+                        model.setShortcut(pending.shortcut, for: entry.id)
+                    }
+                    pending = nil
                 }
             )
             if entry.id != rows.last?.id {
@@ -121,57 +124,18 @@ struct ShortcutsPane: View {
         Spacer().frame(height: 20)
     }
 
-    /// The right-hand column: "Custom Shortcuts" until a row is picked, then that command.
-    @ViewBuilder
-    private func detail(_ entry: ShortcutEntry?, all: [ShortcutEntry]) -> some View {
+    /// The right-hand column, as Arc's: keycap artwork, "Custom Shortcuts", its description, and
+    /// Reset All Shortcuts with a "…" menu at the bottom.
+    private var intro: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let entry {
-                Text(entry.title).font(.system(size: 15, weight: .semibold))
-                Text(entry.menuPath.joined(separator: " › ")).foregroundStyle(.secondary)
-                ShortcutRecorder(
-                    shortcut: pending?.id == entry.id ? pending?.shortcut : entry.shortcut,
-                    isRecording: recording == entry.id,
-                    start: { recording = entry.id; pending = nil },
-                    finish: { shortcut in
-                        recording = nil
-                        guard let shortcut else { return }
-                        if ShortcutsList.conflicts(for: shortcut, excluding: entry.id, in: all).isEmpty {
-                            model.setShortcut(shortcut, for: entry.id)
-                        } else {
-                            pending = (entry.id, shortcut)
-                        }
-                    }
-                )
-                if let pending, pending.id == entry.id {
-                    let conflicts = ShortcutsList.conflicts(for: pending.shortcut, excluding: entry.id, in: all)
-                    if let note = ShortcutsList.conflictDescription(conflicts) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
-                            Text("\(pending.shortcut.displayString) \(note)").font(.system(size: 12))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Button(conflicts.count == 1 ? "Remove Conflicting Shortcut" : "Remove Conflicting Shortcuts") {
-                            model.removeConflicts(with: pending.shortcut, keeping: entry.id)
-                            model.setShortcut(pending.shortcut, for: entry.id)
-                            self.pending = nil
-                        }
-                        Button("Cancel") { self.pending = nil }
-                    }
-                }
-                Button("Reset Shortcut to Default") { model.resetShortcut(entry.id) }
-                    .disabled(!entry.isCustomized)
-                Button("Remove Shortcut") { model.setShortcut(nil, for: entry.id) }
-                    .disabled(entry.shortcut == nil)
-            } else {
-                HStack(spacing: 4) {
-                    ArtKey(symbol: "command")
-                    ArtKey(symbol: "face.smiling")
-                }
-                Text("Custom Shortcuts").font(.system(size: 15, weight: .semibold)).padding(.top, 16)
-                Text("Change shortcuts for your favorite actions.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 4) {
+                ArtKey(symbol: "command")
+                ArtKey(symbol: "face.smiling")
             }
+            Text("Custom Shortcuts").font(.system(size: 15, weight: .semibold)).padding(.top, 16)
+            Text("Change shortcuts for your favorite actions, and even choose whether Kite or a website takes priority.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer()
             HStack(spacing: 8) {
                 Button("Reset All Shortcuts") { model.resetAllShortcuts() }
@@ -203,43 +167,55 @@ private struct ArtKey: View {
     }
 }
 
-/// A 48pt list row: the command's name and its keycap. Click the row to pick it, the keycap to record.
+/// A 48pt list row: the command's name and its keycap (click to record). A recorded shortcut that
+/// another command has shows Arc's note under the row, with Remove Conflicting Shortcut and Cancel.
+/// Right-click for reset and remove.
 private struct ShortcutRow: View {
     @EnvironmentObject private var model: SettingsModel
     let entry: ShortcutEntry
-    let isSelected: Bool
     let isRecording: Bool
     let pending: KeyShortcut?
-    let select: () -> Void
+    let conflicts: [ShortcutEntry]
     let startRecording: () -> Void
     let finishRecording: (KeyShortcut?) -> Void
+    let resolveConflict: (Bool) -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Only the name picks the row, so a click on the keycap records instead.
-            HStack {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
                 Text(entry.title).lineLimit(1)
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
+                ShortcutRecorder(shortcut: pending ?? entry.shortcut, isRecording: isRecording, start: startRecording, finish: finishRecording)
             }
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onTapGesture(perform: select)
-            ShortcutRecorder(shortcut: pending ?? entry.shortcut, isRecording: isRecording, start: startRecording, finish: finishRecording)
+            .frame(height: ShortcutsPane.M.rowHeight)
+            if let pending, let note = ShortcutsList.conflictDescription(conflicts) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+                        Text("\(pending.displayString) \(note)").font(.system(size: 12))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 8) {
+                        Button(conflicts.count == 1 ? "Remove Conflicting Shortcut" : "Remove Conflicting Shortcuts") { resolveConflict(true) }
+                        Button("Cancel") { resolveConflict(false) }
+                    }
+                    .controlSize(.small)
+                }
+                .padding(.bottom, 12)
+            }
         }
         .padding(.leading, 24)
         .padding(.trailing, 24)
-        .frame(height: ShortcutsPane.M.rowHeight)
-        .background(isSelected ? Color.accentColor.opacity(0.25) : .clear)
-        // Arc's per-row actions are menu items (its binary); selecting a row by AX changed nothing on
-        // its right column, so they're most likely this menu. Kite also shows them on the right.
+        .contentShape(Rectangle())
+        // Arc's per-row actions are menu items (its binary), not a detail view.
         .contextMenu {
             Button("Reset Shortcut to Default") { model.resetShortcut(entry.id) }
                 .disabled(!entry.isCustomized)
             Button("Remove Shortcut") { model.setShortcut(nil, for: entry.id) }
                 .disabled(entry.shortcut == nil)
-            let conflicts = ShortcutsList.conflicts(for: entry.shortcut, excluding: entry.id, in: model.shortcutEntries)
-            if !conflicts.isEmpty, let shortcut = entry.shortcut {
-                Button(conflicts.count == 1 ? "Remove Conflicting Shortcut" : "Remove Conflicting Shortcuts") {
+            let clashes = ShortcutsList.conflicts(for: entry.shortcut, excluding: entry.id, in: model.shortcutEntries)
+            if !clashes.isEmpty, let shortcut = entry.shortcut {
+                Button(clashes.count == 1 ? "Remove Conflicting Shortcut" : "Remove Conflicting Shortcuts") {
                     model.removeConflicts(with: shortcut, keeping: entry.id)
                 }
             }
