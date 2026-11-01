@@ -2388,7 +2388,52 @@ through `DialogsClient` (`SharedWindowFeature/WindowData+Dialogs.swift`, `ARCCli
   `commandBarToolbarContextMenuActions` (172024), titled "Hide Full URL" (immediate string at arc.s 1003a7a08,
   comment "Title for the 'Hide Full URL' context menu action." 62840) and "Show Full URL" (62841). Kite has no
   toolbar context menu yet; until the settings window exists the toggle is Kite menu → Show Full URL in Toolbar
-  (command id `toggleToolbarFullURLs`, Arc's action name), not an Arc menu item.
+  (command id `toggleToolbarFullURLs`, Arc's action name), not an Arc menu item. The right-click menu is built
+  now (g105, next section).
+
+## Toolbar right-click menu → `ToolbarMenu` (KiteCore), `PageToolbarHost`, `BrowserWindowController+ToolbarMenu` (Arc 1.171 disassembly and strings, 1 Nov 2026, g105)
+
+All from `~/rea-arc/decomp/arc.s` (Arc 1.171) and `~/rea-arc/arc-strings.txt`; nothing in Arc was opened or
+pressed, so none of it was seen on screen.
+
+- The menu's items are one enum, `CommandBarContextMenuAction` (strings 42074). Its title switch is arc.s
+  1003a7600 (jump table at 1003a7af0): tag 0 "Copy URL", 1 "Share", 2 "Show as Toolbar" / "Hide Toolbar" (bool
+  payload: true shows), 3 "Show Full URL" / "Hide Full URL", 4 "Enable Shared Quotes" / "Disable Shared Quotes",
+  5 "Capture…", 6 "Capture Full Page", 7 "Capture in Portrait Mode", 8 "Manage Extensions…", 9 a separator. The
+  short titles are Swift immediates in that function (e.g. "Copy URL" at 1003a76d8); the localizer comments
+  ("Title for the 'Show Full URL' context menu action.") are strings 62838–62851.
+- One builder makes both the sidebar address field's list (`commandBarPlaceholderContextMenuActions`) and the
+  toolbar's (`commandBarToolbarContextMenuActions`): arc.s 10007204c (file WindowState+CommandBarPlaceholder.swift).
+  Its callers (10002a72c/10002a744, 1000f3b5c/1000f3b74) call it twice in a row, placeholder flag 1 then 0, in the
+  order of the two state fields (strings 148549–148550). With the flag 0 (the toolbar), in order:
+  1. No URL: no items (and `WindowContentViewController`'s menu closure, 10041fda0, returns no menu for an empty list).
+  2. Copy URL, always; its payload carries a flag that is set only when the tab's content is a web page (the
+     enum check at 100072440), which Kite reads as enabled.
+  3. Web page only: Share, Capture…, Capture Full Page, Capture in Portrait Mode.
+  4. If extensions apply (third argument, 1 for main windows, and a check at 10039153c): separator, Manage Extensions….
+  5. A second group: Show/Hide Full URL (web page only, toolbar list only; payload = the opposite of setting 0x51),
+     Show as Toolbar / Hide Toolbar (payload = the opposite of the window's toolbar state, unless a check at
+     102a03b78 says no), Enable/Disable Shared Quotes (web page only, setting 0x84). If the group isn't empty, a
+     separator and then the group.
+- The menu is built in `WindowContentViewController` (strings around arc.s 100420974), which also hosts the top
+  bar; which part of the bar opens it isn't shown by the code. Kite opens it from a right-click anywhere on the bar
+  that isn't a button.
+- Kite leaves out Capture in Portrait Mode and Enable/Disable Shared Quotes (Kite has neither feature). Manage
+  Extensions… shows where extensions run (Chromium windows, not incognito) and opens the extensions popover from the
+  bar's right end. Share uses File › Share…'s picker. Whether Arc's items have icons wasn't checked.
+- Kite's own pages (kite://) count as "not a web page": Copy URL disabled, then Hide Toolbar.
+
+## Command bar: Replace Pin with Current Page → `replacePinWithCurrentPage(_:)` (Arc 1.171 strings, 1 Nov 2026, g106)
+
+- Arc's command-bar action `replacePinnedTab` (strings 68847, 161126, 169663; `ReplacePinnedTabCodingKeys` 41021),
+  title "Replace Pin with Current Page" (79423, comment "Action to replace a pinned tab with a different url"),
+  also matched by "Replace Pinned Tab with the Current Site" (79443, "Action to pin current tab to a new URL.").
+  Neither is in Arc's menu bar (arc-menu-1.171.txt). The sidebar's own item is a different action,
+  `replacePinnedTabWithCurrentPage` (176631), "Replace Pinned URL with Current" (84935).
+- Kite: a hidden Tabs item with Arc's id `replacePinnedTab`, found by the command bar under both phrases, running
+  the same `replacePinnedURLWithCurrent` as Edit Pinned Page. It's offered only while the selected pinned tab or
+  favorite is on a web page other than its pinned one (Kite's Reset Tab test). Arc's own availability rule for the
+  command bar wasn't found; that condition is inferred.
 
 ## Profiles (read from Arc's files and binary, 2026-11-01)
 
