@@ -531,6 +531,42 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Kite has no link routing yet, so it isn't imported.
 
+## Air Traffic Control → `AirTrafficControl` (KiteCore), `AirTrafficControlWindow` (Arc 1.171 binary strings and disassembly, 1 Nov 2026)
+
+Sources: `~/rea-arc/arc-strings.txt` and `~/rea-arc/decomp/arc.s` (short SwiftUI string literals decoded from the
+`mov`/`movk` immediates in `PreferencesFeature/LinkRoutingDialog.swift`'s code, around 0x10200bd38–0x1020155xx).
+Arc was not opened or driven, so no geometry was measured.
+
+- Module `LinkRouting` (`LinkRoutingClient.swift`, `LinkRoutingEditor.swift`), saved to `StorableLinkRouting.json`
+  (strings 67179, 80045–80055). Client API: `currentState`, `stateStream`, `addRule`, `updateDefaultDestination`,
+  `updateState`.
+- Model, from the reflection field names (strings 170798–170819) and coding keys (41563–41578):
+  `StorableLinkRoutingState { version, rules, defaultDestination }`;
+  `LinkMatchingRule { sourceComponents, destination }`; `LinkSourceComponent.componentType` has one case,
+  `urlMatch`; `LinkSourceTextMatchingStyle` is `matches` | `contains`; `LinkDestination` is `space` | `littleArc`
+  | `profile` | `mostRecent`.
+- **No source-app condition.** The only component type is `urlMatch`, and no sender/source-app string appears
+  in the module, so routing by the app a link came from isn't in this Arc. Kite doesn't build it.
+- Editor actions (strings 170798–170808): `addRule`, `updateDestination`, `updateTextMatchingStyle`,
+  `updateTextMatchingPattern`, `delete`, `updateDefaultDestination`, `onUpdateFocusedRuleId`, `onClose`.
+- Dialog views (41821–41831): `LinkRoutingDialog`, `DefaultRuleView`, `LinkMatchingRuleView`,
+  `LinkMatchingRuleComponentView` (`showPlusButton`, `title`, `iconName`), `LinkMatchingRuleDestinationView`,
+  `LinkMatchingRuleDestinationPickerView`.
+- Dialog text: "Air Traffic Control", "Routes let you choose where specific sites open inside Arc. For example,
+  you can route Spotify links to always open inside your Personal space.", "New Route", "Default", "URL" with
+  SF Symbol `link`, "Is equal to" / "Contains", placeholder "arc.net", "Open in", "Little Arc", "Open in Space",
+  "Most Recent Space", symbols `airplane.circle`, `arrow.turn.down.right`, `minus.circle.fill`, and a Done button
+  (`onClickDone`). Opened from Preferences → Links → "Air Traffic Control…" and the command bar action
+  `openAirTrafficControl` ("Action to open Air Traffic Control routes.").
+- Analytics enums: `LinkRoutingWindowType` littleArc / mainWindow / customSpace, `LinkRoutingURLMatchType`
+  equals / contains, `LinkRoutingRuleChangeType` added / removed / changed (strings 69697–69701, 161652–161656).
+- Settings key: only `openExternalLinksInLittleBrowserEnabled` in Arc's defaults; the routes and default live in
+  the JSON file. Kite treats an unset default as that setting (Little Kite when on, Most Recent Space when off).
+- Inferred, not found in the binary: rules are checked in order and the first match wins; a rule's several URL
+  components match when any one does; "Is equal to" compares the site (host without www.) or the whole link
+  ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
+  deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.

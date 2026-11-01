@@ -180,7 +180,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
 | Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
 | Library | Downloads, archive, easels, media, boosts in one window | ❌ | Thread: Library |
-| Air Traffic Control | Rules to route links from other apps to a space | ❌ | Thread: Little Arc / routing |
+| Air Traffic Control | Rules to route links from other apps to a space | 🟡 | Kite menu → Air Traffic Control…: URL "Is equal to"/"Contains" routes to a space or Little Kite, plus a default. No profile destination; editor lives in its own window until Settings exists |
 | Live folders | GitHub PRs/issues, RSS etc. as an auto-updating folder | ❌ | Later |
 | Live calendars | Calendar favorite shows the next meeting | ❌ | Later |
 | Share spaces, folders, splits | Public link or collaborator | ❌ | Roadmap: sync + sharing |
