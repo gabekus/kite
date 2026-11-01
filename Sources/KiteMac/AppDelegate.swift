@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         history = HistoryStore(fileURL: Self.supportDirectory.appendingPathComponent("history.json"))
         store.history = history
         DownloadsModel.shared.start(fileURL: Self.supportDirectory.appendingPathComponent("downloads.json"))
+        BoostsModel.shared.start(fileURL: Self.supportDirectory.appendingPathComponent("boosts.json"))
 
         adblocker = Adblocker(directory: Self.supportDirectory.appendingPathComponent("Adblock", isDirectory: true))
         adblocker.setPolicy(enabled: store.state.blocksAds, allowedHosts: store.state.adblockAllowedHosts)
@@ -300,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store?.saveNow()
         history?.saveNow()
         DownloadsModel.shared.saveNow()
+        BoostsModel.shared.flush()
     }
 
     // MARK: Settings

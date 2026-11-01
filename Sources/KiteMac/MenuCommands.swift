@@ -1,6 +1,13 @@
 import AppKit
 import KiteCore
 
+/// Extra words the command bar matches a menu item by (Arc's type-travel keywords). An item
+/// carrying them is offered even while hidden from the menu bar.
+final class CommandBarKeywords: NSObject {
+    let words: [String]
+    init(_ words: [String]) { self.words = words }
+}
+
 /// A menu bar command offered in the command bar (Arc lets you run any action from there).
 struct MenuCommand: Hashable {
     let item: NSMenuItem
@@ -19,14 +26,16 @@ struct MenuCommand: Hashable {
         var results: [(MenuCommand, Int)] = []
         func walk(_ menu: NSMenu, path: [String]) {
             menu.update()
-            for item in menu.items where !item.isHidden && !item.isSeparatorItem {
+            for item in menu.items where !item.isSeparatorItem {
+                let keywords = item.representedObject as? CommandBarKeywords
+                if item.isHidden && keywords == nil { continue }
                 if let submenu = item.submenu {
                     walk(submenu, path: path + [item.title])
                 } else if item.action != nil, item.isEnabled, !item.title.isEmpty,
                           // AppKit's window list in the Window menu: titled after pages, not commands.
                           item.action != #selector(NSWindow.makeKeyAndOrderFront(_:)),
                           !(item.target is NSWindow), !(item.representedObject is NSWindow),
-                          let score = CommandSearch.score(query, title: item.title) {
+                          let score = ([item.title] + (keywords?.words ?? [])).compactMap({ CommandSearch.score(query, title: $0) }).max() {
                     results.append((MenuCommand(item: item, path: path.joined(separator: " › ")), score))
                 }
             }

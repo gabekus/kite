@@ -45,6 +45,15 @@ enum MainMenu {
             return hidden
         }
 
+        /// Hidden from the menu bar, but offered by the command bar (MenuCommand), also by `keywords`.
+        func commandBarOnly(_ item: NSMenuItem, keywords: [String]) -> NSMenuItem {
+            item.isHidden = true
+            item.allowsKeyEquivalentWhenHidden = true
+            item.representedObject = CommandBarKeywords(keywords)
+            return item
+        }
+        let boostKeywords = ["Boost", "New Boost", "Create boost", "extension", "Boost the Current Page", "Edit Boost"]
+
         func submenuItem(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
             let menu = TypingSafeMenu(title: title)
             items.forEach(menu.addItem)
@@ -303,6 +312,11 @@ enum MainMenu {
             item("Zoom", #selector(NSWindow.performZoom(_:)), toTarget: false, id: "zoomWindow"),
             .separator(),
             item("View Downloads…", #selector(BrowserWindowController.viewDownloads(_:)), "j", [.command, .shift], id: "viewDownloads"),
+            // Arc 1.171: View Easels… and View Media… sit between these.
+            item("View Boosts…", #selector(BrowserWindowController.viewBoosts(_:)), id: "viewBoosts"),
+            // Arc's MainMenu.nib has these as command-bar actions, out of the menu bar, with these keywords.
+            commandBarOnly(item("New Boost", #selector(BrowserWindowController.newBoost(_:)), id: "newBoost"), keywords: boostKeywords),
+            commandBarOnly(item("Edit Boost", #selector(BrowserWindowController.editBoost(_:)), id: "editBoost"), keywords: boostKeywords),
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), toTarget: false, id: "bringAllToFront"),
         ])

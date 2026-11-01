@@ -149,7 +149,8 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Stay On Top | | ✅ checkmark in the menu, window floats, no in-window indicator (as in Arc) | |
 | Open Library… | ⇧⌘L | ❌ | Thread: Library |
 | View Downloads… | ⇧⌘J | ✅ Window menu, opens the downloads list (Arc opens Library › Downloads) | Thread: Library (downloads page) |
-| View Easels… / Media… / Boosts… | | ❌ | Their threads |
+| View Easels… / Media… | | ❌ | Their threads |
+| View Boosts… | | 🟡 Window menu, opens a Boosts window (Arc opens Library › Boosts): every Boost with Enable/Disable, rename, delete, double-click to edit | Move into the Library when it exists |
 
 ### Help
 
@@ -176,7 +177,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Split View | Up to 4 panes, saved in the sidebar | 🟡 horizontal panes, divider, sidebar row; no vertical layout or drag-to-split yet | Thread: Split view |
 | Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | ❌ | Thread: Mini player |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
-| Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |
+| Boosts | Per-site CSS/JS/zap elements, shareable | 🟡 Code Boosts: New Boost / Edit Boost in the command bar (Arc's hidden menu actions and keywords) open an editor window with CSS and JS for the site's domain; boosts.json in the profile; applied at page load on both engines, top frame, never in incognito | Not yet: colours, fonts, text size/case, Zap (gap 22), site control centre entry, live apply without reload, sharing/gallery, Arc import |
 | Developer Mode | Per-site: URL bar shows localhost info, console pane | ❌ | Thread: Developer Mode |
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |

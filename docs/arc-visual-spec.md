@@ -711,6 +711,39 @@ Arc was not opened or driven, so no geometry was measured.
   ignoring scheme, www. and a trailing slash; "Contains" is a case-insensitive substring of the link; a route to a
   deleted space is skipped; only http(s) links are routed. Kite has no profiles, so there's no profile destination.
 
+## Boosts (Arc 1.171, read 1 Nov 2026)
+
+Sources: `~/rea-arc/tools/menudump Window` (AX, nothing pressed), strings in `Contents/Resources/Base.lproj/MainMenu.nib`
+and `~/rea-arc/arc-strings.txt` (line numbers below), asset names from `ARC_BoostsEditor.bundle/Assets.car`.
+
+- Menu bar: Window › **View Boosts…** (no shortcut), after View Downloads…, View Easels…, View Media…. Its copy
+  says it opens the Library's Boosts pane (arc-strings ~62221).
+- MainMenu.nib also has **New Boost** (`newBoost`, outlet `newBoostMenuItem`) and **Edit Boost** (`editBoost`)
+  with the command-bar keywords "Boost; New Boost; Create boost; extension; Boost the Current Page; Edit Boost",
+  and **Boost Gallery** (`openBoostGallery`). None of the three shows in the menu bar (menudump), so they're
+  command-bar actions (Arc also has a `hiddenMenuItem` outlet, ~149700).
+- Other entry points: the site control centre's Boosts section with a new-Boost button and a "Manage Boosts"
+  footer item (~73700–73727), and a context menu titled "Customize Page" (~84895). Not built in Kite.
+- Editor: its own window (`BoostsEditorWindowController`, ~73423) with a code input panel
+  (`BoostsEditorCodeInputPanel`, `CodeType`), the JS placeholder "your javascript here", buttons "Refresh this
+  Page", "Rename this Boost", "Delete this Boost", "Show/Hide Developer Tools" (~73396–73407). The v2 editor
+  serves code from `arc://boost/v2/css/` and `arc://boost/v2/js/` (~73420). Colour wheel, font, text size/case
+  and Zap/selector picker controls are the rest of the editor (`BoostsEditor*`, ~37700–37818).
+- Delete asks "Delete this Boost?" / "Deleting a Boost can't be undone." (~61502–61507). Rename has its own
+  alert with cancel and done buttons (~61510).
+- Library page: empty state "Nothing Boosted Yet!", row buttons delete, rename, disable, enable (~82519–82525).
+- Storage: `StorableBoostsData.json` and a `localBoostsData` directory, `locallyEnabledBoostIDs` (~67162,
+  ~71519). Applied per page by `BoostsClient.applyToWebContent` / `WebContentState+Boosts.updateBoosts(for:)`;
+  a Boost "will run only on" its site (~82390). "Boosts can't be installed or used in Incognito Mode" (~61492).
+
+Kite (`KiteCore/Boosts.swift`, `KiteMac/BoostsModel.swift`, `Views/BoostsViews.swift`): code Boosts only, in
+`boosts.json`. Inferred, not seen in Arc: the domain is the host without `www.` and matches exactly; CSS goes in
+at document start and JS runs at DOMContentLoaded, in the page's world, top frame only; New Boost is offered on
+any web page and Edit Boost opens the site's newest Boost; the new Boost's name is its domain (Arc's default
+title string is inlined, so unknown); the editor's sizes and layout are Kite's (Arc's weren't measured). Kite
+leaves out a Boost's JavaScript when it doesn't parse (shown under the editor), since its document-start
+scripts share one source with the ad blocker's.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
