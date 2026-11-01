@@ -98,7 +98,12 @@ final class SettingsModel: ObservableObject {
     }
 
     func setShortcut(_ shortcut: KeyShortcut?, for id: String) {
-        keyBindings?.set(KeyBindingOverride(action: id, shortcut: shortcut), menu: NSApp.mainMenu)
+        keyBindings?.setShortcut(shortcut, for: id, menu: NSApp.mainMenu)
+        refresh()
+    }
+
+    func setPriority(_ priority: KeyShortcutPriority, for id: String) {
+        keyBindings?.setPriority(priority, for: id, menu: NSApp.mainMenu)
         refresh()
     }
 
@@ -115,7 +120,7 @@ final class SettingsModel: ObservableObject {
     /// Takes `shortcut` away from every other command that has it.
     func removeConflicts(with shortcut: KeyShortcut, keeping id: String) {
         for other in ShortcutsList.conflicts(for: shortcut, excluding: id, in: shortcutEntries) {
-            keyBindings?.set(KeyBindingOverride(action: other.id, shortcut: nil), menu: NSApp.mainMenu)
+            keyBindings?.setShortcut(nil, for: other.id, menu: NSApp.mainMenu)
         }
         refresh()
     }

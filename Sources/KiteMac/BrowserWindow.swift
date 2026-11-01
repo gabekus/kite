@@ -13,4 +13,9 @@ final class BrowserWindow: NSWindow {
         if [.leftMouseDown, .leftMouseDragged, .leftMouseUp].contains(event.type), mouseInterceptor?(event) == true { return }
         super.sendEvent(event)
     }
+
+    /// Before the web view can claim a shortcut for its page: Prefer Kite shortcuts run here (Settings › Shortcuts).
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        ShortcutPriorityRouter.shared.takeBeforePage(event, in: self) || super.performKeyEquivalent(with: event)
+    }
 }

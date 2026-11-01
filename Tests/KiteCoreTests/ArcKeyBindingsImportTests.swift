@@ -53,6 +53,22 @@ import Testing
         ])
     }
 
+    @Test func bringsAcrossOnlyChangedPriorities() throws {
+        let changed = #"""
+        {"userOverrides": [{
+            "priority": "low",
+            "default": {"shortcut": {"deviceIndependentModifierFlags": 1048576, "keyEquivalent": "d"}, "priority": "promptAfterConsumedByWebView"},
+            "state": {"valid": {"_0": {"keyEquivalent": "d", "deviceIndependentModifierFlags": 1048576}}},
+            "action": {"identifier": "pinTab", "name": "Pin/Unpin Tab"},
+            "source": "userDefined"
+        }], "version": 1}
+        """#
+        let overrides = try ArcKeyBindingsImport.parse(Data(changed.utf8))
+        #expect(overrides == [KeyBindingOverride(action: "pinTab", shortcut: KeyShortcut("d", [.command]), source: .arc, priority: .low)])
+        // Unchanged priorities (all of the main fixture's) stay Kite's defaults.
+        #expect(try ArcKeyBindingsImport.parse(Data(json.utf8)).allSatisfy { $0.priority == nil })
+    }
+
     @Test func decodesModifiersAndArrows() {
         let shortcut = ArcKeyBindingsImport.shortcut(.init(keyEquivalent: "→", deviceIndependentModifierFlags: 1572864))
         #expect(shortcut == KeyShortcut("right", [.option, .command]))
