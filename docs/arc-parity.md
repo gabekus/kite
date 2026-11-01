@@ -94,7 +94,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Developer → JavaScript Console | ⌥⌘J | 🟡 opens DevTools, not on Console | Later |
 | Developer → Network Inspector | | ❌ | Later, with the two above |
 | Developer → Allow JavaScript from Apple Events | | ❌ | With AppleScript |
-| Turn on Developer Mode for this site | ⌃D | ❌ | Thread: Developer Mode |
+| Turn on Developer Mode for this site | ⌃D | 🟡 Per-host switch (title flips to "Turn off…"), remembered across relaunches; on a Developer Mode site the sidebar's reload button gets Arc's reload options (Reload this page / Refresh (Ignore Cache) / Clear Cookies and Refresh) and reloads the way last chosen. No Site Controls row yet | Gap 16 |
 | Enter Full Screen | ⌃⌘F | ✅ | |
 | Dark Page for This Site (Kite only) | ⌥⌘D | ✅ | |
 
@@ -177,7 +177,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Mini Player / auto PiP | Media from a hidden tab plays in a sidebar player or PiP | 🟡 | Sidebar Mini Player (play/pause, prev/next, tab mute, PiP, close, back to tab); auto PiP on leaving a playing video. No volume slider, mic/camera, marquee, Arc PiP window |
 | Media pane | All tabs playing media | ❌ | Thread: Mini player |
 | Boosts | Per-site CSS/JS/zap elements, shareable | ❌ | Thread: Boosts |
-| Developer Mode | Per-site: URL bar shows localhost info, console pane | ❌ | Thread: Developer Mode |
+| Developer Mode | Per-site switch and dev reload options (Arc's strings show no console pane or URL change) | 🟡 See the Developer menu row | Gap 16 |
 | Easels | Freeform canvas of screenshots, live clips, text | ❌ | Skip? |
 | Notes | Rich-text notes in the sidebar (Arc is phasing out) | ❌ | Skip |
 | Capture | Screenshot tool for an area/full page | ❌ | Thread: Capture |
