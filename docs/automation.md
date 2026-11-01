@@ -236,8 +236,10 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   page itself, so the password goes from the vault into the form and never through Kite's tools or the model.
   - While it waits, every other tool on that tab fails ("The user is signing in on this tab"), so nothing can read
     the filled fields.
-  - It ends when the page has moved to a different URL and shows no visible password or one-time-code field (two
-    checks 0.5 s apart), when the user presses Done or Cancel, on Stop, or after 5 minutes.
+  - It ends on its own when the tab is back on the site it started on (same registrable domain), at a different page
+    that shows no visible password, one-time-code, email or username field (two checks 0.5 s apart). Pages on another
+    site ("Continue with Google", a passkey prompt) never end it. Otherwise it ends when the user presses Done or
+    Cancel, on Stop, or after 5 minutes.
   - On Cancel or timeout, Kite empties the page's password and code fields before handing the tab back.
   - Claude gets only "signed in / cancelled / timed out" and the tab's new URL and title.
   - Limits: only the top frame is checked (a login inside an iframe needs Done), and after sign-in Claude can still

@@ -1,13 +1,15 @@
 import Foundation
 import KiteCore
+import Observation
 
 /// Browsing history on disk (history.json), shared by every normal window.
 /// Incognito windows get no store, so they never record.
 @MainActor
+@Observable
 final class HistoryStore {
     private(set) var history = History()
-    private let fileURL: URL
-    private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private let fileURL: URL
+    @ObservationIgnored private var saveTask: Task<Void, Never>?
 
     private struct File: Codable {
         var version: Int
@@ -44,6 +46,11 @@ final class HistoryStore {
 
     func removeAll() {
         history.removeAll()
+        saveNow()
+    }
+
+    func remove(_ urls: [URL]) {
+        history.remove(urls)
         saveNow()
     }
 

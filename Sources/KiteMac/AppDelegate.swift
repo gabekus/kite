@@ -103,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             extensionTabs = bridge
             // Once the window is up, so Chrome's "Add 1Password?" dialog has somewhere to hang.
             let engine = windowController.pool.engine
+            VerificationCodeService.shared.configure(engine: engine)
             OnePasswordFieldButton.open = { view in
                 MainActor.assumeIsolated { OnePasswordIntegration.showPopup(engine: engine, relativeTo: view.bounds, of: view) }
             }

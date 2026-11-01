@@ -343,6 +343,50 @@ Not measured (text wasn't read): what the menu's top row of four 48.75×32.75 bu
 208×33 rows) and its two bottom buttons (82×32, 32×32) do. Kite leaves them out; pin, on/off, options and remove
 are in each tile's right-click menu instead. Arc's hover reveal in the sidebar URL row: none found.
 
+## Spaces (Arc 1.169, 31 Oct 2026)
+
+**Paging → `SpacePages`, `SpaceSwipeController`, `KiteCore.SpaceSwipe`**
+- **Binary:** the sidebar under the URL field is `SidebarPagingContainerViewController`, an `NSCollectionView`
+  with a horizontal `SidebarPagingContainerCollectionViewLayout` inside `SidebarPagingContainerScrollView`. Each
+  space is a `SidebarSpaceViewController` page. The favorites are their own item
+  (`SidebarPagingContainerAppTrayCollectionViewItem`).
+- The scroll view's `scrollWheel:` doesn't scroll it: on macOS 14 and later it forwards the event to the window's
+  `contentViewController` (`WindowViewController`, which has its own `scrollWheel:`), and its clip view's
+  `constrainBoundsRect:` returns the current visible rect, so only code moves the pages. Type names nearby:
+  `PagingDragBuffer`, `PagingPosition`, `PagingTransitionConfiguration`.
+- **Accessibility tree** (Gabe's main window, three spaces, sidebar 313 wide, frames only):
+  - The collection list is 939×1153 at x −313: three 313pt pages side by side, the second one showing.
+  - Its first section is the favorites, 313×63 at (0, 82), and it stays at x 0. The pages are the second section.
+  - The page shown is (0, 145, 313×1090): space name at y 154, rows from y 181.
+  - So pages are the full sidebar width and slide under the fixed favorites.
+- **Not measured yet:** the swipe's physics (Arc ignores synthetic trackpad events, and a recording of Gabe's own
+  swipes is pending), whether a keyboard or strip switch slides the pages, and the settle animation. Kite's
+  pages follow the fingers 1:1, rubber-band past the ends with AppKit's constant (0.55), land on the neighbour
+  past half a page or on a flick over 300pt/s, and settle with the space-switch spring below.
+
+**Space strip**
+- In the accessibility tree it is an `AXCollectionList` in a 229×50 scroll area at (42, 1235), between the two
+  32pt buttons at x 8 and 273. Its items aren't exposed.
+- In Gabe's window it draws nothing at all with three spaces, before and after a synthetic hover. Why is still
+  open (a setting, or hover only).
+
+**Theme editor → `ThemeEditor`, `ArcMetrics.ThemeEditor`** (Spaces → Edit Theme…, tree plus one capture)
+- An `AXPopover`, 382×534, hanging off the sidebar's right edge (x 313). Opened from the menu with the pointer
+  away, its bottom sat on the window's bottom (y 751 to 1285); opened the same way a few minutes later it sat
+  at y 158, so something else decides its height.
+- Content 356×508 inset 13. From the popover's corner:
+  - A 340×340 dot-grid image at (21, 21), with one round handle per colour (about 45pt, a 5pt white ring).
+  - Three 32×32 buttons at (135, 45), (175, 45), (215, 45) on the grid: sparkles, sun and moon (auto, light, dark
+    by their glyphs), the selected one on a faint fill.
+  - "Remove" and "Add" (− and +), 32×32, at (155, 313) and (195, 313).
+  - Presets: "Move to previous/next preset page" arrows 32×32 at (21.5, 377) and (328.5, 377); 24pt swatches
+    29.5 apart from (61, 381), nine to a page, labelled "Set space color to Catalog color".
+  - A 224×56 slider at (31, 437), drawn as a wave over a track with a tall white thumb.
+  - A dial of dots, an 80×36 slider at (271, 469) under an 80×36 "Cycle noise texture" button at (271, 425).
+- **Kite:** the same frames (checked with `kite probe` on a test build: popover 382×534, content 356×508 at 13,
+  bottom on the window's). Unmeasured, so chosen: the grid's mapping (angle is hue, distance is chroma, the
+  appearance buttons set lightness), the wave slider as the theme's intensity and the dial as its grain, at most
+  three colours, and Kite's own presets on one page.
 ## Downloads (Arc 1.171 binary, assets and menu bar, 31 Oct 2026)
 
 - Menu: Window › **View Downloads…** ⇧⌘J, next to Open Library… ⇧⌘L (read from Arc's menu bar through AX, no
@@ -364,8 +408,20 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
 Kite (`DownloadsView.swift`): no Library yet, so the bottom bar's leading button (where Arc's Library button sits)
 shows the progress ring and opens a popover list. Row size, ring size and popover width are Kite's, unmeasured.
 
+## History, ⌘Y (Arc 1.171 menu bar and strings, 1 Nov 2026)
+
+- Menu (read from Arc's menu bar through AX, nothing pressed): **Archive** › Go Back ⌘[, Go Forward ⌘], —,
+  **View History** ⌘Y, View Archive…, Clear Archive.
+- Arc's shortcut list describes ⌘Y as "Opens your History in a new Today tab"; its action id is `viewHistory`.
+  The strings also hold `chrome://history`, so the tab is Chromium's own history page, not an Arc view.
+- Kite's CEF (Alloy style) has no chrome://history, so Kite draws a native page over a blank tab at
+  `kite://history` (`HistoryPageView`), following Chromium's history page: search, day cards headed
+  "Today - Saturday, October 31, 2026", rows with time, icon, title and site, and a per-row menu. Sizes are
+  Kite's; Chromium's page wasn't measured in Arc.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
 - The ⌘T panel's exact shadow parameters (only its effect was measured).
 - Arc's default sidebar width, light-theme fill opacities, and the space-switch animation timing.
+- The space swipe's physics and settle, and what Arc's space strip shows (see *Spaces*).

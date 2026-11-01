@@ -48,4 +48,26 @@ extension BrowserState {
         guard let s = spaceIndex(id), !name.isEmpty else { return }
         spaces[s].name = name
     }
+
+    public mutating func setSpaceIcon(_ id: UUID, to icon: String) {
+        let icon = icon.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let s = spaceIndex(id), let first = icon.first else { return }
+        spaces[s].icon = String(first)
+    }
+
+    /// Removes a space with its pinned and unpinned tabs. The last space stays: a window always has one.
+    /// Deleting the selected space selects the one before it.
+    public mutating func deleteSpace(_ id: UUID) {
+        guard spaces.count > 1, let s = spaceIndex(id) else { return }
+        let wasSelected = selectedSpaceID == id
+        spaces.remove(at: s)
+        if wasSelected { selectedSpaceID = spaces[max(s - 1, 0)].id }
+    }
+
+    /// Moves a space to a new place in the strip (Manage Spaces' drag).
+    public mutating func moveSpace(_ id: UUID, to index: Int) {
+        guard let s = spaceIndex(id) else { return }
+        let space = spaces.remove(at: s)
+        spaces.insert(space, at: min(max(index, 0), spaces.count))
+    }
 }

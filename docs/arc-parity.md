@@ -103,13 +103,13 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | New Space… | | ✅ | |
-| Edit Theme… | | ❌ | Thread: space theme editor |
+| Edit Theme… | | ✅ popover laid out from Arc's | Grid mapping unmeasured |
 | Rename Space | | ✅ | |
 | Change Profile | | ❌ | Thread: profiles |
 | Next / Previous Space | ⇧⌘S (Gabe) or ⌥⌘→ / ⌥⌘← | ✅ all three | |
 | Space 1…9 | ⌃1…⌃9 | ✅ | |
 | Manage Spaces… | | ❌ | B3 (reorder, delete) |
-| Swipe between spaces (two fingers) | gesture | ❌ | B3 |
+| Swipe between spaces (two fingers) | gesture | ✅ | Physics not yet fitted to Arc |
 
 ### Tabs
 
@@ -132,7 +132,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | Go Back / Go Forward | ⌘[ / ⌘] (also ⌘← / ⌘→ in a page) | ✅ ⌘←/⌘→ as hidden alternates; text fields keep them for caret moves (seen in Arc; not in its binding table) | B3 |
-| View History | ⌘Y | ❌ | Thread: Library (history page) |
+| View History | ⌘Y | 🟡 History › View History opens kite://history in a new tab (Arc: chrome://history "in a new Today tab"): search, one card per day, Open in New Tab / Copy Link / More from This Site / Remove from History, Clear History…. One row per URL (last visit), not one per visit; Chromium's page sizes not measured | |
 | View Archive… / Clear Archive | | 🟡 archived tabs stored, no UI | Thread: Library |
 
 ### Extensions

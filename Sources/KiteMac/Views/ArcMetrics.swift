@@ -156,6 +156,50 @@ enum ArcMetrics {
         static let sidebarToggleCurve: (x1: Float, y1: Float, x2: Float, y2: Float) = (0.25, 0.46, 0.45, 0.94)
     }
 
+    /// Arc's Edit Theme popover (Arc 1.169 accessibility tree and one capture, 31 Oct 2026). Points
+    /// from the content's top-left: the popover is 382×534 with its content inset 13, and the dot grid
+    /// sits 8 inside that.
+    enum ThemeEditor {
+        static let popoverSize = CGSize(width: 382, height: 534)
+        static let contentSize = CGSize(width: 356, height: 508)
+        static let inset: CGFloat = 8
+        static let fieldSize: CGFloat = 340
+        /// Estimated from the capture.
+        static let fieldCornerRadius: CGFloat = 8
+        static let dotPitch: CGFloat = 5
+        static let buttonSize: CGFloat = 32
+        /// Auto, light and dark, from the grid's corner.
+        static let modeX: CGFloat = 114
+        static let modeY: CGFloat = 24
+        static let modeSpacing: CGFloat = 8
+        /// − and +, from the grid's corner.
+        static let countX: CGFloat = 134
+        static let countY: CGFloat = 292
+        static let countSpacing: CGFloat = 8
+        /// About 45pt across with a 5pt white ring, from the capture.
+        static let handleSize: CGFloat = 45
+        static let handleRing: CGFloat = 5
+        /// Unmeasured: the most colours Kite lets a theme have in the editor.
+        static let maxColors = 3
+        /// The preset row's top, from the grid's top: arrows 32×32 at the ends, 24pt swatches 29.5 apart
+        /// starting 40 in.
+        static let presetsTop: CGFloat = 356
+        static let swatchButton: CGFloat = 32
+        static let swatchesX: CGFloat = 40
+        static let swatchSize: CGFloat = 24
+        static let swatchPitch: CGFloat = 29.5
+        /// The intensity slider (224×56) and grain dial (80×80, 12pt higher) row, from the grid's top.
+        static let controlsTop: CGFloat = 416
+        static let sliderX: CGFloat = 10
+        static let sliderTop: CGFloat = 0
+        static let sliderSize = CGSize(width: 224, height: 56)
+        static let trackHeight: CGFloat = 15
+        static let thumbSize = CGSize(width: 24, height: 55)
+        static let dialSize: CGFloat = 80
+        static let dialY: CGFloat = -12
+        static let dialTrailing: CGFloat = 10
+    }
+
     enum CommandBar {
         static let width: CGFloat = 765
         /// Kite's own: in a window too narrow for 765, the bar keeps this much from each edge.
