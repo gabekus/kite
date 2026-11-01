@@ -86,7 +86,7 @@ struct ProfilesPane: View {
                             .labelsHidden().frame(width: 180)
                         }
                         SettingsSeparator()
-                        SettingsRow(title: "Manage search") { Button("Search Settings…") {}.disabled(true) }
+                        SettingsRow(title: "Manage search") { Button("Search Settings…") { model.openSearchSettings() } }
                         SettingsSeparator()
                         UnsupportedToggle("Include search engine suggestions")
                     }

@@ -55,6 +55,21 @@ final class SettingsModel: ObservableObject {
         set { store?.mutate { $0.searchEngine = newValue }; refresh() }
     }
 
+    /// Profiles › "Search Settings…": Arc opens Chromium's search engines page
+    /// (`arc://settings/searchEngines`) in a new tab of the front browser window; Kite opens its own,
+    /// kite://search-engines.
+    func openSearchSettings() {
+        let front = NSApp.orderedWindows.lazy
+            .compactMap { $0.windowController as? BrowserWindowController }
+            .first { !$0.isIncognito }
+        guard let browser = front?.store ?? store else { return NSSound.beep() }
+        browser.mutate { state in
+            let id = state.openTab(url: InternalPage.searchEngines.url)
+            state.update(tab: id) { $0.title = InternalPage.searchEngines.title }
+        }
+        if !UIDiagnostics.enabledByEnvironment { front?.window?.makeKeyAndOrderFront(nil) }
+    }
+
     var archiveAfter: ArchiveInterval { store?.state.archiveAfter ?? .twelveHours }
 
     /// The Spaces using Kite's one profile, for Profiles' list.

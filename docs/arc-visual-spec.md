@@ -2614,3 +2614,36 @@ triggers). Kite's menu bar checked the same way (an AX read of the test Kite, pl
 - Arc's type-travel triggers for these items are Kite `CommandBarKeywords`, so the command bar still finds the
   old titles ("Reload Page", "Toggle Sidebar", "Back").
 
+
+## Settings › Profiles › "Search Settings…" → `SearchEnginesPageView`, `SiteSearchDraft` (KiteCore) (Arc 1.171 strings and ArcCore locale.pak, 1 Nov 2026)
+
+- **What Arc does** [bin]: the Profiles pane's "Manage search" row (pane-2 AX tree: button "Search Settings…") calls
+  `onManageSearchEnginesTapped`, which opens `arc://settings/searchEngines` (arc-strings.txt ~69087, 83313; the route
+  table at ~63381 lists `settings/searchEngines` beside `settings/privacy`, `settings/payments` …). That is
+  Chromium's own "Manage search engines and site search" page in a new tab, not an Arc sheet.
+- **Wording** [pak]: Chromium's strings in Arc's `ArcCore.framework/Resources/en.lproj/locale.pak`: "Manage search
+  engines and site search", "Search engines", "Site search", "Add site search", "Edit site search", "Shortcut",
+  "URL with %s in place of query", "$1 (Default)", "Make default", "Other saved search engines will appear here",
+  "To search a specific site or part of $AppName$, type its shortcut in the address bar, followed by your
+  preferred keyboard shortcut."
+- **Kite**: a native internal page, `kite://search-engines`, over Kite's Site Search store (Arc's 19 seeded
+  defaults + Arc import): a "Search engines" card (Kite's four engines, the default marked "(Default)", ⋯ menu
+  with Make default) and a "Site search" card (Add; rows with favicon, name, URL, shortcut, ⋯ menu Edit / Delete).
+  Add / Edit open an in-page dialog like Chromium's: Name, Shortcut, URL with %s; a problem shows under its field
+  (empty, shortcut with a space, shortcut already used by another entry, URL not http(s) with %s). Editing an
+  entry's URL drops its brand chip colour so the command bar uses the new site's favicon colour.
+- **Differs**: Chromium's page sizes and colours weren't measured (no capture of `arc://settings/searchEngines`);
+  Kite's cards follow its Site Settings page. Kite's engines have no shortcuts, so the Search engines blurb is only
+  "You can change your default search engine here."; no Inactive shortcuts section (Kite has no
+  extension/visited-site engines), no delete confirmation, no filter field.
+
+## Settings › General › "Previews Settings…" (g102, skipped) (Arc 1.171 strings, defaults key names, 1 Nov 2026)
+
+- Arc's button opens `PreferencesFeature/PreviewSettingsDialog.swift` (arc-strings.txt ~80550): "Show Arc Previews:",
+  the blurb "Save a click! Hover your mouse over an Arc Folder, Pinned, or Favorited tab to quickly preview what you
+  need from that site!", and per-source switches ("Outlook Calendar", "Recent pages on Linear, Notion, and Figma" sit
+  with it; the defaults keys beside them are `folderPreviewEnabled`, `calendarPreviewEnabled`, `gmailPreviewEnabled`,
+  `outlookCalendarPreviewEnabled`, `outlookEmailPreviewEnabled`, `notionCalendarPreviewEnabled`,
+  `recentPagesPreviewEnabled`). These are the sidebar hover previews ("Previews" row in arc-parity, not built); the
+  ⇧-hover link card is Max's "5-Second Previews" (`hoverCardsEnabled`). Kite has none of these previews, so the
+  button stays disabled. Dialog layout and row order not recorded (opening it needs a click in Arc).
