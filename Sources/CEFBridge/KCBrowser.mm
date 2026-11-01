@@ -202,6 +202,14 @@ class KCClient : public CefClient,
         [owner_.delegate browser:owner_ progressDidChange:progress];
     }
 
+    void OnStatusMessage(CefRefPtr<CefBrowser> browser, const CefString& value) override {
+        KCBrowser* owner = owner_;
+        if ([owner.delegate respondsToSelector:@selector(browser:statusMessageDidChange:)]) {
+            NSString* message = ToNSString(value);
+            [owner.delegate browser:owner statusMessageDidChange:message.length ? message : nil];
+        }
+    }
+
     void OnMediaAccessChange(CefRefPtr<CefBrowser> browser, bool has_video_access, bool has_audio_access) override {
         [owner_.delegate browser:owner_ mediaAccessDidChange:has_video_access || has_audio_access];
     }

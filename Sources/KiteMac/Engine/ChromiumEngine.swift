@@ -344,6 +344,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         ExtensionPackage.isDownload(mimeType: mimeType, suggestedName: suggestedName, url: url)
     }
 
+    @objc(browser:statusMessageDidChange:)
+    func browser(_ browser: KCBrowser, statusMessageDidChange message: String?) {
+        onEvent?(.linkHover(LinkPreview.link(fromStatus: message).map { LinkHover(url: $0) }))
+    }
+
     @objc(browser:blockedCountDidChange:)
     func browser(_ browser: KCBrowser, blockedCountDidChange count: Int) { onEvent?(.blockedCount(count)) }
 

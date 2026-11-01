@@ -206,6 +206,8 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
             host.adoptPopup(popup)
         case .closeRequested:
             close()
+        case .linkHover(let hover):
+            if let view = page?.view { LinkPreviewController.shared.hover(hover, in: view) }
         case .favicon, .progress, .blockedCount, .crashed, .addExtension:
             break
         }
