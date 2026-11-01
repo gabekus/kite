@@ -103,13 +103,13 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Arc item | Shortcut | Kite | Plan |
 |---|---|---|---|
 | New Space… | | ✅ | |
-| Edit Theme… | | ❌ | Thread: space theme editor |
+| Edit Theme… | | ✅ popover laid out from Arc's | Grid mapping unmeasured |
 | Rename Space | | ✅ | |
 | Change Profile | | ❌ | Thread: profiles |
 | Next / Previous Space | ⇧⌘S (Gabe) or ⌥⌘→ / ⌥⌘← | ✅ all three | |
 | Space 1…9 | ⌃1…⌃9 | ✅ | |
 | Manage Spaces… | | ❌ | B3 (reorder, delete) |
-| Swipe between spaces (two fingers) | gesture | ❌ | B3 |
+| Swipe between spaces (two fingers) | gesture | ✅ | Physics not yet fitted to Arc |
 
 ### Tabs
 
