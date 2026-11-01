@@ -9,6 +9,8 @@ enum CommandSuggestion: Identifiable, Hashable {
     case switchTab(BrowserTab)
     case history(HistoryEntry)
     case command(MenuCommand)
+    /// ⇧⏎ on a search: Arc Max's Instant Links opens the top result(s) instead.
+    case instantLinks(String)
 
     var id: String {
         switch self {
@@ -18,6 +20,7 @@ enum CommandSuggestion: Identifiable, Hashable {
         case .switchTab(let tab): "tab:\(tab.id)"
         case .history(let entry): "history:\(entry.url.absoluteString)"
         case .command(let command): "command:\(command.path)/\(command.title)"
+        case .instantLinks(let query): "instant:\(query)"
         }
     }
 }
@@ -242,6 +245,13 @@ private struct CommandBarView: View {
                     }
                     .onKeyPress(.upArrow) {
                         highlighted = max(highlighted - 1, 0)
+                        return .handled
+                    }
+                    // Arc: "Press Shift + Enter for any web search to instantly open the top result."
+                    .onKeyPress(.return, phases: .down) { press in
+                        guard press.modifiers == .shift, site == nil, InstantLinksController.isEnabled,
+                              InstantLinks.applies(to: query) else { return .ignored }
+                        onCommit(.instantLinks(query.trimmingCharacters(in: .whitespacesAndNewlines)))
                         return .handled
                     }
                     .onKeyPress(.tab) {
@@ -472,7 +482,7 @@ private struct SuggestionRow: View {
     @ViewBuilder private var icon: some View {
         switch suggestion {
         case .open: Image(systemName: "globe").resizable().scaledToFit()
-        case .search, .siteSearch: Image(systemName: "magnifyingglass").resizable().scaledToFit()
+        case .search, .siteSearch, .instantLinks: Image(systemName: "magnifyingglass").resizable().scaledToFit()
         case .switchTab(let tab): FaviconView(tab: tab, size: C.rowIconSize)
         case .history(let entry): FaviconView(page: entry.url, size: C.rowIconSize)
         case .command: Image(systemName: "command").resizable().scaledToFit()
@@ -482,7 +492,7 @@ private struct SuggestionRow: View {
     private var title: String {
         switch suggestion {
         case .open(let url): url.absoluteString
-        case .search(let query, _), .siteSearch(_, let query, _): query
+        case .search(let query, _), .siteSearch(_, let query, _), .instantLinks(let query): query
         case .switchTab(let tab): tab.displayTitle
         case .history(let entry): entry.displayTitle
         case .command(let command): command.title
@@ -496,7 +506,7 @@ private struct SuggestionRow: View {
         case .search: "Search \(engine.displayName)"
         case .siteSearch(let site, _, _): "Search \(site.name)"
         case .switchTab: "Switch to Tab"
-        case .history: nil
+        case .history, .instantLinks: nil
         case .command(let command): command.shortcut ?? command.path
         }
     }
