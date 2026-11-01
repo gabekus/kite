@@ -94,3 +94,17 @@ import Testing
         #expect(TabAudioButton.showHideDuration == 0.18)
     }
 }
+
+@Suite struct MuteAllTabsTests {
+    @Test func arcsTitles() {
+        #expect(MuteAllTabs.title(mute: true) == "Mute All Tabs")
+        #expect(MuteAllTabs.title(mute: false) == "Unmute All Tabs")
+    }
+
+    @Test func changesOnlyPagesNotAlreadyThere() {
+        let pages = ["a": false, "b": true, "c": false]
+        #expect(Set(MuteAllTabs.pagesToChange(pages, mute: true)) == ["a", "c"])
+        #expect(MuteAllTabs.pagesToChange(pages, mute: false) == ["b"])
+        #expect(MuteAllTabs.pagesToChange([String: Bool](), mute: true).isEmpty)
+    }
+}
