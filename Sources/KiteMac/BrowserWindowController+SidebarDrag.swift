@@ -25,4 +25,32 @@ extension BrowserWindowController {
             }))
         }
     }
+
+    /// Arc's command bar "Move to Today in <space>": the current tab (its split, if it's in one) to the
+    /// top of that space's Today.
+    @objc func moveTabToToday(_ sender: NSMenuItem) {
+        moveSelectedTab(toSpaceAt: sender.tag - 1, pinned: false)
+    }
+
+    /// Arc's "Move to Pinned in <space>": to the end of that space's pinned items.
+    @objc func moveTabToPinned(_ sender: NSMenuItem) {
+        moveSelectedTab(toSpaceAt: sender.tag - 1, pinned: true)
+    }
+
+    @objc func toggleFavoriteTab(_ sender: Any?) {
+        guard let tab = store.state.selectedTab else { return }
+        store.mutate { $0.toggleFavorite(tab: tab.id) }
+    }
+
+    private func moveSelectedTab(toSpaceAt index: Int, pinned: Bool) {
+        let state = store.state
+        guard let tab = state.selectedTab, state.spaces.indices.contains(index) else { return }
+        let space = state.spaces[index]
+        let target: SidebarDropTarget = pinned
+            ? .pinned(space: space.id, folder: nil, before: nil)
+            : .unpinned(space: space.id, before: space.tabs.first?.id)
+        var outcome: SidebarDropOutcome?
+        store.mutate { outcome = $0.dropSidebarItems([$0.sidebarDragID(for: tab.id)], on: target) }
+        if let outcome { sidebarDropped(outcome) }
+    }
 }

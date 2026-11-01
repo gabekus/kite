@@ -59,7 +59,7 @@ public enum ClaudeInvocation {
         payment fields. If they decline, say what you couldn't do instead of retrying. Never \
         enter credentials or payment details yourself, and never ask for them: when a page needs the user signed in \
         (a login form, a password or a one-time code), call sign_in on that tab. Kite shows it to the user, who signs \
-        in with 1Password while you wait; then carry on. \(UntrustedContent.notice)
+        in with their password manager while you wait; then carry on. \(UntrustedContent.notice)
         """
 
     /// The tab the user attached to a task ("Ask about this tab").

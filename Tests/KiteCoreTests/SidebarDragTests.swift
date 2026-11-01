@@ -98,7 +98,35 @@ import Testing
         #expect(today(state, 1) == [t[0], t[1], w1])
         #expect(state.spaces[1].splits.map(\.id) == [split])
         #expect(state.spaces[0].splits.isEmpty)
-        #expect(!state.canDrop([split], on: .favorites(before: nil)))
+    }
+
+    @Test func favoritesHoldSplits() throws {
+        var (state, home, _, t, _) = make()
+        state.spaces[0].splits = [SplitView(tabIDs: [t[0], t[1]])]
+        let split = state.spaces[0].splits[0].id
+        state.dropSidebarItems([split], on: .favorites(before: nil))
+        #expect(state.favorites.map(\.id) == [t[0], t[1]])
+        #expect(state.favoriteSplits.map(\.id) == [split])
+        #expect(state.spaces[0].splits.isEmpty)
+        // Shown in whichever space is on screen, and the split works as one there.
+        state.select(tab: t[1])
+        #expect(state.selectedSplit?.id == split)
+        #expect(state.visibleTabs.map(\.id) == [t[0], t[1]])
+        state.moveSplitDivider(split, index: 0, fraction: 0.25)
+        #expect(try #require(state.favoriteSplits.first).normalizedFactors.first.map { abs($0 - 0.25) < 0.001 } == true)
+        // Reordering favorites keeps the split's panes together.
+        state.dropSidebarItems([t[2]], on: .favorites(before: split))
+        #expect(state.favorites.map(\.id) == [t[2], t[0], t[1]])
+        // Removing a pane from the favorites ends the split.
+        state.dropSidebarItems([t[1]], on: .unpinned(space: home, before: nil))
+        #expect(state.favoriteSplits.isEmpty)
+        // And a favorite split survives a save.
+        let x = state.openTab(url: URL(string: "https://x.example"), in: home)
+        state.dropSidebarItems([x], on: .split(with: t[1], side: .right))
+        state.dropSidebarItems([state.sidebarDragID(for: x)], on: .favorites(before: nil))
+        let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
+        #expect(decoded.favoriteSplits == state.favoriteSplits)
+        #expect(!decoded.favoriteSplits.isEmpty)
     }
 
     @Test func droppingOnATabMakesASplit() throws {

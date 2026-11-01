@@ -222,18 +222,9 @@ private struct DialogView: View {
                 }
                 ForEach(Array(model.fields.enumerated()), id: \.offset) { index, field in
                     TextField("", text: $model.texts[index], prompt: Text(field.placeholder).foregroundStyle(.white.opacity(0.4)))
-                        .textFieldStyle(.plain)
-                        .font(.system(size: M.fieldFontSize, weight: .medium))
-                        .foregroundStyle(.white)
+                        .arcDialogField()
                         .focused($focusedField, equals: index)
                         .onSubmit(submit)
-                        .padding(.horizontal, M.fieldTextInset)
-                        .frame(height: M.fieldHeight)
-                        .background(RoundedRectangle(cornerRadius: M.fieldCornerRadius, style: .continuous).fill(M.fieldFill))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: M.fieldCornerRadius, style: .continuous)
-                                .strokeBorder(M.fieldBorder, lineWidth: 1)
-                        )
                         .padding(.top, index == 0 ? M.titleToField : M.buttonSpacing)
                         .accessibilityLabel(field.placeholder.isEmpty ? model.title : field.placeholder)
                         .onAppear { if index == 0 { focusedField = 0 } }
@@ -260,6 +251,23 @@ private struct DialogView: View {
 
     private func submit() {
         if let index = model.defaultIndex { model.choose(index) }
+    }
+}
+
+extension View {
+    /// Arc's dialog text field (`TextInput`): 17 pt medium white text in a 36 pt filled, outlined
+    /// rounded rectangle. Apply to a plain-style `TextField`.
+    func arcDialogField() -> some View {
+        textFieldStyle(.plain)
+            .font(.system(size: M.fieldFontSize, weight: .medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, M.fieldTextInset)
+            .frame(height: M.fieldHeight)
+            .background(RoundedRectangle(cornerRadius: M.fieldCornerRadius, style: .continuous).fill(M.fieldFill))
+            .overlay(
+                RoundedRectangle(cornerRadius: M.fieldCornerRadius, style: .continuous)
+                    .strokeBorder(M.fieldBorder, lineWidth: 1)
+            )
     }
 }
 

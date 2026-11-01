@@ -138,13 +138,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let engine = windowController.pool.engine
             VerificationCodeService.shared.configure(engine: engine)
             // The popup of the profile the button's window is showing.
-            OnePasswordFieldButton.open = { [weak self] view in
+            PasswordManagerFieldButton.open = { [weak self] view, popup in
                 MainActor.assumeIsolated {
                     let controller = self?.browserControllers.first { $0.window === view.window }
-                    return OnePasswordIntegration.showPopup(engine: controller?.pool.currentEngine ?? engine, relativeTo: view.bounds, of: view)
+                    return PasswordManagerIntegration.showPopup(engine: controller?.pool.currentEngine ?? engine,
+                                                                relativeTo: view.bounds, of: view, popupURL: popup)
                 }
             }
             prepareProfile(engine)
+            followPasswordManager()
             for controller in browserControllers where !controller.isIncognito { followProfiles(of: controller) }
         }
         KCRuntime.extensionDialogAnchor = { [weak self] window in

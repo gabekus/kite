@@ -45,13 +45,13 @@ extension BrowserWindowController {
         guard let window, let index = store.state.spaceIndex(id) else { return }
         let target = store.state.profile(directory).directory
         guard target != store.state.profileDirectory(ofSpace: index) else { return }
-        let alert = NSAlert()
-        alert.messageText = "Each Profile has different browser data, so your \(store.state.spaces[index].name) might look a little different!"
-        alert.informativeText = "For example, you might get logged out of some websites, see different Favorites up top, or need to re-install an extension."
-        alert.addButton(withTitle: "Switch it up")
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn else { return }
+        ArcDialog.present(
+            on: window,
+            title: "Each Profile has different browser data, so your \(store.state.spaces[index].name) might look a little different!",
+            message: "For example, you might get logged out of some websites, see different Favorites up top, or need to re-install an extension.",
+            actions: [.init(title: "Cancel", role: .cancel), .init(title: "Switch it up", role: .primary)]
+        ) { [weak self] action, _ in
+            guard action == 1 else { return }
             self?.store.setProfile(target, forSpace: id)
         }
     }

@@ -49,11 +49,9 @@ extension BrowserState {
     public mutating func openInSplit(url: URL, edge: SplitEdge, id: UUID = UUID(), now: Date = Date()) -> AddSplitResult {
         guard splitDropEdges.contains(edge) else { return selectedSplit == nil ? .noTab : .full }
         let result = addSplitPane(id: id, now: now)
-        guard case .added(let pane) = result,
-              let found = split(containing: pane),
-              let i = spaces[found.space].splits.firstIndex(where: { $0.id == found.split.id }) else { return result }
+        guard case .added(let pane) = result, let found = split(containing: pane) else { return result }
         update(tab: pane) { $0.url = url }
-        var split = spaces[found.space].splits[i]
+        var split = found.split
         // Undo Add Split View's halving: the pane went in right after the focused one with half its share.
         var factors = split.normalizedFactors
         if let p = split.tabIDs.firstIndex(of: pane), p > 0 {
@@ -64,7 +62,7 @@ extension BrowserState {
         }
         split.insertEqualShare(pane, at: edge.isStart ? 0 : split.tabIDs.count)
         split.orientation = edge.orientation
-        spaces[found.space].splits[i] = split
+        updateSplit(split.id) { [split] in $0 = split }
         return result
     }
 
@@ -80,11 +78,6 @@ extension BrowserState {
 
     /// Arc's "Convert to Horizontal/Vertical Split View": the same panes and shares, in a row or a column.
     public mutating func setSplitOrientation(_ splitID: UUID, _ orientation: SplitOrientation) {
-        for s in spaces.indices {
-            if let i = spaces[s].splits.firstIndex(where: { $0.id == splitID }) {
-                spaces[s].splits[i].orientation = orientation
-                return
-            }
-        }
+        updateSplit(splitID) { $0.orientation = orientation }
     }
 }

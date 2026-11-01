@@ -1421,7 +1421,33 @@ Nothing in Arc was pressed or watched. Line numbers are `~/rea-arc/arc-strings.t
   saturation 0.5 and a 180° second hue, and the secondary puck being dragged to change the offset.
 - **Left out:** the analogous/complementary control (`ComplementaryColorControl`, Analogous/ComplementaryColorScheme
   assets; its offsets weren't found), theme-driven schemes, `baseAppearance`, the editor menu's Shuffle and Reset
-  all Edits, and applying changes live (g51; changes show after Refresh this Page).
+  all Edits. (Live apply: see the next section.)
+
+## Boosts apply live → `BoostLiveStyles`, `BoostScript.applyLive` (KiteCore), `LiveBoosts` (Arc 1.171 strings and disassembly, 1 Nov 2026)
+
+Nothing in Arc was pressed or watched. Line numbers are `~/rea-arc/arc-strings.txt`; addresses are `decomp/Arc-arm64`.
+
+- **CSS and style re-register on every change.** BoostsClient.applyToWebContent (function 0x10117642c, Ghidra) builds
+  each Boost's stylesheets under fixed identifiers, the Boost id plus `:user` (its CSS), `:font`, `:textTransform`
+  and `:zaps` (inline small strings in that function), and for each one calls the engine either to register it
+  for the host or, when empty, to unregister it (two adjacent witness-table calls, +0x328 / +0x330). The ADK
+  selectors in the strings are `registerStylesheet:withIdentifier:forHostPattern:`, `unregisterStylesheet:`,
+  `registerZoomFactor:forHostPattern:`, `registerColorFilter:forHostPattern:` and their unregisters (190916–194244).
+  So a Boost's style is replaced by identifier, not added to a page once. `BoostsClient.applyToAllWebContents`
+  (71489), the `boostsSubscriptions` state and "Received boosts update when no boostState is set on web contents" /
+  `updateBoosts(for:)` (74539–74541, 0x101505ba0) show updates are pushed to open web contents.
+- **The editor saves as you go.** `saveBoostData(state:interactive:)` and `boostDataBeforeInteractiveUpdates`
+  (73396, 163658) are interactive saves with a pre-edit snapshot; the editor's actions include `editCSS`, `editJS`,
+  `reloadBoost` (163660–163663). No Boost-specific debounce string was found.
+- **JavaScript is not re-run.** The apply function above has no script path, the editor serves JS from
+  `arc://boost/v2/js/` (~73420) and keeps "Refresh this Page" (73397). Inferred: a Boost's JS runs again only on a
+  reload.
+
+Kite: each save posts the sites whose styles changed (`kiteBoostStylesChanged`); every open page of those sites
+replaces its per-Boost `<style id="kite-boost-<id>">` (removed when empty), the text size and colour style and the SVG
+colour filter in place, through `evaluateJavaScript` in the page's world (same path as zaps, both engines). JS edits
+are saved but run only after Refresh this Page. Inferred, not seen in Arc: applying on every keystroke (Arc's
+timing wasn't observed).
 
 ## Library › Boosts → `BoostsListView` (Arc 1.171 strings and disassembly, 1 Nov 2026)
 
@@ -1794,7 +1820,7 @@ Sources: `~/rea-arc/arc-strings.txt` 62139-62161, 76073, 76141-76144, 39896, 432
   (`menuForEvent:`) do (Kite has neither); where Arc puts the row when the results will go to a folder.
   No Arc pixels: the row wasn't captured in Arc (it needs a live Arc Max search).
 
-## Zap → `Boost.zaps`, `ZapLibrary.css`, `ZapScript`, `ZapPickerScript` (KiteCore), `BoostsModel`, `LiveZaps`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
+## Zap → `Boost.zaps`, `ZapLibrary.css`, `ZapScript`, `ZapPickerScript` (KiteCore), `BoostsModel`, `LiveBoosts`, `ZapPicker` (Arc 1.171 binary, strings and assets, 1 Nov 2026)
 
 Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, `ARC_BoostsEditor.bundle` (Assets.car, SelectorPicker.js;
 read only for its function names, nothing copied).
@@ -1822,7 +1848,7 @@ read only for its function names, nothing copied).
   page in the window the editor came from. A pick goes to the edited Boost, else the site's newest Boost, else a new
   Boost for the site (as New Boost makes one). The shelf lists and removes that Boost's zaps. The Boost script adds
   the site's zaps (Boosts that are on) as one `style[data-kite-zap]` at document start, top frame, page world; a
-  zap, an undo or a Boost turned on/off or deleted replaces that style live in open pages (`LiveZaps`). Like
+  zap, an undo or a Boost turned on/off or deleted replaces that style live in open pages (`LiveBoosts`). Like
   Boosts, zaps never run in incognito windows, and the picker won't open there. The first Zap release kept zaps
   in `zaps.json`; Kite moves them into each site's Boost on the first launch and renames the file
   `zaps.json.migrated` (kept). Inferred: the Zap button's icon (SF `bolt`; no Zap asset in
@@ -2358,6 +2384,17 @@ an Arc incognito window captured at 2× (1 Nov 2026).
   delay for collapsed folders (Kite doesn't expand), how near a drag must come to reveal the empty tray (Kite: as soon as a
   drag starts), the landing animation (Kite: the 0.12s row animation), and drags out over the page (Kite cancels).
 
+**Part 2 (1 Nov 2026):**
+- **Move commands** [str]: Arc's command bar has "Move to Today in <space>", "Move to Pinned in <space>" and
+  "Move to Top Apps" / "Remove from Top Apps" (Favorites' old name), next to their type-travel descriptions ("Action to
+  move this tab to the Today section of a space"). Kite adds them as command-bar-only menu commands, titled per space.
+  Arc also has "Move to Explore in" (no Kite equivalent) and an " and switch there" suffix whose use isn't known.
+- **Favorite split views** [dec @101d0271c]: a tray item can hold children (`AppTrayItemChildStack`, orientation
+  horizontal or vertical) sharing the tile evenly, 2pt apart, each with its own corners. Kite keeps favorite splits per
+  profile (`favoriteSplitsByProfile`); dropping a split in the tray makes one, and the split's panes, divider and
+  orientation work as in a space. Child corner radius and the selected child's look are unmeasured.
+- **Folders under a drag**: Kite opens a collapsed folder after the system spring-loading delay (0.5s unless changed).
+  Arc's interval (`DraggingTimerState`) wasn't found; unverified.
 ## Live Folders (GitHub pull requests) → `KiteCore.LiveFolder`, `LiveFoldersController`, `LiveFolderViews.swift` (Arc 1.171 strings and binary, 1 Nov 2026)
 
 Read from Arc's binary only (its English text is compiled in at each localized call site). Arc wasn't recorded

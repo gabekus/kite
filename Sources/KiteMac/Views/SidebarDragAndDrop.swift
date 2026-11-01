@@ -80,6 +80,13 @@ final class SidebarDragModel {
     /// Arc's `TablistEdgeDragController` (binary): a drag resting within 20pt of the tab list's left
     /// or right edge for 0.35s (`switchThreshold`, one-shot, restarted by a move over 3pt) pages
     /// to the space on that side, once per rest.
+    /// Unverified: how long a drag rests on a collapsed folder before it opens. Arc's list is an
+    /// `NSOutlineView`, which springs folders open like Finder; Kite uses the system's spring-loading
+    /// delay (Accessibility › Pointer Control), 0.5s unless changed.
+    static var springDelay: TimeInterval {
+        let set = UserDefaults.standard.double(forKey: "com.apple.springing.delay")
+        return set > 0 ? set : 0.5
+    }
     static let edgeZone: CGFloat = 20
     static let edgeDwell: TimeInterval = 0.35
     static let edgeSlop: CGFloat = 3
@@ -97,6 +104,14 @@ final class SidebarDragModel {
     }
 
     func forget(_ row: Row) { rows[row.key] = nil }
+
+    /// A row whose kind or place changed without moving (a folder collapsing): keep its frame.
+    func refresh(_ row: Row) {
+        guard let frame = rows[row.key]?.frame else { return }
+        var row = row
+        row.frame = frame
+        report(row)
+    }
 
     private func row(_ id: UUID) -> Row? {
         rows[id.uuidString] ?? rows.values.first { $0.members.contains(id) }
@@ -127,9 +142,17 @@ final class SidebarDragModel {
         store?.sidebarDragContent?.sidebarDrag(session.ids, movedTo: outside ? location : nil)
         updateAutoscroll()
         updateEdgeSwitch()
-        // A split offer comes due with the pointer at rest: aim again then.
+        // A collapsed folder held under the drag springs open.
+        if case .folder(let id)? = self.session?.target, let hover = self.session?.hover, hover.id == id,
+           Date().timeIntervalSince(hover.since) >= Self.springDelay, let store,
+           store.state.selectedSpace.pinnedItems.folder(id)?.isExpanded == false {
+            withAnimation(.easeInOut(duration: 0.12)) { store.mutate { $0.setFolderExpanded(id, true) } }
+            self.session?.hover = nil
+        }
+        // A split offer or a folder's spring comes due with the pointer at rest: aim again then.
         if let hover = self.session?.hover, splitTimer == nil {
-            let due = Self.splitDelay - Date().timeIntervalSince(hover.since)
+            let isFolder = rows[hover.id.uuidString].map { self.isFolder($0.kind) } ?? false
+            let due = (isFolder ? Self.springDelay : Self.splitDelay) - Date().timeIntervalSince(hover.since)
             splitTimer = Timer.scheduledTimer(withTimeInterval: max(due, 0) + 0.01, repeats: false) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -274,7 +297,7 @@ final class SidebarDragModel {
         let row = list.min { abs($0.frame.midY - p.y) < abs($1.frame.midY - p.y) }!
         let fraction = (p.y - row.frame.minY) / max(row.frame.height, 1)
 
-        if row.kind != .tab { session.hover = nil }
+        if row.kind != .tab, !(isFolder(row.kind) && fraction >= 0.25 && fraction <= 0.75) { session.hover = nil }
         switch row.kind {
         case .header:
             return .pinned(space: space, folder: nil, before: state.selectedSpace.pinnedItems.first?.id)
@@ -292,6 +315,7 @@ final class SidebarDragModel {
                 }
                 return after(row, state: state)
             }
+            if !expanded, session.hover?.id != row.id { session.hover = (row.id, Date()) }
             return .folder(row.id)
         case .tab, .split:
             if row.kind == .tab, fraction >= 0.25, fraction <= 0.75, !session.ids.contains(row.id) {
@@ -334,7 +358,8 @@ final class SidebarDragModel {
     private func favoritesTarget(at p: CGPoint, state: BrowserState) -> SidebarDropTarget {
         // Over the open gap: it stays where it is, or the tiles it pushed aside would chase the pointer.
         if let gap = dropGap, gap.contains(p), case .favorites? = session?.target, let target = session?.target { return target }
-        let order = state.favorites.map(\.id)
+        // Tiles in order: a favorite split is one tile, named by its split.
+        let order = SidebarGroup.group(state.favorites.map(\.id), splits: state.favoriteSplits).map(\.id)
         // The tile under the pointer, or the nearest on its row; its right half means after it.
         let candidates = order.compactMap { id in tiles[id].map { (id, $0) } }
         guard let (id, frame) = candidates.min(by: { distance(p, $0.1) < distance(p, $1.1) }) else {
@@ -450,6 +475,7 @@ struct SidebarDragSource<Ghost: View>: ViewModifier {
                 drag?.report(row)
             }
             .onDisappear { drag?.forget(row) }
+            .onChange(of: row) { _, row in drag?.refresh(row) }
             .gesture(draggable ? gesture : nil)
     }
 
