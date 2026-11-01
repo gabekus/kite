@@ -3,6 +3,8 @@
 
 #include <memory>
 #include <set>
+#include <climits>
+#include <cstdlib>
 
 #include "include/cef_app.h"
 #include "include/cef_application_mac.h"
@@ -51,6 +53,7 @@ namespace {
 std::unique_ptr<CefScopedLibraryLoader> gLibraryLoader;
 std::set<CefRefPtr<CefBrowser>>* gBrowsers;
 bool gInitialized = false;
+NSString* gRootCachePath = nil;
 bool gQuitting = false;
 bool gEnergySaverEnabled = false;
 bool gEnergySaverApplied = false;
@@ -97,6 +100,10 @@ void KCUnregisterBrowser(CefRefPtr<CefBrowser> browser) {
 
 bool KCRuntimeIsQuitting() {
     return gQuitting;
+}
+
+NSString* KCRootCachePath() {
+    return gRootCachePath;
 }
 
 // MARK: - KCRuntime
@@ -158,8 +165,15 @@ bool KCRuntimeIsQuitting() {
     cefSettings.remote_debugging_port = settings.remoteDebuggingPort;
     cefSettings.log_severity = LOGSEVERITY_WARNING;
     cefSettings.persist_session_cookies = true;
-    CefString(&cefSettings.root_cache_path) = settings.profilePath.UTF8String;
-    CefString(&cefSettings.cache_path) = [settings.profilePath stringByAppendingPathComponent:@"Default"].UTF8String;
+    // CEF resolves symlinks in root_cache_path (/tmp is /private/tmp) and drops any cache_path
+    // that isn't then inside it to memory only, so every profile path is built from the real path.
+    [NSFileManager.defaultManager createDirectoryAtPath:settings.profilePath withIntermediateDirectories:YES attributes:nil error:nil];
+    char resolved[PATH_MAX];
+    gRootCachePath = realpath(settings.profilePath.fileSystemRepresentation, resolved)
+        ? [NSFileManager.defaultManager stringWithFileSystemRepresentation:resolved length:strlen(resolved)]
+        : [settings.profilePath copy];
+    CefString(&cefSettings.root_cache_path) = gRootCachePath.UTF8String;
+    CefString(&cefSettings.cache_path) = [gRootCachePath stringByAppendingPathComponent:@"Default"].UTF8String;
     CefString(&cefSettings.log_file) = [settings.profilePath stringByAppendingPathComponent:@"chromium.log"].UTF8String;
 
     KCInstallExtensionWindowHooks();

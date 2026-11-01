@@ -50,8 +50,19 @@ public enum DarkPagesMode: String, Hashable, Codable, CaseIterable, Sendable {
 /// render it, which keeps the behavior identical across platforms and testable.
 public struct BrowserState: Hashable, Codable, Sendable {
     public var spaces: [Space]
-    /// Arc's favorites grid: shared by every space, shown above the pinned tabs.
-    public var favorites: [BrowserTab]
+    /// Profiles made after the default one (see Profiles.swift).
+    public var profiles: [Profile]
+    /// Arc's favorites grid, one per profile (Arc's `topAppsContainerIDs` pairs a profile with
+    /// its container), by profile folder.
+    public var favoritesByProfile: [String: [BrowserTab]]
+    /// Folders of deleted profiles the shell hasn't removed from disk yet.
+    public var retiredProfileDirectories: [String]
+    /// The favorites grid of the current space's profile, shown above the pinned tabs.
+    public var favorites: [BrowserTab] {
+        get { favoritesByProfile[selectedProfileDirectory] ?? [] }
+        // An empty grid has no entry, so states compare equal however they got there.
+        set { favoritesByProfile[selectedProfileDirectory] = newValue.isEmpty ? nil : newValue }
+    }
     public var selectedSpaceID: UUID
     public var recentlyClosed: [ClosedTab]
     public var archived: [ClosedTab]
@@ -93,7 +104,9 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public init(spaces: [Space], selectedSpaceID: UUID? = nil, searchEngine: SearchEngine = .google) {
         precondition(!spaces.isEmpty, "A browser needs at least one space")
         self.spaces = spaces
-        self.favorites = []
+        self.profiles = []
+        self.favoritesByProfile = [:]
+        self.retiredProfileDirectories = []
         self.selectedSpaceID = selectedSpaceID.flatMap { id in spaces.first { $0.id == id }?.id } ?? spaces[0].id
         self.recentlyClosed = []
         self.archived = []
@@ -120,6 +133,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter, showsToolbar
         case warnsBeforeQuitting, spacesWithCollapsedPinnedSections
         case developerModeEnabledForHosts, devModeReloadState, allowsJavaScriptFromAppleEvents
+        case profiles, profileFavorites, retiredProfileDirectories
     }
 
     public init(from decoder: Decoder) throws {
@@ -129,7 +143,12 @@ public struct BrowserState: Hashable, Codable, Sendable {
             selectedSpaceID: try c.decodeIfPresent(UUID.self, forKey: .selectedSpaceID),
             searchEngine: try c.decodeIfPresent(SearchEngine.self, forKey: .searchEngine) ?? .google
         )
-        favorites = try c.decodeIfPresent([BrowserTab].self, forKey: .favorites) ?? []
+        profiles = try c.decodeIfPresent([Profile].self, forKey: .profiles) ?? []
+        retiredProfileDirectories = try c.decodeIfPresent([String].self, forKey: .retiredProfileDirectories) ?? []
+        // The default profile's favorites keep the key they had before profiles.
+        favoritesByProfile = try c.decodeIfPresent([String: [BrowserTab]].self, forKey: .profileFavorites) ?? [:]
+        let favorites = try c.decodeIfPresent([BrowserTab].self, forKey: .favorites) ?? []
+        if !favorites.isEmpty { favoritesByProfile[Profile.defaultDirectory] = favorites }
         recentlyClosed = try c.decodeIfPresent([ClosedTab].self, forKey: .recentlyClosed) ?? []
         archived = try c.decodeIfPresent([ClosedTab].self, forKey: .archived) ?? []
         darkPages = try c.decodeIfPresent(DarkPagesMode.self, forKey: .darkPages) ?? .matchSystem
@@ -149,6 +168,33 @@ public struct BrowserState: Hashable, Codable, Sendable {
         developerModeEnabledForHosts = try c.decodeIfPresent(Set<String>.self, forKey: .developerModeEnabledForHosts) ?? []
         devModeReloadState = (try? c.decodeIfPresent(DeveloperTabReloadSetting.self, forKey: .devModeReloadState)) ?? .reload
         allowsJavaScriptFromAppleEvents = try c.decodeIfPresent(Bool.self, forKey: .allowsJavaScriptFromAppleEvents) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(spaces, forKey: .spaces)
+        try c.encode(favoritesByProfile[Profile.defaultDirectory] ?? [], forKey: .favorites)
+        try c.encode(selectedSpaceID, forKey: .selectedSpaceID)
+        try c.encode(recentlyClosed, forKey: .recentlyClosed)
+        try c.encode(archived, forKey: .archived)
+        try c.encode(searchEngine, forKey: .searchEngine)
+        try c.encode(darkPages, forKey: .darkPages)
+        try c.encode(darkPageHosts, forKey: .darkPageHosts)
+        try c.encode(blocksAds, forKey: .blocksAds)
+        try c.encode(adblockAllowedHosts, forKey: .adblockAllowedHosts)
+        try c.encode(siteSearches, forKey: .siteSearches)
+        try c.encode(siteSearchDefaultsSeeded, forKey: .siteSearchDefaultsSeeded)
+        try c.encode(archiveAfter, forKey: .archiveAfter)
+        try c.encode(showsToolbar, forKey: .showsToolbar)
+        try c.encode(warnsBeforeQuitting, forKey: .warnsBeforeQuitting)
+        try c.encode(spacesWithCollapsedPinnedSections, forKey: .spacesWithCollapsedPinnedSections)
+        try c.encode(developerModeEnabledForHosts, forKey: .developerModeEnabledForHosts)
+        try c.encode(devModeReloadState, forKey: .devModeReloadState)
+        try c.encode(allowsJavaScriptFromAppleEvents, forKey: .allowsJavaScriptFromAppleEvents)
+        if !profiles.isEmpty { try c.encode(profiles, forKey: .profiles) }
+        let others = favoritesByProfile.filter { $0.key != Profile.defaultDirectory && !$0.value.isEmpty }
+        if !others.isEmpty { try c.encode(others, forKey: .profileFavorites) }
+        if !retiredProfileDirectories.isEmpty { try c.encode(retiredProfileDirectories, forKey: .retiredProfileDirectories) }
     }
 
     // MARK: Dark pages
@@ -220,8 +266,9 @@ public struct BrowserState: Hashable, Codable, Sendable {
         return sidebarTabs(in: selectedSpaceIndex).first { $0.id == id }
     }
 
+    /// Every profile's favorites count, so a page isn't dropped while its profile's spaces are out of view.
     public var allTabIDs: Set<UUID> {
-        Set(favorites.map(\.id) + spaces.flatMap { $0.allTabs.map(\.id) })
+        Set(favoritesByProfile.values.flatMap { $0.map(\.id) } + spaces.flatMap { $0.allTabs.map(\.id) })
     }
 
     /// Favorites, then the space's pinned and unpinned tabs: the order ⌘1…⌘9 and ⌃Tab follow.

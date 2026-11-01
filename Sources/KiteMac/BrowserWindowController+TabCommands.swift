@@ -6,7 +6,12 @@ extension BrowserWindowController {
     @objc func selectRecentTab(_ sender: Any?) { store.mutate { $0.selectRecentTab() } }
 
     @objc func clearToday(_ sender: Any?) {
-        let cleared = store.mutate { $0.clearToday() }
+        clearToday(inSpace: store.state.selectedSpace.id)
+    }
+
+    /// Clear Today for one space: ⇧⌘K, and the Clear button on that space's Today divider.
+    func clearToday(inSpace spaceID: UUID) {
+        let cleared = store.mutate { $0.clearToday(inSpace: spaceID) }
         if cleared.isEmpty { return NSSound.beep() }
         showToast(cleared.count == 1 ? "Archived 1 tab" : "Archived \(cleared.count) tabs")
     }
@@ -37,6 +42,32 @@ extension BrowserWindowController {
         guard let home = store.state.tab(id)?.pinnedURL,
               store.mutate({ $0.separateFromPinnedTab(id) }) != nil else { return }
         load(home, in: id)
+    }
+
+    /// "Edit Pinned Page › Edit…": Arc's Edit Pinned URL dialog (WindowData+Dialogs), with its
+    /// line "This is what opens first when you click this tab or its favicon.", a field holding
+    /// the pinned URL (placeholder "Enter a URL…"), and Save and Cancel.
+    func editPinnedURL(_ id: UUID) {
+        guard let window, let tab = store.state.tab(id), let pinned = tab.pinnedURL else { return }
+        let alert = NSAlert()
+        alert.messageText = "Edit Pinned URL"
+        alert.informativeText = "This is what opens first when you click this tab or its favicon."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: pinned.absoluteString)
+        field.placeholderString = "Enter a URL…"
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            if !self.store.mutate({ $0.editPinnedURL(id, to: field.stringValue) }) { NSSound.beep() }
+        }
+    }
+
+    /// "Edit Pinned Page › Replace Pinned URL with Current".
+    func replacePinnedURLWithCurrent(_ id: UUID) {
+        if !store.mutate({ $0.replacePinnedURLWithCurrent(id) }) { NSSound.beep() }
     }
 
     /// Tabs › Reset all tabs in this Space.

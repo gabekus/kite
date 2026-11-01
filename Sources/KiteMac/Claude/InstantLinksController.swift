@@ -30,16 +30,39 @@ final class InstantLinksController {
         let input = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard InstantLinks.applies(to: input) else { return }
         let directory = workDirectory
+        // Arc's loading row in Today until the results replace it.
+        let row = InstantLinks.Pending(spaceID: store.state.selectedSpace.id)
+        store.instantLinksRows.insert(row, at: 0)
         Task {
             let plan = await Task.detached { Self.plan(for: input, directory: directory) }.value
                 ?? .fallback(for: input)
             var urls: [URL] = []
             for query in plan.queries {
-                guard let page = InstantLinks.googleURL(for: query) else { continue }
+                guard let page = InstantLinks.googleURL(for: query, template: Self.searchURLTemplate) else { continue }
                 urls.append(await topResult(of: page) ?? page)
             }
-            store.mutate { $0.openInstantLinks(urls, title: plan.title, format: plan.format) }
+            // Closed while it worked: nothing opens.
+            guard let index = store.instantLinksRows.firstIndex(where: { $0.id == row.id }) else { return }
+            guard !urls.isEmpty else {
+                store.instantLinksRows[index].status = .error
+                return
+            }
+            store.instantLinksRows.remove(at: index)
+            store.mutate { $0.openInstantLinks(urls, title: plan.title, format: plan.format, inSpace: row.spaceID) }
         }
+    }
+
+    /// Closes a row: a loading one is cancelled (its results never open).
+    func dismiss(_ id: UUID) {
+        store.instantLinksRows.removeAll { $0.id == id }
+    }
+
+    /// A test build (`KITE_SUPPORT_PATH`) can read results off a local page instead of Google:
+    /// `KITE_TEST_INSTANT_LINKS_SEARCH_URL`, with `%s` for the query.
+    nonisolated private static var searchURLTemplate: String? {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["KITE_SUPPORT_PATH"] != nil else { return nil }
+        return environment["KITE_TEST_INSTANT_LINKS_SEARCH_URL"]
     }
 
     // MARK: Claude

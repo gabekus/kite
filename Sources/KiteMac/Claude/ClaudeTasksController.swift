@@ -29,6 +29,21 @@ final class ClaudeTasksController {
         didSet { UserDefaults.standard.set(runsIn.rawValue, forKey: ClaudeRunsIn.defaultsKey) }
     }
 
+    /// Each space's ⌘J route, and the Claude Projects the user added.
+    private(set) var routes: ClaudeRoutes
+
+    func route(for space: UUID) -> ClaudeRoute { routes.route(for: space) }
+
+    func setRoute(_ route: ClaudeRoute, for space: UUID) {
+        routes.set(route, for: space)
+        try? routes.save(to: routesURL)
+    }
+
+    func addProject(id: String, name: String) {
+        routes.addProject(id: id, name: name)
+        try? routes.save(to: routesURL)
+    }
+
     func markSetUp(_ setUp: Bool) {
         isSetUp = setUp
         UserDefaults.standard.set(setUp, forKey: Self.setUpKey)
@@ -45,6 +60,7 @@ final class ClaudeTasksController {
     @ObservationIgnored private let store: BrowserStore
     @ObservationIgnored let automation: AutomationController
     @ObservationIgnored private let fileURL: URL
+    @ObservationIgnored private let routesURL: URL
     @ObservationIgnored private let workDirectory: URL
     @ObservationIgnored private var runs: [UUID: Run] = [:]
     @ObservationIgnored private var activity: NSObjectProtocol?
@@ -91,6 +107,8 @@ final class ClaudeTasksController {
         self.store = store
         self.automation = automation
         fileURL = ClaudeTaskList.fileURL(supportDirectory: supportDirectory)
+        routesURL = ClaudeRoutes.fileURL(supportDirectory: supportDirectory)
+        routes = ClaudeRoutes.load(from: routesURL)
         workDirectory = supportDirectory.appendingPathComponent("Claude", isDirectory: true)
             .appendingPathComponent("Work", isDirectory: true)
         tasks = ClaudeTaskList.load(from: fileURL).tasks
@@ -110,10 +128,15 @@ final class ClaudeTasksController {
     // MARK: Starting and stopping
 
     /// Starts a new task. `tab` attaches the tab the user is looking at ("Ask about this tab").
-    func start(goal: String, tab: BrowserTab?) {
+    /// `directory` runs Claude Code in that folder (the space's route), with its CLAUDE.md and memory.
+    func start(goal: String, tab: BrowserTab?, directory: String? = nil) {
         let goal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !goal.isEmpty else { return }
         var task = ClaudeTask(goal: goal)
+        if let directory {
+            task.directory = directory
+            task.append(ClaudeTask.Entry(.note, "Working in \(ClaudeRoute.folderName(directory)), with its CLAUDE.md and memory."))
+        }
         if let tab {
             task.append(ClaudeTask.Entry(.note, "Attached “\(tab.displayTitle)”."))
         }
@@ -248,7 +271,12 @@ final class ClaudeTasksController {
 
     private func launch(_ id: UUID, prompt: String, resume: String?) {
         let cli = automation.cliPath, profile = automation.profileOverride
-        let directory = workDirectory
+        let folder = task(id)?.directory.map { URL(fileURLWithPath: $0, isDirectory: true) }
+        // A routed folder that's gone fails the run rather than quietly working elsewhere.
+        if let folder, !FileManager.default.fileExists(atPath: folder.path) {
+            return fail(id, "The folder \(folder.path) isn't there any more. Pick another route in the ⌘J bar.")
+        }
+        let directory = folder ?? workDirectory
         let jev = automation.jev
         // What the user just asked (the goal, or the follow-up), without the attached tab.
         let goal = task(id)?.entries.last { $0.kind == .user }?.text

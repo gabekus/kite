@@ -78,11 +78,51 @@ public enum InstantLinks {
         )
     }
 
-    /// The Google results page Kite reads a query's top result from.
-    public static func googleURL(for query: String) -> URL? {
+    /// The Google results page Kite reads a query's top result from. `template` replaces Google with
+    /// another results page (a test build's local fixture): `%s` stands for the encoded query.
+    public static func googleURL(for query: String, template: String? = nil) -> URL? {
+        if let template, template.contains("%s") {
+            let encoded = query.addingPercentEncoding(withAllowedCharacters: queryValueAllowed) ?? query
+            return URL(string: template.replacingOccurrences(of: "%s", with: encoded))
+        }
         var components = URLComponents(string: "https://www.google.com/search")
         components?.queryItems = [URLQueryItem(name: "q", value: query)]
         return components?.url
+    }
+
+    private static let queryValueAllowed: CharacterSet = {
+        var set = CharacterSet.urlQueryAllowed
+        set.remove(charactersIn: "&=+#?")
+        return set
+    }()
+
+    /// The sidebar row Arc shows in Today while Instant Links works (`SidebarInstantLinks`, drawn by
+    /// `InstantLinksCellView`): a spinning flower and "Searching the web for you", replaced by the
+    /// results when they land, or "Oops, something went wrong." when nothing could be opened.
+    public struct Pending: Identifiable, Equatable, Sendable {
+        /// Arc's `SidebarInstantLinks.Status`.
+        public enum Status: Equatable, Sendable {
+            case loading, error
+        }
+
+        public let id: UUID
+        /// The space it was started in, where the results open.
+        public let spaceID: UUID
+        public var status: Status
+
+        public init(id: UUID = UUID(), spaceID: UUID, status: Status = .loading) {
+            self.id = id
+            self.spaceID = spaceID
+            self.status = status
+        }
+
+        /// Arc's titles ("Title for an in progress web search item" / "… that failed").
+        public var title: String {
+            switch status {
+            case .loading: "Searching the web for you"
+            case .error: "Oops, something went wrong."
+            }
+        }
     }
 
     /// Arc reads Google's organic results from `#search a`.
@@ -132,16 +172,18 @@ public enum InstantLinks {
 }
 
 extension BrowserState {
-    /// Opens Instant Links' results in the current space, in the order the queries came, and
+    /// Opens Instant Links' results in the space it was started in, in the order the queries came, and
     /// selects the first: as tabs, as one split view (up to its 4 panes; the rest as tabs), or
     /// in a new folder named after the plan. Returns the new tabs' IDs.
     @discardableResult
-    public mutating func openInstantLinks(_ urls: [URL], title: String, format: InstantLinks.Format, now: Date = Date()) -> [UUID] {
+    public mutating func openInstantLinks(_ urls: [URL], title: String, format: InstantLinks.Format,
+                                          inSpace spaceID: UUID? = nil, now: Date = Date()) -> [UUID] {
         guard !urls.isEmpty else { return [] }
-        let space = selectedSpace.id
+        // The space Instant Links was started in (gone: the current one).
+        let s = spaceID.flatMap(spaceIndex) ?? selectedSpaceIndex
+        let space = spaces[s].id
         // New tabs go to the top of the list, so open the last one first.
         let ids = urls.reversed().map { openTab(url: $0, in: space, select: false, now: now) }.reversed() as [UUID]
-        let s = selectedSpaceIndex
         switch format {
         case .tab:
             break
@@ -153,7 +195,12 @@ extension BrowserState {
             let folder = createFolder(name: title, inSpace: s)
             for id in ids { moveTab(id, toFolder: folder) }
         }
-        select(tab: ids[0], now: now)
+        // Selecting switches to the results' space only when that's still the one showing.
+        if s == selectedSpaceIndex {
+            select(tab: ids[0], now: now)
+        } else {
+            spaces[s].selectedTabID = ids[0]
+        }
         return ids
     }
 }

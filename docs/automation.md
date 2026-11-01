@@ -141,7 +141,13 @@ What works with Kite in the background (checked on a test build behind other win
   activate Kite the way a real first click would. `input` says when that happened. SwiftUI buttons and rows
   accept first mouse, so they work.
 - Keys: a web view claims ⌘ shortcuts as key equivalents and hands them back to the menu bar a moment later;
-  `input` and `key_log` follow the key through and name the menu item it fired.
+  `input` and `key_log` follow the key through and name the menu item it fired. A WebKit page in a background
+  window can take seconds to answer: `input` waits up to 1.5 s for it, and the menu command still runs in the
+  window you sent the key to if it comes later (don't press the key again; check `key_log`). Keys a page hands
+  back that aren't menu commands (Escape) go through AppKit, which may pick another Kite window.
+- Command bars: SwiftUI shares one field editor between windows, so with several windows' bars open only one
+  holds it. `input` gives its window's bar the field first, as becoming key would. Escape doesn't close a bar
+  in a background window (SwiftUI's exit command needs a key window).
 - `trace`: animation `from`/`to` values are the layer's own (position in its superlayer, bottom-left), while
   the sampled frames are window points. SwiftUI's accessibility frames follow the model, not the animation, so
   `match` shows only start and end; the layers show the curve.
@@ -149,8 +155,14 @@ What works with Kite in the background (checked on a test build behind other win
   `KITE_TEST_CONTEXT_MENU=1` (on a `KITE_SUPPORT_PATH` profile): a right-click (`input` with `"button":"right"`)
   writes the menu it built to stderr as `KITE_TEST_CONTEXT_MENU: Open Link in New Tab | … | ---` (disabled items
   in parentheses) instead of showing it. Put an item's title in `test-context-menu-pick` in the profile folder
-  and the next right-click chooses it. WebKit only: it also keeps a covered test window's page answering, which
-  the menu needs. Despite `input`'s first-mouse note, right-clicks on a page reach WebKit in the background.
+  and the next right-click chooses it. It works on both engines (Chromium: a bundled build, where a submenu's
+  items follow its title in the line). WebKit only: it also keeps a covered test window's page answering, which
+  the menu needs. Despite `input`'s first-mouse note, right-clicks on a page reach WebKit in the background. With
+  `KITE_TEST_PASTEBOARD=name` the menu's Copy items write that named pasteboard instead of the clipboard.
+- Instant Links (⇧⏎ in the command bar) without Google or Claude: on a `KITE_SUPPORT_PATH` profile,
+  `KITE_TEST_INSTANT_LINKS_SEARCH_URL='http://127.0.0.1:PORT/results?q=%s'` makes the hidden reader load that page
+  instead of Google (it takes the first `#search a` that holds an `h3`), and `KITE_CLAUDE_BIN` names a stub that
+  prints the plan JSON. A slow fixture keeps the "Searching the web for you" row up long enough to capture.
 - `menu`: AppKit ignores fn when matching a key against the menu bar, so a system item on fn E (Emoji &
   Symbols) or fn F (Enter Full Screen) fires on a plain "e" or "f" that reaches the menu bar, and is flagged.
 
@@ -345,6 +357,14 @@ isn't an API. So Kite joins Desktop instead of running a second Claude next to i
   installed), Return in the ⌘J bar opens `claude://claude.ai/new?q=…` with the request (and the attached tab's
   title, URL and Kite tab id) in a new Desktop chat. Desktop shows it in the composer and the user sends it. The
   bar's ↗ button switches between Desktop and running here.
+- **Each space has a ⌘J route.** The chip in the ⌘J bar names where a request from this space goes, and its
+  menu changes it: **New chat** (the two items above), a **Claude Project** (added once from its
+  `claude.ai/code/project/chan_…` link), or a **folder**. A project's page opens in a Peek over the tab (a new tab
+  if the space has none) and Kite posts the request in the project's own composer, so it lands in that project's
+  conversation and its replies show in the Peek. A folder runs the task here with `claude -p` in that folder, so it
+  has the folder's CLAUDE.md and memory; follow-ups resume there. Routes live in `<profile>/Claude/routes.json`.
+  There's no public API to post into a project: Desktop's `claude://claude.ai/project/<id>` only opens the page,
+  and Claude Code's `/send-to-project` needs its own approval dialog.
 - **Kite tasks continue in Desktop.** A task that ran here (`claude -p`) has a Claude Code session id; the bar's
   "Continue in the Claude App" button runs `claude --desktop --resume <id>`, which opens that session in
   Desktop's Code tab (Claude Code 2.1.285+, Claude subscription sign-in).

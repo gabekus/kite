@@ -13,6 +13,8 @@ final class BackgroundExtensionInstall {
     let extensionID: String
     private let page: WebPage
     private weak var source: WebPage?
+    /// The profile it installs into: Chromium keeps extensions per profile.
+    private let profile: String?
     private let onFinish: () -> Void
     private var started = false
     private var dialogClosedAt: Date?
@@ -27,6 +29,7 @@ final class BackgroundExtensionInstall {
         self.extensionID = extensionID
         self.source = source
         self.onFinish = onFinish
+        profile = engine.profileDirectory
         page = engine.makePage(url: storeURL, restoring: nil)
         // In the window but hidden: Chrome needs a window to parent its dialog to.
         if let content = NSApp.mainWindow?.contentView {
@@ -56,11 +59,11 @@ final class BackgroundExtensionInstall {
     /// Installed once the extension's folder exists; cancelled once the dialog has
     /// closed and the store offers Add again.
     private func check(deadline: Date) {
-        if Self.installedIDs().contains(extensionID) { return finish(installed: true) }
+        if Self.installedIDs(profile: profile).contains(extensionID) { return finish(installed: true) }
         if Date() > deadline { return finish(installed: false) }
         guard let closed = dialogClosedAt, Date().timeIntervalSince(closed) > 1.5 else { return }
         page.evaluateJavaScript(WebStoreScript.offersAddScript) { [weak self] result in
-            guard let self, (result as? Bool) == true, !Self.installedIDs().contains(self.extensionID) else { return }
+            guard let self, (result as? Bool) == true, !Self.installedIDs(profile: self.profile).contains(self.extensionID) else { return }
             self.finish(installed: false)
         }
     }
@@ -81,9 +84,11 @@ final class BackgroundExtensionInstall {
         source?.evaluateJavaScript(script) { _ in }
     }
 
-    /// Extension ids installed in Kite's Chromium profile.
-    static func installedIDs() -> Set<String> {
-        let directory = AppDelegate.supportDirectory.appendingPathComponent("Chromium/Default/Extensions")
+    /// Extension ids installed in one of Kite's Chromium profiles (the default one when nil).
+    static func installedIDs(profile: String? = Profile.defaultDirectory) -> Set<String> {
+        let directory = AppDelegate.supportDirectory
+            .appendingPathComponent("Chromium").appendingPathComponent(profile ?? Profile.defaultDirectory)
+            .appendingPathComponent("Extensions")
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         return Set(names.filter(ChromeWebStore.isExtensionID))
     }

@@ -47,9 +47,10 @@ for each, is in [arc-parity.md](arc-parity.md).
 
 ## Apps (PWAs)
 
-CEF's Alloy style has no built-in "Install app". Plan: read the site's web app
-manifest and generate a small `.app` launcher in `~/Applications/Kite Apps/`
-that opens the site in a chrome-less Kite window with its own icon and Dock tile.
+CEF's Alloy style has no built-in "Install app", so Kite has its own. It reads the site's manifest, shows
+Chrome's install flow, writes a launcher in `~/Applications/Kite Apps/`, and opens the app in its own window.
+See docs/arc-parity.md (Gap 29). Next: a real Dock tile per app (a launcher that stays running), and restoring
+app windows on relaunch.
 
 ## Extensions
 

@@ -6,6 +6,7 @@ struct MiniPlayerActions {
     var backToTab: (UUID) -> Void
     var command: (UUID, MediaCommand) -> Void
     var toggleMute: (UUID) -> Void
+    var setVolume: (UUID, Double) -> Void
     var close: (UUID) -> Void
 }
 
@@ -37,17 +38,28 @@ private enum Metrics {
 
 struct MiniPlayerView: View {
     let tab: BrowserTab
-    let media: MediaState
+    /// What the tab plays; nil for a call with nothing playing.
+    let media: MediaState?
+    /// Arc's `Recording` media type: the tab uses the camera or microphone. Its controls are the
+    /// call's (CallControls) instead of playback.
+    var isRecording = false
+    var call = CallControls()
     let isMuted: Bool
+    /// The tab volume (TabVolume, 0...1).
+    let volume: Double
     let actions: MiniPlayerActions
     @Environment(\.colorScheme) private var scheme
     @State private var hovering = false
+    /// Arc's `isVolumeExpanded`: "Adjust Tab Volume" opens a row with the tab's volume slider.
+    @State private var volumeExpanded = false
+    /// The slider's value while it's dragged, so it follows the pointer before the page answers.
+    @State private var dragVolume: Double?
 
     var body: some View {
         GeometryReader { proxy in
             card(width: proxy.size.width)
         }
-        .frame(height: Metrics.rowHeight * 2)
+        .frame(height: Metrics.rowHeight * (volumeExpanded ? 3 : 2))
         .onHover { inside in withAnimation(Metrics.hoverAnimation) { hovering = inside } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Mini Player")
@@ -61,6 +73,10 @@ struct MiniPlayerView: View {
         VStack(spacing: 0) {
             titleRow
             controlsRow(width: width)
+            if volumeExpanded {
+                volumeRow
+                    .transition(.opacity)
+            }
         }
         .background(
             RoundedRectangle(cornerRadius: Metrics.cornerRadius, style: .continuous)
@@ -73,7 +89,7 @@ struct MiniPlayerView: View {
     }
 
     private var title: String {
-        if !media.title.isEmpty { return media.title }
+        if let media, !media.title.isEmpty { return media.title }
         return tab.title.isEmpty ? (tab.url?.host() ?? "") : tab.title
     }
 
@@ -87,7 +103,7 @@ struct MiniPlayerView: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if hovering {
-                if media.hasVideo {
+                if media?.hasVideo == true {
                     MiniPlayerButton(symbol: "pip", pointSize: Metrics.pipPointSize, help: "Open Picture in Picture", foreground: foreground) {
                         actions.command(tab.id, .enterPictureInPicture)
                     }
@@ -109,7 +125,7 @@ struct MiniPlayerView: View {
     @ViewBuilder
     private var artwork: some View {
         let icon = FaviconView(tab: tab, size: Metrics.artworkSize)
-        if let url = media.artworkURL {
+        if let url = media?.artworkURL {
             AsyncImage(url: url) { image in
                 image.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
@@ -124,33 +140,88 @@ struct MiniPlayerView: View {
 
     private func controlsRow(width: CGFloat) -> some View {
         HStack(spacing: Metrics.spacing) {
-            if width >= Metrics.compactWidth, media.actions.contains(.previousTrack) {
-                MiniPlayerButton(symbol: "backward.end.fill", help: "Previous Track", foreground: foreground) {
-                    actions.command(tab.id, .previousTrack)
-                }
-            }
-            MiniPlayerButton(
-                symbol: media.isPlaying ? "pause.fill" : "play.fill",
-                help: media.isPlaying ? "Pause" : "Play",
-                foreground: foreground
-            ) {
-                actions.command(tab.id, media.isPlaying ? .pause : .play)
-            }
-            if width >= Metrics.compactWidth, media.actions.contains(.nextTrack) {
-                MiniPlayerButton(symbol: "forward.end.fill", help: "Next Track", foreground: foreground) {
-                    actions.command(tab.id, .nextTrack)
-                }
+            // A call (Arc's `Recording`) has no playback buttons.
+            if !isRecording, let media {
+                playbackControls(media, width: width)
             }
             Spacer(minLength: 0)
             if width >= Metrics.tinyWidth {
-                MiniPlayerButton(
-                    symbol: isMuted || media.isElementMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-                    help: isMuted ? "Unmute Tab" : "Mute Tab",
-                    foreground: foreground
-                ) {
-                    actions.toggleMute(tab.id)
+                MiniPlayerButton(symbol: volumeSymbol, help: "Adjust Tab Volume", foreground: foreground) {
+                    withAnimation(Metrics.hoverAnimation) { volumeExpanded.toggle() }
                 }
             }
+            // Arc's MiniPlayerView builds these right after Adjust Tab Volume; they show whenever
+            // the page handles them.
+            callControls
+        }
+        .padding(.horizontal, Metrics.controlsRowPadding)
+        .frame(height: Metrics.rowHeight)
+    }
+
+    /// A call's microphone and camera, for the ones the page lets Kite toggle (CallControls).
+    @ViewBuilder
+    private var callControls: some View {
+        if call.canToggleMicrophone {
+            MiniPlayerButton(symbol: call.microphoneSymbol, help: CallControls.microphoneHelp, foreground: foreground) {
+                actions.command(tab.id, .toggleMicrophone)
+            }
+        }
+        if call.canToggleCamera {
+            MiniPlayerButton(symbol: call.cameraSymbol, help: CallControls.cameraHelp, foreground: foreground) {
+                actions.command(tab.id, .toggleCamera)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func playbackControls(_ media: MediaState, width: CGFloat) -> some View {
+        if width >= Metrics.compactWidth, media.actions.contains(.previousTrack) {
+            MiniPlayerButton(symbol: "backward.end.fill", help: "Previous Track", foreground: foreground) {
+                actions.command(tab.id, .previousTrack)
+            }
+        }
+        MiniPlayerButton(
+            symbol: media.isPlaying ? "pause.fill" : "play.fill",
+            help: media.isPlaying ? "Pause" : "Play",
+            foreground: foreground
+        ) {
+            actions.command(tab.id, media.isPlaying ? .pause : .play)
+        }
+        if width >= Metrics.compactWidth, media.actions.contains(.nextTrack) {
+            MiniPlayerButton(symbol: "forward.end.fill", help: "Next Track", foreground: foreground) {
+                actions.command(tab.id, .nextTrack)
+            }
+        }
+    }
+}
+
+extension MiniPlayerView {
+    private var shownVolume: Double { dragVolume ?? volume }
+
+    /// Arc picks the speaker from the tab's mute and volume (TabVolume.symbol).
+    private var volumeSymbol: String {
+        TabVolume.symbol(volume: shownVolume, isMuted: isMuted || media?.isElementMuted == true)
+    }
+
+    /// The volume drawer: the tab's mute and a 0...1 slider (Arc's VolumeRowViewState).
+    private var volumeRow: some View {
+        HStack(spacing: Metrics.spacing) {
+            MiniPlayerButton(symbol: volumeSymbol, help: isMuted ? "Unmute Tab" : "Mute Tab", foreground: foreground) {
+                actions.toggleMute(tab.id)
+            }
+            Slider(
+                value: Binding(
+                    get: { shownVolume },
+                    set: { level in
+                        dragVolume = level
+                        actions.setVolume(tab.id, level)
+                    }
+                ),
+                in: TabVolume.range,
+                onEditingChanged: { editing in if !editing { dragVolume = nil } }
+            )
+            .controlSize(.small)
+            .accessibilityLabel("Tab Volume")
         }
         .padding(.horizontal, Metrics.controlsRowPadding)
         .frame(height: Metrics.rowHeight)

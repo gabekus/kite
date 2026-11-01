@@ -15,6 +15,12 @@ struct PageStatus: Equatable {
     var media: MediaActivity?
     /// The browser's tab mute (WebPage.isAudioMuted).
     var isAudioMuted = false
+    /// The tab volume from the Mini Player (TabVolume, 0...1); it lives with the page, like the mute.
+    var tabVolume: Double = 1
+    /// Since when the page has used the camera or microphone (Arc's Mini Player `Recording`); nil when it doesn't.
+    var capturingSince: Date?
+    /// The page's Media Session call controls (Mini Player's Toggle Microphone / Toggle Camera).
+    var callControls = CallControls()
 
     /// Whether the tab is playing media now (muted or not): the base for audio indicators.
     var isPlayingAudio: Bool { media?.state.isPlaying == true }
@@ -52,14 +58,21 @@ final class BrowserStore {
     private(set) var systemIsDark = false
     /// Spaces whose Tidy Tabs request is out with Claude (the Tidy button spins).
     var tidyingSpaceIDs: Set<UUID> = []
+    /// Instant Links at work, newest first: each shows a row at the top of its space's Today.
+    var instantLinksRows: [InstantLinks.Pending] = []
 
     @ObservationIgnored var onChange: (() -> Void)?
     @ObservationIgnored var onPageChange: ((UUID) -> Void)?
     /// nil for an incognito window: nothing is written to disk.
     @ObservationIgnored private let session: SessionStore?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
-    /// Browsing history to record into; nil for an incognito window.
-    @ObservationIgnored var history: HistoryStore?
+    /// The default profile's browsing history, which leads to the other profiles'; nil for an
+    /// incognito window, which records none.
+    @ObservationIgnored var historyRoot: HistoryStore?
+    /// The current space's profile's history.
+    var history: HistoryStore? { historyRoot?.forProfile(state.selectedProfileDirectory) }
+    /// The history a tab's visits go to: its own profile's.
+    private func history(forTab id: UUID) -> HistoryStore? { historyRoot?.forProfile(state.profileDirectory(ofTab: id)) }
     /// The URL each tab last recorded, so repeated reports of one page count once.
     @ObservationIgnored private var recordedURLs: [UUID: URL] = [:]
 
@@ -124,6 +137,9 @@ final class BrowserStore {
         state.syncPinnedURLs()
         // Tidy Tabs' headers lose tabs that left Today, and go when they have none.
         state.pruneTabGroups()
+        // Rows that come, go or move animate in the sidebar, like Arc's. SwiftUI applies the
+        // change on its next pass, so arming after the change is in time.
+        if Self.sidebarRows(of: before) != Self.sidebarRows(of: state) { SidebarRowsAnimator.arm() }
         scheduleSave()
         onChange?()
         link?.propagate(from: self)
@@ -134,6 +150,11 @@ final class BrowserStore {
             if !pinned.isEmpty { TidyTabTitlesController.shared.tabsPinned(pinned, in: self) }
         }
         return result
+    }
+
+    /// Every space's top-level row identities, in order.
+    private static func sidebarRows(of state: BrowserState) -> [[UUID]] {
+        state.spaces.flatMap { [$0.pinnedItems.map(\.id), $0.tabs.map(\.id)] }
     }
 
     /// Archives unpinned tabs left unused longer than the user's setting.
@@ -207,11 +228,38 @@ final class BrowserStore {
         onChange?()
     }
 
+    // MARK: Profiles
+
+    /// Arc's Create a new Profile: the profile, with `spaces` moved into it.
+    func createProfile(named name: String, spaces: [UUID]) throws -> Profile {
+        var made: Result<Profile, Error> = .failure(ProfileNameError.invalid)
+        mutate { state in made = Result { try state.createProfile(named: name, spaces: spaces) } }
+        return try made.get()
+    }
+
+    func renameProfile(_ directory: String, to name: String) throws {
+        var outcome: Result<Void, Error> = .success(())
+        mutate { state in outcome = Result { try state.renameProfile(directory, to: name) } }
+        try outcome.get()
+    }
+
+    /// Forgets the profile now; its data goes at the next launch (ProfileFolders).
+    func deleteProfile(_ directory: String) {
+        let profile = state.profile(directory)
+        guard state.canDeleteProfile(directory), mutate({ $0.deleteProfile(directory) }) else { return }
+        historyRoot?.forgetProfile(directory)
+        ProfileFolders.delete(profile)
+    }
+
+    func setProfile(_ directory: String?, forSpace id: UUID) {
+        mutate { $0.setProfile(directory, forSpace: id) }
+    }
+
     // MARK: Page events from web views
 
     func pageTitleChanged(_ id: UUID, _ title: String?) {
         guard let title, !title.isEmpty, !showsInternalPage(id) else { return }
-        if let url = recordedURLs[id] { history?.updateTitle(url, title) }
+        if let url = recordedURLs[id] { history(forTab: id)?.updateTitle(url, title) }
         guard state.tab(id)?.title != title else { return }
         mutate { $0.update(tab: id) { $0.title = title } }
     }
@@ -223,7 +271,7 @@ final class BrowserStore {
         // Before the tab check: a typed URL is already on the tab when the page reports it.
         if recordedURLs[id] != url {
             recordedURLs[id] = url
-            history?.recordVisit(url, title: "")
+            history(forTab: id)?.recordVisit(url, title: "")
         }
         guard state.tab(id)?.url != url else { return }
         mutate { $0.update(tab: id) { $0.url = url } }
@@ -266,6 +314,12 @@ final class BrowserStore {
         if state?.isPlaying == true, !wasPlaying { miniPlayerDismissed.remove(id) }
     }
 
+    func captureChanged(_ id: UUID, _ capturing: Bool) {
+        guard capturing != (pages[id]?.capturingSince != nil) else { return }
+        updatePage(id) { $0.capturingSince = capturing ? Date() : nil }
+        if capturing { miniPlayerDismissed.remove(id) }
+    }
+
     func tabsLeftScreen(_ ids: some Sequence<UUID>, at date: Date = Date()) {
         for id in ids { hiddenAt[id] = date }
     }
@@ -277,9 +331,11 @@ final class BrowserStore {
     /// The tab whose media the sidebar's Mini Player shows, if any.
     var miniPlayerTabID: UUID? {
         let media = pages.compactMapValues(\.media).filter { state.tab($0.key) != nil }
-        guard !media.isEmpty else { return nil }
+        let capturing = pages.compactMapValues(\.capturingSince).filter { state.tab($0.key) != nil }
+        guard !media.isEmpty || !capturing.isEmpty else { return nil }
         return MiniPlayer.tab(
             media: media,
+            capturing: capturing,
             visible: Set(state.visibleTabs.map(\.id)),
             hiddenAt: hiddenAt,
             dismissed: miniPlayerDismissed

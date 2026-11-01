@@ -45,4 +45,23 @@ import Testing
         #expect(abs(spring.stiffness - pow(2 * .pi / 0.245, 2)) < 1e-9)
         #expect(abs(spring.damping - 4 * .pi * 0.865 / 0.245) < 1e-9)
     }
+
+    @Test func tweenStartsAtTheSourcesWidthAndCentre() {
+        let card = LinkPeek.Frame(x: 100, y: 12, width: 800, height: 676)
+        let link = LinkPeek.Frame(x: 40, y: 300, width: 80, height: 20)
+        let tween = LinkPeek.sourceTween(source: link, card: card, cornerRadius: 4)
+        #expect(tween == LinkPeek.SourceTween(scale: 0.1, dx: 80 - 500, dy: 310 - 350, cornerRadius: 40))
+        #expect(LinkPeek.sourceTween(source: .init(x: 0, y: 0, width: 0, height: 10), card: card) == nil)
+    }
+
+    @Test func sourceFrameAppliesZoomAndRejectsJunk() {
+        let result: [String: Any] = ["x": 10, "y": 20.5, "width": 30, "height": 8]
+        #expect(LinkPeek.sourceFrame(scriptResult: result, zoom: 1.5) == .init(x: 15, y: 30.75, width: 45, height: 12))
+        #expect(LinkPeek.sourceFrame(scriptResult: nil, zoom: 1) == nil)
+        #expect(LinkPeek.sourceFrame(scriptResult: ["x": 1, "y": 1, "width": 0, "height": 5], zoom: 1) == nil)
+        let script = LinkPeek.sourceRectScript(point: (12, 34), url: "https://a.com/\"x")
+        #expect(script.contains("at = [12.0, 34.0]"))
+        #expect(script.contains(#"["https:\/\/a.com\/\"x"][0]"#))
+        #expect(LinkPeek.sourceRectScript(point: nil, url: "https://a.com/").contains("at = null"))
+    }
 }

@@ -125,4 +125,52 @@ import Testing
         let looseRow = state.revealTab(loose)
         #expect(looseRow == loose)
     }
+
+    @Test func editPinnedURLTakesAURLButNotASearch() {
+        var (state, id) = pinnedState()
+        #expect(state.hasPinnedURL(tab: id))
+        let r1 = state.editPinnedURL(id, to: "not a url")
+        #expect(!r1)
+        let r2 = state.editPinnedURL(id, to: "  ")
+        #expect(!r2)
+        #expect(state.tab(id)?.pinnedURL == home)
+        let r3 = state.editPinnedURL(id, to: " calendar.example.com/week ")
+        #expect(r3)
+        #expect(state.tab(id)?.pinnedURL == URL(string: "https://calendar.example.com/week"))
+        // The page stays where it is, now away from its pinned URL.
+        #expect(state.tab(id)?.url == home)
+        #expect(state.canReset(tab: id))
+        let r4 = state.editPinnedURL(id, to: "https://mail.example.com/inbox")
+        #expect(r4)
+        #expect(!state.canReset(tab: id))
+    }
+
+    @Test func replacePinnedURLWithCurrentPinsThePageItsOn() {
+        var (state, id) = pinnedState()
+        state.update(tab: id) { $0.url = away }
+        let r5 = state.replacePinnedURLWithCurrent(id)
+        #expect(r5)
+        #expect(state.tab(id)?.pinnedURL == away)
+        #expect(!state.canReset(tab: id))
+    }
+
+    @Test func favoritesCanEditAndReplaceButUnpinnedTabsCant() {
+        var (state, id) = pinnedState()
+        state.toggleFavorite(tab: id)
+        let fav = state.favorites[0].id
+        let r6 = state.editPinnedURL(fav, to: "example.org")
+        #expect(r6)
+        #expect(state.favorites[0].pinnedURL == URL(string: "https://example.org"))
+        let r7 = state.replacePinnedURLWithCurrent(fav)
+        #expect(r7)
+        #expect(state.favorites[0].pinnedURL == home)
+
+        let loose = state.openTab(url: away)
+        #expect(!state.hasPinnedURL(tab: loose))
+        let r8 = state.editPinnedURL(loose, to: "example.org")
+        #expect(!r8)
+        let r9 = state.replacePinnedURLWithCurrent(loose)
+        #expect(!r9)
+        #expect(state.tab(loose)?.pinnedURL == nil)
+    }
 }
