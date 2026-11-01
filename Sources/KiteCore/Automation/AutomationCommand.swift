@@ -102,6 +102,8 @@ public enum AutomationCommand: Hashable, Sendable {
     case waitFor(tab: String?, condition: WaitCondition, timeout: Double)
     case handleDialog(tab: String?, accept: Bool, promptText: String?)
     case uploadFile(tab: String?, target: AutomationTarget, paths: [String])
+    /// Hands a login page to the user to sign in (with 1Password), and waits. See `SignInHandoff`.
+    case signIn(tab: String?, reason: String?)
 
     // Debugging
     case readConsole(tab: String?, pattern: String?, onlyErrors: Bool, limit: Int, clear: Bool)
@@ -154,6 +156,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case waitFor = "wait_for"
         case handleDialog = "handle_dialog"
         case uploadFile = "upload_file"
+        case signIn = "sign_in"
         case readConsole = "read_console_messages"
         case readNetwork = "read_network_requests"
         case networkLog = "network_log"
@@ -206,6 +209,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case .waitFor: .waitFor
         case .handleDialog: .handleDialog
         case .uploadFile: .uploadFile
+        case .signIn: .signIn
         case .readConsole: .readConsole
         case .readNetwork: .readNetwork
         case .networkLog: .networkLog
@@ -315,6 +319,8 @@ public enum AutomationCommand: Hashable, Sendable {
             let paths = list.compactMap(\.stringValue).filter { !$0.isEmpty }
             guard !paths.isEmpty, paths.count == list.count else { throw InvalidArguments("\"paths\" must be a list of file paths.") }
             self = .uploadFile(tab: tab, target: try a.target(required: true)!, paths: paths)
+        case .signIn:
+            self = .signIn(tab: tab, reason: try a.string("reason").flatMap { $0.isEmpty ? nil : $0 })
         case .readConsole:
             self = .readConsole(tab: tab, pattern: try a.pattern("pattern"), onlyErrors: try a.bool("only_errors"),
                                 limit: try a.int("limit", in: 1...1000) ?? Self.defaultLogLimit, clear: try a.bool("clear"))

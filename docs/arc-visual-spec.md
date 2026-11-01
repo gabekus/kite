@@ -343,6 +343,27 @@ Not measured (text wasn't read): what the menu's top row of four 48.75×32.75 bu
 208×33 rows) and its two bottom buttons (82×32, 32×32) do. Kite leaves them out; pin, on/off, options and remove
 are in each tile's right-click menu instead. Arc's hover reveal in the sidebar URL row: none found.
 
+## Downloads (Arc 1.171 binary, assets and menu bar, 31 Oct 2026)
+
+- Menu: Window › **View Downloads…** ⇧⌘J, next to Open Library… ⇧⌘L (read from Arc's menu bar through AX, no
+  items pressed). Arc's own copy: "Opens the Downloads section of your Library", so ⇧⌘J lands on the Library's
+  Downloads page (`HomeButton/DownloadsPageReducer`, `DownloadsContentView`, `DownloadCell`).
+- Sidebar: `DownloadsUI.DownloadToLibrary` animates a file icon (`DownloadIconView`,
+  `ProjectileIconKeyframeAnimation`, `animateDownload(source:destination:)`, SF Symbol `arrow.down.circle` nearby)
+  into the Library button (`DownloadBin`), which carries a `DownloadProgressBadge`. Geometry and timing: unknown.
+- Context menu ("Download Context Menu"): Open, Copy, Show in Finder, Hide from Arc, Move to Trash, Cancel download
+  (from the localisation comments; exact titles are short inline strings not in the dump).
+- Row text: subtitles for generic / paused / cancelled / failed downloads, "Failed to Download", speed "e.g. 3 MB/s",
+  "Download from [source domain]", file-type copy for PDF, disk image, movie, video, image, audio, archive, zip,
+  empty-state "File deleted or moved".
+- Colours (Assets.car): `DownloadItemBackgroundHovered` light p3 0.96 grey / dark p3 0.12;
+  `DownloadItemBackground` light sRGB white / dark p3 0.05 (Little Arc tray); `DownloadProgressBarBackground` light sRGB
+  (0.808, 0.843, 0.906) / dark (0.443, 0.467, 0.510).
+- Quit with downloads running: alert "Downloads in progress" (not built in Kite yet).
+
+Kite (`DownloadsView.swift`): no Library yet, so the bottom bar's leading button (where Arc's Library button sits)
+shows the progress ring and opens a popover list. Row size, ring size and popover width are Kite's, unmeasured.
+
 ## Still unknown
 
 - The default intensity of a new theme, and the system material Arc puts under it, which sets the blur radius.
