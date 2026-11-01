@@ -187,3 +187,52 @@ public enum BoostStyle {
         return String(rounded)
     }
 }
+
+/// The Boost editor menu's "Shuffle" and "Reset all Edits" (Arc 1.171 BoostsEditor reducer; see
+/// docs/arc-visual-spec.md, "Boost Shuffle and Reset all Edits").
+public enum BoostEdits {
+    /// The second hue's offsets Shuffle picks from (Arc-arm64 __data 0x104571e90: [45.0, 90.0]).
+    public static let shuffleHueOffsets: [Double] = [45, 90]
+
+    /// Arc's Shuffle: a random colour scheme, font, text case and text size; the Boost's CSS,
+    /// JavaScript and zaps stay. Each value is drawn as Arc draws it: the hue 0–360, saturation,
+    /// Original Saturation and Contrast 0–1, Brightness -1–1, the second hue 45° or 90° away,
+    /// Invert lightness on or off, a font from Arc's list, the page's case or one of the three,
+    /// one of the five text sizes.
+    public static func shuffled<G: RandomNumberGenerator>(_ boost: Boost, using generator: inout G) -> Boost {
+        var boost = boost
+        boost.colors = BoostColorWheel(
+            primaryHueDegrees: Double.random(in: 0...360, using: &generator),
+            primarySaturation: Double.random(in: 0...1, using: &generator),
+            secondaryHueOffset: shuffleHueOffsets.randomElement(using: &generator)!,
+            invertLightness: [true, false].randomElement(using: &generator)!,
+            preservedSaturation: Double.random(in: 0...1, using: &generator),
+            preservedLightness: Double.random(in: 0...1, using: &generator),
+            lightnessShift: Double.random(in: -1...1, using: &generator)
+        )
+        boost.fontFamily = BoostFonts.families.randomElement(using: &generator)
+        boost.textCase = ([nil] + BoostTextCase.allCases.map(Optional.some)).randomElement(using: &generator)!
+        let zoom = BoostTextZoom.levels.randomElement(using: &generator)!
+        boost.textZoom = zoom == BoostTextZoom.normal ? nil : zoom
+        return boost
+    }
+
+    public static func shuffled(_ boost: Boost) -> Boost {
+        var generator = SystemRandomNumberGenerator()
+        return shuffled(boost, using: &generator)
+    }
+
+    /// Arc's Reset all Edits: the Boost's data starts over empty (no CSS, JavaScript, zaps,
+    /// colours, font, text size or case). Its name, site and on/off switch stay.
+    public static func reset(_ boost: Boost) -> Boost {
+        var boost = boost
+        boost.css = ""
+        boost.js = ""
+        boost.zaps = []
+        boost.fontFamily = nil
+        boost.textCase = nil
+        boost.textZoom = nil
+        boost.colors = nil
+        return boost
+    }
+}

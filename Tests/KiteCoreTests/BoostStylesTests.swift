@@ -119,4 +119,53 @@ import Testing
         let future = old.replacingOccurrences(of: "\"js\":\"\"", with: "\"js\":\"\",\"textCase\":\"smallCaps\"")
         #expect(try JSONDecoder().decode(Boost.self, from: Data(future.utf8)).textCase == nil)
     }
+
+    /// A seeded generator, so a shuffle test sees the same draws every run.
+    struct Seeded: RandomNumberGenerator {
+        var state: UInt64
+        mutating func next() -> UInt64 {
+            state &+= 0x9E3779B97F4A7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+            z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+            return z ^ (z >> 31)
+        }
+    }
+
+    @Test func shuffleDrawsArcsRangesAndKeepsCode() {
+        let boost = Boost(name: "a", domain: "example.com", css: "p{}", js: "1", zaps: [".ad"])
+        var generator = Seeded(state: 7)
+        var fonts = Set<String>(), cases = Set<String>(), zooms = Set<Int>(), offsets = Set<Double>(), inverts = Set<Bool>()
+        for _ in 0..<400 {
+            let shuffled = BoostEdits.shuffled(boost, using: &generator)
+            #expect(shuffled.css == "p{}" && shuffled.js == "1" && shuffled.zaps == [".ad"])
+            #expect(shuffled.id == boost.id && shuffled.name == "a" && shuffled.domain == "example.com")
+            let colors = try! #require(shuffled.colors)
+            #expect((0...360).contains(colors.primaryHueDegrees))
+            #expect((0...1).contains(colors.primarySaturation))
+            #expect((0...1).contains(colors.preservedSaturation!) && (0...1).contains(colors.preservedLightness!))
+            #expect((-1...1).contains(colors.lightnessShift!))
+            offsets.insert(colors.secondaryHueOffset)
+            inverts.insert(colors.invertLightness)
+            fonts.insert(try! #require(shuffled.fontFamily))
+            cases.insert(shuffled.textCase?.rawValue ?? "none")
+            zooms.insert(shuffled.textZoom ?? 100)
+        }
+        #expect(offsets == [45, 90])
+        #expect(inverts == [true, false])
+        #expect(fonts == Set(BoostFonts.families))
+        #expect(cases == ["none", "capitalize", "uppercase", "lowercase"])
+        #expect(zooms == Set(BoostTextZoom.levels))
+    }
+
+    @Test func resetAllEditsEmptiesTheBoost() {
+        let boost = Boost(
+            name: "Mine", domain: "example.com", css: "p{}", js: "1", zaps: [".ad"], fontFamily: "Futura",
+            textCase: .uppercase, textZoom: 125, colors: BoostColorWheel(primaryHueDegrees: 10, primarySaturation: 0.5),
+            isEnabled: false
+        )
+        let reset = BoostEdits.reset(boost)
+        #expect(reset.isEmpty)
+        #expect(reset.id == boost.id && reset.name == "Mine" && reset.domain == "example.com" && !reset.isEnabled)
+    }
 }
