@@ -64,6 +64,32 @@ extension BrowserState {
         if wasSelected { selectedSpaceID = spaces[max(s - 1, 0)].id }
     }
 
+    /// Arc's folder Delete: the folder goes, and the tabs in it (nested folders' too) are
+    /// archived, like Arc's "Deleting this folder will archive the tabs inside it."
+    @discardableResult
+    public mutating func deleteFolder(_ id: UUID) -> [BrowserTab] {
+        for s in spaces.indices {
+            guard let folder = spaces[s].pinnedItems.removeFolder(id) else { continue }
+            let tabs = folder.items.tabs
+            appendToArchive(tabs.enumerated().map { ClosedTab(tab: $1, spaceID: spaces[s].id, index: $0) })
+            if let selected = spaces[s].selectedTabID, tabs.contains(where: { $0.id == selected }) {
+                spaces[s].selectedTabID = spaces[s].allTabs.first?.id
+            }
+            normalizeSplits()
+            return tabs
+        }
+        return []
+    }
+
+    /// Arc's folder Rename…. A blank name keeps the old one.
+    public mutating func renameFolder(_ id: UUID, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        for s in spaces.indices where spaces[s].pinnedItems.updateFolder(id, { $0.name = name }) {
+            return
+        }
+    }
+
     /// Moves a space to a new place in the strip (Manage Spaces' drag).
     public mutating func moveSpace(_ id: UUID, to index: Int) {
         guard let s = spaceIndex(id) else { return }

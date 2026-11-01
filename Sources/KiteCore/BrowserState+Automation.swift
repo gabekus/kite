@@ -112,10 +112,17 @@ extension BrowserState {
 extension BrowserState {
     /// Removes a pinned tab (in or out of a folder) for good, without archiving it: a tab a
     /// Claude task opened in its folder and then closed. Pinned tabs otherwise only unload on close.
+    /// With `droppingEmptyFolder`, a folder the tab leaves empty goes too, so a task whose
+    /// tabs are all closed doesn't leave an empty folder behind.
     @discardableResult
-    public mutating func removePinnedTab(_ id: UUID) -> Bool {
-        guard let location = location(of: id), location.section == .pinned, let s = location.space,
-              spaces[s].pinnedItems.removeTab(id) != nil else { return false }
+    public mutating func removePinnedTab(_ id: UUID, droppingEmptyFolder: Bool = false) -> Bool {
+        guard let location = location(of: id), location.section == .pinned, let s = location.space else { return false }
+        let parent = folders(inSpace: s).first { $0.items.contains { $0.id == id } }?.id
+        guard spaces[s].pinnedItems.removeTab(id) != nil else { return false }
+        if droppingEmptyFolder, let parent,
+           folders(inSpace: s).first(where: { $0.id == parent })?.items.isEmpty == true {
+            _ = spaces[s].pinnedItems.removeFolder(parent)
+        }
         if spaces[s].selectedTabID == id { spaces[s].selectedTabID = spaces[s].allTabs.first?.id }
         normalizeSplits()
         return true

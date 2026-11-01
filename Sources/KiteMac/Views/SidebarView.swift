@@ -15,6 +15,9 @@ struct SidebarActions {
     var renameSpace: (UUID) -> Void
     var changeSpaceIcon: (UUID) -> Void
     var deleteSpace: (UUID) -> Void
+    /// A folder's context menu.
+    var renameFolder: (UUID) -> Void
+    var deleteFolder: (UUID) -> Void
 }
 
 /// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
@@ -173,9 +176,11 @@ struct SidebarView: View {
                 ? folder.items
                 : folder.items.tabs.filter { $0.id == selectedID }.map(PinnedItem.tab)
             return AnyView(VStack(spacing: M.rowPitch - M.pillHeight) {
-                FolderRow(folder: folder, depth: depth) {
-                    store.mutate { $0.setFolderExpanded(folder.id, !folder.isExpanded) }
-                }
+                FolderRow(
+                    folder: folder, depth: depth,
+                    onToggle: { store.mutate { $0.setFolderExpanded(folder.id, !folder.isExpanded) } },
+                    onRename: { actions.renameFolder(folder.id) },
+                    onDelete: { actions.deleteFolder(folder.id) })
                 ForEach(SidebarGroup.group(visible.map(\.id), splits: store.state.selectedSpace.splits)) { group in
                     pinnedGroup(group, in: visible, depth: depth + 1, selectedID: selectedID)
                 }
@@ -537,6 +542,8 @@ private struct FolderRow: View {
     let folder: TabFolder
     let depth: Int
     let onToggle: () -> Void
+    let onRename: () -> Void
+    let onDelete: () -> Void
     @State private var hovering = false
 
     var body: some View {
@@ -563,8 +570,14 @@ private struct FolderRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onToggle)
+        // Arc's folder menu (SidebarMenu+ListContextMenu), in its order, with the items Kite has.
         .contextMenu {
-            Button(folder.isExpanded ? "Collapse Folder" : "Expand Folder", action: onToggle)
+            Button("Delete", action: onDelete)
+            Divider()
+            Button("Copy All Links") { copyLinks(folder.items.tabs.compactMap(\.url)) }
+                .disabled(folder.items.tabs.allSatisfy { $0.url == nil })
+            Divider()
+            Button("Rename…", action: onRename)
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
@@ -576,6 +589,12 @@ private struct FolderRow: View {
 /// Arc's folder nesting per level (see `ArcMetrics.Sidebar.nestingIndent`).
 private func indent(_ depth: Int) -> CGFloat {
     CGFloat(depth) * M.nestingIndent
+}
+
+private func copyLinks(_ urls: [URL]) {
+    guard !urls.isEmpty else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(urls.map(\.absoluteString).joined(separator: "\n"), forType: .string)
 }
 
 private func copyLink(_ url: URL?) {

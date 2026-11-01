@@ -179,7 +179,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             editTheme: { [weak self] id in self?.editTheme(ofSpace: id) },
             renameSpace: { [weak self] id in self?.renameSpace(id: id) },
             changeSpaceIcon: { [weak self] id in self?.changeIcon(ofSpace: id) },
-            deleteSpace: { [weak self] id in self?.deleteSpace(id) }
+            deleteSpace: { [weak self] id in self?.deleteSpace(id) },
+            renameFolder: { [weak self] id in self?.renameFolder(id) },
+            deleteFolder: { [weak self] id in self?.deleteFolder(id) }
         )
         spaceSwipe = SpaceSwipeController(
             store: store,
