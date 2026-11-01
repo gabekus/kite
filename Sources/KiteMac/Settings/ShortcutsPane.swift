@@ -5,9 +5,10 @@ import SwiftUI
 /// Settings → Shortcuts, measured from Arc 1.169's (AX tree and capture, ~/rea-arc/settings/pane-5):
 /// a "Start with the basics" pill centred at the top, a 340pt list on the left (search field over
 /// "Customized Shortcuts" and "Default Shortcuts", 48pt rows with a 64×24 keycap), and on the
-/// right "Custom Shortcuts" with Reset All Shortcuts at the bottom. Picking a row shows it on the
-/// right (Arc's detail side wasn't recorded: it needs a click inside the pane). Click a keycap to
-/// record; changes go straight to KeyBindingsStore (keybindings.json) and the menu bar.
+/// right "Custom Shortcuts" with Reset All Shortcuts at the bottom. Selecting a row in Arc (by AX)
+/// left that column unchanged, so its per-row actions are most likely the row's context menu, which
+/// Kite has too; showing the picked command on the right is Kite's own. Click a keycap to record;
+/// changes go straight to KeyBindingsStore (keybindings.json) and the menu bar.
 struct ShortcutsPane: View {
     @EnvironmentObject private var model: SettingsModel
     @State private var query = ""
@@ -204,6 +205,7 @@ private struct ArtKey: View {
 
 /// A 48pt list row: the command's name and its keycap. Click the row to pick it, the keycap to record.
 private struct ShortcutRow: View {
+    @EnvironmentObject private var model: SettingsModel
     let entry: ShortcutEntry
     let isSelected: Bool
     let isRecording: Bool
@@ -228,6 +230,26 @@ private struct ShortcutRow: View {
         .padding(.trailing, 24)
         .frame(height: ShortcutsPane.M.rowHeight)
         .background(isSelected ? Color.accentColor.opacity(0.25) : .clear)
+        // Arc's per-row actions are menu items (its binary); selecting a row by AX changed nothing on
+        // its right column, so they're most likely this menu. Kite also shows them on the right.
+        .contextMenu {
+            Button("Reset Shortcut to Default") { model.resetShortcut(entry.id) }
+                .disabled(!entry.isCustomized)
+            Button("Remove Shortcut") { model.setShortcut(nil, for: entry.id) }
+                .disabled(entry.shortcut == nil)
+            let conflicts = ShortcutsList.conflicts(for: entry.shortcut, excluding: entry.id, in: model.shortcutEntries)
+            if !conflicts.isEmpty, let shortcut = entry.shortcut {
+                Button(conflicts.count == 1 ? "Remove Conflicting Shortcut" : "Remove Conflicting Shortcuts") {
+                    model.removeConflicts(with: shortcut, keeping: entry.id)
+                }
+            }
+            Divider()
+            // Arc lets a website take priority over a shortcut; Kite's key routing has no priority yet.
+            Button("When shortcuts conflict, Kite wins.") {}.disabled(true)
+            Button("When shortcuts conflict, the website wins.") {}.disabled(true)
+            Divider()
+            Button("Reset All Shortcuts") { model.resetAllShortcuts() }
+        }
     }
 }
 
