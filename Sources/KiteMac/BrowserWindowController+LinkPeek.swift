@@ -2,8 +2,8 @@ import AppKit
 import KiteCore
 
 /// Arc's Peek: a link from a pinned tab or favorite to another site (or any ⇧-clicked link) opens in a card
-/// over the page instead of navigating the tab. Esc, ⌘W, the close button or a click outside the card close
-/// it; the other buttons turn its page into a tab or a split pane. (`setPeeking` is the sidebar's reveal.)
+/// over the page instead of navigating the tab. Esc, ⌘W, the close button, a click outside the card or a
+/// two-finger swipe right close it; the other buttons turn its page into a tab or a split pane. (`setPeeking` is the sidebar's reveal.)
 @MainActor
 final class LinkPeekSession {
     let sourceTabID: UUID
@@ -12,6 +12,7 @@ final class LinkPeekSession {
     var url: URL?
     var title: String?
     var keyMonitor: Any?
+    var swipe: LinkPeekSwipeController?
 
     init(sourceTabID: UUID, page: WebPage, url: URL, splitTitle: String?) {
         self.sourceTabID = sourceTabID
@@ -55,6 +56,18 @@ extension BrowserWindowController {
             return nil
         }
         installOverContent(session.view)
+        session.swipe = LinkPeekSwipeController(
+            view: session.view,
+            evaluate: { [weak page] script, completion in
+                guard let page else { return completion(nil) }
+                page.evaluateJavaScript(script, completion: completion)
+            },
+            zoomFactor: { [weak page] in page?.zoomFactor ?? 1 },
+            dismiss: { [weak self, weak session] in
+                guard let self, let session, linkPeek === session else { return }
+                closeLinkPeek(animated: true)
+            }
+        )
         let pointerInWindow = window.mouseLocationOutsideOfEventStream
         let pointer = session.view.convert(pointerInWindow, from: nil)
         let fallback = session.view.bounds.contains(pointer) ? pointer : nil
@@ -99,6 +112,7 @@ extension BrowserWindowController {
         guard let session = linkPeek else { return }
         linkPeek = nil
         if let monitor = session.keyMonitor { NSEvent.removeMonitor(monitor) }
+        session.swipe?.stop()
         session.page.onEvent = nil
         let finish = {
             session.view.removeFromSuperview()

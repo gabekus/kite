@@ -65,6 +65,10 @@ final class HistorySwipeController {
     private static func register(_ controller: HistorySwipeController) {
         controllers = controllers.filter { $0.value.controller != nil }
         controllers[ObjectIdentifier(controller.view)] = WeakController(controller)
+        installMonitor()
+    }
+
+    private static func installMonitor() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
             MainActor.assumeIsolated { route(event) } ? nil : event
@@ -81,20 +85,62 @@ final class HistorySwipeController {
     static func route(_ event: NSEvent, in window: NSWindow? = nil) -> Bool {
         guard event.type == .scrollWheel, !(event.phase.isEmpty && event.momentumPhase.isEmpty) else { return false }
         if event.phase == .began || event.phase == .mayBegin {
-            active = controller(at: event, in: window)
-            if active == nil { lastOutcome = "not over a Chromium page" }
+            let hit = hitView(at: event, in: window)
+            // Something drawn over the page (a Peek) gets the gesture first.
+            claimer = hit.flatMap(claimer(from:))
+            active = claimer == nil ? hit.flatMap(controller(from:)) : nil
+            if claimer == nil, active == nil { lastOutcome = "not over a Chromium page" }
+        }
+        if let claimer {
+            defer { lastOutcome = claimer.gestureOutcome }
+            return claimer.handleGesture(event, in: window)
         }
         guard let active else { return false }
         return active.handle(event)
     }
 
-    private static func controller(at event: NSEvent, in fallback: NSWindow?) -> HistorySwipeController? {
+    private static func hitView(at event: NSEvent, in fallback: NSWindow?) -> NSView? {
         // Events made from CGEvents (ui input) carry no window; their location is on screen.
         guard let window = event.window ?? fallback, let content = window.contentView else { return nil }
         let location = event.window == nil ? window.convertPoint(fromScreen: event.locationInWindow) : event.locationInWindow
-        var view = content.superview?.hitTest(location) ?? content.hitTest(location)
+        return content.superview?.hitTest(location) ?? content.hitTest(location)
+    }
+
+    private static func controller(from hit: NSView) -> HistorySwipeController? {
+        var view: NSView? = hit
         while let current = view {
             if let controller = controllers[ObjectIdentifier(current)]?.controller { return controller }
+            view = current.superview
+        }
+        return nil
+    }
+
+    // MARK: Claimers
+
+    private final class WeakClaimer {
+        weak var claimer: ScrollGestureClaimer?
+        init(_ claimer: ScrollGestureClaimer) { self.claimer = claimer }
+    }
+
+    private static var claimers: [ObjectIdentifier: WeakClaimer] = [:]
+    /// Held strongly through the gesture's momentum, which can outlive the claimer's view.
+    private static var claimer: ScrollGestureClaimer?
+
+    /// Gestures that begin over `view` (or inside it) go to `claimer` before any page's swipe.
+    static func register(_ claimer: ScrollGestureClaimer, over view: NSView) {
+        claimers = claimers.filter { $0.value.claimer != nil }
+        claimers[ObjectIdentifier(view)] = WeakClaimer(claimer)
+        installMonitor()
+    }
+
+    static func unregister(view: NSView) {
+        claimers[ObjectIdentifier(view)] = nil
+    }
+
+    private static func claimer(from hit: NSView) -> ScrollGestureClaimer? {
+        var view: NSView? = hit
+        while let current = view {
+            if let claimer = claimers[ObjectIdentifier(current)]?.claimer { return claimer }
             view = current.superview
         }
         return nil
@@ -240,6 +286,16 @@ final class HistorySwipeController {
             MainActor.assumeIsolated { overlay.removeFromSuperview() }
         }
     }
+}
+
+/// A view over pages that takes trackpad scroll gestures before the page's swipe back/forward (the Peek's
+/// swipe to dismiss). It gets every event of a gesture that begins over its view, momentum included.
+@MainActor
+protocol ScrollGestureClaimer: AnyObject {
+    /// True when it consumed the event (the page under it doesn't get it).
+    func handleGesture(_ event: NSEvent, in window: NSWindow?) -> Bool
+    /// What it did with the last gesture, for `ui input` to report.
+    var gestureOutcome: String { get }
 }
 
 /// Chromium's history overlay, hosted like Arc's `PaneHostHistoryOverlayContainerView`: a
