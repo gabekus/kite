@@ -2,9 +2,9 @@ import KiteCore
 import Observation
 import SwiftUI
 
-/// Claude in the browser: a chat bubble floating at the bottom centre of the page.
-/// ⌘J or the sidebar's Claude button opens it; type a goal, Return starts a task, and the
-/// bubble follows that task as it works. Esc hides it; the task keeps going.
+/// Claude in the browser: ⌘J or the sidebar's Claude button opens the Claude bar, which
+/// sits where ⌘T's bar does. Type a goal, Return starts a task, and the bar follows that
+/// task as it works. Esc hides it; the task keeps going.
 @MainActor
 @Observable
 final class ClaudeBubbleModel {
@@ -61,63 +61,128 @@ final class ClaudeBubbleModel {
     }
 }
 
+/// ⌘J: the ⌘T bar in Claude's colours. Same panel, width, position and field as the
+/// command bar; the Claude mark sits where the magnifier does, and the task's transcript
+/// fills the space the suggestions would. Covers the window while open, like ⌘T: a
+/// click outside or Esc hides it, and the task keeps going.
 struct ClaudeBubble: View {
     let model: ClaudeBubbleModel
     let store: BrowserStore
     @FocusState private var focused: Bool
 
+    private typealias C = ArcMetrics.CommandBar
+
     enum Metrics {
-        static let maxWidth: CGFloat = 620
-        static let bottomInset: CGFloat = 18
-        static let cornerRadius: CGFloat = 20
-        static let transcriptMaxHeight: CGFloat = 340
+        /// The mark is drawn a little inside the 18pt icon frame, like the magnifier's ink.
+        static let markSize: CGFloat = 17
+        static let markStroke: CGFloat = 1.8
+        /// Space kept free under the panel when the transcript is at its tallest.
+        static let bottomMargin: CGFloat = 24
+        static let transcriptMinHeight: CGFloat = 120
+        static let buttonSize: CGFloat = 26
+        static let buttonGap: CGFloat = 2
     }
 
     var body: some View {
-        if let tasks = model.tasks {
-            let task = model.taskID.flatMap { tasks.task($0) }
-            VStack(spacing: 0) {
-                if let task {
-                    header(task, tasks: tasks)
-                    transcript(task, isRunning: tasks.isRunning(task.id))
-                    Divider().opacity(0.5)
+        if model.isOpen, let tasks = model.tasks {
+            GeometryReader { proxy in
+                let top = (proxy.size.height * C.topFraction).rounded()
+                let room = proxy.size.height - top - C.fieldHeight - Metrics.bottomMargin
+                ZStack(alignment: .top) {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { model.close() }
+                    panel(tasks: tasks, transcriptHeight: max(Metrics.transcriptMinHeight, room))
+                        .frame(width: min(C.width, proxy.size.width - 32))
+                        .padding(.top, top)
                 }
-                input(task: task, isRunning: task.map { tasks.isRunning($0.id) } ?? false)
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: Metrics.maxWidth)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Metrics.cornerRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Metrics.cornerRadius, style: .continuous)
-                .strokeBorder(.primary.opacity(0.1)))
-            .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
-            .padding(.horizontal, 16)
-            .padding(.top, 24)
-            .padding(.bottom, Metrics.bottomInset)
-            .onExitCommand { model.close() }
-            .onAppear { focused = true }
-            .onChange(of: model.focusToken) { focused = true }
+            // Measured from the window's top edge, titlebar included, like ⌘T.
+            .ignoresSafeArea()
         }
     }
 
-    private func header(_ task: ClaudeTask, tasks: ClaudeTasksController) -> some View {
-        HStack(spacing: 8) {
-            ClaudeMark()
-                .stroke(Color.claude, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
-                .frame(width: 13, height: 13)
-            Text(task.title).font(.callout.weight(.semibold)).lineLimit(1)
-            Spacer()
-            if tasks.hasTabs(task.id) {
-                headerButton("Show Tabs", symbol: "square.on.square") { tasks.showTabs(task.id) }
+    private func panel(tasks: ClaudeTasksController, transcriptHeight: CGFloat) -> some View {
+        let task = model.taskID.flatMap { tasks.task($0) }
+        let isRunning = task.map { tasks.isRunning($0.id) } ?? false
+        return VStack(spacing: 0) {
+            field(task: task, tasks: tasks, isRunning: isRunning)
+            if let task {
+                Rectangle()
+                    .fill(Color.primary.opacity(C.dividerOpacity))
+                    .frame(height: 0.5)
+                    .padding(.horizontal, C.dividerInset)
+                transcript(task, isRunning: isRunning, maxHeight: transcriptHeight)
             }
-            if tasks.isRunning(task.id) {
-                headerButton("Stop", symbol: "stop.circle") { tasks.stop(task.id) }
-            }
-            recentTasks(tasks)
-            headerButton("New Task", symbol: "square.and.pencil") { model.newTask() }
-            headerButton("Hide (Esc)", symbol: "xmark") { model.close() }
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 6)
+        .modifier(CommandBarPanel(accent: .claude))
+        .tint(.claude)
+        .onAppear { focused = true }
+        .onChange(of: model.focusToken) { focused = true }
+    }
+
+    /// ⌘T's search row: icon at 22.5, text at 51.5, 18pt medium, 63.5 tall. A long prompt
+    /// wraps and the row grows; one line keeps ⌘T's exact height.
+    private func field(task: ClaudeTask?, tasks: ClaudeTasksController, isRunning: Bool) -> some View {
+        @Bindable var model = model
+        let frontTab = store.state.selectedTab
+        return HStack(alignment: .center, spacing: 0) {
+            ClaudeMark()
+                .stroke(Color.claude, style: StrokeStyle(lineWidth: Metrics.markStroke, lineCap: .round))
+                .frame(width: Metrics.markSize, height: Metrics.markSize)
+                .frame(width: C.iconSize, height: C.iconSize)
+                .padding(.leading, C.iconX)
+                .padding(.trailing, C.textX - C.iconX - C.iconSize)
+            TextField("", text: $model.draft,
+                      prompt: Text(placeholder(task: task, isRunning: isRunning)).foregroundStyle(.primary.opacity(C.placeholderOpacity)),
+                      axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: C.fieldFontSize, weight: .medium))
+                .lineLimit(1...6)
+                .offset(y: -C.fieldTextLift)
+                .padding(.vertical, 8)
+                .focused($focused)
+                .disabled(isRunning)
+                .onSubmit { task == nil ? model.start(frontTab: frontTab) : model.followUp() }
+                .onExitCommand { model.close() }
+            HStack(spacing: Metrics.buttonGap) {
+                if task == nil, let frontTab {
+                    barButton(model.attachTab ? "Attached “\(frontTab.displayTitle)”" : "Attach this tab",
+                              symbol: model.attachTab ? "paperclip.circle.fill" : "paperclip",
+                              active: model.attachTab) { model.attachTab.toggle() }
+                }
+                if let task {
+                    if tasks.hasTabs(task.id) {
+                        barButton("Show Tabs", symbol: "square.on.square") { tasks.showTabs(task.id) }
+                    }
+                    if isRunning {
+                        barButton("Stop", symbol: "stop.circle") { tasks.stop(task.id) }
+                    }
+                }
+                recentTasks(tasks)
+                if task != nil {
+                    barButton("New Task", symbol: "square.and.pencil") { model.newTask() }
+                }
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, C.iconX - (Metrics.buttonSize - C.iconSize) / 2)
+        }
+        .frame(minHeight: C.fieldHeight)
+    }
+
+    private func barButton(_ help: String, symbol: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: Metrics.buttonSize, height: Metrics.buttonSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(active ? Color.claude : .secondary)
+        .help(help)
+        // Otherwise VoiceOver reads the symbol's own name ("Attachements" for paperclip).
+        .accessibilityLabel(help)
     }
 
     /// Earlier tasks, newest first: a small menu instead of a window.
@@ -136,7 +201,8 @@ struct ClaudeBubble: View {
                 }
             } label: {
                 Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: Metrics.buttonSize, height: Metrics.buttonSize)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -146,20 +212,7 @@ struct ClaudeBubble: View {
         }
     }
 
-    private func headerButton(_ help: String, symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .help(help)
-        .accessibilityLabel(help)
-    }
-
-    private func transcript(_ task: ClaudeTask, isRunning: Bool) -> some View {
+    private func transcript(_ task: ClaudeTask, isRunning: Bool, maxHeight: CGFloat) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
@@ -174,58 +227,18 @@ struct ClaudeBubble: View {
                     }
                     Color.clear.frame(height: 1).id("end")
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 10)
+                .padding(.leading, C.textX)
+                .padding(.trailing, C.iconX)
+                .padding(.vertical, 12)
+                .font(.system(size: 13))
                 .textSelection(.enabled)
             }
-            .frame(maxHeight: Metrics.transcriptMaxHeight)
+            .frame(maxHeight: maxHeight)
             .fixedSize(horizontal: false, vertical: true)
             .onAppear { proxy.scrollTo("end", anchor: .bottom) }
             .onChange(of: task.entries.count) { proxy.scrollTo("end", anchor: .bottom) }
             .onChange(of: task.entries.last?.text) { proxy.scrollTo("end", anchor: .bottom) }
         }
-    }
-
-    private func input(task: ClaudeTask?, isRunning: Bool) -> some View {
-        @Bindable var model = model
-        let frontTab = store.state.selectedTab
-        return HStack(alignment: .center, spacing: 10) {
-            if task == nil {
-                ClaudeMark()
-                    .stroke(Color.claude, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
-                    .frame(width: 16, height: 16)
-            }
-            TextField(placeholder(task: task, isRunning: isRunning), text: $model.draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .lineLimit(1...6)
-                .focused($focused)
-                .disabled(isRunning)
-                .onSubmit { task == nil ? model.start(frontTab: frontTab) : model.followUp() }
-            if task == nil, let frontTab {
-                Button {
-                    model.attachTab.toggle()
-                } label: {
-                    Label(frontTab.displayTitle, systemImage: model.attachTab ? "paperclip.circle.fill" : "paperclip")
-                        .labelStyle(.iconOnly)
-                        .font(.system(size: 14))
-                        .foregroundStyle(model.attachTab ? Color.claude : .secondary)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(model.attachTab ? "Attached “\(frontTab.displayTitle)”" : "Attach this tab")
-            }
-            if task == nil, let tasks = model.tasks {
-                recentTasks(tasks)
-            }
-            if task == nil {
-                // Same 22pt target as the header's buttons; the bare icon was 10.5pt.
-                headerButton("Hide (Esc)", symbol: "xmark") { model.close() }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
     }
 
     private func placeholder(task: ClaudeTask?, isRunning: Bool) -> String {

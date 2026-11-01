@@ -223,6 +223,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         commandBarHost.isHidden = true
         claudeBubbleHost = NSHostingView(rootView: ClaudeBubble(model: claudeBubble, store: store))
+        claudeBubbleHost.sizingOptions = []
         claudeBubbleHost.isHidden = true
         claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
 
@@ -318,16 +319,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             glowView.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: -Layout.glowMargin),
             glowView.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor, constant: Layout.glowMargin),
 
-            // Bottom centre of the page, as wide as the bubble wants up to the page's width.
-            claudeBubbleHost.centerXAnchor.constraint(equalTo: contentFrame.centerXAnchor),
-            claudeBubbleHost.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor),
-            claudeBubbleHost.widthAnchor.constraint(lessThanOrEqualTo: contentFrame.widthAnchor),
-            claudeBubbleHost.topAnchor.constraint(greaterThanOrEqualTo: contentFrame.topAnchor),
-            { let width = claudeBubbleHost.widthAnchor.constraint(equalToConstant: ClaudeBubble.Metrics.maxWidth + 32)
-              // Below the window's own size priorities (490/500), or the bubble's 652pt holds
-              // the window open at sidebar + 662 and the window can't shrink to its minimum.
-              width.priority = .defaultLow
-              return width }(),
+            // ⌘J sits where ⌘T does, so it covers the window the same way.
+            claudeBubbleHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            claudeBubbleHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            claudeBubbleHost.topAnchor.constraint(equalTo: rootView.topAnchor),
+            claudeBubbleHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
             commandBarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             commandBarHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
@@ -539,8 +535,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func claudeBubbleOpened(_ open: Bool) {
         claudeBubbleHost.isHidden = !open
         if open {
+            // ⌘J and ⌘T share a spot: only one shows at a time.
+            store.hideCommandBar()
             window?.makeFirstResponder(claudeBubbleHost)
-        } else {
+        } else if store.commandBar == nil {
+            // Closed by ⌘T opening: leave the focus in ⌘T's field.
             shownPage?.focus()
         }
     }
@@ -554,10 +553,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if visible != commandBarVisible {
             commandBarVisible = visible
             commandBarHost.isHidden = !visible
-            if !visible {
+            if visible {
+                claudeBubble.close()
+            } else {
                 releaseHeldKeys(replay: false)
                 for page in shownPages.values { page.allowFocus() }
-                shownPage?.focus()
+                // Closed by ⌘J opening: leave the focus in Claude's field.
+                if !claudeBubble.isOpen { shownPage?.focus() }
             }
         }
         // Also when ⌘T or ⌘L comes while the bar is already open.

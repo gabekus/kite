@@ -108,14 +108,17 @@ import Testing
 
     @Test func tabNumbersCountASplitOnce() {
         var (state, ids) = makeState()
-        guard case .added(let b) = state.addSplitPane() else { return }
+        // Explicit, increasing times: Windows' clock can stamp makeState's selection and
+        // the new pane with the same Date, and then "the pane used last" is a tie.
+        let t = Date().addingTimeInterval(60)
+        guard case .added(let b) = state.addSplitPane(now: t) else { return }
         // Sidebar: [split(ids0, b)], ids1, ids2.
-        state.selectTab(number: 2)
+        state.selectTab(number: 2, now: t + 1)
         #expect(state.selectedTab?.id == ids[1])
-        state.selectAdjacentTab(offset: -1)
+        state.selectAdjacentTab(offset: -1, now: t + 2)
         // Back into the split, at the pane used last.
         #expect(state.selectedTab?.id == b)
-        state.selectAdjacentTab(offset: 1)
+        state.selectAdjacentTab(offset: 1, now: t + 3)
         #expect(state.selectedTab?.id == ids[1])
     }
 
