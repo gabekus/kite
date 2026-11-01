@@ -26,6 +26,8 @@ final class BrowserStore {
     private(set) var state: BrowserState
     private(set) var pages: [UUID: PageStatus] = [:]
     private(set) var commandBar: CommandBarMode?
+    /// The space whose header name is being edited in place.
+    private(set) var renamingSpaceID: UUID?
     private(set) var isSidebarVisible = true
     /// macOS light/dark, which dark pages follow in `.matchSystem`.
     private(set) var systemIsDark = false
@@ -88,6 +90,14 @@ final class BrowserStore {
     }
 
     // MARK: Chrome state
+
+    func beginRenaming(space id: UUID) {
+        if !isSidebarVisible { toggleSidebar() }
+        mutate { $0.selectSpace(id) }
+        renamingSpaceID = id
+    }
+
+    func endRenaming() { renamingSpaceID = nil }
 
     func showCommandBar(_ mode: CommandBarMode) {
         commandBar = mode

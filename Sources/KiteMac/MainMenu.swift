@@ -250,7 +250,7 @@ enum MainMenu {
         submenu("Spaces", [
             item("New Space", #selector(BrowserWindowController.newSpace(_:)), id: "newSpace"),
             item("Edit Theme…", #selector(BrowserWindowController.editTheme(_:)), id: "editTheme"),
-            item("Rename Space…", #selector(BrowserWindowController.renameSpace(_:)), id: "renameSpace"),
+            item("Rename Space", #selector(BrowserWindowController.renameSpace(_:)), id: "renameSpace"),
             .separator(),
             // ⇧⌘S is Gabe's Arc binding; ⌥⌘→ is Arc's default.
             item("Next Space", #selector(BrowserWindowController.nextSpace(_:)), "s", [.command, .shift], id: "nextSpace"),

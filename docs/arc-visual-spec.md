@@ -370,6 +370,19 @@ are in each tile's right-click menu instead. Arc's hover reveal in the sidebar U
 - In Gabe's window it draws nothing at all with three spaces, before and after a synthetic hover. Why is still
   open (a setting, or hover only).
 
+**Space header and context menu → `SpaceHeader`, `SpaceContextMenu`** (binary strings, 1 Nov 2026)
+- The header's actions are `didClickEditSpaceStyle`, `didClickEditableIcon` / `didCloseIconPicker`,
+  `didBeginEditingSpaceName`, `didRenameSpace` and `didCancelRenameSpace`: the name is edited in place, and the
+  icon is a button that opens an icon picker.
+- `SidebarSpaceState+SpaceContextMenu.swift` holds the space context menu, with items Rename, New Folder, Share,
+  delete, Manage Spaces, Show/Hide Space Header, live folders, profile, Edit Theme Color, Change Space Icon and
+  "Export … into Folder". The order and the exact Rename/delete titles weren't read.
+- Neither could be opened from outside: Arc ignored a right-click posted to its process, and Spaces → Rename
+  Space pressed through accessibility did nothing visible while Arc was in the background.
+- **Kite:** the strip icon and the header share one menu (Rename Space, New Folder, Edit Theme Color, Change
+  Space Icon, Delete Space). Rename edits the header in place: Return or clicking away keeps it, Escape cancels.
+  Unverified: whether Arc also starts a rename on double-click.
+
 **Theme editor → `ThemeEditor`, `ArcMetrics.ThemeEditor`** (Spaces → Edit Theme…, tree plus one capture)
 - An `AXPopover`, 382×534, hanging off the sidebar's right edge (x 313). Opened from the menu with the pointer
   away, its bottom sat on the window's bottom (y 751 to 1285); opened the same way a few minutes later it sat

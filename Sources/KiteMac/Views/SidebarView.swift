@@ -12,7 +12,6 @@ struct SidebarActions {
     var addSplitView: () -> Void
     /// A space's context menu in the strip.
     var editTheme: (UUID) -> Void
-    var renameSpace: (UUID) -> Void
     var changeSpaceIcon: (UUID) -> Void
     var deleteSpace: (UUID) -> Void
 }
@@ -114,7 +113,7 @@ struct SidebarView: View {
         List {
             Section {
                 // A row rather than a section header: a plain List paints headers with an opaque bar.
-                SpaceHeader(space: space)
+                SpaceHeader(store: store, actions: actions, space: space)
                     .sidebarRow(pill: false)
                 let pinnedGroups = SidebarGroup.group(space.pinnedItems.map(\.id), splits: space.splits)
                 ForEach(pinnedGroups) { group in
@@ -791,36 +790,87 @@ private struct SpaceBar: View {
                 }
                 .buttonStyle(.plain)
                 .help(space.name)
-                .contextMenu {
-                    Button("Edit Theme…") { actions.editTheme(space.id) }
-                    Button("Rename Space…") { actions.renameSpace(space.id) }
-                    Button("Change Icon…") { actions.changeSpaceIcon(space.id) }
-                    Divider()
-                    Button("Delete Space…") { actions.deleteSpace(space.id) }
-                        .disabled(state.spaces.count < 2)
-                }
+                .contextMenu { SpaceContextMenu(store: store, actions: actions, space: space) }
             }
         }
     }
 }
 
 /// The space's icon and name above its pinned tabs, Arc's small semibold caption.
-private struct SpaceHeader: View {
+/// Arc's space context menu, shared by the space's icon in the strip and its header. Arc's
+/// `SidebarSpaceState+SpaceContextMenu` also has Share, Manage Spaces, Show/Hide Space Header, live folders,
+/// profile and Turn into Folder, which Kite doesn't have yet.
+private struct SpaceContextMenu: View {
+    let store: BrowserStore
+    let actions: SidebarActions
     let space: Space
 
     var body: some View {
+        Button("Rename Space") { store.beginRenaming(space: space.id) }
+        Button("New Folder") {
+            guard let index = store.state.spaceIndex(space.id) else { return }
+            store.mutate { _ = $0.createFolder(name: "New Folder", inSpace: index) }
+        }
+        Divider()
+        Button("Edit Theme Color") { actions.editTheme(space.id) }
+        Button("Change Space Icon") { actions.changeSpaceIcon(space.id) }
+        Divider()
+        Button("Delete Space") { actions.deleteSpace(space.id) }
+            .disabled(store.state.spaces.count < 2)
+    }
+}
+
+/// The space's icon and name above its pinned tabs, Arc's small semibold caption. As in Arc, the name
+/// is renamed in place (`didBeginEditingSpaceName`, `didRenameSpace`, `didCancelRenameSpace`), the icon
+/// is a button that changes it (`didClickEditableIcon`), and a right-click gives the space's menu.
+private struct SpaceHeader: View {
+    let store: BrowserStore
+    let actions: SidebarActions
+    let space: Space
+    @State private var draft = ""
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        let renaming = store.renamingSpaceID == space.id
         HStack(spacing: M.headerTextX - M.headerIconX - M.headerIconSize) {
-            Text(space.icon)
-                .font(.system(size: 15))
-                .frame(width: M.headerIconSize, height: M.headerIconSize)
-            Text(space.name)
-                .font(.system(size: M.headerFontSize, weight: .semibold))
-                .opacity(M.headerTextOpacity)
-                .lineLimit(1)
+            Button { actions.changeSpaceIcon(space.id) } label: {
+                Text(space.icon)
+                    .font(.system(size: 15))
+                    .frame(width: M.headerIconSize, height: M.headerIconSize)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Change Space Icon")
+            if renaming {
+                TextField("Space Name", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: M.headerFontSize, weight: .semibold))
+                    .focused($fieldFocused)
+                    .onSubmit { commit() }
+                    .onExitCommand { store.endRenaming() }
+                    .onAppear {
+                        draft = space.name
+                        fieldFocused = true
+                    }
+                    .onChange(of: fieldFocused) { _, focused in if !focused { commit() } }
+            } else {
+                Text(space.name)
+                    .font(.system(size: M.headerFontSize, weight: .semibold))
+                    .opacity(M.headerTextOpacity)
+                    .lineLimit(1)
+            }
             Spacer(minLength: 0)
         }
         .padding(.leading, M.headerIconX - M.padding)
         .padding(.top, M.headerIconTop)
         .frame(height: M.headerHeight + M.listTopSpacer, alignment: .top)
+        .contentShape(Rectangle())
+        .contextMenu { SpaceContextMenu(store: store, actions: actions, space: space) }
+    }
+
+    private func commit() {
+        guard store.renamingSpaceID == space.id else { return }
+        store.mutate { $0.renameSpace(space.id, to: draft) }
+        store.endRenaming()
     }
 }
