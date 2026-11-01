@@ -148,7 +148,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Minimize / Zoom | ⌘M | ✅ | macOS adds Fill, Center, tiling for free |
 | Stay On Top | | ✅ checkmark in the menu, window floats, no in-window indicator (as in Arc) | |
 | Open Library… | ⇧⌘L | ❌ | Thread: Library |
-| View Downloads… | ⇧⌘J | ❌ | Thread: Library (downloads) |
+| View Downloads… | ⇧⌘J | ✅ Window menu, opens the downloads list (Arc opens Library › Downloads) | Thread: Library (downloads page) |
 | View Easels… / Media… / Boosts… | | ❌ | Their threads |
 
 ### Help
@@ -206,9 +206,9 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Default browser, handle links | | ✅ | |
 | PWAs / installed apps | `app_mode_loader` shims | ❌ | Roadmap: PWAs |
 | Sad tab | Crashed-tab page: face, "Tab crashed. Maybe reload the page?", exit code bottom-right | ✅ Chromium; WebKit still reloads on its own | B5 |
-| Download from links, downloads list | | 🟡 WebKit saves files, no UI | Thread: Library |
+| Download from links, downloads list | | 🟡 Both engines list downloads (downloads.json): progress ring on a bottom-bar button, popover with progress, open, Show in Finder, copy, hide, trash, cancel. No Library page, flying-icon animation or "Downloads in progress" quit alert yet | Thread: Library |
 | Picture in Picture | Video PiP | ❌ | Thread: Mini player |
-| Gestures | Two-finger swipe back/forward | ❌ | B5 |
+| Gestures | Two-finger swipe back/forward: Chromium's `HistorySwiper` + history overlay (dark circle with arrow sliding in from the edge), only when the page can't scroll that way | 🟡 WebKit (system gesture); Chromium: Kite's own recogniser with Chromium's overlay geometry, threshold for trackpads unverified | B5 |
 | Welcome / onboarding | | ❌ | Skip |
 
 ## Batches

@@ -54,7 +54,6 @@ struct ThemeUniforms {
     float4 fromLab[4];   // OKLab, converted once on the CPU
     float4 toLab[4];
     float4 cutout;       // web content rect in px: x, y, w, h
-    float4 glow;         // pointer light: centre x, y and sigma x, y, in px
     float2 size;         // drawable px
     float fromGrain;
     float toGrain;
@@ -64,7 +63,6 @@ struct ThemeUniforms {
     float cutoutRadius;  // px
     float fromTint;      // opacity over the window's material, 0...1
     float toTint;
-    float glowStrength;  // peak white added under the pointer, 0 when it's away
 };
 
 // Where each color sits, by palette size.
@@ -118,12 +116,7 @@ fragment float4 kite_theme_fragment(VertexOut in [[stage_in]], constant ThemeUni
     float grain = mix(u.fromGrain, u.toGrain, u.progress) * 0.259;
     float grey = saturate(0.73 + (hash12(px) - 0.5) * 0.735);
     float4 grainColor = float4(grey, grey, grey, 1.0) * grain;  // premultiplied
-    color = grainColor * color + grainColor * (1.0 - color.a) + color * (1.0 - grainColor.a);
-
-    // A soft white light that follows the pointer over the sidebar, wider than tall.
-    float2 g = (px - u.glow.xy) / max(u.glow.zw, 1.0);
-    float light = u.glowStrength * exp(-0.5 * dot(g, g));
-    return float4(color.rgb + light, color.a + light * (1.0 - color.a));
+    return grainColor * color + grainColor * (1.0 - color.a) + color * (1.0 - grainColor.a);
 }
 
 // MARK: Loading glow

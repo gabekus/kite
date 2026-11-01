@@ -57,7 +57,8 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 /// Posted on the main thread as a download progresses. `object` is the KCBrowser; userInfo has
-/// id, url, path, state (in-progress, complete, canceled, interrupted), receivedBytes, totalBytes.
+/// id, url, path, state (in-progress, complete, canceled, interrupted), receivedBytes, totalBytes,
+/// speed (bytes per second).
 extern NSString * const KCDownloadDidUpdateNotification;
 
 /// Posted on the main thread when Chromium opened a page outside Kite's tabs (an
@@ -181,6 +182,9 @@ NS_SWIFT_UI_ACTOR
 /// Sends a raw DevTools message, such as one to an attached session.
 - (void)sendDevToolsMessage:(NSDictionary<NSString *, id> *)message;
 - (void)close;
+/// Cancels a live download by the id in KCDownloadDidUpdateNotification. Returns NO when
+/// Chromium no longer has it.
++ (BOOL)cancelDownloadWithID:(NSInteger)downloadID;
 @end
 
 NS_ASSUME_NONNULL_END

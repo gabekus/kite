@@ -8,7 +8,7 @@ import SwiftUI
 final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
     private enum Layout {
         static let defaultSidebarWidth: CGFloat = 240
-        static let sidebarWidths: ClosedRange<CGFloat> = 180...400
+        static let sidebarWidths = ArcMetrics.Sidebar.widths
         static let inset = ArcMetrics.Content.inset
         static let cornerRadius = ArcMetrics.Content.cornerRadius
         static let glowMargin: CGFloat = 28
@@ -31,6 +31,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var sidebarHost: NSHostingView<SidebarView>!
     /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
     let claudeButton = ClaudeButtonModel()
+    let downloadsButton = DownloadsButtonModel()
     /// Claude's chat bubble over the page; AppDelegate connects it to Claude Tasks.
     let claudeBubble = ClaudeBubbleModel()
     private var claudeBubbleHost: NSHostingView<ClaudeBubble>!
@@ -158,6 +159,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             goBack: { [weak self] in self?.goBack(nil) },
             goForward: { [weak self] in self?.goForward(nil) },
             reload: { [weak self] in self?.reload(nil) },
+            forceReload: { [weak self] in self?.forceReload(nil) },
             toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
             closeTab: { [weak self] id in self?.close(tab: id) },
             addSplitView: { [weak self] in self?.addSplitView(nil) },
@@ -183,6 +185,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             actions: actions,
             supportsDarkPages: pool.engine.supportsDarkPages,
             claude: claudeButton,
+            downloads: downloadsButton,
             swipe: spaceSwipe.model
         )
         var toolbar = PageToolbar(store: store, actions: actions)
@@ -373,10 +376,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let frame = shownTabIDs.count > 1 ? .zero : cardCoverDuringToggle ?? contentFrame.frame
         themeView.cutoutRect = CGRect(x: frame.minX, y: rootView.bounds.height - frame.maxY, width: frame.width, height: frame.height)
         themeView.cutoutCornerRadius = Layout.cornerRadius
-        let sidebar = sidebarHost.frame
-        themeView.glowRegion = sidebarVisible
-            ? CGRect(x: sidebar.minX, y: rootView.bounds.height - sidebar.maxY, width: sidebar.width, height: sidebar.height)
-            : .zero
     }
 
     // MARK: Sync with the store
@@ -831,6 +830,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):
             return shownPage?.isLoading ?? false
+        case #selector(showOnePassword(_:)):
+            #if canImport(CEFBridge)
+            return !isIncognito
+            #else
+            return false
+            #endif
         case #selector(toggleFullScreenMode(_:)):
             item.title = window?.styleMask.contains(.fullScreen) == true ? "Exit Full Screen" : "Enter Full Screen"
         default:
