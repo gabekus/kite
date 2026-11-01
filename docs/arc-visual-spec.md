@@ -2655,3 +2655,28 @@ Nothing in Arc was pressed or run. Decompiles (Ghidra, read-only project) are un
   windows on launch with the switch on, one with `restoreWindowsOnLaunch` false. Haptics: the drop handler, reached
   through a temporary hook, called `NSHapticFeedbackManager.perform(.generic, .now)` with the key unset and skipped it with
   `tabReorderingHapticsDisabled` true. A haptic can't be felt in a test, and a real sidebar drag can't run in the background.
+
+
+## Edit menu: Find and Replace, Format › Font, AutoFill, Data Detectors → `MainMenu` (Arc 1.171 MainMenu.nib and binary, 1 Nov 2026)
+
+Read from Arc's compiled `Base.lproj/MainMenu.nib` (control connectors: action, item, key, tag) and Arc's decompile.
+
+- **Find › Find and Replace**, ⌥⌘F, between Find… and Find Next. Action `arc_performFindPanelAction:` with tag 12
+  (`NSTextFinder.Action.showReplaceInterface`), to the first responder, like Find… (tag 1), Find Next (2), Find
+  Previous (3), Use Selection to Find (7). `MainWindowController`'s menu validation for that action enables tag 1,
+  tags 2 and 3 while a find is open, tag 7 with a selection, and nothing else, so for a web page tag 12 is off.
+  Only Arc's Notes editor (`TextEditorViewController`) takes it. Kite sends `performTextFinderAction:` tag 12 to
+  the first responder: only an AppKit text view with a find bar takes it, and Kite has none (its field editors
+  have no find bar), so it's off everywhere in Kite, as in Arc on pages and fields.
+- **Format › Font › Bold / Italic / Underline**, ⌘B / ⌘I / ⌘U. Format holds only Font; Font holds only these three.
+  Bold and Italic: `addFontTrait:` tags 2 and 1, target the font manager. Underline: `underline:` to the first
+  responder. Neither ArcCore (Chromium) nor Kite's CEF has a `changeFont:` or `underline:` selector, so the menu
+  items do nothing for a Chromium page; Blink's own editor maps ⌘B/⌘I/⌘U to ToggleBold/Italic/Underline in a text
+  box, and the page gets the key before the menu bar (CEF hands only keys the page leaves to the menu). WKWebView
+  takes `changeFont:` and `underline:`, so on WebKit the menu items bold and underline a text box too.
+- **AutoFill › Contact… / Passwords…** aren't in Arc's nib: AppKit inserts them (with Start Dictation and Emoji &
+  Symbols) after Format, in Arc and in Kite alike (`_handleInsertFromContactsCommand:` /
+  `_handleInsertFromPasswordsCommand:`). Neither Chromium nor WKWebView takes them, so they work in native fields
+  only, in both browsers. Nothing to build.
+- **Substitutions › Data Detectors**, between Smart Links and Text Replacement: `toggleAutomaticDataDetection:` to
+  the first responder. Page views don't take it; AppKit text fields do.
