@@ -258,8 +258,19 @@ enum MainMenu {
             item("Previous Tab", #selector(BrowserWindowController.previousTab(_:)), up, [.command, .option], id: "previousTab"),
             item("Switch to Recent Tab", #selector(BrowserWindowController.selectRecentTab(_:)), "\t", .control, id: "nextRecentTabItem"),
             alternate(#selector(BrowserWindowController.previousTab(_:)), "\t", [.control, .shift]),
+            // Arc 1.171's Tabs menu: no shortcut by default; Arc's binding name.
+            item("Reveal Tab in Sidebar", #selector(BrowserWindowController.revealTabInSidebar(_:)), id: "revealTabInSidebar"),
             .separator(),
             item("Clear Today", #selector(BrowserWindowController.clearToday(_:)), "k", [.command, .shift], id: "clearUnpinnedTabs"),
+            item("Reset all tabs in this Space", #selector(BrowserWindowController.resetAllTabsInSpace(_:)), id: "resetSpace"),
+            {
+                // Arc has a `resetTab` binding ("Reset tab to original URL.") but no menu item for it:
+                // hidden, so a shortcut set for it (or brought over from Arc) still works.
+                let reset = item("Reset Tab to Original URL", #selector(BrowserWindowController.resetTab(_:)), id: "resetTab")
+                reset.isHidden = true
+                reset.allowsKeyEquivalentWhenHidden = true
+                return reset
+            }(),
             .separator(),
         ] + (1...9).map { n in
             item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n, id: n == 9 ? "lastTab" : "tab\(n)")
