@@ -5,8 +5,11 @@ extension BrowserWindowController {
     /// After a sidebar drop: Arc's drop haptic and its move toasts (`MoveItemsToastType`; the
     /// wording is from Arc 1.169's strings).
     func sidebarDropped(_ outcome: SidebarDropOutcome) {
-        // Arc's drop haptic: probably the generic pattern, performed now (binary, not confirmed).
-        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+        // Arc's drop haptic: probably the generic pattern, performed now (binary, not confirmed),
+        // unless Settings › Advanced › "Haptic feedback when reordering tabs" is off.
+        if TabReorderHaptics.isEnabled() {
+            NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+        }
         let state = store.state
         switch outcome {
         case .moved:
