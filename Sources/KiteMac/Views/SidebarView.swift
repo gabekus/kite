@@ -329,9 +329,9 @@ struct SidebarView: View {
                     onDelete: { actions.deleteFolder(folder.id) },
                     showsIntro: store.liveFolderIntroID == folder.id,
                     onDismissIntro: { store.liveFolderIntroID = nil },
-                    isClaudeFolder: folder.ephemeral == true && parent == nil,
                     claudeActive: claudeShowsActivity(on: folder),
-                    onStopClaude: { stopClaude(in: folder) })
+                    onStopClaude: { stopClaude(in: folder) },
+                    isClaudeFolder: folder.ephemeral == true && parent == nil)
                     .modifier(SidebarDragSource(
                         store: store,
                         row: .init(id: folder.id, kind: .folder(expanded: folder.isExpanded), space: space.id, pinned: true,
