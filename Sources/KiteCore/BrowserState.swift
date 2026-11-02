@@ -428,13 +428,23 @@ public struct BrowserState: Hashable, Codable, Sendable {
         defer { normalizeSplits() }
 
         let outcome: CloseOutcome
-        if location.section != .unpinned, self[location].isBlank {
-            // An empty pane left pinned (Add Split View next to a pinned tab) has nothing to keep:
-            // it goes, with a Claude folder it leaves empty, rather than staying as a blank row.
+        if location.section != .unpinned, closesForGood(tab: id) {
+            // A pane the user added next to a pinned tab goes like an unpinned tab (archived,
+            // reopenable) instead of staying as a row, with a Claude folder it leaves empty.
+            let tab = self[location]
             if location.section == .favorite {
                 favorites.remove(at: location.index)
             } else {
                 removePinnedTab(id, droppingEmptyFolder: isInEphemeralFolder(id))
+            }
+            if !tab.isBlank {
+                var closed = ClosedTab(tab: tab, spaceID: spaces[s].id, index: 0)
+                closed.tab.splitPane = nil
+                recentlyClosed.append(closed)
+                if recentlyClosed.count > Self.recentlyClosedLimit {
+                    recentlyClosed.removeFirst(recentlyClosed.count - Self.recentlyClosedLimit)
+                }
+                appendToArchive([closed])
             }
             outcome = .removed
         } else if location.section != .unpinned {
@@ -465,6 +475,19 @@ public struct BrowserState: Hashable, Codable, Sendable {
             spaces[s].selectedTabID = remaining.isEmpty ? nil : remaining[min(position, remaining.count - 1)].id
         }
         return outcome
+    }
+
+    /// A pinned tab or favorite that closing removes rather than unloads: a pane Add Split View
+    /// added next to one, or a tab that never had a page.
+    public func closesForGood(tab id: UUID) -> Bool {
+        guard let tab = tab(id) else { return false }
+        return tab.splitPane == true || tab.isBlank
+    }
+
+    /// Whether the sidebar row shows its close button. Tabs Claude opened in its folders don't:
+    /// Claude closes them when it's done, and closing one by hand would only unload it.
+    public func showsCloseButton(tab id: UUID) -> Bool {
+        !isInEphemeralFolder(id) || closesForGood(tab: id)
     }
 
     @discardableResult
@@ -502,7 +525,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
             if location.section == .pinned {
                 spaces[s].tabs.insert(contentsOf: members, at: 0)
             } else {
-                spaces[s].pinnedItems.append(contentsOf: members.map(PinnedItem.tab))
+                spaces[s].pinnedItems.append(contentsOf: members.map { var tab = $0; tab.splitPane = nil; return .tab(tab) })
             }
             return
         }
@@ -516,7 +539,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
                 spaces[s].tabs.insert(tab, at: 0)
             }
         } else {
-            let tab = spaces[s].tabs.remove(at: location.index)
+            var tab = spaces[s].tabs.remove(at: location.index)
+            tab.splitPane = nil
             spaces[s].pinnedItems.append(.tab(tab))
         }
     }

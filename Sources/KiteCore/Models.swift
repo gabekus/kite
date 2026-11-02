@@ -12,6 +12,10 @@ public struct BrowserTab: Identifiable, Hashable, Codable, Sendable {
     /// A name the user gave the tab (Arc's Rename), shown instead of the page's title and kept
     /// when the page's title changes. nil shows the page's title. Older sessions decode it as nil.
     public var customTitle: String?
+    /// A pane Add Split View put next to a pinned tab or favorite: it sits pinned with its split,
+    /// but the user opened it, so closing it removes it like an unpinned tab instead of only
+    /// unloading it. nil for every other tab, and cleared when the user pins it.
+    public var splitPane: Bool?
 
     public init(
         id: UUID = UUID(),

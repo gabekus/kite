@@ -107,6 +107,44 @@ import Testing
         #expect(closedTab == .unloaded)
     }
 
+    @Test func closingAPaneThatLoadedAPageNextToAClaudeTabRemovesIt() throws {
+        // ⌘L on a tab in Claude › Session, a search, then ⌘W: the pane goes for good (archived,
+        // reopenable), and only Claude's own tab hides its close button.
+        var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0])])
+        let created = state.claudeSessionFolder(named: "Blacksmith", inSpace: state.spaces[0].id)
+        let folder = try #require(created)
+        let tab = state.openTab(url: URL(string: "https://app.blacksmith.sh"), in: state.spaces[0].id)
+        let moved = state.moveTab(tab, toFolder: folder)
+        #expect(moved)
+        state.select(tab: tab)
+        guard case .added(let pane) = state.addSplitPane() else { return }
+        state.update(tab: pane) { $0.url = URL(string: "https://www.google.com/search?q=test") }
+        state.syncPinnedURLs()
+        #expect(!state.showsCloseButton(tab: tab))
+        #expect(state.showsCloseButton(tab: pane))
+        let closed = state.close(tab: pane)
+        #expect(closed == .removed)
+        #expect(state.tab(pane) == nil && state.tab(tab) != nil)
+        #expect(state.archived.map(\.tab.id) == [pane])
+        let reopened = state.reopenLastClosed()
+        #expect(reopened == pane)
+        #expect(state.selectedSpace.tabs.map(\.id) == [pane])
+        #expect(state.tab(pane)?.splitPane == nil)
+    }
+
+    @Test func pinningASplitByHandMakesItsPanesOrdinaryPinnedTabs() {
+        var (state, ids) = makeState()
+        state.togglePin(tab: ids[0])
+        guard case .added(let pane) = state.addSplitPane() else { return }
+        #expect(state.tab(pane)?.splitPane == true)
+        state.togglePin(tab: pane)
+        state.togglePin(tab: pane)
+        #expect(state.tab(pane)?.splitPane == nil)
+        state.update(tab: pane) { $0.url = URL(string: "https://example.com") }
+        let closed = state.close(tab: pane)
+        #expect(closed == .unloaded)
+    }
+
     @Test func closingAStrandedBlankPinnedTabRemovesIt() throws {
         // What earlier builds left behind: an empty pane, out of its split, pinned at about:blank.
         var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0])])
