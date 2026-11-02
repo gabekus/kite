@@ -1178,11 +1178,16 @@ Arc wasn't driven; nothing here is from a recording.
   ("separates a tab from its split view container"). Kite leaves out Share Split View… (no sharing) and keeps its Pin/Unpin Split View,
   Copy Link and Close this Split Pane items in those two groups.
 - **Undo name** [str]: "Move Items out of split" (`WindowData+SplitViewHelpers.swift`). Kite has no sidebar undo yet.
-- **Hover button** [str]: Arc's sidebar trailing button on a split's pane can be "Separate from Split View" ("removes the child item from its
-  split view and opens it in a separate tab"), drawn with `icon-separate-from-split-opaque`. Possibly behind the
-  `new-split-separation-mechanisms-enabled` flag. **Not built**: when it shows wasn't traced.
-- **What happens to the tabs** [inferred]: the split ends and its tabs stay where they were in the sidebar, the focused one still
-  selected. Not observed live in Arc.
+- **What happens to the tabs** [observed, View › Separate Page from Split View, Arc 1.171 incognito]: separating the focused pane of
+  [A | B] leaves A in place with B directly below it, B still selected and alone on screen; from [A | B | C], C lands directly below
+  the [A | B] row. No in-between frames at ~10 captures/s. Separate All Tabs itself (context menu only; Arc ignores synthetic clicks
+  there) is **not observed**: Kite leaves every tab in place, the focused one selected.
+- **Per-tab trailing button** [dec, 1.169 FUN_1000bcff0 / FUN_1000bb388 / FUN_1000bd610]: a split row's tab has a trailing button
+  whose states are close, deselect and unsplit. With `option-click-split-tab-close-button-to-unsplit-enabled` on and ⌥ (alone)
+  held, it shows as unsplit ("Separate from Split View") and a click (or a middle-click on the tab) separates the tab. The flag's
+  default is off (its key getter returns 0x200; on-flags return 0x201). Kite: the tab row's close button (24×24, `xmark` 9pt bold,
+  60%) on the hovered split tab, turning into `scissors` under ⌥ when the hidden `optionClickSplitTabCloseButtonToUnsplit` default is
+  on. Arc's button geometry, icon and hover timing are **not measured**; Kite has no middle-click close, so that path is left out.
 
 ## Split View: drag a sidebar tab onto the pages → `SplitTabDrop.swift` (KiteCore), `BrowserWindowController+SplitTabDrop` (Arc 1.169 decompile, 1.171 strings, 1 Nov 2026)
 

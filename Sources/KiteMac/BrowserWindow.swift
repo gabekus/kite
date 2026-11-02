@@ -1,4 +1,13 @@
 import AppKit
+import Observation
+
+/// The modifiers held as of the last modifier change any browser window saw, for views that change
+/// while a key is held (a split tab's button turns into Separate from Split View under ⌥).
+@MainActor @Observable
+final class HeldModifiers {
+    static let shared = HeldModifiers()
+    var flags: NSEvent.ModifierFlags = []
+}
 
 /// The browser window. It offers scroll events to `scrollInterceptor` before any view sees them, so a
 /// two-finger swipe over the sidebar can page spaces even though the tab list is a scroll view too.
@@ -16,7 +25,10 @@ final class BrowserWindow: NSWindow {
     override func sendEvent(_ event: NSEvent) {
         if event.type == .scrollWheel, scrollInterceptor?(event) == true { return }
         if [.leftMouseDown, .leftMouseDragged, .leftMouseUp].contains(event.type), mouseInterceptor?(event) == true { return }
-        if event.type == .flagsChanged { heldModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask) }
+        if event.type == .flagsChanged {
+            heldModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            HeldModifiers.shared.flags = heldModifiers
+        }
         if [.keyDown, .keyUp, .flagsChanged].contains(event.type), keyInterceptor?(event) == true { return }
         super.sendEvent(event)
     }
