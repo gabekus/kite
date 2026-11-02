@@ -3536,3 +3536,27 @@ Page. Which one ⌘F opens with the feature off isn't traced in the reducer; the
   material), the field's row height (Kite: the field's line + 24), the Ask button's palette colour (Kite: system accent),
   and the shadow (Kite keeps the find bar's).
 
+
+## Reordering spaces in the bottom bar → `SpaceReorder` (KiteCore), `SpaceBar` (SidebarView.swift) (Arc 1.171, 1 Nov 2026)
+
+Sources: a synthetic drag of a space icon in Arc's bottom bar, with the bar's accessibility frames
+(roles and frames only) sampled every ~60ms and dock-region screen captures; Arc's strings and the
+Ghidra decompile of `SidebarDock.SidebarDockCollectionViewLayout`.
+
+- The bar is Arc's `SidebarDock`, an `NSCollectionView` (AX `AXCollectionList` in a 205×50 scroll view
+  between the end buttons) whose items can be dragged: `SidebarDockViewController` has `DragDropHandlers`,
+  `ProposedDrop` and `DropType`, the window store an `acceptSidebarDockDrop` action, and the paging
+  container a `draggingSpaceIDs` field (strings). Undo: `undoMoveSpace` (strings; Kite has no undo here yet).
+- Layout during a drag (decompile of `prepareLayout`): slots = items − dragged + (a proposed drop index ?
+  1 : 0), pitch min(width / slots, 34) and at least 8, centred. So the dragged icon leaves its slot, an
+  open slot appears where the drop would land, and with no drop target the rest close up and re-centre.
+- Observed: the dragged icon follows the pointer (drawn with its 32pt rounded backing), the others slide
+  aside. The open slot moved when the pointer crossed the midpoint between two slot centres (between
+  x 128 and 134 for slots centred at 110.5 and 144.5; again between 162 and 168): the nearest slot.
+- Moving the pointer up off the bar (out of its 50pt-tall scroll view) closed the slot and the two other
+  icons re-centred; coming back reopened it. Releasing on the icon's own slot changed nothing; the
+  current space stayed current throughout.
+- Pressing an icon scales it to 0.95 (`SidebarDockItemView.mouseDown:`, back to 1 on mouseUp); Kite
+  doesn't do this yet.
+- Not observed: the slide and landing durations, a release off the bar (Kite slides the icon home), and
+  whether dragging a non-current space selects it (Kite doesn't).

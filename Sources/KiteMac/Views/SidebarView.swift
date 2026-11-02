@@ -1679,6 +1679,10 @@ private struct SpaceBar: View {
     let library: LibraryModel
     let swipe: SpaceSwipeModel
     @State private var iconRoom: CGFloat = .infinity
+    /// A space icon being dragged to a new place in the strip, and the strip's frame (bar points).
+    @State private var iconDrag: SpaceIconDrag?
+    @State private var stripFrame: CGRect = .zero
+    @State private var roomFrame: CGRect = .zero
 
     var body: some View {
         let state = store.state
@@ -1693,9 +1697,8 @@ private struct SpaceBar: View {
             // than widen the bar: an over-wide bar pushes the whole sidebar off its left edge. Worked out
             // from the room rather than with `ViewThatFits`, which measures both again whenever an icon's
             // highlight changes, every frame of a swipe.
-            let iconsWidth = CGFloat(state.spaces.count) * M.spaceCellPitch + M.spaceCellSize.width - M.spaceCellPitch
             Group {
-                if iconsWidth <= iconRoom {
+                if fits(state) {
                     spaceIcons(state)
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -1704,7 +1707,10 @@ private struct SpaceBar: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { iconRoom = $0 }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: {
+                roomFrame = $0
+                iconRoom = $0.width
+            }
             Group {
                 ClaudeSidebarButton(model: claude, size: M.bottomButtonSize)
                 // Arc's + opens a menu of new things, not a new space straight away.
@@ -1722,25 +1728,144 @@ private struct SpaceBar: View {
             .opacity(creating ? 0 : 1)
             .disabled(creating)
         }
+        .overlay(alignment: .topLeading) { dragGhost(state) }
+        .coordinateSpace(.named(Self.space))
+    }
+
+    private static let space = "spaceBar"
+
+    private func fits(_ state: BrowserState) -> Bool {
+        CGFloat(SpaceReorder.width(slots: state.spaces.count, pitch: M.spaceCellPitch, cellWidth: M.spaceCellSize.width)) <= iconRoom
     }
 
     /// Arc's cells are 36×34 on a 34pt pitch (accessibility tree, 1 Nov 2026), centred. From Gabe's
     /// screenshots: the space you're in shows its icon in colour, the others are small dots, and an icon
     /// stays grey until its space is the active one.
+    ///
+    /// While an icon is dragged it leaves its cell (kept, invisible, so its gesture carries on) and the
+    /// others take the slots `SpaceReorder.slots` gives: an open one where it would land, none off the strip.
     private func spaceIcons(_ state: BrowserState) -> some View {
-        HStack(spacing: M.spaceCellPitch - M.spaceCellSize.width) {
+        let ids = state.spaces.map(\.id)
+        let slots = iconDrag.map { SpaceReorder.slots(ids, dragging: $0.id, target: $0.target) } ?? ids
+        return ZStack(alignment: .leading) {
             ForEach(state.spaces) { space in
+                let slot = slots.firstIndex(of: space.id) ?? slots.firstIndex(of: nil) ?? max(slots.count - 1, 0)
+                let dragged = iconDrag?.id == space.id
                 SpaceCell(space: space, highlight: SpaceCellHighlight(store: store, swipe: swipe, spaceID: space.id),
                           number: (state.spaceIndex(space.id) ?? 0) + 1,
-                          profileName: actions.showsProfiles ? state.profile(space.profile).name : nil) {
+                          profileName: actions.showsProfiles ? state.profile(space.profile).name : nil,
+                          dragging: iconDrag != nil) {
                     store.mutate { $0.selectSpace(space.id) }
                 }
+                .opacity(dragged ? 0 : 1)
+                .highPriorityGesture(reorderGesture(space.id, state: state))
                 .contextMenu { SpaceContextMenu(store: store, actions: actions, space: space) }
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag?.reportSpaceIcon(space.id, frame: $0) }
                 .onDisappear { drag?.reportSpaceIcon(space.id, frame: nil) }
+                // Last, so the frame reported for tab drops onto the icon is where it's drawn.
+                .offset(x: CGFloat(slot) * M.spaceCellPitch)
             }
         }
+        .frame(width: CGFloat(SpaceReorder.width(slots: slots.count, pitch: M.spaceCellPitch, cellWidth: M.spaceCellSize.width)),
+               height: M.spaceCellSize.height, alignment: .leading)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: { stripFrame = $0 }
     }
+
+    /// Where the strip's first cell starts when it has `slots` cells: centred in the room, or from the
+    /// scroll view's leading edge when the spaces overflow it.
+    private func stripMinX(slots: Int, state: BrowserState) -> CGFloat {
+        guard fits(state) else { return stripFrame.minX }
+        return roomFrame.midX - CGFloat(SpaceReorder.width(slots: slots, pitch: M.spaceCellPitch, cellWidth: M.spaceCellSize.width)) / 2
+    }
+
+    /// The centre of slot `index` in a strip of `slots` cells.
+    private func slotCenter(_ index: Int, slots: Int, state: BrowserState) -> CGPoint {
+        CGPoint(x: stripMinX(slots: slots, state: state) + M.spaceCellSize.width / 2 + CGFloat(index) * M.spaceCellPitch,
+                y: roomFrame.midY)
+    }
+
+    /// Arc's dock takes the drop anywhere over the strip's scroll view, which spans the bar's height
+    /// between its end buttons; off it the open slot closes.
+    private func target(at point: CGPoint, state: BrowserState) -> Int? {
+        let zone = CGRect(x: roomFrame.minX, y: roomFrame.midY - M.bottomBarHeight / 2,
+                          width: roomFrame.width, height: M.bottomBarHeight)
+        guard zone.contains(point) else { return nil }
+        let count = state.spaces.count
+        return SpaceReorder.dropIndex(pointerX: point.x, stripMinX: stripMinX(slots: count, state: state), count: count,
+                                      pitch: M.spaceCellPitch, cellWidth: M.spaceCellSize.width)
+    }
+
+    private func reorderGesture(_ id: UUID, state: BrowserState) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .named(Self.space))
+            .onChanged { value in
+                let state = store.state
+                guard state.spaces.count > 1, let index = state.spaceIndex(id), iconDrag?.landing == nil else { return }
+                if iconDrag == nil {
+                    // Picked up where it sat: its open slot is its own until the pointer says otherwise.
+                    iconDrag = SpaceIconDrag(id: id, start: value.startLocation, location: value.startLocation,
+                                             pickedUp: slotCenter(index, slots: state.spaces.count, state: state),
+                                             target: index)
+                }
+                iconDrag?.location = value.location
+                let aim = target(at: value.location, state: state)
+                if aim != iconDrag?.target {
+                    withAnimation(Self.slide) { iconDrag?.target = aim }
+                }
+            }
+            .onEnded { value in
+                guard var moving = iconDrag, moving.landing == nil else { return }
+                let state = store.state
+                let count = state.spaces.count
+                // Dropped off the strip: back to where it came from (unverified in Arc: a refused
+                // `NSDraggingSession` drop slides its image home).
+                let slot = target(at: value.location, state: state) ?? state.spaceIndex(moving.id) ?? 0
+                moving.landing = slotCenter(slot, slots: count, state: state)
+                iconDrag = moving
+                withAnimation(Self.slide) {
+                    iconDrag?.target = slot
+                    iconDrag?.location = value.location
+                } completion: {
+                    if store.state.spaceIndex(moving.id) != slot {
+                        store.mutate { $0.moveSpace(moving.id, to: slot) }
+                    }
+                    iconDrag = nil
+                }
+            }
+    }
+
+    /// Unverified: Arc's collection view animates the slide and the landing; its duration isn't measured.
+    private static let slide = Animation.easeInOut(duration: 0.2)
+
+    /// The dragged icon, following the pointer from where it was picked up, then settling into its slot.
+    @ViewBuilder
+    private func dragGhost(_ state: BrowserState) -> some View {
+        if let iconDrag, let space = state.spaces.first(where: { $0.id == iconDrag.id }) {
+            let center = iconDrag.landing ?? CGPoint(x: iconDrag.pickedUp.x + iconDrag.location.x - iconDrag.start.x,
+                                                     y: iconDrag.pickedUp.y + iconDrag.location.y - iconDrag.start.y)
+            // Arc's drag image is the cell with its rounded backing (dock-region capture, 1 Nov 2026).
+            SpaceCellIcon(space: space, highlight: SpaceCellHighlight(store: store, swipe: swipe, spaceID: space.id))
+                .frame(width: M.spaceCellSize.width, height: M.spaceCellSize.height)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.primary.opacity(0.08))
+                    .frame(width: M.bottomButtonSize, height: M.bottomButtonSize))
+                .offset(x: center.x - M.spaceCellSize.width / 2, y: center.y - M.spaceCellSize.height / 2)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+/// A space icon on its way to a new place in the strip.
+private struct SpaceIconDrag {
+    var id: UUID
+    /// Where the pointer went down and where it is (bar points).
+    var start: CGPoint
+    var location: CGPoint
+    /// The centre of the icon's cell when it was picked up.
+    var pickedUp: CGPoint
+    /// The open slot, nil while the pointer is off the strip.
+    var target: Int?
+    /// Once dropped: the centre of the slot the icon settles into.
+    var landing: CGPoint?
 }
 
 /// One space in the strip. Arc (1 Nov 2026): the current space shows its icon in colour, other spaces
@@ -1770,6 +1895,8 @@ private struct SpaceCell: View {
     let highlight: SpaceCellHighlight
     let number: Int
     let profileName: String?
+    /// Some icon in the strip is being dragged: no hover backing or name pill meanwhile.
+    var dragging = false
     let action: () -> Void
     @State private var hovering = false
     @State private var showsTip = false
@@ -1779,7 +1906,7 @@ private struct SpaceCell: View {
             SpaceCellIcon(space: space, highlight: highlight)
             .frame(width: M.spaceCellSize.width, height: M.spaceCellSize.height)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.primary.opacity(hovering && space.id != highlight.store.state.selectedSpaceID ? 0.08 : 0))
+                .fill(.primary.opacity(hovering && !dragging && space.id != highlight.store.state.selectedSpaceID ? 0.08 : 0))
                 .frame(width: M.bottomButtonSize, height: M.bottomButtonSize))
             .contentShape(Rectangle())
         }
@@ -1792,8 +1919,9 @@ private struct SpaceCell: View {
                 showsTip = false
             }
         }
+        .onChange(of: dragging) { _, dragging in if dragging { showsTip = false } }
         .overlay(alignment: .bottom) {
-            if showsTip {
+            if showsTip && !dragging {
                 SpaceTip(space: space, number: number, profileName: profileName)
                     .fixedSize()
                     .offset(y: -M.spaceCellSize.height - M.spaceTipGap)
