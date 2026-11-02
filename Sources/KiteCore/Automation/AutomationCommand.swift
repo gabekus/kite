@@ -257,8 +257,11 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .tabsContext
         case .tabsCreate:
             let placement: TabPlacement
-            placement = try Self.placement(space: a.string("space"),
-                                           claudeFolder: a.bool("claude_folder") || a.bool("in_claude_space"))
+            // Claude's tabs go in the Claude folder unless it says the tab is for the user: claude_folder
+            // false, or active true (it's being shown to them now).
+            let active = try a.bool("active")
+            let folder = try a.optionalBool("claude_folder") ?? (try a.bool("in_claude_space") || !active)
+            placement = Self.placement(space: try a.string("space"), claudeFolder: folder)
             self = .tabsCreate(url: try a.string("url").flatMap { $0.isEmpty ? nil : $0 }, active: try a.bool("active"),
                                placement: placement)
         case .tabsClose:
@@ -274,7 +277,7 @@ public enum AutomationCommand: Hashable, Sendable {
                 if tab != nil { throw InvalidArguments("\"space\" opens a new tab, so don't pass \"tab\" with it.") }
                 if ["back", "forward"].contains(url.lowercased()) { throw InvalidArguments("\"back\" and \"forward\" need a tab, not a space.") }
                 self = .tabsCreate(url: url, active: false,
-                                   placement: Self.placement(space: space, claudeFolder: try a.bool("claude_folder")))
+                                   placement: Self.placement(space: space, claudeFolder: try a.optionalBool("claude_folder") ?? true))
                 return
             }
             self = .navigate(tab: tab, url: url, newTab: newTab)
@@ -430,6 +433,13 @@ private struct Arguments {
             throw Invalid("\"\(key)\" is required.")
         }
         return string
+    }
+
+    /// nil when absent, so a default can apply.
+    func optionalBool(_ key: String) throws -> Bool? {
+        guard let value = values[key], !value.isNull else { return nil }
+        guard let bool = value.boolValue else { throw Invalid("\"\(key)\" must be true or false.") }
+        return bool
     }
 
     func bool(_ key: String) throws -> Bool {

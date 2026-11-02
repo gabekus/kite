@@ -587,6 +587,19 @@ extension AutomationController {
             let index = try spaceName.map(spaceIndex) ?? store.state.selectedSpaceIndex
             let id = store.mutate { $0.createFolder(name: name, inSpace: index) }
             return .text("Made folder \(id.uuidString) in \(store.state.spaces[index].name)'s pinned tabs.")
+        case let .moveToFolder(string, folderName)
+            where folderName.trimmingCharacters(in: .whitespaces).lowercased() == BrowserState.claudeFolderName.lowercased():
+            let tab = try resolveTab(string)
+            let moved = store.mutate { state -> String? in
+                guard let space = state.location(of: tab.id)?.space,
+                      let folder = state.claudeFolder(inSpace: state.spaces[space].id),
+                      state.moveTab(tab.id, toFolder: folder) else { return nil }
+                return state.spaces[space].name
+            }
+            guard let moved else {
+                throw AutomationError(.invalidArguments, "That tab can't move into a folder (favorites stay in the favorites grid).")
+            }
+            return .text("Moved the tab into \(moved)'s Claude folder.")
         case let .moveToFolder(string, folderName):
             let tab = try resolveTab(string)
             guard let (_, folder) = store.state.folder(matching: folderName) else {

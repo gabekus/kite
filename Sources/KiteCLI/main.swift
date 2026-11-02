@@ -23,7 +23,9 @@ let usage = """
                                                      Type into an element (or the focused one)
       kite key KEYS [--tab ID]                       Press keys, e.g. "cmd+a Backspace" or Enter
       kite open URL [--here | --tab ID]              Open URL in a new background tab (or navigate one)
-      kite open URL --space NAME [--active]          Open URL in a new tab in that space
+      kite open URL --space NAME [--plain | --active] Open URL in that space's Claude folder (--plain or --active:
+                                                     a plain tab there, for the user)
+      kite call move_to_folder '{"folder":"claude"}' File the front tab in its space's Claude folder
       kite screenshot [--tab ID] [--format png] [-o FILE]
                                                      Save a screenshot of a tab (JPEG unless --format png)
       kite js CODE [--tab ID]                        Run JavaScript in the page
@@ -276,6 +278,7 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
         if let space = args.options["--space"] {
             json["space"] = .string(space)
             if args.flags.contains("--active") { json["active"] = true }
+            if args.flags.contains("--plain") { json["claude_folder"] = false }
         } else if args.options["--tab"] == nil && !args.flags.contains("--here") {
             json["new_tab"] = true
         }
