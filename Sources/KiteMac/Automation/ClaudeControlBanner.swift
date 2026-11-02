@@ -2,7 +2,8 @@ import AppKit
 import KiteCore
 import SwiftUI
 
-/// Floats over the top of the page while Claude is driving a tab, with Stop.
+/// Floats over the bottom of the page while Claude is driving a tab, with Stop. It sits at the bottom so it
+/// never covers a site's nav bar or the password manager's inline menu on a login form.
 struct ClaudeControlBanner: View {
     let automation: AutomationController
     let store: BrowserStore
@@ -119,7 +120,7 @@ extension BrowserWindowController: AutomationHost {
         close(tab: id)
     }
 
-    /// Pins the banner to the top of the page area, above the web view.
+    /// Pins the banner to the bottom centre of the page area, above the web view.
     func installAutomationBanner(_ automation: AutomationController) {
         pool.onPageCreated = { [weak automation] id, page in automation?.pageCreated(id, page) }
         pool.onLoadFinished = { [weak automation] id in automation?.pageFinishedLoading(id) }
@@ -127,16 +128,16 @@ extension BrowserWindowController: AutomationHost {
         // A strip across the page area, rather than a view sized to the banner: the banner's size changes
         // with Claude's state, and an intrinsically sized host stayed 0×0, so its buttons never got clicks.
         let host = BannerHostingView(rootView: ClaudeControlBanner(automation: automation, store: store)
-            .frame(maxWidth: .infinity, alignment: .top))
+            .frame(maxWidth: .infinity, alignment: .bottom))
         host.sizingOptions = []
-        // The strip reaches under the titlebar; its safe area would push the banner down.
+        // No safe area: the strip is laid out against the page area only.
         host.safeAreaRegions = []
         host.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(host)
         NSLayoutConstraint.activate([
             host.leadingAnchor.constraint(equalTo: contentFrame.leadingAnchor),
             host.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor),
-            host.topAnchor.constraint(equalTo: contentFrame.topAnchor, constant: 10),
+            host.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor, constant: -10),
             host.heightAnchor.constraint(equalToConstant: 28),
         ])
     }

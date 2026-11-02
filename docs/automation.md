@@ -252,7 +252,8 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   - JavaScript results;
   - dialog messages;
   - form values.
-- **Indicator.** A "Claude is controlling this tab" pill floats over the page, with Show and **Stop**. Stop revokes
+- **Indicator.** A "Claude is controlling this tab" pill floats at the bottom centre of the page (so it never covers
+  a site's nav bar or 1Password's inline menu), with Show and **Stop**. Stop revokes
   the tab: it ends its event collection and fails pending confirmations and waits.
 - **Sign-in handoff (`sign_in`).** Claude never types or sees passwords. When a page needs the user signed in,
   Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and swaps the
