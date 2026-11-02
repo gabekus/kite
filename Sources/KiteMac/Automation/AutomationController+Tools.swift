@@ -32,6 +32,8 @@ extension AutomationController {
             return try await exportHAR(try networkQuery(query), bodies: bodies)
         case .listSpaces, .switchSpace, .createSpace, .describeSpace, .pinTab, .createFolder, .moveToFolder:
             return try kiteCommand(command)
+        case let .moveToClaudeFolder(string, session):
+            return try moveToClaudeFolder(string, session: session, connection: connection)
         case .ui(let inspection):
             guard UIDiagnostics.isEnabled else {
                 throw AutomationError(.disabled, "Diagnostics for Claude is off. Ask the user to turn it on in the Kite menu "
@@ -422,6 +424,14 @@ extension AutomationController {
 
     private func openTab(_ string: String?, active: Bool, placement: TabPlacement, connection: Int) async throws -> ToolOutput {
         guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
+        // A session's Claude-folder tabs share its Claude › Session folder: remember the name it gave,
+        // and use it for its later tabs that don't repeat it.
+        var placement = placement
+        switch placement {
+        case .claudeSessionFolder(_, let session): sessionFolders[connection] = session
+        case .claudeFolder(let space): if let session = sessionFolders[connection] { placement = .claudeSessionFolder(space: space, session: session) }
+        default: break
+        }
         let url = try string.map(resolveURL)
         if let url, case .deny(let reason) = AutomationPolicy.evaluate(.navigate(url), host: nil) {
             throw AutomationError(.denied, reason)
@@ -431,7 +441,7 @@ extension AutomationController {
         let spaceID: UUID?
         var jevPicked: String?
         switch placement {
-        case .currentSpace, .claudeFolder(nil):
+        case .currentSpace, .claudeFolder(nil), .claudeSessionFolder(nil, _):
             // Claude forgot to name a space for a tab it opened: Jev picks one from what each space is
             // for, in well under a second. Unsure, or no Jev: the space in front.
             if task == nil, let url, let picked = await jevSpace(for: url),
@@ -442,7 +452,7 @@ extension AutomationController {
                 spaceID = nil
             }
         // Pages Claude works in go in the Claude folder of the space they belong to (moved there below).
-        case .claudeFolder(let name?):
+        case .claudeFolder(let name?), .claudeSessionFolder(let name?, _):
             guard let index = store.state.space(matching: name) else {
                 throw AutomationError(.notFound, "There's no space called \(name). Call list_spaces.")
             }
@@ -460,9 +470,16 @@ extension AutomationController {
         case (.space, let task?):
             taskTabs[task, default: []].append(id)
         // A task's own pages: its folder, inside the Claude folder of the space it was asked from.
-        case (.currentSpace, let task?), (.claudeFolder(nil), let task?):
+        case (.currentSpace, let task?), (.claudeFolder(nil), let task?), (.claudeSessionFolder(nil, _), let task?):
             taskOpenedTab?(task, id)
             taskTabs[task, default: []].append(id)
+        case (.claudeSessionFolder(_, let session), _):
+            store.mutate { state in
+                guard let space = state.location(of: id)?.space,
+                      let folder = state.claudeSessionFolder(named: session, inSpace: state.spaces[space].id) else { return }
+                _ = state.moveTab(id, toFolder: folder)
+            }
+            if let task { taskTabs[task, default: []].append(id) }
         case (.claudeFolder, _):
             store.mutate { state in
                 guard let space = state.location(of: id)?.space, let folder = state.claudeFolder(inSpace: state.spaces[space].id)
@@ -487,9 +504,19 @@ extension AutomationController {
             _ = host.automationPage(for: tab)
             await settle(id, startDelay: 0.3)
         }
-        let space = store.state.location(of: id)?.space.map { store.state.spaces[$0].name } ?? ""
+        var place = store.state.location(of: id)?.space.map { store.state.spaces[$0].name } ?? ""
+        var hint = ""
+        if task == nil {
+            switch placement {
+            case .claudeSessionFolder(_, let session): place += " › \(BrowserState.claudeFolderName) › \(session)"
+            case .claudeFolder:
+                place += " › \(BrowserState.claudeFolderName)"
+                hint = " Pass session (a short name for this work, like \"Cloudflare DNS move\") to keep this session's tabs together in Claude › that name."
+            default: break
+            }
+        }
         let why = jevPicked == nil ? "" : " (no space was given, so Kite picked it from what each space is for)"
-        return report("Opened a new \(active ? "" : "background ")tab in \(space)\(why).", id)
+        return report("Opened a new \(active ? "" : "background ")tab in \(place)\(why).\(hint)", id)
     }
 
     /// The space Jev is sure a link belongs in, or nil.
@@ -587,19 +614,6 @@ extension AutomationController {
             let index = try spaceName.map(spaceIndex) ?? store.state.selectedSpaceIndex
             let id = store.mutate { $0.createFolder(name: name, inSpace: index) }
             return .text("Made folder \(id.uuidString) in \(store.state.spaces[index].name)'s pinned tabs.")
-        case let .moveToFolder(string, folderName)
-            where folderName.trimmingCharacters(in: .whitespaces).lowercased() == BrowserState.claudeFolderName.lowercased():
-            let tab = try resolveTab(string)
-            let moved = store.mutate { state -> String? in
-                guard let space = state.location(of: tab.id)?.space,
-                      let folder = state.claudeFolder(inSpace: state.spaces[space].id),
-                      state.moveTab(tab.id, toFolder: folder) else { return nil }
-                return state.spaces[space].name
-            }
-            guard let moved else {
-                throw AutomationError(.invalidArguments, "That tab can't move into a folder (favorites stay in the favorites grid).")
-            }
-            return .text("Moved the tab into \(moved)'s Claude folder.")
         case let .moveToFolder(string, folderName):
             let tab = try resolveTab(string)
             guard let (_, folder) = store.state.folder(matching: folderName) else {
@@ -612,6 +626,25 @@ extension AutomationController {
         default:
             throw AutomationError(.failed, "\(command.tool.rawValue) isn't a Kite tool.")
         }
+    }
+
+    /// move_to_folder "claude": into the Claude folder of the tab's own space, or Claude › session (the one
+    /// given, else the one this session used before).
+    private func moveToClaudeFolder(_ string: String?, session: String?, connection: Int) throws -> ToolOutput {
+        let tab = try resolveTab(string)
+        let session = session ?? sessionFolders[connection]
+        if let session { sessionFolders[connection] = session }
+        let moved = store.mutate { state -> String? in
+            guard let space = state.location(of: tab.id)?.space else { return nil }
+            let id = state.spaces[space].id
+            guard let folder = session.flatMap({ state.claudeSessionFolder(named: $0, inSpace: id) }) ?? state.claudeFolder(inSpace: id),
+                  state.moveTab(tab.id, toFolder: folder) else { return nil }
+            return state.spaces[space].name
+        }
+        guard let moved else {
+            throw AutomationError(.invalidArguments, "That tab can't move into a folder (favorites stay in the favorites grid).")
+        }
+        return .text("Moved the tab into \(moved) › Claude\(session.map { " › \($0)" } ?? "").")
     }
 
     // MARK: Reports

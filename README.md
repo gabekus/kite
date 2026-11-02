@@ -75,11 +75,14 @@ which are also in the MCP server's instructions and the tool descriptions, so an
 - **Claude's tabs go in that space's Claude folder by default.** `tabs_create` puts a tab in the space's Claude folder,
   a pinned folder Kite makes when needed. Pass `claude_folder: false`, or `active: true`, only for a link the user
   asked to open for themselves. That opens a plain tab in the space.
+- **One folder per Claude session.** Pass `session`, a short name Claude makes up for the work at hand ("Cloudflare
+  DNS move"), and the tab goes in Claude › that name. Kite remembers it for the session's later tabs, and reuses a
+  folder with the same name. So a space's sidebar reads Claude › Session 1, Claude › Session 2.
 - **Never a Claude space.** Kite has no Claude space and `create_space` refuses that name.
 - **Filing a tab you're already driving:** `move_to_folder` with `folder: "claude"` moves it into its own space's
   Claude folder.
 
-CLI equivalents: `kite spaces`, `kite describe-space NAME TEXT`, `kite open URL --space NAME` (Claude folder) or
+CLI equivalents: `kite spaces`, `kite describe-space NAME TEXT`, `kite open URL --space NAME [--session NAME]` (Claude folder) or
 `--plain` (a plain tab), `kite call move_to_folder '{"folder":"claude","tab":"ID"}'`. More in `docs/automation.md`.
 
 ## Layout
