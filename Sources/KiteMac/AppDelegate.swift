@@ -36,6 +36,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     #endif
     private var automation: AutomationController!
     private var claudeTasks: ClaudeTasksController!
+    /// The user's own Claude Code sessions, in the ⌘J bar's Claude Code side.
+    private var claudeCode: ClaudeCodeSessionsController!
     private var liveFolders: LiveFoldersController!
     private var diagnostics: DiagnosticsRecorder!
     /// Links opened before launch finished (Kite as the default browser).
@@ -120,7 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         claudeTasks.isPanelVisible = { [weak self] in self?.windowController.claudeBubble.isOpen == true }
         windowController.claudeBubble.tasks = claudeTasks
-        windowController.hidesInsteadOfClosing = { [weak self] in self?.claudeTasks.isRunningAny == true }
+        claudeCode = ClaudeCodeSessionsController(supportDirectory: Self.supportDirectory)
+        windowController.claudeBubble.code = claudeCode
+        windowController.hidesInsteadOfClosing = { [weak self] in
+            self?.claudeTasks.isRunningAny == true || self?.claudeCode.isRunningAny == true
+        }
         windowController.claudeButton.tasks = claudeTasks
         windowController.claudeButton.open = { [weak self] in self?.claudeButtonClicked() }
         #if canImport(CEFBridge)
@@ -484,6 +490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         claudeTasks?.stopAll()
         claudeTasks?.saveNow()
+        claudeCode?.stopAll()
         windows?.applicationWillTerminate()
         saveSession()
         automation?.shutdown()

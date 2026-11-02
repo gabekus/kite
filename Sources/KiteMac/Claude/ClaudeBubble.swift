@@ -10,7 +10,19 @@ import SwiftUI
 @Observable
 final class ClaudeBubbleModel {
     var tasks: ClaudeTasksController?
+    /// The user's own Claude Code sessions, for the bar's Claude Code side (⌃⌘J).
+    var code: ClaudeCodeSessionsController?
     private(set) var isOpen = false
+
+    /// What the bar shows: Kite's Claude (⌘J tasks) or the user's Claude Code sessions.
+    enum Mode { case tasks, code }
+    private(set) var mode: Mode = .tasks {
+        didSet { if mode != oldValue { updateWatching() } }
+    }
+    /// The Claude Code side's draft, apart from ⌘J's.
+    var codeDraft = ""
+    /// A folder picked for a new Claude Code session, until its first message is sent.
+    var newSessionFolder: String?
     /// The task the bubble follows; nil shows a fresh composer.
     var taskID: UUID?
     var draft = ""
@@ -24,6 +36,7 @@ final class ClaudeBubbleModel {
     /// Opens on `task`, or on the task it showed last (a fresh composer once that's done and read).
     func open(task: UUID? = nil, attachTab: Bool = false) {
         guard tasks != nil else { return }
+        mode = .tasks
         if let task { taskID = task }
         if attachTab { taskID = nil; self.attachTab = true }
         if let taskID { tasks?.selectedID = taskID }
@@ -33,7 +46,53 @@ final class ClaudeBubbleModel {
 
     func close() { setOpen(false) }
 
-    func toggle() { isOpen ? close() : open() }
+    func toggle() { isOpen && mode == .tasks ? close() : open() }
+
+    /// Opens the Claude Code side: the sessions list, or the session it showed last.
+    func openCode(session: String? = nil) {
+        guard let code else { return }
+        if let session { code.selectedID = session; newSessionFolder = nil }
+        mode = .code
+        setOpen(true)
+        focusToken += 1
+    }
+
+    func toggleCode() { isOpen && mode == .code ? close() : openCode() }
+
+    /// Back to the Claude Code sessions list.
+    func showSessions() {
+        code?.selectedID = nil
+        newSessionFolder = nil
+        codeDraft = ""
+        focusToken += 1
+    }
+
+    /// A new Claude Code session in `folder`: the field takes its first message.
+    func newSession(in folder: String) {
+        code?.selectedID = nil
+        newSessionFolder = folder
+        focusToken += 1
+    }
+
+    /// Return in the Claude Code field: a message to the shown session, or a new session's first.
+    func sendCode() {
+        guard let code else { return }
+        let text = codeDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if let id = code.selectedID {
+            code.send(text, to: id)
+        } else if let folder = newSessionFolder {
+            code.startNew(in: folder, text: text)
+            newSessionFolder = nil
+        } else {
+            return
+        }
+        codeDraft = ""
+    }
+
+    private func updateWatching() {
+        code?.setVisible(isOpen && mode == .code)
+    }
 
     func newTask() {
         taskID = nil
@@ -86,8 +145,9 @@ final class ClaudeBubbleModel {
     }
 
     private func setOpen(_ open: Bool) {
-        guard open != isOpen else { return }
+        guard open != isOpen else { return updateWatching() }
         isOpen = open
+        updateWatching()
         onOpenChange(open)
     }
 }
@@ -122,9 +182,15 @@ struct ClaudeBubble: View {
                     Color.clear
                         .contentShape(Rectangle())
                         .onTapGesture { model.close() }
-                    panel(tasks: tasks, transcriptHeight: max(Metrics.transcriptMinHeight, room))
-                        .frame(width: min(C.width, proxy.size.width - 32))
-                        .padding(.top, top)
+                    Group {
+                        if model.mode == .code, let code = model.code {
+                            ClaudeCodeBar(model: model, code: code, transcriptHeight: max(Metrics.transcriptMinHeight, room))
+                        } else {
+                            panel(tasks: tasks, transcriptHeight: max(Metrics.transcriptMinHeight, room))
+                        }
+                    }
+                    .frame(width: min(C.width, proxy.size.width - 32))
+                    .padding(.top, top)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -205,6 +271,9 @@ struct ClaudeBubble: View {
                     }
                 }
                 recentTasks(tasks)
+                if model.code != nil {
+                    ClaudeCodeSwitchButton(toCode: true, size: Metrics.buttonSize) { model.openCode() }
+                }
                 if task != nil {
                     barButton("New Task", symbol: "square.and.pencil") { model.newTask() }
                 }

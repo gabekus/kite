@@ -3,6 +3,8 @@ import SwiftUI
 
 struct ClaudeTaskEntryView: View {
     let entry: ClaudeTask.Entry
+    /// Kite tasks' tool calls are browser actions; Claude Code sessions' are terminal ones.
+    var toolSymbol = "globe"
 
     var body: some View {
         switch entry.kind {
@@ -15,7 +17,7 @@ struct ClaudeTaskEntryView: View {
             ClaudeMarkdown(text: entry.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool:
-            Label(entry.text, systemImage: "globe")
+            Label(entry.text, systemImage: toolSymbol)
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
         case .toolError:
             Label(entry.text, systemImage: "hand.raised")

@@ -923,6 +923,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         claudeBubble.toggle()
     }
 
+    /// ⌃⌘J: the user's own Claude Code sessions, in the ⌘J bar.
+    @objc func toggleClaudeCode(_ sender: Any?) {
+        claudeBubble.toggleCode()
+    }
+
     private func claudeBubbleOpened(_ open: Bool) {
         claudeBubbleHost.isHidden = !open
         if open {
