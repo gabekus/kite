@@ -852,7 +852,8 @@ private struct FavoritesGrid: View {
                     }
                 }
             }
-            .animation(.easeInOut(duration: 0.12), value: slots)
+            // No animation as the slot opens or moves: Arc's tray sets its drag info and invalidates the
+            // layout outside any animation context (decompiled), so its tiles jump to their new places.
         }
     }
 
@@ -983,7 +984,7 @@ private struct FavoritesEmptyState: View {
 }
 
 /// A favorite's tile as it follows the pointer.
-private struct FavoriteGhost: View {
+struct FavoriteGhost: View {
     let tabs: [BrowserTab]
 
     var body: some View {
