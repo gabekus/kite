@@ -17,13 +17,16 @@ extension AutomationCommand.Tool {
     private static let networkLimit: JSONValue = ["type": "integer", "minimum": 1, "maximum": 1000, "description": "Most requests to return, newest (default 50)."]
     private static let limit: JSONValue = ["type": "integer", "minimum": 1, "maximum": 1000, "description": "Most entries to return (default 100)."]
 
-    /// How Claude picks the space for a link: shared by tabs_create, the MCP instructions and Claude Tasks.
+    /// How Claude picks the space for a tab: shared by tabs_create, the MCP instructions and Claude Tasks.
     public static let spaceRouting = """
-        Each space holds one part of the user's life (say, a business and their personal life). When the user asks \
-        you to open a link (even a plain "open X"), choose its space yourself from what the link and the conversation \
-        are about, using what list_spaces says each space is for, and pass it as space. Don't ask which space unless \
-        it's truly unclear, and don't just use the one in front. Pass active true when they want to look at it now. \
-        "claude" is Claude's own space, out of the user's way, for pages only you need.
+        Each space holds one part of the user's life (say, a business and their personal life). Every tab you open \
+        goes in the space it belongs to: choose it yourself from what the link, the task and the conversation are \
+        about, using what list_spaces says each space is for, and pass it as space. Don't ask which space unless it's \
+        truly unclear, and don't just use the one in front. By default a tab you open goes in that space's Claude \
+        folder (pages you work in: looking things up, changing settings on a site). Only a link the user asked to \
+        open for themselves is a plain tab: pass claude_folder false, or active true to show it now. Never make a \
+        Claude space; if a tab you're driving isn't in a Claude folder yet, move_to_folder with folder "claude" \
+        files it in its space's Claude folder.
         """
 
     public var title: String {
@@ -91,7 +94,7 @@ extension AutomationCommand.Tool {
         case .switchSpace:
             "Switches the window to a space, by id or name."
         case .createSpace:
-            "Adds a space (in the background; it doesn't switch to it). about says what belongs in it."
+            "Adds a space (in the background; it doesn't switch to it). about says what belongs in it. Only when the user asks for a new space; never a space for Claude (use a space's Claude folder)."
         case .describeSpace:
             "Saves what belongs in a space, in the user's words (\"Komado business: Shopify, suppliers, ads, the business's money\"), so links opened later go to the right space. Call it when the user tells you which kinds of things go where. \"\" clears it."
         case .pinTab:
@@ -99,7 +102,7 @@ extension AutomationCommand.Tool {
         case .createFolder:
             "Makes a folder in a space's pinned section and returns its id."
         case .moveToFolder:
-            "Moves a tab into a pinned folder, by folder id or name."
+            "Moves a tab into a pinned folder, by folder id or name. Folder \"claude\" is the Claude folder of the tab's own space (made if needed)."
         }
     }
 
@@ -116,7 +119,8 @@ extension AutomationCommand.Tool {
             properties = [
                 "url": ["type": "string", "description": "URL to open (blank tab when omitted)."],
                 "active": ["type": "boolean", "description": "Bring the tab to the front (default false)."],
-                "space": ["type": "string", "description": "Space id or name (from list_spaces), chosen by what the link is about; \"claude\" for Claude's own space. Omit only for the space in front."],
+                "space": ["type": "string", "description": "Space id or name (from list_spaces), chosen by what the link or task is about. Omit only for the space in front."],
+                "claude_folder": ["type": "boolean", "description": "Put the tab in the space's Claude folder. Default: true, unless active is true. Pass false only for a link the user asked to open for themselves."],
             ]
         case .tabsClose, .switchTab:
             properties = ["tab": ["type": "string", "description": "Tab id from tabs_context."]]
@@ -127,6 +131,7 @@ extension AutomationCommand.Tool {
                 "url": ["type": "string", "description": "URL (https:// is assumed), or \"back\" / \"forward\"."],
                 "new_tab": ["type": "boolean", "description": "Open in a new background tab."],
                 "space": ["type": "string", "description": "Open in a new background tab in this space (id or name), instead of tab."],
+                "claude_folder": ["type": "boolean", "description": "With space: in that space's Claude folder (default true)."],
             ]
             required = ["url"]
         case .resizeWindow:
@@ -246,7 +251,7 @@ extension AutomationCommand.Tool {
             properties = ["name": ["type": "string"], "space": ["type": "string", "description": "Space id or name (default: the current one)."]]
             required = ["name"]
         case .moveToFolder:
-            properties = ["tab": tab, "folder": ["type": "string", "description": "Folder id or name."]]
+            properties = ["tab": tab, "folder": ["type": "string", "description": "Folder id or name, or \"claude\" for the tab's space's Claude folder."]]
             required = ["folder"]
         }
         var schema: [String: JSONValue] = ["type": "object", "properties": .object(properties)]

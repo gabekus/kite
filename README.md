@@ -63,6 +63,25 @@ valid one, so the identity stays the same and "Always Allow" sticks across rebui
 Without one, run `scripts/make-signing-cert.sh` once to create a self-signed
 "Kite Local Signing" identity instead.
 
+## For agents: spaces and the Claude folder
+
+Claude drives Kite through its MCP server (`kite mcp`) or the `kite` CLI. Every tab Claude opens follows these rules,
+which are also in the MCP server's instructions and the tool descriptions, so any Claude session gets them:
+
+- **Pick the space from what the tab is about.** `list_spaces` shows what each space is for (its `for:` line, set
+  with `describe_space`). Pass that space to `tabs_create` (or `navigate` with `space`). Don't ask which space, and
+  don't just use the one in front. The user writes it in Create a Space ("What's it for?") or the space's
+  right-click menu ("What's This Space For?…").
+- **Claude's tabs go in that space's Claude folder by default.** `tabs_create` puts a tab in the space's Claude folder,
+  a pinned folder Kite makes when needed. Pass `claude_folder: false`, or `active: true`, only for a link the user
+  asked to open for themselves. That opens a plain tab in the space.
+- **Never a Claude space.** Kite has no Claude space and `create_space` refuses that name.
+- **Filing a tab you're already driving:** `move_to_folder` with `folder: "claude"` moves it into its own space's
+  Claude folder.
+
+CLI equivalents: `kite spaces`, `kite describe-space NAME TEXT`, `kite open URL --space NAME` (Claude folder) or
+`--plain` (a plain tab), `kite call move_to_folder '{"folder":"claude","tab":"ID"}'`. More in `docs/automation.md`.
+
 ## Layout
 
 ```

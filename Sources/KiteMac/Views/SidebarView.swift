@@ -32,6 +32,8 @@ struct SidebarActions {
     var renameTab: (UUID) -> Void
     /// Tidy Tabs: the Today divider's Tidy button, and a tab group header's context menu.
     var tidyTabs: (UUID) -> Void = { _ in }
+    /// What the space is for, which Claude reads to pick the space a tab goes in (Space.about).
+    var describeSpace: (UUID) -> Void = { _ in }
     /// The Today divider's Clear button: Clear Today for that space.
     var clearToday: (UUID) -> Void = { _ in }
     var removeTabGroupHeader: (UUID) -> Void = { _ in }
@@ -2117,6 +2119,8 @@ private struct SpaceContextMenu: View {
     var body: some View {
         Button("Change Space Icon…") { actions.changeSpaceIcon(space.id) }
         Button("Rename Space…") { store.beginRenaming(space: space.id) }
+        // Kite's own (Arc has no such field): what belongs here, so Claude opens tabs in the right space.
+        Button("What's This Space For?…") { actions.describeSpace(space.id) }
         Button("Edit Theme Color…") { actions.editTheme(space.id) }
         if actions.showsProfiles { SetProfileMenu(store: store, actions: actions, space: space) }
         Divider()

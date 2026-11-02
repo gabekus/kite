@@ -100,7 +100,7 @@ enum MainMenu {
             item("Ask Claude", #selector(BrowserWindowController.toggleClaudeBubble(_:)), "j", id: "askClaude"),
             .separator(),
             item("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)), toTarget: false),
-            item("Open Claude’s Tabs in a Claude Space", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),
+            item("Open Claude’s Tabs in a Claude Folder", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),
             item("Ask Before Claude Acts", #selector(AppDelegate.toggleAskBeforeClaudeActs(_:)), toTarget: false),
             item("Record Network for Claude", #selector(AppDelegate.toggleRecordNetwork(_:)), toTarget: false),
             item("Ask Claude in the Claude App", #selector(AppDelegate.toggleClaudeRunsInDesktop(_:)), toTarget: false),

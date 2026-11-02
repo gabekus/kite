@@ -24,7 +24,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | Claude in Chrome | Kite tool | CLI | Notes |
 |---|---|---|---|
 | `tabs_context_mcp` | `tabs_context` | `kite tabs` | Every tab in every space, with ids, URLs, space, front. |
-| `tabs_create_mcp` | `tabs_create` | `kite open URL [--space NAME]` | Background by default. `space` picks the space (see "Opening links in the right space"); `"claude"` is Claude's own. |
+| `tabs_create_mcp` | `tabs_create` | `kite open URL [--space NAME]` | Background by default. `space` picks the space (see "Opening links in the right space"); the tab goes in that space's Claude folder unless `claude_folder: false` or `active: true`. |
 | `tabs_close_mcp` | `tabs_close` | `kite call tabs_close` | Asks first if Claude didn't open the tab. |
 | (switch tab) | `switch_tab` | | |
 | `navigate` | `navigate` | `kite open URL --here` | Also `"back"` / `"forward"`. Waits for the load. |
@@ -300,7 +300,7 @@ How dialogs work:
   - `NetworkLog`, `Redaction` and `NetworkLogStore`: the network log, its redaction, and its files on disk.
   - `AccessibilityOutline`, `UntrustedContent`, `MCPServer`, `AutomationWire`, `AutomationReport`.
 - `Sources/KiteCore/BrowserState+Automation.swift` holds the additions behind the Kite tools: background spaces, the
-  Claude space, folders and moving tabs into them. Nothing in it changes existing mutations.
+  Claude folders, folders and moving tabs into them. Nothing in it changes existing mutations.
 - `Sources/KiteCLI/main.swift`: the `kite` CLI and `kite mcp`. It's built as `kite-cli` and installed as
   `Kite.app/Contents/Helpers/kite`.
 - `Sources/KiteMac/Automation/`:
@@ -330,7 +330,7 @@ claude -p --output-format stream-json --verbose --include-partial-messages \
   shell, file and web tools. Every Kite safety rule still applies: the confirmation sheets, untrusted-content blocks
   and the Stop button. Starting a task turns on Allow Claude to Control the Browser.
 - **Background.** `kite mcp` sends `KITE_AGENT_TASK` with each call. Tabs that task opens go into a folder named after
-  the task in the Claude space, never in front of the user. Tabs it closes are removed from the folder for good.
+  the task in the Claude folder of its space, never in front of the user. Tabs it closes are removed from the folder for good.
   **Close Tabs** removes the folder.
 - **Keeps going.** While a task runs, Kite holds an idle-sleep assertion, and closing the main window only hides it
   (the Dock icon brings it back). A closed lid still sleeps the Mac.
@@ -395,3 +395,8 @@ without the user naming it.
   and conversation are about, using `list_spaces`, without asking and without defaulting to the space in front.
 - A Claude task that opens a link in a named space leaves it as a plain tab there, not in the task's folder, since
   it's for the user.
+- Kite never makes a Claude space (Gabe's rule): `create_space` refuses the name "Claude", and nothing else makes one. Pages Claude opens to work in itself go in the Claude folder (an
+  ephemeral pinned folder, `BrowserState.claudeFolder(inSpace:)`) of the space they belong to: `tabs_create` with
+  `space` (the default: `claude_folder` is true unless `active` is). `claude_folder: false` (CLI `--plain`) is a plain
+  tab for the user. `move_to_folder` with folder `"claude"` files a tab Claude is already driving. `space: "claude"` and `in_claude_space` (older callers) mean the Claude folder of
+  the space in front, as does Kite menu → Open Claude's Tabs in a Claude Folder for `navigate new_tab`.

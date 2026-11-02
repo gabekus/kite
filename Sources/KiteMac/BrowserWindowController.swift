@@ -255,6 +255,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             replacePinnedURL: { [weak self] id in self?.replacePinnedURLWithCurrent(id) },
             renameTab: { [weak self] id in self?.renameTab(id) },
             tidyTabs: { [weak self] id in self?.tidyTabs(inSpace: id) },
+            describeSpace: { [weak self] id in self?.describeSpace(id) },
             clearToday: { [weak self] id in self?.clearFromTodayDivider(inSpace: id) },
             removeTabGroupHeader: { [weak self] id in self?.removeTabGroupHeader(id) },
             toggleMute: { [weak self] id in self?.toggleMute(id) },
