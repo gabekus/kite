@@ -142,10 +142,34 @@ extension [PinnedItem] {
 /// A space is a named set of tabs with its own theme, like a lightweight profile.
 public struct Space: Identifiable, Hashable, Codable, Sendable {
     public static let symbolPrefix = "symbol:"
+    /// A picture the user chose: `image:` and the name of a PNG in Kite's SpaceIcons folder (Kite only, Arc has no image icons).
+    public static let imagePrefix = "image:"
     public var id: UUID
     public var name: String
-    /// An emoji, `symbol:` and an SF Symbol name (Arc's Icon tab), or empty: Arc shows an icon-less space as a dot.
+    /// An emoji, `symbol:` and an SF Symbol name (Arc's Icon tab), `image:` and a file name, or empty: Arc shows
+    /// an icon-less space as a dot.
     public var icon: String
+
+    /// The file name of the space's image icon, or nil when the icon isn't an image.
+    public var iconImageName: String? {
+        guard icon.hasPrefix(Self.imagePrefix) else { return nil }
+        let name = String(icon.dropFirst(Self.imagePrefix.count))
+        return Self.isValidIconImageName(name) ? name : nil
+    }
+
+    /// The icon as text, for menus and labels: the emoji, or empty for an icon, an image or none.
+    public var iconText: String {
+        icon.hasPrefix(Self.symbolPrefix) || icon.hasPrefix(Self.imagePrefix) ? "" : icon
+    }
+
+    /// "🏠 Personal", or just the name when the icon isn't an emoji.
+    public var labelWithIcon: String { iconText.isEmpty ? name : "\(iconText) \(name)" }
+
+    /// A bare file name in the SpaceIcons folder: no path separators, no leading dot.
+    public static func isValidIconImageName(_ name: String) -> Bool {
+        !name.isEmpty && name.count <= 128 && !name.hasPrefix(".") && !name.contains("/") && !name.contains("\\")
+            && !name.contains(":")
+    }
     public var theme: Theme
     public var pinnedItems: [PinnedItem]
     /// Unpinned tabs, newest first.
@@ -158,6 +182,17 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     public var tabGroups: [TodayTabGroup] = []
     /// The folder of the profile this space uses (Profiles.swift); nil is the default profile.
     public var profile: String?
+    /// What belongs in this space, in the user's words ("Komado business: Shopify, suppliers, ads").
+    /// Claude reads it (list_spaces) to choose the space a link it opens goes to.
+    public var about: String?
+
+    public static let maxAboutLength = 500
+
+    /// Trims a description and caps its length; nil when there's nothing left.
+    public static func cleanAbout(_ text: String) -> String? {
+        let trimmed = text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : String(trimmed.prefix(maxAboutLength))
+    }
 
     public init(
         id: UUID = UUID(),
@@ -186,7 +221,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     public var allTabs: [BrowserTab] { pinned + tabs }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, icon, theme, pinnedItems, pinned, tabs, selectedTabID, splits, tabGroups, profile
+        case id, name, icon, theme, pinnedItems, pinned, tabs, selectedTabID, splits, tabGroups, profile, about
     }
 
     public init(from decoder: Decoder) throws {
@@ -206,6 +241,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
         splits = try c.decodeIfPresent([SplitView].self, forKey: .splits) ?? []
         tabGroups = try c.decodeIfPresent([TodayTabGroup].self, forKey: .tabGroups) ?? []
         profile = try c.decodeIfPresent(String.self, forKey: .profile)
+        about = try c.decodeIfPresent(String.self, forKey: .about)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -220,6 +256,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
         if !splits.isEmpty { try c.encode(splits, forKey: .splits) }
         if !tabGroups.isEmpty { try c.encode(tabGroups, forKey: .tabGroups) }
         try c.encodeIfPresent(profile, forKey: .profile)
+        try c.encodeIfPresent(about, forKey: .about)
     }
 }
 

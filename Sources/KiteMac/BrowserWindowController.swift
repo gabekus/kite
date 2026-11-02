@@ -158,6 +158,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.delegate = self
 
         buildViews()
+        startFavoritePreviews()
         window.keyInterceptor = { [weak self] event in self?.tabSwitcher.intercept(event) ?? false }
         store.onChange = { [weak self] in self?.sync() }
         store.onPageChange = { [weak self] id in self?.pageChanged(id) }
@@ -1379,7 +1380,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let exists = spaces.indices.contains(item.tag - 1)
             item.isHidden = !exists
             guard exists else { return false }
-            item.title = "\(spaces[item.tag - 1].icon) \(spaces[item.tag - 1].name)"
+            item.title = spaces[item.tag - 1].labelWithIcon
         case #selector(goBack(_:)), #selector(goForward(_:)) where item.isHidden:
             // ⌘← / ⌘→ belong to a focused AppKit text field (the command bar) for line start/end.
             // A disabled key equivalent passes the key on.

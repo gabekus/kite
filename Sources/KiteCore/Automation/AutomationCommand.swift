@@ -118,7 +118,9 @@ public enum AutomationCommand: Hashable, Sendable {
     // Kite
     case listSpaces
     case switchSpace(space: String)
-    case createSpace(name: String, icon: String?)
+    case createSpace(name: String, icon: String?, about: String?)
+    /// Sets what a space is for ("Komado business"), which Claude reads to pick the space a link opens in.
+    case describeSpace(space: String, about: String)
     case pinTab(tab: String?, pinned: Bool)
     case createFolder(name: String, space: String?)
     case moveToFolder(tab: String?, folder: String)
@@ -166,6 +168,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case listSpaces = "list_spaces"
         case switchSpace = "switch_space"
         case createSpace = "create_space"
+        case describeSpace = "describe_space"
         case pinTab = "pin_tab"
         case createFolder = "create_folder"
         case moveToFolder = "move_to_folder"
@@ -219,6 +222,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case .listSpaces: .listSpaces
         case .switchSpace: .switchSpace
         case .createSpace: .createSpace
+        case .describeSpace: .describeSpace
         case .pinTab: .pinTab
         case .createFolder: .createFolder
         case .moveToFolder: .moveToFolder
@@ -256,6 +260,14 @@ public enum AutomationCommand: Hashable, Sendable {
             let url = try a.required("url")
             let newTab = try a.bool("new_tab")
             if newTab && tab != nil { throw InvalidArguments("Pass \"tab\" or \"new_tab\", not both.") }
+            // A space means a new tab there: the same as tabs_create.
+            if let space = try a.string("space"), !space.isEmpty {
+                if tab != nil { throw InvalidArguments("\"space\" opens a new tab, so don't pass \"tab\" with it.") }
+                if ["back", "forward"].contains(url.lowercased()) { throw InvalidArguments("\"back\" and \"forward\" need a tab, not a space.") }
+                self = .tabsCreate(url: url, active: false,
+                                   placement: space.lowercased() == "claude" ? .claudeSpace : .space(space))
+                return
+            }
             self = .navigate(tab: tab, url: url, newTab: newTab)
         case .resizeWindow:
             guard let width = try a.int("width", in: 400...10_000), let height = try a.int("height", in: 300...10_000) else {
@@ -345,7 +357,11 @@ public enum AutomationCommand: Hashable, Sendable {
         case .switchSpace:
             self = .switchSpace(space: try a.required("space"))
         case .createSpace:
-            self = .createSpace(name: try a.required("name"), icon: try a.string("icon"))
+            self = .createSpace(name: try a.required("name"), icon: try a.string("icon"),
+                                about: try a.string("about").flatMap(Space.cleanAbout))
+        case .describeSpace:
+            guard let about = try a.string("about") else { throw InvalidArguments("\"about\" is required (\"\" clears it).") }
+            self = .describeSpace(space: try a.required("space"), about: Space.cleanAbout(about) ?? "")
         case .pinTab:
             guard let value = a.values["pinned"], !value.isNull else {
                 self = .pinTab(tab: tab, pinned: true)

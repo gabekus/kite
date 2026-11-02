@@ -3452,7 +3452,9 @@ Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, Ghidra decompile
 
 **More Settings…**: strings 80409–80410, "Clicking opens arc://settings", Chromium's own settings WebUI, which Kite's Alloy-style tabs can't host. Kite opens its own Chromium settings pages instead (kite://settings/privacy, from g100/g101) in a new tab for the current space's profile. **Reset Translated-site Prompts** stays disabled: Kite has no translation.
 
-## Command bar › search suggestions privacy banner (g122) → `SearchSuggestionsPrivacyBanner` (CommandBarView.swift) (Arc 1.171 decomp, strings, asset catalogs, 1 Nov 2026)
+## Command bar › search suggestions privacy banner (g122) (Arc 1.171 decomp, strings, asset catalogs, 1 Nov 2026)
+
+**Kite doesn't show this banner** (Gabe, 2 Nov 2026: removed for good, a deliberate departure from Arc). The notes below are kept as a record of Arc's behaviour only.
 
 - **Strings** [strings + disasm]: title "We talk to your search engine to help us suggest results." (arc-strings 81286),
   subtitle "Learn more about your data on Arc " + an underlined link "here" (`Text.underline`, PlainButtonStyle) + "."
@@ -3599,6 +3601,11 @@ accessibility frames and pixel colours only (no screenshot of the mail was looke
 - Timing (measured with a real pointer, 5ms pixel sampling): the card's first frame about 0.39s after the pointer
   reaches the tile, fully in within about 0.05–0.09s; it stays while the pointer is on the card and goes within
   about 0.1s of leaving both. Kite: 0.38s delay, 0.08s fades.
+- Data ready before the hover (binary: `PreviewsDataClient.setPeriodicUpdatesEnabled`, `refreshTimer`; measured: Arc's
+  card had the mail in its first frame). Kite reads Gmail favorites' mail 3s after a window opens and every minute,
+  from one hidden page per profile, so the card opens with it rather than after a network round trip.
+- Scrolling: the list is as tall as its rows up to the 272 cap and scrolls inside the card (a legacy scroller shows
+  with Gabe's scroller setting, as on Arc's).
 - Click (Kite): a row opens the message in the favorite. **[unverified]** what Arc does on click.
 - **[unverified]** Calendar and recents cards: none of Gabe's favorites has them, so their rows follow the email
   row's type and padding. Light-appearance colours are unmeasured (Gabe's spaces are dark).

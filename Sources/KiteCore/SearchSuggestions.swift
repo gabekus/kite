@@ -24,13 +24,6 @@ public enum SearchSuggestions {
         return items.filter { $0.lowercased() != typed }
     }
 
-    /// Arc's search suggestions privacy banner (`SearchSuggestionsPrivacyView`) shows at the foot of
-    /// the command bar while the list holds the engine's suggestions (results carrying
-    /// `searchPrivacyInfo`), until Dismiss is pressed once (then never again).
-    public static func showsPrivacyBanner(hasEngineSuggestions: Bool, dismissed: Bool) -> Bool {
-        hasEngineSuggestions && !dismissed
-    }
-
     /// The engine's suggest request for `query`. `template` replaces the engine's own URL
     /// (tests point it at a local fixture); `{searchTerms}` in it is the encoded query.
     public static func requestURL(for query: String, engine: SearchEngine, template: String? = nil) -> URL? {

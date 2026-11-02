@@ -24,7 +24,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | Claude in Chrome | Kite tool | CLI | Notes |
 |---|---|---|---|
 | `tabs_context_mcp` | `tabs_context` | `kite tabs` | Every tab in every space, with ids, URLs, space, front. |
-| `tabs_create_mcp` | `tabs_create` | `kite open URL` | Background by default. `space: "claude"` opens it in a Claude space. |
+| `tabs_create_mcp` | `tabs_create` | `kite open URL [--space NAME]` | Background by default. `space` picks the space (see "Opening links in the right space"); `"claude"` is Claude's own. |
 | `tabs_close_mcp` | `tabs_close` | `kite call tabs_close` | Asks first if Claude didn't open the tab. |
 | (switch tab) | `switch_tab` | | |
 | `navigate` | `navigate` | `kite open URL --here` | Also `"back"` / `"forward"`. Waits for the load. |
@@ -44,7 +44,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | (none) | `handle_dialog` | | alert / confirm / prompt / beforeunload. |
 | (none) | `list_downloads` | | Downloads since control was turned on. |
 | (none) | `sign_in` | `kite call sign_in` | Hands a login page to the user, with 1Password. See below. |
-| (none) | `list_spaces`, `switch_space`, `create_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces` | Kite's own organization. |
+| (none) | `list_spaces`, `switch_space`, `create_space`, `describe_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces`, `kite describe-space` | Kite's own organization. |
 | `gif_creator`, `shortcuts_*`, `switch_browser` | not yet | | |
 
 | (none) | `batch` | `kite call batch` | Several tool calls in one round trip. See below. |
@@ -378,3 +378,17 @@ isn't an API. So Kite joins Desktop instead of running a second Claude next to i
 Limits: Desktop doesn't send a `q` prompt by itself (by design), and a headless task that's opened in Desktop
 shouldn't get more Kite follow-ups, or the two would write to one transcript.
 
+## Opening links in the right space
+
+A plain "open X" from the user should land in the space X belongs to (say, a business space or a personal one)
+without the user naming it.
+
+- Each space can say what it's for, in the user's words (`Space.about`, saved with the session). `describe_space`
+  (or `kite describe-space NAME TEXT`, or `about` on `create_space`) sets it; `list_spaces` shows it as a `for:` line.
+  Claude saves it when the user explains which things go where.
+- `tabs_create` takes `space`, and so does `navigate` (a new tab there) and `kite open URL --space NAME`.
+- The choice is Claude's: the `tabs_create` description, the MCP server's instructions and the Claude Tasks system
+  prompt share one paragraph (`AutomationCommand.Tool.spaceRouting`) telling it to pick the space from what the link
+  and conversation are about, using `list_spaces`, without asking and without defaulting to the space in front.
+- A Claude task that opens a link in a named space leaves it as a plain tab there, not in the task's folder, since
+  it's for the user.

@@ -26,6 +26,7 @@ public struct MCPServer: Sendable {
         Kite is the user's own web browser. These tools act in their real tabs, signed in as them. \
         Call tabs_context first for tab ids, and read_page or find before click, type or form_input to get element refs; \
         screenshot pixels are the coordinates the computer tool clicks. Tools work on background tabs without switching to them. \
+        Opening a link for the user: \(AutomationCommand.Tool.spaceRouting) \
         \(UntrustedContent.notice) \
         Only submit forms, send, post, pay, buy or delete what the user asked for. If they turned on Kite's \
         Ask Before Claude Acts, Kite asks them first; if they decline, the tool returns an error. \

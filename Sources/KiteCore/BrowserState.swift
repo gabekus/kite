@@ -137,9 +137,6 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public var liveFoldersTurnedOff: [LiveFolder.Source]
     /// Whether the Pull Requests intro popover has shown (Arc's `hasSeenGithubLiveFolderEducation`).
     public var hasSeenLiveFolderIntro: Bool
-    /// The command bar's search suggestions privacy banner was closed with Dismiss (Arc's
-    /// `commandBarSearchSuggestionsPrivacyHasBeenExplicitlyDismissed`, one for the whole app).
-    public var hasDismissedSearchSuggestionsPrivacy: Bool
 
     public static let recentlyClosedLimit = 25
     public static let archiveLimit = 500
@@ -172,7 +169,6 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.allowsJavaScriptFromAppleEvents = false
         self.liveFoldersTurnedOff = []
         self.hasSeenLiveFolderIntro = false
-        self.hasDismissedSearchSuggestionsPrivacy = false
         seedDefaultSiteSearches()
     }
 
@@ -184,7 +180,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         // always wrote `true`, so the old key is ignored and they start without the warning.
         case warnsBeforeQuitting = "asksBeforeQuitting", spacesWithCollapsedPinnedSections
         case developerModeEnabledForHosts, devModeReloadState, allowsJavaScriptFromAppleEvents
-        case liveFoldersTurnedOff, hasSeenLiveFolderIntro, pageAppearance, hasDismissedSearchSuggestionsPrivacy
+        case liveFoldersTurnedOff, hasSeenLiveFolderIntro, pageAppearance
         case profiles, profileFavorites, retiredProfileDirectories, favoriteSplits, profileSettings
     }
 
@@ -225,7 +221,6 @@ public struct BrowserState: Hashable, Codable, Sendable {
         allowsJavaScriptFromAppleEvents = try c.decodeIfPresent(Bool.self, forKey: .allowsJavaScriptFromAppleEvents) ?? false
         liveFoldersTurnedOff = try c.decodeIfPresent([LiveFolder.Source].self, forKey: .liveFoldersTurnedOff) ?? []
         hasSeenLiveFolderIntro = try c.decodeIfPresent(Bool.self, forKey: .hasSeenLiveFolderIntro) ?? false
-        hasDismissedSearchSuggestionsPrivacy = try c.decodeIfPresent(Bool.self, forKey: .hasDismissedSearchSuggestionsPrivacy) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -252,7 +247,6 @@ public struct BrowserState: Hashable, Codable, Sendable {
         try c.encode(allowsJavaScriptFromAppleEvents, forKey: .allowsJavaScriptFromAppleEvents)
         try c.encode(liveFoldersTurnedOff, forKey: .liveFoldersTurnedOff)
         try c.encode(hasSeenLiveFolderIntro, forKey: .hasSeenLiveFolderIntro)
-        if hasDismissedSearchSuggestionsPrivacy { try c.encode(true, forKey: .hasDismissedSearchSuggestionsPrivacy) }
         if !profiles.isEmpty { try c.encode(profiles, forKey: .profiles) }
         let others = favoritesByProfile.filter { $0.key != Profile.defaultDirectory && !$0.value.isEmpty }
         if !others.isEmpty { try c.encode(others, forKey: .profileFavorites) }

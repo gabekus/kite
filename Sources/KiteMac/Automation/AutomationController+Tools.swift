@@ -30,7 +30,7 @@ extension AutomationController {
             return try await networkRequest(id, body: body, maxBodyLength: maxBodyLength)
         case let .exportHAR(query, bodies):
             return try await exportHAR(try networkQuery(query), bodies: bodies)
-        case .listSpaces, .switchSpace, .createSpace, .pinTab, .createFolder, .moveToFolder:
+        case .listSpaces, .switchSpace, .createSpace, .describeSpace, .pinTab, .createFolder, .moveToFolder:
             return try kiteCommand(command)
         case .ui(let inspection):
             guard UIDiagnostics.isEnabled else {
@@ -440,7 +440,11 @@ extension AutomationController {
             spaceID = store.state.spaces[index].id
         }
         let id = store.mutate { $0.openTab(url: url, in: spaceID, select: false) }
-        if let task {
+        // A link a task opens in a named space is for the user, so it stays a plain tab there rather than
+        // going in the task's folder.
+        if let task, case .space = placement {
+            taskTabs[task, default: []].append(id)
+        } else if let task {
             taskOpenedTab?(task, id)
             taskTabs[task, default: []].append(id)
         }
@@ -508,18 +512,31 @@ extension AutomationController {
                 let space = state.spaces[i]
                 return AutomationReport.SpaceSummary(
                     id: space.id, name: space.name, icon: space.icon, pinned: space.pinned.count, tabs: space.tabs.count,
-                    folders: state.folders(inSpace: i).map(\.name), isFront: space.id == state.selectedSpaceID)
+                    folders: state.folders(inSpace: i).map(\.name), isFront: space.id == state.selectedSpaceID,
+                    about: space.about)
             }))
         case .switchSpace(let name):
             let index = try spaceIndex(name)
             store.mutate { $0.selectSpace(at: index) }
             return .text("Switched to \(store.state.spaces[index].name).")
-        case let .createSpace(name, icon):
+        case let .createSpace(name, icon, about):
+            // Space names are how Claude (and kite open --space) pick a space, so they must stay unique.
+            if store.state.spaces.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+                throw AutomationError(.invalidArguments,
+                                      "There's already a space called \(name). Use it, or describe_space to say what it's for.")
+            }
             let count = store.state.spaces.count
             let id = store.mutate {
-                $0.addBackgroundSpace(name: name, icon: icon ?? "🗂️", theme: Theme.presets[count % Theme.presets.count])
+                let id = $0.addBackgroundSpace(name: name, icon: icon ?? "🗂️", theme: Theme.presets[count % Theme.presets.count])
+                if let index = $0.spaceIndex(id) { $0.spaces[index].about = about }
+                return id
             }
             return .text("Made space \(id.uuidString) (not switched to it).")
+        case let .describeSpace(name, about):
+            let index = try spaceIndex(name)
+            store.mutate { $0.spaces[index].about = about.isEmpty ? nil : about }
+            let space = store.state.spaces[index].name
+            return .text(about.isEmpty ? "\(space) no longer says what it's for." : "\(space) is now for: \(about)")
         case let .pinTab(string, pinned):
             let tab = try resolveTab(string)
             switch store.state.location(of: tab.id)?.section {
