@@ -91,6 +91,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     var contextMenuHost: (() -> PageContextMenu.Host)?
     private var mediaInUse = false
     private let adblocker: Adblocker?
+    private var frameAdblock: FrameAdblock?
     private let appliesBoosts: Bool
     private var address: URL?
     /// Bumped per load so a page that navigated away stops being polled.
@@ -113,6 +114,9 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         super.init()
         browser.delegate = self
         prepareVerificationCodes()
+        if let adblocker, KCRuntime.supportsAdblock {
+            frameAdblock = FrameAdblock(browser: browser, adblocker: adblocker, pageURL: { [weak self] in self?.address })
+        }
         if appliesBoosts { LiveBoosts.attach(to: self, owner: self) }
         historySwipe = HistorySwipeController(
             view: browser.view,
@@ -419,6 +423,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
 
     private func handlePageFeatureEvent(_ method: String, _ params: [AnyHashable: Any]) {
+        frameAdblock?.handle(method, params)
         switch method {
         case "Runtime.executionContextCreated":
             guard let context = params["context"] as? [String: Any],
