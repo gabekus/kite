@@ -114,6 +114,7 @@ has no key; the URL pill still opens it), and shortcuts are remappable (B6).
 | Space 1…9 | ⌃1…⌃9 | ✅ | |
 | Manage Spaces… | | ❌ | B3 (reorder, delete) |
 | Swipe between spaces (two fingers) | gesture | ✅ | Physics not yet fitted to Arc |
+| Reorder spaces by dragging their icons in the bottom bar | gesture | ✅ the icon follows the pointer, the others slide to open its slot, off the bar the slot closes; a drop keeps the current space | Slide duration unmeasured; Manage Spaces' drag not built |
 
 ### Tabs
 
