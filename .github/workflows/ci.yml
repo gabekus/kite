@@ -68,9 +68,9 @@ jobs:
       - name: Test (WebKit build, no CEF download)
         run: swift test
       - name: Save build cache (main only, so every PR starts from main's build)
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'ci-speedup'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: git rev-parse HEAD > .build/ci-built-sha
-      - if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'ci-speedup'
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: .build
@@ -107,9 +107,9 @@ jobs:
         shell: pwsh
         run: swift test
       - name: Save build cache (main only, so every PR starts from main's build)
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'ci-speedup'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: git rev-parse HEAD > .build/ci-built-sha
-      - if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'ci-speedup'
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:
           path: .build
