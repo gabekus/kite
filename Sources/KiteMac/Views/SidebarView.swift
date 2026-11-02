@@ -455,6 +455,47 @@ private struct ChromeFill: ViewModifier {
     }
 }
 
+/// A favorite's tile. Unselected it's the field's white wash. Selected, Arc fills it white (0.45 dark,
+/// 0.8 light), lays the favorite's colour over that (0.2, 0.3 hovered; on a light theme only when
+/// hovered, 0.1), and strokes a 2pt ring of the colour on the tile inset by 1. With no colour (a
+/// grey or missing favicon) the tile is just white.
+private struct FavoriteFill: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    let isSelected: Bool
+    let isHovered: Bool
+    let highlight: NSColor?
+
+    func body(content: Content) -> some View {
+        if isSelected {
+            let dark = scheme == .dark
+            let shape = RoundedRectangle(cornerRadius: M.favoriteCornerRadius, style: .continuous)
+            let tint = dark ? (isHovered ? M.favoriteTintHovered : M.favoriteTint) : (isHovered ? M.favoriteTintHoveredLight : 0)
+            content
+                .background {
+                    ZStack {
+                        shape.fill(Color.white.opacity(dark ? M.favoriteSelectedFill : M.favoriteSelectedFillLight))
+                        if let color { shape.fill(color.opacity(tint)) }
+                    }
+                }
+                .overlay {
+                    if let color {
+                        RoundedRectangle(cornerRadius: M.favoriteCornerRadius, style: .continuous)
+                            .inset(by: M.favoriteRingInset)
+                            .stroke(color, lineWidth: M.favoriteRingWidth)
+                            .allowsHitTesting(false)
+                    }
+                }
+        } else {
+            content.modifier(ChromeFill(strength: isHovered ? M.fieldFill + M.hoverFill : M.fieldFill, cornerRadius: M.favoriteCornerRadius))
+        }
+    }
+
+    /// The favicon's colour, lightened like Arc's ring (fitted, see `favoriteHighlightWhiten`).
+    private var color: Color? {
+        highlight?.blended(withFraction: M.favoriteHighlightWhiten, of: .white).map(Color.init(nsColor:))
+    }
+}
+
 /// A tab or split row's pill. Arc's colours for these come in light and dark pairs
 /// rather than one white scaled up, so on a light theme a hovered tab gets a faint
 /// dark wash instead of a white haze.
@@ -991,7 +1032,7 @@ private struct FavoriteGhost: View {
             ForEach(tabs) { tab in
                 FaviconView(tab: tab, size: M.favoriteIconSize)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .modifier(ChromeFill(strength: M.fieldFill + M.selectedFill))
+                    .modifier(ChromeFill(strength: M.fieldFill + M.selectedFill, cornerRadius: M.favoriteCornerRadius))
             }
         }
     }
@@ -1043,14 +1084,20 @@ private struct FavoriteTile: View {
     let onPreview: (NSView?) -> Void
     @State private var hovering = false
     @State private var anchor: NSView?
+    /// The favicon's dominant colour, for the selected tile's ring and tint.
+    @State private var highlight: NSColor?
 
     var body: some View {
         FaviconView(tab: tab, size: M.favoriteIconSize)
             .frame(maxWidth: .infinity)
             .frame(height: M.favoriteHeight)
-            .modifier(ChromeFill(strength: isSelected ? M.fieldFill + M.selectedFill : hovering ? M.fieldFill + M.hoverFill : M.fieldFill))
+            .modifier(FavoriteFill(isSelected: isSelected, isHovered: hovering, highlight: highlight))
             .contentShape(Rectangle())
             .background(AnchorView(view: $anchor))
+            .task(id: FaviconView(tab: tab).url) {
+                guard let url = FaviconView(tab: tab).url, let image = await FaviconCache.shared.image(for: url) else { return }
+                highlight = image.dominantColor
+            }
             .onHover { inside in
                 hovering = inside
                 onPreview(inside ? anchor : nil)

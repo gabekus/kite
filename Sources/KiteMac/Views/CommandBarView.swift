@@ -120,34 +120,6 @@ private extension Color {
     }
 }
 
-private extension NSImage {
-    /// The most common saturated hue in the icon, averaged; nil for a grey or empty icon.
-    var dominantColor: NSColor? {
-        let side = 16
-        guard let bitmap = NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8, samplesPerPixel: 4,
-            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-        ) else { return nil }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-        draw(in: NSRect(x: 0, y: 0, width: side, height: side))
-        NSGraphicsContext.restoreGraphicsState()
-        var bins: [Int: (count: Int, r: CGFloat, g: CGFloat, b: CGFloat)] = [:]
-        for x in 0..<side {
-            for y in 0..<side {
-                guard let pixel = bitmap.colorAt(x: x, y: y), pixel.alphaComponent > 0.5,
-                      pixel.saturationComponent > 0.25, pixel.brightnessComponent > 0.15 else { continue }
-                let bin = Int(pixel.hueComponent * 12) % 12
-                let sum = bins[bin, default: (0, 0, 0, 0)]
-                bins[bin] = (sum.count + 1, sum.r + pixel.redComponent, sum.g + pixel.greenComponent, sum.b + pixel.blueComponent)
-            }
-        }
-        guard let top = bins.values.max(by: { $0.count < $1.count }) else { return nil }
-        let n = CGFloat(top.count)
-        return NSColor(srgbRed: top.r / n, green: top.g / n, blue: top.b / n, alpha: 1)
-    }
-}
-
 private struct CommandBarView: View {
     let store: BrowserStore
     let mode: CommandBarMode

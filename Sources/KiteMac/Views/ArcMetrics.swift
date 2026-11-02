@@ -59,6 +59,21 @@ enum ArcMetrics {
         static let favoriteIconSize: CGFloat = 18
         /// A favorite split's panes inside its tile (Arc 1.169's binary, `AppTrayItemChildStack`).
         static let favoriteSplitSpacing: CGFloat = 2
+        /// Arc 1.171's tray tile (`AppTrayItemBackgroundView`, `AppTrayItemHighlightRingView`; decompiled,
+        /// docs/arc-visual-spec.md "Selected favorite"): continuous corners of 12, a selected tile filled
+        /// white at 0.45 (dark) or 0.8 (light), and a 2pt ring on the tile inset by 1.
+        static let favoriteCornerRadius: CGFloat = 12
+        static let favoriteSelectedFill: Double = 0.45
+        static let favoriteSelectedFillLight: Double = 0.8
+        static let favoriteRingWidth: CGFloat = 2
+        static let favoriteRingInset: CGFloat = 1
+        /// The tile's colour layer: 0.2, 0.3 hovered (dark); none, 0.1 hovered (light).
+        static let favoriteTint: Double = 0.2
+        static let favoriteTintHovered: Double = 0.3
+        static let favoriteTintHoveredLight: Double = 0.1
+        /// Unverified, fitted to a capture of Arc's selected YouTube favorite: the ring's colour is
+        /// the favicon's half way to white.
+        static let favoriteHighlightWhiten: Double = 0.5
 
         /// URL field, favorite tiles and tab pills share one corner.
         static let cornerRadius: CGFloat = 11
