@@ -1169,6 +1169,21 @@ Arc wasn't driven; nothing here is from a recording.
   12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
   top/bottom one on a top/bottom drop (Kite refuses it).
 
+## Split View: Separate All Tabs → `BrowserState.separateAllTabs` (KiteCore), `SplitRow` context menu (Arc 1.169 disassembly, 1.171 strings, 2 Nov 2026)
+
+- **Split row context menu** [str + dis]: Arc builds a "Split View Context Menu" (`ContextMenus/SidebarMenu+TabContextMenu.swift`) in
+  this order: Share Split View…, separator, **Separate All Tabs** ("separate all tabs from a split view sidebar item"), **Add Tab…**
+  ("add a new tab to a split view sidebar item"; the title is an inline literal), then a separator and a **Tab Options** header
+  ("demarcates child tab level options") over the right-clicked pane's items, whose separate item is titled **Separate from Split View**
+  ("separates a tab from its split view container"). Kite leaves out Share Split View… (no sharing) and keeps its Pin/Unpin Split View,
+  Copy Link and Close this Split Pane items in those two groups.
+- **Undo name** [str]: "Move Items out of split" (`WindowData+SplitViewHelpers.swift`). Kite has no sidebar undo yet.
+- **Hover button** [str]: Arc's sidebar trailing button on a split's pane can be "Separate from Split View" ("removes the child item from its
+  split view and opens it in a separate tab"), drawn with `icon-separate-from-split-opaque`. Possibly behind the
+  `new-split-separation-mechanisms-enabled` flag. **Not built**: when it shows wasn't traced.
+- **What happens to the tabs** [inferred]: the split ends and its tabs stay where they were in the sidebar, the focused one still
+  selected. Not observed live in Arc.
+
 ## Split View: drag a sidebar tab onto the pages → `SplitTabDrop.swift` (KiteCore), `BrowserWindowController+SplitTabDrop` (Arc 1.169 decompile, 1.171 strings, 1 Nov 2026)
 
 Arc wasn't driven; nothing here is from a recording or a capture. Sources: **[str]** `~/rea-arc/arc-strings.txt`; **[dec]** Ghidra on

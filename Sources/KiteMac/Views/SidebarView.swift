@@ -403,6 +403,13 @@ struct SidebarView: View {
             },
             onClose: actions.closeTab,
             onSeparate: { id in store.mutate { $0.separateFromSplit(tab: id) } },
+            onSeparateAll: { store.mutate { $0.separateAllTabs(split: split.id) } },
+            onAddTab: {
+                store.mutate { state in
+                    if let target = state.focusTarget(of: split) { state.select(tab: target) }
+                }
+                actions.addSplitView()
+            },
             onTogglePin: { store.mutate { $0.togglePin(tab: split.tabIDs[0]) } }
         )
         .modifier(SidebarDragSource(
@@ -1828,6 +1835,10 @@ private struct SplitRow: View {
     let onSelect: (UUID?) -> Void
     let onClose: (UUID) -> Void
     let onSeparate: (UUID) -> Void
+    /// Arc's Separate All Tabs: the split ends and its tabs stay where they are.
+    let onSeparateAll: () -> Void
+    /// Arc's Add Tab…: a new pane in this split, filled from the command bar.
+    let onAddTab: () -> Void
     let onTogglePin: () -> Void
     @State private var hovering = false
 
@@ -1881,11 +1892,19 @@ private struct SplitRow: View {
         .onTapGesture { onSelect(tab.id) }
         .help(tab.displayTitle)
         .contextMenu {
-            Button("Separate Page from Split View") { onSeparate(tab.id) }
+            // Arc's "Split View Context Menu": the split's own items, then a "Tab Options" section
+            // for the pane that was right-clicked (SidebarMenu+TabContextMenu in Arc 1.169).
+            Button("Separate All Tabs", action: onSeparateAll)
+            Button("Add Tab…", action: onAddTab)
+                .disabled(tabs.count >= SplitView.maxPanes)
             Button(isPinned ? "Unpin Split View" : "Pin Split View", action: onTogglePin)
-            Button("Copy Link") { copyLink(tab.url) }
             Divider()
-            Button("Close this Split Pane") { onClose(tab.id) }
+            Section("Tab Options") {
+                Button("Separate from Split View") { onSeparate(tab.id) }
+                Button("Copy Link") { copyLink(tab.url) }
+                Divider()
+                Button("Close this Split Pane") { onClose(tab.id) }
+            }
         }
         .accessibilityElement(children: .combine)
         // Icon-only items would otherwise read as the favicon's symbol name.

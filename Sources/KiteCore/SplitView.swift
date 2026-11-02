@@ -243,6 +243,16 @@ extension BrowserState {
         normalizeSplits()
     }
 
+    /// Arc's Separate All Tabs (the split row's context menu): the split goes away and each of its
+    /// tabs becomes a row of its own, where it already sat in the sidebar. The focused tab stays
+    /// selected and now fills the window alone.
+    public mutating func separateAllTabs(split splitID: UUID) {
+        for s in spaces.indices {
+            spaces[s].splits.removeAll { $0.id == splitID }
+        }
+        favoriteSplits.removeAll { $0.id == splitID }
+    }
+
     /// Arc's Expand Current Split: the focused pane fills the split; the others stay in it, hidden.
     /// It only expands, as Arc's handler does: running it again changes nothing.
     public mutating func expandSplitPane() {
