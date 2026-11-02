@@ -14,6 +14,8 @@ final class AutomationServer: @unchecked Sendable {
     private let onDisconnect: @Sendable (Int) -> Void
     private let queue = DispatchQueue(label: "dev.gabek.Kite.automation")
     private var listenFD: Int32 = -1
+    /// The socket file this server bound (device and inode), so it only ever deletes its own.
+    private var boundFile: (dev: dev_t, ino: ino_t)?
     private var listenSource: DispatchSourceRead?
     private var connections: [Int: Connection] = [:]
     private var nextConnectionID = 1
@@ -44,6 +46,11 @@ final class AutomationServer: @unchecked Sendable {
             buffer.copyBytes(from: path.utf8)
             buffer[path.utf8.count] = 0
         }
+        // Don't take the socket from another Kite that's still answering on it
+        // (it would lose Claude's connection). The watchdog tries again later.
+        if Self.isAnswering(address) {
+            throw AutomationError(.failed, "Another Kite is already answering at \(path).")
+        }
         // A socket left behind by a crash would make bind fail.
         unlink(path)
 
@@ -59,6 +66,8 @@ final class AutomationServer: @unchecked Sendable {
             throw error
         }
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+        var info = stat()
+        if lstat(path, &info) == 0 { boundFile = (info.st_dev, info.st_ino) }
         listenFD = fd
 
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
@@ -72,11 +81,40 @@ final class AutomationServer: @unchecked Sendable {
         queue.sync {
             listenSource?.cancel()
             listenSource = nil
-            if listenFD >= 0 { unlink(socketURL.path) }
+            // Only our own file: a newer Kite may have bound the path since
+            // (an update relaunching, a second instance), and deleting its
+            // socket leaves Claude unable to find the running Kite.
+            if listenFD >= 0, ownsSocketFileLocked { unlink(socketURL.path) }
             listenFD = -1
+            boundFile = nil
             for connection in Array(connections.values) { connection.close() }
             connections.removeAll()
         }
+    }
+
+    /// True while the server is listening.
+    var isListening: Bool { queue.sync { listenFD >= 0 } }
+
+    /// True while the file at `socketURL` is still the socket this server bound.
+    var ownsSocketFile: Bool { queue.sync { ownsSocketFileLocked } }
+
+    private var ownsSocketFileLocked: Bool {
+        guard let boundFile else { return false }
+        var info = stat()
+        guard lstat(socketURL.path, &info) == 0 else { return false }
+        return info.st_dev == boundFile.dev && info.st_ino == boundFile.ino
+    }
+
+    /// Whether something accepts connections at the address right now.
+    private static func isAnswering(_ address: sockaddr_un) -> Bool {
+        let probe = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard probe >= 0 else { return false }
+        defer { close(probe) }
+        var address = address
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(probe, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        return connected == 0
     }
 
     // MARK: Private (on `queue`)

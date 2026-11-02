@@ -61,6 +61,10 @@ final class AutomationController {
     @ObservationIgnored private var revoked: Set<UUID> = []
     @ObservationIgnored private var pendingConfirmations: [UUID: [NSAlert]] = [:]
     @ObservationIgnored private var expiryTimer: Timer?
+    /// While the setting is on: reopens the socket if it couldn't open at launch or its file went away.
+    @ObservationIgnored private var socketWatchdog: Timer?
+    /// The last reason the socket didn't open, so the watchdog logs each reason once.
+    @ObservationIgnored private var lastSocketError: String?
     /// Console, network and dialog state of tabs Claude has touched, and the page each was collected from.
     @ObservationIgnored var activities: [UUID: TabActivity] = [:]
     @ObservationIgnored private var trackedPages: [UUID: (page: ObjectIdentifier, actions: PageActions)] = [:]
@@ -123,16 +127,52 @@ final class AutomationController {
     var socketURL: URL { AutomationWire.socketURL(supportDirectory: supportDirectory) }
 
     /// Opens the socket if the setting is on. Call once the window exists.
+    ///
+    /// A socket that can't open at launch never turns the setting off: the
+    /// watchdog keeps retrying, so "Allow Claude to Control the Browser" stays
+    /// on across restarts and updates until the user turns it off.
     func start() {
-        if isEnabled && !openSocket() { settings.allowClaudeControl = false }
+        if isEnabled {
+            if !openSocket(interactive: false) {
+                NSLog("Kite: Claude's connection didn't open at launch; retrying.")
+            }
+            startWatchdog()
+        }
         if isRecordingNetwork { startRecording() }
+    }
+
+    private func startWatchdog() {
+        socketWatchdog?.invalidate()
+        socketWatchdog = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkSocket() }
+        }
+    }
+
+    /// Something else can take the socket away from a running Kite: another Kite
+    /// on the same profile quitting, or a crashed launch's cleanup. Reopen it.
+    private func checkSocket() {
+        guard isEnabled else {
+            socketWatchdog?.invalidate()
+            socketWatchdog = nil
+            return
+        }
+        if let server, server.isListening, server.ownsSocketFile { return }
+        if let server {
+            NSLog("Kite: Claude's socket file at \(server.socketURL.path) went away; reopening it.")
+            server.stop()
+            self.server = nil
+        }
+        _ = openSocket(interactive: false)
     }
 
     func setEnabled(_ enabled: Bool) {
         guard enabled != isEnabled else { return }
         if enabled {
-            guard openSocket() else { return }
+            guard openSocket(interactive: true) else { return }
+            startWatchdog()
         } else {
+            socketWatchdog?.invalidate()
+            socketWatchdog = nil
             server?.stop()
             server = nil
             stop(tabs: Set(controlledTabs.keys).union(pendingConfirmations.keys).union(trackedPages.keys))
@@ -220,6 +260,8 @@ final class AutomationController {
     }
 
     func shutdown() {
+        socketWatchdog?.invalidate()
+        socketWatchdog = nil
         server?.stop()
         server = nil
         if settings.recordNetwork { networkStore.flush() }
@@ -251,7 +293,7 @@ final class AutomationController {
         return trackedPages[id]?.actions ?? recordedPages[id]?.actions
     }
 
-    private func openSocket() -> Bool {
+    private func openSocket(interactive: Bool) -> Bool {
         let server = AutomationServer(
             socketURL: socketURL,
             handler: { [weak self] request, connection in
@@ -264,6 +306,12 @@ final class AutomationController {
         do {
             try server.start()
         } catch {
+            guard interactive else {
+                let reason = "\(error)"
+                if reason != lastSocketError { NSLog("Kite: couldn't open Claude's socket: \(reason)") }
+                lastSocketError = reason
+                return false
+            }
             let alert = NSAlert()
             alert.messageText = "Kite couldn't start Claude's connection"
             alert.informativeText = "\(error)"
@@ -271,6 +319,7 @@ final class AutomationController {
             return false
         }
         self.server = server
+        lastSocketError = nil
         expiryTimer?.invalidate()
         expiryTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.expireIdleTabs() }

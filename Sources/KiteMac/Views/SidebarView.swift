@@ -165,6 +165,9 @@ struct SidebarView: View {
                     .onDisappear { drag.favoritesArea = nil }
                     .padding(.top, M.favoritesTopGap)
                     .padding(.bottom, M.favoritesBottomGap)
+                    // Arc's tray is a collection view the sidebar's width, insets and gaps included:
+                    // a press anywhere on it is the tray's, never a window move.
+                    .background(NoWindowDrag().padding(.horizontal, -M.padding))
                 }
 
                 SpacePages(store: store, swipe: swipe) { space in
