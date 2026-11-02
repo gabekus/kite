@@ -109,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A test build on a throwaway profile with KITE_DIAGNOSTICS=1 comes up ready for Claude.
         if UIDiagnostics.enabledByEnvironment && !automation.isEnabled { automation.setEnabled(true) }
         UIDiagnostics.shared.applySetting()
-        automation.jev = JevClient.fromKeychain()
+        automation.jev = JevClient.shared
         claudeTasks = ClaudeTasksController(store: store, automation: automation, supportDirectory: Self.supportDirectory)
         // A notification clicked: the bubble, on that task.
         claudeTasks.showPanel = { [weak self] id in

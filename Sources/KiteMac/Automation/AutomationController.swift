@@ -523,13 +523,27 @@ final class AutomationController {
     func authorize(_ action: AutomationAction, tab: BrowserTab) async throws {
         switch AutomationPolicy.evaluate(action, host: store.state.tab(tab.id)?.url?.host()) {
         case .allow:
-            break
+            // Ask Before Claude Acts: Jev takes a second look at clicks the word list let through.
+            // It can only add a question, and a slow or failed answer adds none.
+            if settings.askBeforeActing, case .click(let element) = action, let jev,
+               let request = await Self.jevConfirmation(element, host: store.state.tab(tab.id)?.url?.host(), jev: jev) {
+                try await require(request, tab: tab.id)
+            }
         case .deny(let reason):
             throw AutomationError(.denied, reason)
         case .confirm(let request):
             try await require(request, tab: tab.id)
         }
         if revoked.contains(tab.id) { throw AutomationError.stopped }
+    }
+
+    nonisolated private static func jevConfirmation(_ element: ElementDescription, host: String?,
+                                                     jev: JevClient) async -> ConfirmationRequest? {
+        let (state, questions) = Jev.guardrail(click: element, host: host)
+        guard let answers = try? await jev.ask(state: state, questions: questions),
+              Jev.needsConfirmation(answers) else { return nil }
+        return ConfirmationRequest(action: "click something that may not be undoable\(host.map { " on \($0)" } ?? "")",
+                                   detail: "Claude wants to click \(element.summary).")
     }
 
     /// Asks the user; throws if they say no. Inside a batch it stops the batch instead.

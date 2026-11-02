@@ -53,4 +53,44 @@ import Testing
             choice: "e2", confidence: 0.8, probabilities: ["e2": 0.9, "e1": 0.08, "e3": 0.02, "e9": 0.5])])
         #expect(Jev.found(answers, among: candidates).map(\.ref) == ["e2", "e1"])
     }
+
+    @Test func routesLinksOnlyWhenSpacesSayWhatTheyreFor() throws {
+        let url = URL(string: "https://admin.shopify.com/store/komado")!
+        let spaces = [Jev.SpaceOption(name: "Komado", about: "Komado business: Shopify, suppliers"),
+                      Jev.SpaceOption(name: "Personal", about: nil)]
+        let (state, questions) = try #require(Jev.spaceRouting(url: url, spaces: spaces))
+        #expect(state.contains(url.absoluteString))
+        guard case let .choice(_, options)? = questions[Jev.spaceQuestion] else {
+            Issue.record("expected a choice")
+            return
+        }
+        #expect(options == ["Komado": "Komado business: Shopify, suppliers", "Personal": "The Personal space"])
+        #expect(Jev.spaceRouting(url: url, spaces: [spaces[0]]) == nil)
+        #expect(Jev.spaceRouting(url: url, spaces: spaces.map { Jev.SpaceOption(name: $0.name, about: nil) }) == nil)
+        #expect(Jev.spaceRouting(url: URL(string: "file:///tmp/x")!, spaces: spaces) == nil)
+
+        func answers(_ choice: String, _ confidence: Double) -> Jev.Answers {
+            Jev.Answers(choices: [Jev.spaceQuestion: Jev.Choice(choice: choice, confidence: confidence, probabilities: [:])])
+        }
+        #expect(Jev.space(from: answers("Komado", 0.9)) == "Komado")
+        #expect(Jev.space(from: answers("Komado", 0.5)) == nil)
+        #expect(Jev.space(from: Jev.Answers()) == nil)
+    }
+
+    @Test func searchesInstantLinksAsTypedOnlyWhenJevIsSure() {
+        #expect(Jev.instantLinks(input: "swift testing docs").state.contains("swift testing docs"))
+        #expect(Jev.searchAsTyped(Jev.Answers(nouls: [Jev.searchAsTypedQuestion: 0.9])))
+        #expect(!Jev.searchAsTyped(Jev.Answers(nouls: [Jev.searchAsTypedQuestion: 0.6])))
+        #expect(!Jev.searchAsTyped(Jev.Answers()))
+    }
+
+    @Test func guardrailOnlyAddsConfirmations() {
+        let element = ElementDescription(tag: "button", label: "Continue", href: nil, inForm: true)
+        let (state, questions) = Jev.guardrail(click: element, host: "shop.example")
+        #expect(state.contains("shop.example") && state.contains("Continue") && state.contains("Inside a form"))
+        #expect(questions[Jev.commitsQuestion] != nil)
+        #expect(Jev.needsConfirmation(Jev.Answers(nouls: [Jev.commitsQuestion: 0.95])))
+        #expect(!Jev.needsConfirmation(Jev.Answers(nouls: [Jev.commitsQuestion: 0.5])))
+        #expect(!Jev.needsConfirmation(Jev.Answers()))
+    }
 }

@@ -429,8 +429,18 @@ extension AutomationController {
         // A Claude task's tabs go in the Claude folder of the space it was asked from (taskOpenedTab).
         let task = Self.agentTask
         let spaceID: UUID?
+        var jevPicked: String?
         switch placement {
-        case .currentSpace: spaceID = nil
+        case .currentSpace:
+            // Claude forgot to name a space for a link it opened for the user: Jev picks one from
+            // what each space is for, in well under a second. Unsure, or no Jev: the space in front.
+            if task == nil, let url, let picked = await jevSpace(for: url),
+               let index = store.state.space(matching: picked), store.state.spaces[index].id != store.state.selectedSpace.id {
+                spaceID = store.state.spaces[index].id
+                jevPicked = store.state.spaces[index].name
+            } else {
+                spaceID = nil
+            }
         // A task never makes a Claude space: its tabs go to its space's Claude folder.
         case .claudeSpace: spaceID = task == nil ? store.mutate { $0.claudeSpace() } : nil
         case .space(let name):
@@ -463,7 +473,17 @@ extension AutomationController {
             await settle(id, startDelay: 0.3)
         }
         let space = store.state.location(of: id)?.space.map { store.state.spaces[$0].name } ?? ""
-        return report("Opened a new \(active ? "" : "background ")tab in \(space).", id)
+        let why = jevPicked == nil ? "" : " (no space was given, so Kite picked it from what each space is for)"
+        return report("Opened a new \(active ? "" : "background ")tab in \(space)\(why).", id)
+    }
+
+    /// The space Jev is sure a link belongs in, or nil.
+    private func jevSpace(for url: URL) async -> String? {
+        guard let jev else { return nil }
+        let spaces = store.state.spaces.map { Jev.SpaceOption(name: $0.name, about: $0.about) }
+        guard let (state, questions) = Jev.spaceRouting(url: url, spaces: spaces),
+              let answers = try? await jev.ask(state: state, questions: questions) else { return nil }
+        return Jev.space(from: answers)
     }
 
     private func closeTab(_ string: String) async throws -> ToolOutput {
