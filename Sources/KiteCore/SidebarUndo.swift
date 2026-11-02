@@ -48,7 +48,8 @@ public struct SidebarSnapshot: Hashable, Sendable {
     }
 }
 
-/// What an undo step is called in the Edit menu ("Undo Archive Tab") and on its toast.
+/// What an undo step is called in the Edit menu ("Undo Archive Tab") and on its toast. The names are
+/// Arc's own (its undo titles, read from Arc's binary: see the PR).
 public enum SidebarUndo {
     /// How many steps each window keeps.
     public static let levels = 100
@@ -131,40 +132,28 @@ public enum SidebarUndo {
 
         if !removedFolders.isEmpty { return removedFolders.count == 1 ? "Delete Folder" : "Delete Folders" }
         if !removed.isEmpty {
+            // Arc names a close by what went: pinned tabs are "Remove Pin", favorites "Remove Favorite",
+            // and Today's tabs are archived ("Undo Archive Tab"), or just closed when they never had a page.
+            let one = removed.count == 1
+            if removed.allSatisfy({ old[$0]?.section == .favorite }) { return one ? "Remove Favorite" : "Remove Favorites" }
+            if removed.allSatisfy({ old[$0]?.section == .pinned }) { return one ? "Remove Pin" : "Remove Pins" }
             let archivedIDs = Set(after.archived.map(\.tab.id)).union(after.recentlyClosed.map(\.tab.id))
-            // Closing a tab archives it in Arc ("Undo Archive Tab"); a tab that never had a page just goes.
-            if removed.allSatisfy({ !archivedIDs.contains($0) }) { return removed.count == 1 ? "Close Tab" : "Close Tabs" }
-            return removed.count == 1 ? "Archive Tab" : "Archive Tabs"
+            if removed.allSatisfy({ !archivedIDs.contains($0) }) { return one ? "Close Tab" : "Close Tabs" }
+            return one ? "Archive Tab" : "Archive Tabs"
         }
         if !addedFolders.isEmpty { return "New Folder" }
         if !added.isEmpty { return added.count == 1 ? "New Tab" : "New Tabs" }
 
-        // Renames.
+        // Renames: Arc calls renaming a tab or a folder "Rename Item".
         let renamedFolder = newFolders.contains { id, name in oldFolders[id].map { $0 != name } ?? false }
-        if renamedFolder { return "Rename Folder" }
         let renamedTab = new.contains { id, placement in old[id].map { $0.customTitle != placement.customTitle } ?? false }
-        if renamedTab { return "Rename Tab" }
+        if renamedFolder || renamedTab { return "Rename Item" }
 
-        // Moves to another section, folder or space, by the strongest kind among them.
-        let moved = new.compactMap { id, placement -> (Placement, Placement)? in
-            guard let was = old[id], was.where != placement.where else { return nil }
-            return (was, placement)
-        }
-        func plural(_ name: String, _ count: Int) -> String { count > 1 ? name + "s" : name }
-        if moved.contains(where: { $0.0.section != .favorite && $0.1.section == .favorite }) { return "Add to Favorites" }
-        if moved.contains(where: { $0.0.section == .favorite && $0.1.section != .favorite }) { return "Remove from Favorites" }
-        if moved.contains(where: { $0.0.space != $0.1.space && $0.0.space != nil && $0.1.space != nil }) {
-            return plural("Move Tab", moved.count) + " to Space"
-        }
-        // Pinning puts a tab at the top of the pinned tabs; one dragged into a folder is moved there.
-        if moved.contains(where: { $0.0.section == .unpinned && $0.1.section == .pinned && $0.1.container == $0.1.space }) {
-            return plural("Pin Tab", moved.count)
-        }
-        if moved.contains(where: { $0.0.section == .pinned && $0.1.section == .unpinned }) { return plural("Unpin Tab", moved.count) }
-        if !moved.isEmpty { return plural("Move Tab", moved.count) }
-        // Reordered in place: as many tabs as had to move to get the new order.
-        let reordered = reorderedCount(old, new)
-        if reordered > 0 { return plural("Move Tab", reordered) }
+        // Every move is "Move Item" in Arc: reordering, pinning and unpinning, into or out of a folder
+        // or Favorites, and to another space.
+        let moved = new.filter { id, placement in old[id].map { $0.where != placement.where } ?? false }.count
+        let count = moved + reorderedCount(old, new)
+        if count > 0 { return count == 1 ? "Move Item" : "Move Items" }
 
         // Splits and Tidy Tabs' groups.
         let oldLayout = Layout(before), newLayout = Layout(after)
@@ -174,7 +163,7 @@ public enum SidebarUndo {
         let groupsChanged = oldLayout.spaces.contains { id, space in newLayout.spaces[id].map { $0.groups != space.groups } ?? false }
         if groupsChanged { return "Tidy Tabs" }
         // Folders moved among the pinned tabs.
-        return "Move Folder"
+        return "Move Item"
     }
 
     /// Where a tab sits in the sidebar, for naming a change.

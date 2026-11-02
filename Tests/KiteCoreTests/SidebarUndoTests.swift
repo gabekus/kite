@@ -43,7 +43,7 @@ import Testing
         var state = BrowserState.makeDefault()
         let a = state.openTab(url: url("a.com"))
         let s = step(&state) { $0.togglePin(tab: a) }
-        #expect(s.name == "Pin Tab")
+        #expect(s.name == "Move Item")
         // The page moves on after pinning.
         state.update(tab: a) { $0.url = self.url("a.com/next"); $0.title = "Next" }
         state.restoreSidebar(s.before, other: s.after)
@@ -64,6 +64,19 @@ import Testing
         #expect(state.location(of: a)?.section == .unpinned)
     }
 
+    @Test func closingPinnedAndFavoriteTabsUsesArcsNames() {
+        var state = BrowserState.makeDefault()
+        let a = state.openTab(url: url("a.com"))
+        let b = state.openTab(url: url("b.com"))
+        state.togglePin(tab: a)
+        state.toggleFavorite(tab: b)
+        #expect(step(&state) { _ = $0.removePinnedTab(a) }.name == "Remove Pin")
+        let removeFavorite = step(&state) { state in
+            for profile in state.favoritesByProfile.keys { state.favoritesByProfile[profile]?.removeAll { $0.id == b } }
+        }
+        #expect(removeFavorite.name == "Remove Favorite")
+    }
+
     @Test func newTabUndoesByClosing() {
         var state = BrowserState.makeDefault()
         let s = step(&state) { _ = $0.openTab(url: self.url("a.com")) }
@@ -80,7 +93,7 @@ import Testing
         let a = state.openTab(url: url("a.com"))
         state.togglePin(tab: a)
         let rename = step(&state) { $0.renameTab(a, to: "Mine") }
-        #expect(rename.name == "Rename Tab")
+        #expect(rename.name == "Rename Item")
         state.restoreSidebar(rename.before, other: rename.after)
         #expect(state.tab(a)?.customTitle == nil)
 
@@ -89,7 +102,7 @@ import Testing
         #expect(folderStep.name == "New Folder")
         let folder = SidebarUndo.folders(in: state).first { $0.value == "New Folder" }!.key
         let renameFolder = step(&state) { $0.renameFolder(folder, to: "Work") }
-        #expect(renameFolder.name == "Rename Folder")
+        #expect(renameFolder.name == "Rename Item")
         state.restoreSidebar(renameFolder.before, other: renameFolder.after)
         #expect(SidebarUndo.folders(in: state)[folder] == "New Folder")
         state.restoreSidebar(folderStep.before, other: folderStep.after)
@@ -120,7 +133,7 @@ import Testing
         #expect(toggle.name == nil)
         let a = state.openTab(url: url("a.com"))
         let s = step(&state) { _ = $0.moveTab(a, toFolder: folder) }
-        #expect(s.name == "Move Tab")
+        #expect(s.name == "Move Item")
         state.setFolderExpanded(folder, true)
         state.restoreSidebar(s.before, other: s.after)
         let restored = state.selectedSpace.pinnedItems.compactMap { item -> TabFolder? in
@@ -139,14 +152,14 @@ import Testing
         let a = state.openTab(url: url("a.com"))
         let b = state.openTab(url: url("b.com"))
         let reorder = step(&state) { $0.moveTabs(inSpace: $0.selectedSpaceID, pinned: false, fromOffsets: IndexSet(integer: 0), toOffset: 2) }
-        #expect(reorder.name == "Move Tab")
+        #expect(reorder.name == "Move Item")
         let move = step(&state) { state in
             let s = state.selectedSpaceIndex
             let tab = state.spaces[s].tabs.first { $0.id == a }!
             state.spaces[s].tabs.removeAll { $0.id == a }
             state.spaces[state.spaceIndex(other)!].tabs.insert(tab, at: 0)
         }
-        #expect(move.name == "Move Tab to Space")
+        #expect(move.name == "Move Item")
         state.restoreSidebar(move.before, other: move.after)
         #expect(state.location(of: a)?.space == state.selectedSpaceIndex)
         #expect(state.spaces[state.spaceIndex(other)!].tabs.isEmpty)
@@ -174,7 +187,7 @@ import Testing
         var state = BrowserState.makeDefault()
         let a = state.openTab(url: url("a.com"))
         let s = step(&state) { $0.toggleFavorite(tab: a) }
-        #expect(s.name == "Add to Favorites")
+        #expect(s.name == "Move Item")
         state.restoreSidebar(s.before, other: s.after)
         #expect(state.location(of: a)?.section == .unpinned)
         #expect(state.favorites.isEmpty)
