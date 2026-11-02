@@ -89,11 +89,11 @@ public enum SidebarUndo {
             func tab(_ tab: BrowserTab) -> TabLayout {
                 TabLayout(id: tab.id, customTitle: tab.customTitle.flatMap { $0.isEmpty ? nil : $0 })
             }
-            func items(_ items: [PinnedItem]) -> [ItemLayout] {
-                items.map { item -> ItemLayout in
+            func layout(_ list: [PinnedItem]) -> [ItemLayout] {
+                list.map { item -> ItemLayout in
                     switch item {
                     case .tab(let t): .tab(tab(t))
-                    case .folder(let f): .folder(id: f.id, name: f.name, items: Self.isLive(f) ? [] : items(f.items))
+                    case .folder(let f): .folder(id: f.id, name: f.name, items: Self.isLive(f) ? [] : layout(f.items))
                     }
                 }
             }
@@ -101,7 +101,7 @@ public enum SidebarUndo {
                 splits.map { SplitLayout(tabIDs: $0.tabIDs, orientation: $0.orientation) }
             }
             spaces = Dictionary(uniqueKeysWithValues: state.spaces.map {
-                ($0.id, SpaceLayout(pinned: items($0.pinnedItems), tabs: $0.tabs.map(tab), splits: splits($0.splits), groups: $0.tabGroups))
+                ($0.id, SpaceLayout(pinned: layout($0.pinnedItems), tabs: $0.tabs.map(tab), splits: splits($0.splits), groups: $0.tabGroups))
             })
             favorites = state.favoritesByProfile.mapValues { $0.map(tab) }
             favoriteSplits = state.favoriteSplitsByProfile.mapValues(splits)
