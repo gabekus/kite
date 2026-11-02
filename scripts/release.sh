@@ -77,7 +77,10 @@ APP=build/Kite.app
 codesign --verify --deep --strict "$APP"
 # Sparkle only installs an update signed by the same team as the running Kite, and 1Password only
 # trusts a Developer ID browser, so a release must be Developer ID signed.
-codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "^Authority=Developer ID Application" \
+# (Read into a variable first: grep -q exits at the first match, and under pipefail codesign's
+# SIGPIPE would fail the check.)
+SIGNING="$(codesign -dv --verbose=2 "$APP" 2>&1)"
+[[ "$SIGNING" == *$'\nAuthority=Developer ID Application'* ]] \
     || fail "Kite.app isn't signed with a Developer ID Application certificate"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
 BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist")"
@@ -114,7 +117,7 @@ PREVIOUS="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null |
     git log --first-parent --format='%H' "$range" | while read -r commit; do
         subject="$(git log -1 --format=%s "$commit")"
         if [[ "$subject" =~ ^Merge\ pull\ request\ \#([0-9]+) ]]; then
-            title="$(git log -1 --format=%b "$commit" | sed '/^[[:space:]]*$/d' | head -1)"
+            title="$(git log -1 --format=%b "$commit" | sed -n '/[^[:space:]]/{p;q;}')"
             echo "- ${title:-$subject} (#${BASH_REMATCH[1]})"
         else
             echo "- $subject"
