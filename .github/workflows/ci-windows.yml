@@ -30,7 +30,7 @@ jobs:
   # Keeps KiteCore portable for the Windows shell. Only KiteCore and its tests
   # build on Windows, so the job runs only when those change.
   windows:
-    runs-on: windows-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'windows-latest' || vars.WINDOWS_RUNNER || 'windows-latest' }}
     timeout-minutes: 30
     defaults:
       run:
