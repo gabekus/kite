@@ -101,7 +101,8 @@ import Testing
         let index = state.selectedSpaceIndex
         let a = state.openTab(url: url("a.com"))
         let folder = state.createFolder(name: "Work", inSpace: index)
-        #expect(state.moveTab(a, toFolder: folder))
+        let filed = state.moveTab(a, toFolder: folder)
+        #expect(filed)
         let pinned = state.selectedSpace.pinnedItems
         let s = step(&state) { _ = $0.deleteFolder(folder) }
         #expect(s.name == "Delete Folder")
@@ -157,13 +158,16 @@ import Testing
         var state = BrowserState.makeDefault()
         let a = state.openTab(url: url("a.com"))
         _ = state.openTab(url: url("b.com"))
-        #expect(step(&state) { $0.select(tab: a) }.name == nil)
-        #expect(step(&state) { $0.update(tab: a) { $0.title = "A" } }.name == nil)
+        let select = step(&state) { $0.select(tab: a) }
+        #expect(select.name == nil)
+        let retitle = step(&state) { $0.update(tab: a) { $0.title = "A" } }
+        #expect(retitle.name == nil)
     }
 
     @Test func spacesComingAndGoingAreNotSteps() {
         var state = BrowserState.makeDefault()
-        #expect(step(&state) { _ = $0.addSpace(name: "New", icon: "", theme: Theme.presets[2]) }.name == nil)
+        let add = step(&state) { _ = $0.addSpace(name: "New", icon: "", theme: Theme.presets[2]) }
+        #expect(add.name == nil)
     }
 
     @Test func favorites() {
