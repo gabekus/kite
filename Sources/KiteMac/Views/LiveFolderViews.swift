@@ -8,11 +8,16 @@ struct LiveFoldersSpaceMenu: View {
     let space: Space
 
     var body: some View {
-        if let controller = LiveFoldersController.shared, let index = store.state.spaceIndex(space.id) {
+        // The index is looked up on every read: the menu outlives a Delete Space, and SwiftUI reads
+        // the toggles once more after the space has gone (an index taken here crashed on 2 Nov 2026).
+        if let controller = LiveFoldersController.shared, store.state.spaceIndex(space.id) != nil {
             Menu("Live Folders") {
                 ForEach(LiveFolder.Source.allCases, id: \.self) { source in
                     Toggle(source.displayName, isOn: Binding(
-                        get: { store.state.liveFolder(source, inSpace: index) != nil },
+                        get: {
+                            guard let index = store.state.spaceIndex(space.id) else { return false }
+                            return store.state.liveFolder(source, inSpace: index) != nil
+                        },
                         set: { _ in controller.toggle(source, inSpace: space.id) }))
                 }
             }

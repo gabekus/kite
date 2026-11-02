@@ -82,6 +82,69 @@ import Testing
         #expect(state.selectedSpace.name == "C")
     }
 
+    @Test func deletingTheFirstSpaceWhileSelectedSelectsTheNextOne() {
+        var state = makeState()
+        state.selectSpace(at: 0)
+        state.deleteSpace(state.spaces[0].id)
+        #expect(state.spaces.map(\.name) == ["B", "C"])
+        #expect(state.selectedSpace.name == "B")
+    }
+
+    @Test func deletingTheLastSpaceInTheListWhileSelected() {
+        var state = makeState()
+        state.selectSpace(at: 2)
+        let id = state.spaces[2].id
+        state.deleteSpace(id)
+        #expect(state.spaceIndex(id) == nil)
+        #expect(state.selectedSpaceIndex == 1)
+        state.selectSpace(at: 0)
+        #expect(state.selectedSpace.name == "A")
+    }
+
+    @Test func aSpaceWithAnImageIconDeletes() {
+        var state = makeState()
+        let id = state.spaces[1].id
+        state.setSpaceIcon(id, to: "image:3F2A.png")
+        state.deleteSpace(id)
+        #expect(state.spaces.map(\.name) == ["A", "C"])
+    }
+
+    // The space menu's Live Folders toggles are read once more after Delete Space, with the index the
+    // deleted space had (the crash of 2 Nov 2026): a stale index finds nothing instead of trapping.
+    @Test func folderLookupsAfterDeletingTheLastSpaceDontTrap() {
+        var state = makeState()
+        let staleIndex = 2
+        state.addLiveFolder(.github, inSpace: staleIndex)
+        state.deleteSpace(state.spaces[staleIndex].id)
+        #expect(state.folders(inSpace: staleIndex).isEmpty)
+        #expect(state.liveFolder(.github, inSpace: staleIndex) == nil)
+        #expect(state.liveFolders.isEmpty)
+    }
+
+    @Test func aDeletedSpaceStaysGoneAfterSavingAndLoading() throws {
+        var state = makeState()
+        state.selectSpace(at: 1)
+        state.deleteSpace(state.spaces[1].id)
+        let loaded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
+        #expect(loaded.spaces.map(\.name) == ["A", "C"])
+        #expect(loaded.selectedSpace.name == "A")
+    }
+
+    @Test func aLinkRouteToADeletedSpaceFallsBack() {
+        var state = makeState()
+        let id = state.spaces[1].id
+        let routing = AirTrafficControl.State(rules: [AirTrafficControl.Rule(
+            components: [AirTrafficControl.Component(style: .contains, pattern: "figma.com")],
+            destination: .space(id))])
+        state.deleteSpace(id)
+        let destination = routing.destination(
+            for: URL(string: "https://figma.com/file/1")!,
+            spaceIDs: Set(state.spaces.map(\.id)),
+            opensExternalLinksInLittleKite: false)
+        #expect(destination == .mostRecentSpace)
+        #expect(state.space(matching: "B") == nil)
+    }
+
     @Test func anIconIsOneCharacter() {
         var state = makeState()
         state.setSpaceIcon(state.spaces[0].id, to: " 🚀🌙 ")

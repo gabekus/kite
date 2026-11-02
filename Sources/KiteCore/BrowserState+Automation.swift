@@ -37,8 +37,10 @@ extension BrowserState {
         return addBackgroundSpace(name: Self.claudeSpaceName, icon: Self.claudeSpaceIcon, theme: theme)
     }
 
-    /// Every folder in a space's pinned section, depth first.
+    /// Every folder in a space's pinned section, depth first. None for an index past the end (a
+    /// space that was deleted).
     public func folders(inSpace index: Int) -> [TabFolder] {
+        guard spaces.indices.contains(index) else { return [] }
         func collect(_ items: [PinnedItem]) -> [TabFolder] {
             items.flatMap { item -> [TabFolder] in
                 guard case .folder(let folder) = item else { return [] }
