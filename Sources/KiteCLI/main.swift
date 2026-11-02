@@ -23,8 +23,9 @@ let usage = """
                                                      Type into an element (or the focused one)
       kite key KEYS [--tab ID]                       Press keys, e.g. "cmd+a Backspace" or Enter
       kite open URL [--here | --tab ID]              Open URL in a new background tab (or navigate one)
-      kite open URL --space NAME [--plain | --active] Open URL in that space's Claude folder (--plain or --active:
-                                                     a plain tab there, for the user)
+      kite open URL --space NAME [--session NAME] [--plain | --active]
+                                                     Open URL in that space's Claude folder, in Claude › SESSION
+                                                     with --session (--plain or --active: a plain tab, for the user)
       kite call move_to_folder '{"folder":"claude"}' File the front tab in its space's Claude folder
       kite screenshot [--tab ID] [--format png] [-o FILE]
                                                      Save a screenshot of a tab (JPEG unless --format png)
@@ -197,7 +198,7 @@ struct Arguments {
     var options: [String: String] = [:]
     var flags: Set<String> = []
 
-    static let valued: Set<String> = ["--tab", "--space", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
+    static let valued: Set<String> = ["--tab", "--space", "--session", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
                                       "--window", "--depth", "--match", "--region", "--pixels",
                                       "--status", "--host", "--type", "--url", "--since", "--limit"]
 
@@ -279,6 +280,7 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
             json["space"] = .string(space)
             if args.flags.contains("--active") { json["active"] = true }
             if args.flags.contains("--plain") { json["claude_folder"] = false }
+            if let session = args.options["--session"] { json["session"] = .string(session) }
         } else if args.options["--tab"] == nil && !args.flags.contains("--here") {
             json["new_tab"] = true
         }

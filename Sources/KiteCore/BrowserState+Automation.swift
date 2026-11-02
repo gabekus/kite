@@ -81,6 +81,29 @@ extension BrowserState {
         return folder.id
     }
 
+    public static let maxSessionFolderName = 40
+
+    /// A session folder's name: one line, trimmed and capped; nil when empty.
+    public static func cleanSessionFolderName(_ name: String) -> String? {
+        let line = name.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        return line.isEmpty ? nil : String(line.prefix(maxSessionFolderName))
+    }
+
+    /// The folder for one Claude session inside the space's Claude folder (Claude › Session name), reused
+    /// when a folder by that name (any case) is already there. Ephemeral like the Claude folder.
+    public mutating func claudeSessionFolder(named name: String, inSpace id: UUID) -> UUID? {
+        guard let name = Self.cleanSessionFolderName(name), let claude = claudeFolder(inSpace: id),
+              let index = spaceIndex(id) else { return nil }
+        let existing = folders(inSpace: index).first { $0.id == claude }?.items.compactMap { item -> TabFolder? in
+            if case .folder(let folder) = item, folder.name.localizedCaseInsensitiveCompare(name) == .orderedSame { return folder }
+            return nil
+        }.first
+        if let existing { return existing.id }
+        let folder = TabFolder(name: name, ephemeral: true)
+        guard spaces[index].pinnedItems.updateFolder(claude, { $0.items.append(.folder(folder)) }) else { return nil }
+        return folder.id
+    }
+
     /// Drops ephemeral (Claude) folders left empty, deepest first.
     mutating func dropEmptyEphemeralFolders(inSpace index: Int) {
         func pruned(_ items: [PinnedItem]) -> [PinnedItem] {

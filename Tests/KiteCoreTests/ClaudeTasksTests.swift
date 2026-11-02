@@ -164,6 +164,42 @@ import Testing
         #expect(try AutomationCommand(tool: "navigate", arguments: ["url": "x.com", "space": "claude"])
             == .tabsCreate(url: "x.com", active: false, placement: .claudeFolder(space: nil)))
     }
+
+    @Test func eachSessionGetsAFolderInsideTheClaudeFolder() throws {
+        var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0])])
+        let komado = state.spaces[0].id
+        let dnsFolder = state.claudeSessionFolder(named: "Cloudflare DNS move", inSpace: komado)
+        let adsFolder = state.claudeSessionFolder(named: "Meta ads audit", inSpace: komado)
+        let dns = try #require(dnsFolder)
+        let ads = try #require(adsFolder)
+        // The same name (any case) is the same folder.
+        let dnsAgain = state.claudeSessionFolder(named: " cloudflare dns MOVE ", inSpace: komado)
+        #expect(dnsAgain == dns && dns != ads)
+        let tab = state.openTab(url: URL(string: "https://dash.cloudflare.com"), in: komado, select: false)
+        let moved = state.moveTab(tab, toFolder: dns)
+        #expect(moved)
+        // Claude › Cloudflare DNS move, Claude › Meta ads audit, all in the existing space.
+        let claude = try #require(state.folders(inSpace: 0).first)
+        #expect(claude.name == "Claude")
+        #expect(state.folders(inSpace: 0).map(\.name) == ["Claude", "Cloudflare DNS move", "Meta ads audit"])
+        #expect(state.spaces.count == 1)
+        #expect(BrowserState.cleanSessionFolderName("  \n ") == nil)
+        #expect(BrowserState.cleanSessionFolderName(String(repeating: "x", count: 99))?.count == BrowserState.maxSessionFolderName)
+
+        #expect(try AutomationCommand(tool: "tabs_create", arguments: ["space": "Komado", "session": "Cloudflare DNS move"])
+            == .tabsCreate(url: nil, active: false, placement: .claudeSessionFolder(space: "Komado", session: "Cloudflare DNS move")))
+        // A plain tab for the user ignores the session.
+        #expect(try AutomationCommand(tool: "tabs_create", arguments: ["space": "Komado", "session": "X", "claude_folder": false])
+            == .tabsCreate(url: nil, active: false, placement: .space("Komado")))
+        #expect(try AutomationCommand(tool: "navigate", arguments: ["url": "x.com", "space": "Komado", "session": "X"])
+            == .tabsCreate(url: "x.com", active: false, placement: .claudeSessionFolder(space: "Komado", session: "X")))
+        #expect(try AutomationCommand(tool: "move_to_folder", arguments: ["folder": "Claude", "session": "X"])
+            == .moveToClaudeFolder(tab: nil, session: "X"))
+        #expect(try AutomationCommand(tool: "move_to_folder", arguments: ["folder": "claude"])
+            == .moveToClaudeFolder(tab: nil, session: nil))
+        #expect(try AutomationCommand(tool: "move_to_folder", arguments: ["folder": "Work"])
+            == .moveToFolder(tab: nil, folder: "Work"))
+    }
 }
 
 @Suite struct ClaudeDesktopLinkTests {

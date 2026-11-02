@@ -400,3 +400,7 @@ without the user naming it.
   `space` (the default: `claude_folder` is true unless `active` is). `claude_folder: false` (CLI `--plain`) is a plain
   tab for the user. `move_to_folder` with folder `"claude"` files a tab Claude is already driving. `space: "claude"` and `in_claude_space` (older callers) mean the Claude folder of
   the space in front, as does Kite menu → Open Claude's Tabs in a Claude Folder for `navigate new_tab`.
+- Each Claude session gets its own folder inside the Claude folder: `session` on `tabs_create`, `navigate` (with
+  `space`) and `move_to_folder` (folder `"claude"`) names it, Claude › Session name, reused by name
+  (`BrowserState.claudeSessionFolder`). Kite remembers each connection's last session name and applies it to that
+  connection's later Claude-folder tabs. ⌘J tasks keep their own per-task folders.

@@ -81,6 +81,9 @@ final class AutomationController {
     @ObservationIgnored var claudeOpened: Set<UUID> = []
     /// The tabs each Claude task opened, newest last, so a placeholder tab id can mean the task's only tab.
     @ObservationIgnored var taskTabs: [UUID: [UUID]] = [:]
+    /// The session folder name each connection (one Claude session) last used, so its later Claude-folder
+    /// tabs land in the same Claude › Session folder without repeating it.
+    @ObservationIgnored var sessionFolders: [Int: String] = [:]
     @ObservationIgnored private(set) var downloads: [Int: Download] = [:]
     @ObservationIgnored private var downloadObserver: NSObjectProtocol?
     /// Each tab's last read, the baseline for change-only reads.

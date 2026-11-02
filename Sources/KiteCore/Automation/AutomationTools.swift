@@ -23,10 +23,12 @@ extension AutomationCommand.Tool {
         goes in the space it belongs to: choose it yourself from what the link, the task and the conversation are \
         about, using what list_spaces says each space is for, and pass it as space. Don't ask which space unless it's \
         truly unclear, and don't just use the one in front. By default a tab you open goes in that space's Claude \
-        folder (pages you work in: looking things up, changing settings on a site). Only a link the user asked to \
-        open for themselves is a plain tab: pass claude_folder false, or active true to show it now. Never make a \
-        Claude space; if a tab you're driving isn't in a Claude folder yet, move_to_folder with folder "claude" \
-        files it in its space's Claude folder.
+        folder (pages you work in: looking things up, changing settings on a site), in a folder of its own for this \
+        session: pass session, a short name you make up for the work at hand (2 to 5 words, like "Cloudflare DNS \
+        move"), and use the same name for every tab of this work, so they sit together in Claude › that name. Only \
+        a link the user asked to open for themselves is a plain tab: pass claude_folder false, or active true to show \
+        it now. Never make a Claude space; if a tab you're driving isn't in a Claude folder yet, move_to_folder with \
+        folder "claude" (and your session) files it there.
         """
 
     public var title: String {
@@ -102,7 +104,7 @@ extension AutomationCommand.Tool {
         case .createFolder:
             "Makes a folder in a space's pinned section and returns its id."
         case .moveToFolder:
-            "Moves a tab into a pinned folder, by folder id or name. Folder \"claude\" is the Claude folder of the tab's own space (made if needed)."
+            "Moves a tab into a pinned folder, by folder id or name. Folder \"claude\" is the Claude folder of the tab's own space (made if needed), or Claude › session with session."
         }
     }
 
@@ -121,6 +123,7 @@ extension AutomationCommand.Tool {
                 "active": ["type": "boolean", "description": "Bring the tab to the front (default false)."],
                 "space": ["type": "string", "description": "Space id or name (from list_spaces), chosen by what the link or task is about. Omit only for the space in front."],
                 "claude_folder": ["type": "boolean", "description": "Put the tab in the space's Claude folder. Default: true, unless active is true. Pass false only for a link the user asked to open for themselves."],
+                "session": ["type": "string", "description": "Short name for the work at hand (2 to 5 words), the same for all its tabs: they go in Claude › this name. Kite remembers it for your later tabs."],
             ]
         case .tabsClose, .switchTab:
             properties = ["tab": ["type": "string", "description": "Tab id from tabs_context."]]
@@ -132,6 +135,7 @@ extension AutomationCommand.Tool {
                 "new_tab": ["type": "boolean", "description": "Open in a new background tab."],
                 "space": ["type": "string", "description": "Open in a new background tab in this space (id or name), instead of tab."],
                 "claude_folder": ["type": "boolean", "description": "With space: in that space's Claude folder (default true)."],
+                "session": ["type": "string", "description": "With space: in Claude › this name (see tabs_create)."],
             ]
             required = ["url"]
         case .resizeWindow:
@@ -251,7 +255,8 @@ extension AutomationCommand.Tool {
             properties = ["name": ["type": "string"], "space": ["type": "string", "description": "Space id or name (default: the current one)."]]
             required = ["name"]
         case .moveToFolder:
-            properties = ["tab": tab, "folder": ["type": "string", "description": "Folder id or name, or \"claude\" for the tab's space's Claude folder."]]
+            properties = ["tab": tab, "folder": ["type": "string", "description": "Folder id or name, or \"claude\" for the tab's space's Claude folder."],
+                          "session": ["type": "string", "description": "With folder \"claude\": Claude › this name (your session's folder)."]]
             required = ["folder"]
         }
         var schema: [String: JSONValue] = ["type": "object", "properties": .object(properties)]
