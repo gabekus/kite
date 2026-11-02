@@ -21,14 +21,15 @@ enum SearchSuggestionFetcher {
         return template
     }
 
-    static func suggestions(for query: String, engine: SearchEngine) async -> [String] {
+    /// The engine's answer, or nil when it couldn't be had (offline, timeout, an error status).
+    static func suggestions(for query: String, engine: SearchEngine) async -> [String]? {
         guard let url = SearchSuggestions.requestURL(for: query, engine: engine, template: testTemplate) else { return [] }
         do {
             let (data, response) = try await session.data(from: url)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
             return SearchSuggestions.parse(data, query: query)
         } catch {
-            return []
+            return nil
         }
     }
 }
