@@ -154,11 +154,21 @@ import Testing
         #expect(decoded.showsToolbar)
     }
 
-    @Test func quitWarningIsOnByDefaultAndPersists() throws {
+    @Test func quitWarningIsOffByDefaultAndPersists() throws {
         var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
-        #expect(state.warnsBeforeQuitting)
-        state.warnsBeforeQuitting = false
+        #expect(!state.warnsBeforeQuitting)
+        state.warnsBeforeQuitting = true
         let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
+        #expect(decoded.warnsBeforeQuitting)
+    }
+
+    @Test func quitWarningSavedBeforeItWasOffByDefaultIsDropped() throws {
+        // Older sessions always saved `"warnsBeforeQuitting": true`.
+        let state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(state)) as! [String: Any]
+        json.removeValue(forKey: "asksBeforeQuitting")
+        json["warnsBeforeQuitting"] = true
+        let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONSerialization.data(withJSONObject: json))
         #expect(!decoded.warnsBeforeQuitting)
     }
 
