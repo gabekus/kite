@@ -246,6 +246,8 @@ final class AutomationController {
 
     /// Ends page loads Chromium answered but never reported finished (see `NetworkLog.finishAnsweredDocuments`).
     func pageFinishedLoading(_ id: UUID) {
+        // A reload (or a slept tab waking) took the ring with the old page: put it back now, not on the next look.
+        if waitingStep(on: id) != nil { pollHandoffsSoon() }
         guard isEnabled else { return }
         let finished = network.finishAnsweredDocuments(tab: id.uuidString)
         if isRecordingNetwork { networkStore.append(finished) }

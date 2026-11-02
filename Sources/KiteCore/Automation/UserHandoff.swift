@@ -139,9 +139,11 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         public enum Locator: Hashable, Codable, Sendable {
             case selector(String)
             case text(String)
-            /// An element Claude named by ref, marked with `UserHandoff.markerAttribute`; `label` finds it again if
+            /// An element Claude named by ref, marked with `UserHandoff.markerAttribute`. The mark is gone once the
+            /// page reloads (or Kite slept the tab), so `path` (its place in the page, checked against `label`) and
+            /// then `label` find it again.
             /// the page redraws it.
-            case marker(String, label: String?)
+            case marker(String, label: String?, path: String? = nil)
         }
 
         /// "h1.2": the handoff and the step's number.
@@ -318,6 +320,7 @@ extension UserHandoff {
         public var selector: String?
         public var text: String?
         public var marker: String?
+        public var path: String?
         /// Scroll the control into view the first time it's found.
         public var scroll: Bool
 
@@ -329,9 +332,10 @@ extension UserHandoff {
             switch step.locator {
             case .selector(let selector)?: self.selector = selector
             case .text(let text)?: self.text = text
-            case .marker(let marker, let label)?:
+            case .marker(let marker, let label, let path)?:
                 self.marker = marker
                 text = label
+                self.path = path
             case nil: break
             }
         }
@@ -430,6 +434,12 @@ extension UserHandoff {
               if (marked) return marked;
             }
             if (c.selector) { try { return document.querySelector(c.selector); } catch (e) { return null; } }
+            // After a reload: the same place in the page, if it still says the same; otherwise its words.
+            if (c.path) {
+              let placed = null;
+              try { placed = document.querySelector(c.path); } catch (e) {}
+              if (placed && (!c.text || words(placed) === norm(c.text))) return placed;
+            }
             return c.text ? byText(c.text) : null;
           };
           if (!K.clear) {
