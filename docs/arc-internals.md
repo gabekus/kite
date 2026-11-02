@@ -15,7 +15,7 @@ Status: ✅ Kite already does this · 🟡 partial · ❌ gap.
 
 | Arc | Kite | Notes |
 |---|---|---|
-| Theme background is a classic Metal pass: gradient layers offscreen, tiled grain on top, a final pass cuts a hole for the web page. Theme changes crossfade in the shader via a `progress` uniform. | ✅ | `Metal/ThemeView.swift` + `Shaders/Kite.metal` do the same (cutout, from/to grain, `progress`). Arc renders gradients offscreen first; we compute in one fragment pass, which is fine at our sizes. |
+| Theme background is a classic Metal pass: gradient layers offscreen, tiled grain on top, a final pass cuts a hole for the web page. Theme changes crossfade in the shader via a `progress` uniform. | ✅ | `Metal/ThemeView.swift` + `Shaders/Kite.metal` do the same (from/to grain, `progress`), minus the cutout: Kite draws under the opaque card too, so a missed redraw can't leave a hole. Arc renders gradients offscreen first; we compute in one fragment pass, which is fine at our sizes. |
 | Loading state is a soft edge glow (two colours, inset, intensity, looping `cycleProgress`), not a spinner. | ✅ | `Metal/GlowView.swift`. |
 | Plain `NSVisualEffectView` materials, plus an animated `CIGaussianBlur` for transitions. No `CABackdropLayer`/`CAFilter` strings, so no private API. | 🟡 | We use materials. No animated blur transition yet; only worth it if a transition calls for it. |
 | Cached bitmaps of tabs stand in during transitions and drags (inferred from module and type names). | ❌ | Needed for tab drag and for space-switch transitions. See *Gaps*. |

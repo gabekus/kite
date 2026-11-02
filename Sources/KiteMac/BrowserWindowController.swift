@@ -121,8 +121,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var settingsToasts: [UUID: String] = [:]
     private var commandBarVisible = false
     private var sidebarVisible = true
-    /// While the sidebar slides: the part of the window the card covers at both ends of the slide.
-    private var cardCoverDuringToggle: CGRect?
     private var sidebarToggles = 0
     /// Arc's Peek over the page, while one is open (BrowserWindowController+LinkPeek).
     var linkPeek: LinkPeekSession?
@@ -223,7 +221,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func buildViews() {
         guard let window else { return }
         window.contentView = rootView
-        rootView.onLayout = { [weak self] in self?.layoutChanged() }
 
         contentClip.wantsLayer = true
         contentClip.layer?.cornerRadius = Layout.cornerRadius
@@ -529,16 +526,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sidebarWidth = width
         sidebarWidthConstraint.constant = width
         if sidebarVisible { contentLeading.constant = width } else if !peeking { sidebarLeading.constant = -width }
-        // Lay out now so the theme's cutout moves in the same frame as the page.
+        // Lay out now so the card follows the pointer in the same frame.
         rootView.layoutSubtreeIfNeeded()
-    }
-
-    private func layoutChanged() {
-        // Metal works top-left; AppKit's origin is bottom-left.
-        // The theme shows through the gaps between a split's panes.
-        let frame = shownTabIDs.count > 1 ? .zero : cardCoverDuringToggle ?? contentFrame.frame
-        themeView.cutoutRect = CGRect(x: frame.minX, y: rootView.bounds.height - frame.maxY, width: frame.width, height: frame.height)
-        themeView.cutoutCornerRadius = Layout.cornerRadius
     }
 
     /// Settings › Advanced › "Allow websites to get your theme data" was switched.
@@ -734,7 +723,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func setSplitChrome(_ split: Bool) {
         contentClip.layer?.backgroundColor = split ? NSColor.clear.cgColor : NSColor.pageBackdrop.cgColor
         contentFrame.layer?.shadowOpacity = split ? 0 : ShadowView.opacity
-        layoutChanged()
     }
 
     /// Dark pages follow the site, so this re-checks every pane on screen whenever a URL changes.
@@ -1055,11 +1043,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sidebarLeading.constant = visible ? 0 : -sidebarWidth
         let to = CGRect(x: contentLeading.constant, y: from.minY, width: from.maxX - contentLeading.constant, height: from.height)
         // The page keeps the wider of its two widths until the slide ends, so it never stops short
-        // of the card's edge: a hide widens it now, a show narrows it at the end. And the theme
-        // skips drawing only where the card covers the window the whole way.
+        // of the card's edge: a hide widens it now, a show narrows it at the end.
         contentClip.minimumPageWidth = max(from.width, to.width)
-        cardCoverDuringToggle = from.intersection(to)
-        layoutChanged()
 
         let curve = ArcMetrics.Motion.sidebarToggleCurve
         NSAnimationContext.runAnimationGroup({ context in
@@ -1071,11 +1056,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             MainActor.assumeIsolated {
                 guard let self, toggle == self.sidebarToggles else { return }
                 self.contentClip.minimumPageWidth = 0
-                self.cardCoverDuringToggle = nil
                 self.sidebarHost.isHidden = !self.sidebarVisible
                 if wasPeeking { self.raiseSidebar(false) }
                 self.peekEdge.isActive = !self.sidebarVisible
-                self.layoutChanged()
             }
         })
     }
@@ -1544,9 +1527,7 @@ final class ContentClipView: NSView {
     }
 }
 
-/// Reports layout passes so the theme can skip pixels under the web content.
 final class RootView: NSView {
-    var onLayout: (() -> Void)?
     /// Take clicks, first to last, ahead of the views above them in subview order (they're raised by z-position).
     var frontViews: [NSView] = []
 
@@ -1555,11 +1536,6 @@ final class RootView: NSView {
             if let hit = front.hitTest(convert(point, from: superview)) { return hit }
         }
         return super.hitTest(point)
-    }
-
-    override func layout() {
-        super.layout()
-        onLayout?()
     }
 }
 

@@ -130,6 +130,8 @@ reading its asset catalog. It records numbers and structure only. No shader code
   - Other overlay textures are `denim`, `sand` and `tweed`, crossfaded with the same `fromOverlayAlpha` and
     `toOverlayAlpha`.
 - **Cutout:** Arc discards the pixels inside an axis-aligned rect (no rounded corners) where the web content sits.
+  Kite doesn't: the card is opaque, so the hole is invisible when it's right, and when a redraw was missed after a
+  sidebar resize it showed the old card's outline as a band of untinted material (Gabe's screenshot, 2 Nov 2026).
 
 Kite now does the grain the same way: per-pixel hash noise with the same mean and spread, multiply-blended at
 0.259 × the theme's grain, where `Theme.grain` is Arc's `noiseFactor`. Kite keeps its own OKLab anchor blend for

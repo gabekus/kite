@@ -53,14 +53,12 @@ static float hash12(float2 p) {
 struct ThemeUniforms {
     float4 fromLab[4];   // OKLab, converted once on the CPU
     float4 toLab[4];
-    float4 cutout;       // web content rect in px: x, y, w, h
     float2 size;         // drawable px
     float fromGrain;
     float toGrain;
     float progress;      // space-switch crossfade, 0...1
     uint fromCount;
     uint toCount;
-    float cutoutRadius;  // px
     float fromTint;      // opacity over the window's material, 0...1
     float toTint;
 };
@@ -94,12 +92,6 @@ static float3 themeLab(constant float4 *lab, uint count, float2 uv, float aspect
 
 fragment float4 kite_theme_fragment(VertexOut in [[stage_in]], constant ThemeUniforms &u [[buffer(0)]]) {
     float2 px = in.position.xy;
-
-    // The web page covers the middle of the window, so skip pixels nobody will see.
-    float2 halfSize = u.cutout.zw * 0.5;
-    if (halfSize.x > 0.0 && roundedRectDistance(px - (u.cutout.xy + halfSize), halfSize, u.cutoutRadius) < -2.0) {
-        discard_fragment();
-    }
 
     float aspect = u.size.x / max(u.size.y, 1.0);
     float3 lab = mix(themeLab(u.fromLab, u.fromCount, in.uv, aspect),

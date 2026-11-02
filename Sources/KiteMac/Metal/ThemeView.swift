@@ -2,19 +2,17 @@ import KiteCore
 import MetalKit
 import QuartzCore
 
-/// Must match `ThemeUniforms` in Kite.metal (192 bytes).
+/// Must match `ThemeUniforms` in Kite.metal (176 bytes).
 private struct ThemeUniforms {
     typealias Palette = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
     var fromLab: Palette
     var toLab: Palette
-    var cutout: SIMD4<Float>
     var size: SIMD2<Float>
     var fromGrain: Float
     var toGrain: Float
     var progress: Float
     var fromCount: UInt32
     var toCount: UInt32
-    var cutoutRadius: Float
     var fromTint: Float
     var toTint: Float
 }
@@ -27,16 +25,13 @@ private func palette(_ theme: Theme) -> ThemeUniforms.Palette {
 
 /// The space's gradient backdrop behind the sidebar and web content.
 ///
-/// It only draws when something changes (theme, size, cutout). The frame clock runs
+/// It draws under the whole window, page card included: drawing around the card instead left
+/// the old card's outline as untinted material whenever a redraw after a sidebar resize was missed.
+/// It only draws when something changes (theme, size). The frame clock runs
 /// only during the space-switch crossfade, at the screen's full refresh rate, then
 /// stops again.
 @MainActor
 final class ThemeView: MTKView, MTKViewDelegate {
-    var cutoutRect: CGRect = .zero {
-        didSet { if cutoutRect != oldValue { needsDisplay = true } }
-    }
-    var cutoutCornerRadius: CGFloat = 10
-
     private var from: Theme
     private var to: Theme
     private var transitionStart: CFTimeInterval?
@@ -54,7 +49,7 @@ final class ThemeView: MTKView, MTKViewDelegate {
         from = theme
         to = theme
         super.init(frame: .zero, device: ShaderLibrary.shared.device)
-        assert(MemoryLayout<ThemeUniforms>.stride == 192)
+        assert(MemoryLayout<ThemeUniforms>.stride == 176)
         colorPixelFormat = .bgra8Unorm
         // The tint is translucent: the window's material shows through it.
         layer?.isOpaque = false
@@ -177,18 +172,15 @@ final class ThemeView: MTKView, MTKViewDelegate {
               let encoder = commands.makeRenderCommandEncoder(descriptor: pass)
         else { return }
 
-        let scale = Float(bounds.width > 0 ? drawableSize.width / bounds.width : 1)
         var uniforms = ThemeUniforms(
             fromLab: palette(from),
             toLab: palette(to),
-            cutout: SIMD4(Float(cutoutRect.minX), Float(cutoutRect.minY), Float(cutoutRect.width), Float(cutoutRect.height)) * scale,
             size: SIMD2(Float(drawableSize.width), Float(drawableSize.height)),
             fromGrain: from.grain,
             toGrain: to.grain,
             progress: progress,
             fromCount: UInt32(from.colors.count),
             toCount: UInt32(to.colors.count),
-            cutoutRadius: Float(cutoutCornerRadius) * scale,
             fromTint: from.tint,
             toTint: to.tint
         )

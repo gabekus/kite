@@ -133,7 +133,7 @@ Sources/KiteMac/
                          onChange/onPageChange callbacks to the window controller.
   BrowserWindowController.swift  NSWindow (full-size content, transparent titlebar). Back to front: ThemeView,
                          sidebar NSHostingView, ShadowView/contentClip (web content), GlowView, command bar host.
-                         Menu actions (@objc), dark-pages application, theme cutout.
+                         Menu actions (@objc), dark-pages application.
   MainMenu.swift         Programmatic menus and shortcuts (Arc-like).
   Engine/WebPage.swift   WebPage / WebEngine protocols + PageEvent enum (engine-neutral).
   Engine/PagePool.swift  Page lifecycle: lazy creation, visibility (WasHidden), LRU hibernation (max 6 live),
@@ -141,10 +141,10 @@ Sources/KiteMac/
   Engine/ChromiumEngine.swift  ChromiumPage wraps KCBrowser (#if canImport(CEFBridge)).
   Engine/WebKitEngine.swift    WebKitPage wraps WKWebView: KVO, navigation/UI delegates, downloads, alerts, file picker.
   Metal/ShaderLibrary.swift    Loads Kite.metallib from the bundle or compiles Shaders/Kite.metal at runtime; caches pipelines.
-  Metal/ThemeView.swift  On-demand MTKView backdrop; 0.4s OKLab crossfade on space switch; cutout under content.
+  Metal/ThemeView.swift  On-demand MTKView backdrop; 0.4s OKLab crossfade on space switch; draws under the whole window.
   Metal/GlowView.swift   Loading glow overlay; runs only while loading, then pauses and hides; hitTest → nil.
   Shaders/Kite.metal     Full-screen triangle from vertex_id; theme fragment (OKLab gaussian blend, grain, dither,
-                         rounded-rect cutout discard); glow fragment (rounded-rect SDF rim + bloom + sweep).
+                         no cutout); glow fragment (rounded-rect SDF rim + bloom + sweep).
   Views/SidebarView.swift, CommandBarView.swift, FaviconView.swift (NSCache favicon loader).
 Sources/CEFBridge/       Objective-C++ over CEF's C++ API; Swift sees only include/CEFBridge.h.
   KCRuntime.mm           KCApplication (CefAppProtocol, sendEvent wrapper, terminate → close all browsers then quit),
@@ -263,7 +263,7 @@ swaps the shown page, theme, command bar and sidebar. Page events flow from the 
 - Only the selected tab loads at launch; other pages are created when first shown.
 - At most 6 live pages (LRU). Hibernation is skipped for tabs playing media or using the camera or mic. Every background page hibernates on a memory-pressure warning.
 - Hidden tabs get `WasHidden(true)` on Chromium; WebKit throttles views that aren't in a window by itself.
-- Theme shader: draws only when the theme, size or cutout changes. Colors are converted to OKLab once on the CPU. It uses no vertex buffers or textures, skips pixels under the page, and dithers to avoid 8-bit banding.
+- Theme shader: draws only when the theme or size changes. Colors are converted to OKLab once on the CPU. It uses no vertex buffers or textures, and dithers to avoid 8-bit banding. It draws under the page card too: a cutout that missed a redraw after a sidebar resize left the old card's outline as untinted material (Nov 2026).
 - Glow: renders at 60fps only while a page loads, fades out, then pauses and hides.
 - Explicit `shadowPath`, so Core Animation skips an offscreen shadow pass.
 - `NSSupportsAutomaticGraphicsSwitching` keeps dual-GPU Macs on the integrated GPU.
