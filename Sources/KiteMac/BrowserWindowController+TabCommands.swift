@@ -152,22 +152,15 @@ extension BrowserWindowController {
     func describeSpace(_ id: UUID) {
         guard let window, let index = store.state.spaceIndex(id) else { return }
         let space = store.state.spaces[index]
-        let alert = NSAlert()
-        alert.messageText = "What\u{2019}s \u{201C}\(space.name)\u{201D} for?"
-        alert.informativeText = "Claude reads this to choose the space for each link it opens, e.g. \u{201C}Komado business: store, suppliers, ads, the business\u{2019}s money.\u{201D}"
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 64))
-        field.stringValue = space.about ?? ""
-        field.placeholderString = "What belongs in this space"
-        field.usesSingleLineMode = false
-        field.cell?.wraps = true
-        field.cell?.isScrollable = false
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn, let self, let index = store.state.spaceIndex(id) else { return }
-            store.mutate { $0.spaces[index].about = Space.cleanAbout(field.stringValue) }
+        ArcDialog.present(
+            on: window,
+            title: "What\u{2019}s \u{201C}\(space.name)\u{201D} for?",
+            message: "Claude reads this to choose the space for each link it opens, e.g. \u{201C}Komado business: store, suppliers, ads, the business\u{2019}s money.\u{201D}",
+            field: .init(text: space.about ?? "", placeholder: "What belongs in this space"),
+            actions: [.init(title: "Cancel", role: .cancel), .init(title: "Save", role: .primary)]
+        ) { [weak self] action, text in
+            guard action == 1, let self, let index = store.state.spaceIndex(id) else { return }
+            store.mutate { $0.spaces[index].about = Space.cleanAbout(text) }
         }
     }
 
