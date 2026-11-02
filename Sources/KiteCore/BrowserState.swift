@@ -117,7 +117,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
     /// View → Show Toolbar: back/forward/reload and the URL in a bar over the page
     /// instead of in the sidebar. Off by default, as in Arc.
     public var showsToolbar: Bool
-    /// Ask "Quit Kite?" on ⌘Q, as Arc's "Warn before quitting" does. On by default.
+    /// Ask "Quit Kite?" on ⌘Q, as Arc's "Warn before quitting" does. Off by default (Arc's is
+    /// on): ⌘Q quits straight away unless the user turns it on in Settings or the Kite menu.
     public var warnsBeforeQuitting: Bool
     /// Spaces whose pinned tabs are folded away (View → Collapse Pinned Tabs), by Arc's name
     /// for the same state, `spacesWithCollapsedPinnedSections`.
@@ -164,7 +165,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.siteSearchDefaultsSeeded = 0
         self.archiveAfter = .twelveHours
         self.showsToolbar = false
-        self.warnsBeforeQuitting = true
+        self.warnsBeforeQuitting = false
         self.spacesWithCollapsedPinnedSections = []
         self.developerModeEnabledForHosts = []
         self.devModeReloadState = .reload
@@ -179,7 +180,9 @@ public struct BrowserState: Hashable, Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case spaces, favorites, selectedSpaceID, recentlyClosed, archived, searchEngine, darkPages, darkPageHosts
         case blocksAds, adblockAllowedHosts, siteSearches, siteSearchDefaultsSeeded, archiveAfter, showsToolbar
-        case warnsBeforeQuitting, spacesWithCollapsedPinnedSections
+        // Saved under a new key when the default turned off: sessions saved before then
+        // always wrote `true`, so the old key is ignored and they start without the warning.
+        case warnsBeforeQuitting = "asksBeforeQuitting", spacesWithCollapsedPinnedSections
         case developerModeEnabledForHosts, devModeReloadState, allowsJavaScriptFromAppleEvents
         case liveFoldersTurnedOff, hasSeenLiveFolderIntro, pageAppearance, hasDismissedSearchSuggestionsPrivacy
         case profiles, profileFavorites, retiredProfileDirectories, favoriteSplits, profileSettings
@@ -213,7 +216,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         seedDefaultSiteSearches()
         archiveAfter = try c.decodeIfPresent(ArchiveInterval.self, forKey: .archiveAfter) ?? .twelveHours
         showsToolbar = try c.decodeIfPresent(Bool.self, forKey: .showsToolbar) ?? false
-        warnsBeforeQuitting = try c.decodeIfPresent(Bool.self, forKey: .warnsBeforeQuitting) ?? true
+        warnsBeforeQuitting = try c.decodeIfPresent(Bool.self, forKey: .warnsBeforeQuitting) ?? false
         // Pinned tabs saved before Kite kept a pinned URL take the page they're on.
         syncPinnedURLs()
         spacesWithCollapsedPinnedSections = try c.decodeIfPresent(Set<UUID>.self, forKey: .spacesWithCollapsedPinnedSections) ?? []
