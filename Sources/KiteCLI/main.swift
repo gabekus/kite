@@ -23,7 +23,7 @@ let usage = """
                                                      Type into an element (or the focused one)
       kite key KEYS [--tab ID]                       Press keys, e.g. "cmd+a Backspace" or Enter
       kite open URL [--here | --tab ID]              Open URL in a new background tab (or navigate one)
-      kite open URL --space NAME [--session NAME] [--plain | --active]
+      kite open URL --space NAME [--session NAME] [--plain] [--active]
                                                      Open URL in that space's Claude folder, in Claude › SESSION
                                                      with --session (--plain or --active: a plain tab, for the user)
       kite call move_to_folder '{"folder":"claude"}' File the front tab in its space's Claude folder
