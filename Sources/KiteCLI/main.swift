@@ -37,6 +37,9 @@ let usage = """
       kite har [--tab ID] [--bodies] [filters]       Export the network log as a HAR file
       kite spaces                                    List spaces and what each is for
       kite describe-space NAME TEXT                  Say what belongs in a space (Claude routes links by it; no TEXT clears it)
+      kite vpn [status | watch HOST | unwatch HOST | reconnect [--profile NAME] | wait] [--timeout S]
+                                                     Quiet VPN sign-in: sign-in pages on a watched host load on a
+                                                     hidden page; reconnect has the VPN client connect again
       kite call TOOL [JSON]                          Call any MCP tool, e.g. kite call computer '{"action":"scroll"}'
       kite ui ACTION [JSON] [-o FILE]                Kite's own UI (Diagnostics for Claude): windows, tree, capture,
                                                      pointer, input, menu, key_log, trace. kite ui tree '{"match":"Sidebar"}'
@@ -201,7 +204,7 @@ struct Arguments {
 
     static let valued: Set<String> = ["--tab", "--space", "--session", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
                                       "--window", "--depth", "--match", "--region", "--pixels",
-                                      "--status", "--host", "--type", "--url", "--since", "--limit"]
+                                      "--status", "--host", "--type", "--url", "--since", "--limit", "--profile", "--timeout"]
 
     init(_ raw: ArraySlice<String>) throws {
         var iterator = raw.makeIterator()
@@ -320,6 +323,15 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
         tool = "describe_space"
         json["space"] = .string(try first("a space name"))
         json["about"] = .string(args.positional.dropFirst().joined(separator: " "))
+    case "vpn":
+        tool = "vpn"
+        json["action"] = .string(args.positional.first ?? "status")
+        if let host = args.positional.dropFirst().first { json["host"] = .string(host) }
+        if let profile = args.options["--profile"] { json["profile"] = .string(profile) }
+        if let timeout = args.options["--timeout"] {
+            guard let seconds = Double(timeout) else { throw CLIError("--timeout needs a number of seconds.") }
+            json["timeout"] = .number(seconds)
+        }
     case "ui":
         tool = "ui"
         json["action"] = .string(try first("an action (windows, tree, capture, pointer, input, menu, key_log, trace)"))
@@ -374,7 +386,7 @@ func runMCP(_ connection: KiteConnection) async {
             // Concurrently, so a call waiting on the user's confirmation doesn't block pings.
             group.addTask {
                 let response = await server.handle(message) { tool, arguments in
-                    await connection.call(tool.rawValue, arguments)
+                    await VPNClient.route(tool.rawValue, arguments, through: connection)
                 }
                 if let response { out.write(response) }
             }
@@ -449,7 +461,7 @@ func main() async -> Int32 {
         if tool == .networkLog && args.flags.contains("--follow") {
             return await follow(connection, arguments)
         }
-        let output = await connection.call(tool.rawValue, arguments)
+        let output = await VPNClient.route(tool.rawValue, arguments, through: connection)
         if output.isError {
             FileHandle.standardError.write(Data("kite: \(output.text)\n".utf8))
             return 1

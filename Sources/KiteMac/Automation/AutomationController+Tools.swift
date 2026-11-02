@@ -18,12 +18,14 @@ extension AutomationController {
             return try await closeTab(string)
         case .switchTab(let string):
             let tab = try resolveTab(string)
-            store.mutate { $0.select(tab: tab.id) }
+            store.mutateWithoutUndo { $0.select(tab: tab.id) }
             return report("Switched to the tab.", tab.id)
         case let .resizeWindow(width, height):
             return try resizeWindow(width: width, height: height)
         case .listDownloads:
             return .text(downloadsReport())
+        case .vpn(let action):
+            return .text(await VPNSignInController.shared.run(action))
         case .networkLog(let query):
             return .text(network.report(try networkQuery(query), recording: isRecordingNetwork))
         case let .networkRequest(id, body, maxBodyLength):
@@ -467,7 +469,7 @@ extension AutomationController {
             }
             spaceID = store.state.spaces[index].id
         }
-        let id = store.mutate { $0.openTab(url: url, in: spaceID, select: false) }
+        let id = store.mutateWithoutUndo { $0.openTab(url: url, in: spaceID, select: false) }
         switch (placement, task) {
         // A link a task opens in a named space is for the user, so it stays a plain tab there rather than
         // going in the task's folder.
@@ -481,14 +483,14 @@ extension AutomationController {
             taskOpenedTab?(task, id, session)
             taskTabs[task, default: []].append(id)
         case (.claudeSessionFolder(_, let session), _):
-            store.mutate { state in
+            store.mutateWithoutUndo { state in
                 guard let space = state.location(of: id)?.space,
                       let folder = state.claudeSessionFolder(named: session, inSpace: state.spaces[space].id) else { return }
                 _ = state.moveTab(id, toFolder: folder)
             }
             if let task { taskTabs[task, default: []].append(id) }
         case (.claudeFolder, _):
-            store.mutate { state in
+            store.mutateWithoutUndo { state in
                 guard let space = state.location(of: id)?.space, let folder = state.claudeFolder(inSpace: state.spaces[space].id)
                 else { return }
                 _ = state.moveTab(id, toFolder: folder)
@@ -501,7 +503,7 @@ extension AutomationController {
         // and the new tab is selected. Other clients (background agents) keep opening tabs behind,
         // unless they pass active.
         if active || task != nil {
-            store.mutate { state in
+            store.mutateWithoutUndo { state in
                 state.select(tab: id)
                 _ = state.revealTab(id)
             }
@@ -554,7 +556,7 @@ extension AutomationController {
         // Tabs in a task's folder or a Claude folder are pinned, where closing would only unload
         // them. Remove them instead; closing a folder's last tab takes the empty folder too.
         let removable = Self.agentTask != nil || store.state.isInEphemeralFolder(tab.id)
-        if !removable || !store.mutate({ $0.removePinnedTab(tab.id, droppingEmptyFolder: true) }) {
+        if !removable || !store.mutateWithoutUndo({ $0.removePinnedTab(tab.id, droppingEmptyFolder: true) }) {
             host?.closeAutomatedTab(tab.id)
         }
         claudeOpened.remove(tab.id)
@@ -596,7 +598,7 @@ extension AutomationController {
             }))
         case .switchSpace(let name):
             let index = try spaceIndex(name)
-            store.mutate { $0.selectSpace(at: index) }
+            store.mutateWithoutUndo { $0.selectSpace(at: index) }
             return .text("Switched to \(store.state.spaces[index].name).")
         case let .createSpace(name, icon, about):
             // Space names are how Claude (and kite open --space) pick a space, so they must stay unique.
@@ -605,7 +607,7 @@ extension AutomationController {
                                       "There's already a space called \(name). Use it, or describe_space to say what it's for.")
             }
             let count = store.state.spaces.count
-            let id = store.mutate {
+            let id = store.mutateWithoutUndo {
                 let id = $0.addBackgroundSpace(name: name, icon: icon ?? "🗂️", theme: Theme.presets[count % Theme.presets.count])
                 if let index = $0.spaceIndex(id) { $0.spaces[index].about = about }
                 return id
@@ -613,7 +615,7 @@ extension AutomationController {
             return .text("Made space \(id.uuidString) (not switched to it).")
         case let .describeSpace(name, about):
             let index = try spaceIndex(name)
-            store.mutate { $0.spaces[index].about = about.isEmpty ? nil : about }
+            store.mutateWithoutUndo { $0.spaces[index].about = about.isEmpty ? nil : about }
             let space = store.state.spaces[index].name
             return .text(about.isEmpty ? "\(space) no longer says what it's for." : "\(space) is now for: \(about)")
         case let .pinTab(string, pinned):
@@ -622,21 +624,21 @@ extension AutomationController {
             case .favorite?:
                 throw AutomationError(.invalidArguments, "That tab is a favorite; favorites can't be pinned or unpinned.")
             case .pinned? where !pinned, .unpinned? where pinned:
-                store.mutate { $0.togglePin(tab: tab.id) }
+                store.mutateWithoutUndo { $0.togglePin(tab: tab.id) }
             default:
                 break
             }
             return .text("The tab is \(pinned ? "pinned" : "unpinned").")
         case let .createFolder(name, spaceName):
             let index = try spaceName.map(spaceIndex) ?? store.state.selectedSpaceIndex
-            let id = store.mutate { $0.createFolder(name: name, inSpace: index) }
+            let id = store.mutateWithoutUndo { $0.createFolder(name: name, inSpace: index) }
             return .text("Made folder \(id.uuidString) in \(store.state.spaces[index].name)'s pinned tabs.")
         case let .moveToFolder(string, folderName):
             let tab = try resolveTab(string)
             guard let (_, folder) = store.state.folder(matching: folderName) else {
                 throw AutomationError(.notFound, "There's no folder called \(folderName). Call list_spaces to see folders.")
             }
-            guard store.mutate({ $0.moveTab(tab.id, toFolder: folder.id) }) else {
+            guard store.mutateWithoutUndo({ $0.moveTab(tab.id, toFolder: folder.id) }) else {
                 throw AutomationError(.invalidArguments, "That tab can't move into a folder (favorites stay in the favorites grid).")
             }
             return .text("Moved the tab into \(folder.name).")
@@ -651,7 +653,7 @@ extension AutomationController {
         let tab = try resolveTab(string)
         let session = session ?? sessionFolders[connection]
         if let session { sessionFolders[connection] = session }
-        let moved = store.mutate { state -> String? in
+        let moved = store.mutateWithoutUndo { state -> String? in
             guard let space = state.location(of: tab.id)?.space else { return nil }
             let id = state.spaces[space].id
             guard let folder = session.flatMap({ state.claudeSessionFolder(named: $0, inSpace: id) }) ?? state.claudeFolder(inSpace: id),

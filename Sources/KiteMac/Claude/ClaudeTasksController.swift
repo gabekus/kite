@@ -235,12 +235,12 @@ final class ClaudeTasksController {
         let name = session.flatMap(BrowserState.cleanSessionFolderName) ?? ClaudeTask.folderName(for: tasks[i].title)
         let existing = tasks[i].folderID.flatMap { folder in store.state.folder(matching: folder.uuidString)?.folder.id }
         let space = tasks[i].spaceID.flatMap { store.state.spaceIndex($0) != nil ? $0 : nil } ?? store.state.selectedSpaceID
-        guard let folder = existing ?? store.mutate({ $0.claudeTaskFolder(named: name, inSpace: space) }) else { return }
+        guard let folder = existing ?? store.mutateWithoutUndo({ $0.claudeTaskFolder(named: name, inSpace: space) }) else { return }
         // Claude named its work after the first tab: rename the folder, unless the user already renamed it.
         if let existing, session != nil, store.state.folder(matching: existing.uuidString)?.folder.name == ClaudeTask.folderName(for: tasks[i].title) {
-            store.mutate { $0.renameFolder(existing, to: name) }
+            store.mutateWithoutUndo { $0.renameFolder(existing, to: name) }
         }
-        store.mutate { _ = $0.moveTab(tab, toFolder: folder) }
+        store.mutateWithoutUndo { _ = $0.moveTab(tab, toFolder: folder) }
         tasks[i].folderID = folder
         if !tasks[i].tabIDs.contains(tab) { tasks[i].tabIDs.append(tab) }
         scheduleSave()
@@ -254,14 +254,14 @@ final class ClaudeTasksController {
     /// Shows the task's first open tab.
     func showTabs(_ id: UUID) {
         guard let task = task(id), let tab = task.tabIDs.first(where: { store.state.tab($0) != nil }) else { return }
-        store.mutate { $0.select(tab: tab) }
+        store.mutateWithoutUndo { $0.select(tab: tab) }
         automation.host?.window?.makeKeyAndOrderFront(nil)
     }
 
     /// Closes the task's folder and every tab in it, and the space's Claude folder once it's empty.
     func closeTabs(_ id: UUID) {
         guard let i = index(id) else { return }
-        if let folder = tasks[i].folderID { store.mutate { _ = $0.removeFolder(folder) } }
+        if let folder = tasks[i].folderID { store.mutateWithoutUndo { _ = $0.removeFolder(folder) } }
         // Tabs the user dragged out of the folder stay.
         tasks[i].folderID = nil
         tasks[i].tabIDs = tasks[i].tabIDs.filter { store.state.tab($0) != nil }

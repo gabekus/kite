@@ -134,6 +134,9 @@ public enum AutomationCommand: Hashable, Sendable {
     /// move_to_folder with folder "claude": the tab's space's Claude folder, or Claude › `session`.
     case moveToClaudeFolder(tab: String?, session: String?)
 
+    /// Quiet VPN sign-in (VPNSignIn): status, which hosts to watch, and reconnecting.
+    case vpn(VPNAction)
+
     /// Kite's own native UI, for debugging Kite itself (Diagnostics for Claude).
     case ui(UIInspection)
 
@@ -183,6 +186,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case pinTab = "pin_tab"
         case createFolder = "create_folder"
         case moveToFolder = "move_to_folder"
+        case vpn
         case ui
         case batch
 
@@ -239,6 +243,7 @@ public enum AutomationCommand: Hashable, Sendable {
         case .pinTab: .pinTab
         case .createFolder: .createFolder
         case .moveToFolder, .moveToClaudeFolder: .moveToFolder
+        case .vpn: .vpn
         case .ui: .ui
         case .batch: .batch
         }
@@ -408,6 +413,8 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .pinTab(tab: tab, pinned: pinned)
         case .createFolder:
             self = .createFolder(name: try a.required("name"), space: try a.string("space"))
+        case .vpn:
+            self = .vpn(try VPNAction(a))
         case .moveToFolder:
             let folder = try a.required("folder")
             if folder.trimmingCharacters(in: .whitespaces).lowercased() == BrowserState.claudeFolderName.lowercased() {
@@ -437,6 +444,45 @@ public enum AutomationCommand: Hashable, Sendable {
                     throw InvalidArguments("Step \(index + 1) (\(name)): \(error.description)")
                 }
             })
+        }
+    }
+}
+
+/// What the `vpn` tool does.
+public enum VPNAction: Hashable, Sendable {
+    case status
+    /// Handle sign-in pages on this host (and its subdomains) quietly.
+    case watch(host: String)
+    case unwatch(host: String)
+    /// Has the VPN client connect again (the CLI runs the client, then asks Kite), then waits
+    /// up to `timeout` seconds for the sign-in it opens.
+    case reconnect(profile: String?, timeout: Double)
+    /// Waits up to `timeout` seconds for a quiet sign-in to end, one started from now on or running.
+    case wait(timeout: Double)
+
+    public static let names = ["status", "watch", "unwatch", "reconnect", "wait"]
+    public static let defaultTimeout: Double = 60
+    public static let maxTimeout: Double = 120
+
+    fileprivate init(_ a: Arguments) throws {
+        let timeout = try a.double("timeout") ?? Self.defaultTimeout
+        guard timeout >= 0, timeout <= Self.maxTimeout else {
+            throw AutomationCommand.InvalidArguments("\"timeout\" is 0 to \(Int(Self.maxTimeout)) seconds.")
+        }
+        func host() throws -> String {
+            guard let host = VPNSignIn.normalize(try a.required("host")) else {
+                throw AutomationCommand.InvalidArguments("\"host\" must be a host name like vpn.example.com.")
+            }
+            return host
+        }
+        switch try a.string("action") ?? "status" {
+        case "status": self = .status
+        case "watch": self = .watch(host: try host())
+        case "unwatch": self = .unwatch(host: try host())
+        case "reconnect": self = .reconnect(profile: try a.string("profile").flatMap { $0.isEmpty ? nil : $0 }, timeout: timeout)
+        case "wait": self = .wait(timeout: timeout)
+        case let other:
+            throw AutomationCommand.InvalidArguments("\"\(other)\" isn't a vpn action (\(Self.names.joined(separator: ", "))).")
         }
     }
 }

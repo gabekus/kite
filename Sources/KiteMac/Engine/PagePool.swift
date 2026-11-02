@@ -235,7 +235,7 @@ final class PagePool {
         let newID = UUID()
         register(page, id: newID)
         pageProfiles[newID] = currentEngine.profileDirectory
-        store.mutate { $0.openTab(id: newID, url: url) }
+        store.mutateWithoutUndo { $0.openTab(id: newID, url: url) }
     }
 
     /// Registers `page` (a Peek's) for a tab the caller is about to add with `id`.
@@ -307,30 +307,30 @@ final class PagePool {
                 extensionID: extensionID, storeURL: storeURL, engine: engine(forTab: id), source: source
             ) { [weak self] in self?.extensionInstalls[extensionID] = nil }
         case let .openInNewTab(url, foreground):
-            store.mutate { $0.openTab(url: url, select: foreground) }
+            store.mutateWithoutUndo { $0.openTab(url: url, select: foreground) }
         case .popup(let page):
             openTab(with: page)
         case .openInLinkPeek(let url):
             // Out of the engine's navigation callback before making another page.
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                if let onLinkPeek { onLinkPeek(id, url) } else { store.mutate { $0.openTab(url: url) } }
+                if let onLinkPeek { onLinkPeek(id, url) } else { store.mutateWithoutUndo { $0.openTab(url: url) } }
             }
         case .openInSplit(let url):
             // Out of the engine's navigation callback before making another page.
             DispatchQueue.main.async { [weak self] in
-                self?.store.mutate { $0.openLinkInSplit(url: url, from: id) }
+                self?.store.mutateWithoutUndo { $0.openLinkInSplit(url: url, from: id) }
             }
         case .openInLittleKite(let url):
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                if let onOpenLittleKite { onOpenLittleKite(id, url) } else { store.mutate { $0.openLinkInSplit(url: url, from: id) } }
+                if let onOpenLittleKite { onOpenLittleKite(id, url) } else { store.mutateWithoutUndo { $0.openLinkInSplit(url: url, from: id) } }
             }
         case .closeRequested:
-            store.mutate { $0.close(tab: id) }
+            store.mutateWithoutUndo { $0.close(tab: id) }
         case let .openLink(url, target):
             // Chromium opens Open Link in New Tab in the background.
-            if target == .newTab { store.mutate { $0.openTab(url: url, select: false) } } else { onOpenLink?(id, url, target) }
+            if target == .newTab { store.mutateWithoutUndo { $0.openTab(url: url, select: false) } } else { onOpenLink?(id, url, target) }
         case .pageCommand(let command):
             onPageCommand?(id, command)
         case .linkHover(let hover):

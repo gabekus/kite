@@ -162,7 +162,7 @@ final class WebAppsController: NSObject, NSMenuItemValidation {
             guard let self, let installed = self.state.app(id: app.id) else { return }
             let url = browser?.store.state.tab(tab)?.url.flatMap { installed.contains($0) ? $0 : nil }
             self.open(installed.id, at: url)
-            if installed.display.opensInWindow { browser?.store.mutate { $0.close(tab: tab) } }
+            if installed.display.opensInWindow { browser?.store.mutateWithoutUndo { $0.close(tab: tab) } }
         }
         browser.installOverContent(hostView)
     }

@@ -65,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyPageAppearance()
         // Deleted profiles whose folders are gone (ProfileFolders) free their names.
         let removed = Set(store.state.retiredProfileDirectories.filter { !ProfileFolders.exists($0) })
-        if !removed.isEmpty { store.mutate { $0.forgetRetiredProfiles(removed) } }
+        if !removed.isEmpty { store.mutateWithoutUndo { $0.forgetRetiredProfiles(removed) } }
         history = HistoryStore(fileURL: Self.supportDirectory.appendingPathComponent("history.json"))
         store.historyRoot = history
         DownloadsModel.shared.start(fileURL: Self.supportDirectory.appendingPathComponent("downloads.json"))
@@ -101,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         windows.restore()
         setUpWebApps()
+        setUpVPNSignIn()
 
         automation = AutomationController(store: store, supportDirectory: Self.supportDirectory)
         automation.host = windowController
@@ -128,14 +129,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ExtensionPopover.openTab = { [weak self] tab in
             guard let controller = self?.windowController else { return }
             switch tab {
-            case .url(let url): controller.store.mutate { _ = $0.openTab(url: url) }
+            case .url(let url): controller.store.mutateWithoutUndo { _ = $0.openTab(url: url) }
             case .page(let page): controller.pool.openTab(with: page)
             }
             controller.window?.makeKeyAndOrderFront(nil)
         }
         NotificationCenter.default.addObserver(forName: .KCRuntimeOpenURL, object: nil, queue: .main) { [weak self] note in
             guard let url = note.userInfo?["url"] as? URL else { return }
-            MainActor.assumeIsolated { _ = self?.store.mutate { $0.openTab(url: url, select: false) } }
+            MainActor.assumeIsolated { _ = self?.store.mutateWithoutUndo { $0.openTab(url: url, select: false) } }
         }
         if windowController.pool.engine is ChromiumEngine {
             windowController.didSync = { [weak self] in self?.extensionTabs.values.forEach { $0.setNeedsUpdate() } }
@@ -234,25 +235,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Kite as the default mail app (it registers for mailto, as Arc does): the default
                 // web mail app's compose page in a new tab, else the system's mail app if that isn't Kite.
                 if let compose = MailHandlers.shared.destination(for: url) {
-                    store.mutate { _ = $0.openTab(url: compose) }
+                    store.mutateWithoutUndo { _ = $0.openTab(url: compose) }
                     openedTab = true
                 } else {
                     MailHandlers.shared.openInSystemMailApp(url)
                 }
                 continue
             }
-            switch airTraffic.state.destination(for: url, spaceIDs: spaceIDs, opensExternalLinksInLittleKite: little) {
+            let destination = airTraffic.state.destination(for: url, spaceIDs: spaceIDs, opensExternalLinksInLittleKite: little)
+            // A VPN client's sign-in page on a watched host signs in on a hidden page (VPNSignIn).
+            if case .space(let id) = destination {
+                if VPNSignInController.shared.handle(url, spaceID: id) { continue }
+            } else if VPNSignInController.shared.handle(url, spaceID: nil) {
+                continue
+            }
+            switch destination {
             case .littleKite:
                 openLittleKiteWindow(url: url)
             case .mostRecentSpace:
-                store.mutate { _ = $0.openTab(url: url) }
+                store.mutateWithoutUndo { _ = $0.openTab(url: url) }
                 openedTab = true
             case .space(let id):
-                store.mutate { _ = $0.openTab(url: url, in: id) }
+                store.mutateWithoutUndo { _ = $0.openTab(url: url, in: id) }
                 openedTab = true
             }
         }
         if openedTab { windowController.window?.makeKeyAndOrderFront(nil) }
+    }
+
+    /// Quiet VPN sign-in loads in the destination space's profile, and shows a page that needs
+    /// the user as a tab behind the selected one, without raising the window.
+    private func setUpVPNSignIn() {
+        let main = windowController!
+        let store = self.store!
+        VPNSignInController.shared.host = .init(
+            engine: { [weak main] spaceID in
+                let state = store.state
+                let engine = main?.pool.engine ?? self.engine!
+                guard engine.profileDirectory != nil else { return engine }
+                let index = spaceID.flatMap(state.spaceIndex) ?? state.selectedSpaceIndex
+                return engine.forProfile(state.profile(state.profileDirectory(ofSpace: index)))
+            },
+            showInBackground: { [weak main] page, url, title, spaceID, profile in
+                guard let main else { return page.close() }
+                let id = main.pool.adopt(page, profileDirectory: profile)
+                store.mutate { _ = $0.openTab(id: id, url: url, in: spaceID, select: false) }
+                store.pageTitleChanged(id, title)
+            }
+        )
     }
 
     /// Installed apps' windows send links and popups to the main window, like Little Kite's.
@@ -262,7 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         webApps.host = WebAppsController.Host(
             engine: { [weak main] in main?.pool.engine ?? self.engine },
             openTab: { [weak main] url in
-                store.mutate { _ = $0.openTab(url: url) }
+                store.mutateWithoutUndo { _ = $0.openTab(url: url) }
                 if !UIDiagnostics.enabledByEnvironment { main?.window?.makeKeyAndOrderFront(nil) }
             },
             adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) },
@@ -298,10 +328,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             move: { [weak main] page, url, title, spaceID, profile in
                 main?.adopt(page, url: url, title: title, in: spaceID, profileDirectory: profile)
             },
-            openTab: { url in store.mutate { _ = $0.openTab(url: url) } },
+            openTab: { url in store.mutateWithoutUndo { _ = $0.openTab(url: url) } },
             adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) },
             archive: { url, title, reason in
-                store.mutate { _ = $0.archiveLittleKite(url: url, title: title ?? "", reason: reason) }
+                store.mutateWithoutUndo { _ = $0.archiveLittleKite(url: url, title: title ?? "", reason: reason) }
             }
         )
         let controller = LittleKiteWindowController(url: url, host: host)
@@ -355,7 +385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleTidyTabs(_ sender: Any?) {
         UserDefaults.standard.set(!TidyTabs.isEnabled(in: .standard), forKey: TidyTabs.enabledKey)
         // The sidebar reads the setting when it redraws.
-        store.mutate { _ in }
+        store.mutateWithoutUndo { _ in }
     }
 
     /// Kite menu → Tidy Downloads: Arc Max's AI rename of finished downloads (Arc's `renameDownloadsEnabled`).
@@ -382,12 +412,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The extensions menu's links (Chrome Web Store, an extension's options), as a new tab.
     @objc func openURLFromExtensionsMenu(_ sender: Any?) {
         guard let url = sender as? URL else { return }
-        store.mutate { _ = $0.openTab(url: url) }
+        store.mutateWithoutUndo { _ = $0.openTab(url: url) }
     }
 
     /// Kite › Check for Updates…: asks GitHub releases; a release opens in a new tab.
     @objc func checkForUpdates(_ sender: Any?) {
-        UpdaterWindow.shared.openURL = { [weak self] url in self?.store.mutate { _ = $0.openTab(url: url) } }
+        UpdaterWindow.shared.openURL = { [weak self] url in self?.store.mutateWithoutUndo { _ = $0.openTab(url: url) } }
         UpdaterWindow.shared.checkForUpdates()
     }
 
@@ -418,7 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let front, front !== controller.window {
             controller.window?.setFrameTopLeftPoint(NSPoint(x: front.frame.minX + 28, y: front.frame.maxY - 28))
         }
-        if let url { controller.store.mutate { _ = $0.openTab(url: url) } } else { controller.newTab(nil) }
+        if let url { controller.store.mutateWithoutUndo { _ = $0.openTab(url: url) } } else { controller.newTab(nil) }
         return controller
     }
 
@@ -440,7 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// View › Developer › Allow JavaScript from Apple Events (Arc's item, off by default).
     @objc func toggleJavaScriptFromAppleEvents(_ sender: Any?) {
-        store.mutate { $0.allowsJavaScriptFromAppleEvents.toggle() }
+        store.mutateWithoutUndo { $0.allowsJavaScriptFromAppleEvents.toggle() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -487,7 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func setArchiveInterval(_ sender: NSMenuItem) {
         let intervals = ArchiveInterval.allCases
         guard intervals.indices.contains(sender.tag) else { return }
-        store.mutate { $0.archiveAfter = intervals[sender.tag] }
+        store.mutateWithoutUndo { $0.archiveAfter = intervals[sender.tag] }
         store.archiveStaleTabs()
     }
 
@@ -501,7 +531,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .quit:
             NSApp.terminate(sender)
         case .quitAndDontAskAgain:
-            store.mutate { $0.warnsBeforeQuitting = false }
+            store.mutateWithoutUndo { $0.warnsBeforeQuitting = false }
             NSApp.terminate(sender)
         case .cancel:
             break
@@ -530,7 +560,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func setDarkAppearance(_ sender: Any?) { setPageAppearance(.dark) }
 
     private func setPageAppearance(_ appearance: PageAppearance) {
-        store.mutate { $0.pageAppearance = appearance }
+        store.mutateWithoutUndo { $0.pageAppearance = appearance }
         applyPageAppearance()
     }
 
@@ -540,7 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Kite menu → Warn Before Quitting, until there's a Settings window (Arc has it in General).
     @objc func toggleQuitWarning(_ sender: Any?) {
-        store.mutate { $0.warnsBeforeQuitting.toggle() }
+        store.mutateWithoutUndo { $0.warnsBeforeQuitting.toggle() }
     }
 
     // MARK: Claude

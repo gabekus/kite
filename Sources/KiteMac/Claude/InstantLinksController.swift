@@ -49,7 +49,7 @@ final class InstantLinksController {
                 return
             }
             store.instantLinksRows.remove(at: index)
-            store.mutate { $0.openInstantLinks(urls, title: plan.title, format: plan.format, inSpace: row.spaceID) }
+            store.mutateWithoutUndo { $0.openInstantLinks(urls, title: plan.title, format: plan.format, inSpace: row.spaceID) }
         }
     }
 
