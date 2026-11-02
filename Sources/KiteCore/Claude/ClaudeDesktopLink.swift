@@ -11,8 +11,8 @@ import Foundation
 ///    Kite from there is part of that chat, with Desktop's memory and history.
 /// 2. ⌘J hands the request to Desktop (`claude://claude.ai/new?q=…`) instead of running a
 ///    separate headless Claude, so the conversation happens in Desktop.
-/// 3. A task that did run headless in Kite opens in Desktop's Code tab with
-///    `claude --desktop --resume <session>`, and carries on there.
+/// 3. A task that did run headless in Kite opens in Desktop's Code tab through
+///    `claude://resume?session=<id>`, and carries on there.
 public enum ClaudeDesktopLink {
     /// The name Kite's server has in Desktop's config (the same as in Claude Code's).
     public static let serverName = "kite"
@@ -106,10 +106,35 @@ public enum ClaudeDesktopLink {
             """
     }
 
-    /// Claude Code's arguments to open a headless task's session in Desktop's Code tab.
-    /// Needs Claude Code 2.1.285 or later and a Claude subscription sign-in.
-    public static func resumeInDesktopArguments(sessionID: String) -> [String] {
-        ["--desktop", "--resume", sessionID]
+    /// Opens a headless task's Claude Code session in Desktop's Code tab.
+    ///
+    /// This is the link `claude --desktop --resume <id>` opens itself. Kite opens it
+    /// directly: the CLI refuses `--desktop` unless stdin and stdout are a terminal, and a
+    /// GUI app launching it never has one ("can't run non-interactively … or redirected output").
+    public static func resumeURL(sessionID: String) -> URL? {
+        guard UUID(uuidString: sessionID) != nil else { return nil }
+        var components = URLComponents()
+        components.scheme = "claude"
+        components.host = "resume"
+        components.queryItems = [URLQueryItem(name: "session", value: sessionID)]
+        return components.url
+    }
+
+    /// The oldest Desktop that understands `claude://resume` (what Claude Code checks for).
+    public static let minimumResumeVersion = "1.1.9669"
+
+    /// True when `version` (Desktop's CFBundleShortVersionString) is at least
+    /// `minimumResumeVersion`. An unreadable version gets the benefit of the doubt.
+    public static func supportsResume(version: String?) -> Bool {
+        guard let version else { return true }
+        let parts = { (v: String) in v.split(separator: ".").map { Int($0.prefix(while: \.isNumber)) ?? 0 } }
+        let have = parts(version), need = parts(minimumResumeVersion)
+        guard !have.isEmpty else { return true }
+        for i in 0..<max(have.count, need.count) {
+            let a = i < have.count ? have[i] : 0, b = i < need.count ? need[i] : 0
+            if a != b { return a > b }
+        }
+        return true
     }
 }
 

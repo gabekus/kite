@@ -206,6 +206,15 @@ import Testing
         #expect(prompt.hasPrefix("Summarise this\n"))
         #expect(prompt.contains("https://example.com/orders") && prompt.contains("3F2A0000-0000-0000-0000-000000000000"))
         #expect(ClaudeDesktopLink.prompt(goal: "Hi", tab: nil) == "Hi")
-        #expect(ClaudeDesktopLink.resumeInDesktopArguments(sessionID: "s1") == ["--desktop", "--resume", "s1"])
+        let id = "5D2C9F3A-1B4E-4C8D-9A0F-0123456789AB"
+        #expect(ClaudeDesktopLink.resumeURL(sessionID: id)?.absoluteString == "claude://resume?session=\(id)")
+        #expect(ClaudeDesktopLink.resumeURL(sessionID: "s1") == nil)
+        #expect(ClaudeDesktopLink.resumeURL(sessionID: "../x&y") == nil)
+        #expect(ClaudeDesktopLink.supportsResume(version: "1.1.9669"))
+        #expect(ClaudeDesktopLink.supportsResume(version: "1.2.0"))
+        #expect(ClaudeDesktopLink.supportsResume(version: "1.10.1"))
+        #expect(!ClaudeDesktopLink.supportsResume(version: "1.1.9668"))
+        #expect(!ClaudeDesktopLink.supportsResume(version: "0.14.3"))
+        #expect(ClaudeDesktopLink.supportsResume(version: nil))
     }
 }

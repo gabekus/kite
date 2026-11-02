@@ -374,8 +374,9 @@ isn't an API. So Kite joins Desktop instead of running a second Claude next to i
   There's no public API to post into a project: Desktop's `claude://claude.ai/project/<id>` only opens the page,
   and Claude Code's `/send-to-project` needs its own approval dialog.
 - **Kite tasks continue in Desktop.** A task that ran here (`claude -p`) has a Claude Code session id; the bar's
-  "Continue in the Claude App" button runs `claude --desktop --resume <id>`, which opens that session in
-  Desktop's Code tab (Claude Code 2.1.285+, Claude subscription sign-in).
+  "Continue in the Claude App" button opens `claude://resume?session=<id>`, the link `claude --desktop --resume`
+  opens, which shows that session in Desktop's Code tab (Desktop 1.1.9669+). Kite doesn't run the CLI for this:
+  `--desktop` refuses to run without a terminal on stdin and stdout, which an app's child process never has.
 
 Limits: Desktop doesn't send a `q` prompt by itself (by design), and a headless task that's opened in Desktop
 shouldn't get more Kite follow-ups, or the two would write to one transcript.

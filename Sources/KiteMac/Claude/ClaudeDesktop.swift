@@ -80,12 +80,16 @@ enum ClaudeDesktop {
     }
 
     /// Opens a Claude Code session in Desktop's Code tab. Returns what went wrong, or nil.
-    nonisolated static func openSession(_ sessionID: String) -> String? {
-        guard let claude = ClaudeConnect.findClaude() else { return "Couldn't find Claude Code." }
-        let (status, output) = ClaudeConnect.run(claude, ClaudeDesktopLink.resumeInDesktopArguments(sessionID: sessionID))
-        guard status != 0 else { return nil }
-        let message = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return message.isEmpty ? "claude --desktop exited with status \(status)." : String(message.suffix(400))
+    static func openSession(_ sessionID: String) -> String? {
+        guard let appURL else { return "The Claude app isn't installed. Get it at claude.ai/download." }
+        let version = Bundle(url: appURL)?.infoDictionary?["CFBundleShortVersionString"] as? String
+        guard ClaudeDesktopLink.supportsResume(version: version) else {
+            return "Claude \(version ?? "") is too old to open Claude Code sessions. Update it to \(ClaudeDesktopLink.minimumResumeVersion) or later."
+        }
+        guard let url = ClaudeDesktopLink.resumeURL(sessionID: sessionID) else {
+            return "This task's session id (\(sessionID)) isn't one Claude can open."
+        }
+        return NSWorkspace.shared.open(url) ? nil : "macOS couldn't open the Claude app."
     }
 }
 
