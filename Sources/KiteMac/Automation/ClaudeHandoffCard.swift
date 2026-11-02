@@ -226,9 +226,12 @@ private struct HandoffPill: View {
 extension BrowserWindowController {
     /// The handoff card, over the bottom centre of the page. It takes clicks only on itself.
     func installClaudeHandoffCard(_ automation: AutomationController) {
-        let host = BannerHostingView(rootView: ClaudeHandoffCard(automation: automation, store: store)
+        let card = HandoffCardFrame()
+        let host = HandoffHostingView(card: card, rootView: ClaudeHandoffCard(automation: automation, store: store)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(HandoffCardFrame.space)) } action: { card.rect = $0 }
             .padding(.bottom, 12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .coordinateSpace(.named(HandoffCardFrame.space)))
         host.sizingOptions = []
         host.safeAreaRegions = []
         host.translatesAutoresizingMaskIntoConstraints = false
@@ -239,5 +242,34 @@ extension BrowserWindowController {
             host.topAnchor.constraint(equalTo: contentFrame.topAnchor),
             host.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor),
         ])
+    }
+}
+
+/// Where the card (or its pill) sits in its host, in the host's flipped coordinates.
+final class HandoffCardFrame {
+    static let space = "handoffHost"
+    var rect: CGRect = .zero
+}
+
+/// Lets clicks through to the page everywhere except on the card. Unlike `BannerHostingView`, the card's own
+/// background and its plain buttons (the chevron, the pill) take clicks too: SwiftUI draws those itself, so
+/// they hit-test to the hosting view.
+final class HandoffHostingView<Content: View>: NSHostingView<Content> {
+    private let card: HandoffCardFrame
+
+    init(card: HandoffCardFrame, rootView: Content) {
+        self.card = card
+        super.init(rootView: rootView)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    @MainActor @preconcurrency required init(rootView: Content) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        guard hit === self else { return hit }
+        return card.rect.contains(convert(point, from: superview)) ? self : nil
     }
 }
