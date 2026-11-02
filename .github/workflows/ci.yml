@@ -5,17 +5,23 @@ on:
     branches: [main]
   pull_request:
 
-# A new push cancels the run it replaces (on a PR branch, or on main during a
-# burst of merges), so stale runs stop holding one of the few macOS runners the
-# account gets. Runs used to queue 5-15 minutes for one, then get cancelled.
+# A new push to a PR branch cancels the run it replaces, so stale runs stop
+# holding one of the few macOS runners the account gets. Main runs are never
+# cancelled: only a main run that finishes saves the build cache every later
+# run starts from, and cancelling them during a burst of merges left main with
+# no cache at all, so each run built from scratch. A main run that is still
+# waiting is replaced by a newer one, so a burst still runs at most two.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Decides which jobs this change needs. Ubuntu runners start in seconds.
+  # Decides which jobs this change needs. Every job's runner comes from a repo
+  # variable (LINUX_RUNNER, MACOS_RUNNER, WINDOWS_RUNNER), so all of them can move
+  # to a faster runner service at once; a short job left behind still waits for
+  # a machine.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       mac: ${{ steps.mac.outputs.mac }}
@@ -81,7 +87,7 @@ jobs:
   windows:
     needs: changes
     if: needs.changes.outputs.core == 'true'
-    runs-on: windows-latest
+    runs-on: ${{ vars.WINDOWS_RUNNER || 'windows-latest' }}
     timeout-minutes: 30
     defaults:
       run:
