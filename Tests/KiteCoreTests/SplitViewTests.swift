@@ -172,6 +172,42 @@ import Testing
         #expect(state.selectedSpace.splits.isEmpty)
     }
 
+    @Test func separatingAllTabsLeavesEachOnItsOwnRowInPlace() throws {
+        var (state, ids) = makeState()
+        guard case .added(let b) = state.addSplitPane() else { return }
+        guard case .added(let c) = state.addSplitPane() else { return }
+        let split = try #require(state.selectedSplit)
+        state.separateAllTabs(split: split.id)
+        #expect(state.selectedSpace.splits.isEmpty)
+        // Nothing moves or closes: the members keep their places in the sidebar.
+        #expect(state.selectedSpace.tabs.map(\.id) == [ids[0], b, c, ids[1], ids[2]])
+        // The focused pane stays selected and is the only one on screen.
+        #expect(state.selectedTab?.id == c)
+        #expect(state.visibleTabs.map(\.id) == [c])
+    }
+
+    @Test func separatingAllTabsLeavesOtherSplitsAlone() throws {
+        var (state, ids) = makeState()
+        guard case .added = state.addSplitPane() else { return }
+        let first = try #require(state.selectedSplit)
+        state.select(tab: ids[2])
+        guard case .added = state.addSplitPane() else { return }
+        let second = try #require(state.selectedSplit)
+        state.separateAllTabs(split: first.id)
+        #expect(state.selectedSpace.splits == [second])
+    }
+
+    @Test func separatingAFavoriteSplitKeepsTheFavorites() throws {
+        var (state, ids) = makeState()
+        state.spaces[0].splits = [SplitView(tabIDs: [ids[0], ids[1]])]
+        let split = state.spaces[0].splits[0].id
+        state.dropSidebarItems([split], on: .favorites(before: nil))
+        #expect(state.favoriteSplits.map(\.id) == [split])
+        state.separateAllTabs(split: split)
+        #expect(state.favoriteSplits.isEmpty)
+        #expect(state.favorites.map(\.id) == [ids[0], ids[1]])
+    }
+
     @Test func expandingShowsTheFocusedPaneAloneAndKeepsTheWidths() throws {
         var (state, ids) = makeState()
         guard case .added(let b) = state.addSplitPane() else { return }
@@ -369,5 +405,20 @@ import Testing
         let (single, before) = SidebarGroup.itemMove(groups, from: [3], to: 1, itemCount: 5)
         #expect(single == IndexSet([4]))
         #expect(before == 1)
+    }
+}
+
+@Suite struct SplitTabButtonTests {
+    @Test func closesOrUnloadsWithoutTheSetting() {
+        #expect(SplitTabButton.state(isPinned: false, optionSeparates: false, modifiers: .alt) == .close)
+        #expect(SplitTabButton.state(isPinned: true, optionSeparates: false, modifiers: .alt) == .unload)
+    }
+
+    @Test func optionAloneSeparatesWhenTheSettingIsOn() {
+        #expect(SplitTabButton.state(isPinned: false, optionSeparates: true, modifiers: .alt) == .separate)
+        #expect(SplitTabButton.state(isPinned: true, optionSeparates: true, modifiers: .alt) == .separate)
+        // Arc checks for ⌥ and nothing else.
+        #expect(SplitTabButton.state(isPinned: false, optionSeparates: true, modifiers: [.alt, .shift]) == .close)
+        #expect(SplitTabButton.state(isPinned: false, optionSeparates: true, modifiers: []) == .close)
     }
 }

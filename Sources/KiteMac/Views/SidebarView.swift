@@ -403,6 +403,13 @@ struct SidebarView: View {
             },
             onClose: actions.closeTab,
             onSeparate: { id in store.mutate { $0.separateFromSplit(tab: id) } },
+            onSeparateAll: { store.mutate { $0.separateAllTabs(split: split.id) } },
+            onAddTab: {
+                store.mutate { state in
+                    if let target = state.focusTarget(of: split) { state.select(tab: target) }
+                }
+                actions.addSplitView()
+            },
             onTogglePin: { store.mutate { $0.togglePin(tab: split.tabIDs[0]) } }
         )
         .modifier(SidebarDragSource(
@@ -1828,8 +1835,15 @@ private struct SplitRow: View {
     let onSelect: (UUID?) -> Void
     let onClose: (UUID) -> Void
     let onSeparate: (UUID) -> Void
+    /// Arc's Separate All Tabs: the split ends and its tabs stay where they are.
+    let onSeparateAll: () -> Void
+    /// Arc's Add Tab…: a new pane in this split, filled from the command bar.
+    let onAddTab: () -> Void
     let onTogglePin: () -> Void
     @State private var hovering = false
+    @State private var hoveredTab: UUID?
+    /// Arc's `option-click-split-tab-close-button-to-unsplit-enabled`, off by default as in Arc.
+    @AppStorage(SplitTabButton.optionSeparatesKey) private var optionSeparates = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -1869,8 +1883,10 @@ private struct SplitRow: View {
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
             }
+            if showsTitle && hoveredTab == tab.id { trailingButton(tab) }
         }
-        .padding(.horizontal, compact ? 0 : M.iconInset)
+        .padding(.leading, compact ? 0 : M.iconInset)
+        .padding(.trailing, compact ? 0 : showsTitle && hoveredTab == tab.id ? 0 : M.iconInset)
         .frame(width: width, height: M.pillHeight)
         .background(
             // Unverified: Arc's focused pane gets the item's fill; the row carries the selection.
@@ -1878,19 +1894,62 @@ private struct SplitRow: View {
                 .fill(Color.white.opacity(tab.id == focusedID ? M.hoverFill : 0))
         )
         .contentShape(Rectangle())
+        .onHover { inside in
+            if inside { hoveredTab = tab.id } else if hoveredTab == tab.id { hoveredTab = nil }
+        }
         .onTapGesture { onSelect(tab.id) }
         .help(tab.displayTitle)
         .contextMenu {
-            Button("Separate Page from Split View") { onSeparate(tab.id) }
+            // Arc's "Split View Context Menu": the split's own items, then a "Tab Options" section
+            // for the pane that was right-clicked (SidebarMenu+TabContextMenu in Arc 1.169).
+            Button("Separate All Tabs", action: onSeparateAll)
+            Button("Add Tab…", action: onAddTab)
+                .disabled(tabs.count >= SplitView.maxPanes)
             Button(isPinned ? "Unpin Split View" : "Pin Split View", action: onTogglePin)
-            Button("Copy Link") { copyLink(tab.url) }
             Divider()
-            Button("Close this Split Pane") { onClose(tab.id) }
+            Section("Tab Options") {
+                Button("Separate from Split View") { onSeparate(tab.id) }
+                Button("Copy Link") { copyLink(tab.url) }
+                Divider()
+                Button("Close this Split Pane") { onClose(tab.id) }
+            }
         }
         .accessibilityElement(children: .combine)
         // Icon-only items would otherwise read as the favicon's symbol name.
         .accessibilityLabel(tab.displayTitle)
         .accessibilityAddTraits(tab.id == focusedID ? [.isButton, .isSelected] : .isButton)
+    }
+
+    /// Arc's per-tab trailing button (SplitViewCellChildItemView): the tab row's close button, which
+    /// becomes Separate from Split View while ⌥ alone is held and the setting is on. Its size and
+    /// placement copy Kite's tab row; Arc's own were not measured.
+    private func trailingButton(_ tab: BrowserTab) -> some View {
+        let state = SplitTabButton.state(isPinned: isPinned, optionSeparates: optionSeparates,
+                                         modifiers: HeldModifiers.shared.flags.chordModifiers)
+        return Button {
+            if state == .separate { onSeparate(tab.id) } else { onClose(tab.id) }
+        } label: {
+            Image(systemName: state == .separate ? "scissors" : "xmark")
+                .font(.system(size: state == .separate ? 10 : 9, weight: .bold))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(0.6)
+        .help(state.title)
+        .accessibilityLabel(state.title)
+        .accessibilityIdentifier("splitTabTrailingButton")
+    }
+}
+
+private extension NSEvent.ModifierFlags {
+    var chordModifiers: KeyChord.Modifiers {
+        var m: KeyChord.Modifiers = []
+        if contains(.option) { m.insert(.alt) }
+        if contains(.control) { m.insert(.control) }
+        if contains(.command) { m.insert(.meta) }
+        if contains(.shift) { m.insert(.shift) }
+        return m
     }
 }
 

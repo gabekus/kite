@@ -243,6 +243,16 @@ extension BrowserState {
         normalizeSplits()
     }
 
+    /// Arc's Separate All Tabs (the split row's context menu): the split goes away and each of its
+    /// tabs becomes a row of its own, where it already sat in the sidebar. The focused tab stays
+    /// selected and now fills the window alone.
+    public mutating func separateAllTabs(split splitID: UUID) {
+        for s in spaces.indices {
+            spaces[s].splits.removeAll { $0.id == splitID }
+        }
+        favoriteSplits.removeAll { $0.id == splitID }
+    }
+
     /// Arc's Expand Current Split: the focused pane fills the split; the others stay in it, hidden.
     /// It only expands, as Arc's handler does: running it again changes nothing.
     public mutating func expandSplitPane() {
@@ -362,5 +372,34 @@ public struct SidebarGroup: Identifiable, Hashable, Sendable {
         let items = IndexSet(source.flatMap { groups[$0].indices })
         let target = destination < groups.count ? groups[destination].indices.first ?? itemCount : itemCount
         return (items, target)
+    }
+}
+
+/// What the hover button on one of a split row's tabs does: Arc's sidebar trailing button states
+/// `close`, `deselect` and `unsplit`. With `option-click-split-tab-close-button-to-unsplit-enabled`
+/// on (off by default in Arc 1.169), holding ⌥ and nothing else turns it into Separate from Split View
+/// (FUN_1000bcff0 for the look, FUN_1000bb388 for the click).
+public enum SplitTabButton: Equatable, Sendable {
+    /// An unpinned tab: Close Tab.
+    case close
+    /// A pinned tab or favorite: Arc deselects and closes it but keeps the item (Kite's Unload).
+    case unload
+    /// Separate from Split View.
+    case separate
+
+    /// The setting's UserDefaults key, named after Arc's flag.
+    public static let optionSeparatesKey = "optionClickSplitTabCloseButtonToUnsplit"
+
+    public static func state(isPinned: Bool, optionSeparates: Bool, modifiers: KeyChord.Modifiers) -> SplitTabButton {
+        if optionSeparates && modifiers == .alt { return .separate }
+        return isPinned ? .unload : .close
+    }
+
+    public var title: String {
+        switch self {
+        case .close: "Close Tab"
+        case .unload: "Unload"
+        case .separate: "Separate from Split View"
+        }
     }
 }
