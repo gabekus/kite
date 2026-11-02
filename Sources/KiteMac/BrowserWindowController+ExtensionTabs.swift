@@ -48,7 +48,13 @@ extension BrowserWindowController: ExtensionTabsHost {
 extension BrowserWindowController {
     /// ⇧⌘X: the password manager's popup over the top right of the page, for the selected tab.
     @objc func showPasswordManager(_ sender: Any?) {
-        if !openPasswordManager() { NSSound.beep() }
+        if openPasswordManager() { return }
+        // Not in this space's profile yet: add it (Chrome's dialog asks).
+        if !isIncognito, PasswordManagerIntegration.canInstall(in: pool.currentEngine) {
+            PasswordManagerIntegration.install(in: pool.currentEngine)
+        } else {
+            NSSound.beep()
+        }
     }
 
     /// The password manager's popup over the top right of the page. False when it can't open here.
