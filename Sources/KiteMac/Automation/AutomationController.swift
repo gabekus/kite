@@ -67,6 +67,8 @@ final class AutomationController {
     /// A step the user brought up with Next or the pill that isn't on the tab in front (a terminal command, or a
     /// step on a tab that's gone): the card shows it until it ends or another tab comes forward.
     var focusedHandoffStep: String?
+    /// The tab that was in front when Next brought `focusedHandoffStep` up.
+    var focusedHandoffFront: UUID?
     /// The card is folded down to its pill.
     var handoffCardCollapsed = false
     @ObservationIgnored var handoffPoller: Task<Void, Never>?

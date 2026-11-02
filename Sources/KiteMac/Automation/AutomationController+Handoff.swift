@@ -98,9 +98,11 @@ extension AutomationController {
     /// The step the card shows: the tab in front's (the first one waiting on it), or the one brought up with Next.
     func cardStep(front: UUID?) -> (handoff: Handoff, step: Handoff.Step)? {
         let waiting = waitingHandoffSteps
+        // A step brought up with Next stays up over the front tab's own until another tab comes forward.
+        let focused = focusedHandoffStep.flatMap { id in waiting.first { $0.step.id == id } }
+        if let focused, focusedHandoffFront == front { return focused }
         if let front, let found = waiting.first(where: { $0.step.tab == front }) { return found }
-        if let focused = focusedHandoffStep, let found = waiting.first(where: { $0.step.id == focused }) { return found }
-        return nil
+        return focused
     }
 
     /// The first step waiting on a tab, for its sidebar row.
@@ -144,6 +146,7 @@ extension AutomationController {
             pollHandoffsSoon()
         } else {
             focusedHandoffStep = next.step.id
+            focusedHandoffFront = store.state.selectedTab?.id
         }
     }
 
