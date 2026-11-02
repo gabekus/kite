@@ -6,6 +6,8 @@ import SwiftUI
 @Observable
 final class ClaudeButtonModel {
     var tasks: ClaudeTasksController?
+    /// Which tabs Claude is driving, for the sidebar's rows and Claude folders. Nil in incognito.
+    var automation: AutomationController?
     @ObservationIgnored var open: () -> Void = {}
     /// The button's frame in the sidebar's hosting view (top-left origin), or nil while it isn't shown.
     /// Claude's control pill sits just above it.

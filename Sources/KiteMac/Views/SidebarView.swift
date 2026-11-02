@@ -269,6 +269,35 @@ struct SidebarView: View {
         .environment(\.defaultMinListRowHeight, 1)
     }
 
+    /// Tabs Claude is driving right now (none in incognito).
+    private var claudeControlled: Set<UUID> { claude.automation?.controlledTabIDs ?? [] }
+
+    /// A Claude folder (Space › Claude › session) shows Claude at work while Claude drives a tab in it:
+    /// the folder holding the tab, and a collapsed folder above it, so it shows wherever the tab is hidden.
+    private func claudeShowsActivity(on folder: TabFolder) -> Bool {
+        guard folder.ephemeral == true else { return false }
+        let controlled = claudeControlled
+        guard !controlled.isEmpty, folder.items.tabs.contains(where: { controlled.contains($0.id) }) else { return false }
+        if !folder.isExpanded { return true }
+        return folder.items.contains { item in
+            if case .tab(let tab) = item { return controlled.contains(tab.id) }
+            return false
+        }
+    }
+
+    /// Stop on a Claude folder: takes back every tab in it that Claude is driving.
+    private func stopClaude(in folder: TabFolder) {
+        let tabs = Set(folder.items.tabs.map(\.id)).intersection(claudeControlled)
+        if !tabs.isEmpty { claude.automation?.stop(tabs: tabs) }
+    }
+
+    /// A tab row's tooltip while Claude drives it, naming the session when it has one; nil when it doesn't.
+    private func claudeControlHelp(_ tab: UUID) -> String? {
+        guard claudeControlled.contains(tab) else { return nil }
+        if let session = claude.automation?.sessionName(controlling: tab) { return "Claude is controlling this tab (\(session))" }
+        return "Claude is controlling this tab"
+    }
+
     /// Nil hides the moon: nothing to darken, or the engine can't.
     private func darkPageState(for tab: BrowserTab?) -> Bool? {
         guard supportsDarkPages, let url = tab?.url, url.host() != nil else { return nil }
@@ -299,7 +328,9 @@ struct SidebarView: View {
                     onCancelRename: { store.endRenamingFolder() },
                     onDelete: { actions.deleteFolder(folder.id) },
                     showsIntro: store.liveFolderIntroID == folder.id,
-                    onDismissIntro: { store.liveFolderIntroID = nil })
+                    onDismissIntro: { store.liveFolderIntroID = nil },
+                    claudeActive: claudeShowsActivity(on: folder),
+                    onStopClaude: { stopClaude(in: folder) })
                     .modifier(SidebarDragSource(
                         store: store,
                         row: .init(id: folder.id, kind: .folder(expanded: folder.isExpanded), space: space.id, pinned: true,
@@ -418,7 +449,9 @@ struct SidebarView: View {
             onToggleMute: { actions.toggleMute(tab.id) },
             isUnread: liveFolder?.isUnread(tab) ?? false,
             icon: liveFolder.flatMap { _ in LiveFolderIcons.pullRequest(tab, dark: colorScheme == .dark) },
-            peek: store.linkPeekBadges[tab.id]
+            peek: store.linkPeekBadges[tab.id],
+            claudeControl: claudeControlHelp(tab.id),
+            onStopClaude: { claude.automation?.stop(tabs: [tab.id]) }
         )
     }
 }
@@ -1276,16 +1309,26 @@ private struct FolderRow: View {
     /// A live folder's intro popover (Arc's LiveItemIntroPopover), to the folder's right.
     var showsIntro = false
     var onDismissIntro: () -> Void = {}
+    /// Claude is driving a tab in this Claude folder: Claude's mark turns in place of the folder icon,
+    /// with Stop on hover and in the menu.
+    var claudeActive = false
+    var onStopClaude: () -> Void = {}
     @State private var hovering = false
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
         HStack(spacing: M.iconTextGap) {
-            Image(systemName: folder.isExpanded ? "folder" : "folder.fill")
-                .font(.system(size: 14))
-                .frame(width: M.iconSize, height: M.iconSize)
-                .opacity(0.75)
+            if claudeActive {
+                ClaudeWorkingMark()
+                    .frame(width: M.iconSize, height: M.iconSize)
+                    .transition(.opacity)
+            } else {
+                Image(systemName: folder.isExpanded ? "folder" : "folder.fill")
+                    .font(.system(size: 14))
+                    .frame(width: M.iconSize, height: M.iconSize)
+                    .opacity(0.75)
+            }
             if isRenaming {
                 // In place, like a tab's title (Arc's EditableTextFieldWithCompletionHandler).
                 TextField("", text: $draft)
@@ -1307,11 +1350,16 @@ private struct FolderRow: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 0)
+            if claudeActive && hovering && !isRenaming {
+                ClaudeStopButton(action: onStopClaude)
+            }
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .bold))
                 .rotationEffect(.degrees(folder.isExpanded ? 90 : 0))
                 .opacity(hovering ? 0.5 : 0)
         }
+        .animation(.easeInOut(duration: 0.15), value: claudeActive)
+        .help(claudeActive ? "Claude is working in “\(folder.name)”" : "")
         .padding(.leading, M.iconInset + indent(depth))
         .padding(.trailing, M.iconInset)
         .frame(height: M.pillHeight)
@@ -1324,6 +1372,10 @@ private struct FolderRow: View {
             if let live = folder.live {
                 LiveFolderMenu(folder: folder, live: live, onDelete: onDelete)
             } else {
+                if claudeActive {
+                    Button("Stop Claude", action: onStopClaude)
+                    Divider()
+                }
                 Button("Delete", action: onDelete)
                 Divider()
                 Button("Copy All Links") { copyLinks(folder.items.tabs.compactMap(\.url)) }
@@ -1415,6 +1467,10 @@ private struct TabRow: View {
     var icon: URL?
     /// The page of a Peek open over this tab (Arc's TabCellState `modalIcon`), shown as a badge at the row's end.
     var peek: LinkPeekBadge?
+    /// Claude is driving this tab: the tooltip to show (naming its session), with Claude's ring on the
+    /// favicon and Stop Claude in the menu. Nil when it isn't.
+    var claudeControl: String?
+    var onStopClaude: () -> Void = {}
     @State private var hovering = false
     @State private var draft = ""
     @State private var titleWidth: CGFloat = 0
@@ -1425,6 +1481,14 @@ private struct TabRow: View {
     var body: some View {
         HStack(spacing: M.iconTextGap) {
             FaviconView(page: tab.url, icon: icon ?? tab.faviconURL, size: M.iconSize)
+                .overlay {
+                    if let claudeControl {
+                        ClaudeControlRing()
+                            .help(claudeControl)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.15), value: claudeControl != nil)
             if showsAudio {
                 TabAudioButtonView(isMuted: isMuted, action: onToggleMute)
                     // Arc: 2pt after the button, not the row's favicon-to-title gap.
@@ -1496,6 +1560,10 @@ private struct TabRow: View {
         // Alongside the single tap so selecting isn't held back waiting for a second click.
         .simultaneousGesture(TapGesture(count: 2).onEnded(onRename))
         .contextMenu {
+            if claudeControl != nil {
+                Button("Stop Claude", action: onStopClaude)
+                Divider()
+            }
             Button("Add to Favorites", action: onFavorite)
             Button(isPinned ? "Unpin Tab" : "Pin Tab", action: onTogglePin)
             if canReset {
@@ -1513,6 +1581,52 @@ private struct TabRow: View {
             Divider()
             Button(isPinned ? "Unload Tab" : "Close Tab", action: onClose)
         }
+    }
+}
+
+/// Claude's mark in Claude's orange, turning slowly while Claude works (a Claude folder's icon).
+private struct ClaudeWorkingMark: View {
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+            let turns = context.date.timeIntervalSinceReferenceDate / 6
+            ClaudeMark()
+                .stroke(Color.claude, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                .frame(width: 13, height: 13)
+                .rotationEffect(.degrees(turns.truncatingRemainder(dividingBy: 1) * 360))
+        }
+        .accessibilityLabel("Claude is working")
+    }
+}
+
+/// A ring in Claude's orange around a tab's favicon while Claude drives the tab, breathing gently.
+private struct ClaudeControlRing: View {
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+            let phase = (sin(context.date.timeIntervalSinceReferenceDate * .pi / 1.2) + 1) / 2
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .strokeBorder(Color.claude, lineWidth: 1.5)
+                .padding(-3)
+                .opacity(0.55 + 0.45 * phase)
+        }
+        .accessibilityLabel("Claude is controlling this tab")
+    }
+}
+
+/// Stop on a Claude folder's row: takes its tabs back from Claude.
+private struct ClaudeStopButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Color.claude)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Stop Claude")
+        .accessibilityLabel("Stop Claude")
     }
 }
 
