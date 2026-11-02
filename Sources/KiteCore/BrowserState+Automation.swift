@@ -4,10 +4,14 @@ import Foundation
 // existing mutations behave; these only ever add.
 
 extension BrowserState {
-    /// The name of the space Claude's tabs can open into.
-    public static let claudeSpaceName = "Claude"
-    /// Orange, like Claude (✳️ renders green).
-    public static let claudeSpaceIcon = "✴️"
+    /// The name of the folder Claude's own tabs go in, inside the space they belong to. Kite never makes
+    /// a space by this name (Gabe's rule): Claude gets folders in existing spaces, never a space of its own.
+    public static let claudeFolderName = "Claude"
+
+    /// Whether Claude may make a space with this name (create_space). Never a Claude space.
+    public static func claudeMayCreateSpace(named name: String) -> Bool {
+        name.trimmingCharacters(in: .whitespaces).localizedCaseInsensitiveCompare(claudeFolderName) != .orderedSame
+    }
 
     /// A space by id, or by name (case-insensitive).
     public func space(matching idOrName: String) -> Int? {
@@ -22,19 +26,6 @@ extension BrowserState {
         let space = Space(name: name, icon: icon, theme: theme)
         spaces.append(space)
         return space.id
-    }
-
-    /// The Claude space, made (in the background) the first time it's needed.
-    public mutating func claudeSpace(theme: Theme = .claude) -> UUID {
-        if let index = space(matching: Self.claudeSpaceName) {
-            // Claude spaces made before it was orange: the green ✳️ and the last preset theme.
-            if spaces[index].icon == "✳️" {
-                spaces[index].icon = Self.claudeSpaceIcon
-                if spaces[index].theme == Theme.presets.last { spaces[index].theme = theme }
-            }
-            return spaces[index].id
-        }
-        return addBackgroundSpace(name: Self.claudeSpaceName, icon: Self.claudeSpaceIcon, theme: theme)
     }
 
     /// Every folder in a space's pinned section, depth first. None for an index past the end (a
@@ -76,7 +67,7 @@ extension BrowserState {
         }).first {
             return folder.id
         }
-        let folder = TabFolder(name: Self.claudeSpaceName, ephemeral: true)
+        let folder = TabFolder(name: Self.claudeFolderName, ephemeral: true)
         spaces[index].pinnedItems.append(.folder(folder))
         return folder.id
     }

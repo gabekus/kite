@@ -88,7 +88,7 @@ public struct Theme: Hashable, Codable, Sendable {
     /// sidebar is mostly the system material picking up the wallpaper.
     public static let arcDefault = Theme(colors: [ThemeColor(r: 0.1, g: 0.1, b: 0.1)], grain: 0, tint: defaultTint * 0.8)
 
-    /// Claude's orange, for the Claude space.
+    /// Claude's orange.
     public static let claude = Theme(colors: [ThemeColor(hex: 0xE8956F), ThemeColor(hex: 0xD97757)], grain: 0.3)
 
     public static let presets: [Theme] = [

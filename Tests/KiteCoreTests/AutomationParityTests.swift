@@ -196,14 +196,13 @@ import Testing
         return (state, a, b)
     }
 
-    @Test func claudeSpaceIsMadeOnceInTheBackground() {
+    @Test func backgroundSpacesDontSwitchAndMatchByNameOrID() {
         var (state, _, _) = makeState()
         let selected = state.selectedSpaceID
-        let first = state.claudeSpace(theme: Theme.presets[1])
+        let first = state.addBackgroundSpace(name: "Komado", icon: "🈳", theme: Theme.presets[1])
         #expect(state.selectedSpaceID == selected)
-        #expect(state.claudeSpace(theme: Theme.presets[1]) == first)
         #expect(state.spaces.count == 2)
-        #expect(state.space(matching: "claude") == 1)
+        #expect(state.space(matching: "komado") == 1)
         #expect(state.space(matching: first.uuidString) == 1)
         #expect(state.space(matching: "nope") == nil)
     }

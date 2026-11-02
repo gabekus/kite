@@ -366,7 +366,11 @@ public enum AutomationCommand: Hashable, Sendable {
         case .switchSpace:
             self = .switchSpace(space: try a.required("space"))
         case .createSpace:
-            self = .createSpace(name: try a.required("name"), icon: try a.string("icon"),
+            let name = try a.required("name")
+            guard BrowserState.claudeMayCreateSpace(named: name) else {
+                throw InvalidArguments("Kite never makes a Claude space. Put your tabs in the Claude folder of the space they belong to: tabs_create with space and claude_folder true.")
+            }
+            self = .createSpace(name: name, icon: try a.string("icon"),
                                 about: try a.string("about").flatMap(Space.cleanAbout))
         case .describeSpace:
             guard let about = try a.string("about") else { throw InvalidArguments("\"about\" is required (\"\" clears it).") }

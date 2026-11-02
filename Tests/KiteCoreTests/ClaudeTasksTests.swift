@@ -114,7 +114,7 @@ import Testing
 
     @Test func removingATaskFolderTakesItsTabs() throws {
         var state = BrowserState(spaces: [Space(name: "Home", icon: "🏠", theme: Theme.presets[0])])
-        let space = state.claudeSpace(theme: Theme.presets[0])
+        let space = state.spaces[0].id
         let index = try #require(state.space(matching: space.uuidString))
         let folder = state.createFolder(name: "Task", inSpace: index)
         let a = state.openTab(url: URL(string: "https://a.example"), in: space, select: false)
@@ -135,16 +135,31 @@ import Testing
         #expect(decoded.task == "T")
     }
 
-    @Test func theClaudeSpaceIsOrange() throws {
-        var state = BrowserState(spaces: [Space(name: "Home", icon: "🏠", theme: Theme.presets[0])])
-        let fresh = state.claudeSpace()
-        let index = try #require(state.space(matching: fresh.uuidString))
-        #expect(state.spaces[index].icon == "✴️" && state.spaces[index].theme == .claude)
-        // One made before, with the green ✳️ and the last preset, turns orange on next use.
-        state.spaces[index].icon = "✳️"
-        state.spaces[index].theme = Theme.presets.last!
-        #expect(state.claudeSpace() == fresh)
-        #expect(state.spaces[index].icon == "✴️" && state.spaces[index].theme == .claude)
+    @Test func claudeNeverMakesAClaudeSpace() throws {
+        // Claude's tabs go in a Claude folder inside an existing space; the spaces stay as they were.
+        var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0]),
+                                          Space(name: "Personal", icon: "🏠", theme: Theme.presets[1])])
+        let komado = state.spaces[0].id
+        let folder = try #require(state.claudeFolder(inSpace: komado))
+        #expect(state.claudeFolder(inSpace: komado) == folder)
+        let tab = state.openTab(url: URL(string: "https://dash.cloudflare.com"), in: komado, select: false)
+        #expect(state.moveTab(tab, toFolder: folder))
+        #expect(state.spaces.map(\.name) == ["Komado", "Personal"])
+        #expect(state.folders(inSpace: 0).map(\.name) == ["Claude"])
+        #expect(state.location(of: tab)?.space == 0)
+
+        // No tool can make one either: create_space refuses the name, and "claude" as a space means a folder.
+        for name in ["Claude", " claude ", "CLAUDE"] {
+            #expect(!BrowserState.claudeMayCreateSpace(named: name))
+            #expect(throws: AutomationCommand.InvalidArguments.self) {
+                try AutomationCommand(tool: "create_space", arguments: ["name": .string(name)])
+            }
+        }
+        #expect(BrowserState.claudeMayCreateSpace(named: "Claude Projects"))
+        #expect(try AutomationCommand(tool: "tabs_create", arguments: ["space": "Claude"])
+            == .tabsCreate(url: nil, active: false, placement: .claudeFolder(space: nil)))
+        #expect(try AutomationCommand(tool: "navigate", arguments: ["url": "x.com", "space": "claude"])
+            == .tabsCreate(url: "x.com", active: false, placement: .claudeFolder(space: nil)))
     }
 }
 
