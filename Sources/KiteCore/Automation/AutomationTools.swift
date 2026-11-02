@@ -49,6 +49,8 @@ extension AutomationCommand.Tool {
             "Loads a URL in a tab (or a new background tab with new_tab, or space), or goes \"back\"/\"forward\". Waits for the load. To open a link for the user, use tabs_create (or pass space) so it lands in the right space."
         case .resizeWindow:
             "Resizes Kite's window, in points."
+        case .vpn:
+            "Quiet VPN sign-in. When the user's VPN client (OpenVPN Connect, Tunnelblick) reconnects and opens its SSO/SAML sign-in page in Kite, Kite signs in on a hidden page with the user's cookies and closes it, and only opens a background tab (never taking focus) when the page needs them: a password, a code, an MFA prompt. action status (default) lists the watched hosts, the last sign-in and the hosts of links other apps opened lately; watch / unwatch with host choose which sign-in pages are handled this way (only a host the user confirmed is their VPN's); reconnect has the VPN client connect again (profile names the client's profile when it has several) and waits for the sign-in; wait waits for one. It never changes the VPN client's settings."
         case .ui:
             UIInspection.summary
         case .batch:
@@ -288,6 +290,13 @@ extension AutomationCommand.Tool {
         case .createFolder:
             properties = ["name": ["type": "string"], "space": ["type": "string", "description": "Space id or name (default: the current one)."]]
             required = ["name"]
+        case .vpn:
+            properties = [
+                "action": ["type": "string", "enum": .array(VPNAction.names.map { .string($0) }), "description": "status (default), watch, unwatch, reconnect or wait."],
+                "host": ["type": "string", "description": "For watch and unwatch: the sign-in page's host, like vpn.example.com (subdomains count)."],
+                "profile": ["type": "string", "description": "For reconnect: the VPN client's profile or configuration name, when it has more than one."],
+                "timeout": ["type": "number", "minimum": 0, "maximum": .number(VPNAction.maxTimeout), "description": "For reconnect and wait: seconds to wait for the sign-in (default 60)."],
+            ]
         case .moveToFolder:
             properties = ["tab": tab, "folder": ["type": "string", "description": "Folder id or name, or \"claude\" for the tab's space's Claude folder."],
                           "session": ["type": "string", "description": "With folder \"claude\": Claude › this name (your session's folder)."]]
