@@ -101,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         windows.restore()
         setUpWebApps()
+        setUpVPNSignIn()
 
         automation = AutomationController(store: store, supportDirectory: Self.supportDirectory)
         automation.host = windowController
@@ -241,7 +242,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 continue
             }
-            switch airTraffic.state.destination(for: url, spaceIDs: spaceIDs, opensExternalLinksInLittleKite: little) {
+            let destination = airTraffic.state.destination(for: url, spaceIDs: spaceIDs, opensExternalLinksInLittleKite: little)
+            // A VPN client's sign-in page on a watched host signs in on a hidden page (VPNSignIn).
+            if case .space(let id) = destination {
+                if VPNSignInController.shared.handle(url, spaceID: id) { continue }
+            } else if VPNSignInController.shared.handle(url, spaceID: nil) {
+                continue
+            }
+            switch destination {
             case .littleKite:
                 openLittleKiteWindow(url: url)
             case .mostRecentSpace:
@@ -253,6 +261,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         if openedTab { windowController.window?.makeKeyAndOrderFront(nil) }
+    }
+
+    /// Quiet VPN sign-in loads in the destination space's profile, and shows a page that needs
+    /// the user as a tab behind the selected one, without raising the window.
+    private func setUpVPNSignIn() {
+        let main = windowController!
+        let store = self.store!
+        VPNSignInController.shared.host = .init(
+            engine: { [weak main] spaceID in
+                let state = store.state
+                let engine = main?.pool.engine ?? self.engine!
+                guard engine.profileDirectory != nil else { return engine }
+                let index = spaceID.flatMap(state.spaceIndex) ?? state.selectedSpaceIndex
+                return engine.forProfile(state.profile(state.profileDirectory(ofSpace: index)))
+            },
+            showInBackground: { [weak main] page, url, title, spaceID, profile in
+                guard let main else { return page.close() }
+                let id = main.pool.adopt(page, profileDirectory: profile)
+                store.mutate { _ = $0.openTab(id: id, url: url, in: spaceID, select: false) }
+                store.pageTitleChanged(id, title)
+            }
+        )
     }
 
     /// Installed apps' windows send links and popups to the main window, like Little Kite's.

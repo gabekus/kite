@@ -131,4 +131,42 @@ import Testing
         #expect(UserHandoff.RingEvent(json: #"{"step":"h1.2","how":"change"}"#)?.step == "h1.2")
         #expect(UserHandoff.describe("change") == "the user changed the highlighted control")
     }
+
+    @Test func keepsHandoffsAcrossLaunches() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = Handoff.fileURL(supportDirectory: folder)
+        let (start, tab, _) = sample()
+        var handoff = start
+        _ = handoff.finish("h1.1", .done, how: "the user clicked the highlighted control")
+        handoff.steps[1].found = true
+        handoff.steps[1].locator = .marker("h1.2", label: "Save")
+        var old = Handoff(id: "h7", reason: "Old", created: Date(timeIntervalSinceNow: -8 * 24 * 3600),
+                          steps: [.init(id: "h7.1", number: 1, instruction: "Gone")])
+        old.steps[0].state = .waiting
+        try Handoff.save([old, handoff], to: url)
+
+        let loaded = Handoff.load(from: url)
+        // A week-old handoff is dropped; the rest comes back as the user left it, minus what the ring last saw.
+        #expect(loaded.map(\.id) == ["h1"])
+        #expect(loaded[0].steps[0].state == .done && loaded[0].steps[0].how == "the user clicked the highlighted control")
+        #expect(loaded[0].steps[1].locator == .marker("h1.2", label: "Save") && loaded[0].steps[1].found == nil)
+        #expect(loaded[0].current(on: tab)?.id == "h1.2")
+        #expect(loaded[0].steps[3].command == "ls")
+        #expect(Handoff.lastNumber(in: [old, handoff]) == 7)
+        #expect(Handoff.load(from: folder.appendingPathComponent("missing.json")).isEmpty)
+    }
+
+    @Test func keepsOnlyTheNewestFinishedHandoffs() {
+        func make(_ n: Int, done: Bool) -> Handoff {
+            var h = Handoff(id: "h\(n)", reason: "R", steps: [.init(id: "h\(n).1", number: 1, instruction: "Do")])
+            if done { h.finishAll(.done, how: "the user pressed Done") }
+            return h
+        }
+        let all = (1...25).map { make($0, done: $0 != 3) }
+        let kept = Handoff.pruned(all)
+        #expect(kept.filter(\.isFinished).count == Handoff.keptFinished)
+        #expect(kept.contains { $0.id == "h3" })
+        #expect(kept.last?.id == "h25")
+    }
 }

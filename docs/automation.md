@@ -45,6 +45,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | (none) | `list_downloads` | | Downloads since control was turned on. |
 | (none) | `sign_in` | `kite call sign_in` | Hands a login page to the user, with 1Password. See below. |
 | (none) | `handoff`, `handoff_status` | `kite call handoff` | Hands steps Claude can't do to the user, shown on the pages. See below. |
+| (none) | `vpn` | `kite vpn` | Quiet VPN sign-in and reconnect. See the README. |
 | (none) | `list_spaces`, `switch_space`, `create_space`, `describe_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces`, `kite describe-space` | Kite's own organization. |
 | `gif_creator`, `shortcuts_*`, `switch_browser` | not yet | | |
 
@@ -283,7 +284,7 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   - **Back to Claude.** `handoff` returns at once (or after `wait` seconds, up to 600) with an id. `handoff_status`
     (`id`, default the session's latest; `wait`; `cancel` to withdraw the rest) lists each step as done, skipped or
     waiting, how it ended ("the user clicked the highlighted control", "pressed Done", "skipped it", "closed the
-    tab"), and each tab's URL now. Kite keeps the last 20 finished handoffs; it forgets them when it quits.
+    tab"), and each tab's URL now. Handoffs are saved in the profile (`Claude Handoffs.json`) on every step the user or Claude ends, so steps still waiting come back after Kite quits or restarts: the card and sidebar dots at once, the ring when the tab's page loads (a ref's mark is gone after a reload, so its label finds the control). Kite keeps handoffs for a week, and the last 20 finished ones for `handoff_status`; Claude can ask about one by id from a new connection.
 - **Sign-in handoff (`sign_in`).** Claude never types or sees passwords. When a page needs the user signed in,
   Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and shows a
   pill at the bottom of the page: "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the

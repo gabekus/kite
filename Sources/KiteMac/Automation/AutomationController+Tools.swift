@@ -24,6 +24,8 @@ extension AutomationController {
             return try resizeWindow(width: width, height: height)
         case .listDownloads:
             return .text(downloadsReport())
+        case .vpn(let action):
+            return .text(await VPNSignInController.shared.run(action))
         case .networkLog(let query):
             return .text(network.report(try networkQuery(query), recording: isRecordingNetwork))
         case let .networkRequest(id, body, maxBodyLength):
