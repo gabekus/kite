@@ -182,6 +182,17 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     public var tabGroups: [TodayTabGroup] = []
     /// The folder of the profile this space uses (Profiles.swift); nil is the default profile.
     public var profile: String?
+    /// What belongs in this space, in the user's words ("Komado business: Shopify, suppliers, ads").
+    /// Claude reads it (list_spaces) to choose the space a link it opens goes to.
+    public var about: String?
+
+    public static let maxAboutLength = 500
+
+    /// Trims a description and caps its length; nil when there's nothing left.
+    public static func cleanAbout(_ text: String) -> String? {
+        let trimmed = text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : String(trimmed.prefix(maxAboutLength))
+    }
 
     public init(
         id: UUID = UUID(),
@@ -210,7 +221,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     public var allTabs: [BrowserTab] { pinned + tabs }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, icon, theme, pinnedItems, pinned, tabs, selectedTabID, splits, tabGroups, profile
+        case id, name, icon, theme, pinnedItems, pinned, tabs, selectedTabID, splits, tabGroups, profile, about
     }
 
     public init(from decoder: Decoder) throws {
@@ -230,6 +241,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
         splits = try c.decodeIfPresent([SplitView].self, forKey: .splits) ?? []
         tabGroups = try c.decodeIfPresent([TodayTabGroup].self, forKey: .tabGroups) ?? []
         profile = try c.decodeIfPresent(String.self, forKey: .profile)
+        about = try c.decodeIfPresent(String.self, forKey: .about)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -244,6 +256,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
         if !splits.isEmpty { try c.encode(splits, forKey: .splits) }
         if !tabGroups.isEmpty { try c.encode(tabGroups, forKey: .tabGroups) }
         try c.encodeIfPresent(profile, forKey: .profile)
+        try c.encodeIfPresent(about, forKey: .about)
     }
 }
 

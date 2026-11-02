@@ -17,6 +17,15 @@ extension AutomationCommand.Tool {
     private static let networkLimit: JSONValue = ["type": "integer", "minimum": 1, "maximum": 1000, "description": "Most requests to return, newest (default 50)."]
     private static let limit: JSONValue = ["type": "integer", "minimum": 1, "maximum": 1000, "description": "Most entries to return (default 100)."]
 
+    /// How Claude picks the space for a link: shared by tabs_create, the MCP instructions and Claude Tasks.
+    public static let spaceRouting = """
+        Each space holds one part of the user's life (say, a business and their personal life). When the user asks \
+        you to open a link (even a plain "open X"), choose its space yourself from what the link and the conversation \
+        are about, using what list_spaces says each space is for, and pass it as space. Don't ask which space unless \
+        it's truly unclear, and don't just use the one in front. Pass active true when they want to look at it now. \
+        "claude" is Claude's own space, out of the user's way, for pages only you need.
+        """
+
     public var title: String {
         rawValue.split(separator: "_").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
     }
@@ -26,13 +35,13 @@ extension AutomationCommand.Tool {
         case .tabsContext:
             "Lists Kite's open tabs: id, title, URL, space, and which one is in front. Call it first to get tab ids."
         case .tabsCreate:
-            "Opens a new tab (in the background unless active is true). space \"claude\" opens it in a Claude space, out of the user's way."
+            "Opens a new tab (in the background unless active is true) in a space. \(Self.spaceRouting)"
         case .tabsClose:
             "Closes a tab. Closing a tab Claude didn't open asks the user first."
         case .switchTab:
             "Brings a tab to the front (and switches to its space)."
         case .navigate:
-            "Loads a URL in a tab (or a new background tab with new_tab), or goes \"back\"/\"forward\". Waits for the load."
+            "Loads a URL in a tab (or a new background tab with new_tab, or space), or goes \"back\"/\"forward\". Waits for the load. To open a link for the user, use tabs_create (or pass space) so it lands in the right space."
         case .resizeWindow:
             "Resizes Kite's window, in points."
         case .ui:
@@ -78,11 +87,13 @@ extension AutomationCommand.Tool {
         case .listDownloads:
             "Lists downloads Kite started this session and their state."
         case .listSpaces:
-            "Lists Kite's spaces (id, name, icon, tab counts) and which one is in front."
+            "Lists Kite's spaces (id, name, icon, tab counts, and what each is for, in the user's words) and which one is in front. Call it before opening a link for the user, to pick its space."
         case .switchSpace:
             "Switches the window to a space, by id or name."
         case .createSpace:
-            "Adds a space (in the background; it doesn't switch to it)."
+            "Adds a space (in the background; it doesn't switch to it). about says what belongs in it."
+        case .describeSpace:
+            "Saves what belongs in a space, in the user's words (\"Komado business: Shopify, suppliers, ads, the business's money\"), so links opened later go to the right space. Call it when the user tells you which kinds of things go where. \"\" clears it."
         case .pinTab:
             "Pins a tab (pinned true, the default) or unpins it."
         case .createFolder:
@@ -105,7 +116,7 @@ extension AutomationCommand.Tool {
             properties = [
                 "url": ["type": "string", "description": "URL to open (blank tab when omitted)."],
                 "active": ["type": "boolean", "description": "Bring the tab to the front (default false)."],
-                "space": ["type": "string", "description": "Space id or name, or \"claude\" for the Claude space."],
+                "space": ["type": "string", "description": "Space id or name (from list_spaces), chosen by what the link is about; \"claude\" for Claude's own space. Omit only for the space in front."],
             ]
         case .tabsClose, .switchTab:
             properties = ["tab": ["type": "string", "description": "Tab id from tabs_context."]]
@@ -115,6 +126,7 @@ extension AutomationCommand.Tool {
                 "tab": tab,
                 "url": ["type": "string", "description": "URL (https:// is assumed), or \"back\" / \"forward\"."],
                 "new_tab": ["type": "boolean", "description": "Open in a new background tab."],
+                "space": ["type": "string", "description": "Open in a new background tab in this space (id or name), instead of tab."],
             ]
             required = ["url"]
         case .resizeWindow:
@@ -221,8 +233,13 @@ extension AutomationCommand.Tool {
             properties = ["space": ["type": "string", "description": "Space id or name."]]
             required = ["space"]
         case .createSpace:
-            properties = ["name": ["type": "string"], "icon": ["type": "string", "description": "An emoji."]]
+            properties = ["name": ["type": "string"], "icon": ["type": "string", "description": "An emoji."],
+                          "about": ["type": "string", "description": "What belongs in the space, in the user's words."]]
             required = ["name"]
+        case .describeSpace:
+            properties = ["space": ["type": "string", "description": "Space id or name."],
+                          "about": ["type": "string", "description": "What belongs in it, in the user's words; \"\" clears it."]]
+            required = ["space", "about"]
         case .pinTab:
             properties = ["tab": tab, "pinned": ["type": "boolean"]]
         case .createFolder:

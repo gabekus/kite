@@ -56,8 +56,11 @@ public enum AutomationReport {
         public var tabs: Int
         public var folders: [String]
         public var isFront: Bool
+        /// What the user said belongs in the space.
+        public var about: String?
 
-        public init(id: UUID, name: String, icon: String, pinned: Int, tabs: Int, folders: [String], isFront: Bool) {
+        public init(id: UUID, name: String, icon: String, pinned: Int, tabs: Int, folders: [String], isFront: Bool,
+                    about: String? = nil) {
             self.id = id
             self.name = name
             self.icon = icon
@@ -65,8 +68,16 @@ public enum AutomationReport {
             self.tabs = tabs
             self.folders = folders
             self.isFront = isFront
+            self.about = about
         }
     }
+
+    static let spacesHint = """
+
+
+        No space says what it's for yet. Pick by name for now, and when the user tells you what belongs where, \
+        save it with describe_space.
+        """
 
     /// Space names are the user's own, not a page's, so they aren't wrapped.
     public static func spaces(_ spaces: [SpaceSummary]) -> String {
@@ -75,8 +86,9 @@ public enum AutomationReport {
             line += space.isFront ? " [front]" : ""
             line += ": \(space.pinned) pinned, \(space.tabs) tab\(space.tabs == 1 ? "" : "s")"
             if !space.folders.isEmpty { line += "; folders: " + space.folders.map(AccessibilityOutline.quote).joined(separator: ", ") }
+            if let about = space.about { line += "\n  for: " + AccessibilityOutline.quote(about) }
             return line
-        }.joined(separator: "\n")
+        }.joined(separator: "\n") + (spaces.contains { $0.about != nil } ? "" : spacesHint)
     }
 
     public static func find(_ matches: [ElementFinder.Match], query: String, url: URL?) -> String {

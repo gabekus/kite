@@ -43,6 +43,21 @@ import Testing
             == .tabsCreate(url: nil, active: true, placement: .currentSpace))
         #expect(try AutomationCommand(tool: "tabs_create", arguments: ["space": "Work"])
             == .tabsCreate(url: nil, active: false, placement: .space("Work")))
+        #expect(try AutomationCommand(tool: "navigate", arguments: ["url": "shopify.com", "space": "Komado"])
+            == .tabsCreate(url: "shopify.com", active: false, placement: .space("Komado")))
+        #expect(throws: AutomationCommand.InvalidArguments.self) {
+            try AutomationCommand(tool: "navigate", arguments: ["url": "x.com", "space": "Komado", "tab": "T"])
+        }
+        #expect(try AutomationCommand(tool: "describe_space", arguments: ["space": "Komado", "about": "  Komado\nbusiness "])
+            == .describeSpace(space: "Komado", about: "Komado business"))
+        #expect(try AutomationCommand(tool: "describe_space", arguments: ["space": "Komado", "about": ""])
+            == .describeSpace(space: "Komado", about: ""))
+        #expect(throws: AutomationCommand.InvalidArguments.self) {
+            try AutomationCommand(tool: "describe_space", arguments: ["space": "Komado"])
+        }
+        #expect(try AutomationCommand(tool: "create_space", arguments: ["name": "Komado", "about": "Komado business"])
+            == .createSpace(name: "Komado", icon: nil, about: "Komado business"))
+        #expect(AutomationCommand.Tool.tabsCreate.summary.contains("list_spaces"))
         #expect(try AutomationCommand(tool: "tabs_close", arguments: ["tab": "T"]) == .tabsClose(tab: "T"))
         #expect(try AutomationCommand(tool: "resize_window", arguments: ["width": 1200, "height": 800])
             == .resizeWindow(width: 1200, height: 800))
@@ -524,6 +539,27 @@ import Testing
         ])
         #expect(text.contains("tab \(id.uuidString) [Work, front, pinned]"))
         #expect(text.components(separatedBy: "</untrusted-page-content>").count == 2)
+    }
+
+    @Test func spaceListSaysWhatEachSpaceIsFor() throws {
+        let id = UUID()
+        let described = AutomationReport.spaces([
+            AutomationReport.SpaceSummary(id: id, name: "Komado", icon: "🪟", pinned: 2, tabs: 3, folders: [], isFront: true,
+                                          about: "Komado business"),
+            AutomationReport.SpaceSummary(id: UUID(), name: "Personal", icon: "🏠", pinned: 0, tabs: 1, folders: [], isFront: false),
+        ])
+        #expect(described.contains("space \(id.uuidString) 🪟 \"Komado\" [front]: 2 pinned, 3 tabs\n  for: \"Komado business\""))
+        #expect(!described.contains("describe_space"))
+        let bare = AutomationReport.spaces([
+            AutomationReport.SpaceSummary(id: id, name: "Komado", icon: "🪟", pinned: 0, tabs: 0, folders: [], isFront: true),
+        ])
+        #expect(bare.contains("describe_space"))
+
+        var space = Space(name: "Komado", icon: "🪟", theme: Theme.presets[0])
+        space.about = "Komado business"
+        let decoded = try JSONDecoder().decode(Space.self, from: JSONEncoder().encode(space))
+        #expect(decoded.about == "Komado business")
+        #expect(Space.cleanAbout("  \n ") == nil)
     }
 
     @Test func pageTextIsCut() {
