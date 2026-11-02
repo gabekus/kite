@@ -211,3 +211,38 @@ extension Jev {
         (answers.nouls[commitsQuestion] ?? 0) >= threshold
     }
 }
+
+// MARK: Nothing to tidy
+
+extension Jev {
+    public static let alreadyTidyQuestion = "already_tidy"
+
+    /// Tidy Tab Titles: a title that's already a short, clean name needs no Claude run.
+    public static func tabTitleCheck(title: String, host: String?) -> (state: String, questions: [String: Question]) {
+        ("Browser tab title: \(title)\nSite: \(host ?? "unknown")", [alreadyTidyQuestion: .noul(instructions: """
+            This title is already a short, specific sidebar name of one to three words, without the website's \
+            name, search-engine filler or words that only say what kind of page it is
+            """)])
+    }
+
+    /// Tidy Downloads: a file name that already says what the file is needs no Claude run.
+    public static func fileNameCheck(fileName: String, tabTitle: String?) -> (state: String, questions: [String: Question]) {
+        var state = "Downloaded file name: \(fileName)"
+        if let tabTitle, !tabTitle.isEmpty { state += "\nDownloaded from the page: \(tabTitle)" }
+        return (state, [alreadyTidyQuestion: .noul(instructions: """
+            This file name already says clearly what the file is, in readable words, with no random IDs, \
+            hashes, timestamps, download counters like (1) or generic names like document or download
+            """)])
+    }
+
+    public static func isAlreadyTidy(_ answers: Answers, threshold: Double = 0.85) -> Bool {
+        (answers.nouls[alreadyTidyQuestion] ?? 0) >= threshold
+    }
+
+    /// True only when Jev is sure there's nothing to tidy. No Jev or no answer: tidy as before.
+    public static func skipsTidy(_ check: (state: String, questions: [String: Question]),
+                                 ask: (String, [String: Question]) async throws -> Answers) async -> Bool {
+        guard let answers = try? await ask(check.state, check.questions) else { return false }
+        return isAlreadyTidy(answers)
+    }
+}

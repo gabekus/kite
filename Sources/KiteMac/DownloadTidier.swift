@@ -25,7 +25,10 @@ final class DownloadTidier {
         let prompt = TidyDownloads.prompt(fileName: fileName, tabTitle: sourceTitle, domain: item.sourceHost,
                                           language: TidyDownloads.languageName())
         let timeout = timeout
+        let check = Jev.fileNameCheck(fileName: fileName, tabTitle: sourceTitle)
         Task.detached(priority: .utility) { [weak self] in
+            // A name that already says what the file is stays, without a Claude run.
+            if let jev = JevClient.shared, await Jev.skipsTidy(check, ask: jev.ask) { return }
             guard let output = Self.askClaude(prompt, timeout: timeout),
                   let proposed = TidyDownloads.name(fromClaudeOutput: output),
                   let name = TidyDownloads.tidiedName(proposed, original: fileName) else { return }

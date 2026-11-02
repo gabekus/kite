@@ -93,4 +93,14 @@ import Testing
         #expect(!Jev.needsConfirmation(Jev.Answers(nouls: [Jev.commitsQuestion: 0.5])))
         #expect(!Jev.needsConfirmation(Jev.Answers()))
     }
+
+    @Test func skipsTidyingOnlyWhenJevIsSure() async {
+        let title = Jev.tabTitleCheck(title: "Komado orders", host: "admin.shopify.com")
+        #expect(title.state.contains("Komado orders") && title.questions[Jev.alreadyTidyQuestion] != nil)
+        let file = Jev.fileNameCheck(fileName: "invoice-oct.pdf", tabTitle: "Billing")
+        #expect(file.state.contains("invoice-oct.pdf") && file.state.contains("Billing"))
+        #expect(await Jev.skipsTidy(title) { _, _ in Jev.Answers(nouls: [Jev.alreadyTidyQuestion: 0.9]) })
+        #expect(!(await Jev.skipsTidy(title) { _, _ in Jev.Answers(nouls: [Jev.alreadyTidyQuestion: 0.6]) }))
+        #expect(!(await Jev.skipsTidy(file) { _, _ in throw Jev.BadResponse(description: "down") }))
+    }
 }
