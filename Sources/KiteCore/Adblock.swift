@@ -14,6 +14,10 @@ public struct FilterList: Hashable, Sendable {
         FilterList(id: "easyprivacy", name: "EasyPrivacy", url: URL(string: "https://easylist.to/easylist/easyprivacy.txt")!, trusted: false),
         FilterList(id: "ublock-filters", name: "uBlock filters", url: URL(string: "https://ublockorigin.github.io/uAssets/filters/filters.txt")!, trusted: true),
         FilterList(id: "ublock-quick-fixes", name: "uBlock filters – Quick fixes", url: URL(string: "https://ublockorigin.github.io/uAssets/filters/quick-fixes.txt")!, trusted: true),
+        // The rest of uBO's own default lists, so Kite blocks what Arc with uBO does.
+        FilterList(id: "ublock-privacy", name: "uBlock filters – Privacy", url: URL(string: "https://ublockorigin.github.io/uAssets/filters/privacy.txt")!, trusted: true),
+        FilterList(id: "ublock-badware", name: "uBlock filters – Badware risks", url: URL(string: "https://ublockorigin.github.io/uAssets/filters/badware.txt")!, trusted: true),
+        FilterList(id: "ublock-unbreak", name: "uBlock filters – Unbreak", url: URL(string: "https://ublockorigin.github.io/uAssets/filters/unbreak.txt")!, trusted: true),
     ]
 
     /// How often lists and scriptlets are re-downloaded.
@@ -30,6 +34,89 @@ public struct FilterList: Hashable, Sendable {
     public static func looksValid(_ text: String) -> Bool {
         let head = text.prefix(4096)
         return head.hasPrefix("[Adblock") || head.contains("! Title:")
+    }
+}
+
+/// uBlock Origin's list directives, which adblock-rust reads as comments:
+/// `!#if` / `!#else` / `!#endif` pick rules per platform, and `!#include` pulls in
+/// sublists. "uBlock filters" is mostly sublists (filters-2020…, filters-general),
+/// and without the `!#if`s Kite also got Firefox-, Safari- and uBO Lite-only rules.
+public enum FilterListDirectives {
+    /// The tokens uBO sets on desktop Chromium. Every other token (`env_firefox`,
+    /// `env_mobile`, `ext_ubol`, `cap_html_filtering`, `cap_ipaddress`, AdGuard's…)
+    /// is false: adblock-rust has no HTML filtering or `$ipaddress` either.
+    public static let environment: Set<String> = ["env_chromium", "ext_ublock", "cap_user_stylesheet"]
+
+    /// uBO's expressions: tokens, `!token`, joined left to right by `&&` and `||`,
+    /// optionally in one pair of parentheses. Anything else is false.
+    public static func evaluate(_ expression: String, environment: Set<String> = environment) -> Bool {
+        var expr = expression.trimmingCharacters(in: .whitespaces)
+        if expr.hasPrefix("("), expr.hasSuffix(")") { expr = String(expr.dropFirst().dropLast()) }
+        let parts = expr.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        func token(_ t: String) -> Bool? {
+            let negated = t.hasPrefix("!")
+            let name = negated ? String(t.dropFirst()) : t
+            guard !name.isEmpty, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return nil }
+            return environment.contains(name) != negated
+        }
+        guard let first = parts.first, var result = token(first) else { return false }
+        var i = 1
+        while i < parts.count {
+            guard i + 1 < parts.count, let value = token(parts[i + 1]) else { return false }
+            switch parts[i] {
+            case "&&": result = result && value
+            case "||": result = result || value
+            default: return false
+            }
+            i += 2
+        }
+        return result
+    }
+
+    /// The list with the branches that don't apply removed, and the directive lines too.
+    public static func apply(_ text: String, environment: Set<String> = environment) -> String {
+        // Each open `!#if`: whether its current branch is kept.
+        var stack: [Bool] = []
+        var out: [Substring] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmed = line.hasSuffix("\r") ? line.dropLast() : line
+            if trimmed.hasPrefix("!#if ") || trimmed == "!#if" {
+                stack.append(evaluate(String(trimmed.dropFirst(4)), environment: environment))
+            } else if trimmed.hasPrefix("!#else") {
+                if !stack.isEmpty { stack[stack.count - 1].toggle() }
+            } else if trimmed.hasPrefix("!#endif") {
+                _ = stack.popLast()
+            } else if stack.allSatisfy({ $0 }) {
+                out.append(line)
+            }
+        }
+        return out.joined(separator: "\n")
+    }
+
+    /// The sublists a list includes, as URLs next to it. Like uBO, only plain file
+    /// names in the list's own folder are followed.
+    public static func includes(in text: String, of list: URL) -> [URL] {
+        text.split(separator: "\n").compactMap { line in
+            guard line.hasPrefix("!#include ") else { return nil }
+            let name = line.dropFirst("!#include ".count).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard name.range(of: #"^[A-Za-z0-9_.-]+\.txt$"#, options: .regularExpression) != nil, !name.hasPrefix(".") else { return nil }
+            return list.deletingLastPathComponent().appendingPathComponent(name)
+        }
+    }
+
+    /// Replaces each `!#include` line whose sublist is in `sublists` with that
+    /// sublist's text. Includes inside sublists aren't followed (uBO's aren't nested).
+    public static func expand(_ text: String, of list: URL, sublists: [URL: String]) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            guard line.hasPrefix("!#include "), let url = includes(in: String(line), of: list).first,
+                  let body = sublists[url] else { return String(line) }
+            return body
+        }.joined(separator: "\n")
+    }
+
+    /// A downloaded sublist is plausible if it isn't an HTML error page.
+    public static func looksLikeSublist(_ text: String) -> Bool {
+        !text.prefix(512).trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<")
     }
 }
 
