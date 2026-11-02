@@ -289,4 +289,17 @@ import Testing
         #expect(!ClaudeDesktopLink.supportsResume(version: "0.14.3"))
         #expect(ClaudeDesktopLink.supportsResume(version: nil))
     }
+
+    @Test func taskFolderNamesStayShort() {
+        #expect(ClaudeTask.folderName(for: "Compare prices") == "Compare prices")
+        #expect(ClaudeTask.folderName(for: "find me the cheapest flights from nyc to tokyo in december") == "find me the cheapest…")
+        #expect(ClaudeTask.folderName(for: "Supercalifragilisticexpialidociousness check") == "Supercalifragilisticexp…")
+        #expect(ClaudeTask.folderName(for: "  ") == "Task")
+        #expect(ClaudeTask.folderName(for: String(repeating: "word ", count: 30)).count <= ClaudeTask.maxFolderNameLength + 1)
+    }
+
+    @Test func taskTabsComeToTheFront() {
+        #expect(ClaudeInvocation.systemPrompt.contains("comes to the front"))
+        #expect(ClaudeInvocation.systemPrompt.contains("Pass session"))
+    }
 }

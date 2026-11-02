@@ -89,6 +89,24 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
         return line.count > maxTitleLength ? String(line.prefix(maxTitleLength - 1)) + "…" : line
     }
 
+    public static let maxFolderNameLength = 24
+    public static let maxFolderNameWords = 4
+
+    /// The task's sidebar folder name when Claude didn't name it: the goal's first few words, cut at a
+    /// word with an ellipsis, so a long ⌘J request doesn't fill the sidebar row.
+    public static func folderName(for goal: String) -> String {
+        let words = title(for: goal).replacingOccurrences(of: "…", with: "").split(whereSeparator: \.isWhitespace)
+        guard !words.isEmpty else { return "Task" }
+        var name = ""
+        for word in words.prefix(maxFolderNameWords) {
+            let next = name.isEmpty ? String(word) : name + " " + word
+            if next.count > maxFolderNameLength { break }
+            name = next
+        }
+        if name.isEmpty { name = String(words[0].prefix(maxFolderNameLength - 1)) }
+        return name.count < words.joined(separator: " ").count ? name + "…" : name
+    }
+
     /// Claude's last reply: what the notification and the list row show.
     public var lastReply: String? {
         entries.last { $0.kind == .assistant && !$0.text.isEmpty }?.text

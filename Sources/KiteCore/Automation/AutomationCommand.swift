@@ -264,10 +264,9 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .tabsContext
         case .tabsCreate:
             let placement: TabPlacement
-            // Claude's tabs go in the Claude folder unless it says the tab is for the user: claude_folder
-            // false, or active true (it's being shown to them now).
-            let active = try a.bool("active")
-            let folder = try a.optionalBool("claude_folder") ?? (try a.bool("in_claude_space") || !active)
+            // Claude's tabs go in the Claude folder (its session's folder), shown or not, unless it says
+            // the tab is for the user: claude_folder false.
+            let folder = try a.optionalBool("claude_folder") ?? true
             placement = Self.placement(space: try a.string("space"), claudeFolder: folder, session: try a.string("session"))
             self = .tabsCreate(url: try a.string("url").flatMap { $0.isEmpty ? nil : $0 }, active: try a.bool("active"),
                                placement: placement)

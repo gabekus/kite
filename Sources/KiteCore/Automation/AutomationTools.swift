@@ -26,8 +26,8 @@ extension AutomationCommand.Tool {
         folder (pages you work in: looking things up, changing settings on a site), in a folder of its own for this \
         session: pass session, a short name you make up for the work at hand (2 to 5 words, like "Cloudflare DNS \
         move"), and use the same name for every tab of this work, so they sit together in Claude › that name. Only \
-        a link the user asked to open for themselves is a plain tab: pass claude_folder false, or active true to show \
-        it now. Never make a Claude space; if a tab you're driving isn't in a Claude folder yet, move_to_folder with \
+        a link the user asked to open for themselves is a plain tab: pass claude_folder false. active true only \
+        brings the tab to the front; it stays in your session's folder. Never make a Claude space; if a tab you're driving isn't in a Claude folder yet, move_to_folder with \
         folder "claude" (and your session) files it there.
         """
 
@@ -122,7 +122,7 @@ extension AutomationCommand.Tool {
                 "url": ["type": "string", "description": "URL to open (blank tab when omitted)."],
                 "active": ["type": "boolean", "description": "Bring the tab to the front (default false)."],
                 "space": ["type": "string", "description": "Space id or name (from list_spaces), chosen by what the link or task is about. Omit only for the space in front."],
-                "claude_folder": ["type": "boolean", "description": "Put the tab in the space's Claude folder. Default: true, unless active is true. Pass false only for a link the user asked to open for themselves."],
+                "claude_folder": ["type": "boolean", "description": "Put the tab in the space's Claude folder (in Claude › session). Default: true, also with active. Pass false only for a link the user asked to open for themselves."],
                 "session": ["type": "string", "description": "Short name for the work at hand (2 to 5 words), the same for all its tabs: they go in Claude › this name. Kite remembers it for your later tabs."],
             ]
         case .tabsClose, .switchTab:
