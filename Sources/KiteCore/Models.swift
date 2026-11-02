@@ -186,7 +186,7 @@ public struct Space: Identifiable, Hashable, Codable, Sendable {
     public var tabGroups: [TodayTabGroup] = []
     /// The folder of the profile this space uses (Profiles.swift); nil is the default profile.
     public var profile: String?
-    /// What belongs in this space, in the user's words ("Komado business: Shopify, suppliers, ads").
+    /// What belongs in this space, in the user's words ("My bakery: orders, suppliers, the shop's money").
     /// Claude reads it (list_spaces) to choose the space a link it opens goes to.
     public var about: String?
 

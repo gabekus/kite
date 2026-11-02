@@ -155,7 +155,7 @@ extension BrowserWindowController {
         ArcDialog.present(
             on: window,
             title: "What\u{2019}s \u{201C}\(space.name)\u{201D} for?",
-            message: "Claude reads this to choose the space for each link it opens, e.g. \u{201C}Komado business: store, suppliers, ads, the business\u{2019}s money.\u{201D}",
+            message: "Claude reads this to choose the space for each link it opens, e.g. \u{201C}My bakery: orders, suppliers, the shop\u{2019}s money.\u{201D}",
             field: .init(text: space.about ?? "", placeholder: "What belongs in this space"),
             actions: [.init(title: "Cancel", role: .cancel), .init(title: "Save", role: .primary)]
         ) { [weak self] action, text in

@@ -104,7 +104,7 @@ extension AutomationCommand.Tool {
         case .createSpace:
             "Adds a space (in the background; it doesn't switch to it). about says what belongs in it. Only when the user asks for a new space; never a space for Claude (use a space's Claude folder)."
         case .describeSpace:
-            "Saves what belongs in a space, in the user's words (\"Komado business: Shopify, suppliers, ads, the business's money\"), so links opened later go to the right space. Call it when the user tells you which kinds of things go where. \"\" clears it."
+            "Saves what belongs in a space, in the user's words (\"My bakery: orders, suppliers, the shop's money\"), so links opened later go to the right space. Call it when the user tells you which kinds of things go where. \"\" clears it."
         case .pinTab:
             "Pins a tab (pinned true, the default) or unpins it."
         case .createFolder:

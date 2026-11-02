@@ -31,7 +31,7 @@ enum ClaudeRoutePicker {
                 + "Requests from this space are posted in that project's conversation.",
             fields: [
                 .init(text: "", placeholder: "https://claude.ai/code/project/chan_…"),
-                .init(text: "", placeholder: "Name, e.g. Komado"),
+                .init(text: "", placeholder: "Name, e.g. Bakery"),
             ],
             actions: [.init(title: "Cancel", role: .cancel), .init(title: "Add", role: .primary)]
         ) { action, texts in

@@ -131,12 +131,12 @@ public enum UserHandoff {
 }
 
 /// A handoff while it's live in Kite: its steps and how far the user got.
-public struct Handoff: Identifiable, Hashable, Sendable {
-    public struct Step: Identifiable, Hashable, Sendable {
-        public enum State: String, Hashable, Sendable { case waiting, done, skipped }
+public struct Handoff: Identifiable, Hashable, Codable, Sendable {
+    public struct Step: Identifiable, Hashable, Codable, Sendable {
+        public enum State: String, Hashable, Codable, Sendable { case waiting, done, skipped }
 
         /// How Kite finds the step's control on the page.
-        public enum Locator: Hashable, Sendable {
+        public enum Locator: Hashable, Codable, Sendable {
             case selector(String)
             case text(String)
             /// An element Claude named by ref, marked with `UserHandoff.markerAttribute`; `label` finds it again if
@@ -171,6 +171,9 @@ public struct Handoff: Identifiable, Hashable, Sendable {
         }
 
         public var isWaiting: Bool { state == .waiting }
+
+        /// `found` is only what the last look saw, so it isn't saved.
+        enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, state, how }
     }
 
     /// "h1", "h2": short enough for Claude to pass back.
@@ -245,6 +248,62 @@ public struct Handoff: Identifiable, Hashable, Sendable {
                 + "\(Int(UserHandoff.maxWait)) seconds) to hear when they're done.")
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+// MARK: Keeping handoffs across launches
+
+extension Handoff {
+    /// Where a profile keeps its handoffs, so steps still waiting come back when Kite does.
+    public static func fileURL(supportDirectory: URL) -> URL {
+        supportDirectory.appendingPathComponent("Claude Handoffs.json")
+    }
+
+    /// How long a handoff lasts across launches, waiting or not.
+    public static let lifetime: TimeInterval = 7 * 24 * 3600
+    /// Finished handoffs kept for handoff_status.
+    public static let keptFinished = 20
+
+    /// The saved handoffs still worth keeping: under a week old, and the newest finished ones.
+    public static func load(from url: URL, now: Date = Date()) -> [Handoff] {
+        guard let data = try? Data(contentsOf: url),
+              let saved = try? JSONDecoder.handoffs.decode([Handoff].self, from: data) else { return [] }
+        return pruned(saved.filter { now.timeIntervalSince($0.created) < lifetime })
+    }
+
+    public static func save(_ handoffs: [Handoff], to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder.handoffs.encode(handoffs).write(to: url, options: .atomic)
+    }
+
+    /// Drops the oldest finished handoffs past `keptFinished`; waiting ones always stay.
+    public static func pruned(_ handoffs: [Handoff]) -> [Handoff] {
+        let finished = handoffs.filter(\.isFinished)
+        guard finished.count > keptFinished else { return handoffs }
+        let drop = Set(finished.prefix(finished.count - keptFinished).map(\.id))
+        return handoffs.filter { !drop.contains($0.id) }
+    }
+
+    /// The number after "h" in the newest id, so new handoffs don't reuse a saved one's.
+    public static func lastNumber(in handoffs: [Handoff]) -> Int {
+        handoffs.compactMap { Int($0.id.dropFirst()) }.max() ?? 0
+    }
+}
+
+private extension JSONEncoder {
+    static var handoffs: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }
+}
+
+private extension JSONDecoder {
+    static var handoffs: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }
 
