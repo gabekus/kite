@@ -118,6 +118,11 @@ import Testing
                                 locator: .marker("h1.2", label: "Super Administrator"))
         let config = UserHandoff.RingConfig(step: step, scroll: true)
         #expect(config.marker == "h1.2" && config.text == "Super Administrator" && config.selector == nil)
+        // A slept or reloaded page loses the mark: the ring looks the control up by its place, then its words.
+        let reloaded = UserHandoff.RingConfig(step: .init(id: "h1.3", number: 3, instruction: "Save", tab: UUID(),
+            locator: .marker("h1.3", label: "Save", path: "#form > button:nth-of-type(2)")), scroll: true)
+        #expect(reloaded.path == "#form > button:nth-of-type(2)" && reloaded.text == "Save")
+        #expect(UserHandoff.ringScript(reloaded).contains("c.path"))
         let script = UserHandoff.ringScript(config)
         #expect(script.hasPrefix("((cfg) => {"))
         #expect(script.contains(#""step":"h1.2""#))

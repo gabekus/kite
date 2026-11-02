@@ -68,8 +68,8 @@ extension AutomationController {
             guard let host, let actions = host.automationPage(for: tab).automation as? PageActions else {
                 throw AutomationError(.unsupported, "This tab's engine can't point at a control: pass text instead of ref.")
             }
-            let label = try await actions.mark(ref: ref, attribute: UserHandoff.markerAttribute, value: step)
-            return .marker(step, label: label)
+            let found = try await actions.mark(ref: ref, attribute: UserHandoff.markerAttribute, value: step)
+            return .marker(step, label: found.label, path: found.path)
         }
     }
 
