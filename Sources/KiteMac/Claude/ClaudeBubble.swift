@@ -106,7 +106,6 @@ struct ClaudeBubble: View {
     enum Metrics {
         /// The mark is drawn a little inside the 18pt icon frame, like the magnifier's ink.
         static let markSize: CGFloat = 17
-        static let markStroke: CGFloat = 1.8
         /// Space kept free under the panel when the transcript is at its tallest.
         static let bottomMargin: CGFloat = 24
         static let transcriptMinHeight: CGFloat = 120
@@ -162,7 +161,7 @@ struct ClaudeBubble: View {
         let route = tasks.route(for: space)
         return HStack(alignment: .center, spacing: 0) {
             ClaudeMark()
-                .stroke(Color.claude, style: StrokeStyle(lineWidth: Metrics.markStroke, lineCap: .round))
+                .fill(Color.claude)
                 .frame(width: Metrics.markSize, height: Metrics.markSize)
                 .frame(width: C.iconSize, height: C.iconSize)
                 .padding(.leading, C.iconX)
