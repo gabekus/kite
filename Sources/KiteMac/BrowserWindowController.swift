@@ -912,7 +912,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     /// ⌘J: Claude's chat bubble.
+    /// ⌘J. The first time, it sets Claude up (what the sidebar's Claude button did before it went).
     @objc func toggleClaudeBubble(_ sender: Any?) {
+        if claudeButton.tasks != nil { return claudeButton.open() }
         claudeBubble.toggle()
     }
 

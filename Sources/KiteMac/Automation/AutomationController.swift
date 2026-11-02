@@ -48,8 +48,17 @@ final class AutomationController {
 
     private(set) var settings: AutomationSettings
     var isEnabled: Bool { settings.allowClaudeControl }
-    /// Tabs Claude is driving right now, for the "Claude is controlling this tab" banner.
-    private(set) var controlledTabs: [UUID: ControlledTab] = [:]
+    /// Tabs Claude is driving right now, with their idle clocks. Not observed: every tool call
+    /// touches it, and the sidebar only needs to know which tabs (`controlledTabIDs`).
+    @ObservationIgnored private(set) var controlledTabs: [UUID: ControlledTab] = [:] {
+        didSet {
+            let ids = Set(controlledTabs.keys)
+            if ids != controlledTabIDs { controlledTabIDs = ids }
+        }
+    }
+    /// The tabs Claude is driving: the sidebar marks their rows and the Claude folders that hold them,
+    /// and the page gets Claude's border while one is in front.
+    private(set) var controlledTabIDs: Set<UUID> = []
     /// Tabs handed to the user to sign in (sign_in), for the banner's Done and Cancel.
     var signIns: [UUID: SignInRequest] = [:]
 
@@ -352,6 +361,11 @@ final class AutomationController {
         entry.lastActive = Date()
         entry.connections.insert(connection)
         controlledTabs[id] = entry
+    }
+
+    /// The Claude session folder name of the session driving a tab, if it named one.
+    func sessionName(controlling id: UUID) -> String? {
+        controlledTabs[id]?.connections.sorted().compactMap { sessionFolders[$0] }.first
     }
 
     /// Refreshes a controlled tab's idle clock without adding a connection.

@@ -252,13 +252,15 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   - JavaScript results;
   - dialog messages;
   - form values.
-- **Indicator.** A "Claude is controlling this tab" pill floats just above the sidebar's Claude button (at the bottom
-  centre of the page when the sidebar is hidden), so it never covers a site's nav bar or 1Password's inline menu.
-  It has Show and **Stop**. Stop revokes
-  the tab: it ends its event collection and fails pending confirmations and waits.
+- **Indicator.** No banner. In the sidebar, a tab Claude is driving gets a ring in Claude's orange around its
+  favicon (its tooltip names the session), and the Claude folder holding it (Space › Claude › *session*) shows
+  Claude's mark turning in place of the folder icon, as does a collapsed folder above it. Hovering that folder
+  shows **Stop**; the folder's and the tab's menus have **Stop Claude**. While the tab in front is Claude's, the
+  page gets a 2pt orange border, so it shows with the sidebar hidden too. Stop revokes the tab: it ends its event
+  collection and fails pending confirmations and waits.
 - **Sign-in handoff (`sign_in`).** Claude never types or sees passwords. When a page needs the user signed in,
-  Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and swaps the
-  pill for "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the
+  Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and shows a
+  pill at the bottom of the page: "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the
   page itself, so the password goes from the vault into the form and never through Kite's tools or the model.
   - While it waits, every other tool on that tab fails ("The user is signing in on this tab"), so nothing can read
     the filled fields.
@@ -308,7 +310,7 @@ How dialogs work:
   - `ChromiumAutomation`: the DevTools calls.
   - `WebKitAutomation`: read and screenshot only.
   - `AutomationServer`: the socket.
-  - `ClaudeControlBanner`: the pill.
+  - `ClaudeControlBanner`: the sign-in pill and the page's border (`ClaudeControlBorder`).
   - `ClaudeConnect`: the Connect sheet.
 - `KCBrowser`:
   - `callDevToolsMethod:params:completion:` returns DevTools errors;
@@ -358,7 +360,7 @@ Desktop. What Desktop knows (chat history, chat search, memory, projects) lives 
 only reachable from inside a Desktop or claude.ai chat. Nothing hands it to `claude -p`, and Desktop's local data
 isn't an API. So Kite joins Desktop instead of running a second Claude next to it:
 
-- **Desktop has Kite's tools.** Setup (the sidebar's Claude button) and Connect Claude… add Kite to
+- **Desktop has Kite's tools.** Setup (the first ⌘J) and Connect Claude… add Kite to
   `claude_desktop_config.json`. Desktop loads servers from that file into its Chat tab, Cowork and its local
   Code sessions, so whatever Claude does in Kite from Desktop is in that chat, with Desktop's memory.
 - **⌘J asks in Desktop.** With **Kite menu → Ask Claude in the Claude App** on (the default when Desktop is
