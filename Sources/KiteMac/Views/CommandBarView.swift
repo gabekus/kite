@@ -203,10 +203,11 @@ private struct CommandBarView: View {
         let commands = mode == .newTab ? MenuCommand.search(text, in: NSApp.mainMenu) : []
         let strong = commands.filter { $0.score >= 80 }.map { CommandSuggestion.command($0.command) }
         let weak = commands.filter { $0.score < 80 }.map { CommandSuggestion.command($0.command) }
-        // The engine's suggestions follow the typed search, while they're for this text.
-        let engine = engineSuggestions.query == text ? engineSuggestions.items.map {
+        // The engine's suggestions follow the typed search. The last answer stays up while the
+        // next one is on its way (Chromium's autocomplete keeps old matches to avoid flicker).
+        let engine = SearchSuggestions.lingering(engineSuggestions.items, for: text).map {
             CommandSuggestion.search($0, state.searchEngine.searchURL(for: $0))
-        } : []
+        }
         return strong + [search] + engine + tabs + history + weak
     }
 
@@ -386,8 +387,10 @@ private struct CommandBarView: View {
         // Wait out fast typing; a newer keystroke cancels this one.
         try? await Task.sleep(for: .milliseconds(80))
         guard !Task.isCancelled else { return }
-        let items = await SearchSuggestionFetcher.suggestions(for: text, engine: state.searchEngine)
-        guard !Task.isCancelled else { return }
+        // A failed request keeps what's showing rather than blanking the list.
+        guard let items = await SearchSuggestionFetcher.suggestions(for: text, engine: state.searchEngine),
+              !Task.isCancelled
+        else { return }
         engineSuggestions = (text, items)
     }
 

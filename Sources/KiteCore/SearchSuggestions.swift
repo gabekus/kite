@@ -15,6 +15,15 @@ public enum SearchSuggestions {
             && !URLInput.looksLikeURL(trimmed)
     }
 
+    /// The engine's last answer, shown for `text` while the answer for `text` itself is on its
+    /// way, so the rows don't blink out on every keystroke. Drops the row that now equals what's
+    /// typed, since the typed search already has its own row.
+    public static func lingering(_ items: [String], for text: String) -> [String] {
+        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !typed.isEmpty else { return [] }
+        return items.filter { $0.lowercased() != typed }
+    }
+
     /// The engine's suggest request for `query`. `template` replaces the engine's own URL
     /// (tests point it at a local fixture); `{searchTerms}` in it is the encoded query.
     public static func requestURL(for query: String, engine: SearchEngine, template: String? = nil) -> URL? {
