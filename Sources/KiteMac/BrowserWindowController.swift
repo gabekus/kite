@@ -216,6 +216,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// `ui input` is about to send this background window keys: what becoming key would do first.
     func takeKeysInBackground() {
         keepCommandBarFocused(after: .becameKey)
+        // The ⌘J bar's field too: SwiftUI's focus request doesn't land while the window isn't key.
+        if claudeBubble.isOpen, (window?.firstResponder as? NSView)?.isDescendant(of: claudeBubbleHost) != true,
+           let field = Self.editableField(in: claudeBubbleHost) {
+            window?.makeFirstResponder(field)
+        }
+    }
+
+    private static func editableField(in view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField, field.isEditable { return field }
+        return view.subviews.lazy.compactMap(editableField(in:)).first
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }
@@ -923,6 +933,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         claudeBubble.toggle()
     }
 
+    /// ⌃⌘J: the user's own Claude Code sessions, in the ⌘J bar.
+    @objc func toggleClaudeCode(_ sender: Any?) {
+        claudeBubble.toggleCode()
+    }
+
     private func claudeBubbleOpened(_ open: Bool) {
         claudeBubbleHost.isHidden = !open
         if open {
@@ -983,11 +998,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func focusCommandBar(attempt: Int = 0) {
         // Builds the bar's views now instead of on the next display pass.
         commandBarHost.layoutSubtreeIfNeeded()
-        func field(in view: NSView) -> NSTextField? {
-            if let field = view as? NSTextField, field.isEditable { return field }
-            return view.subviews.lazy.compactMap(field(in:)).first
-        }
-        guard let field = field(in: commandBarHost) else {
+        guard let field = Self.editableField(in: commandBarHost) else {
             // The bar's first open in a session: SwiftUI makes the field on a later pass.
             // Hold what's typed meanwhile so it lands in the bar, not the page.
             holdKeys()

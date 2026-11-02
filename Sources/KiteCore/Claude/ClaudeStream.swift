@@ -85,6 +85,14 @@ public enum ClaudeStream {
             let names = steps.compactMap { $0["tool"]?.stringValue }
             return firstLine("\(steps.count) steps: " + names.joined(separator: ", "), limit: 100)
         }
+        // Claude Code's own tools (in the Claude Code bar): the command, the file, the subagent's job.
+        if let command = input["command"]?.stringValue, !command.isEmpty { return firstLine(command, limit: 100) }
+        if let path = (input["file_path"] ?? input["notebook_path"])?.stringValue, !path.isEmpty {
+            return firstLine(URL(fileURLWithPath: path).lastPathComponent, limit: 100)
+        }
+        if tool == "Task" || tool == "Agent", let description = input["description"]?.stringValue {
+            return firstLine(description, limit: 100)
+        }
         var parts: [String] = []
         for key in ["url", "query", "action", "text", "value", "ref", "selector", "name", "space", "pattern"] {
             guard let value = input[key] else { continue }
