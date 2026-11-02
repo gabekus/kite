@@ -394,6 +394,7 @@ struct SidebarView: View {
         SplitRow(
             tabs: tabs,
             isPinned: pinned,
+            orientation: split.orientation,
             focusedID: tabs.contains { $0.id == selectedID } ? selectedID : nil,
             depth: depth,
             onSelect: { id in
@@ -410,7 +411,11 @@ struct SidebarView: View {
                 }
                 actions.addSplitView()
             },
-            onTogglePin: { store.mutate { $0.togglePin(tab: split.tabIDs[0]) } }
+            onFlipOrientation: {
+                store.mutate { $0.setSplitOrientation(split.id, split.orientation == .horizontal ? .vertical : .horizontal) }
+            },
+            audio: { id in (store.pages[id]?.isAudible ?? false, store.pages[id]?.isAudioMuted ?? false) },
+            onToggleMute: actions.toggleMute
         )
         .modifier(SidebarDragSource(
             store: store,
@@ -1828,6 +1833,7 @@ private struct SplitRow: View {
 
     let tabs: [BrowserTab]
     let isPinned: Bool
+    let orientation: SplitOrientation
     /// The focused pane, when this split is the one on screen.
     let focusedID: UUID?
     var depth = 0
@@ -1839,11 +1845,12 @@ private struct SplitRow: View {
     let onSeparateAll: () -> Void
     /// Arc's Add Tab…: a new pane in this split, filled from the command bar.
     let onAddTab: () -> Void
-    let onTogglePin: () -> Void
+    /// Convert to Vertical / Horizontal Split View.
+    let onFlipOrientation: () -> Void
+    /// A pane's (isAudible, isMuted), for its Mute / Unmute item.
+    let audio: (UUID) -> (audible: Bool, muted: Bool)
+    let onToggleMute: (UUID) -> Void
     @State private var hovering = false
-    @State private var hoveredTab: UUID?
-    /// Arc's `option-click-split-tab-close-button-to-unsplit-enabled`, off by default as in Arc.
-    @AppStorage(SplitTabButton.optionSeparatesKey) private var optionSeparates = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -1861,8 +1868,40 @@ private struct SplitRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { onSelect(nil) }
+        .contextMenu { menu }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Split View")
+    }
+
+    /// Arc's "Split View Context Menu", as Arc 1.171 shows it: the split's own items, then under a
+    /// Tab Options header one submenu per pane, then the row's items. Kite leaves out what it has no
+    /// counterpart for yet (each pane's Share, the row's Change Icon…, Rename…, Duplicate and
+    /// Archive Other Tabs / Below / Above).
+    @ViewBuilder private var menu: some View {
+        Button("Separate All Tabs", action: onSeparateAll)
+        Button("Add Tab…", action: onAddTab)
+            .disabled(tabs.count >= SplitView.maxPanes)
+        Button(orientation == .horizontal ? "Convert to Vertical Split View" : "Convert to Horizontal Split View",
+               action: onFlipOrientation)
+        Divider()
+        Section("Tab Options") {
+            ForEach(tabs) { tab in
+                Menu(tab.displayTitle) {
+                    Button("Separate from Split View") { onSeparate(tab.id) }
+                    Divider()
+                    let sound = audio(tab.id)
+                    // Arc shows Mute greyed out for a pane that isn't playing anything.
+                    Button(TabAudioButton.menuTitle(isMuted: sound.muted)) { onToggleMute(tab.id) }
+                        .disabled(!sound.audible && !sound.muted)
+                    Button("Copy Link") { copyLink(tab.url) }
+                    Button("Copy link as Markdown") { copyMarkdownLink(tab) }
+                    Divider()
+                    Button("Archive Item") { onClose(tab.id) }
+                }
+            }
+        }
+        Divider()
+        Button("Archive Item") { tabs.forEach { onClose($0.id) } }
     }
 
     private func item(_ tab: BrowserTab, width: CGFloat) -> some View {
@@ -1872,6 +1911,8 @@ private struct SplitRow: View {
         // The HStack's gap comes twice: favicon to title, and title to the spacer after it.
         let titleWidth = width - 2 * M.iconInset - M.iconSize - 2 * M.iconTextGap
         let showsTitle = !compact && titleWidth > S.rowTitleMinWidth
+        // Arc shows every pane's button while the row is hovered, not just the hovered pane's.
+        let showsButton = showsTitle && hovering
         return HStack(spacing: M.iconTextGap) {
             FaviconView(tab: tab, size: M.iconSize)
             if !showsTitle && !compact { Spacer(minLength: 0) }
@@ -1883,10 +1924,10 @@ private struct SplitRow: View {
                     .truncationMode(.tail)
                 Spacer(minLength: 0)
             }
-            if showsTitle && hoveredTab == tab.id { trailingButton(tab) }
+            if showsButton { trailingButton(tab) }
         }
         .padding(.leading, compact ? 0 : M.iconInset)
-        .padding(.trailing, compact ? 0 : showsTitle && hoveredTab == tab.id ? 0 : M.iconInset)
+        .padding(.trailing, compact ? 0 : showsButton ? S.rowButtonTrailingInset : M.iconInset)
         .frame(width: width, height: M.pillHeight)
         .background(
             // Unverified: Arc's focused pane gets the item's fill; the row carries the selection.
@@ -1894,52 +1935,48 @@ private struct SplitRow: View {
                 .fill(Color.white.opacity(tab.id == focusedID ? M.hoverFill : 0))
         )
         .contentShape(Rectangle())
-        .onHover { inside in
-            if inside { hoveredTab = tab.id } else if hoveredTab == tab.id { hoveredTab = nil }
-        }
         .onTapGesture { onSelect(tab.id) }
         .help(tab.displayTitle)
-        .contextMenu {
-            // Arc's "Split View Context Menu": the split's own items, then a "Tab Options" section
-            // for the pane that was right-clicked (SidebarMenu+TabContextMenu in Arc 1.169).
-            Button("Separate All Tabs", action: onSeparateAll)
-            Button("Add Tab…", action: onAddTab)
-                .disabled(tabs.count >= SplitView.maxPanes)
-            Button(isPinned ? "Unpin Split View" : "Pin Split View", action: onTogglePin)
-            Divider()
-            Section("Tab Options") {
-                Button("Separate from Split View") { onSeparate(tab.id) }
-                Button("Copy Link") { copyLink(tab.url) }
-                Divider()
-                Button("Close this Split Pane") { onClose(tab.id) }
-            }
-        }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         // Icon-only items would otherwise read as the favicon's symbol name.
         .accessibilityLabel(tab.displayTitle)
         .accessibilityAddTraits(tab.id == focusedID ? [.isButton, .isSelected] : .isButton)
     }
 
-    /// Arc's per-tab trailing button (SplitViewCellChildItemView): the tab row's close button, which
-    /// becomes Separate from Split View while ⌥ alone is held and the setting is on. Its size and
-    /// placement copy Kite's tab row; Arc's own were not measured.
+    /// Arc's per-pane trailing button (SplitViewCellChildItemView): × closes the pane's tab, and while
+    /// ⌥ alone is held it becomes Separate from Split View (measured in Arc 1.171, docs/arc-visual-spec.md).
     private func trailingButton(_ tab: BrowserTab) -> some View {
-        let state = SplitTabButton.state(isPinned: isPinned, optionSeparates: optionSeparates,
-                                         modifiers: HeldModifiers.shared.flags.chordModifiers)
+        let state = SplitTabButton.state(isPinned: isPinned, modifiers: HeldModifiers.shared.flags.chordModifiers)
         return Button {
             if state == .separate { onSeparate(tab.id) } else { onClose(tab.id) }
         } label: {
-            Image(systemName: state == .separate ? "scissors" : "xmark")
-                .font(.system(size: state == .separate ? 10 : 9, weight: .bold))
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
+            Group {
+                if state == .separate {
+                    // Arc's icon-separate-from-split: an arrow pointing out of a split box, drawn here
+                    // from SF Symbols (Arc's asset isn't copied).
+                    HStack(spacing: -1) {
+                        Image(systemName: "arrow.down.left").font(.system(size: S.rowSeparateGlyphSize * 0.55, weight: .bold))
+                        Image(systemName: "square.split.2x1").font(.system(size: S.rowSeparateGlyphSize * 0.95, weight: .medium))
+                    }
+                } else {
+                    Image(systemName: "xmark").font(.system(size: S.rowCloseGlyphSize, weight: .semibold))
+                }
+            }
+            .frame(width: S.rowButtonSize, height: S.rowButtonSize)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .opacity(0.6)
+        .opacity(S.rowButtonOpacity)
         .help(state.title)
         .accessibilityLabel(state.title)
         .accessibilityIdentifier("splitTabTrailingButton")
     }
+}
+
+private func copyMarkdownLink(_ tab: BrowserTab) {
+    guard let url = tab.url else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(LinkFormat.markdown(title: tab.displayTitle, url: url), forType: .string)
 }
 
 private extension NSEvent.ModifierFlags {

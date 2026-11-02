@@ -376,9 +376,9 @@ public struct SidebarGroup: Identifiable, Hashable, Sendable {
 }
 
 /// What the hover button on one of a split row's tabs does: Arc's sidebar trailing button states
-/// `close`, `deselect` and `unsplit`. With `option-click-split-tab-close-button-to-unsplit-enabled`
-/// on (off by default in Arc 1.169), holding ⌥ and nothing else turns it into Separate from Split View
-/// (FUN_1000bcff0 for the look, FUN_1000bb388 for the click).
+/// `close`, `deselect` and `unsplit`. Holding ⌥ and nothing else turns it into Separate from Split View
+/// (Arc 1.169 FUN_1000bcff0 for the look, FUN_1000bb388 for the click; seen live in Arc 1.171, where
+/// `option-click-split-tab-close-button-to-unsplit-enabled` is on).
 public enum SplitTabButton: Equatable, Sendable {
     /// An unpinned tab: Close Tab.
     case close
@@ -387,11 +387,8 @@ public enum SplitTabButton: Equatable, Sendable {
     /// Separate from Split View.
     case separate
 
-    /// The setting's UserDefaults key, named after Arc's flag.
-    public static let optionSeparatesKey = "optionClickSplitTabCloseButtonToUnsplit"
-
-    public static func state(isPinned: Bool, optionSeparates: Bool, modifiers: KeyChord.Modifiers) -> SplitTabButton {
-        if optionSeparates && modifiers == .alt { return .separate }
+    public static func state(isPinned: Bool, modifiers: KeyChord.Modifiers) -> SplitTabButton {
+        if modifiers == .alt { return .separate }
         return isPinned ? .unload : .close
     }
 

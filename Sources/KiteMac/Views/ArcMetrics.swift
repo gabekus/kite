@@ -200,6 +200,15 @@ enum ArcMetrics {
         static let rowTitleMinWidth: CGFloat = 20
         /// Each item's corner is min(width / 2, this).
         static let rowItemMaxCornerRadius: CGFloat = 8
+        /// Each pane's trailing button while the row is hovered, measured in Arc 1.171 (2 Nov 2026): the ×
+        /// is an 11pt glyph centred 13.25pt in from the pane's trailing edge, #C2C2C4 on #5D5E61 (white at
+        /// about 62%); under ⌥ Arc's separate icon is 17.5×14pt in the same place. The 24pt hit area is Kite's
+        /// tab-row button; Arc's own wasn't measured.
+        static let rowButtonSize: CGFloat = 24
+        static let rowButtonTrailingInset: CGFloat = 1.25
+        static let rowButtonOpacity: Double = 0.62
+        static let rowCloseGlyphSize: CGFloat = 13.5
+        static let rowSeparateGlyphSize: CGFloat = 13
     }
 
     /// Arc's timings: from its binary where it names them, else fitted from 60fps recordings.

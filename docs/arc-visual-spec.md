@@ -1169,25 +1169,27 @@ Arc wasn't driven; nothing here is from a recording.
   12% fill), whether Arc also lets a centre drop replace a pane (`replaceContent`), and whether Arc turns a side-by-side split into a
   top/bottom one on a top/bottom drop (Kite refuses it).
 
-## Split View: Separate All Tabs → `BrowserState.separateAllTabs` (KiteCore), `SplitRow` context menu (Arc 1.169 disassembly, 1.171 strings, 2 Nov 2026)
+## Split View: Separate All Tabs → `BrowserState.separateAllTabs` (KiteCore), `SplitRow` (Arc 1.171 incognito live + 1.169 decompile, 2 Nov 2026)
 
-- **Split row context menu** [str + dis]: Arc builds a "Split View Context Menu" (`ContextMenus/SidebarMenu+TabContextMenu.swift`) in
-  this order: Share Split View…, separator, **Separate All Tabs** ("separate all tabs from a split view sidebar item"), **Add Tab…**
-  ("add a new tab to a split view sidebar item"; the title is an inline literal), then a separator and a **Tab Options** header
-  ("demarcates child tab level options") over the right-clicked pane's items, whose separate item is titled **Separate from Split View**
-  ("separates a tab from its split view container"). Kite leaves out Share Split View… (no sharing) and keeps its Pin/Unpin Split View,
-  Copy Link and Close this Split Pane items in those two groups.
-- **Undo name** [str]: "Move Items out of split" (`WindowData+SplitViewHelpers.swift`). Kite has no sidebar undo yet.
-- **What happens to the tabs** [observed, View › Separate Page from Split View, Arc 1.171 incognito]: separating the focused pane of
-  [A | B] leaves A in place with B directly below it, B still selected and alone on screen; from [A | B | C], C lands directly below
-  the [A | B] row. No in-between frames at ~10 captures/s. Separate All Tabs itself (context menu only; Arc ignores synthetic clicks
-  there) is **not observed**: Kite leaves every tab in place, the focused one selected.
-- **Per-tab trailing button** [dec, 1.169 FUN_1000bcff0 / FUN_1000bb388 / FUN_1000bd610]: a split row's tab has a trailing button
-  whose states are close, deselect and unsplit. With `option-click-split-tab-close-button-to-unsplit-enabled` on and ⌥ (alone)
-  held, it shows as unsplit ("Separate from Split View") and a click (or a middle-click on the tab) separates the tab. The flag's
-  default is off (its key getter returns 0x200; on-flags return 0x201). Kite: the tab row's close button (24×24, `xmark` 9pt bold,
-  60%) on the hovered split tab, turning into `scissors` under ⌥ when the hidden `optionClickSplitTabCloseButtonToUnsplit` default is
-  on. Arc's button geometry, icon and hover timing are **not measured**; Kite has no middle-click close, so that path is left out.
+- **Split row context menu** [observed live, Arc 1.171; read through AX after a real right-click]: Separate All Tabs, Add Tab…,
+  Convert to Vertical Split View, —, **Tab Options** (disabled header), one submenu per pane titled with its tab's title
+  (Separate from Split View, —, Share, Mute (disabled unless audible), Copy Link, Copy link as Markdown, —, Archive Item), —,
+  Change Icon…, Rename…, —, Duplicate, —, Archive Item, Archive Other Tabs, Archive Tabs Below, Archive Tabs Above. The 1.169
+  binary also builds a Share Split View… item first (not shown in incognito). Kite has everything except Share, Change Icon…,
+  Rename…, Duplicate and Archive Other Tabs / Below / Above, which it has no split counterpart for yet. There's no Pin item.
+- **Separate All Tabs** [observed]: [A | B] (B focused) became two rows in place, A then B, B still selected and alone on screen.
+  The menu fades out over about 4 captures, then the split row fades and moves up while the two new rows fade in and the
+  rows below slide down (one or two captures at ~10/s; not timed more finely).
+- **Separate Page from Split View** [observed]: the separated pane lands directly below what's left of the split (below A for
+  [A | B]; below the [A | B] row for [A | B | C]), selected and alone on screen.
+- **Per-pane trailing button** [observed + dec]: while the row is hovered, **every** pane shows a × (not just the hovered one), and
+  its title truncates to make room. It appeared in the first capture after the pointer arrived. The × is an 11pt glyph centred 13.25pt
+  in from the pane's trailing edge, #C2C2C4 on #5D5E61 (white at ~62%). Holding ⌥ turns every pane's × into Arc's
+  separate-from-split icon (an arrow pointing down-left out of a split box, 17.5×14pt), and a click separates that pane
+  (FUN_1000bcff0 for the look, FUN_1000bb388 for the click). Arc's flag `option-click-split-tab-close-button-to-unsplit-enabled`
+  defaults to off in the binary (its getter returns 0x200, on-flags 0x201), but it's on in Arc 1.171 as shipped. Middle-click
+  with ⌥ also separates (FUN_1000bd610); Kite has no middle-click close on rows, so that's left out.
+- **Undo name** [str]: "Move Items out of split". Kite has no sidebar undo yet.
 
 ## Split View: drag a sidebar tab onto the pages → `SplitTabDrop.swift` (KiteCore), `BrowserWindowController+SplitTabDrop` (Arc 1.169 decompile, 1.171 strings, 1 Nov 2026)
 
