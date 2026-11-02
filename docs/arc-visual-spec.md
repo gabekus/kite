@@ -1765,12 +1765,11 @@ Nothing in Arc was pressed or toggled; Gabe's Arc defaults were read for key pre
   (`SoftwareUpdateBannerUpdateAvailableView`, `…V2View`, `…UpdateSummaryView`), "Update available",
   settings keys `autoUpdateBannerDismissalCount`, `canShowUpdateBanner`, `currentUpdateAvailableSince`. A dialog
   "Arc is ready to update!" / "Restart required." also exists (lines ~61403-61407). Not observed on screen.
-- Kite: no release pipeline, notarisation or appcast yet, and gabekus/kite has no GitHub releases (1 Nov 2026), so
-  Kite › Check for Updates… asks `api.github.com/repos/gabekus/kite/releases/latest`, compares the tag with
-  CFBundleShortVersionString (`AppVersion` in KiteCore) and shows Arc's states in a small window
-  (`UpdaterWindow`): checking, up to date, no releases yet, a new version (notes, Remind Me Later, View Release,
-  Download when a .dmg/.zip is attached, opened in a Kite tab), and errors (Download manually, Try Again). Window
-  size and layout are Kite's; Arc's updater window wasn't measured. No background checks or banner yet.
+- Kite (2 Nov 2026): Sparkle with Arc's Info.plist settings (8-hour checks, silent install) in release builds,
+  which `scripts/release.sh` publishes to GitHub Releases with an EdDSA-signed appcast (docs/updates.md). It uses
+  Sparkle's standard windows, not Arc's custom ones, and has no sidebar banner. Builds without a feed (install-app.sh)
+  still ask `api.github.com/repos/gabekus/kite/releases/latest` and show `UpdaterWindow`: checking, up to date, no
+  releases yet, a new version (notes, Remind Me Later, View Release, Download), and errors.
 
 ## Air Traffic Control → `AirTrafficControl` (KiteCore), `AirTrafficControlWindow` (Arc 1.171 binary strings and disassembly, 1 Nov 2026)
 

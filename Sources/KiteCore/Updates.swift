@@ -2,9 +2,10 @@ import Foundation
 
 /// Kite › Check for Updates…, against GitHub releases of gabekus/kite.
 ///
-/// Arc uses Sparkle with a signed appcast. Kite has no release pipeline, notarisation or appcast yet, so it asks
-/// GitHub's releases API for the latest release, compares its tag with the running version, and offers the
-/// release page. Nothing is downloaded or replaced.
+/// Arc uses Sparkle with a signed appcast, and so do Kite's release builds (SoftwareUpdater, docs/updates.md).
+/// Builds without an update feed (Gabe's install-app.sh builds) use this instead: it asks GitHub's releases API
+/// for the latest release, compares its tag with the running version, and offers the release page. Nothing is
+/// downloaded or replaced.
 public enum Updates {
     public static let repository = "gabekus/kite"
     public static let latestReleaseURL = URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!

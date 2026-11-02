@@ -150,4 +150,4 @@ Claude folder, then close it.
 | `claude mcp list` shows kite failing | Its command must be Kite.app's `Contents/Helpers/kite` with args `mcp` and no env. |
 | Kite "is damaged" or "can't be opened" | Step 2. |
 | Keychain asks every launch | Click Always Allow once; if it keeps asking, Kite was replaced by a differently signed copy. |
-| Updates | Kite menu › Check for Updates… checks GitHub releases (gabekus/kite). Until releases exist, get a new build from whoever sent this one. |
+| Updates | Kite updates itself: it checks GitHub releases (gabekus/kite) every 8 hours and installs a new version the next time you quit it. Kite menu › Check for Updates… checks now. |
