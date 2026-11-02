@@ -147,6 +147,30 @@ extension BrowserWindowController {
     /// Arc's icon picker, hanging under the space's header icon.
     func changeIcon(ofSpace id: UUID) { store.requestIconPicker(space: id) }
 
+    /// The space's "What's This Space For?…": a line of the user's own words that Claude reads (list_spaces) to
+    /// choose the space, and its Claude folder, for each tab it opens.
+    func describeSpace(_ id: UUID) {
+        guard let window, let index = store.state.spaceIndex(id) else { return }
+        let space = store.state.spaces[index]
+        let alert = NSAlert()
+        alert.messageText = "What\u{2019}s \u{201C}\(space.name)\u{201D} for?"
+        alert.informativeText = "Claude reads this to choose the space for each link it opens, e.g. \u{201C}Komado business: store, suppliers, ads, the business\u{2019}s money.\u{201D}"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 64))
+        field.stringValue = space.about ?? ""
+        field.placeholderString = "What belongs in this space"
+        field.usesSingleLineMode = false
+        field.cell?.wraps = true
+        field.cell?.isScrollable = false
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self, let index = store.state.spaceIndex(id) else { return }
+            store.mutate { $0.spaces[index].about = Space.cleanAbout(field.stringValue) }
+        }
+    }
+
     /// A folder's Rename…: edits its name in place in its sidebar row, like a tab's title.
     func renameFolder(_ id: UUID) {
         guard store.state.folder(matching: id.uuidString) != nil else { return }

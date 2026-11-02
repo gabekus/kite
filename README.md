@@ -70,7 +70,8 @@ which are also in the MCP server's instructions and the tool descriptions, so an
 
 - **Pick the space from what the tab is about.** `list_spaces` shows what each space is for (its `for:` line, set
   with `describe_space`). Pass that space to `tabs_create` (or `navigate` with `space`). Don't ask which space, and
-  don't just use the one in front.
+  don't just use the one in front. The user writes it in Create a Space ("What's it for?") or the space's
+  right-click menu ("What's This Space For?…").
 - **Claude's tabs go in that space's Claude folder by default.** `tabs_create` puts a tab in the space's Claude folder,
   a pinned folder Kite makes when needed. Pass `claude_folder: false`, or `active: true`, only for a link the user
   asked to open for themselves. That opens a plain tab in the space.

@@ -221,11 +221,14 @@ final class BrowserStore {
 
     func spaceThemeChosen() { spaceCreation?.themeChosen = true }
 
-    func finishNewSpace(name: String) {
+    func finishNewSpace(name: String, about: String = "") {
         guard let creation = spaceCreation else { return }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
-        mutate { $0.renameSpace(creation.spaceID, to: name) }
+        mutate {
+            $0.renameSpace(creation.spaceID, to: name)
+            if let index = $0.spaceIndex(creation.spaceID) { $0.spaces[index].about = Space.cleanAbout(about) }
+        }
         spaceCreation = nil
     }
 

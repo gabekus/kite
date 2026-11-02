@@ -12,6 +12,7 @@ struct SpaceCreationView: View {
     let actions: SidebarActions
     let creation: BrowserStore.SpaceCreation
     @State private var name = ""
+    @State private var about = ""
     @FocusState private var nameFocused: Bool
 
     var body: some View {
@@ -40,6 +41,19 @@ struct SpaceCreationView: View {
                         .onSubmit(create)
                 }
                 .padding(.top, 0)
+                // Kite's own row (Arc has none): what the space is for, so Claude routes tabs here.
+                row {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 14))
+                        .opacity(0.6)
+                        .frame(width: M.iconSize)
+                    TextField("What's it for? (for Claude)", text: $about)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: M.rowFontSize))
+                        .onSubmit(create)
+                        .help("Claude reads this to open tabs in the right space, e.g. “Komado business: store, suppliers, ads”.")
+                }
+                .padding(.top, M.profileGap)
                 if actions.showsProfiles {
                     row {
                         Image(systemName: "face.smiling")
@@ -90,7 +104,7 @@ struct SpaceCreationView: View {
 
     private func create() {
         guard canCreate else { return }
-        store.finishNewSpace(name: name)
+        store.finishNewSpace(name: name, about: about)
     }
 
     private func row<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
