@@ -3048,6 +3048,15 @@ an Arc incognito window captured at 2× (1 Nov 2026).
   orientation work as in a space. Child corner radius and the selected child's look are unmeasured.
 - **Folders under a drag**: Kite opens a collapsed folder after the system spring-loading delay (0.5s unless changed).
   Arc's interval (`DraggingTimerState`) wasn't found; unverified.
+- **Favorites never move the window** (2 Nov 2026). Arc's tray is its own `NSCollectionView` (AX: a scroll area with a
+  collection list, 0,82 289×63 in a 289pt sidebar: the full width, insets and gaps between tiles included), and its tiles
+  drag through the collection view's `collectionView:draggingSession:willBeginAtPoint:forItemsAtIndexPaths:` [str], so a
+  press there is the tray's. Kite's window is movable by its background, and the window server starts that move itself
+  on a real press before SwiftUI sees it, so a favorite dragged with the real pointer moved the window (reproduced: a
+  tile drag moved a test window by −208, +5). Kite puts `NoWindowDrag` behind the tray, sidebar-wide. Checked with real
+  HID drags in a test Kite: tiles reorder, tile ↔ Today list both ways, gaps and insets in the tray don't move the window,
+  the empty top bar still does, a click still selects. `kite ui input` drags never showed it: they don't go through
+  the window server.
 ## Live Folders (GitHub pull requests) → `KiteCore.LiveFolder`, `LiveFoldersController`, `LiveFolderViews.swift` (Arc 1.171 strings and binary, 1 Nov 2026)
 
 Read from Arc's binary only (its English text is compiled in at each localized call site). Arc wasn't recorded
