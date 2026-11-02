@@ -61,13 +61,26 @@ enum PasswordManagerIntegration {
     /// starts the store's Add flow in the background. Chrome's own "Add …?" dialog still
     /// asks, once per manager and profile.
     static func installIfNeeded(engine: WebEngine) {
+        guard let profile = engine.profileDirectory, !wasOffered(current, profile) else { return }
+        install(in: engine)
+    }
+
+    /// Whether the key button should offer to add the chosen manager to `engine`'s profile:
+    /// its app is on the Mac and its extension isn't in the profile.
+    static func canInstall(in engine: WebEngine) -> Bool {
+        current.extensionID != nil && isAppInstalled(current) && !isExtensionInstalled(in: engine)
+    }
+
+    /// Starts the store's Add flow for the chosen manager in `engine`'s profile, even if Kite
+    /// asked before (the user clicked the key). Chrome's "Add …?" dialog asks.
+    static func install(in engine: WebEngine) {
         let manager = current
         guard let id = manager.extensionID, let store = manager.storeURL, let profile = engine.profileDirectory,
-              isAppInstalled(manager), !isExtensionInstalled(in: engine),
-              installs[profile] == nil, !wasOffered(manager, profile) else { return }
+              canInstall(in: engine), installs[profile] == nil else { return }
         markOffered(manager, profile)
         installs[profile] = BackgroundExtensionInstall(extensionID: id, storeURL: store, engine: engine, source: nil) {
             installs[profile] = nil
+            ExtensionsModel.shared(engine: engine).refresh()
         }
     }
 

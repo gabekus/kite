@@ -225,20 +225,28 @@ struct PasswordManagerFieldButton: View {
 
     var body: some View {
         if let manager = model.passwordManager {
-            Button { open(manager) } label: {
-                Image(systemName: "key.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 30, height: 30)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(hovering ? 0.1 : 0)))
-                    .background(AnchorView(view: $anchor))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .opacity(hovering ? 0.9 : 0.6)
-            .onHover { hovering = $0 }
-            .help(manager.name)
-            .accessibilityLabel(manager.name)
+            key(manager.name) { open(manager) }
+        } else if PasswordManagerIntegration.canInstall(in: model.engine) {
+            // Not in this profile yet (each profile has its own extensions): the key adds it.
+            let name = PasswordManagerIntegration.current.name
+            key("Add \(name) to this profile") { PasswordManagerIntegration.install(in: model.engine) }
         }
+    }
+
+    private func key(_ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(hovering ? 0.1 : 0)))
+                .background(AnchorView(view: $anchor))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(hovering ? 0.9 : 0.6)
+        .onHover { hovering = $0 }
+        .help(label)
+        .accessibilityLabel(label)
     }
 
     private func open(_ manager: InstalledExtension) {
