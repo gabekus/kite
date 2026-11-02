@@ -3452,7 +3452,9 @@ Sources: `~/rea-arc/arc-strings.txt`, `~/rea-arc/decomp/arc.s`, Ghidra decompile
 
 **More Settings…**: strings 80409–80410, "Clicking opens arc://settings", Chromium's own settings WebUI, which Kite's Alloy-style tabs can't host. Kite opens its own Chromium settings pages instead (kite://settings/privacy, from g100/g101) in a new tab for the current space's profile. **Reset Translated-site Prompts** stays disabled: Kite has no translation.
 
-## Command bar › search suggestions privacy banner (g122) → `SearchSuggestionsPrivacyBanner` (CommandBarView.swift) (Arc 1.171 decomp, strings, asset catalogs, 1 Nov 2026)
+## Command bar › search suggestions privacy banner (g122) (Arc 1.171 decomp, strings, asset catalogs, 1 Nov 2026)
+
+**Kite doesn't show this banner** (Gabe, 2 Nov 2026: removed for good, a deliberate departure from Arc). The notes below are kept as a record of Arc's behaviour only.
 
 - **Strings** [strings + disasm]: title "We talk to your search engine to help us suggest results." (arc-strings 81286),
   subtitle "Learn more about your data on Arc " + an underlined link "here" (`Text.underline`, PlainButtonStyle) + "."

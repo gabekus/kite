@@ -35,14 +35,4 @@ import Testing
         #expect(youtube.matchesFilter("search_query"))
         #expect(!youtube.matchesFilter("amazon"))
     }
-
-    @Test func privacyBannerShowsWithEngineSuggestionsUntilDismissed() throws {
-        #expect(SearchSuggestions.showsPrivacyBanner(hasEngineSuggestions: true, dismissed: false))
-        #expect(!SearchSuggestions.showsPrivacyBanner(hasEngineSuggestions: false, dismissed: false))
-        #expect(!SearchSuggestions.showsPrivacyBanner(hasEngineSuggestions: true, dismissed: true))
-        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
-        state.hasDismissedSearchSuggestionsPrivacy = true
-        let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
-        #expect(decoded.hasDismissedSearchSuggestionsPrivacy)
-    }
 }
