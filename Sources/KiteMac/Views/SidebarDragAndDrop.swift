@@ -73,6 +73,8 @@ final class SidebarDragModel {
     private(set) var session: Session?
     /// The ghost for the session: the row as it was when picked up.
     private(set) var ghost: AnyView?
+    /// A tab or split dragged from the list, drawn as a favorite tile while it's over the tray.
+    private(set) var tileGhost: AnyView?
 
     /// How long a tab row has to be the drop target before the drop offers a split. Arc 1.169's
     /// `splitDropTargetDelaySatisfied` turns on 0.2s after the row becomes the target (binary).
@@ -125,9 +127,10 @@ final class SidebarDragModel {
         if spaceIcons[id] != frame { spaceIcons[id] = frame }
     }
 
-    func begin(_ ids: [UUID], row: Row, at start: CGPoint, ghost: AnyView) {
+    func begin(_ ids: [UUID], row: Row, at start: CGPoint, ghost: AnyView, tileGhost: AnyView? = nil) {
         session = Session(ids: ids, row: row, start: start, location: start)
         self.ghost = ghost
+        self.tileGhost = tileGhost
     }
 
     func move(to location: CGPoint, in state: BrowserState) {
@@ -254,6 +257,7 @@ final class SidebarDragModel {
             if let session { store?.sidebarDragContent?.sidebarDrag(session.ids, movedTo: nil) }
             session = nil
             ghost = nil
+            tileGhost = nil
             updateAutoscroll()
             updateEdgeSwitch()
         }
@@ -271,6 +275,7 @@ final class SidebarDragModel {
         if let session { store?.sidebarDragContent?.sidebarDrag(session.ids, movedTo: nil) }
         session = nil
         ghost = nil
+        tileGhost = nil
         updateAutoscroll()
         updateEdgeSwitch()
     }
@@ -479,6 +484,18 @@ struct SidebarDragSource<Ghost: View>: ViewModifier {
             .gesture(draggable ? gesture : nil)
     }
 
+    /// Arc swaps a tab's drag image for a favorite tile, the size of the tray's open slot, once
+    /// it's over the tray (`collectionView:updateDraggingItemsForDrag:`, decompiled).
+    private var tileGhost: AnyView? {
+        let state = store.state
+        let tabs: [BrowserTab] = switch row.kind {
+        case .tab: state.tab(row.id).map { [$0] } ?? []
+        case .split: ((state.spaces.flatMap(\.splits) + state.favoriteSplits).first { $0.id == row.id }?.tabIDs ?? []).compactMap(state.tab)
+        default: []
+        }
+        return tabs.isEmpty ? nil : AnyView(FavoriteGhost(tabs: tabs))
+    }
+
     private var gesture: some Gesture {
         DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .onChanged { value in
@@ -486,7 +503,7 @@ struct SidebarDragSource<Ghost: View>: ViewModifier {
                 if !drag.isDragging {
                     var row = row
                     row.frame = drag.frame(of: row) ?? .zero
-                    drag.begin([row.id], row: row, at: value.startLocation, ghost: AnyView(ghost()))
+                    drag.begin([row.id], row: row, at: value.startLocation, ghost: AnyView(ghost()), tileGhost: tileGhost)
                 }
                 drag.move(to: value.location, in: store.state)
             }
@@ -523,7 +540,13 @@ struct SidebarDragOverlay: View {
                     InsertionLine(width: line.width)
                         .offset(x: line.x, y: line.y - InsertionLine.thickness / 2)
                 }
-                if let ghost = drag.ghost {
+                if case .favorites? = session.target, let tile = drag.tileGhost, let gap = drag.dropGap {
+                    // Unverified: where the tile sits against the pointer. Kite centres it.
+                    tile
+                        .frame(width: gap.width, height: gap.height)
+                        .opacity(SidebarDragOverlay.ghostOpacity)
+                        .offset(x: session.location.x - gap.width / 2, y: session.location.y - gap.height / 2)
+                } else if let ghost = drag.ghost {
                     let frame = session.row.frame
                     ghost
                         .frame(width: frame.width, height: frame.height)

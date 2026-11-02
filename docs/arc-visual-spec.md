@@ -3057,6 +3057,21 @@ an Arc incognito window captured at 2× (1 Nov 2026).
   HID drags in a test Kite: tiles reorder, tile ↔ Today list both ways, gaps and insets in the tray don't move the window,
   the empty top bar still does, a click still selects. `kite ui input` drags never showed it: they don't go through
   the window server.
+- **Tray drag preview and neighbours** (Arc 1.171 decompile, 2 Nov 2026; dumps in ~/rea-arc/decomp/out7/drag*.txt):
+  - A tile dragged from the tray uses `NSCollectionView`'s own drag image (no `draggingImageForItems…` override); the
+    tile left behind is alpha 0 (above).
+  - `collectionView:updateDraggingItemsForDrag:` returns at once when the drag came from the tray itself. Otherwise
+    (a tab from the list) it enumerates the drag's items and gives each a real tray tile view
+    (`AppTrayItemViewAppKit`) laid out at the open slot's size (`dropGapFrame`, 47×47 without one) through
+    `setDraggingFrame:contents:`: over the tray, the dragged tab turns into a favorite tile.
+  - Opening or moving the slot: validate-drop sets the layout's `draggingInfo` and calls `invalidateLayout`, and drag
+    end clears it the same way. There's no `NSAnimationContext` or animator on that path, so the tiles jump to their
+    new places. Kite dropped the 0.12s ease it had there.
+  - Kite: a tab or split row dragged over the tray draws as `FavoriteGhost` at the slot's size, centred on the pointer.
+    Checked with held `ui input` drags (a Today tab over the tray, a tile moved along it). **Unverified**: where Arc's
+    tile sits against the pointer (Kite centres it), the drag image's opacity (Kite keeps 0.6), and whether AppKit adds
+    its own animation when a collection view relayouts mid-drag (not seen in Arc: no live tray drag, Gabe's favorites
+    stay untouched).
 
 ## Selected favorite → `FavoriteFill` in `SidebarView.swift`, `ArcMetrics.Sidebar.favorite*` (Arc 1.171 decompile, 2 Nov 2026)
 
