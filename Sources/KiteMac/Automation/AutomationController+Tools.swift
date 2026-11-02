@@ -520,6 +520,11 @@ extension AutomationController {
             store.mutate { $0.selectSpace(at: index) }
             return .text("Switched to \(store.state.spaces[index].name).")
         case let .createSpace(name, icon, about):
+            // Space names are how Claude (and kite open --space) pick a space, so they must stay unique.
+            if store.state.spaces.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+                throw AutomationError(.invalidArguments,
+                                      "There's already a space called \(name). Use it, or describe_space to say what it's for.")
+            }
             let count = store.state.spaces.count
             let id = store.mutate {
                 let id = $0.addBackgroundSpace(name: name, icon: icon ?? "🗂️", theme: Theme.presets[count % Theme.presets.count])
