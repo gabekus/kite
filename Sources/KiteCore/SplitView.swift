@@ -172,7 +172,8 @@ extension BrowserState {
         guard let focused = selectedTab, let location = location(of: focused.id) else { return .noTab }
         // Favorites belong to no space; split them in the current one.
         let s = location.space ?? selectedSpaceIndex
-        let newTab = BrowserTab(id: id, url: nil, lastActiveAt: now)
+        var newTab = BrowserTab(id: id, url: nil, lastActiveAt: now)
+        if location.section != .unpinned { newTab.splitPane = true }
 
         if let existing = split(containing: focused.id)?.split {
             guard existing.tabIDs.count < SplitView.maxPanes else { return .full }
