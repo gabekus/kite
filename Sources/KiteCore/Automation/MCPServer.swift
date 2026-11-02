@@ -33,6 +33,12 @@ public struct MCPServer: Sendable {
         Don't retry a declined action. \
         When a page needs the user signed in, call sign_in: the user signs in (with their password manager) while you wait, and \
         you never see the password. Never ask for a password or type one yourself. \
+        When you stop because the user must do something themselves (your safety check or their rules won't let you, \
+        it needs their judgment, a secret only they hold, or a command on their computer), call handoff instead of \
+        listing steps in chat: give the reason you stopped and each step with its tab and the control to click (ref, \
+        selector or visible text) or the command to run. Kite shows the steps on the pages themselves, so the user \
+        never has to come back to the chat to see what to do. Then call handoff_status with wait to hear when they're \
+        done, and carry on. \
         To check Kite's own interface (sidebar, command bar, menus, cursors, animations), use the ui tool, not \
         screenshots of the screen or the user's mouse. \
         When debugging a site, network_log shows what the tabs requested (pass its cursor back as since to see only \

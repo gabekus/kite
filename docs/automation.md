@@ -44,6 +44,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | (none) | `handle_dialog` | | alert / confirm / prompt / beforeunload. |
 | (none) | `list_downloads` | | Downloads since control was turned on. |
 | (none) | `sign_in` | `kite call sign_in` | Hands a login page to the user, with 1Password. See below. |
+| (none) | `handoff`, `handoff_status` | `kite call handoff` | Hands steps Claude can't do to the user, shown on the pages. See below. |
 | (none) | `list_spaces`, `switch_space`, `create_space`, `describe_space`, `pin_tab`, `create_folder`, `move_to_folder` | `kite spaces`, `kite describe-space` | Kite's own organization. |
 | `gif_creator`, `shortcuts_*`, `switch_browser` | not yet | | |
 
@@ -258,6 +259,31 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   shows **Stop**; the folder's and the tab's menus have **Stop Claude**. While the tab in front is Claude's, the
   page gets a 2pt orange border, so it shows with the sidebar hidden too. Stop revokes the tab: it ends its event
   collection and fails pending confirmations and waits.
+- **Handing steps to the user (`handoff`, `handoff_status`).** When Claude stops because the user must act
+  (its safety check or the user's rules forbid the step, the choice is theirs, a secret only they hold, a command on
+  their Mac), it calls `handoff` with `reason` (why it stopped) and `steps`. Each step has an `instruction` and either
+  a tab and its control (`ref`, `selector`, or the control's visible `text`), a tab alone, a `command` for the
+  terminal, or nothing (a note); `why` overrides the reason for one step. Kite shows them where they happen:
+  - **The ring.** On the tab's page, the control gets a 2pt ring in Claude's orange, pulsing, with a tag above it:
+    "Claude needs you · 1. Approve Apple". It scrolls into view once. Steps on one tab come one after another. The
+    ring lives in a closed shadow root on a host that takes no clicks, run in an isolated world
+    (`Page.createIsolatedWorld`, `kite-handoff`), so the page's scripts can't see, restyle or fake it. A click (or a
+    change) inside the control with `isTrusted` ends the step; it reports through `Runtime.addBinding`, scoped to that
+    world, so a click that navigates away still counts. A ref is marked with `data-kite-handoff` when Claude calls,
+    and its label finds it again if the page redraws it; `text` matches buttons, links, labels and other controls,
+    exact first. Kite looks at the pages on screen twice a second (only while a step waits), so the ring follows
+    navigations. Only the top frame is searched.
+  - **The sidebar.** A tab with a step waiting gets an orange dot at its row's end (tooltip: the step); a folded
+    folder holding one gets the dot too.
+  - **The card.** Over the bottom centre of the page: Claude's mark, "Claude needs you", the session, "Step n of m",
+    the reason, the step, and **Skip**, **Next** and **Done**; a terminal step shows its command with **Copy**. ⋯ has
+    Dismiss All Steps. The chevron folds it to a pill ("Claude needs you · 3 steps"); with no step on the tab in
+    front it's the pill, which brings up the next step (switching tab). sign_in's pill takes precedence on its tab.
+    Kite bounces its Dock icon once if it isn't in front.
+  - **Back to Claude.** `handoff` returns at once (or after `wait` seconds, up to 600) with an id. `handoff_status`
+    (`id`, default the session's latest; `wait`; `cancel` to withdraw the rest) lists each step as done, skipped or
+    waiting, how it ended ("the user clicked the highlighted control", "pressed Done", "skipped it", "closed the
+    tab"), and each tab's URL now. Kite keeps the last 20 finished handoffs; it forgets them when it quits.
 - **Sign-in handoff (`sign_in`).** Claude never types or sees passwords. When a page needs the user signed in,
   Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and shows a
   pill at the bottom of the page: "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the

@@ -54,6 +54,10 @@ protocol PageActions: PageAutomation {
     func zoom(x0: Double, y0: Double, x1: Double, y1: Double) async throws -> Screenshot
     /// How the tab's screenshots are scaled, to map their coordinates back to the page.
     func screenshotScale() async throws -> ScreenshotScale
+    /// Runs code in Kite's own isolated world on the page, where only `binding` reports back. For handoff's ring.
+    func runIsolated(_ code: String, world: String, binding: String) async throws -> String
+    /// Marks the element a ref names with an attribute; returns its visible label.
+    func mark(ref: String, attribute: String, value: String) async throws -> String?
 }
 
 struct Screenshot {

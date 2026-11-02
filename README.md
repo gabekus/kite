@@ -85,6 +85,34 @@ which are also in the MCP server's instructions and the tool descriptions, so an
 CLI equivalents: `kite spaces`, `kite describe-space NAME TEXT`, `kite open URL --space NAME [--session NAME]` (Claude folder) or
 `--plain` (a plain tab), `kite call move_to_folder '{"folder":"claude","tab":"ID"}'`. More in `docs/automation.md`.
 
+## For agents: handing steps to the user
+
+When Claude stops because the user has to do something themselves (its safety check or the user's rules won't let it,
+the choice is theirs, it needs a secret only they hold, or a command has to run on their Mac), it calls `handoff`
+instead of listing steps in the chat. The user then sees what to do in Kite itself, not back in the chat:
+
+- **On the page:** the control to click gets a ring in Claude's orange with the step beside it ("Claude needs you ·
+  1. Approve Apple"). Clicking it finishes the step. Only a real click counts; the page can't fake one.
+- **In the sidebar:** each tab with a step waiting gets an orange dot (its tooltip says the step), as does a folded
+  folder holding one.
+- **Over the page:** a card says why Claude stopped, what to do here, and step *n* of *m*, with **Done**, **Skip** and
+  **Next** (which goes to the next tab that needs you). A terminal step shows its command with **Copy**. Folded,
+  the card is a pill: "Claude needs you · 3 steps".
+
+```json
+{"reason": "My safety check won't let me change nameservers or invite an admin.",
+ "steps": [
+   {"tab": "TAB-1", "instruction": "Approve Apple", "text": "Approve"},
+   {"tab": "TAB-1", "instruction": "Save", "text": "Save"},
+   {"tab": "TAB-2", "instruction": "Tick Super Administrator", "ref": "e42"},
+   {"instruction": "Run the secrets script (it reads 1Password)", "command": "bash ~/dev/cf-split/set-outside-secrets.sh"}
+ ]}
+```
+
+`handoff` returns at once with an id (`h1`). `handoff_status` (`id`, `wait` up to 600 seconds, `cancel`) says which
+steps the user did, skipped or hasn't reached, with each tab's URL now, so Claude carries on when they're done.
+CLI: `kite call handoff '{…}'`, `kite call handoff_status '{"id":"h1","wait":600}'`. More in `docs/automation.md`.
+
 ## Layout
 
 ```

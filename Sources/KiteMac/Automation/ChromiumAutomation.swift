@@ -387,6 +387,67 @@ struct ChromiumAutomation: PageActions {
         return ViewportPoint(x: viewport.width / 2, y: viewport.height / 2)
     }
 
+    // MARK: Kite's own world
+
+    /// Execution contexts of Kite's isolated worlds, by browser and world name. A navigation drops them,
+    /// and the next call makes a new one.
+    private static var isolatedWorlds: [String: Int] = [:]
+
+    /// Runs code in an isolated world of the top frame: it shares the page's DOM but none of its scripts, so the
+    /// page can't read or change what runs there. `binding` is callable from that world only (its calls arrive as
+    /// Runtime.bindingCalled events).
+    func runIsolated(_ code: String, world: String, binding: String) async throws -> String {
+        let key = "\(ObjectIdentifier(browser).hashValue):\(world)"
+        for attempt in 0..<2 {
+            let context: Int
+            if attempt == 0, let cached = Self.isolatedWorlds[key] {
+                context = cached
+            } else {
+                try await call("Runtime.addBinding", ["name": binding, "executionContextName": world])
+                let tree = try await call("Page.getFrameTree")
+                guard let frame = ((tree["frameTree"] as? [String: Any])?["frame"] as? [String: Any])?["id"] as? String else {
+                    throw AutomationError(.failed, "The page has no frame yet.")
+                }
+                let made = try await call("Page.createIsolatedWorld", ["frameId": frame, "worldName": world])
+                guard let id = made["executionContextId"] as? Int else { throw AutomationError(.failed, "Chromium made no world.") }
+                Self.isolatedWorlds[key] = id
+                context = id
+            }
+            let result: [String: Any]
+            do {
+                result = try await call("Runtime.evaluate", ["expression": code, "contextId": context, "returnByValue": true], timeout: 5)
+            } catch let error as AutomationError where attempt == 0 && error.code == .failed {
+                // "Cannot find context with specified id": the page navigated since.
+                Self.isolatedWorlds[key] = nil
+                continue
+            }
+            if let exception = result["exceptionDetails"] as? [String: Any] {
+                throw AutomationError(.failed, "Kite's page script threw: \(Self.exceptionText(exception))")
+            }
+            let value = (result["result"] as? [String: Any])?["value"]
+            return value as? String ?? ""
+        }
+        throw AutomationError(.failed, "Kite couldn't reach the page.")
+    }
+
+    /// Puts `attribute="value"` on the element a ref names and returns its visible label (to find it again).
+    func mark(ref: String, attribute: String, value: String) async throws -> String? {
+        guard let backendID = AccessibilityOutline.backendNodeID(fromRef: ref) else {
+            throw AutomationError(.invalidArguments, "\"\(ref)\" isn't a ref. Refs look like e42 and come from read_page or find.")
+        }
+        let objectID = try await resolve(backendID: backendID, ref: ref)
+        let label = try await callFunction(objectID, """
+            function (attribute, value) {
+              const el = this.nodeType === 1 ? this : this.parentElement;
+              if (!el) return null;
+              el.setAttribute(attribute, value);
+              const t = (el.getAttribute('aria-label') || el.innerText || el.value || el.title || '').replace(/\\s+/g, ' ').trim();
+              return t ? t.slice(0, 120) : null;
+            }
+            """, arguments: [attribute, value])
+        return label as? String
+    }
+
     // MARK: Helpers
 
     private func resolve(backendID: Int, ref: String?) async throws -> String {

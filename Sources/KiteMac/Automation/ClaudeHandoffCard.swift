@@ -1,0 +1,243 @@
+import AppKit
+import KiteCore
+import SwiftUI
+
+/// handoff's card, over the bottom of the page: what Claude needs the user to do here and why it stopped, with
+/// Done, Skip and Next. The page itself rings the control to click. While no step is on the tab in front, the card
+/// folds to a pill ("Claude needs you · 3 steps") that brings up the next one.
+struct ClaudeHandoffCard: View {
+    let automation: AutomationController
+    let store: BrowserStore
+
+    var body: some View {
+        let front = store.state.selectedTab?.id
+        let waiting = automation.waitingHandoffSteps
+        Group {
+            // sign_in's own pill owns the bottom of a tab that's signing in.
+            if let front, automation.signIns[front] != nil {
+                EmptyView()
+            } else if !automation.handoffCardCollapsed, let current = automation.cardStep(front: front) {
+                HandoffStepCard(automation: automation, handoff: current.handoff, step: current.step,
+                                onFront: current.step.tab == nil || current.step.tab == front,
+                                others: waiting.count - 1)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if !waiting.isEmpty {
+                HandoffPill(count: waiting.count, front: automation.cardStep(front: front) != nil) {
+                    if automation.cardStep(front: front) != nil {
+                        automation.handoffCardCollapsed = false
+                    } else {
+                        automation.showNextHandoffStep()
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.spring(duration: 0.28, bounce: 0.15), value: automation.cardStep(front: front)?.step.id)
+        .animation(.easeInOut(duration: 0.18), value: automation.handoffCardCollapsed)
+    }
+}
+
+/// One step: why Claude stopped, what to do, and (for a step outside the browser) the command to copy.
+private struct HandoffStepCard: View {
+    let automation: AutomationController
+    let handoff: Handoff
+    let step: Handoff.Step
+    /// The step belongs on the tab in front (or on no tab), so Show Tab isn't needed.
+    let onFront: Bool
+    /// Steps waiting besides this one, across every handoff.
+    let others: Int
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ClaudeMark()
+                    .stroke(Color.claude, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                    .frame(width: 12, height: 12)
+                Text("Claude needs you")
+                    .font(.system(size: 12, weight: .semibold))
+                if let session = handoff.session {
+                    Text(session)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 8)
+                Text("Step \(step.number) of \(handoff.steps.count)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Menu {
+                    Button("Dismiss All Steps") { automation.dismissHandoff(handoff.id) }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More")
+                Button {
+                    automation.handoffCardCollapsed = true
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Hide until you need it")
+            }
+
+            // Why Claude stopped: the step's own reason when it has one.
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.claude)
+                Text(step.why ?? handoff.reason)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(step.number)")
+                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(Color.claude))
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4.5 }
+                Text(step.instruction)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+
+            if let command = step.command {
+                HStack(alignment: .top, spacing: 6) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        Text(command)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(4)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.06)))
+                    Button(copied ? "Copied" : "Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(command, forType: .string)
+                        copied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                    }
+                    .controlSize(.small)
+                    .help("Copy the command, then paste it in Terminal")
+                }
+                Text("Run it in Terminal, then press Done.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            } else if !onFront {
+                Text("This step is in another tab.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            } else if step.locator != nil, step.found == false {
+                Text("Kite can't find it on this page yet. Do it by hand, then press Done.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+            }
+
+            HStack(spacing: 8) {
+                if !onFront {
+                    Button("Show Tab") { automation.showTab(of: step.id) }
+                        .controlSize(.small)
+                }
+                Spacer(minLength: 0)
+                Button("Skip") { automation.answerHandoff(step.id, .skipped) }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 12))
+                    .help("Leave this step undone: Claude hears you skipped it")
+                if others > 0 {
+                    Button("Next") { automation.showNextHandoffStep(after: step.id) }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 12))
+                        .help("Go to the next step without finishing this one")
+                }
+                Button {
+                    automation.answerHandoff(step.id, .done)
+                } label: {
+                    Text("Done").font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.claude)
+                .controlSize(.small)
+                .help("You did it: tell Claude")
+            }
+        }
+        .padding(12)
+        .frame(width: 400)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.claude.opacity(0.55), lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Claude needs you: \(step.instruction)")
+    }
+}
+
+/// The folded card: how many steps wait on the user. Clicking brings up the next one.
+private struct HandoffPill: View {
+    let count: Int
+    /// A step waits on the tab in front (the card was folded).
+    let front: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                ClaudeMark()
+                    .stroke(Color.claude, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                    .frame(width: 11, height: 11)
+                Text("Claude needs you")
+                    .font(.system(size: 12, weight: .medium))
+                Text(count == 1 ? "1 step" : "\(count) steps")
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Image(systemName: front ? "chevron.up" : "arrow.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.claude.opacity(0.6), lineWidth: 1))
+            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(front ? "Show what Claude needs here" : "Go to the next thing Claude needs you to do")
+        .accessibilityLabel("Claude needs you: \(count) steps")
+    }
+}
+
+extension BrowserWindowController {
+    /// The handoff card, over the bottom centre of the page. It takes clicks only on itself.
+    func installClaudeHandoffCard(_ automation: AutomationController) {
+        let host = BannerHostingView(rootView: ClaudeHandoffCard(automation: automation, store: store)
+            .padding(.bottom, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom))
+        host.sizingOptions = []
+        host.safeAreaRegions = []
+        host.translatesAutoresizingMaskIntoConstraints = false
+        contentFrame.addSubview(host, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: contentFrame.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor),
+            host.topAnchor.constraint(equalTo: contentFrame.topAnchor),
+            host.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor),
+        ])
+    }
+}
