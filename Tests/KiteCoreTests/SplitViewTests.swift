@@ -409,16 +409,15 @@ import Testing
 }
 
 @Suite struct SplitTabButtonTests {
-    @Test func closesOrUnloadsWithoutTheSetting() {
-        #expect(SplitTabButton.state(isPinned: false, optionSeparates: false, modifiers: .alt) == .close)
-        #expect(SplitTabButton.state(isPinned: true, optionSeparates: false, modifiers: .alt) == .unload)
+    @Test func closesOrUnloads() {
+        #expect(SplitTabButton.state(isPinned: false, modifiers: []) == .close)
+        #expect(SplitTabButton.state(isPinned: true, modifiers: []) == .unload)
     }
 
-    @Test func optionAloneSeparatesWhenTheSettingIsOn() {
-        #expect(SplitTabButton.state(isPinned: false, optionSeparates: true, modifiers: .alt) == .separate)
-        #expect(SplitTabButton.state(isPinned: true, optionSeparates: true, modifiers: .alt) == .separate)
+    @Test func optionAloneSeparates() {
+        #expect(SplitTabButton.state(isPinned: false, modifiers: .alt) == .separate)
+        #expect(SplitTabButton.state(isPinned: true, modifiers: .alt) == .separate)
         // Arc checks for ⌥ and nothing else.
-        #expect(SplitTabButton.state(isPinned: false, optionSeparates: true, modifiers: [.alt, .shift]) == .close)
-        #expect(SplitTabButton.state(isPinned: false, optionSeparates: true, modifiers: []) == .close)
+        #expect(SplitTabButton.state(isPinned: false, modifiers: [.alt, .shift]) == .close)
     }
 }
