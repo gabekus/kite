@@ -3057,6 +3057,32 @@ an Arc incognito window captured at 2× (1 Nov 2026).
   HID drags in a test Kite: tiles reorder, tile ↔ Today list both ways, gaps and insets in the tray don't move the window,
   the empty top bar still does, a click still selects. `kite ui input` drags never showed it: they don't go through
   the window server.
+
+## Selected favorite → `FavoriteFill` in `SidebarView.swift`, `ArcMetrics.Sidebar.favorite*` (Arc 1.171 decompile, 2 Nov 2026)
+
+Ghidra on `AppTrayItemBackgroundView`, `AppTrayItemHighlightRingView`, `AppTrayItemSelectionOutlineView` and
+`AppTrayItemViewAppKit` (notes and dumps in ~/rea-arc/decomp/out7/ring*.txt), checked against a 2× screenshot of Gabe's
+selected YouTube favorite (dark, grey theme).
+
+- **Background** [dec]: continuous corners, radius **12**, masks to bounds. Selected: white at **0.45** (dark) or **0.8**
+  (light), ×0.5 when dimmed; unselected: no fill of its own. Over it a blurred image (`AppTrayVisualEffectImageProvider`)
+  at **0.2**, **0.3** hovered (dark), **0** / **0.1** hovered (light), animated on change. Measured unselected tile: the
+  sidebar's 92 grey becomes a neutral 108 (white ≈ 0.10, Kite's field fill).
+- **Ring** [dec]: two `CAShapeLayer`s on the bounds inset by **1**, continuous rounded rect, line width **2** (so it covers
+  the tile's outer 2pt). Shown while the item's `isHighlighted` with its `highlightColor` (`AppTrayItemViewState` fields
+  next to `mutedColor`); a developer tab gets a debug ring instead (black under yellow, dashes 6/6).
+- **Measured** (Gabe's selected YouTube favorite): ring ≈ (255,123,126), the fill ≈ (171,149,150) over a ≈50 grey sidebar,
+  pinker than white at 0.45 (≈142) alone.
+- **Kite**: selected tiles get the white fill, the favicon's dominant colour (Kite's `NSImage.dominantColor`) half way to
+  white as the ring, and that colour at the tint alphas above; unselected tiles keep the 0.10 wash, now at radius 12.
+  Kite's capture of a selected YouTube favorite: ring (255,150,166) (YouTube's favicon is now #FF0033), fill
+  (158,137,139) over a 36 grey sidebar.
+- **Unverified**: how Arc picks `highlightColor` (the fetch through `FaviconDominantColorFetcher` wasn't traced; the
+  half-way-to-white is fitted to one capture), whether `isHighlighted` is exactly "selected" (one capture shows them
+  together), what the blurred image holds (its source wasn't traced; Kite tints with the highlight colour, which matches
+  the capture), the light theme (no capture), and the selection outline view (an image behind an even-odd mask with a
+  3pt setting, not drawn by Kite).
+
 ## Live Folders (GitHub pull requests) → `KiteCore.LiveFolder`, `LiveFoldersController`, `LiveFolderViews.swift` (Arc 1.171 strings and binary, 1 Nov 2026)
 
 Read from Arc's binary only (its English text is compiled in at each localized call site). Arc wasn't recorded
