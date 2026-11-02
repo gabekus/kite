@@ -60,8 +60,13 @@ final class KiteConnection: @unchecked Sendable {
 
     init(path: String) { self.path = path }
 
+    /// How long a call waits for Kite's socket before saying Kite isn't answering.
+    /// Covers Kite relaunching for an update, or still starting up.
+    static let connectWait: TimeInterval = 8
+
     func call(_ tool: String, _ arguments: JSONValue) async -> ToolOutput {
-        await withCheckedContinuation { continuation in
+        await waitForKite()
+        return await withCheckedContinuation { continuation in
             lock.lock()
             if fd < 0, !connect() {
                 lock.unlock()
@@ -79,6 +84,16 @@ final class KiteConnection: @unchecked Sendable {
                 disconnect(socket)
                 return
             }
+        }
+    }
+
+    /// Connects if not connected, retrying for up to `connectWait` seconds.
+    private func waitForKite() async {
+        let deadline = Date().addingTimeInterval(Self.connectWait)
+        while true {
+            let connected = lock.withLock { fd >= 0 || connect() }
+            if connected || Date() >= deadline { return }
+            try? await Task.sleep(nanoseconds: 250_000_000)
         }
     }
 
