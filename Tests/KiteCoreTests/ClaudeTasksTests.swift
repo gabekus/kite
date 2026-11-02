@@ -168,8 +168,10 @@ import Testing
     @Test func eachSessionGetsAFolderInsideTheClaudeFolder() throws {
         var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0])])
         let komado = state.spaces[0].id
-        let dns = try #require(state.claudeSessionFolder(named: "Cloudflare DNS move", inSpace: komado))
-        let ads = try #require(state.claudeSessionFolder(named: "Meta ads audit", inSpace: komado))
+        let dnsFolder = state.claudeSessionFolder(named: "Cloudflare DNS move", inSpace: komado)
+        let adsFolder = state.claudeSessionFolder(named: "Meta ads audit", inSpace: komado)
+        let dns = try #require(dnsFolder)
+        let ads = try #require(adsFolder)
         // The same name (any case) is the same folder.
         let dnsAgain = state.claudeSessionFolder(named: " cloudflare dns MOVE ", inSpace: komado)
         #expect(dnsAgain == dns && dns != ads)
