@@ -5,17 +5,83 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a PR cancels that PR's older run, so stale runs stop holding
+# one of the few macOS runners the account gets. Main keeps every run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  macos:
-    runs-on: macos-15
+  # Decides which jobs this change needs. Ubuntu runners start in seconds.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mac: ${{ steps.mac.outputs.mac }}
+      core: ${{ steps.core.outputs.core }}
     steps:
       - uses: actions/checkout@v4
+      # Docs-only changes skip the macOS build.
+      - uses: dorny/paths-filter@v3
+        id: mac
+        with:
+          predicate-quantifier: every
+          filters: |
+            mac:
+              - '!docs/**'
+              - '!**/*.md'
+      - uses: dorny/paths-filter@v3
+        id: core
+        with:
+          filters: |
+            core:
+              - 'Sources/KiteCore/**'
+              - 'Tests/**'
+              - 'Package.swift'
+              - 'Package.resolved'
+              - '.github/workflows/ci.yml'
+
+  macos:
+    needs: changes
+    if: needs.changes.outputs.mac == 'true'
+    # Set the MACOS_RUNNER repo variable to move this job to another runner
+    # (a paid service or a self-hosted Mac) without editing the workflow.
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-15' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Blobless: full history (needed to diff against the cached build's
+          # commit) without downloading old file contents.
+          fetch-depth: 0
+          filter: blob:none
+      - name: Restore build cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: spm-${{ runner.os }}-${{ runner.arch }}-
+      - name: Make the cached build incremental
+        run: scripts/ci-restore-mtimes.sh
       - name: Test (WebKit build, no CEF download)
         run: swift test
+      - name: Save build cache (main only, so every PR starts from main's build)
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'ci-speedup'
+        run: git rev-parse HEAD > .build/ci-built-sha
+      - if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.head_ref == 'ci-speedup'
+        uses: actions/cache/save@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
 
-  # Keeps KiteCore portable for the Windows shell.
+  # Keeps KiteCore portable for the Windows shell. Only KiteCore and its tests
+  # build on Windows, so the job runs only when those change.
   windows:
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: compnerd/gha-setup-swift@main
