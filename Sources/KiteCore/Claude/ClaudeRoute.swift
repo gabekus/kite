@@ -1,7 +1,7 @@
 import Foundation
 
 /// Where ⌘J sends a request made in a space. Each space keeps its own route, so a request
-/// typed in the Komado space goes to the Komado project. A space that hasn't picked one
+/// typed in a Bakery space goes to the bakery project. A space that hasn't picked one
 /// goes where ⌘J always has.
 ///
 /// What can be addressed (checked 1 Nov 2026):

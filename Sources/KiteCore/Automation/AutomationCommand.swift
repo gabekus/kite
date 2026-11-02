@@ -126,7 +126,7 @@ public enum AutomationCommand: Hashable, Sendable {
     case listSpaces
     case switchSpace(space: String)
     case createSpace(name: String, icon: String?, about: String?)
-    /// Sets what a space is for ("Komado business"), which Claude reads to pick the space a link opens in.
+    /// Sets what a space is for ("My bakery"), which Claude reads to pick the space a link opens in.
     case describeSpace(space: String, about: String)
     case pinTab(tab: String?, pinned: Bool)
     case createFolder(name: String, space: String?)
