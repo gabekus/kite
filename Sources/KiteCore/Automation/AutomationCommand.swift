@@ -107,6 +107,10 @@ public enum AutomationCommand: Hashable, Sendable {
     case uploadFile(tab: String?, target: AutomationTarget, paths: [String])
     /// Hands a login page to the user to sign in (with their password manager), and waits. See `SignInHandoff`.
     case signIn(tab: String?, reason: String?)
+    /// Hands steps Claude can't do to the user, shown where they happen. See `UserHandoff`.
+    case handoff(UserHandoff.Request)
+    /// How far the user got with a handoff (nil: the latest), waiting up to `wait` seconds; `cancel` withdraws it.
+    case handoffStatus(id: String?, wait: Double, cancel: Bool)
 
     // Debugging
     case readConsole(tab: String?, pattern: String?, onlyErrors: Bool, limit: Int, clear: Bool)
@@ -164,6 +168,8 @@ public enum AutomationCommand: Hashable, Sendable {
         case handleDialog = "handle_dialog"
         case uploadFile = "upload_file"
         case signIn = "sign_in"
+        case handoff
+        case handoffStatus = "handoff_status"
         case readConsole = "read_console_messages"
         case readNetwork = "read_network_requests"
         case networkLog = "network_log"
@@ -218,6 +224,8 @@ public enum AutomationCommand: Hashable, Sendable {
         case .handleDialog: .handleDialog
         case .uploadFile: .uploadFile
         case .signIn: .signIn
+        case .handoff: .handoff
+        case .handoffStatus: .handoffStatus
         case .readConsole: .readConsole
         case .readNetwork: .readNetwork
         case .networkLog: .networkLog
@@ -352,6 +360,12 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .uploadFile(tab: tab, target: try a.target(required: true)!, paths: paths)
         case .signIn:
             self = .signIn(tab: tab, reason: try a.string("reason").flatMap { $0.isEmpty ? nil : $0 })
+        case .handoff:
+            self = .handoff(try UserHandoff.parse(a.values, tab: tab))
+        case .handoffStatus:
+            let wait = try a.double("wait") ?? 0
+            guard wait >= 0, wait <= UserHandoff.maxWait else { throw InvalidArguments("\"wait\" is 0 to \(Int(UserHandoff.maxWait)) seconds.") }
+            self = .handoffStatus(id: try a.string("id").flatMap { $0.isEmpty ? nil : $0 }, wait: wait, cancel: try a.bool("cancel"))
         case .readConsole:
             self = .readConsole(tab: tab, pattern: try a.pattern("pattern"), onlyErrors: try a.bool("only_errors"),
                                 limit: try a.int("limit", in: 1...1000) ?? Self.defaultLogLimit, clear: try a.bool("clear"))

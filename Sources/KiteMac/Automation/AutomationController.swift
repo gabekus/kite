@@ -61,6 +61,22 @@ final class AutomationController {
     private(set) var controlledTabIDs: Set<UUID> = []
     /// Tabs handed to the user to sign in (sign_in), for the banner's Done and Cancel.
     var signIns: [UUID: SignInRequest] = [:]
+    /// Steps Claude handed to the user (handoff), newest last, kept a while after they end so Claude can read how
+    /// they went. The sidebar marks their tabs and the card over the page shows them.
+    var handoffs: [Handoff] = []
+    /// A step the user brought up with Next or the pill that isn't on the tab in front (a terminal command, or a
+    /// step on a tab that's gone): the card shows it until it ends or another tab comes forward.
+    var focusedHandoffStep: String?
+    /// The tab that was in front when Next brought `focusedHandoffStep` up.
+    var focusedHandoffFront: UUID?
+    /// The card is folded down to its pill.
+    var handoffCardCollapsed = false
+    @ObservationIgnored var handoffPoller: Task<Void, Never>?
+    /// Which step's ring each tab's page shows, so Kite takes it off when the step ends.
+    @ObservationIgnored var ringShown: [UUID: String] = [:]
+    @ObservationIgnored var handoffCount = 0
+    @ObservationIgnored var handoffPolling = false
+    @ObservationIgnored var handoffPollAgain = false
 
     @ObservationIgnored weak var host: AutomationHost?
     @ObservationIgnored let store: BrowserStore
@@ -415,6 +431,10 @@ final class AutomationController {
     }
 
     private func received(_ method: String, _ params: JSONValue, tab id: UUID) {
+        if method == "Runtime.bindingCalled" {
+            handoffBindingCalled(params, tab: id)
+            return
+        }
         if method.hasPrefix("Network.") {
             let finished = network.ingest(method: method, params: params, tab: id.uuidString)
             if isRecordingNetwork { networkStore.append(finished) }

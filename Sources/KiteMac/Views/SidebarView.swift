@@ -291,6 +291,13 @@ struct SidebarView: View {
         if !tabs.isEmpty { claude.automation?.stop(tabs: tabs) }
     }
 
+    /// How many tabs in a folded folder have a step Claude handed the user (handoff), so the folder says so
+    /// while its tab rows are hidden. 0 for an open folder: its rows show it.
+    private func claudeNeedsYouCount(in folder: TabFolder) -> Int {
+        guard !folder.isExpanded, let tabs = claude.automation?.handoffTabs, !tabs.isEmpty else { return 0 }
+        return folder.items.tabs.filter { tabs.contains($0.id) }.count
+    }
+
     /// A tab row's tooltip while Claude drives it, naming the session when it has one; nil when it doesn't.
     private func claudeControlHelp(_ tab: UUID) -> String? {
         guard claudeControlled.contains(tab) else { return nil }
@@ -331,7 +338,8 @@ struct SidebarView: View {
                     onDismissIntro: { store.liveFolderIntroID = nil },
                     claudeActive: claudeShowsActivity(on: folder),
                     onStopClaude: { stopClaude(in: folder) },
-                    isClaudeFolder: folder.ephemeral == true && parent == nil)
+                    isClaudeFolder: folder.ephemeral == true && parent == nil,
+                    claudeNeedsYou: claudeNeedsYouCount(in: folder))
                     .modifier(SidebarDragSource(
                         store: store,
                         row: .init(id: folder.id, kind: .folder(expanded: folder.isExpanded), space: space.id, pinned: true,
@@ -453,7 +461,8 @@ struct SidebarView: View {
             icon: liveFolder.flatMap { _ in LiveFolderIcons.pullRequest(tab, dark: colorScheme == .dark) },
             peek: store.linkPeekBadges[tab.id],
             claudeControl: claudeControlHelp(tab.id),
-            onStopClaude: { claude.automation?.stop(tabs: [tab.id]) }
+            onStopClaude: { claude.automation?.stop(tabs: [tab.id]) },
+            claudeNeedsYou: claude.automation?.waitingStep(on: tab.id).map { "Claude needs you: \($0.instruction)" }
         )
     }
 }
@@ -1317,6 +1326,8 @@ private struct FolderRow: View {
     var onStopClaude: () -> Void = {}
     /// The space's own Claude folder (not a session folder in it): Claude's mark is its icon.
     var isClaudeFolder = false
+    /// Tabs in this folded folder with a step waiting on the user (handoff): Claude's dot at the row's end.
+    var claudeNeedsYou = 0
     @State private var hovering = false
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
@@ -1354,6 +1365,10 @@ private struct FolderRow: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 0)
+            if claudeNeedsYou > 0 && !isRenaming {
+                ClaudeNeedsYouDot()
+                    .help(claudeNeedsYou == 1 ? "Claude needs you in a tab here" : "Claude needs you in \(claudeNeedsYou) tabs here")
+            }
             if claudeActive && hovering && !isRenaming {
                 ClaudeStopButton(action: onStopClaude)
             }
@@ -1477,6 +1492,8 @@ private struct TabRow: View {
     /// favicon and Stop Claude in the menu. Nil when it isn't.
     var claudeControl: String?
     var onStopClaude: () -> Void = {}
+    /// Claude handed the user a step on this tab (handoff): the tooltip for Claude's dot at the row's end.
+    var claudeNeedsYou: String?
     @State private var hovering = false
     @State private var draft = ""
     @State private var titleWidth: CGFloat = 0
@@ -1525,6 +1542,9 @@ private struct TabRow: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 0)
+            if let claudeNeedsYou, !isRenaming {
+                ClaudeNeedsYouDot().help(claudeNeedsYou)
+            }
             if isUnread && !hovering { LiveUnreadDot() }
             if hovering && canReset && !isRenaming {
                 // Arc's tooltip; its icon and placement are unverified (see arc-visual-spec.md).
@@ -1618,6 +1638,18 @@ private struct ClaudeControlRing: View {
                 .opacity(0.55 + 0.45 * phase)
         }
         .accessibilityLabel("Claude is controlling this tab")
+    }
+}
+
+/// A step Claude handed the user waits here (handoff): a dot in Claude's orange at the row's end, like a live
+/// folder's unread dot.
+private struct ClaudeNeedsYouDot: View {
+    var body: some View {
+        Circle()
+            .fill(Color.claude)
+            .frame(width: 7, height: 7)
+            .frame(width: 24, height: 24)
+            .accessibilityLabel("Claude needs you")
     }
 }
 

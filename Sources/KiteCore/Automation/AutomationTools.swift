@@ -79,6 +79,10 @@ extension AutomationCommand.Tool {
             "Puts files from this Mac into a file input. Kite shows the user the paths and asks first."
         case .signIn:
             "When a page needs the user to sign in (a login form, a password or a one-time code), hands the tab to the user: Kite shows it, offers their password manager, and waits (up to 5 minutes) until they've signed in or cancelled. You never see or type the password. Returns where the tab ended up. Never ask the user for a password in chat."
+        case .handoff:
+            "When you stop because the user must do something themselves (your safety check or the user's rules won't let you, it needs their judgment, a secret only they hold, or a command on their computer), hand it to them with this instead of listing steps in chat. Say why you stopped in reason, and give each step: instruction (a few words: \"Approve Apple\", \"Tick Super Administrator\"), the tab, and the control to click by ref, selector or its visible text, or a command for their terminal. Kite rings that control on the page with the step beside it, marks the tabs in the sidebar, and shows a card with your reason, the step, Done and Skip, and the command to copy. A step is done when the user clicks the ringed control or presses Done. Returns at once with a handoff id unless you pass wait; then call handoff_status to hear what they did. Don't do a step yourself after handing it off."
+        case .handoffStatus:
+            "Which steps of a handoff the user has done, skipped or not reached yet, with each tab's URL now. Pass wait (seconds, up to 600) to wait until they're all done or skipped; call again to keep waiting. cancel true takes the steps you no longer need off the user's screen."
         case .readConsole:
             "Console messages and uncaught errors logged since Claude started driving the tab. pattern filters by regex; clear empties the log after reading."
         case .readNetwork:
@@ -214,6 +218,36 @@ extension AutomationCommand.Tool {
             required = ["paths"]
         case .signIn:
             properties = ["tab": tab, "reason": ["type": "string", "description": "Why you need them signed in, shown to the user, e.g. \"to check your order status\"."]]
+        case .handoff:
+            properties = [
+                "reason": ["type": "string", "description": "Why you stopped and need the user, shown to them: \"My safety check won't let me approve nameserver changes.\""],
+                "tab": ["type": "string", "description": "Tab id for steps that don't name one."],
+                "steps": [
+                    "type": "array", "minItems": 1, "maxItems": .number(Double(UserHandoff.maxSteps)),
+                    "description": "In order. Steps on one tab are shown one after another.",
+                    "items": [
+                        "type": "object",
+                        "properties": [
+                            "instruction": ["type": "string", "description": "What to do, in a few words: \"Approve Apple\", \"Click Save\"."],
+                            "tab": ["type": "string", "description": "Tab id the step happens in. Omit for the call's tab (or the front tab), or for a command."],
+                            "ref": Self.ref,
+                            "selector": Self.selector,
+                            "text": ["type": "string", "description": "Visible text of the control to click, when there's no ref: \"Save\"."],
+                            "command": ["type": "string", "description": "A command for the user to run in their terminal, shown with Copy. Takes no tab or target."],
+                            "why": ["type": "string", "description": "Why this step is theirs, when it differs from reason."],
+                        ],
+                        "required": ["instruction"],
+                    ],
+                ],
+                "wait": ["type": "number", "minimum": 0, "maximum": .number(UserHandoff.maxWait), "description": "Seconds to wait for the user before returning (default 0)."],
+            ]
+            required = ["reason", "steps"]
+        case .handoffStatus:
+            properties = [
+                "id": ["type": "string", "description": "The handoff id (h1, h2…). Omit for your latest."],
+                "wait": ["type": "number", "minimum": 0, "maximum": .number(UserHandoff.maxWait), "description": "Seconds to wait for the user to finish (default 0)."],
+                "cancel": ["type": "boolean", "description": "Take the remaining steps off the user's screen."],
+            ]
         case .readConsole:
             properties = ["tab": tab, "pattern": ["type": "string", "description": "Regular expression to match messages."],
                           "only_errors": ["type": "boolean"], "limit": Self.limit, "clear": ["type": "boolean"]]
@@ -267,7 +301,7 @@ extension AutomationCommand.Tool {
     public var isReadOnly: Bool {
         switch self {
         case .tabsContext, .readPage, .find, .getPageText, .screenshot, .readConsole, .readNetwork, .networkLog, .networkRequest, .listDownloads, .listSpaces,
-             .waitFor:
+             .waitFor, .handoffStatus:
             true
         default:
             false

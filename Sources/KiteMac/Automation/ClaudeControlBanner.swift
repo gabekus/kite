@@ -85,6 +85,7 @@ extension BrowserWindowController: AutomationHost {
         pool.onLoadFinished = { [weak automation] id in automation?.pageFinishedLoading(id) }
         claudeButton.automation = automation
         installClaudeControlBorder(automation)
+        installClaudeHandoffCard(automation)
         guard let root = window?.contentView else { return }
         // A strip across the window, rather than a view sized to the banner: the banner's size changes
         // with Claude's state, and an intrinsically sized host stayed 0×0, so its buttons never got clicks.
@@ -214,7 +215,7 @@ private struct ClaudeBannerStrip: View {
 }
 
 /// Lets clicks through to the page everywhere except on the banner's controls.
-private final class BannerHostingView<Content: View>: NSHostingView<Content> {
+final class BannerHostingView<Content: View>: NSHostingView<Content> {
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
         return hit === self ? nil : hit

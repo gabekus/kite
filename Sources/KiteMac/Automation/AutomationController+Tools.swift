@@ -42,6 +42,10 @@ extension AutomationController {
             return try await UIDiagnostics.shared.run(inspection)
         case let .signIn(tab, reason):
             return try await signIn(tab: tab, reason: reason, connection: connection)
+        case .handoff(let request):
+            return try await handOff(request, connection: connection)
+        case let .handoffStatus(id, wait, cancel):
+            return try await handoffStatus(id, wait: wait, cancel: cancel, connection: connection)
         case .batch(let steps):
             return await runBatch(steps, connection: connection)
         default:
