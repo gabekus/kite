@@ -470,8 +470,11 @@ extension AutomationController {
         case (.space, let task?):
             taskTabs[task, default: []].append(id)
         // A task's own pages: its folder, inside the Claude folder of the space it was asked from.
-        case (.currentSpace, let task?), (.claudeFolder(nil), let task?), (.claudeSessionFolder(nil, _), let task?):
-            taskOpenedTab?(task, id)
+        case (.currentSpace, let task?), (.claudeFolder(nil), let task?):
+            taskOpenedTab?(task, id, nil)
+            taskTabs[task, default: []].append(id)
+        case (.claudeSessionFolder(nil, let session), let task?):
+            taskOpenedTab?(task, id, session)
             taskTabs[task, default: []].append(id)
         case (.claudeSessionFolder(_, let session), _):
             store.mutate { state in
@@ -490,7 +493,16 @@ extension AutomationController {
         default:
             break
         }
-        if active { store.mutate { $0.select(tab: id) } }
+        // A ⌘J task's tabs come to the front, the way the user watching it expects: its folder opens
+        // and the new tab is selected. Other clients (background agents) keep opening tabs behind,
+        // unless they pass active.
+        if active || task != nil {
+            store.mutate { state in
+                state.select(tab: id)
+                _ = state.revealTab(id)
+            }
+            if let row = store.state.sidebarRowID(of: id) { store.reveal(row: row) }
+        }
         claudeOpened.insert(id)
         markControlled(id, connection: connection)
         guard let tab = store.state.tab(id) else { throw AutomationError(.failed, "Couldn't open a tab.") }
@@ -516,7 +528,7 @@ extension AutomationController {
             }
         }
         let why = jevPicked == nil ? "" : " (no space was given, so Kite picked it from what each space is for)"
-        return report("Opened a new \(active ? "" : "background ")tab in \(place)\(why).\(hint)", id)
+        return report("Opened a new \(active || task != nil ? "" : "background ")tab in \(place)\(why).\(hint)", id)
     }
 
     /// The space Jev is sure a link belongs in, or nil.

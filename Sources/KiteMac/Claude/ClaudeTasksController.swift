@@ -113,7 +113,7 @@ final class ClaudeTasksController {
             .appendingPathComponent("Work", isDirectory: true)
         tasks = ClaudeTaskList.load(from: fileURL).tasks
         automation.isRunningTask = { [weak self] id in self?.runs[id] != nil }
-        automation.taskOpenedTab = { [weak self] task, tab in self?.file(tab, under: task) }
+        automation.taskOpenedTab = { [weak self] task, tab, session in self?.file(tab, under: task, named: session) }
         updateBadge()
     }
 
@@ -229,12 +229,17 @@ final class ClaudeTasksController {
 
     /// The task's own folder, inside the Claude folder of the space it was asked from (the
     /// selected one for older tasks). Both archive themselves once their tabs go stale.
-    private func file(_ tab: UUID, under id: UUID) {
+    /// The folder is named by Claude (`session`) when it gave a name, else a few words of the goal.
+    private func file(_ tab: UUID, under id: UUID, named session: String? = nil) {
         guard let i = index(id) else { return }
-        let title = tasks[i].title
+        let name = session.flatMap(BrowserState.cleanSessionFolderName) ?? ClaudeTask.folderName(for: tasks[i].title)
         let existing = tasks[i].folderID.flatMap { folder in store.state.folder(matching: folder.uuidString)?.folder.id }
         let space = tasks[i].spaceID.flatMap { store.state.spaceIndex($0) != nil ? $0 : nil } ?? store.state.selectedSpaceID
-        guard let folder = existing ?? store.mutate({ $0.claudeTaskFolder(named: title, inSpace: space) }) else { return }
+        guard let folder = existing ?? store.mutate({ $0.claudeTaskFolder(named: name, inSpace: space) }) else { return }
+        // Claude named its work after the first tab: rename the folder, unless the user already renamed it.
+        if let existing, session != nil, store.state.folder(matching: existing.uuidString)?.folder.name == ClaudeTask.folderName(for: tasks[i].title) {
+            store.mutate { $0.renameFolder(existing, to: name) }
+        }
         store.mutate { _ = $0.moveTab(tab, toFolder: folder) }
         tasks[i].folderID = folder
         if !tasks[i].tabIDs.contains(tab) { tasks[i].tabIDs.append(tab) }

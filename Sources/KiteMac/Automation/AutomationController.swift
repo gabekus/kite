@@ -111,7 +111,8 @@ final class AutomationController {
 
     /// Claude Tasks: whether a task id is one of Kite's running tasks, and where its new tabs go.
     @ObservationIgnored var isRunningTask: ((UUID) -> Bool)?
-    @ObservationIgnored var taskOpenedTab: ((_ task: UUID, _ tab: UUID) -> Void)?
+    /// `session` is the short name Claude gave its work (tabs_create's `session`), which names the task's folder.
+    @ObservationIgnored var taskOpenedTab: ((_ task: UUID, _ tab: UUID, _ session: String?) -> Void)?
 
     struct NeedsConfirmation: Error {
         let request: ConfirmationRequest
