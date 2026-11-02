@@ -28,6 +28,12 @@ Run the setup again any time:
 Using the Claude app instead of Claude Code? Copy the guide and paste it into a chat:
 `/Applications/Kite.app/Contents/Helpers/kite setup --print | pbcopy`.
 
+## Updates
+
+Kite updates itself. It checks for a new version every 8 hours and installs it the next time
+you quit Kite; **Kite › Check for Updates…** checks right away. You won't need another
+folder like this one.
+
 ## If macOS won't open it
 
 This build is signed but not notarized by Apple yet. `install.sh` handles it. If you

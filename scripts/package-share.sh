@@ -21,6 +21,10 @@ if [[ ! -d ThirdParty/cef/Release ]]; then
     exit 1
 fi
 
+# The shared Kite updates itself from GitHub Releases (Sparkle, docs/updates.md), so this is the
+# last build anyone has to be sent by hand.
+export KITE_UPDATE_FEED="${KITE_UPDATE_FEED:-https://github.com/gabekus/kite/releases/latest/download/appcast.xml}"
+
 # The ad blocker links only when its library exists (see install-app.sh).
 ADBLOCK_LIB="Sources/KiteAdblock/rust/target/lib/libkite_adblock.a"
 [[ -f "$ADBLOCK_LIB" ]] || scripts/build-adblock.sh
@@ -38,7 +42,7 @@ if [[ -z "$TEAM" || "$TEAM" == "not set" ]]; then
     echo "warning: Kite.app isn't signed with a Developer ID; the keychain will ask again on every update" >&2
 fi
 
-version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/Kite.app/Contents/Info.plist)"
 commit="$(git rev-parse --short HEAD)"
 OUT="$ROOT/dist/Kite"
 rm -rf "$OUT"

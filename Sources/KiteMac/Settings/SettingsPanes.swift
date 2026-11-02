@@ -19,6 +19,26 @@ struct AccountPane: View {
     }
 }
 
+/// Settings › General › Automatically update my Kite: Sparkle's scheduled checks and silent installs
+/// (SoftwareUpdater). Builds that don't update themselves (Gabe's install-app.sh builds, test builds)
+/// show it switched off and disabled, as before.
+private struct AutoUpdateToggle: View {
+    @State private var isOn = SoftwareUpdater.shared.automaticallyUpdates
+
+    var body: some View {
+        if SoftwareUpdater.shared.isEnabled {
+            SettingsRow(title: "Automatically update my Kite") {
+                SettingsSwitch(isOn: Binding(get: { isOn }, set: {
+                    SoftwareUpdater.shared.automaticallyUpdates = $0
+                    isOn = SoftwareUpdater.shared.automaticallyUpdates
+                }))
+            }
+        } else {
+            UnsupportedToggle("Automatically update my Kite")
+        }
+    }
+}
+
 /// Arc: two sections, "Automatically update my Arc ⓘ" and "Warn before quitting", then
 /// "Previews" and the Profile Settings pointer.
 struct GeneralPane: View {
@@ -28,8 +48,7 @@ struct GeneralPane: View {
         let _ = model.revision
         SettingsPaneContainer {
             SettingsSection {
-                // Kite updates when you ask it to (Check for Updates…, below).
-                UnsupportedToggle("Automatically update my Kite")
+                AutoUpdateToggle()
                 SettingsSeparator()
                 CommandToggle("Warn before quitting", #selector(AppDelegate.toggleQuitWarning(_:)))
             }

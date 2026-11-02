@@ -5,7 +5,8 @@ import SwiftUI
 /// Kite › Check for Updates…: a small status window, like Arc's (Sparkle with its own
 /// `SoftwareUpdaterClient.UpdaterWindowView`): "Checking for updates..." with Cancel, then
 /// "Your browser is up to date", or the new version's notes with Remind Me Later and Download.
-/// Kite asks GitHub releases (see `Updates`) and opens the release in a tab; it never installs.
+/// Kite asks GitHub releases (see `Updates`) and opens the release in a tab; it never installs. Release builds
+/// use Sparkle instead (SoftwareUpdater).
 @MainActor
 final class UpdaterWindow {
     static let shared = UpdaterWindow()
