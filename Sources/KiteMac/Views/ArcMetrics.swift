@@ -130,8 +130,9 @@ enum ArcMetrics {
         /// capture, 1 Nov 2026; Arc draws the strip in its own window, which window captures miss).
         static let spaceDotSize: CGFloat = 8
         static let spaceDotOpacity: Double = 0.23
-        /// The current space's icon is about 14pt tall.
-        static let spaceIconFontSize: CGFloat = 14
+        /// A space's emoji icon: 🏃 measured 11.5×13.5pt in Arc's bar (capture of Gabe's window, 2 Nov 2026) and
+        /// 13×15pt in Kite's at 14pt, so 12.5pt.
+        static let spaceIconFontSize: CGFloat = 12.5
         /// The hover pill sits just above the cells. Unmeasured: its delay.
         static let spaceTipGap: CGFloat = 2
         static let spaceTipDelay: Double = 0.4
