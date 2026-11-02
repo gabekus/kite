@@ -158,6 +158,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.delegate = self
 
         buildViews()
+        startFavoritePreviews()
         window.keyInterceptor = { [weak self] event in self?.tabSwitcher.intercept(event) ?? false }
         store.onChange = { [weak self] in self?.sync() }
         store.onPageChange = { [weak self] id in self?.pageChanged(id) }
