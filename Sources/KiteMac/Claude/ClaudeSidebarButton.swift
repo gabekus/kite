@@ -7,6 +7,12 @@ import SwiftUI
 final class ClaudeButtonModel {
     var tasks: ClaudeTasksController?
     @ObservationIgnored var open: () -> Void = {}
+    /// The button's frame in the sidebar's hosting view (top-left origin), or nil while it isn't shown.
+    /// Claude's control pill sits just above it.
+    @ObservationIgnored var frame: CGRect? {
+        didSet { if frame != oldValue { onFrameChange() } }
+    }
+    @ObservationIgnored var onFrameChange: () -> Void = {}
 }
 
 /// Claude in the sidebar's bottom bar. A yellow dot means Claude isn't set up yet:
@@ -36,6 +42,8 @@ struct ClaudeSidebarButton: View {
             .opacity(tasks.isSettingUp ? 0.4 : 1)
             .disabled(tasks.isSettingUp)
             .help(tasks.isSetUp ? "Claude" : "Set up Claude")
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { model.frame = $0 }
+            .onDisappear { model.frame = nil }
         }
     }
 }
