@@ -19,7 +19,6 @@ public enum AutomationReport {
             self.space = space
             self.section = section
             self.isFront = isFront
-            self.about = about
         }
     }
 
@@ -69,6 +68,7 @@ public enum AutomationReport {
             self.tabs = tabs
             self.folders = folders
             self.isFront = isFront
+            self.about = about
         }
     }
 
