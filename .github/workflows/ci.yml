@@ -5,22 +5,16 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a branch cancels the run it replaces, so stale runs don't hold one of the few
+# macOS runners GitHub gives this repo (runs used to queue 15-20 minutes for one).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   macos:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Test (WebKit build, no CEF download)
-        run: swift test
-
-  # Keeps KiteCore portable for the Windows shell.
-  windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: compnerd/gha-setup-swift@main
-        with:
-          branch: swift-6.2-release
-          tag: 6.2-RELEASE
-      - name: Test KiteCore
         run: swift test

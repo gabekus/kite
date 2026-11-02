@@ -67,7 +67,7 @@ Windows that means:
 
 
 
-1. CI: KiteCore builds and tests on `windows-latest` (done; see `.github/workflows/ci.yml`).
+1. CI: KiteCore builds and tests on `windows-latest` (done; see `.github/workflows/ci-windows.yml`; it runs when KiteCore, its tests or Package.swift change).
 2. Spike: Swift + CEF off-screen + D3D11 shared texture in a bare window,
    measuring frame time and input latency.
 3. Port the bridge to C++ and the shaders to HLSL.
