@@ -3,51 +3,24 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ['docs/**', '**/*.md']
   pull_request:
+    paths-ignore: ['docs/**', '**/*.md']
 
-# A new push cancels the run it replaces (on a PR branch, or on main during a
-# burst of merges), so stale runs stop holding one of the few macOS runners the
-# account gets. Runs used to queue 5-15 minutes for one, then get cancelled.
+# A new push to a PR cancels the run it replaces, so stale runs stop holding one
+# of the few macOS runners the account gets. On main a running build finishes
+# (it saves the cache PRs restore), and only the queued runs in between are
+# replaced by the newest one.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Decides which jobs this change needs. Ubuntu runners start in seconds.
-  changes:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      mac: ${{ steps.mac.outputs.mac }}
-      core: ${{ steps.core.outputs.core }}
-    steps:
-      - uses: actions/checkout@v4
-      # Docs-only changes skip the macOS build.
-      - uses: dorny/paths-filter@v3
-        id: mac
-        with:
-          predicate-quantifier: every
-          filters: |
-            mac:
-              - '!docs/**'
-              - '!**/*.md'
-      - uses: dorny/paths-filter@v3
-        id: core
-        with:
-          filters: |
-            core:
-              - 'Sources/KiteCore/**'
-              - 'Tests/**'
-              - 'Package.swift'
-              - 'Package.resolved'
-              - '.github/workflows/ci.yml'
-
   macos:
-    needs: changes
-    if: needs.changes.outputs.mac == 'true'
     # Set the MACOS_RUNNER repo variable to move this job to another runner
     # (a paid service or a self-hosted Mac) without editing the workflow.
-    runs-on: ${{ vars.MACOS_RUNNER || 'macos-15' }}
+    # Pull requests from forks always use GitHub's runner, never a self-hosted one.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'macos-15' || vars.MACOS_RUNNER || 'macos-15' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -66,45 +39,6 @@ jobs:
       - name: Make the cached build incremental
         run: scripts/ci-restore-mtimes.sh
       - name: Test (WebKit build, no CEF download)
-        run: swift test
-      - name: Save build cache (main only, so every PR starts from main's build)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: git rev-parse HEAD > .build/ci-built-sha
-      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: .build
-          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-
-  # Keeps KiteCore portable for the Windows shell. Only KiteCore and its tests
-  # build on Windows, so the job runs only when those change.
-  windows:
-    needs: changes
-    if: needs.changes.outputs.core == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          filter: blob:none
-      - name: Restore build cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .build
-          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-          restore-keys: spm-${{ runner.os }}-${{ runner.arch }}-
-      - name: Make the cached build incremental
-        run: scripts/ci-restore-mtimes.sh
-      - uses: compnerd/gha-setup-swift@main
-        with:
-          branch: swift-6.2-release
-          tag: 6.2-RELEASE
-      - name: Test KiteCore
-        shell: pwsh
         run: swift test
       - name: Save build cache (main only, so every PR starts from main's build)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

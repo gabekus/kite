@@ -1,0 +1,65 @@
+name: CI (Windows)
+
+# Only KiteCore and its tests build on Windows, so this runs only when they change.
+# A path filter on the trigger (not a separate "changes" job) means no extra job
+# hop before the build starts.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Sources/KiteCore/**'
+      - 'Tests/**'
+      - 'Package.swift'
+      - 'Package.resolved'
+      - 'scripts/ci-restore-mtimes.sh'
+      - '.github/workflows/ci-windows.yml'
+  pull_request:
+    paths:
+      - 'Sources/KiteCore/**'
+      - 'Tests/**'
+      - 'Package.swift'
+      - 'Package.resolved'
+      - 'scripts/ci-restore-mtimes.sh'
+      - '.github/workflows/ci-windows.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # Keeps KiteCore portable for the Windows shell. Only KiteCore and its tests
+  # build on Windows, so the job runs only when those change.
+  windows:
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'windows-latest' || vars.WINDOWS_RUNNER || 'windows-latest' }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: spm-${{ runner.os }}-${{ runner.arch }}-
+      - name: Make the cached build incremental
+        run: scripts/ci-restore-mtimes.sh
+      - uses: compnerd/gha-setup-swift@main
+        with:
+          branch: swift-6.2-release
+          tag: 6.2-RELEASE
+      - name: Test KiteCore
+        shell: pwsh
+        run: swift test
+      - name: Save build cache (main only, so every PR starts from main's build)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: git rev-parse HEAD > .build/ci-built-sha
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
