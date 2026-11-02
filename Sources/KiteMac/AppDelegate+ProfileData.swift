@@ -13,7 +13,7 @@ extension AppDelegate {
             ? state.selectedSpaceID
             : state.spaces(usingProfile: profile).first?.id
         guard let spaceID else { return NSSound.beep() }
-        store.mutate { state in
+        store.mutateWithoutUndo { state in
             let id = state.openTab(url: page.url, in: spaceID)
             state.update(tab: id) { $0.title = page.tabTitle }
         }

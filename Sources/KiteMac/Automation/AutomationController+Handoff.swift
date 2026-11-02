@@ -148,7 +148,7 @@ extension AutomationController {
         handoffCardCollapsed = false
         if let tab = next.step.tab, store.state.tab(tab) != nil {
             focusedHandoffStep = nil
-            store.mutate { $0.select(tab: tab) }
+            store.mutateWithoutUndo { $0.select(tab: tab) }
             pollHandoffsSoon()
         } else {
             focusedHandoffStep = next.step.id
@@ -159,7 +159,7 @@ extension AutomationController {
     /// Show Tab on the card, for a step whose tab isn't in front.
     func showTab(of stepID: String) {
         guard let tab = waitingHandoffSteps.first(where: { $0.step.id == stepID })?.step.tab, store.state.tab(tab) != nil else { return }
-        store.mutate { $0.select(tab: tab) }
+        store.mutateWithoutUndo { $0.select(tab: tab) }
         pollHandoffsSoon()
     }
 

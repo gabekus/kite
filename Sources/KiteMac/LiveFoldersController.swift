@@ -44,23 +44,23 @@ final class LiveFoldersController {
         if let existing = store.state.liveFolder(source, inSpace: index) {
             delete(existing.id)
         } else {
-            let folder = store.mutate { $0.addLiveFolder(source, inSpace: index) }
+            let folder = store.mutateWithoutUndo { $0.addLiveFolder(source, inSpace: index) }
             refresh(folder, force: true)
         }
     }
 
     func delete(_ id: UUID) {
         fetches.removeValue(forKey: id)?.cancel()
-        store.mutate { $0.deleteLiveFolder(id) }
+        store.mutateWithoutUndo { $0.deleteLiveFolder(id) }
     }
 
     func toggleFilter(_ id: UUID, _ filter: LiveFolder.Filter) {
-        store.mutate { $0.toggleLiveFolderFilter(id, filter) }
+        store.mutateWithoutUndo { $0.toggleLiveFolderFilter(id, filter) }
         refresh(id, force: true)
     }
 
     func toggleRepository(_ id: UUID, _ repository: String) {
-        store.mutate { $0.toggleLiveFolderRepository(id, repository) }
+        store.mutateWithoutUndo { $0.toggleLiveFolderRepository(id, repository) }
         refresh(id, force: true)
     }
 
@@ -71,11 +71,11 @@ final class LiveFoldersController {
     /// folder shows its intro popover the first time, 0.1 s later (Arc's presenter delay).
     func tabURLChanged(_ id: UUID, from old: URL?, to new: URL, in window: BrowserStore) {
         guard window === store || window.link != nil, BrowserState.isPullRequestCreatedOrReviewed(from: old, to: new),
-              let filed = store.mutate({ $0.filePullRequest(tab: id) }) else { return }
+              let filed = store.mutateWithoutUndo({ $0.filePullRequest(tab: id) }) else { return }
         // Not from inside the engine's navigation callback: a page made there never loads.
         DispatchQueue.main.async { self.refresh(filed.folder, force: true) }
         guard filed.created, !store.state.hasSeenLiveFolderIntro else { return }
-        store.mutate { $0.hasSeenLiveFolderIntro = true }
+        store.mutateWithoutUndo { $0.hasSeenLiveFolderIntro = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { window.liveFolderIntroID = filed.folder }
     }
 
@@ -103,8 +103,8 @@ final class LiveFoldersController {
                 guard let self else { return }
                 self.fetches[id] = nil
                 switch result {
-                case .success(let items): self.store.mutate { $0.applyLiveFolderResult(id, items: items) }
-                case .failure(let error): self.store.mutate { $0.failLiveFolder(id, error: error.message) }
+                case .success(let items): self.store.mutateWithoutUndo { $0.applyLiveFolderResult(id, items: items) }
+                case .failure(let error): self.store.mutateWithoutUndo { $0.failLiveFolder(id, error: error.message) }
                 }
             }
             fetches[id] = fetch

@@ -189,8 +189,10 @@ enum MainMenu {
         ])
 
         submenu("Edit", [
-            item("Undo", Selector(("undo:")), "z", toTarget: false, id: "undo"),
-            item("Redo", Selector(("redo:")), "z", [.command, .shift], toTarget: false, id: "redo"),
+            // Through the MenuRouter, which gives ⌘Z to the sidebar unless the keyboard is in something
+            // that undoes its own typing (BrowserWindowController+Undo).
+            item("Undo", #selector(MenuRouter.routeUndo(_:)), "z", id: "undo"),
+            item("Redo", #selector(MenuRouter.routeRedo(_:)), "z", [.command, .shift], id: "redo"),
             .separator(),
             item("Cut", #selector(NSText.cut(_:)), "x", toTarget: false, id: "cut"),
             item("Copy", #selector(NSText.copy(_:)), "c", toTarget: false, id: "copy"),

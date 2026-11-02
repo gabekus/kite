@@ -76,6 +76,7 @@ final class MenuRouter: NSObject, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if let undo = validateUndoItem(item) { return undo }
         if let little {
             guard let action = item.action else { return false }
             if [#selector(newWindow(_:)), #selector(newBlankWindow(_:)), #selector(newIncognitoWindow(_:)),

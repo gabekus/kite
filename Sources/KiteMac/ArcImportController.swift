@@ -141,7 +141,7 @@ enum ArcImportController {
             MainActor.assumeIsolated {
                 let skipUntitled = untitledBox?.state != .on
                 let spaces = result.spaces.filter { !(skipUntitled && result.untitledSpaceIDs.contains($0.id)) }
-                store.mutate {
+                store.mutateWithoutUndo {
                     $0.merge(imported: spaces, favorites: result.favorites)
                     $0.mergeSiteSearches(siteSearches)
                     $0.mergeArchive(imported: archive)

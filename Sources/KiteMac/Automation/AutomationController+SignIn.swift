@@ -30,7 +30,7 @@ extension AutomationController {
         defer { signIns[tab.id] = nil }
 
         // Show the tab, and the password manager over it once the tab is in front (it fills the active tab).
-        store.mutate { $0.select(tab: tab.id) }
+        store.mutateWithoutUndo { $0.select(tab: tab.id) }
         NSApp.activate(ignoringOtherApps: true)
         host.window?.makeKeyAndOrderFront(nil)
         if host.canOpenPasswordManager {

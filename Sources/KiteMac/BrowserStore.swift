@@ -66,6 +66,8 @@ final class BrowserStore {
         let spaceID: UUID
         let returnTo: UUID
         var themeChosen = false
+        /// The state before the page opened: finishing makes one "New Space" undo step from it.
+        var before: BrowserState? = nil
     }
     /// The tab whose sidebar title is being edited in place (Arc's Rename… / double-click).
     private(set) var renamingTabID: UUID?
@@ -175,6 +177,65 @@ final class BrowserStore {
         for space in state.spaces where space.name.isEmpty && space.allTabs.isEmpty { state.deleteSpace(space.id) }
     }
 
+    // MARK: Undo
+
+    /// The window's undo manager, for Edit › Undo and Redo of sidebar changes (SidebarUndo). nil
+    /// leaves changes out of undo (no window yet).
+    @ObservationIgnored var undoManager: (() -> UndoManager?)?
+    /// Above zero while changes stay out of the user's undo: Claude's and automation's, Kite's own
+    /// housekeeping, and steps that register their own undo.
+    @ObservationIgnored private var undoSuppression = 0
+    /// The name for the next undo step, when the caller knows better than the guess from the change.
+    @ObservationIgnored private var pendingUndoName: String?
+
+    /// Runs `body` with its changes left out of the user's undo.
+    @discardableResult
+    func withoutUndo<R>(_ body: () -> R) -> R {
+        undoSuppression += 1
+        defer { undoSuppression -= 1 }
+        return body()
+    }
+
+    /// A change that isn't the user's to undo: Claude and automation, AppleScript, pages opening
+    /// tabs, live folders refreshing, imports and settings.
+    @discardableResult
+    func mutateWithoutUndo<R>(_ body: (inout BrowserState) -> R) -> R {
+        withoutUndo { mutate(body) }
+    }
+
+    /// Like `mutate`, with the undo step called `name` ("Undo \(name)").
+    @discardableResult
+    func mutate<R>(undoName name: String, _ body: (inout BrowserState) -> R) -> R {
+        let outer = pendingUndoName
+        pendingUndoName = name
+        defer { pendingUndoName = outer }
+        return mutate(body)
+    }
+
+    /// Registers the change from `before` to now as one undo step called `name`, for changes made
+    /// in several goes (Create a Space).
+    func registerUndoStep(from before: BrowserState, name: String) {
+        guard undoSuppression == 0, let undoManager = undoManager?(), SidebarUndo.isUndoable(from: before, to: state) else { return }
+        registerStep(undoManager, restoring: SidebarSnapshot(before), other: SidebarSnapshot(state), name: name)
+    }
+
+    private func registerUndo(from before: BrowserState, to after: BrowserState) {
+        guard undoSuppression == 0, let undoManager = undoManager?(), !undoManager.isUndoing, !undoManager.isRedoing,
+              SidebarUndo.isUndoable(from: before, to: after) else { return }
+        let name = pendingUndoName ?? SidebarUndo.actionName(from: before, to: after)
+        registerStep(undoManager, restoring: SidebarSnapshot(before), other: SidebarSnapshot(after), name: name)
+    }
+
+    private func registerStep(_ undoManager: UndoManager, restoring target: SidebarSnapshot, other: SidebarSnapshot, name: String) {
+        undoManager.registerUndo(withTarget: self) { store in
+            guard let manager = store.undoManager?() else { return }
+            store.withoutUndo { _ = store.mutate { $0.restoreSidebar(target, other: other) } }
+            // Registered while undoing, this lands on the redo stack, and while redoing back on the undo stack.
+            store.registerStep(manager, restoring: other, other: target, name: name)
+        }
+        undoManager.setActionName(name)
+    }
+
     @discardableResult
     func mutate<R>(_ body: (inout BrowserState) -> R) -> R {
         let before = state
@@ -183,6 +244,7 @@ final class BrowserStore {
         state.syncPinnedURLs()
         // Tidy Tabs' headers lose tabs that left Today, and go when they have none.
         state.pruneTabGroups()
+        registerUndo(from: before, to: state)
         // Rows that come, go or move animate in the sidebar, like Arc's. SwiftUI applies the
         // change on its next pass, so arming after the change is in time.
         if Self.sidebarRows(of: before) != Self.sidebarRows(of: state) { SidebarRowsAnimator.arm() }
@@ -206,7 +268,7 @@ final class BrowserStore {
     /// Archives unpinned tabs left unused longer than the user's setting.
     func archiveStaleTabs() {
         guard let interval = state.archiveAfter.seconds else { return }
-        mutate { $0.archiveStaleTabs(olderThan: interval) }
+        withoutUndo { mutate { $0.archiveStaleTabs(olderThan: interval) } }
     }
 
     /// + › New Space: a nameless space right after this one, shown as Arc's Create a Space page. It keeps
@@ -215,8 +277,10 @@ final class BrowserStore {
         if let creation = spaceCreation { return mutate { $0.selectSpace(creation.spaceID) } }
         if !isSidebarVisible { toggleSidebar() }
         let current = state.selectedSpace
-        let id = mutate { $0.insertSpace(name: "", icon: "", theme: current.theme, profile: current.profile) }
-        spaceCreation = SpaceCreation(spaceID: id, returnTo: current.id)
+        let before = state
+        // The space is only a draft until it's named: Undo New Space comes with Create.
+        let id = mutateWithoutUndo { $0.insertSpace(name: "", icon: "", theme: current.theme, profile: current.profile) }
+        spaceCreation = SpaceCreation(spaceID: id, returnTo: current.id, before: before)
     }
 
     func spaceThemeChosen() { spaceCreation?.themeChosen = true }
@@ -225,17 +289,18 @@ final class BrowserStore {
         guard let creation = spaceCreation else { return }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
-        mutate {
+        mutateWithoutUndo {
             $0.renameSpace(creation.spaceID, to: name)
             if let index = $0.spaceIndex(creation.spaceID) { $0.spaces[index].about = Space.cleanAbout(about) }
         }
         spaceCreation = nil
+        if let before = creation.before { registerUndoStep(from: before, name: "New Space") }
     }
 
     func cancelNewSpace() {
         guard let creation = spaceCreation else { return }
         spaceCreation = nil
-        mutate {
+        mutateWithoutUndo {
             $0.deleteSpace(creation.spaceID)
             $0.selectSpace(creation.returnTo)
         }
