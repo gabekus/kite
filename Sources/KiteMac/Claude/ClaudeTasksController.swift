@@ -188,15 +188,11 @@ final class ClaudeTasksController {
 
     func openInDesktop(_ id: UUID) {
         guard canOpenInDesktop(id), let sessionID = task(id)?.sessionID else { return }
-        Task.detached { [weak self] in
-            let failure = ClaudeDesktop.openSession(sessionID)
-            await MainActor.run {
-                guard let self, let i = self.index(id) else { return }
-                self.tasks[i].append(ClaudeTask.Entry(.note, failure.map { "Couldn't open this in Claude: \($0)" }
-                    ?? "Opened in the Claude app. Carry on there; it's the same conversation."))
-                self.scheduleSave()
-            }
-        }
+        let failure = ClaudeDesktop.openSession(sessionID)
+        guard let i = index(id) else { return }
+        tasks[i].append(ClaudeTask.Entry(.note, failure.map { "Couldn't open this in Claude: \($0)" }
+            ?? "Opened in the Claude app. Carry on there; it's the same conversation."))
+        scheduleSave()
     }
 
     /// Another turn on a finished task, in the same Claude conversation.
