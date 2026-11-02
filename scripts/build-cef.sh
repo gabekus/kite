@@ -8,7 +8,8 @@
 # ThirdParty/codecs/, where fetch-cef.sh picks it up instead of downloading.
 #
 # Usage: scripts/build-cef.sh [WORK_DIR]   (default ~/cef-build; delete it afterwards)
-# Running it again resumes: the checkout and build output are reused.
+# Stop it any time (ctrl-c); running it again resumes: the checkout and the
+# finished part of the compile are reused.
 set -euo pipefail
 
 # Keep in step with scripts/fetch-cef.sh.
@@ -32,6 +33,8 @@ curl -fsSL -o automate-git.py \
 # is_official_build matches the Spotify builds; PGO profiles are required with it.
 export GN_DEFINES="is_official_build=true proprietary_codecs=true ffmpeg_branding=Chrome symbol_level=0"
 export CEF_ARCHIVE_FORMAT=tar.bz2
+# --force-build: without it a rerun on an unchanged checkout skips the build. Ninja
+# only compiles what's left, so a resumed build picks up where it stopped.
 python3 automate-git.py \
     --download-dir="$WORK/chromium_git" \
     --depot-tools-dir="$WORK/depot_tools" \
@@ -44,7 +47,8 @@ python3 automate-git.py \
     --build-target=cefsimple \
     --minimal-distrib-only \
     --no-distrib-docs \
-    --no-distrib-symbols
+    --no-distrib-symbols \
+    --force-build
 
 archive="$WORK/chromium_git/chromium/src/cef/binary_distrib/$NAME.tar.bz2"
 if [[ ! -f "$archive" ]]; then
