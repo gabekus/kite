@@ -55,6 +55,8 @@ final class Adblocker {
         var uboRelease: String?
         /// `engineFormat` the cached engine was built with.
         var engineFormat: Int?
+        /// `listsFormat` the lists on disk were downloaded with.
+        var listsFormat: Int?
         /// `BrowserNags.fingerprint` of the copy of that list in the cached engine.
         var browserNags: String?
 
@@ -68,8 +70,11 @@ final class Adblocker {
 
     /// Bump when the Rust build changes how lists compile (e.g. adblock-rust
     /// features), so an engine cached by an older Kite is rebuilt, not reused.
-    /// 3: engines include `BrowserNags`.
-    private nonisolated static let engineFormat = 3
+    /// 3: engines include `BrowserNags`. 4: lists go through `FilterListDirectives`.
+    private nonisolated static let engineFormat = 4
+    /// Bump when downloads change shape, so lists saved by an older Kite are fetched again.
+    /// 2: sublists inlined, `!#if`s applied.
+    private nonisolated static let listsFormat = 2
 
     init(directory: URL) {
         self.directory = directory
@@ -164,7 +169,10 @@ final class Adblocker {
     /// downloaded. Only WebKit's rule conversion needs them after the engine is
     /// built, so they're read from disk on demand instead of kept in memory.
     nonisolated func readLists() -> [(text: Data, trusted: Bool)] {
-        let downloaded = FilterList.defaults.compactMap { list in (try? Data(contentsOf: listURL(list))).map { ($0, list.trusted) } }
+        // Lists saved before `listsFormat` 2 still have their `!#if`s; applying them again is a no-op.
+        let downloaded = FilterList.defaults.compactMap { list in
+            (try? Data(contentsOf: listURL(list))).map { (Data(FilterListDirectives.apply(String(decoding: $0, as: UTF8.self)).utf8), list.trusted) }
+        }
         return downloaded.isEmpty ? [] : BrowserNags.withBuiltIn(downloaded)
     }
 
@@ -209,6 +217,29 @@ final class Adblocker {
         onEngineChange.forEach { $0() }
     }
 
+    /// One list with its `!#if`s applied and its sublists (`!#include`) inlined, or
+    /// nil if it didn't download. A sublist that fails fails the whole list, so a
+    /// good copy on disk isn't replaced by a partial one.
+    private nonisolated static func download(_ list: FilterList, session: URLSession) async -> Data? {
+        func fetch(_ url: URL) async -> String? {
+            guard let (data, response) = try? await session.data(from: url),
+                  (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return String(decoding: data, as: UTF8.self)
+        }
+        guard let raw = await fetch(list.url), FilterList.looksValid(raw) else { return nil }
+        let text = FilterListDirectives.apply(raw)
+        let includes = FilterListDirectives.includes(in: text, of: list.url).filter { $0.host() == list.url.host() }
+        var sublists: [URL: String] = [:]
+        for url in includes {
+            guard let body = await fetch(url), FilterListDirectives.looksLikeSublist(body) else {
+                NSLog("Kite: couldn't download \(url.lastPathComponent) for filter list \(list.id)")
+                return nil
+            }
+            sublists[url] = FilterListDirectives.apply(body)
+        }
+        return Data(FilterListDirectives.expand(text, of: list.url, sublists: sublists).utf8)
+    }
+
     func refreshIfDue(force: Bool = false) async {
         guard !refreshing else { return }
         refreshing = true
@@ -218,16 +249,12 @@ final class Adblocker {
         var changed = false
         try? FileManager.default.createDirectory(at: listsDirectory, withIntermediateDirectories: true)
 
-        if force || engine == nil || FilterList.isRefreshDue(lastUpdated: status.listsUpdatedAt, now: now) {
+        if force || engine == nil || status.listsFormat != Self.listsFormat
+            || FilterList.isRefreshDue(lastUpdated: status.listsUpdatedAt, now: now) {
             var fetched = 0
             await withTaskGroup(of: (FilterList, Data?).self) { group in
                 for list in FilterList.defaults {
-                    group.addTask { [session] in
-                        guard let (data, response) = try? await session.data(from: list.url),
-                              (response as? HTTPURLResponse)?.statusCode == 200,
-                              FilterList.looksValid(String(decoding: data.prefix(4096), as: UTF8.self)) else { return (list, nil) }
-                        return (list, data)
-                    }
+                    group.addTask { [session] in (list, await Self.download(list, session: session)) }
                 }
                 for await (list, data) in group {
                     guard let data else { NSLog("Kite: couldn't update filter list \(list.id)"); continue }
@@ -236,7 +263,10 @@ final class Adblocker {
                 }
             }
             // Keep retrying hourly until every list came down; a partial update still rebuilds.
-            if fetched == FilterList.defaults.count { status.listsUpdatedAt = now }
+            if fetched == FilterList.defaults.count {
+                status.listsUpdatedAt = now
+                status.listsFormat = Self.listsFormat
+            }
             changed = fetched > 0
         }
 

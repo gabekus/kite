@@ -52,9 +52,10 @@ import Testing
 }
 
 @Suite struct FilterListTests {
-    @Test func defaultsAreTheFourApprovedLists() {
-        #expect(FilterList.defaults.map(\.id) == ["easylist", "easyprivacy", "ublock-filters", "ublock-quick-fixes"])
-        #expect(FilterList.defaults.filter(\.trusted).map(\.id) == ["ublock-filters", "ublock-quick-fixes"])
+    @Test func defaultsAreUBlockOriginsDefaultLists() {
+        let ublock = ["ublock-filters", "ublock-quick-fixes", "ublock-privacy", "ublock-badware", "ublock-unbreak"]
+        #expect(FilterList.defaults.map(\.id) == ["easylist", "easyprivacy"] + ublock)
+        #expect(FilterList.defaults.filter(\.trusted).map(\.id) == ublock)
         #expect(Set(FilterList.defaults.map(\.id)).count == FilterList.defaults.count)
     }
 
@@ -297,5 +298,70 @@ import JavaScriptCore
     @Test func fingerprintIsStableHex() {
         #expect(BrowserNags.fingerprint == BrowserNags.fingerprint)
         #expect(!BrowserNags.fingerprint.isEmpty && BrowserNags.fingerprint.allSatisfy(\.isHexDigit))
+    }
+}
+
+@Suite struct FilterListDirectivesTests {
+    @Test func evaluatesLikeUBlockOnChromium() {
+        #expect(FilterListDirectives.evaluate("env_chromium"))
+        #expect(FilterListDirectives.evaluate("!env_firefox"))
+        #expect(!FilterListDirectives.evaluate("cap_html_filtering"))
+        #expect(!FilterListDirectives.evaluate("ext_ubol"))
+        #expect(FilterListDirectives.evaluate("env_firefox || env_chromium"))
+        #expect(!FilterListDirectives.evaluate("env_chromium && env_mobile"))
+        #expect(FilterListDirectives.evaluate("(!env_mv3 && !ext_ubol)"))
+        #expect(!FilterListDirectives.evaluate("adguard"))
+        #expect(!FilterListDirectives.evaluate(""))
+        #expect(!FilterListDirectives.evaluate("env_chromium &&"))
+    }
+
+    @Test func keepsOnlyTheBranchesThatApply() {
+        let list = """
+            a.com##.ad
+            !#if !env_mv3
+            !#if env_firefox
+            firefox.com##+js(json-prune, legacyImportant)
+            !#endif
+            !#endif
+            !#if !cap_html_filtering
+            youtube.com##+js(trusted-rpfr, x, y)
+            !#else
+            ||youtube.com/watch?$xhr,replace=/x/y/
+            youtube.com##^script:has-text(fetch)
+            !#endif
+            !#if env_mobile
+            !#include filters-mobile.txt
+            !#endif
+            b.com##.ad
+            """
+        #expect(FilterListDirectives.apply(list) == """
+            a.com##.ad
+            youtube.com##+js(trusted-rpfr, x, y)
+            b.com##.ad
+            """)
+    }
+
+    @Test func inlinesSublistsFromTheSameFolder() {
+        let list = URL(string: "https://ublockorigin.github.io/uAssets/filters/filters.txt")!
+        let text = """
+            ! Title: uBlock filters
+            !#include filters-2025.txt
+            !#include ../other/evil.txt
+            !#include https://example.com/x.txt
+            end.com##.ad
+            """
+        let sub = URL(string: "https://ublockorigin.github.io/uAssets/filters/filters-2025.txt")!
+        #expect(FilterListDirectives.includes(in: text, of: list) == [sub])
+        let expanded = FilterListDirectives.expand(text, of: list, sublists: [sub: "x.com##.ad\ny.com##.ad"])
+        #expect(expanded == """
+            ! Title: uBlock filters
+            x.com##.ad
+            y.com##.ad
+            !#include ../other/evil.txt
+            !#include https://example.com/x.txt
+            end.com##.ad
+            """)
+        #expect(!FilterListDirectives.looksLikeSublist("<!DOCTYPE html><html>"))
+        #expect(FilterListDirectives.looksLikeSublist("! SECTION: ads\nx.com##.ad"))
     }
 }
