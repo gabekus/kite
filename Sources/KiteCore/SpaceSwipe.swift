@@ -111,3 +111,4 @@ public struct SpaceSwipe: Equatable, Sendable {
         return built.contains(index) ? cover(index) / total : 0
     }
 }
+// ci-cache probe
