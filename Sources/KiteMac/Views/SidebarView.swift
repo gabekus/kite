@@ -329,6 +329,7 @@ struct SidebarView: View {
                     onDelete: { actions.deleteFolder(folder.id) },
                     showsIntro: store.liveFolderIntroID == folder.id,
                     onDismissIntro: { store.liveFolderIntroID = nil },
+                    isClaudeFolder: folder.ephemeral == true && parent == nil,
                     claudeActive: claudeShowsActivity(on: folder),
                     onStopClaude: { stopClaude(in: folder) })
                     .modifier(SidebarDragSource(
@@ -1313,14 +1314,16 @@ private struct FolderRow: View {
     /// with Stop on hover and in the menu.
     var claudeActive = false
     var onStopClaude: () -> Void = {}
+    /// The space's own Claude folder (not a session folder in it): Claude's mark is its icon.
+    var isClaudeFolder = false
     @State private var hovering = false
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
         HStack(spacing: M.iconTextGap) {
-            if claudeActive {
-                ClaudeWorkingMark()
+            if claudeActive || isClaudeFolder {
+                ClaudeWorkingMark(turning: claudeActive)
                     .frame(width: M.iconSize, height: M.iconSize)
                     .transition(.opacity)
             } else {
@@ -1584,17 +1587,20 @@ private struct TabRow: View {
     }
 }
 
-/// Claude's mark in Claude's orange, turning slowly while Claude works (a Claude folder's icon).
+/// Claude's mark in Claude's orange: the Claude folder's icon, and a session folder's while Claude works
+/// in it, when it turns slowly.
 private struct ClaudeWorkingMark: View {
+    var turning = true
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-            let turns = context.date.timeIntervalSinceReferenceDate / 6
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !turning)) { context in
+            let turns = turning ? context.date.timeIntervalSinceReferenceDate / 6 : 0
             ClaudeMark()
                 .stroke(Color.claude, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
                 .frame(width: 13, height: 13)
                 .rotationEffect(.degrees(turns.truncatingRemainder(dividingBy: 1) * 360))
         }
-        .accessibilityLabel("Claude is working")
+        .accessibilityLabel(turning ? "Claude is working" : "Claude")
     }
 }
 
