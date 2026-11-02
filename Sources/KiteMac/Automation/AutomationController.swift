@@ -80,7 +80,7 @@ final class AutomationController {
 
     @ObservationIgnored weak var host: AutomationHost?
     @ObservationIgnored let store: BrowserStore
-    @ObservationIgnored private let supportDirectory: URL
+    @ObservationIgnored let supportDirectory: URL
     @ObservationIgnored private var server: AutomationServer?
     /// Tabs the user pressed Stop on. Cleared when the setting is turned off and on again.
     @ObservationIgnored private var revoked: Set<UUID> = []
@@ -151,6 +151,8 @@ final class AutomationController {
         self.store = store
         self.supportDirectory = supportDirectory
         settings = AutomationSettings.load(from: AutomationSettings.fileURL(supportDirectory: supportDirectory))
+        handoffs = Handoff.load(from: Handoff.fileURL(supportDirectory: supportDirectory))
+        handoffCount = Handoff.lastNumber(in: handoffs)
     }
 
     var socketURL: URL { AutomationWire.socketURL(supportDirectory: supportDirectory) }
@@ -161,6 +163,8 @@ final class AutomationController {
     /// watchdog keeps retrying, so "Allow Claude to Control the Browser" stays
     /// on across restarts and updates until the user turns it off.
     func start() {
+        // Steps Claude handed over before Kite quit show again, whether or not Claude is connected now.
+        if handoffs.contains(where: { !$0.isFinished }) { startHandoffPoller() }
         if isEnabled {
             if !openSocket(interactive: false) {
                 NSLog("Kite: Claude's connection didn't open at launch; retrying.")

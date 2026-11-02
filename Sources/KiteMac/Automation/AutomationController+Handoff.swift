@@ -5,9 +5,6 @@ import KiteCore
 // control in the page, a mark on the tab in the sidebar, and a card with why Claude stopped. See `UserHandoff`.
 
 extension AutomationController {
-    /// Finished handoffs kept for handoff_status.
-    private static let keptHandoffs = 20
-
     func handOff(_ request: UserHandoff.Request, connection: Int) async throws -> ToolOutput {
         guard host?.window != nil else { throw AutomationError(.failed, "Kite has no window open.") }
         handoffCount += 1
@@ -24,12 +21,8 @@ extension AutomationController {
             steps.append(step)
         }
         let handoff = Handoff(id: id, reason: request.reason, session: sessionFolders[connection], steps: steps)
-        handoffs.append(handoff)
-        let finished = handoffs.filter(\.isFinished)
-        if finished.count > Self.keptHandoffs {
-            let drop = Set(finished.prefix(finished.count - Self.keptHandoffs).map(\.id))
-            handoffs.removeAll { drop.contains($0.id) }
-        }
+        handoffs = Handoff.pruned(handoffs + [handoff])
+        saveHandoffs()
         handoffCardCollapsed = false
         // The tab in front may be one of them: show its step at once rather than on the next look.
         startHandoffPoller()
@@ -41,7 +34,7 @@ extension AutomationController {
         let mine = sessionFolders[connection]
         guard let handoff = id.flatMap({ id in handoffs.last { $0.id == id.lowercased() } })
             ?? handoffs.last(where: { mine != nil && $0.session == mine }) ?? handoffs.last else {
-            throw AutomationError(.notFound, id.map { "There's no handoff \($0) (Kite forgets them when it quits)." }
+            throw AutomationError(.notFound, id.map { "There's no handoff \($0) (Kite keeps them for a week)." }
                 ?? "There's no handoff. Call handoff first.")
         }
         if cancel {
@@ -82,11 +75,24 @@ extension AutomationController {
 
     private func update(_ id: String, _ change: (inout Handoff) -> Void) {
         guard let index = handoffs.firstIndex(where: { $0.id == id }) else { return }
+        let before = handoffs[index]
         change(&handoffs[index])
+        // Only what the user or Claude did is saved; the ring finding its control or not isn't.
+        if handoffs[index].steps.map(\.state) != before.steps.map(\.state) { saveHandoffs() }
         if handoffs[index].isFinished, let focused = focusedHandoffStep, focused.hasPrefix(id + ".") { focusedHandoffStep = nil }
     }
 
     private func handoffID(of step: String) -> String { String(step.prefix { $0 != "." }) }
+
+    // MARK: Across launches
+
+    func saveHandoffs() {
+        do {
+            try Handoff.save(handoffs, to: Handoff.fileURL(supportDirectory: supportDirectory))
+        } catch {
+            NSLog("Kite: couldn't save Claude's handoffs: \(error)")
+        }
+    }
 
     // MARK: What the card and the sidebar ask
 
@@ -193,8 +199,8 @@ extension AutomationController {
     private func pollHandoffsOnce() async {
         guard let host else { return }
         let live = store.state.allTabIDs
-        // A closed tab takes its steps with it.
-        for handoff in handoffs where !handoff.isFinished {
+        // A closed tab takes its steps with it (not while the window's tabs haven't loaded yet).
+        for handoff in handoffs where !handoff.isFinished && !live.isEmpty {
             update(handoff.id) { $0.finishAll(.skipped, how: "the user closed the tab") { $0.tab.map { !live.contains($0) } ?? false } }
         }
         for (id, page) in host.livePages {
