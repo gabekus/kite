@@ -1599,7 +1599,7 @@ private struct ClaudeWorkingMark: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !turning)) { context in
             let turns = turning ? context.date.timeIntervalSinceReferenceDate / 6 : 0
             ClaudeMark()
-                .stroke(Color.claude, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                .fill(Color.claude)
                 .frame(width: 13, height: 13)
                 .rotationEffect(.degrees(turns.truncatingRemainder(dividingBy: 1) * 360))
         }
