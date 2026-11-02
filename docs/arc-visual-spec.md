@@ -3560,3 +3560,8 @@ Ghidra decompile of `SidebarDock.SidebarDockCollectionViewLayout`.
   doesn't do this yet.
 - Not observed: the slide and landing durations, a release off the bar (Kite slides the icon home), and
   whether dragging a non-current space selects it (Kite doesn't).
+- The name pill over a bar icon is a window of its own in Arc (`SidebarDockItemTooltipView`; a 265×93
+  window at x −22 for the first icon, 1 Nov 2026): the pill is centred on the icon, its bottom 2pt above
+  the cell, and it isn't cut off where it passes the browser window's edge. Kite shows it in a child
+  panel (`SpaceTipWindow`) for the same reason. Arc's pill for a "Personal" space with a "Personal"
+  profile chip: 200pt wide, 28pt tall, chip 21pt tall, keycaps 19pt with 3pt between them.

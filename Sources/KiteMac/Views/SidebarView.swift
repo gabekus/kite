@@ -1681,6 +1681,8 @@ private struct SpaceBar: View {
     @State private var iconRoom: CGFloat = .infinity
     /// A space icon being dragged to a new place in the strip, and the strip's frame (bar points).
     @State private var iconDrag: SpaceIconDrag?
+    /// The pointer during that drag, apart from `iconDrag` so a move redraws the dragged icon and nothing else.
+    @State private var pointer = SpaceIconPointer()
     @State private var stripFrame: CGRect = .zero
     @State private var roomFrame: CGRect = .zero
 
@@ -1800,13 +1802,13 @@ private struct SpaceBar: View {
             .onChanged { value in
                 let state = store.state
                 guard state.spaces.count > 1, let index = state.spaceIndex(id), iconDrag?.landing == nil else { return }
+                pointer.location = value.location
                 if iconDrag == nil {
                     // Picked up where it sat: its open slot is its own until the pointer says otherwise.
-                    iconDrag = SpaceIconDrag(id: id, start: value.startLocation, location: value.startLocation,
+                    iconDrag = SpaceIconDrag(id: id, start: value.startLocation,
                                              pickedUp: slotCenter(index, slots: state.spaces.count, state: state),
                                              target: index)
                 }
-                iconDrag?.location = value.location
                 let aim = target(at: value.location, state: state)
                 if aim != iconDrag?.target {
                     withAnimation(Self.slide) { iconDrag?.target = aim }
@@ -1823,7 +1825,6 @@ private struct SpaceBar: View {
                 iconDrag = moving
                 withAnimation(Self.slide) {
                     iconDrag?.target = slot
-                    iconDrag?.location = value.location
                 } completion: {
                     if store.state.spaceIndex(moving.id) != slot {
                         store.mutate { $0.moveSpace(moving.id, to: slot) }
@@ -1836,30 +1837,48 @@ private struct SpaceBar: View {
     /// Unverified: Arc's collection view animates the slide and the landing; its duration isn't measured.
     private static let slide = Animation.easeInOut(duration: 0.2)
 
-    /// The dragged icon, following the pointer from where it was picked up, then settling into its slot.
     @ViewBuilder
     private func dragGhost(_ state: BrowserState) -> some View {
         if let iconDrag, let space = state.spaces.first(where: { $0.id == iconDrag.id }) {
-            let center = iconDrag.landing ?? CGPoint(x: iconDrag.pickedUp.x + iconDrag.location.x - iconDrag.start.x,
-                                                     y: iconDrag.pickedUp.y + iconDrag.location.y - iconDrag.start.y)
-            // Arc's drag image is the cell with its rounded backing (dock-region capture, 1 Nov 2026).
-            SpaceCellIcon(space: space, highlight: SpaceCellHighlight(store: store, swipe: swipe, spaceID: space.id))
-                .frame(width: M.spaceCellSize.width, height: M.spaceCellSize.height)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(.primary.opacity(0.08))
-                    .frame(width: M.bottomButtonSize, height: M.bottomButtonSize))
-                .offset(x: center.x - M.spaceCellSize.width / 2, y: center.y - M.spaceCellSize.height / 2)
-                .allowsHitTesting(false)
+            SpaceDragGhost(drag: iconDrag, pointer: pointer, space: space,
+                           highlight: SpaceCellHighlight(store: store, swipe: swipe, spaceID: space.id))
         }
     }
+}
+
+/// The dragged icon, following the pointer from where it was picked up, then settling into its slot.
+/// Its own view, reading the pointer, so a move redraws it alone and not the bar.
+private struct SpaceDragGhost: View {
+    let drag: SpaceIconDrag
+    let pointer: SpaceIconPointer
+    let space: Space
+    let highlight: SpaceCellHighlight
+
+    var body: some View {
+        let center = drag.landing ?? CGPoint(x: drag.pickedUp.x + pointer.location.x - drag.start.x,
+                                             y: drag.pickedUp.y + pointer.location.y - drag.start.y)
+        // Arc's drag image is the cell with its rounded backing (dock-region capture, 1 Nov 2026).
+        SpaceCellIcon(space: space, highlight: highlight)
+            .frame(width: M.spaceCellSize.width, height: M.spaceCellSize.height)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.primary.opacity(0.08))
+                .frame(width: M.bottomButtonSize, height: M.bottomButtonSize))
+            .offset(x: center.x - M.spaceCellSize.width / 2, y: center.y - M.spaceCellSize.height / 2)
+            .allowsHitTesting(false)
+    }
+}
+
+@MainActor
+@Observable
+private final class SpaceIconPointer {
+    var location: CGPoint = .zero
 }
 
 /// A space icon on its way to a new place in the strip.
 private struct SpaceIconDrag {
     var id: UUID
-    /// Where the pointer went down and where it is (bar points).
+    /// Where the pointer went down (bar points).
     var start: CGPoint
-    var location: CGPoint
     /// The centre of the icon's cell when it was picked up.
     var pickedUp: CGPoint
     /// The open slot, nil while the pointer is off the strip.
@@ -1899,7 +1918,7 @@ private struct SpaceCell: View {
     var dragging = false
     let action: () -> Void
     @State private var hovering = false
-    @State private var showsTip = false
+    @State private var anchor: NSView?
 
     var body: some View {
         Button(action: action) {
@@ -1911,26 +1930,24 @@ private struct SpaceCell: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .background(AnchorView(view: $anchor))
         .onHover { inside in
             hovering = inside
             if inside {
-                DispatchQueue.main.asyncAfter(deadline: .now() + M.spaceTipDelay) { if hovering { showsTip = true } }
+                DispatchQueue.main.asyncAfter(deadline: .now() + M.spaceTipDelay) { if hovering && !dragging { showTip() } }
             } else {
-                showsTip = false
+                SpaceTipWindow.shared.hide(space.id)
             }
         }
-        .onChange(of: dragging) { _, dragging in if dragging { showsTip = false } }
-        .overlay(alignment: .bottom) {
-            if showsTip && !dragging {
-                SpaceTip(space: space, number: number, profileName: profileName)
-                    .fixedSize()
-                    .offset(y: -M.spaceCellSize.height - M.spaceTipGap)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
-            }
-        }
-        .zIndex(showsTip ? 1 : 0)
+        .onChange(of: dragging) { _, dragging in if dragging { SpaceTipWindow.shared.hide(space.id) } }
+        .onDisappear { SpaceTipWindow.shared.hide(space.id) }
         .accessibilityLabel(space.name)
+    }
+
+    private func showTip() {
+        guard let anchor else { return }
+        SpaceTipWindow.shared.show(SpaceTip(space: space, number: number, profileName: profileName),
+                                   for: space.id, above: anchor, gap: M.spaceTipGap)
     }
 }
 
