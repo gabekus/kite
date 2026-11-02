@@ -140,10 +140,13 @@ import Testing
         var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0]),
                                           Space(name: "Personal", icon: "🏠", theme: Theme.presets[1])])
         let komado = state.spaces[0].id
-        let folder = try #require(state.claudeFolder(inSpace: komado))
-        #expect(state.claudeFolder(inSpace: komado) == folder)
+        let made = state.claudeFolder(inSpace: komado)
+        let folder = try #require(made)
+        let again = state.claudeFolder(inSpace: komado)
+        #expect(again == folder)
         let tab = state.openTab(url: URL(string: "https://dash.cloudflare.com"), in: komado, select: false)
-        #expect(state.moveTab(tab, toFolder: folder))
+        let moved = state.moveTab(tab, toFolder: folder)
+        #expect(moved)
         #expect(state.spaces.map(\.name) == ["Komado", "Personal"])
         #expect(state.folders(inSpace: 0).map(\.name) == ["Claude"])
         #expect(state.location(of: tab)?.space == 0)
