@@ -7,12 +7,13 @@ on:
   pull_request:
     paths-ignore: ['docs/**', '**/*.md']
 
-# A new push cancels the run it replaces (on a PR branch, or on main during a
-# burst of merges), so stale runs stop holding one of the few macOS runners the
-# account gets. Runs used to queue 5-15 minutes for one, then get cancelled.
+# A new push to a PR cancels the run it replaces, so stale runs stop holding one
+# of the few macOS runners the account gets. On main a running build finishes
+# (it saves the cache PRs restore), and only the queued runs in between are
+# replaced by the newest one.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   macos:
