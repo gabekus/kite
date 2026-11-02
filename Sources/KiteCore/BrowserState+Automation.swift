@@ -164,6 +164,12 @@ extension BrowserState {
 }
 
 extension BrowserState {
+    /// Whether a tab sits in an ephemeral (Claude) folder, at any depth.
+    public func isInEphemeralFolder(_ id: UUID) -> Bool {
+        guard let s = location(of: id)?.space else { return false }
+        return folders(inSpace: s).contains { $0.ephemeral == true && $0.items.contains { $0.id == id } }
+    }
+
     /// Removes a pinned tab (in or out of a folder) for good, without archiving it: a tab a
     /// Claude task opened in its folder and then closed. Pinned tabs otherwise only unload on close.
     /// With `droppingEmptyFolder`, a folder the tab leaves empty goes too, so a task whose
