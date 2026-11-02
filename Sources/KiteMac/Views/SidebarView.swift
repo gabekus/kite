@@ -620,7 +620,8 @@ private struct AddressPill: View {
     /// The installable app's name; nil hides the install icon.
     var installAppName: String?
     var installApp: ((NSView) -> Void)?
-    /// The field's buttons, all but extensions, show only while the pointer is over the sidebar.
+    /// The field's buttons, all but the password manager and extensions, show only while the
+    /// pointer is over the sidebar.
     var sidebarHovered = false
     // Settings → Advanced → Toolbar can hide each button; their commands still work from the menu bar.
     @AppStorage(ChromeButton.passwordManager.hiddenKey) private var hidesPasswordManager = false
@@ -643,14 +644,13 @@ private struct AddressPill: View {
             .buttonStyle(.plain)
             // Arc's buttons at the field's right end are 30pt wide on a 28pt pitch. Arc shows them only
             // while the sidebar is hovered (its URL row's `sidebarHovered`); Kite always shows the
-            // extensions button, rightmost (Gabe's call, 2026-11-01).
+            // password manager's key and the extensions button, rightmost (Gabe's calls, 2026-11-01/02).
             let isDark = hidesDarkPage ? nil : isDark
             let showSiteControls = hidesSiteControls ? nil : showSiteControls
             let showExtensions = hidesExtensions ? nil : showExtensions
             let revealed = sidebarHovered || SiteControlsPopover.isShown
             HStack(spacing: -2) {
                 HStack(spacing: -2) {
-                    if let accessory, !hidesPasswordManager { accessory }
                     if let isDark {
                         DarkPageToggle(isDark: isDark, action: toggleDark)
                     }
@@ -666,11 +666,13 @@ private struct AddressPill: View {
                 .allowsHitTesting(revealed)
                 .accessibilityHidden(!revealed)
                 .animation(.easeInOut(duration: M.urlFieldButtonsFade), value: revealed)
+                if let accessory, !hidesPasswordManager { accessory }
                 if let showExtensions {
                     ExtensionsFieldButton(action: showExtensions)
                 }
             }
-            .padding(.trailing, isDark != nil || showExtensions != nil || showSiteControls != nil || installAppName != nil ? 4 : 0)
+            .padding(.trailing, isDark != nil || showExtensions != nil || showSiteControls != nil || installAppName != nil
+                || (accessory != nil && !hidesPasswordManager) ? 4 : 0)
         }
         .modifier(ChromeFill(strength: M.fieldFill))
     }
