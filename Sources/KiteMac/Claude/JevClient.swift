@@ -24,6 +24,9 @@ final class JevClient: Sendable {
         self.timeout = timeout
     }
 
+    /// Read once, the first time anything asks: one Keychain lookup per launch.
+    static let shared: JevClient? = fromKeychain()
+
     static func fromKeychain() -> JevClient? {
         let environment = ProcessInfo.processInfo.environment
         if let key = environment["TYPESAFE_API_KEY"], !key.isEmpty { return JevClient(key: key) }

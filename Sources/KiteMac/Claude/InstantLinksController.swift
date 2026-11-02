@@ -33,9 +33,10 @@ final class InstantLinksController {
         // Arc's loading row in Today until the results replace it.
         let row = InstantLinks.Pending(spaceID: store.state.selectedSpace.id)
         store.instantLinksRows.insert(row, at: 0)
+        // Jev answers "search it as typed?" in a fraction of a second, so most inputs skip Claude.
+        let jev = JevClient.shared
         Task {
-            let plan = await Task.detached { Self.plan(for: input, directory: directory) }.value
-                ?? .fallback(for: input)
+            let plan = await Self.plan(for: input, directory: directory, jev: jev)
             var urls: [URL] = []
             for query in plan.queries {
                 guard let page = InstantLinks.googleURL(for: query, template: Self.searchURLTemplate) else { continue }
@@ -65,7 +66,19 @@ final class InstantLinksController {
         return environment["KITE_TEST_INSTANT_LINKS_SEARCH_URL"]
     }
 
-    // MARK: Claude
+    // MARK: Jev, then Claude
+
+    /// One thing typed plainly is searched as typed (Jev decides); anything that needs
+    /// rewriting goes to Claude. No Jev, or Jev unsure: Claude, as before.
+    nonisolated private static func plan(for input: String, directory: URL, jev: JevClient?) async -> InstantLinks.Plan {
+        if let jev {
+            let (state, questions) = Jev.instantLinks(input: input)
+            if let answers = try? await jev.ask(state: state, questions: questions), Jev.searchAsTyped(answers) {
+                return .fallback(for: input)
+            }
+        }
+        return await Task.detached { plan(for: input, directory: directory) }.value ?? .fallback(for: input)
+    }
 
     /// One headless Claude Code turn: no tools, no MCP, no saved session, the fast model.
     nonisolated private static func plan(for input: String, directory: URL) -> InstantLinks.Plan? {

@@ -19,7 +19,13 @@ final class TidyTabTitlesController {
             pending.insert(tab.id)
             let prompt = TidyTabTitles.prompt(title: tab.title, url: tab.url, language: TidyTabTitles.language())
             let id = tab.id
+            let check = Jev.tabTitleCheck(title: tab.title, host: tab.url?.host())
             Task { [weak self, weak store] in
+                // A title that's already short and clean keeps the page's own name, without a Claude run.
+                if let jev = JevClient.shared, await Jev.skipsTidy(check, ask: jev.ask) {
+                    self?.pending.remove(id)
+                    return
+                }
                 let name = await Task.detached { Self.ask(prompt) }.value
                 self?.finish(id, name: name, store: store)
             }

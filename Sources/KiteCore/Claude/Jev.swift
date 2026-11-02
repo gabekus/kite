@@ -126,3 +126,123 @@ extension Jev {
             .compactMap { ref, probability in byRef[ref].map { ElementFinder.Match(ref: $0.ref, line: $0.line, score: probability) } }
     }
 }
+
+// MARK: Which space a link opens in
+
+extension Jev {
+    public static let spaceQuestion = "space"
+
+    /// One space as Jev sees it: its name, and what `describe_space` says it's for.
+    public struct SpaceOption: Hashable, Sendable {
+        public var name: String
+        public var about: String?
+
+        public init(name: String, about: String?) {
+            self.name = name
+            self.about = about
+        }
+    }
+
+    /// Claude opened a link for the user without naming a space (the routing rule asks it to,
+    /// but it forgets). Jev reads the link against what each space is for. Nil when there's
+    /// nothing to choose between: one space, no link, or no space that says what it's for.
+    public static func spaceRouting(url: URL, spaces: [SpaceOption]) -> (state: String, questions: [String: Question])? {
+        let named = spaces.filter { !$0.name.isEmpty }
+        guard named.count > 1, named.contains(where: { !($0.about ?? "").isEmpty }),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        var options: [String: String] = [:]
+        for space in named.prefix(maxOptions) where options[space.name] == nil {
+            let about = space.about?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            options[space.name] = about.isEmpty ? "The \(space.name) space" : about
+        }
+        return ("A link the user asked to open: \(url.absoluteString)", [spaceQuestion: .choice(
+            instructions: "Which of the user's browser spaces this link belongs in, going by what each space is for",
+            options: options)])
+    }
+
+    /// The space Jev picked, when it's sure enough to override where the tab would have gone.
+    public static func space(from answers: Answers, minimumConfidence: Double = 0.75) -> String? {
+        guard let answer = answers.choices[spaceQuestion], answer.confidence >= minimumConfidence else { return nil }
+        return answer.choice
+    }
+}
+
+// MARK: Instant Links
+
+extension Jev {
+    public static let searchAsTypedQuestion = "as_typed"
+
+    /// Most of what's typed before ⇧⏎ is one thing to look up, and Google finds it as typed.
+    /// Jev answers that in a fraction of a second, so only inputs that need rewriting (several
+    /// things, a site to search on, a folder or a split) wait for Claude.
+    public static func instantLinks(input: String) -> (state: String, questions: [String: Question]) {
+        ("Typed into a browser's address bar: \(input)", [searchAsTypedQuestion: .noul(instructions: """
+            This names exactly one thing to find; it doesn't name a website to search on, ask for several \
+            results, or ask for a folder or a split view; so a Google search for it exactly as typed has the \
+            page they want as its top result
+            """)])
+    }
+
+    public static func searchAsTyped(_ answers: Answers, threshold: Double = 0.8) -> Bool {
+        (answers.nouls[searchAsTypedQuestion] ?? 0) >= threshold
+    }
+}
+
+// MARK: An extra check before Claude clicks
+
+extension Jev {
+    public static let commitsQuestion = "commits"
+
+    /// With Ask Before Claude Acts on, a click Kite's word list lets through ("Continue",
+    /// "Yes, I'm sure", an icon button) gets a second look. Jev can only add a question for the
+    /// user, never take one away.
+    public static func guardrail(click element: ElementDescription, host: String?) -> (state: String, questions: [String: Question]) {
+        var lines = ["Site: \(host ?? "unknown")", "Element: \(element.summary)"]
+        if let href = element.href, !href.isEmpty { lines.append("Link: \(href.prefix(200))") }
+        if element.inForm { lines.append("Inside a form") }
+        return (lines.joined(separator: "\n"), [commitsQuestion: .noul(instructions: """
+            A browser assistant clicking this commits something the person can't easily take back: pays, buys, \
+            places an order, sends or posts a message, deletes, submits an application or form, books, or \
+            changes account or security settings
+            """)])
+    }
+
+    public static func needsConfirmation(_ answers: Answers, threshold: Double = 0.85) -> Bool {
+        (answers.nouls[commitsQuestion] ?? 0) >= threshold
+    }
+}
+
+// MARK: Nothing to tidy
+
+extension Jev {
+    public static let alreadyTidyQuestion = "already_tidy"
+
+    /// Tidy Tab Titles: a title that's already a short, clean name needs no Claude run.
+    public static func tabTitleCheck(title: String, host: String?) -> (state: String, questions: [String: Question]) {
+        ("Browser tab title: \(title)\nSite: \(host ?? "unknown")", [alreadyTidyQuestion: .noul(instructions: """
+            This title is already a short, specific sidebar name of one to three words, without the website's \
+            name, search-engine filler or words that only say what kind of page it is
+            """)])
+    }
+
+    /// Tidy Downloads: a file name that already says what the file is needs no Claude run.
+    public static func fileNameCheck(fileName: String, tabTitle: String?) -> (state: String, questions: [String: Question]) {
+        var state = "Downloaded file name: \(fileName)"
+        if let tabTitle, !tabTitle.isEmpty { state += "\nDownloaded from the page: \(tabTitle)" }
+        return (state, [alreadyTidyQuestion: .noul(instructions: """
+            This file name already says clearly what the file is, in readable words, with no random IDs, \
+            hashes, timestamps, download counters like (1) or generic names like document or download
+            """)])
+    }
+
+    public static func isAlreadyTidy(_ answers: Answers, threshold: Double = 0.85) -> Bool {
+        (answers.nouls[alreadyTidyQuestion] ?? 0) >= threshold
+    }
+
+    /// True only when Jev is sure there's nothing to tidy. No Jev or no answer: tidy as before.
+    public static func skipsTidy(_ check: (state: String, questions: [String: Question]),
+                                 ask: (String, [String: Question]) async throws -> Answers) async -> Bool {
+        guard let answers = try? await ask(check.state, check.questions) else { return false }
+        return isAlreadyTidy(answers)
+    }
+}
