@@ -11,6 +11,7 @@ var targets: [Target] = [
 var products: [Product] = [
     .library(name: "KiteCore", targets: ["KiteCore"]),
 ]
+var packageDependencies: [Package.Dependency] = []
 
 #if os(macOS)
 // The Chromium engine is built only after scripts/fetch-cef.sh has run.
@@ -18,7 +19,11 @@ var products: [Product] = [
 let cefDirectory = Context.packageDirectory + "/ThirdParty/cef"
 let hasCEF = FileManager.default.fileExists(atPath: cefDirectory + "/build/libcef_dll_wrapper/libcef_dll_wrapper.a")
 
-var macDependencies: [Target.Dependency] = ["KiteCore"]
+var macDependencies: [Target.Dependency] = ["KiteCore", .product(name: "Sparkle", package: "Sparkle")]
+
+// Sparkle: over-the-air updates for release builds (scripts/release.sh). A build only checks for
+// updates when bundle-app.sh gave it a feed (KITE_UPDATE_FEED); see docs/updates.md.
+packageDependencies.append(.package(url: "https://github.com/sparkle-project/Sparkle", from: "2.10.1"))
 
 // The ad blocker (Brave's adblock-rust) is built only after scripts/build-adblock.sh
 // has run. Without it Kite builds and runs with no ad blocking.
@@ -69,7 +74,10 @@ targets.append(
         name: "KiteMac",
         dependencies: macDependencies,
         resources: [.copy("Shaders")],
-        swiftSettings: [.swiftLanguageMode(.v5)]
+        swiftSettings: [.swiftLanguageMode(.v5)],
+        // Kite.app keeps Sparkle.framework in Contents/Frameworks (bundle-app.sh); a bare
+        // `swift build` binary finds it next to itself through SwiftPM's @loader_path.
+        linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
     )
 )
 products.append(.executable(name: "Kite", targets: ["KiteMac"]))
@@ -79,5 +87,6 @@ let package = Package(
     name: "Kite",
     platforms: [.macOS(.v14)],
     products: products,
+    dependencies: packageDependencies,
     targets: targets
 )

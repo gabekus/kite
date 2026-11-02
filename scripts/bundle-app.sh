@@ -26,6 +26,31 @@ cp Resources/Info.plist "$CONTENTS/Info.plist"
 # Release builds (install-app.sh, update-app.sh) keep dev.gabek.Kite. KITE_BUNDLE_ID overrides.
 BUNDLE_ID="${KITE_BUNDLE_ID:-$([[ "$CONFIG" == debug ]] && echo dev.gabek.Kite.dev || echo dev.gabek.Kite)}"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$CONTENTS/Info.plist"
+# Versions: Sparkle orders builds by CFBundleVersion, so it's the commit count of HEAD (it grows with
+# every merge to main), and the version people see is Info.plist's major.minor plus that count
+# ("0.1.2345"). A shallow clone (CI) can't count, so it keeps Info.plist's. KITE_VERSION and
+# KITE_BUILD_NUMBER override them (release.sh's end-to-end test builds an "older" Kite with them).
+PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$CONTENTS/Info.plist")"
+BUILD_NUMBER="${KITE_BUILD_NUMBER:-}"
+if [[ -z "$BUILD_NUMBER" && "$(git rev-parse --is-shallow-repository 2>/dev/null)" == false ]]; then
+    BUILD_NUMBER="$(git rev-list --count HEAD)"
+fi
+if [[ -n "$BUILD_NUMBER" ]]; then
+    VERSION="${KITE_VERSION:-$(echo "$PLIST_VERSION" | cut -d. -f1,2).$BUILD_NUMBER}"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CONTENTS/Info.plist"
+fi
+# Over-the-air updates (Sparkle, docs/updates.md) only for builds given a feed: release.sh and
+# package-share.sh. Without one, Kite never updates itself (install-app.sh keeps Gabe's Kite current).
+# Arc's settings: check every 8 hours, download and install silently on quit.
+if [[ -n "${KITE_UPDATE_FEED:-}" ]]; then
+    /usr/libexec/PlistBuddy -c "Add :SUFeedURL string $KITE_UPDATE_FEED" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUEnableAutomaticChecks bool true" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUAutomaticallyUpdate bool true" "$CONTENTS/Info.plist"
+    /usr/libexec/PlistBuddy -c "Add :SUScheduledCheckInterval integer 28800" "$CONTENTS/Info.plist"
+    # Sparkle checks the archive's EdDSA signature before it unpacks anything.
+    /usr/libexec/PlistBuddy -c "Add :SUVerifyUpdateBeforeExtraction bool true" "$CONTENTS/Info.plist"
+fi
 # Built from Resources/AppIcon.svg (1024 canvas, 824 body, the macOS icon grid).
 cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 # The AppleScript dictionary (Info.plist's OSAScriptingDefinition).
@@ -45,6 +70,11 @@ if xcrun -sdk macosx metal -c Sources/KiteMac/Shaders/Kite.metal -o "$ROOT/build
 else
     echo "note: Metal toolchain missing, shaders will compile at launch (xcodebuild -downloadComponent MetalToolchain)"
 fi
+
+# Sparkle (over-the-air updates). Kite isn't sandboxed, so Sparkle's XPC services aren't used;
+# they're left out, as Sparkle's docs allow.
+ditto "$BIN/Sparkle.framework" "$CONTENTS/Frameworks/Sparkle.framework"
+rm -rf "$CONTENTS/Frameworks/Sparkle.framework/Versions/B/XPCServices" "$CONTENTS/Frameworks/Sparkle.framework/XPCServices"
 
 CEF="$ROOT/ThirdParty/cef"
 if [[ -d "$CEF/Release/Chromium Embedded Framework.framework" ]]; then
@@ -86,6 +116,11 @@ codesign --force --sign "$SIGN_ID" "$CONTENTS/Helpers/kite"
 for helper in "$CONTENTS/Frameworks/"*.app; do
     [[ -e "$helper" ]] && codesign --force --sign "$SIGN_ID" "$helper"
 done
+# Sparkle's helpers first, then the framework (Sparkle's documented order, hardened runtime as it ships).
+SPARKLE="$CONTENTS/Frameworks/Sparkle.framework"
+codesign --force --sign "$SIGN_ID" -o runtime "$SPARKLE/Versions/B/Autoupdate"
+codesign --force --sign "$SIGN_ID" -o runtime "$SPARKLE/Versions/B/Updater.app"
+codesign --force --sign "$SIGN_ID" -o runtime "$SPARKLE"
 if [[ -d "$CONTENTS/Frameworks/Chromium Embedded Framework.framework" ]]; then
     codesign --force --sign "$SIGN_ID" "$CONTENTS/Frameworks/Chromium Embedded Framework.framework"
 fi

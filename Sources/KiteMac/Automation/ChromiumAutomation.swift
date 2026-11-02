@@ -389,25 +389,26 @@ struct ChromiumAutomation: PageActions {
 
     // MARK: Kite's own world
 
-    /// Execution contexts of Kite's isolated worlds, by browser and world name. A navigation drops them,
-    /// and the next call makes a new one.
+    /// Execution contexts of Kite's isolated worlds, by top frame id and world name. A navigation drops them,
+    /// and the next call makes a new one. Keyed by frame, not by browser object: a slept tab's new browser can
+    /// reuse the old one's address, and an old context id can name a different context in it (even the page's).
     private static var isolatedWorlds: [String: Int] = [:]
 
     /// Runs code in an isolated world of the top frame: it shares the page's DOM but none of its scripts, so the
     /// page can't read or change what runs there. `binding` is callable from that world only (its calls arrive as
     /// Runtime.bindingCalled events).
     func runIsolated(_ code: String, world: String, binding: String) async throws -> String {
-        let key = "\(ObjectIdentifier(browser).hashValue):\(world)"
+        let tree = try await call("Page.getFrameTree")
+        guard let frame = ((tree["frameTree"] as? [String: Any])?["frame"] as? [String: Any])?["id"] as? String else {
+            throw AutomationError(.failed, "The page has no frame yet.")
+        }
+        let key = "\(frame):\(world)"
         for attempt in 0..<2 {
             let context: Int
             if attempt == 0, let cached = Self.isolatedWorlds[key] {
                 context = cached
             } else {
                 try await call("Runtime.addBinding", ["name": binding, "executionContextName": world])
-                let tree = try await call("Page.getFrameTree")
-                guard let frame = ((tree["frameTree"] as? [String: Any])?["frame"] as? [String: Any])?["id"] as? String else {
-                    throw AutomationError(.failed, "The page has no frame yet.")
-                }
                 let made = try await call("Page.createIsolatedWorld", ["frameId": frame, "worldName": world])
                 guard let id = made["executionContextId"] as? Int else { throw AutomationError(.failed, "Chromium made no world.") }
                 Self.isolatedWorlds[key] = id
@@ -430,22 +431,30 @@ struct ChromiumAutomation: PageActions {
         throw AutomationError(.failed, "Kite couldn't reach the page.")
     }
 
-    /// Puts `attribute="value"` on the element a ref names and returns its visible label (to find it again).
-    func mark(ref: String, attribute: String, value: String) async throws -> String? {
+    /// Puts `attribute="value"` on the element a ref names and returns its visible label and its place in the
+    /// page as a CSS path (to find it again after a reload).
+    func mark(ref: String, attribute: String, value: String) async throws -> (label: String?, path: String?) {
         guard let backendID = AccessibilityOutline.backendNodeID(fromRef: ref) else {
             throw AutomationError(.invalidArguments, "\"\(ref)\" isn't a ref. Refs look like e42 and come from read_page or find.")
         }
         let objectID = try await resolve(backendID: backendID, ref: ref)
-        let label = try await callFunction(objectID, """
+        let found = try await callFunction(objectID, """
             function (attribute, value) {
               const el = this.nodeType === 1 ? this : this.parentElement;
               if (!el) return null;
               el.setAttribute(attribute, value);
               const t = (el.getAttribute('aria-label') || el.innerText || el.value || el.title || '').replace(/\\s+/g, ' ').trim();
-              return t ? t.slice(0, 120) : null;
+              const parts = [];
+              for (let n = el; n && n.nodeType === 1 && n !== document.documentElement; n = n.parentElement) {
+                if (n.id && document.querySelectorAll('#' + CSS.escape(n.id)).length === 1) { parts.unshift('#' + CSS.escape(n.id)); break; }
+                let i = 1;
+                for (let s = n.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === n.tagName) i++;
+                parts.unshift(n.tagName.toLowerCase() + ':nth-of-type(' + i + ')');
+              }
+              return { label: t ? t.slice(0, 120) : null, path: parts.length ? parts.join(' > ') : null };
             }
-            """, arguments: [attribute, value])
-        return label as? String
+            """, arguments: [attribute, value]) as? [String: Any]
+        return (found?["label"] as? String, found?["path"] as? String)
     }
 
     // MARK: Helpers

@@ -20,6 +20,9 @@
 	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<!-- Sparkle: updates must be signed with the matching key (docs/updates.md). -->
+	<key>SUPublicEDKey</key>
+	<string>SgSQxqydUom1LXEo0hjL35JyV7HUeWegbadQJR14lvQ=</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSApplicationCategoryType</key>

@@ -62,6 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Release builds check for updates (8-hourly, installing on quit); others do nothing.
+        SoftwareUpdater.shared.start()
         store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
         store.archiveStaleTabs()
         applyPageAppearance()
@@ -421,8 +423,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.mutateWithoutUndo { _ = $0.openTab(url: url) }
     }
 
-    /// Kite › Check for Updates…: asks GitHub releases; a release opens in a new tab.
+    /// Kite › Check for Updates…: Sparkle in a release build (SoftwareUpdater); otherwise asks GitHub
+    /// releases, and a release opens in a new tab.
     @objc func checkForUpdates(_ sender: Any?) {
+        if SoftwareUpdater.shared.checkForUpdates() { return }
         UpdaterWindow.shared.openURL = { [weak self] url in self?.store.mutateWithoutUndo { _ = $0.openTab(url: url) } }
         UpdaterWindow.shared.checkForUpdates()
     }
