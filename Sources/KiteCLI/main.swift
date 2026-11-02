@@ -23,6 +23,7 @@ let usage = """
                                                      Type into an element (or the focused one)
       kite key KEYS [--tab ID]                       Press keys, e.g. "cmd+a Backspace" or Enter
       kite open URL [--here | --tab ID]              Open URL in a new background tab (or navigate one)
+      kite open URL --space NAME [--active]          Open URL in a new tab in that space
       kite screenshot [--tab ID] [--format png] [-o FILE]
                                                      Save a screenshot of a tab (JPEG unless --format png)
       kite js CODE [--tab ID]                        Run JavaScript in the page
@@ -31,7 +32,8 @@ let usage = """
                    [--since N] [--follow]            Kite's network log; --follow keeps printing new requests
       kite request ID [--no-body]                    One request in full (headers, timing, bodies)
       kite har [--tab ID] [--bodies] [filters]       Export the network log as a HAR file
-      kite spaces                                    List spaces
+      kite spaces                                    List spaces and what each is for
+      kite describe-space NAME TEXT                  Say what belongs in a space (Claude routes links by it; no TEXT clears it)
       kite call TOOL [JSON]                          Call any MCP tool, e.g. kite call computer '{"action":"scroll"}'
       kite ui ACTION [JSON] [-o FILE]                Kite's own UI (Diagnostics for Claude): windows, tree, capture,
                                                      pointer, input, menu, key_log, trace. kite ui tree '{"match":"Sidebar"}'
@@ -178,7 +180,7 @@ struct Arguments {
     var options: [String: String] = [:]
     var flags: Set<String> = []
 
-    static let valued: Set<String> = ["--tab", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
+    static let valued: Set<String> = ["--tab", "--space", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
                                       "--window", "--depth", "--match", "--region", "--pixels",
                                       "--status", "--host", "--type", "--url", "--since", "--limit"]
 
@@ -254,9 +256,14 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
         json["action"] = "key"
         json["text"] = .string(try first("the keys to press"))
     case "open", "navigate", "go":
-        tool = "navigate"
+        tool = args.options["--space"] == nil ? "navigate" : "tabs_create"
         json["url"] = .string(try first("a URL"))
-        if args.options["--tab"] == nil && !args.flags.contains("--here") { json["new_tab"] = true }
+        if let space = args.options["--space"] {
+            json["space"] = .string(space)
+            if args.flags.contains("--active") { json["active"] = true }
+        } else if args.options["--tab"] == nil && !args.flags.contains("--here") {
+            json["new_tab"] = true
+        }
     case "screenshot", "shot":
         tool = "screenshot"
         if let format = args.options["--format"] { json["format"] = .string(format) }
@@ -288,6 +295,10 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
         if args.flags.contains("--no-body") { json["body"] = false }
     case "spaces":
         tool = "list_spaces"
+    case "describe-space":
+        tool = "describe_space"
+        json["space"] = .string(try first("a space name"))
+        json["about"] = .string(args.positional.dropFirst().joined(separator: " "))
     case "ui":
         tool = "ui"
         json["action"] = .string(try first("an action (windows, tree, capture, pointer, input, menu, key_log, trace)"))

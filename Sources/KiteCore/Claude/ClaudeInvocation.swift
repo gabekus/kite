@@ -51,7 +51,9 @@ public enum ClaudeInvocation {
         Your only tools are Kite's (mcp__kite__*), acting in the user's real browser, signed in as them. \
         Open the tabs you need with tabs_create: they open in the background, in the Claude folder of the space \
         the user asked from, so you never take over the tab the user is looking at. Don't switch_tab or switch_space unless the \
-        user asks. Prefer read_page, find and get_page_text over screenshots, and use batch to save round trips. \
+        user asks. When the user asks you to open a link for them (rather than to do work in it), open it with \
+        tabs_create in the space it belongs to, without asking which: \(AutomationCommand.Tool.spaceRouting) \
+        Prefer read_page, find and get_page_text over screenshots, and use batch to save round trips. \
         Close tabs you opened that aren't part of the result. If the user attached a tab, it's theirs: read it, \
         but don't navigate away from it.
 
