@@ -82,6 +82,47 @@ import Testing
         #expect(state.selectedSplit?.tabIDs.count == 2)
     }
 
+    @Test func closingAnEmptyPaneNextToAClaudeFolderTabRemovesIt() throws {
+        // A split of a tab in Claude › Session puts the new pane in that folder. Chromium reports
+        // about:blank for it, and syncPinnedURLs must not pin that page.
+        var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0])])
+        let created = state.claudeSessionFolder(named: "Blacksmith", inSpace: state.spaces[0].id)
+        let folder = try #require(created)
+        let tab = state.openTab(url: URL(string: "https://app.blacksmith.sh"), in: state.spaces[0].id)
+        let moved = state.moveTab(tab, toFolder: folder)
+        #expect(moved)
+        state.select(tab: tab)
+        guard case .added(let pane) = state.addSplitPane() else { return }
+        #expect(state.isInEphemeralFolder(pane))
+        state.update(tab: pane) { $0.url = URL(string: "about:blank") }
+        state.syncPinnedURLs()
+        #expect(state.tab(pane)?.pinnedURL == nil)
+        let closedPane = state.close(tab: pane)
+        #expect(closedPane == .removed)
+        #expect(state.tab(pane) == nil && state.tab(tab) != nil)
+        #expect(state.selectedSpace.splits.isEmpty)
+        #expect(state.selectedTab?.id == tab)
+        // The Claude folder's real tab still closes as before.
+        let closedTab = state.close(tab: tab)
+        #expect(closedTab == .unloaded)
+    }
+
+    @Test func closingAStrandedBlankPinnedTabRemovesIt() throws {
+        // What earlier builds left behind: an empty pane, out of its split, pinned at about:blank.
+        var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0])])
+        let created = state.claudeSessionFolder(named: "Blacksmith", inSpace: state.spaces[0].id)
+        let folder = try #require(created)
+        let blank = state.openTab(url: URL(string: "about:blank"), in: state.spaces[0].id)
+        let moved = state.moveTab(blank, toFolder: folder)
+        #expect(moved)
+        state.update(tab: blank) { $0.pinnedURL = URL(string: "about:blank") }
+        let closed = state.close(tab: blank)
+        #expect(closed == .removed)
+        #expect(state.tab(blank) == nil)
+        // It was the folder's only tab, so Claude › Blacksmith and Claude go with it.
+        #expect(state.folders(inSpace: 0).isEmpty)
+    }
+
     @Test func separatingLeavesTheTabOpenOnItsOwn() {
         var (state, ids) = makeState()
         guard case .added(let b) = state.addSplitPane() else { return }

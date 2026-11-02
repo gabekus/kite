@@ -7,6 +7,13 @@ import Foundation
 /// pinned tabs in the current Space."), `revealTabInSidebar` ("Reveals the current tab in
 /// your Sidebar."). See docs/arc-visual-spec.md, "Pinned URL reset and Reveal Tab".
 extension BrowserTab {
+    /// A tab that never had a page: a new split pane nobody filled. Chromium reports about:blank
+    /// for it. Closing a pinned one removes it, since unloading would leave an empty row for good.
+    public var isBlank: Bool {
+        func blank(_ url: URL?) -> Bool { url == nil || url?.absoluteString == "about:blank" }
+        return blank(url) && blank(pinnedURL)
+    }
+
     /// Whether the tab has left its pinned page (Arc's `TabNavigatedAwayFromSavedURLHeuristic`).
     /// Arc's exact rules aren't known; this ignores the fragment, a trailing slash, `www.` and
     /// http/https, so a pinned page's own redirects and in-page anchors don't count as leaving.
@@ -42,7 +49,9 @@ extension BrowserState {
     /// you're on. Shells call it after every change; it only writes what differs.
     public mutating func syncPinnedURLs() {
         func adopt(_ tab: inout BrowserTab) {
-            if tab.pinnedURL == nil, let url = tab.url, InternalPage(url) == nil { tab.pinnedURL = url }
+            if tab.pinnedURL == nil, let url = tab.url, InternalPage(url) == nil, url.absoluteString != "about:blank" {
+                tab.pinnedURL = url
+            }
         }
         for profile in favoritesByProfile.keys {
             for i in favoritesByProfile[profile]!.indices {
