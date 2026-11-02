@@ -122,6 +122,25 @@ instead of listing steps in the chat. The user then sees what to do in Kite itse
 steps the user did, skipped or hasn't reached, with each tab's URL now, so Claude carries on when they're done.
 CLI: `kite call handoff '{…}'`, `kite call handoff_status '{"id":"h1","wait":600}'`. More in `docs/automation.md`.
 
+## For agents: VPN reconnects without a tab
+
+When a VPN client with web sign-in (OpenVPN Connect, Tunnelblick: SSO, SAML) reconnects, it opens its sign-in page
+in the default browser. For a host Kite watches, Kite loads that page on a hidden page with the user's cookies (the
+profile of the space the link would go to), and closes it once the sign-in goes back to the VPN's site. Only a page
+that needs the user (a password, a code, an MFA push or button that sits there for 10 s, or 45 s without finishing)
+becomes a tab, behind the one in front, with one Dock bounce and no change of focus.
+
+The `vpn` tool: `status` (watched hosts, the last sign-in, and the hosts of links other apps opened lately, so you can
+spot the VPN's), `watch` / `unwatch` with `host` (only one the user confirms is their VPN's; nothing is watched by
+default), `reconnect` (has Tunnelblick, or OpenVPN Connect with `profile`, connect again, then waits for the sign-in)
+and `wait`. It never changes the VPN client's profiles. CLI:
+
+```bash
+kite vpn status
+kite vpn watch vpn.example.com
+kite vpn reconnect [--profile NAME] [--timeout 60]
+```
+
 ## Layout
 
 ```

@@ -41,6 +41,9 @@ public struct MCPServer: Sendable {
         done, and carry on. \
         To check Kite's own interface (sidebar, command bar, menus, cursors, animations), use the ui tool, not \
         screenshots of the screen or the user's mouse. \
+        When the user's VPN needs to reconnect, or its SSO sign-in keeps opening tabs, use the vpn tool: \
+        reconnect has the VPN client connect again and Kite signs in on a hidden page, showing a background tab only \
+        when the page needs the user (MFA). Watch a sign-in host only when the user confirms it's their VPN's. \
         When debugging a site, network_log shows what the tabs requested (pass its cursor back as since to see only \
         new requests) and network_request gives one request's headers and bodies.
         """
