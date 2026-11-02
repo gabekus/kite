@@ -427,6 +427,7 @@ struct SidebarView: View {
             isPinned: pinned,
             isSelected: selected,
             depth: depth,
+            showsClose: store.state.showsCloseButton(tab: tab.id),
             isRenaming: store.renamingTabID == tab.id,
             aiRename: store.aiRenames[tab.id],
             onSelect: { store.mutate { $0.select(tab: tab.id) } },
@@ -1444,6 +1445,8 @@ private struct TabRow: View {
     let isPinned: Bool
     let isSelected: Bool
     var depth = 0
+    /// Off for tabs Claude opened in its folders (`BrowserState.showsCloseButton`).
+    var showsClose = true
     var isRenaming = false
     /// A Tidy Tab Titles name that just landed: the title wipes over from the old one.
     var aiRename: BrowserStore.AIRename?
@@ -1536,7 +1539,7 @@ private struct TabRow: View {
                 .help("Back to Pinned URL")
                 .accessibilityLabel("Back to Pinned URL")
             }
-            if hovering && !isRenaming {
+            if hovering && !isRenaming && showsClose {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
