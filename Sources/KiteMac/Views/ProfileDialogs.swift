@@ -202,7 +202,7 @@ struct CreateProfileView: View {
                     .fill(LinearGradient(colors: space.theme.colors.map { Color(red: Double($0.r), green: Double($0.g), blue: Double($0.b)) },
                                          startPoint: .top, endPoint: .bottom).opacity(0.6))
                     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.white.opacity(0.25)))
-                    .overlay(Text(space.icon).font(.system(size: 20)))
+                    .overlay(SpaceIconView(icon: space.icon, theme: space.theme, size: 20, tinted: false))
                     .frame(width: 64, height: 95)
                 Image(systemName: on ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 17))
@@ -262,7 +262,7 @@ struct ChangeProfileView: View {
             ZStack(alignment: .bottomTrailing) {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(M.primary.opacity(0.9))
-                    .overlay(Text(space?.icon ?? "").font(.system(size: 28)))
+                    .overlay { if let space { SpaceIconView(icon: space.icon, theme: space.theme, size: 28, tinted: false) } }
                     .frame(width: 62, height: 62)
                 ProfileBadge(size: 24).offset(x: 6, y: 6)
             }

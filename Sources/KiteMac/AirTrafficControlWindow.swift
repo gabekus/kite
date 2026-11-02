@@ -246,7 +246,7 @@ private struct DestinationPicker: View {
             Text("Little Kite").tag(AirTrafficControl.Destination.littleKite)
             Divider()
             ForEach(spaces) { space in
-                Text("\(space.icon) \(space.name)").tag(AirTrafficControl.Destination.space(space.id))
+                Text(space.icon.isEmpty ? space.name : "\(space.icon) \(space.name)").tag(AirTrafficControl.Destination.space(space.id))
             }
             // A route to a space that's gone still shows something.
             if case .space(let id) = selection, !spaces.contains(where: { $0.id == id }) {

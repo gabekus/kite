@@ -110,11 +110,15 @@ extension BrowserState {
         return space.id
     }
 
-    /// A space's icon: an emoji, a `symbol:` SF Symbol name, or empty for none (Arc shows a dot).
+    /// A space's icon: an emoji, a `symbol:` SF Symbol name, an `image:` file name, or empty for none
+    /// (Arc shows a dot). An image name with a path in it is refused.
     public mutating func setSpaceIcon(_ id: UUID, to icon: String) {
         guard let s = spaceIndex(id) else { return }
         let icon = icon.trimmingCharacters(in: .whitespacesAndNewlines)
-        if icon.hasPrefix(Space.symbolPrefix) {
+        if icon.hasPrefix(Space.imagePrefix) {
+            guard Space.isValidIconImageName(String(icon.dropFirst(Space.imagePrefix.count))) else { return }
+            spaces[s].icon = icon
+        } else if icon.hasPrefix(Space.symbolPrefix) {
             spaces[s].icon = icon
         } else {
             spaces[s].icon = icon.first.map(String.init) ?? ""
