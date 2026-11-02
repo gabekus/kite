@@ -75,7 +75,10 @@ final class FavoritePreviewController {
         /// Arc's card faded in over about 0.05–0.09s and out in about 0.04s.
         static let fade: Double = 0.08
         /// A preview's data is fetched again when it's older than this.
-        static let staleAfter: TimeInterval = 60
+        static let staleAfter: TimeInterval = 50
+        /// Gmail favorites' mail is read this long after the window opens, then every minute.
+        static let firstPrefetch: Double = 3
+        static let prefetchInterval: TimeInterval = 60
     }
 
     private func show(_ tab: BrowserTab, kind: FavoritePreviews.Kind) {
@@ -101,6 +104,26 @@ final class FavoritePreviewController {
         }
         layout()
         card.show()
+    }
+
+    private var prefetchTimer: Timer?
+
+    /// Arc keeps its previews fetched (`PreviewsDataClient.setPeriodicUpdatesEnabled`, a refresh
+    /// timer), so its Gmail card opened with the mail already in it. Kite reads each Gmail favorite's
+    /// mail as the window opens and every minute after, so the card doesn't wait on the network.
+    func startPrefetching(_ favorites: @escaping () -> [BrowserTab]) {
+        guard prefetchTimer == nil else { return }
+        let prefetch = { [weak self] in
+            guard let self, FavoritePreviews.isEnabled() else { return }
+            for tab in favorites() {
+                guard let kind = FavoritePreviews.kind(for: tab.pinnedURL ?? tab.url), case .gmail = kind else { continue }
+                self.refresh(kind, profile: self.host.profile(tab.id), tab: tab.id)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Timing.firstPrefetch) { prefetch() }
+        prefetchTimer = Timer.scheduledTimer(withTimeInterval: Timing.prefetchInterval, repeats: true) { _ in
+            MainActor.assumeIsolated { prefetch() }
+        }
     }
 
     private func refresh(_ kind: FavoritePreviews.Kind, profile: String, tab: UUID) {
@@ -285,29 +308,48 @@ enum GmailFeedReader {
     }
 
     #if canImport(CEFBridge)
-    private static var pages: [ObjectIdentifier: ChromiumPage] = [:]
+    /// One hidden page per profile, kept for the next read (reads come every minute, see `prefetch`).
+    private final class Reader {
+        let page: ChromiumPage
+        var ready = false
+        var waiting: [() -> Void] = []
+        init(page: ChromiumPage) { self.page = page }
+    }
+
+    private static var readers: [ObjectIdentifier: Reader] = [:]
 
     static func read(account: Int, engine: WebEngine, completion: @escaping ([VerificationCodes.Message]?) -> Void) {
-        guard let url = URL(string: origin + "/mail/u/\(account)/feed/atom"),
-              let page = engine.makePage(url: url, restoring: nil) as? ChromiumPage else { return completion(nil) }
-        let id = ObjectIdentifier(page)
-        pages[id] = page
+        guard let reader = reader(for: engine) else { return completion(nil) }
         var done = false
         func finish(_ messages: [VerificationCodes.Message]?) {
             guard !done else { return }
             done = true
-            page.onEvent = nil
-            page.close()
-            pages[id] = nil
             completion(messages)
         }
-        page.onEvent = { event in
-            guard case let .navigationState(isLoading, _, _) = event, !isLoading else { return }
-            page.evaluate(script(account: account), userGesture: false) { value, _ in
+        let run = {
+            reader.page.evaluate(script(account: account), userGesture: false) { value, _ in
                 finish((value as? String).map { VerificationCodes.parseGmailFeed(Data($0.utf8)) })
             }
         }
+        if reader.ready { run() } else { reader.waiting.append(run) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { finish(nil) }
+    }
+
+    private static func reader(for engine: WebEngine) -> Reader? {
+        let key = ObjectIdentifier(engine)
+        if let reader = readers[key] { return reader }
+        guard let url = URL(string: origin + "/mail/u/0/feed/atom"),
+              let page = engine.makePage(url: url, restoring: nil) as? ChromiumPage else { return nil }
+        let reader = Reader(page: page)
+        readers[key] = reader
+        page.onEvent = { [weak reader] event in
+            guard let reader, case let .navigationState(isLoading, _, _) = event, !isLoading, !reader.ready else { return }
+            reader.ready = true
+            let waiting = reader.waiting
+            reader.waiting = []
+            waiting.forEach { $0() }
+        }
+        return reader
     }
     #else
     static func read(account: Int, engine: WebEngine, completion: @escaping ([VerificationCodes.Message]?) -> Void) {
@@ -463,6 +505,7 @@ struct FavoritePreviewCardView: View {
 
     @ObservedObject var model: FavoritePreviewModel
     let sizing: FavoritePreviewSizing
+    @State private var listHeight: CGFloat = 0
 
     var body: some View {
         card
@@ -536,8 +579,11 @@ struct FavoritePreviewCardView: View {
                         FavoritePreviewRow(item: item, kind: kind, icon: model.tab?.faviconURL, open: model.open)
                     }
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
             }
-            .fixedSize(horizontal: false, vertical: true)
+            // As tall as the list up to the card's cap, so a longer list scrolls inside the card
+            // (sized to the whole list, the scroll view had nothing to scroll and the card clipped it).
+            .frame(height: min(listHeight, Metrics.maxHeight))
         }
     }
 }

@@ -3599,6 +3599,11 @@ accessibility frames and pixel colours only (no screenshot of the mail was looke
 - Timing (measured with a real pointer, 5ms pixel sampling): the card's first frame about 0.39s after the pointer
   reaches the tile, fully in within about 0.05–0.09s; it stays while the pointer is on the card and goes within
   about 0.1s of leaving both. Kite: 0.38s delay, 0.08s fades.
+- Data ready before the hover (binary: `PreviewsDataClient.setPeriodicUpdatesEnabled`, `refreshTimer`; measured: Arc's
+  card had the mail in its first frame). Kite reads Gmail favorites' mail 3s after a window opens and every minute,
+  from one hidden page per profile, so the card opens with it rather than after a network round trip.
+- Scrolling: the list is as tall as its rows up to the 272 cap and scrolls inside the card (a legacy scroller shows
+  with Gabe's scroller setting, as on Arc's).
 - Click (Kite): a row opens the message in the favorite. **[unverified]** what Arc does on click.
 - **[unverified]** Calendar and recents cards: none of Gabe's favorites has them, so their rows follow the email
   row's type and padding. Light-appearance colours are unmeasured (Gabe's spaces are dark).
