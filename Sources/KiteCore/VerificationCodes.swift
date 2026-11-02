@@ -15,13 +15,16 @@ public enum VerificationCodes {
         public var senderName: String
         public var senderEmail: String
         public var date: Date
+        /// The message in Gmail (the feed entry's `<link href>`).
+        public var link: URL?
 
-        public init(subject: String, snippet: String, senderName: String, senderEmail: String, date: Date) {
+        public init(subject: String, snippet: String, senderName: String, senderEmail: String, date: Date, link: URL? = nil) {
             self.subject = subject
             self.snippet = snippet
             self.senderName = senderName
             self.senderEmail = senderEmail
             self.date = date
+            self.link = link
         }
     }
 
@@ -174,6 +177,7 @@ public enum VerificationCodes {
             path.append(name)
             text = ""
             if name == "entry" { current = [:] }
+            if name == "link", path.dropLast().last == "entry", let href = attributes["href"] { current?["link"] = href }
         }
 
         func parser(_ parser: XMLParser, foundCharacters string: String) { text += string }
@@ -192,7 +196,8 @@ public enum VerificationCodes {
             case (_, "entry"):
                 if let entry = current, let date = entry["date"].flatMap(dates.date(from:)) {
                     messages.append(Message(subject: entry["subject"] ?? "", snippet: entry["snippet"] ?? "",
-                                            senderName: entry["name"] ?? "", senderEmail: entry["email"] ?? "", date: date))
+                                            senderName: entry["name"] ?? "", senderEmail: entry["email"] ?? "", date: date,
+                                            link: entry["link"].flatMap(URL.init(string:))))
                 }
                 current = nil
             default: break
