@@ -1889,8 +1889,8 @@ private struct SpaceBar: View {
             // highlight changes, every frame of a swipe.
             Group {
                 if fits(state) {
+                    // Centred between Library and +, like Arc's strip between its end buttons.
                     spaceIcons(state)
-                        .offset(x: centreShift(slots: state.spaces.count))
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
                         spaceIcons(state)
@@ -1903,7 +1903,6 @@ private struct SpaceBar: View {
                 iconRoom = $0.width
             }
             Group {
-                ClaudeSidebarButton(model: claude, size: M.bottomButtonSize)
                 // Arc's + opens a menu of new things, not a new space straight away.
                 AnchoredButton { view in
                     NewItemMenu.present(from: view, store: store, actions: actions)
@@ -1967,16 +1966,6 @@ private struct SpaceBar: View {
     private func stripMinX(slots: Int, state: BrowserState) -> CGFloat {
         guard fits(state) else { return stripFrame.minX }
         return roomFrame.midX - CGFloat(SpaceReorder.width(slots: slots, pitch: M.spaceCellPitch, cellWidth: M.spaceCellSize.width)) / 2
-            + centreShift(slots: slots)
-    }
-
-    /// Arc centres the strip between its end buttons (its tree, 2 Nov 2026: four cells centred at x 144.5
-    /// between buttons at 8 and 249 on a 289pt sidebar). Kite's Claude button beside + would pull that centre
-    /// left by half its room, so the strip moves back right by as much of that as fits, reaching at most up
-    /// to the Claude button itself, as Arc's strip reaches its + button.
-    private func centreShift(slots: Int) -> CGFloat {
-        let width = CGFloat(SpaceReorder.width(slots: slots, pitch: M.spaceCellPitch, cellWidth: M.spaceCellSize.width))
-        return max(0, min((M.bottomButtonSize + Self.buttonGap) / 2, (roomFrame.width - width) / 2 + Self.buttonGap))
     }
 
     /// The bar's spacing between its buttons and the strip.

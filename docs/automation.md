@@ -260,7 +260,7 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   collection and fails pending confirmations and waits.
 - **Sign-in handoff (`sign_in`).** Claude never types or sees passwords. When a page needs the user signed in,
   Claude calls `sign_in` and waits. Kite brings the tab to the front, opens 1Password's popup over it, and shows a
-  pill above the sidebar's Claude button: "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the
+  pill at the bottom of the page: "Claude is waiting for you to sign in to *site*" with 1Password, Cancel and **Done**. 1Password fills the
   page itself, so the password goes from the vault into the form and never through Kite's tools or the model.
   - While it waits, every other tool on that tab fails ("The user is signing in on this tab"), so nothing can read
     the filled fields.
@@ -360,7 +360,7 @@ Desktop. What Desktop knows (chat history, chat search, memory, projects) lives 
 only reachable from inside a Desktop or claude.ai chat. Nothing hands it to `claude -p`, and Desktop's local data
 isn't an API. So Kite joins Desktop instead of running a second Claude next to it:
 
-- **Desktop has Kite's tools.** Setup (the sidebar's Claude button) and Connect Claude… add Kite to
+- **Desktop has Kite's tools.** Setup (the first ⌘J) and Connect Claude… add Kite to
   `claude_desktop_config.json`. Desktop loads servers from that file into its Chat tab, Cowork and its local
   Code sessions, so whatever Claude does in Kite from Desktop is in that chat, with Desktop's memory.
 - **⌘J asks in Desktop.** With **Kite menu → Ask Claude in the Claude App** on (the default when Desktop is

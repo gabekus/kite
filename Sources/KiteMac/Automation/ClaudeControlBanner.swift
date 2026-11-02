@@ -3,8 +3,7 @@ import KiteCore
 import Observation
 import SwiftUI
 
-/// sign_in's prompt, floating just above the sidebar's Claude button (or at the bottom of the page when the
-/// sidebar is hidden), so it never covers a site's nav bar or the password manager's inline menu.
+/// sign_in's prompt, floating at the bottom centre of the page, so it never covers a site's nav bar or the password manager's inline menu.
 ///
 /// Claude *driving* a tab has no banner: the sidebar shows it on the tab's row and on the Claude › session
 /// folder holding it (with Stop), and the page gets Claude's border (`ClaudeControlBorder`).
