@@ -1,9 +1,11 @@
 import AppKit
 import KiteCore
+import Observation
 import SwiftUI
 
-/// Floats over the bottom of the page while Claude is driving a tab, with Stop. It sits at the bottom so it
-/// never covers a site's nav bar or the password manager's inline menu on a login form.
+/// Floats just above the sidebar's Claude button while Claude is driving a tab, with Stop (or at the bottom
+/// of the page when the sidebar is hidden), so it never covers a site's nav bar or the password manager's
+/// inline menu on a login form.
 struct ClaudeControlBanner: View {
     let automation: AutomationController
     let store: BrowserStore
@@ -120,26 +122,100 @@ extension BrowserWindowController: AutomationHost {
         close(tab: id)
     }
 
-    /// Pins the banner to the bottom centre of the page area, above the web view.
+    /// Pins the banner just above the sidebar's Claude button, or to the bottom centre of the page when
+    /// the sidebar (and so the button) isn't showing.
     func installAutomationBanner(_ automation: AutomationController) {
         pool.onPageCreated = { [weak automation] id, page in automation?.pageCreated(id, page) }
         pool.onLoadFinished = { [weak automation] id in automation?.pageFinishedLoading(id) }
         guard let root = window?.contentView else { return }
-        // A strip across the page area, rather than a view sized to the banner: the banner's size changes
+        // A strip across the window, rather than a view sized to the banner: the banner's size changes
         // with Claude's state, and an intrinsically sized host stayed 0×0, so its buttons never got clicks.
-        let host = BannerHostingView(rootView: ClaudeControlBanner(automation: automation, store: store)
-            .frame(maxWidth: .infinity, alignment: .bottom))
+        let host = BannerHostingView(rootView: ClaudeBannerStrip(
+            banner: ClaudeControlBanner(automation: automation, store: store),
+            placement: claudeBannerPlacement
+        ))
         host.sizingOptions = []
-        // No safe area: the strip is laid out against the page area only.
         host.safeAreaRegions = []
         host.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(host)
+        let bottom = host.bottomAnchor.constraint(equalTo: root.bottomAnchor)
+        claudeBannerBottom = bottom
         NSLayoutConstraint.activate([
-            host.leadingAnchor.constraint(equalTo: contentFrame.leadingAnchor),
-            host.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor),
-            host.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor, constant: -10),
+            host.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             host.heightAnchor.constraint(equalToConstant: 28),
+            bottom,
         ])
+        claudeButton.onFrameChange = { [weak self] in self?.schedulePlaceClaudeBanner() }
+        for view in [sidebarHostView, contentFrame] as [NSView] {
+            view.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: view, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.schedulePlaceClaudeBanner() }
+            }
+        }
+        schedulePlaceClaudeBanner()
+    }
+
+    /// Frames change mid-layout; move the pill once that pass is over, not inside it.
+    private func schedulePlaceClaudeBanner() {
+        guard !claudeBannerPlacement.pending else { return }
+        claudeBannerPlacement.pending = true
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.claudeBannerPlacement.pending = false
+                self.placeClaudeBanner()
+            }
+        }
+    }
+
+    /// Above the Claude button when the docked sidebar shows it; otherwise 10pt up from the page's bottom, centred.
+    private func placeClaudeBanner() {
+        guard let root = window?.contentView, let bottom = claudeBannerBottom else { return }
+        // Distance from the root's bottom edge to a rect's top (or bottom) edge, whatever the root's flip.
+        func lift(_ r: CGRect, top: Bool) -> CGFloat {
+            root.isFlipped ? root.bounds.height - (top ? r.minY : r.maxY) : (top ? r.maxY : r.minY)
+        }
+        if isSidebarDocked, let button = claudeButton.frame, !button.isEmpty {
+            let r = sidebarHostView.convert(button, to: root)
+            if root.bounds.contains(CGPoint(x: r.midX, y: r.midY)) {
+                bottom.constant = -(lift(r, top: true) + 6)
+                claudeBannerPlacement.anchorX = r.midX
+                return
+            }
+        }
+        let page = contentFrame.convert(contentFrame.bounds, to: root)
+        bottom.constant = -(lift(page, top: false) + 10)
+        claudeBannerPlacement.anchorX = page.midX
+    }
+}
+
+/// Where the banner's centre goes across the window, in the window's points from its left edge.
+@MainActor
+@Observable
+final class ClaudeBannerPlacement {
+    var anchorX: CGFloat = 0
+    @ObservationIgnored var pending = false
+}
+
+/// Centres the banner on `placement.anchorX`, kept 8pt inside the window's edges.
+private struct ClaudeBannerStrip: View {
+    let banner: ClaudeControlBanner
+    let placement: ClaudeBannerPlacement
+    @State private var stripWidth: CGFloat = 0
+    @State private var bannerWidth: CGFloat = 0
+
+    var body: some View {
+        banner
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { bannerWidth = $0 }
+            .padding(.leading, leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { stripWidth = $0 }
+    }
+
+    private var leading: CGFloat {
+        let margin: CGFloat = 8
+        return max(margin, min(placement.anchorX - bannerWidth / 2, stripWidth - bannerWidth - margin))
     }
 }
 

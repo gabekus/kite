@@ -40,6 +40,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var sidebarHost: SidebarHostingView!
     /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
     let claudeButton = ClaudeButtonModel()
+    /// Claude's control pill: where it sits across the window, and its strip's bottom constraint.
+    let claudeBannerPlacement = ClaudeBannerPlacement()
+    var claudeBannerBottom: NSLayoutConstraint?
+    /// The sidebar's hosting view, for placing Claude's control pill over its Claude button.
+    var sidebarHostView: NSView { sidebarHost }
+    /// The sidebar is docked beside the page (not hidden, not peeking).
+    var isSidebarDocked: Bool { sidebarVisible && !peeking }
     /// Window › Open Library… (⇧⌘L): covers the sidebar and the card while open.
     let library = LibraryModel()
     private var libraryHost: NSHostingView<LibraryView>!
