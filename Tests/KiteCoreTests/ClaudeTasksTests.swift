@@ -165,6 +165,24 @@ import Testing
             == .tabsCreate(url: "x.com", active: false, placement: .claudeFolder(space: nil)))
     }
 
+    @Test func closingClaudesLastTabTakesItsFoldersWithIt() throws {
+        var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0])])
+        let komado = state.spaces[0].id
+        let mine = state.openTab(url: URL(string: "https://komado.com"), in: komado, select: false)
+        let sessionFolder = state.claudeSessionFolder(named: "Cloudflare", inSpace: komado)
+        let session = try #require(sessionFolder)
+        let tab = state.openTab(url: URL(string: "https://dash.cloudflare.com"), in: komado, select: false)
+        let moved = state.moveTab(tab, toFolder: session)
+        #expect(moved)
+        #expect(state.isInEphemeralFolder(tab))
+        #expect(!state.isInEphemeralFolder(mine))
+        let removed = state.removePinnedTab(tab, droppingEmptyFolder: true)
+        #expect(removed)
+        // Claude › Cloudflare and Claude both go; the user's own tab stays.
+        #expect(state.folders(inSpace: 0).isEmpty)
+        #expect(state.tab(tab) == nil && state.tab(mine) != nil)
+    }
+
     @Test func eachSessionGetsAFolderInsideTheClaudeFolder() throws {
         var state = BrowserState(spaces: [Space(name: "Komado", icon: "🈳", theme: Theme.presets[0])])
         let komado = state.spaces[0].id
