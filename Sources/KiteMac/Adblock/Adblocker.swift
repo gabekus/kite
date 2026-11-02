@@ -128,6 +128,20 @@ final class Adblocker {
         #endif
     }
 
+    /// What to run at document start in a cross-site iframe at `url` on `page`: its
+    /// own host's scriptlets and hiding rules (uBO injects per frame), or nil. Generic
+    /// rules aren't collected from frames, so there's no class/id queue.
+    func frameStartScript(for url: URL, page: URL?) -> String? {
+        #if canImport(KiteAdblock)
+        guard blocks(page), let host = url.host(), url.scheme?.hasPrefix("http") == true,
+              let engine, let resources = engine.cosmeticResources(for: url),
+              !resources.injectedScript.isEmpty || !resources.hideSelectors.isEmpty || !resources.procedural.isEmpty else { return nil }
+        return resources.documentStartScript(host: host, styleID: String(styleID), drain: nil)
+        #else
+        return nil
+        #endif
+    }
+
     /// Script that hands back the classes and ids a page queued (`genericHidingScript`'s input).
     var drainScript: String { CosmeticResources.drainScript(drainName) }
 
