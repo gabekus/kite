@@ -46,6 +46,8 @@ struct SidebarActions {
     var dismissInstantLinks: (UUID) -> Void = { _ in }
     /// After a drag drops something in the sidebar: Arc's move toasts.
     var didDrop: (SidebarDropOutcome) -> Void = { _ in }
+    /// The pointer moved onto a favorite's tile (with the tile's view), or off it (nil): its preview card.
+    var previewFavorite: (BrowserTab?, NSView?) -> Void = { _, _ in }
 }
 
 /// Set from a tracking area over the sidebar's host (`BrowserWindowController`).
@@ -156,7 +158,8 @@ struct SidebarView: View {
                         onRemove: { id in store.mutate { $0.toggleFavorite(tab: id) } },
                         onEditPinnedURL: actions.editPinnedURL,
                         onReplacePinnedURL: actions.replacePinnedURL,
-                        onDrop: actions.didDrop
+                        onDrop: actions.didDrop,
+                        onPreview: actions.previewFavorite
                     )
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.favoritesArea = $0 }
                     .onDisappear { drag.favoritesArea = nil }
@@ -787,6 +790,7 @@ private struct FavoritesGrid: View {
     let onEditPinnedURL: (UUID) -> Void
     let onReplacePinnedURL: (UUID) -> Void
     let onDrop: (SidebarDropOutcome) -> Void
+    let onPreview: (BrowserTab?, NSView?) -> Void
     @Environment(\.sidebarDrag) private var drag
     @AppStorage("favoritesEmptyStateDismissed") private var emptyStateDismissed = false
 
@@ -860,7 +864,8 @@ private struct FavoritesGrid: View {
             onUnload: { onUnload(tab.id) },
             onRemove: { onRemove(tab.id) },
             onEditPinnedURL: { onEditPinnedURL(tab.id) },
-            onReplacePinnedURL: { onReplacePinnedURL(tab.id) }
+            onReplacePinnedURL: { onReplacePinnedURL(tab.id) },
+            onPreview: { anchor in onPreview(anchor == nil || drag?.isDragging == true ? nil : tab, anchor) }
         )
     }
 
@@ -1034,7 +1039,10 @@ private struct FavoriteTile: View {
     let onRemove: () -> Void
     let onEditPinnedURL: () -> Void
     let onReplacePinnedURL: () -> Void
+    /// The pointer came onto the tile (its view) or left it (nil).
+    let onPreview: (NSView?) -> Void
     @State private var hovering = false
+    @State private var anchor: NSView?
 
     var body: some View {
         FaviconView(tab: tab, size: M.favoriteIconSize)
@@ -1042,7 +1050,12 @@ private struct FavoriteTile: View {
             .frame(height: M.favoriteHeight)
             .modifier(ChromeFill(strength: isSelected ? M.fieldFill + M.selectedFill : hovering ? M.fieldFill + M.hoverFill : M.fieldFill))
             .contentShape(Rectangle())
-            .onHover { hovering = $0 }
+            .background(AnchorView(view: $anchor))
+            .onHover { inside in
+                hovering = inside
+                onPreview(inside ? anchor : nil)
+            }
+            .onDisappear { if hovering { onPreview(nil) } }
             .onTapGesture(perform: onSelect)
             .help(tab.displayTitle)
             .contextMenu {

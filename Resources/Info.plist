@@ -40,6 +40,8 @@
 	<string>Websites you allow can use your camera.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Websites you allow can use your microphone.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Kite shows your upcoming events when you hover a calendar favorite.</string>
 	<key>NSLocationUsageDescription</key>
 	<string>Websites you allow can use your location.</string>
 	<!-- Bluetooth is how a phone proves it's nearby when you sign in with a

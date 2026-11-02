@@ -3565,3 +3565,40 @@ Ghidra decompile of `SidebarDock.SidebarDockCollectionViewLayout`.
   the cell, and it isn't cut off where it passes the browser window's edge. Kite shows it in a child
   panel (`SpaceTipWindow`) for the same reason. Arc's pill for a "Personal" space with a "Personal"
   profile chip: 200pt wide, 28pt tall, chip 21pt tall, keycaps 19pt with 3pt between them.
+
+## Favorite previews → `FavoritePreviews` (KiteCore), `FavoritePreviewController`, `FavoritePreviewCardView` (Arc 1.171, 2 Nov 2026)
+
+Hover a Gmail favorite and Arc shows a card of unread mail hanging off the tile. Sources: Arc's binary
+(strings, `~/rea-arc/decomp/arc.s`, Ghidra `out-hp/`), and a live hover of Gabe's Gmail favorite read through
+accessibility frames and pixel colours only (no screenshot of the mail was looked at; captures were deleted).
+
+- Kinds (binary, `PreviewType`, `PreviewsDataClient`): `gmail` (the Atom feed `mail.google.com/mail/u/N/feed/atom`,
+  `GmailPreviewXMLParser`, with the profile's own Google sign-in), `googleCalendar` (Google's Calendar API through
+  Arc's own OAuth client, "Connect Calendar"; also calendar.notion.so), Outlook mail and calendar (Microsoft
+  OAuth), and `recentPages` for Notion, Linear, Figma and Confluence (history by domain, `RecentPagesFetcher`).
+  Kite: Gmail as Arc; Calendar through macOS Calendar (EventKit) since Kite has no Google OAuth client
+  **[differs]**; recents from Kite's history; no Outlook.
+- Strings (binary, `StandardPreviewConfiguration` FUN_100098xxx): empty Gmail "No unread emails, you can exhale! 🍃";
+  signed out "Sign in to your Email to see messages at a glance." / "Sign In"; Calendar "See upcoming meetings and
+  join video calls instantly with the Calendar Preview." / "Connect Calendar"; recents "Recent Notion docs appear
+  here." etc.; join buttons "Join <name>" / "Join Event", 14pt semibold; context menu "Copy Join Link". The
+  configuration also names headers ("Unread", "Upcoming", "Recents") and + buttons ("New Email" → `/#compose`),
+  which the measured Gmail card didn't show; Kite leaves them out.
+- Size (binary, PreviewView FUN_10003c7d0): content `width <= 250`, `height <= 300` (320 for some kinds).
+  Measured Gmail card: 240 × 272 with more mail below. Corners 12 (binary `PopoverBackgroundView` 0x4028…, and the
+  measured corner), fill #18181C, a 1pt light line just inside the edge (#4E4E51 over the fill) and a black
+  hairline outside it; a soft shadow darkens the sidebar from about 12pt out.
+- Placement (measured): tile 8–70.25 × 145–192 (window points), card from (66.5, 188): its top-left is 3.75 left
+  of the tile's right edge and 4 above its bottom, the same wherever the pointer is on the tile. It covers the
+  sidebar and runs past its edge (289) over the page.
+- Rows (measured): text 12 in from the card's edge; dividers 84 apart, 1pt, white about 7% over the fill, full
+  width; each email: the sender (brightest) with the time right-aligned, the subject, then up to two lines of the
+  message, about 16.5pt apart, the first glyphs 13 below the row's top. The row under the pointer lightens
+  (#1B1B19 → #333332 on screen; binary `Color.opacity(0.07)`). A legacy scroller showed at the right (Gabe's
+  setting). No avatars.
+- Timing (measured with a real pointer, 5ms pixel sampling): the card's first frame about 0.39s after the pointer
+  reaches the tile, fully in within about 0.05–0.09s; it stays while the pointer is on the card and goes within
+  about 0.1s of leaving both. Kite: 0.38s delay, 0.08s fades.
+- Click (Kite): a row opens the message in the favorite. **[unverified]** what Arc does on click.
+- **[unverified]** Calendar and recents cards: none of Gabe's favorites has them, so their rows follow the email
+  row's type and padding. Light-appearance colours are unmeasured (Gabe's spaces are dark).

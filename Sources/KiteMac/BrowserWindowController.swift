@@ -49,6 +49,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var trafficLights: TrafficLights!
     private var commandBarHost: NSHostingView<CommandBarOverlay>!
     private lazy var instantLinks = InstantLinksController(store: store, supportDirectory: AppDelegate.supportDirectory)
+    /// Hover cards for Gmail, Calendar and other favorites (Arc's favorite previews).
+    lazy var favoritePreviews = FavoritePreviewController(host: .init(
+        profile: { [weak self] id in self?.store.state.profileDirectory(ofTab: id) ?? Profile.defaultDirectory },
+        history: { [weak self] profile in self?.store.historyRoot?.forProfile(profile) },
+        engine: { [weak self] id in self?.pool.engine(forTab: id) },
+        open: { [weak self] id, url in self?.openInFavorite(id, url) }
+    ))
     private var contentLeading: NSLayoutConstraint!
     private var sidebarLeading: NSLayoutConstraint!
     private var sidebarWidthConstraint: NSLayoutConstraint!
@@ -247,7 +254,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             newProfile: { [weak self] id in self?.presentCreateProfile(for: id) },
             showsProfiles: !isIncognito,
             dismissInstantLinks: { [weak self] id in self?.instantLinks.dismiss(id) },
-            didDrop: { [weak self] outcome in self?.sidebarDropped(outcome) }
+            didDrop: { [weak self] outcome in self?.sidebarDropped(outcome) },
+            previewFavorite: { [weak self] tab, anchor in self?.previewFavorite(tab, anchor: anchor) }
         )
         spaceSwipe = SpaceSwipeController(
             store: store,
