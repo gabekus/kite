@@ -23,6 +23,12 @@ WORK="${1:-$HOME/cef-build}"
 NAME="cef_binary_${CEF_VERSION}_${CEF_PLATFORM}_minimal"
 OUT="$ROOT/ThirdParty/codecs"
 
+# Chromium compiles ANGLE's Metal shaders, which needs Xcode's separate Metal toolchain.
+if ! xcrun -sdk macosx metal --version >/dev/null 2>&1; then
+    echo "error: Xcode's Metal toolchain is missing; run: xcodebuild -downloadComponent MetalToolchain" >&2
+    exit 1
+fi
+
 mkdir -p "$WORK" "$OUT"
 cd "$WORK"
 [[ -d depot_tools ]] || git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
