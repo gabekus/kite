@@ -338,7 +338,7 @@ struct SidebarView: View {
                     onDismissIntro: { store.liveFolderIntroID = nil },
                     claudeActive: claudeShowsActivity(on: folder),
                     onStopClaude: { stopClaude(in: folder) },
-                    isClaudeFolder: folder.ephemeral == true && parent == nil,
+                    isClaudeFolder: folder.ephemeral == true,
                     claudeNeedsYou: claudeNeedsYouCount(in: folder))
                     .modifier(SidebarDragSource(
                         store: store,
@@ -1324,7 +1324,7 @@ private struct FolderRow: View {
     /// with Stop on hover and in the menu.
     var claudeActive = false
     var onStopClaude: () -> Void = {}
-    /// The space's own Claude folder (not a session folder in it): Claude's mark is its icon.
+    /// A Claude folder (the space's Claude folder or a session folder in it): Claude's logo is its icon.
     var isClaudeFolder = false
     /// Tabs in this folded folder with a step waiting on the user (handoff): Claude's dot at the row's end.
     var claudeNeedsYou = 0
