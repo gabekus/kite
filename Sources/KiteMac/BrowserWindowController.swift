@@ -172,7 +172,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         // Edit › Undo and Redo for the sidebar (SidebarUndo), on this window's undo manager.
         window.undoManager?.levelsOfUndo = SidebarUndo.levels
         store.undoManager = { [weak self] in self?.window?.undoManager }
-        store.didUndo = { [weak self] name, isRedo in self?.showToast(SidebarUndo.toast(for: name, isRedo: isRedo)) }
         pool.onPageTaken = { [weak self] id in self?.pageTaken(id) }
         pool.onLinkedWindowClosing = { [weak self] owner in self?.reclaimPages(from: owner) }
         // Dark pages in "Match System" follow macOS switching light/dark.
@@ -1180,7 +1179,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         // Arc's Edit menu: "Undo Archive Tab" ⌘Z, Redo ⇧⌘Z. A tab that leaves the sidebar is a
         // sidebar undo step (SidebarUndo); a pinned tab or favourite only unloads, so its step is here.
         let outcome = store.mutate(undoName: "Archive Tab") { $0.close(tab: id) }
-        if outcome != .notFound, window?.undoManager?.isRedoing == true { store.didUndo?("Archive Tab", true) }
         if outcome == .unloaded {
             pool.discard(id, keepHistory: false)
             window?.undoManager?.registerUndo(withTarget: self) { controller in
@@ -1196,7 +1194,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if reselect { store.mutate { $0.select(tab: id) } }
         window?.undoManager?.registerUndo(withTarget: self) { controller in controller.close(tab: id) }
         window?.undoManager?.setActionName("Archive Tab")
-        store.didUndo?("Archive Tab", window?.undoManager?.isRedoing == true)
     }
 
     @objc func newTab(_ sender: Any?) {

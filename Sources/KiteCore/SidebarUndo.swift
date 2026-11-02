@@ -2,7 +2,7 @@ import Foundation
 
 /// Edit › Undo and Redo for the sidebar, like Arc's: closing and archiving tabs, moving and
 /// reordering them, pinning, favorites, renaming tabs and folders, making and deleting folders,
-/// moving tabs between spaces and adding tabs.
+/// moving tabs between spaces, adding tabs, and making, deleting, moving and renaming spaces.
 ///
 /// Each step keeps the sidebar as it was before and after the change (`SidebarSnapshot`).
 /// Undoing puts the "before" layout back over the live state, and Redo the "after" one, without
@@ -19,6 +19,8 @@ public struct SidebarSnapshot: Hashable, Sendable {
     }
 
     var spaces: [UUID: SpaceContent]
+    /// The spaces in order, whole, so a deleted one comes back with its theme, icon and profile.
+    var spaceList: [Space]
     var favoritesByProfile: [String: [BrowserTab]]
     var favoriteSplitsByProfile: [String: [SplitView]]
     var recentlyClosed: [ClosedTab]
@@ -30,6 +32,7 @@ public struct SidebarSnapshot: Hashable, Sendable {
             ($0.id, SpaceContent(pinnedItems: $0.pinnedItems, tabs: $0.tabs, splits: $0.splits,
                                  tabGroups: $0.tabGroups, selectedTabID: $0.selectedTabID))
         })
+        spaceList = state.spaces
         favoritesByProfile = state.favoritesByProfile
         favoriteSplitsByProfile = state.favoriteSplitsByProfile
         recentlyClosed = state.recentlyClosed
@@ -48,22 +51,19 @@ public struct SidebarSnapshot: Hashable, Sendable {
     }
 }
 
-/// What an undo step is called in the Edit menu ("Undo Archive Tab") and on its toast. The names are
+/// What an undo step is called in the Edit menu ("Undo Archive Tab"). The names are
 /// Arc's own (its undo titles, read from Arc's binary: see the PR).
 public enum SidebarUndo {
     /// How many steps each window keeps.
     public static let levels = 100
-
-    /// The toast after Undo or Redo of a step: "Undo Archive Tab", "Redo Move Tab".
-    public static func toast(for actionName: String, isRedo: Bool) -> String {
-        (isRedo ? "Redo " : "Undo ") + actionName
-    }
 
     /// The part of the state an undo step covers, with everything that changes on its own
     /// stripped out (page URLs and titles, favicons, last-active times, folders opening and
     /// closing, split divider positions, selection). Two states with the same layout compare equal.
     public struct Layout: Hashable, Sendable {
         var spaces: [UUID: SpaceLayout]
+        var spaceOrder: [UUID]
+        var spaceNames: [UUID: String]
         var favorites: [String: [TabLayout]]
         var favoriteSplits: [String: [SplitLayout]]
 
@@ -104,6 +104,8 @@ public enum SidebarUndo {
             spaces = Dictionary(uniqueKeysWithValues: state.spaces.map {
                 ($0.id, SpaceLayout(pinned: layout($0.pinnedItems), tabs: $0.tabs.map(tab), splits: splits($0.splits), groups: $0.tabGroups))
             })
+            spaceOrder = state.spaces.map(\.id)
+            spaceNames = Dictionary(uniqueKeysWithValues: state.spaces.map { ($0.id, $0.name) })
             favorites = state.favoritesByProfile.mapValues { $0.map(tab) }
             favoriteSplits = state.favoriteSplitsByProfile.mapValues(splits)
         }
@@ -114,15 +116,22 @@ public enum SidebarUndo {
     }
 
     /// Whether going from `before` to `after` is a change the user can undo.
-    /// Making or deleting a space isn't one: Arc asks before deleting a space, and can't undo it.
     public static func isUndoable(from before: BrowserState, to after: BrowserState) -> Bool {
-        guard Set(before.spaces.map(\.id)) == Set(after.spaces.map(\.id)) else { return false }
-        return Layout(before) != Layout(after)
+        Layout(before) != Layout(after)
     }
 
     /// Arc's name for the change from `before` to `after`, as the Edit menu shows it after
     /// "Undo " and "Redo ".
     public static func actionName(from before: BrowserState, to after: BrowserState) -> String {
+        // Spaces first: deleting one takes its tabs with it, and that's still "Delete Space".
+        let oldSpaces = before.spaces.map(\.id), newSpaces = after.spaces.map(\.id)
+        if oldSpaces.contains(where: { !newSpaces.contains($0) }) { return "Delete Space" }
+        if newSpaces.contains(where: { !oldSpaces.contains($0) }) { return "New Space" }
+        if oldSpaces != newSpaces { return "Move Space" }
+        if before.spaces.contains(where: { space in after.spaces.first { $0.id == space.id }?.name != space.name }) {
+            return "Customize Space"
+        }
+
         let old = Placement.all(in: before), new = Placement.all(in: after)
         let removed = old.keys.filter { new[$0] == nil }
         let added = new.keys.filter { old[$0] == nil }
@@ -251,6 +260,7 @@ extension BrowserState {
         let live = current.tabsByID
         let stepTabs = Set(target.tabsByID.keys).union(other.tabsByID.keys)
         let liveFolders = Self.folderStates(in: spaces.flatMap(\.pinnedItems))
+        restoreSpaces(target, other: other)
 
         // The step's layout, space by space (spaces made or deleted since are left alone).
         for s in spaces.indices {
@@ -326,6 +336,33 @@ extension BrowserState {
         }
         normalizeSplits()
         return Array(broughtBack)
+    }
+
+    /// The step's spaces: ones it made go, ones it deleted come back whole where they were, and
+    /// they take the step's order and names. Spaces made since, outside the step, stay.
+    private mutating func restoreSpaces(_ target: SidebarSnapshot, other: SidebarSnapshot) {
+        let wanted = target.spaceList.map(\.id)
+        let made = Set(other.spaceList.map(\.id)).subtracting(wanted)
+        if spaces.contains(where: { !made.contains($0.id) }) { spaces.removeAll { made.contains($0.id) } }
+        let present = Set(spaces.map(\.id))
+        var cameBack: [UUID] = []
+        for (i, space) in target.spaceList.enumerated() where !present.contains(space.id) {
+            spaces.insert(space, at: min(i, spaces.count))
+            cameBack.append(space.id)
+        }
+        // The step's spaces take its order in the slots they fill; others keep their places.
+        let rank = Dictionary(uniqueKeysWithValues: wanted.enumerated().map { ($1, $0) })
+        let slots = spaces.indices.filter { rank[spaces[$0].id] != nil }
+        let ordered = slots.map { spaces[$0] }.sorted { rank[$0.id]! < rank[$1.id]! }
+        for (slot, space) in zip(slots, ordered) { spaces[slot] = space }
+        for s in spaces.indices {
+            if let name = target.spaceList.first(where: { $0.id == spaces[s].id })?.name { spaces[s].name = name }
+        }
+        if let back = cameBack.first(where: { $0 == target.selectedSpaceID }) ?? cameBack.first {
+            selectedSpaceID = back
+        } else if spaceIndex(selectedSpaceID) == nil {
+            selectedSpaceID = spaceIndex(target.selectedSpaceID).map { spaces[$0].id } ?? spaces[0].id
+        }
     }
 
     private func isKnownProfile(_ profile: String) -> Bool {

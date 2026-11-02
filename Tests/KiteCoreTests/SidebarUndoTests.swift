@@ -177,10 +177,39 @@ import Testing
         #expect(retitle.name == nil)
     }
 
-    @Test func spacesComingAndGoingAreNotSteps() {
+    @Test func spacesAreStepsLikeArcs() {
         var state = BrowserState.makeDefault()
+        let home = state.selectedSpaceID
         let add = step(&state) { _ = $0.addSpace(name: "New", icon: "", theme: Theme.presets[2]) }
-        #expect(add.name == nil)
+        #expect(add.name == "New Space")
+        let new = state.selectedSpaceID
+        state.restoreSidebar(add.before, other: add.after)
+        #expect(state.spaceIndex(new) == nil)
+        #expect(state.selectedSpaceID == home)
+        state.restoreSidebar(add.after, other: add.before)
+        #expect(state.spaceIndex(new) != nil)
+
+        // Deleting a space with tabs, then undoing, brings it back whole, in place, with its tabs.
+        state.selectSpace(new)
+        let tab = state.openTab(url: url("a.com"))
+        state.selectSpace(home)
+        let order = state.spaces.map(\.id)
+        let delete = step(&state) { $0.deleteSpace(new) }
+        #expect(delete.name == "Delete Space")
+        state.restoreSidebar(delete.before, other: delete.after)
+        #expect(state.spaces.map(\.id) == order)
+        #expect(state.spaces[state.spaceIndex(new)!].name == "New")
+        #expect(state.location(of: tab)?.space == state.spaceIndex(new))
+
+        let move = step(&state) { $0.moveSpace(new, to: 0) }
+        #expect(move.name == "Move Space")
+        state.restoreSidebar(move.before, other: move.after)
+        #expect(state.spaces.map(\.id) == order)
+
+        let rename = step(&state) { $0.renameSpace(new, to: "Work") }
+        #expect(rename.name == "Customize Space")
+        state.restoreSidebar(rename.before, other: rename.after)
+        #expect(state.spaces[state.spaceIndex(new)!].name == "New")
     }
 
     @Test func favorites() {
