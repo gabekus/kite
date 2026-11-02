@@ -104,9 +104,9 @@ Before pushing Swift changes, build locally: the repo's pre-push hook runs
 `swift build --build-tests` (incremental, usually seconds). Enable it once per
 clone, which covers its worktrees: `git config core.hooksPath .githooks`.
 
-CI (`.github/workflows/ci.yml`) restores the `.build` cache saved by the
+CI (`.github/workflows/ci.yml` for macOS, `ci-windows.yml`) restores the `.build` cache saved by the
 latest main run, and `scripts/ci-restore-mtimes.sh` makes that build
 incremental, so a PR recompiles only what it changed. Docs-only changes skip
 the macOS job, and Windows runs only when KiteCore, Tests or Package.swift
 change. The macOS runner label comes from the `MACOS_RUNNER` repo variable
-(default `macos-15`).
+(default `macos-15`); fork PRs always use GitHub's runner.
