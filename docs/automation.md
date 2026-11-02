@@ -24,7 +24,7 @@ claude mcp add -s user kite -- /path/to/Kite.app/Contents/Helpers/kite mcp
 | Claude in Chrome | Kite tool | CLI | Notes |
 |---|---|---|---|
 | `tabs_context_mcp` | `tabs_context` | `kite tabs` | Every tab in every space, with ids, URLs, space, front. |
-| `tabs_create_mcp` | `tabs_create` | `kite open URL [--space NAME]` | Background by default. `space` picks the space (see "Opening links in the right space"); `"claude"` is Claude's own. |
+| `tabs_create_mcp` | `tabs_create` | `kite open URL [--space NAME]` | Background by default. `space` picks the space (see "Opening links in the right space"); `claude_folder` puts it in that space's Claude folder. |
 | `tabs_close_mcp` | `tabs_close` | `kite call tabs_close` | Asks first if Claude didn't open the tab. |
 | (switch tab) | `switch_tab` | | |
 | `navigate` | `navigate` | `kite open URL --here` | Also `"back"` / `"forward"`. Waits for the load. |
@@ -395,3 +395,7 @@ without the user naming it.
   and conversation are about, using `list_spaces`, without asking and without defaulting to the space in front.
 - A Claude task that opens a link in a named space leaves it as a plain tab there, not in the task's folder, since
   it's for the user.
+- There is no separate Claude space any more. Pages Claude opens to work in itself go in the Claude folder (an
+  ephemeral pinned folder, `BrowserState.claudeFolder(inSpace:)`) of the space they belong to: `tabs_create` with
+  `space` and `claude_folder: true`. `space: "claude"` and `in_claude_space` (older callers) mean the Claude folder of
+  the space in front, as does Kite menu → Open Claude's Tabs in a Claude Folder for `navigate new_tab`.

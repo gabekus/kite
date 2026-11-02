@@ -527,7 +527,7 @@ struct AdvancedPane: View {
                 SettingsSeparator()
                 CommandToggle("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)))
                 SettingsSeparator()
-                CommandToggle("Open Claude’s Tabs in a Claude Space", #selector(AppDelegate.toggleClaudeSpace(_:)))
+                CommandToggle("Open Claude’s Tabs in a Claude Folder", #selector(AppDelegate.toggleClaudeSpace(_:)))
                 SettingsSeparator()
                 CommandToggle("Ask Before Claude Acts", #selector(AppDelegate.toggleAskBeforeClaudeActs(_:)))
                 SettingsSeparator()

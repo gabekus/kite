@@ -12,7 +12,7 @@ extension AutomationController {
         case let .tabsCreate(url, active, placement):
             return try await openTab(url, active: active, placement: placement, connection: connection)
         case .navigate(nil, let url, true):
-            return try await openTab(url, active: false, placement: settings.useClaudeSpace ? .claudeSpace : .currentSpace,
+            return try await openTab(url, active: false, placement: settings.useClaudeSpace ? .claudeFolder(space: nil) : .currentSpace,
                                      connection: connection)
         case .tabsClose(let string):
             return try await closeTab(string)
@@ -431,9 +431,9 @@ extension AutomationController {
         let spaceID: UUID?
         var jevPicked: String?
         switch placement {
-        case .currentSpace:
-            // Claude forgot to name a space for a link it opened for the user: Jev picks one from
-            // what each space is for, in well under a second. Unsure, or no Jev: the space in front.
+        case .currentSpace, .claudeFolder(nil):
+            // Claude forgot to name a space for a tab it opened: Jev picks one from what each space is
+            // for, in well under a second. Unsure, or no Jev: the space in front.
             if task == nil, let url, let picked = await jevSpace(for: url),
                let index = store.state.space(matching: picked), store.state.spaces[index].id != store.state.selectedSpace.id {
                 spaceID = store.state.spaces[index].id
@@ -441,8 +441,12 @@ extension AutomationController {
             } else {
                 spaceID = nil
             }
-        // A task never makes a Claude space: its tabs go to its space's Claude folder.
-        case .claudeSpace: spaceID = task == nil ? store.mutate { $0.claudeSpace() } : nil
+        // Pages Claude works in go in the Claude folder of the space they belong to (moved there below).
+        case .claudeFolder(let name?):
+            guard let index = store.state.space(matching: name) else {
+                throw AutomationError(.notFound, "There's no space called \(name). Call list_spaces.")
+            }
+            spaceID = store.state.spaces[index].id
         case .space(let name):
             guard let index = store.state.space(matching: name) else {
                 throw AutomationError(.notFound, "There's no space called \(name). Call list_spaces.")
@@ -450,13 +454,24 @@ extension AutomationController {
             spaceID = store.state.spaces[index].id
         }
         let id = store.mutate { $0.openTab(url: url, in: spaceID, select: false) }
+        switch (placement, task) {
         // A link a task opens in a named space is for the user, so it stays a plain tab there rather than
         // going in the task's folder.
-        if let task, case .space = placement {
+        case (.space, let task?):
             taskTabs[task, default: []].append(id)
-        } else if let task {
+        // A task's own pages: its folder, inside the Claude folder of the space it was asked from.
+        case (.currentSpace, let task?), (.claudeFolder(nil), let task?):
             taskOpenedTab?(task, id)
             taskTabs[task, default: []].append(id)
+        case (.claudeFolder, _):
+            store.mutate { state in
+                guard let space = state.location(of: id)?.space, let folder = state.claudeFolder(inSpace: state.spaces[space].id)
+                else { return }
+                _ = state.moveTab(id, toFolder: folder)
+            }
+            if let task { taskTabs[task, default: []].append(id) }
+        default:
+            break
         }
         if active { store.mutate { $0.select(tab: id) } }
         claudeOpened.insert(id)

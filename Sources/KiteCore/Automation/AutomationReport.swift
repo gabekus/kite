@@ -113,7 +113,7 @@ public enum AutomationReport {
 /// the session so a throwaway test profile never turns it on for the real one.
 public struct AutomationSettings: Codable, Hashable, Sendable {
     public var allowClaudeControl: Bool
-    /// Open Claude's new tabs in a "Claude" space instead of the current one.
+    /// Open Claude's new tabs (navigate new_tab without a space) in the front space's Claude folder.
     public var useClaudeSpace: Bool
     /// Log every tab's requests (redacted) for Claude, and keep a week of them on disk, not just the tabs Claude drives.
     public var recordNetwork: Bool

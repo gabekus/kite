@@ -66,8 +66,9 @@ public enum WaitCondition: Hashable, Sendable {
 /// Where a new tab goes.
 public enum TabPlacement: Hashable, Sendable {
     case currentSpace
-    /// The profile's "Claude" space, made on first use, so Claude's tabs stay out of the user's way.
-    case claudeSpace
+    /// The Claude folder in a space's pinned section (by id or name; nil for the space in front), made on
+    /// first use, so pages Claude works in stay out of the user's way in the space they belong to.
+    case claudeFolder(space: String?)
     /// A space by id or name.
     case space(String)
 }
@@ -231,6 +232,17 @@ public enum AutomationCommand: Hashable, Sendable {
         }
     }
 
+    /// Where tabs_create (or navigate with a space) puts a tab. "claude" was once a separate Claude space;
+    /// it now means the Claude folder of the space in front.
+    static func placement(space: String?, claudeFolder: Bool) -> TabPlacement {
+        let space = space?.trimmingCharacters(in: .whitespaces)
+        switch space {
+        case nil, "": return claudeFolder ? .claudeFolder(space: nil) : .currentSpace
+        case let space? where space.lowercased() == "claude": return .claudeFolder(space: nil)
+        case let space?: return claudeFolder ? .claudeFolder(space: space) : .space(space)
+        }
+    }
+
     /// Parses a tool call. Unknown arguments are ignored; missing or mistyped ones throw.
     public init(tool name: String, arguments: JSONValue?) throws {
         guard let tool = Tool(name: name) else { throw InvalidArguments("Unknown tool \"\(name)\".") }
@@ -245,11 +257,8 @@ public enum AutomationCommand: Hashable, Sendable {
             self = .tabsContext
         case .tabsCreate:
             let placement: TabPlacement
-            switch try a.string("space") {
-            case nil, "": placement = try a.bool("in_claude_space") ? .claudeSpace : .currentSpace
-            case let space? where space.lowercased() == "claude": placement = .claudeSpace
-            case let space?: placement = .space(space)
-            }
+            placement = try Self.placement(space: a.string("space"),
+                                           claudeFolder: a.bool("claude_folder") || a.bool("in_claude_space"))
             self = .tabsCreate(url: try a.string("url").flatMap { $0.isEmpty ? nil : $0 }, active: try a.bool("active"),
                                placement: placement)
         case .tabsClose:
@@ -265,7 +274,7 @@ public enum AutomationCommand: Hashable, Sendable {
                 if tab != nil { throw InvalidArguments("\"space\" opens a new tab, so don't pass \"tab\" with it.") }
                 if ["back", "forward"].contains(url.lowercased()) { throw InvalidArguments("\"back\" and \"forward\" need a tab, not a space.") }
                 self = .tabsCreate(url: url, active: false,
-                                   placement: space.lowercased() == "claude" ? .claudeSpace : .space(space))
+                                   placement: Self.placement(space: space, claudeFolder: try a.bool("claude_folder")))
                 return
             }
             self = .navigate(tab: tab, url: url, newTab: newTab)

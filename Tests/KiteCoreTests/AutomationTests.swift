@@ -38,7 +38,15 @@ import Testing
 
     @Test func parsesTabAndKiteTools() throws {
         #expect(try AutomationCommand(tool: "tabs_create", arguments: ["url": "x.com", "space": "claude"])
-            == .tabsCreate(url: "x.com", active: false, placement: .claudeSpace))
+            == .tabsCreate(url: "x.com", active: false, placement: .claudeFolder(space: nil)))
+        #expect(try AutomationCommand(tool: "tabs_create", arguments: ["url": "dash.cloudflare.com", "space": "Komado", "claude_folder": true])
+            == .tabsCreate(url: "dash.cloudflare.com", active: false, placement: .claudeFolder(space: "Komado")))
+        #expect(try AutomationCommand(tool: "tabs_create", arguments: ["claude_folder": true])
+            == .tabsCreate(url: nil, active: false, placement: .claudeFolder(space: nil)))
+        #expect(try AutomationCommand(tool: "tabs_create", arguments: ["in_claude_space": true])
+            == .tabsCreate(url: nil, active: false, placement: .claudeFolder(space: nil)))
+        #expect(try AutomationCommand(tool: "navigate", arguments: ["url": "x.com", "space": "Komado", "claude_folder": true])
+            == .tabsCreate(url: "x.com", active: false, placement: .claudeFolder(space: "Komado")))
         #expect(try AutomationCommand(tool: "tabs_create_mcp", arguments: ["active": true])
             == .tabsCreate(url: nil, active: true, placement: .currentSpace))
         #expect(try AutomationCommand(tool: "tabs_create", arguments: ["space": "Work"])
