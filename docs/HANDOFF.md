@@ -88,7 +88,8 @@ Requirements: macOS 14+ (dev machine: macOS 15.7, Apple Silicon), Xcode 26.3 / S
 
 ```bash
 cd ~/dev/kite
-scripts/fetch-cef.sh            # CEF minimal macosarm64, ~135 MB, SHA-1 pinned; builds libcef_dll_wrapper.a with cmake/ninja
+scripts/build-cef.sh            # once, optional: CEF from source with H.264/AAC (~5-8 h, ~90 GB peak) → ThirdParty/codecs/
+scripts/fetch-cef.sh            # CEF minimal macosarm64 (the codecs build if present, else download ~135 MB, SHA-1 pinned); builds libcef_dll_wrapper.a
 scripts/bundle-app.sh debug     # → build/Kite.app (framework + 5 helper apps, ad-hoc signed)
 open build/Kite.app
 swift run Kite                  # WebKit engine, fast UI iteration (no CEF needed)
