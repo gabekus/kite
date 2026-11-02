@@ -55,6 +55,10 @@ import Testing
         let plain = [Self.user("<command-name>/clear</command-name>"), Self.user("make ⌘J faster\nplease")].joined(separator: "\n")
         #expect(ClaudeCodeTranscript.info(head: Data(plain.utf8))?.title == "make ⌘J faster")
 
+        // Claude Code's own title beats the first prompt.
+        let titled = plain + "\n" + Self.line(["type": "ai-title", "aiTitle": "Faster ⌘J", "sessionId": "s"])
+        #expect(ClaudeCodeTranscript.info(head: Data(titled.utf8))?.title == "Faster ⌘J")
+
         // A name the user gave wins, wherever it is.
         let renamed = plain + "\n" + Self.line(["type": "custom-title", "customTitle": "Speed up ⌘J", "sessionId": "s"])
         #expect(ClaudeCodeTranscript.info(head: Data(renamed.utf8))?.title == "Speed up ⌘J")
@@ -98,8 +102,76 @@ import Testing
         #expect(list.recent.first?.isLive() == true)
         #expect(list.recent.last?.isLive() == false)
         #expect(ClaudeCodeSessions.transcript(id: ids[7], home: home)?.lastPathComponent == "\(ids[7]).jsonl")
+        // The shown session stays readable once it's off the list.
+        #expect(ClaudeCodeSessions.list(home: home, pinned: [], limit: 5, shown: ids[7]).shown?.title == "task 7")
+        #expect(ClaudeCodeSessions.list(home: home, pinned: [], limit: 5).shown == nil)
         #endif
     }
+
+    @Test func followsAGrowingTranscript() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jsonl")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data((Self.user("first") + "\n" + Self.assistant([["type": "text", "text": "one"]]) + "\n").utf8).write(to: file)
+        var reader = ClaudeCodeTranscriptReader()
+        do { let changed = reader.read(file); #expect(changed) }
+        #expect(reader.entries.map(\.text) == ["first", "one"])
+        do { let changed = reader.read(file); #expect(!changed) }
+
+        // A line still being written waits for its newline.
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        let next = Self.user("second")
+        try handle.write(contentsOf: Data(next.prefix(20).utf8))
+        do { let changed = reader.read(file); #expect(!changed) }
+        try handle.write(contentsOf: Data((next.dropFirst(20) + "\n").utf8))
+        try handle.close()
+        do { let changed = reader.read(file); #expect(changed) }
+        #expect(reader.entries.map(\.text) == ["first", "one", "second"])
+
+        // A big file starts near its end; the cut line there is skipped.
+        var tail = ClaudeCodeTranscriptReader()
+        do { let changed = tail.read(file, startBytes: 10); #expect(!changed) }
+        #expect(tail.entries.map(\.text) == [])
+        var last = ClaudeCodeTranscriptReader()
+        do { let changed = last.read(file, startBytes: UInt64(next.utf8.count + 1)); #expect(changed) }
+        #expect(last.entries.map(\.text) == ["second"])
+    }
+
+    @Test func readsTheClaudeAppsTitles() throws {
+        #if !os(Windows)
+        let files = FileManager.default
+        let home = files.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? files.removeItem(at: home) }
+        let cli = UUID().uuidString.lowercased(), archived = UUID().uuidString.lowercased()
+        let dir = projectsDir(home).appendingPathComponent("-Users-me-dev-kite")
+        try files.createDirectory(at: dir, withIntermediateDirectories: true)
+        for id in [cli, archived] {
+            try Data(Self.user("the first prompt").utf8).write(to: dir.appendingPathComponent("\(id).jsonl"))
+        }
+        let org = ClaudeDesktopSessions.directory(home: home).appendingPathComponent("acct/org")
+        try files.createDirectory(at: org, withIntermediateDirectories: true)
+        func meta(_ name: String, _ object: [String: Any]) throws {
+            try JSONSerialization.data(withJSONObject: object).write(to: org.appendingPathComponent(name))
+        }
+        try meta("local_1.json", ["sessionId": "local_1", "cliSessionId": cli, "title": "Fix the cursor", "isArchived": false])
+        try meta("local_2.json", ["sessionId": "local_2", "cliSessionId": archived, "title": "Old", "isArchived": true])
+        try meta("local_3.json", ["sessionId": "local_3", "title": ""])
+        try Data("not json".utf8).write(to: org.appendingPathComponent("local_4.json"))
+
+        let index = ClaudeDesktopSessions.index(home: home)
+        #expect(index.byCLISessionID[cli] == ClaudeDesktopSession(title: "Fix the cursor", isArchived: false))
+        #expect(index.byCLISessionID.count == 2)
+        // An unchanged file isn't read again.
+        #expect(ClaudeDesktopSessions.index(home: home, previous: index).byCLISessionID == index.byCLISessionID)
+
+        let list = ClaudeCodeSessions.list(home: home, pinned: [archived], desktop: index.byCLISessionID)
+        #expect(list.recent.map(\.title) == ["Fix the cursor"])
+        // Archived in the app: not recent, but still shown when pinned.
+        #expect(list.pinned.map(\.title) == ["Old"])
+        #endif
+    }
+
+    private func projectsDir(_ home: URL) -> URL { ClaudeCodeSessions.projectsDirectory(home: home) }
 
     @Test func pinsSurviveAndFollowRenames() throws {
         var pins = ClaudeCodePins()

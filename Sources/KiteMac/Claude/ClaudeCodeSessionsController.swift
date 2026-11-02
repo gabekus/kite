@@ -21,6 +21,8 @@ final class ClaudeCodeSessionsController {
     private(set) var pins: ClaudeCodePins
     /// A session Kite just started, until its transcript shows up in the list.
     private(set) var started: [String: ClaudeCodeSession] = [:]
+    /// The shown session, kept up to date when it's no longer one of the listed ones.
+    private(set) var shown: ClaudeCodeSession?
 
     var permissions: ClaudeCodeInvocation.Permissions = UserDefaults.standard.string(forKey: ClaudeCodeInvocation.Permissions.defaultsKey)
         .flatMap(ClaudeCodeInvocation.Permissions.init) ?? .acceptEdits {
@@ -31,6 +33,7 @@ final class ClaudeCodeSessionsController {
     var selectedID: String? {
         didSet {
             guard selectedID != oldValue else { return }
+            shown = selectedID.flatMap(session)
             if let selectedID {
                 unreadIDs.remove(selectedID)
                 reloadConversation(selectedID)
@@ -47,6 +50,11 @@ final class ClaudeCodeSessionsController {
     @ObservationIgnored private var refreshing = false
     /// Each loaded conversation's transcript date, so a poll reloads only what changed.
     @ObservationIgnored private var loadedDates: [String: Date] = [:]
+    /// Each shown conversation's place in its transcript, so a reload reads only what was added.
+    @ObservationIgnored private var readers: [String: ClaudeCodeTranscriptReader] = [:]
+    @ObservationIgnored private var reading: Set<String> = []
+    /// The Claude app's titles for its Code tab's sessions.
+    @ObservationIgnored private var desktop = ClaudeDesktopSessions.Index()
     @ObservationIgnored private var activity: NSObjectProtocol?
 
     private final class Run {
@@ -70,10 +78,16 @@ final class ClaudeCodeSessionsController {
     func isPinned(_ id: String) -> Bool { pins.isPinned(id) }
 
     func session(_ id: String) -> ClaudeCodeSession? {
-        pinned.first { $0.id == id } ?? recent.first { $0.id == id } ?? started[id]
+        pinned.first { $0.id == id } ?? recent.first { $0.id == id } ?? started[id] ?? (shown?.id == id ? shown : nil)
     }
 
     func conversation(_ id: String) -> ClaudeTask? { conversations[id] }
+
+    /// Changed in the last minute and a half by something other than Kite's own last turn:
+    /// probably running in a terminal or the Claude app right now.
+    func isActiveElsewhere(_ session: ClaudeCodeSession) -> Bool {
+        session.isLive() && !(kiteRanAt[session.id].map { session.updatedAt.timeIntervalSince($0) <= 5 } ?? false)
+    }
 
     // MARK: Watching
 
@@ -94,19 +108,26 @@ final class ClaudeCodeSessionsController {
     func refresh() {
         guard !refreshing else { return }
         refreshing = true
-        let home = home, pinnedIDs = pins.pinned, excluding = kiteDirectories
-        let known = Dictionary((pinned + recent).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let home = home, pinnedIDs = pins.pinned, excluding = kiteDirectories, previous = desktop
+        let known = Dictionary((pinned + recent + [shown].compactMap { $0 }).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let shownID = selectedID
         Task.detached(priority: .userInitiated) { [weak self] in
-            let list = ClaudeCodeSessions.list(home: home, pinned: pinnedIDs, excluding: excluding, known: known)
-            await self?.listed(list)
+            let desktop = ClaudeDesktopSessions.index(home: home, previous: previous)
+            let list = ClaudeCodeSessions.list(home: home, pinned: pinnedIDs, excluding: excluding, known: known,
+                                               desktop: desktop.byCLISessionID, shown: shownID)
+            await self?.listed(list, desktop: desktop)
         }
     }
 
-    private func listed(_ list: (pinned: [ClaudeCodeSession], recent: [ClaudeCodeSession])) {
+    private func listed(_ list: (pinned: [ClaudeCodeSession], recent: [ClaudeCodeSession], shown: ClaudeCodeSession?),
+                        desktop: ClaudeDesktopSessions.Index) {
         refreshing = false
+        self.desktop = desktop
         if pinned != list.pinned { pinned = list.pinned }
         if recent != list.recent { recent = list.recent }
-        let listedIDs = Set((pinned + recent).map(\.id))
+        // A listing started before the selection changed says nothing about the new one.
+        if let listed = list.shown, listed.id == selectedID, shown != listed { shown = listed }
+        let listedIDs = Set((pinned + recent + [shown].compactMap { $0 }).map(\.id))
         if started.keys.contains(where: listedIDs.contains) { started = started.filter { !listedIDs.contains($0.key) } }
         if let selectedID, runs[selectedID] == nil, let session = session(selectedID),
            loadedDates[selectedID] != session.updatedAt {
@@ -114,23 +135,31 @@ final class ClaudeCodeSessionsController {
         }
     }
 
-    /// Reads the session's transcript into its conversation (not while Kite's own run streams into it).
+    /// Reads what was added to the session's transcript into its conversation (not while Kite's
+    /// own run streams into it).
     private func reloadConversation(_ id: String) {
-        guard runs[id] == nil else { return }
+        guard runs[id] == nil, !reading.contains(id) else { return }
+        reading.insert(id)
         let home = home
         let known = session(id)?.transcript
+        var reader = readers[id] ?? ClaudeCodeTranscriptReader()
         Task.detached(priority: .userInitiated) { [weak self] in
-            guard let file = known ?? ClaudeCodeSessions.transcript(id: id, home: home),
-                  let data = try? Data(contentsOf: file) else { return }
+            guard let file = known ?? ClaudeCodeSessions.transcript(id: id, home: home) else {
+                await self?.loaded(id, reader: nil, date: nil)
+                return
+            }
             let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-            let entries = ClaudeCodeTranscript.entries(data)
-            await self?.loaded(id, entries: entries, date: date)
+            _ = reader.read(file)
+            await self?.loaded(id, reader: reader, date: date)
         }
     }
 
-    private func loaded(_ id: String, entries: [ClaudeTask.Entry], date: Date?) {
-        guard runs[id] == nil else { return }
+    private func loaded(_ id: String, reader: ClaudeCodeTranscriptReader?, date: Date?) {
+        reading.remove(id)
+        guard let reader, runs[id] == nil else { return }
+        readers[id] = reader
         loadedDates[id] = date
+        let entries = reader.entries
         var conversation = conversations[id] ?? Self.emptyConversation(id)
         guard conversation.entries != entries || conversation.status == .running else { return }
         conversation.entries = entries
@@ -168,9 +197,7 @@ final class ClaudeCodeSessionsController {
             return fail(id, "Kite can't tell which folder this session works in, so it can't continue it here. Open it in the Claude app instead.")
         }
         var conversation = conversations[id] ?? Self.emptyConversation(id)
-        // Kite's own last turn doesn't count as someone else working in it.
-        if let session = self.session(id), session.isLive(),
-           kiteRanAt[id].map({ session.updatedAt.timeIntervalSince($0) > 5 }) ?? true {
+        if let session = self.session(id), isActiveElsewhere(session) {
             conversation.append(.init(.note, "This session changed in the last minute. If it's still running in a terminal or the Claude app, both will add to it."))
         }
         conversation.followUp(text)
@@ -184,6 +211,8 @@ final class ClaudeCodeSessionsController {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
         let id = UUID().uuidString.lowercased()
+        // Claude Code keys transcripts by the real path (/tmp is /private/tmp).
+        let folder = URL(fileURLWithPath: folder).resolvingSymlinksInPath().path
         let transcript = ClaudeCodeSessions.projectsDirectory(home: home)
             .appendingPathComponent(ClaudeCodeFolders.transcriptKey(folder), isDirectory: true)
             .appendingPathComponent("\(id).jsonl")
@@ -310,6 +339,7 @@ final class ClaudeCodeSessionsController {
 
     private func rekey(_ old: String, to new: String) {
         runs[new] = runs.removeValue(forKey: old)
+        readers[new] = readers.removeValue(forKey: old)
         conversations[new] = conversations.removeValue(forKey: old)
         if var moved = started.removeValue(forKey: old) ?? session(old) {
             moved.id = new

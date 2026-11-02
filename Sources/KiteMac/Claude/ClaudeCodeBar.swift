@@ -5,7 +5,8 @@ import SwiftUI
 /// ⌃⌘J, or the Claude Code button in the ⌘J bar: the user's own Claude Code sessions in the same
 /// bar as ⌘J (same panel, field and transcript). Without a session it lists the pinned ones and
 /// the last few, filtered by what's typed; picking one shows its conversation (live while it runs
-/// in a terminal or the Claude app), and Return continues it from Kite.
+/// in a terminal or the Claude app), and Return continues it from Kite. A folder's path typed in
+/// the field offers a new session there.
 struct ClaudeCodeBar: View {
     let model: ClaudeBubbleModel
     let code: ClaudeCodeSessionsController
@@ -37,13 +38,13 @@ struct ClaudeCodeBar: View {
                 }
             } else {
                 let rows = self.rows
-                if !rows.isEmpty {
+                if !rows.isEmpty || typedFolder != nil {
                     divider
                     list(rows)
                 } else {
                     divider
                     Text(model.codeDraft.isEmpty
-                         ? "No Claude Code sessions yet. Start one in a folder with the New Session button."
+                         ? "No Claude Code sessions yet. Start one with the New Session button, or type a folder’s path."
                          : "No sessions match.")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
@@ -91,7 +92,7 @@ struct ClaudeCodeBar: View {
                 .onSubmit(submit)
                 .onKeyPress(.downArrow) {
                     guard isListing else { return .ignored }
-                    highlighted = min(highlighted + 1, max(rows.count - 1, 0))
+                    highlighted = min(highlighted + 1, max(rowCount - 1, 0))
                     return .handled
                 }
                 .onKeyPress(.upArrow) {
@@ -129,11 +130,30 @@ struct ClaudeCodeBar: View {
 
     private func submit() {
         guard isListing else { return model.sendCode() }
-        let rows = self.rows
-        guard rows.indices.contains(highlighted) else { return }
+        if let folder = typedFolder {
+            guard highlighted > 0 else {
+                model.codeDraft = ""
+                return model.newSession(in: folder)
+            }
+        }
+        let rows = self.rows, index = highlighted - (typedFolder == nil ? 0 : 1)
+        guard rows.indices.contains(index) else { return }
         model.codeDraft = ""
-        model.openCode(session: rows[highlighted].session.id)
+        model.openCode(session: rows[index].session.id)
     }
+
+    /// The folder whose path is typed in the field (`/…` or `~/…`), for a new session there.
+    private var typedFolder: String? {
+        let text = model.codeDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.hasPrefix("/") || text.hasPrefix("~") else { return nil }
+        let path = URL(fileURLWithPath: (text as NSString).expandingTildeInPath).standardizedFileURL.path
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else { return nil }
+        return path
+    }
+
+    /// The list's rows: the typed folder's, then the sessions.
+    private var rowCount: Int { rows.count + (typedFolder == nil ? 0 : 1) }
 
     private func placeholder(session: ClaudeCodeSession?, isRunning: Bool) -> String {
         if let folder = model.newSessionFolder { return "New Claude Code session in \(ClaudeRoute.folderName(folder))…" }
@@ -150,7 +170,9 @@ struct ClaudeCodeBar: View {
                 }
             }
             Button("Choose Folder…") {
-                if let path = ClaudeRoutePicker.chooseFolder() { model.newSession(in: path) }
+                if let path = ClaudeRoutePicker.chooseFolder(message: "Claude Code starts a new session in this folder.") {
+                    model.newSession(in: path)
+                }
             }
         } label: {
             Image(systemName: "square.and.pencil")
@@ -223,21 +245,31 @@ struct ClaudeCodeBar: View {
     }
 
     private func list(_ rows: [Row]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let offset = typedFolder == nil ? 0 : 1
+        return VStack(alignment: .leading, spacing: 0) {
+            if let folder = typedFolder {
+                ClaudeCodeFolderRow(folder: folder, highlighted: highlighted == 0)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        model.codeDraft = ""
+                        model.newSession(in: folder)
+                    }
+                    .onHover { if $0 { highlighted = 0 } }
+            }
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 if index == 0 || rows[index - 1].pinned != row.pinned {
                     Text(row.pinned ? "Pinned" : "Recent")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                         .padding(.leading, C.rowIconX + C.rowFillInset)
-                        .padding(.top, index == 0 ? 2 : 8)
+                        .padding(.top, index + offset == 0 ? 2 : 8)
                         .padding(.bottom, 2)
                 }
-                ClaudeCodeSessionRow(row: row, highlighted: index == highlighted,
-                                     running: code.isRunning(row.session.id), unread: code.unreadIDs.contains(row.session.id))
+                ClaudeCodeSessionRow(row: row, highlighted: index + offset == highlighted, running: code.isRunning(row.session.id),
+                                     live: code.isActiveElsewhere(row.session), unread: code.unreadIDs.contains(row.session.id))
                     .contentShape(Rectangle())
                     .onTapGesture { model.openCode(session: row.session.id) }
-                    .onHover { if $0 { highlighted = index } }
+                    .onHover { if $0 { highlighted = index + offset } }
                     .contextMenu {
                         Button(row.pinned ? "Unpin" : "Pin") { code.togglePin(row.session.id) }
                         if ClaudeDesktop.isInstalled {
@@ -271,13 +303,13 @@ struct ClaudeCodeBar: View {
                 Spacer(minLength: 6)
                 if code.isRunning(session.id) {
                     Text("Running in Kite").foregroundStyle(Color.claude)
-                } else if session.isLive() {
+                } else if code.isActiveElsewhere(session) {
                     Text("Active now").foregroundStyle(Color.claude)
                 } else {
                     Text(session.updatedAt, style: .relative) + Text(" ago")
                 }
             }
-            Spacer(minLength: 0)
+            if session == nil { Spacer(minLength: 0) }
         }
         .font(.system(size: 12))
         .foregroundStyle(.secondary)
@@ -321,6 +353,8 @@ struct ClaudeCodeSessionRow: View {
     let row: ClaudeCodeBar.Row
     let highlighted: Bool
     let running: Bool
+    /// Probably running in a terminal or the Claude app right now.
+    let live: Bool
     let unread: Bool
 
     private typealias C = ArcMetrics.CommandBar
@@ -342,7 +376,7 @@ struct ClaudeCodeSessionRow: View {
                 .background(highlighted ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .foregroundStyle(highlighted ? Color.claude : .primary)
                 .overlay(alignment: .topTrailing) {
-                    if running || session.isLive() || unread {
+                    if running || live || unread {
                         Circle()
                             .fill(highlighted ? Color.white : Color.claude)
                             .frame(width: 7, height: 7)
@@ -359,7 +393,7 @@ struct ClaudeCodeSessionRow: View {
             Group {
                 if running {
                     Text("Running")
-                } else if session.isLive() {
+                } else if live {
                     Text("Active")
                 } else {
                     Text(session.updatedAt, format: .relative(presentation: .named, unitsStyle: .abbreviated))
@@ -367,6 +401,53 @@ struct ClaudeCodeSessionRow: View {
             }
             .opacity(highlighted ? 0.8 : C.rowDetailOpacity)
             .padding(.trailing, C.actionGap)
+            Image(systemName: "arrow.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(highlighted ? Color.claude : .primary)
+                .frame(width: C.actionBoxSize, height: C.actionBoxSize)
+                .background(highlighted ? Color.white : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .opacity(highlighted ? 1 : 0.7)
+                .padding(.trailing, C.actionBoxTrailing)
+        }
+        .font(.system(size: C.rowFontSize, weight: .medium))
+        .foregroundStyle(highlighted ? Color.white : .primary)
+        .frame(height: C.rowFillHeight)
+        .background(
+            RoundedRectangle(cornerRadius: C.rowCornerRadius, style: .continuous)
+                .fill(highlighted ? Color.claude : .clear)
+        )
+        .padding(.horizontal, C.rowFillInset)
+        .padding(.top, C.rowFillInset)
+        .frame(height: C.rowPitch, alignment: .top)
+    }
+}
+
+/// "New Session in kite — ~/dev/kite": the folder typed in the field, in a session row's geometry.
+struct ClaudeCodeFolderRow: View {
+    let folder: String
+    let highlighted: Bool
+
+    private typealias C = ArcMetrics.CommandBar
+
+    var body: some View {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let shown = folder.hasPrefix(home + "/") ? "~" + folder.dropFirst(home.count) : folder
+        HStack(spacing: 0) {
+            Image(systemName: "square.and.pencil")
+                .resizable()
+                .scaledToFit()
+                .frame(width: C.rowIconSize - 2, height: C.rowIconSize - 2)
+                .frame(width: C.rowIconTileSize, height: C.rowIconTileSize)
+                .background(highlighted ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .foregroundStyle(highlighted ? Color.claude : .primary)
+                .padding(.leading, C.rowIconX)
+                .padding(.trailing, C.rowTitleX - C.rowIconX - C.rowIconTileSize)
+            (Text("New Session in \(ClaudeRoute.folderName(folder))") + Text(" — " + shown)
+                .foregroundColor(highlighted ? .white.opacity(0.7) : .primary.opacity(0.5)))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .opacity(highlighted ? 1 : C.rowTextOpacity)
+            Spacer(minLength: C.actionGap)
             Image(systemName: "arrow.right")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(highlighted ? Color.claude : .primary)

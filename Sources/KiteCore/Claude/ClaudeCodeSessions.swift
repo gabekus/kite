@@ -7,8 +7,10 @@ import Foundation
 /// Claude Code keeps every session as a JSON Lines transcript at
 /// `~/.claude/projects/<folder key>/<session id>.jsonl`, one line per message: `type` is
 /// `user`/`assistant` (with `message`, `cwd`, `gitBranch`, `timestamp`), or a bookkeeping line
-/// (`summary`, `custom-title`, …). Kite only reads these files; a turn sent from Kite runs
-/// `claude -p --resume <id>`, which appends to the same transcript.
+/// (`custom-title`, `ai-title`, `summary` in older versions, …). Kite only reads these files; a
+/// turn sent from Kite runs `claude -p --resume <id>`, which appends to the same transcript and
+/// keeps the session's id (checked with Claude Code 2.1.316). The Claude app keeps its own titles
+/// for its Code tab's sessions apart from the transcripts (`ClaudeDesktopSessions`).
 public struct ClaudeCodeSession: Identifiable, Hashable, Sendable {
     /// Claude Code's session id (the transcript's file name).
     public var id: String
@@ -59,25 +61,39 @@ public enum ClaudeCodeSessions {
     /// The pinned sessions (in pin order), then the most recently used others, up to `limit`.
     /// `excluding` leaves out sessions working in those folders or below (Kite's own ⌘J tasks).
     /// `known` is the last listing: a transcript that hasn't changed since isn't read again.
+    /// `desktop` is what the Claude app says about its sessions: their titles win (they're the
+    /// ones the user sees there, renames included), and the ones archived there aren't recent.
+    /// `shown` is the session the bar shows, which stays readable once newer ones push it off the list.
     public static func list(home: URL, pinned: [String], limit: Int = recentLimit, excluding: [String] = [],
-                            known: [String: ClaudeCodeSession] = [:],
-                            files: FileManager = .default) -> (pinned: [ClaudeCodeSession], recent: [ClaudeCodeSession]) {
+                            known: [String: ClaudeCodeSession] = [:], desktop: [String: ClaudeDesktopSession] = [:],
+                            shown: String? = nil, files: FileManager = .default)
+        -> (pinned: [ClaudeCodeSession], recent: [ClaudeCodeSession], shown: ClaudeCodeSession?) {
         let candidates = transcripts(home: home, files: files)
         let byID = Dictionary(candidates.map { ($0.id, $0) }, uniquingKeysWith: { a, b in a.date >= b.date ? a : b })
         func session(id: String, file: URL, date: Date) -> ClaudeCodeSession? {
-            if let cached = known[id], cached.updatedAt == date, cached.transcript == file { return cached }
-            return Self.session(id: id, file: file, date: date)
+            var session: ClaudeCodeSession?
+            if let cached = known[id], cached.updatedAt == date, cached.transcript == file {
+                session = cached
+            } else {
+                session = Self.session(id: id, file: file, date: date)
+            }
+            if let title = desktop[id]?.title { session?.title = ClaudeCodeTranscript.cut(title, to: ClaudeCodeTranscript.maxTitleLength) }
+            return session
         }
         let pinnedSessions = pinned.compactMap { id in byID[id].flatMap { session(id: id, file: $0.url, date: $0.date) } }
         var recent: [ClaudeCodeSession] = []
         let pinnedSet = Set(pinned)
-        for candidate in candidates.sorted(by: { $0.date > $1.date }) where !pinnedSet.contains(candidate.id) {
+        for candidate in candidates.sorted(by: { $0.date > $1.date })
+            where !pinnedSet.contains(candidate.id) && desktop[candidate.id]?.isArchived != true {
             guard recent.count < limit else { break }
             guard let session = session(id: candidate.id, file: candidate.url, date: candidate.date) else { continue }
             if let directory = session.directory, excluding.contains(where: { isInside(directory, $0) }) { continue }
             recent.append(session)
         }
-        return (pinnedSessions, recent)
+        let shownSession = shown.flatMap { id in
+            (pinnedSessions + recent).first { $0.id == id } ?? byID[id].flatMap { session(id: id, file: $0.url, date: $0.date) }
+        }
+        return (pinnedSessions, recent, shownSession)
     }
 
     /// The transcript of one session, wherever its folder is.
@@ -140,15 +156,17 @@ public enum ClaudeCodeTranscript {
     public static let maxTitleLength = 80
 
     /// What the session list shows. The title is the one the user gave (`/rename`), else Claude
-    /// Code's summary, else the first thing the user asked. `tail` is the file's end when it's
+    /// Code's own (`ai-title`, or a summary from older versions), else the first thing the user asked. `tail` is the file's end when it's
     /// too big to read whole (its first line may be cut; that line is skipped).
     public static func info(head: Data, tail: Data = Data()) -> Info? {
-        var directory: String?, branch: String?, firstPrompt: String?, summary: String?, customTitle: String?
+        var directory: String?, branch: String?, firstPrompt: String?, summary: String?, customTitle: String?, aiTitle: String?
         func scan(_ lines: [JSONValue]) {
             for line in lines {
                 switch line["type"]?.stringValue {
                 case "custom-title":
                     if let title = line["customTitle"]?.stringValue, !title.isEmpty { customTitle = title }
+                case "ai-title":
+                    if let title = line["aiTitle"]?.stringValue, !title.isEmpty { aiTitle = title }
                 case "summary":
                     if let text = line["summary"]?.stringValue, !text.isEmpty { summary = text }
                 case "user", "assistant":
@@ -168,8 +186,8 @@ public enum ClaudeCodeTranscript {
         // Only the first folder seen in the head counts for the first prompt; the tail's lines
         // say where the session is now (it can `cd`), and its latest branch and title.
         scan(headLines)
-        if !tail.isEmpty { scan(Array(lines(tail).dropFirst())) }
-        guard let title = customTitle ?? summary ?? firstPrompt else { return nil }
+        if let cut = tail.firstIndex(of: 0x0A) { scan(lines(Data(tail[cut...]))) }
+        guard let title = customTitle ?? aiTitle ?? summary ?? firstPrompt else { return nil }
         return Info(directory: directory, gitBranch: branch, title: cut(title, to: maxTitleLength))
     }
 
@@ -280,6 +298,120 @@ public enum ClaudeCodeTranscript {
         return data.split(separator: 0x0A, omittingEmptySubsequences: true).compactMap {
             try? decoder.decode(JSONValue.self, from: Data($0))
         }
+    }
+}
+
+/// Follows one transcript as it grows, for the bar's live view: each read parses only the lines
+/// appended since the last one. Transcripts get big (tool output and images are in them: tens of
+/// MB is common, and over 100 MB happens), and reading one whole takes seconds, so a big file's
+/// first read starts at its last `startBytes`: the bar keeps only the last `ClaudeTask.maxEntries`.
+public struct ClaudeCodeTranscriptReader: Sendable {
+    public static let startBytes: UInt64 = 8 << 20
+
+    public private(set) var entries: [ClaudeTask.Entry] = []
+    /// Where the next read starts: just after the last whole line read.
+    public private(set) var offset: UInt64 = 0
+
+    public init() {}
+
+    /// Reads what was added to `file`. False when the conversation didn't change.
+    public mutating func read(_ file: URL, startBytes: UInt64 = startBytes) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return false }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return false }
+        var changed = false
+        if size < offset {
+            // Rewritten from scratch: start over.
+            changed = !entries.isEmpty
+            entries = []
+            offset = 0
+        }
+        // A cut first line doesn't parse and is skipped.
+        if offset == 0, size > startBytes { offset = size - startBytes }
+        guard size > offset else { return changed }
+        try? handle.seek(toOffset: offset)
+        guard let data = try? handle.read(upToCount: Int(size - offset)),
+              let lastNewline = data.lastIndex(of: 0x0A) else { return changed }
+        // Only whole lines: one still being written is read next time.
+        let whole = data[data.startIndex...lastNewline]
+        offset += UInt64(whole.count)
+        let new = ClaudeCodeTranscript.entries(Data(whole))
+        guard !new.isEmpty else { return changed }
+        entries += new
+        if entries.count > ClaudeTask.maxEntries { entries.removeFirst(entries.count - ClaudeTask.maxEntries) }
+        return true
+    }
+}
+
+/// What the Claude app keeps about one of its Code tab's sessions.
+public struct ClaudeDesktopSession: Hashable, Sendable {
+    public var title: String?
+    public var isArchived: Bool
+
+    public init(title: String?, isArchived: Bool) {
+        self.title = title
+        self.isArchived = isArchived
+    }
+}
+
+/// The Claude app's Code tab runs Claude Code, whose transcripts are in `~/.claude/projects` like the
+/// terminal's, but the app keeps each session's title (made up after the first turn, or given by
+/// the user) in its own file, `~/Library/Application Support/Claude/claude-code-sessions/<account>/
+/// <org>/local_<app session id>.json`, with `cliSessionId` (the transcript's id), `title` and
+/// `isArchived`. Kite only reads these.
+public enum ClaudeDesktopSessions {
+    public struct Index: Sendable {
+        struct File: Sendable {
+            var date: Date
+            var cliSessionID: String?
+            var session: ClaudeDesktopSession
+        }
+
+        var files: [String: File] = [:]
+
+        public init() {}
+
+        /// Each session the app knows, by Claude Code session id.
+        public var byCLISessionID: [String: ClaudeDesktopSession] {
+            var sessions: [String: ClaudeDesktopSession] = [:]
+            for file in files.values {
+                if let id = file.cliSessionID { sessions[id] = file.session }
+            }
+            return sessions
+        }
+    }
+
+    public static func directory(home: URL) -> URL {
+        home.appendingPathComponent("Library/Application Support/Claude/claude-code-sessions", isDirectory: true)
+    }
+
+    /// The app's sessions, reading only the files that changed since `previous`.
+    public static func index(home: URL, previous: Index = Index(), files: FileManager = .default) -> Index {
+        var index = Index()
+        let keys: [URLResourceKey] = [.contentModificationDateKey]
+        func children(_ url: URL) -> [URL] {
+            (try? files.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
+        }
+        for account in children(directory(home: home)) {
+            for org in children(account) {
+                for file in children(org) where file.pathExtension == "json" && file.lastPathComponent.hasPrefix("local_") {
+                    let date = (try? file.resourceValues(forKeys: Set(keys)))?.contentModificationDate ?? .distantPast
+                    if let known = previous.files[file.path], known.date == date {
+                        index.files[file.path] = known
+                    } else if let data = try? Data(contentsOf: file), let parsed = parse(data) {
+                        index.files[file.path] = .init(date: date, cliSessionID: parsed.cliSessionID, session: parsed.session)
+                    }
+                }
+            }
+        }
+        return index
+    }
+
+    static func parse(_ data: Data) -> (cliSessionID: String?, session: ClaudeDesktopSession)? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let title = (object["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (object["cliSessionId"] as? String,
+                ClaudeDesktopSession(title: title?.isEmpty == false ? title : nil, isArchived: object["isArchived"] as? Bool ?? false))
     }
 }
 

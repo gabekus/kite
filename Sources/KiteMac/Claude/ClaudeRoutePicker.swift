@@ -11,13 +11,13 @@ enum ClaudeRoutePicker {
         return folders
     }
 
-    static func chooseFolder() -> String? {
+    static func chooseFolder(message: String = "Claude works in this folder, with its CLAUDE.md and memory, when you ask from this space.") -> String? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Use Folder"
-        panel.message = "Claude works in this folder, with its CLAUDE.md and memory, when you ask from this space."
+        panel.message = message
         return panel.runModal() == .OK ? panel.url?.path : nil
     }
 
