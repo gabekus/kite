@@ -156,7 +156,10 @@ public enum SidebarUndo {
         if moved.contains(where: { $0.0.space != $0.1.space && $0.0.space != nil && $0.1.space != nil }) {
             return plural("Move Tab", moved.count) + " to Space"
         }
-        if moved.contains(where: { $0.0.section == .unpinned && $0.1.section == .pinned }) { return plural("Pin Tab", moved.count) }
+        // Pinning puts a tab at the top of the pinned tabs; one dragged into a folder is moved there.
+        if moved.contains(where: { $0.0.section == .unpinned && $0.1.section == .pinned && $0.1.container == $0.1.space }) {
+            return plural("Pin Tab", moved.count)
+        }
         if moved.contains(where: { $0.0.section == .pinned && $0.1.section == .unpinned }) { return plural("Unpin Tab", moved.count) }
         if !moved.isEmpty { return plural("Move Tab", moved.count) }
         // Reordered in place: as many tabs as had to move to get the new order.
