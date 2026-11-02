@@ -39,7 +39,8 @@ curl -fsSL -o automate-git.py \
 # is_official_build matches the Spotify builds; PGO profiles are required with it.
 export GN_DEFINES="is_official_build=true proprietary_codecs=true ffmpeg_branding=Chrome symbol_level=0"
 export CEF_ARCHIVE_FORMAT=tar.bz2
-# --force-build: without it a rerun on an unchanged checkout skips the build. Ninja
+# cefclient: make_distrib only packages the Release framework when cefclient.app
+# was built. --force-build: without it a rerun on an unchanged checkout skips the build. Ninja
 # only compiles what's left, so a resumed build picks up where it stopped.
 python3 automate-git.py \
     --download-dir="$WORK/chromium_git" \
@@ -50,7 +51,7 @@ python3 automate-git.py \
     --no-debug-build \
     --no-chromium-history \
     --with-pgo-profiles \
-    --build-target=cefsimple \
+    --build-target=cefclient \
     --minimal-distrib-only \
     --no-distrib-docs \
     --no-distrib-symbols \
@@ -60,6 +61,10 @@ archive="$WORK/chromium_git/chromium/src/cef/binary_distrib/$NAME.tar.bz2"
 if [[ ! -f "$archive" ]]; then
     echo "error: expected $archive; the built version doesn't match $CEF_VERSION:" >&2
     ls "$WORK/chromium_git/chromium/src/cef/binary_distrib" >&2
+    exit 1
+fi
+if ! tar -tjf "$archive" | grep -q "/Release/Chromium Embedded Framework.framework/"; then
+    echo "error: $archive has no Release framework" >&2
     exit 1
 fi
 cp "$archive" "$OUT/$NAME.tar.bz2"
