@@ -428,7 +428,16 @@ public struct BrowserState: Hashable, Codable, Sendable {
         defer { normalizeSplits() }
 
         let outcome: CloseOutcome
-        if location.section != .unpinned {
+        if location.section != .unpinned, self[location].isBlank {
+            // An empty pane left pinned (Add Split View next to a pinned tab) has nothing to keep:
+            // it goes, with a Claude folder it leaves empty, rather than staying as a blank row.
+            if location.section == .favorite {
+                favorites.remove(at: location.index)
+            } else {
+                removePinnedTab(id, droppingEmptyFolder: isInEphemeralFolder(id))
+            }
+            outcome = .removed
+        } else if location.section != .unpinned {
             outcome = .unloaded
         } else {
             let tab = spaces[s].tabs.remove(at: location.index)
