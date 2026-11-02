@@ -97,3 +97,16 @@ need Accessibility and Screen Recording permission for the app running `kite`.
 
 Fall back to screen recording or computer control only for what these can't
 see (Arc's cursors and hover, system UI outside Kite), and say why in the PR.
+
+## CI
+
+Before pushing Swift changes, build locally: the repo's pre-push hook runs
+`swift build --build-tests` (incremental, usually seconds). Enable it once per
+clone, which covers its worktrees: `git config core.hooksPath .githooks`.
+
+CI (`.github/workflows/ci.yml`) restores the `.build` cache saved by the
+latest main run, and `scripts/ci-restore-mtimes.sh` makes that build
+incremental, so a PR recompiles only what it changed. Docs-only changes skip
+the macOS job, and Windows runs only when KiteCore, Tests or Package.swift
+change. The macOS runner label comes from the `MACOS_RUNNER` repo variable
+(default `macos-15`).
