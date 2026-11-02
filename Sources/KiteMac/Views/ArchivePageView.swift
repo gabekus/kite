@@ -66,7 +66,7 @@ struct ArchivePageView: View {
         Menu {
             Section("Where was the tab?") {
                 ForEach(spaces) { space in
-                    Toggle("\(space.icon) \(space.name)", isOn: sourceBinding(.space(space.id)))
+                    Toggle(space.labelWithIcon, isOn: sourceBinding(.space(space.id)))
                 }
                 // Arc's "Little Arc" filter: pages archived from Little Kite windows.
                 Toggle(Self.littleKiteTitle, isOn: sourceBinding(.littleKite))
@@ -101,7 +101,7 @@ struct ArchivePageView: View {
         var chips: [(String, () -> Void)] = []
         switch filter.source {
         case .space(let id):
-            let name = spaces.first { $0.id == id }.map { "\($0.icon) \($0.name)" } ?? "Space"
+            let name = spaces.first { $0.id == id }.map(\.labelWithIcon) ?? "Space"
             chips.append((name, { filter.source = nil }))
         case .littleKite:
             chips.append((Self.littleKiteTitle, { filter.source = nil }))
@@ -222,7 +222,7 @@ private struct ArchiveRow: View {
 
     private var subtitle: String {
         let host = (item.tab.url?.host() ?? "").replacingOccurrences(of: "www.", with: "", options: .anchored)
-        let place = item.isLittleKite ? ArchivePageView.littleKiteTitle : space.map { "\($0.icon) \($0.name)" }
+        let place = item.isLittleKite ? ArchivePageView.littleKiteTitle : space.map(\.labelWithIcon)
         return [host, place].compactMap { $0 }.filter { !$0.isEmpty }
             .joined(separator: " · ")
     }

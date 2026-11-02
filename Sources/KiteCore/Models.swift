@@ -142,10 +142,34 @@ extension [PinnedItem] {
 /// A space is a named set of tabs with its own theme, like a lightweight profile.
 public struct Space: Identifiable, Hashable, Codable, Sendable {
     public static let symbolPrefix = "symbol:"
+    /// A picture the user chose: `image:` and the name of a PNG in Kite's SpaceIcons folder (Kite only, Arc has no image icons).
+    public static let imagePrefix = "image:"
     public var id: UUID
     public var name: String
-    /// An emoji, `symbol:` and an SF Symbol name (Arc's Icon tab), or empty: Arc shows an icon-less space as a dot.
+    /// An emoji, `symbol:` and an SF Symbol name (Arc's Icon tab), `image:` and a file name, or empty: Arc shows
+    /// an icon-less space as a dot.
     public var icon: String
+
+    /// The file name of the space's image icon, or nil when the icon isn't an image.
+    public var iconImageName: String? {
+        guard icon.hasPrefix(Self.imagePrefix) else { return nil }
+        let name = String(icon.dropFirst(Self.imagePrefix.count))
+        return Self.isValidIconImageName(name) ? name : nil
+    }
+
+    /// The icon as text, for menus and labels: the emoji, or empty for an icon, an image or none.
+    public var iconText: String {
+        icon.hasPrefix(Self.symbolPrefix) || icon.hasPrefix(Self.imagePrefix) ? "" : icon
+    }
+
+    /// "🏠 Personal", or just the name when the icon isn't an emoji.
+    public var labelWithIcon: String { iconText.isEmpty ? name : "\(iconText) \(name)" }
+
+    /// A bare file name in the SpaceIcons folder: no path separators, no leading dot.
+    public static func isValidIconImageName(_ name: String) -> Bool {
+        !name.isEmpty && name.count <= 128 && !name.hasPrefix(".") && !name.contains("/") && !name.contains("\\")
+            && !name.contains(":")
+    }
     public var theme: Theme
     public var pinnedItems: [PinnedItem]
     /// Unpinned tabs, newest first.

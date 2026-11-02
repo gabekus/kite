@@ -277,7 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showAirTrafficControl(_ sender: Any?) {
         let store = self.store!
         AirTrafficControlWindow.show(store: airTraffic) {
-            store.state.spaces.map { .init(id: $0.id, name: $0.name, icon: $0.icon) }
+            store.state.spaces.map { .init(id: $0.id, name: $0.name, icon: $0.iconText) }
         }
     }
 

@@ -93,6 +93,25 @@ import Testing
         #expect(state.spaces[0].icon == "")
     }
 
+    @Test func anImageIconIsAFileNameInTheIconsFolder() {
+        var state = makeState()
+        let id = state.spaces[0].id
+        state.setSpaceIcon(id, to: "image:3F2A.png")
+        #expect(state.spaces[0].icon == "image:3F2A.png")
+        #expect(state.spaces[0].iconImageName == "3F2A.png")
+        // Menus and labels show no icon text for an image or an SF Symbol.
+        #expect(state.spaces[0].iconText == "")
+        #expect(state.spaces[0].labelWithIcon == state.spaces[0].name)
+        // A path is refused and leaves the icon as it was.
+        for bad in ["image:../../etc/passwd", "image:a/b.png", "image:.hidden", "image:"] {
+            state.setSpaceIcon(id, to: bad)
+            #expect(state.spaces[0].icon == "image:3F2A.png")
+        }
+        state.setSpaceIcon(id, to: "🚀")
+        #expect(state.spaces[0].iconImageName == nil)
+        #expect(state.spaces[0].labelWithIcon == "🚀 \(state.spaces[0].name)")
+    }
+
     @Test func aNewSpaceGoesRightAfterTheCurrentOne() {
         var state = makeState()
         state.selectSpace(at: 0)
