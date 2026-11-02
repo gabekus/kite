@@ -95,6 +95,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Every tab on screen in pane order, and its page: one, or a split's panes.
     private var shownTabIDs: [UUID] = []
     private var shownPages: [UUID: WebPage] = [:]
+    /// The pages on screen: the shown tab's, or each pane's of its split.
+    var visiblePages: [WebPage] { Array(shownPages.values) }
     /// Shown tabs whose page another normal window has (`pageTaken`), by tab.
     private var placeholders: [UUID: PagePlaceholderView] = [:]
     /// Tabs Kite put into picture in picture when you left them; it ends when you come back.
@@ -167,6 +169,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.keyInterceptor = { [weak self] event in self?.tabSwitcher.intercept(event) ?? false }
         store.onChange = { [weak self] in self?.sync() }
         store.onPageChange = { [weak self] id in self?.pageChanged(id) }
+        // Edit › Undo and Redo for the sidebar (SidebarUndo), on this window's undo manager.
+        window.undoManager?.levelsOfUndo = SidebarUndo.levels
+        store.undoManager = { [weak self] in self?.window?.undoManager }
+        store.didUndo = { [weak self] name, isRedo in self?.showToast(SidebarUndo.toast(for: name, isRedo: isRedo)) }
         pool.onPageTaken = { [weak self] id in self?.pageTaken(id) }
         pool.onLinkedWindowClosing = { [weak self] owner in self?.reclaimPages(from: owner) }
         // Dark pages in "Match System" follow macOS switching light/dark.
@@ -1171,30 +1177,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func close(tab id: UUID) {
         let wasSelected = store.state.selectedTab?.id == id
-        let outcome = store.mutate { $0.close(tab: id) }
+        // Arc's Edit menu: "Undo Archive Tab" ⌘Z, Redo ⇧⌘Z. A tab that leaves the sidebar is a
+        // sidebar undo step (SidebarUndo); a pinned tab or favourite only unloads, so its step is here.
+        let outcome = store.mutate(undoName: "Archive Tab") { $0.close(tab: id) }
+        if outcome != .notFound, window?.undoManager?.isRedoing == true { store.didUndo?("Archive Tab", true) }
         if outcome == .unloaded {
             pool.discard(id, keepHistory: false)
+            window?.undoManager?.registerUndo(withTarget: self) { controller in
+                controller.undoUnload(tab: id, reselect: wasSelected)
+            }
+            window?.undoManager?.setActionName("Archive Tab")
         }
-        guard outcome != .notFound else { return }
-        // Arc's Edit menu: "Undo Archive Tab" ⌘Z, Redo ⇧⌘Z. AppKit titles the items from the action name.
-        window?.undoManager?.registerUndo(withTarget: self) { controller in
-            controller.undoClose(tab: id, outcome: outcome, reselect: wasSelected)
-        }
-        window?.undoManager?.setActionName("Archive Tab")
     }
 
-    private func undoClose(tab id: UUID, outcome: CloseOutcome, reselect: Bool) {
-        let restored: Bool
-        if outcome == .removed {
-            restored = store.mutate { $0.reopenClosed(tab: id) } != nil
-        } else {
-            // A pinned tab or favourite stays in the sidebar when archived; undo shows it again.
-            restored = store.state.location(of: id) != nil
-            if restored, reselect { store.mutate { $0.select(tab: id) } }
-        }
-        guard restored else { return }
+    /// Undo Archive Tab for a pinned tab or favourite: it stayed in the sidebar, so it's shown again.
+    private func undoUnload(tab id: UUID, reselect: Bool) {
+        guard store.state.location(of: id) != nil else { return }
+        if reselect { store.mutate { $0.select(tab: id) } }
         window?.undoManager?.registerUndo(withTarget: self) { controller in controller.close(tab: id) }
         window?.undoManager?.setActionName("Archive Tab")
+        store.didUndo?("Archive Tab", window?.undoManager?.isRedoing == true)
     }
 
     @objc func newTab(_ sender: Any?) {

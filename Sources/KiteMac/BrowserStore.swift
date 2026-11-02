@@ -175,6 +175,62 @@ final class BrowserStore {
         for space in state.spaces where space.name.isEmpty && space.allTabs.isEmpty { state.deleteSpace(space.id) }
     }
 
+    // MARK: Undo
+
+    /// The window's undo manager, for Edit › Undo and Redo of sidebar changes (SidebarUndo). nil
+    /// leaves changes out of undo (no window yet).
+    @ObservationIgnored var undoManager: (() -> UndoManager?)?
+    /// After Undo or Redo of a sidebar step, with its name and whether it was Redo: the window's toast.
+    @ObservationIgnored var didUndo: ((_ actionName: String, _ isRedo: Bool) -> Void)?
+    /// Above zero while changes stay out of the user's undo: Claude's and automation's, Kite's own
+    /// housekeeping, and steps that register their own undo.
+    @ObservationIgnored private var undoSuppression = 0
+    /// The name for the next undo step, when the caller knows better than the guess from the change.
+    @ObservationIgnored private var pendingUndoName: String?
+
+    /// Runs `body` with its changes left out of the user's undo.
+    @discardableResult
+    func withoutUndo<R>(_ body: () -> R) -> R {
+        undoSuppression += 1
+        defer { undoSuppression -= 1 }
+        return body()
+    }
+
+    /// A change that isn't the user's to undo: Claude and automation, AppleScript, pages opening
+    /// tabs, live folders refreshing, imports and settings.
+    @discardableResult
+    func mutateWithoutUndo<R>(_ body: (inout BrowserState) -> R) -> R {
+        withoutUndo { mutate(body) }
+    }
+
+    /// Like `mutate`, with the undo step called `name` ("Undo \(name)").
+    @discardableResult
+    func mutate<R>(undoName name: String, _ body: (inout BrowserState) -> R) -> R {
+        let outer = pendingUndoName
+        pendingUndoName = name
+        defer { pendingUndoName = outer }
+        return mutate(body)
+    }
+
+    private func registerUndo(from before: BrowserState, to after: BrowserState) {
+        guard undoSuppression == 0, let undoManager = undoManager?(), !undoManager.isUndoing, !undoManager.isRedoing,
+              SidebarUndo.isUndoable(from: before, to: after) else { return }
+        let name = pendingUndoName ?? SidebarUndo.actionName(from: before, to: after)
+        registerStep(undoManager, restoring: SidebarSnapshot(before), other: SidebarSnapshot(after), name: name)
+    }
+
+    private func registerStep(_ undoManager: UndoManager, restoring target: SidebarSnapshot, other: SidebarSnapshot, name: String) {
+        undoManager.registerUndo(withTarget: self) { store in
+            guard let manager = store.undoManager?() else { return }
+            let isRedo = manager.isRedoing
+            store.withoutUndo { _ = store.mutate { $0.restoreSidebar(target, other: other) } }
+            // Registered while undoing, this lands on the redo stack, and while redoing back on the undo stack.
+            store.registerStep(manager, restoring: other, other: target, name: name)
+            store.didUndo?(name, isRedo)
+        }
+        undoManager.setActionName(name)
+    }
+
     @discardableResult
     func mutate<R>(_ body: (inout BrowserState) -> R) -> R {
         let before = state
@@ -183,6 +239,7 @@ final class BrowserStore {
         state.syncPinnedURLs()
         // Tidy Tabs' headers lose tabs that left Today, and go when they have none.
         state.pruneTabGroups()
+        registerUndo(from: before, to: state)
         // Rows that come, go or move animate in the sidebar, like Arc's. SwiftUI applies the
         // change on its next pass, so arming after the change is in time.
         if Self.sidebarRows(of: before) != Self.sidebarRows(of: state) { SidebarRowsAnimator.arm() }
@@ -206,7 +263,7 @@ final class BrowserStore {
     /// Archives unpinned tabs left unused longer than the user's setting.
     func archiveStaleTabs() {
         guard let interval = state.archiveAfter.seconds else { return }
-        mutate { $0.archiveStaleTabs(olderThan: interval) }
+        withoutUndo { mutate { $0.archiveStaleTabs(olderThan: interval) } }
     }
 
     /// + › New Space: a nameless space right after this one, shown as Arc's Create a Space page. It keeps

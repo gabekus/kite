@@ -257,7 +257,7 @@ enum BrowserImportController {
                 let previous = store.state.spaces.first { $0.id == browser.spaceID(for: profile) }
                 let space = BookmarkImport.space(for: browser, profile: profile, namedAfterProfile: namedAfterProfile, bookmarks,
                                                  theme: previous?.theme ?? theme, icon: previous?.icon ?? icon)
-                store.mutate { $0.merge(imported: [space]) }
+                store.mutateWithoutUndo { $0.merge(imported: [space]) }
             }
             if let history = read.history, !history.isEmpty { store.history?.merge(history) }
             let gotBookmarks = read.bookmarks != nil

@@ -598,7 +598,7 @@ final class AutomationController {
     /// Shows the tab and asks. Deny is the default button; no answer within two minutes is a no.
     private func confirm(_ request: ConfirmationRequest, tab id: UUID) async -> Bool {
         guard let window = host?.window else { return false }
-        store.mutate { $0.select(tab: id) }
+        store.mutateWithoutUndo { $0.select(tab: id) }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
 

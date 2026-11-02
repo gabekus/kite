@@ -64,7 +64,7 @@ final class BrowserWindows {
         let front = frontStore()
         let state = (front ?? main).state.newWindowState(on: (front ?? main).state.selectedSpaceID)
         let controller = makeNormal(state, frame: nil)
-        if let url { controller.store.mutate { _ = $0.openTab(url: url) } } else { controller.newTab(nil) }
+        if let url { controller.store.mutateWithoutUndo { _ = $0.openTab(url: url) } } else { controller.newTab(nil) }
         return controller
     }
 

@@ -32,7 +32,7 @@ extension BrowserWindowController {
         guard let space = store.state.spaces.first(where: { $0.id == spaceID }) else { return }
         let before = (space.tabs.map(\.id), space.tabGroups)
         guard let groups = TidyTabs.parse(reply, tabCount: ids.count),
-              store.mutate({ $0.applyTidy(inSpace: spaceID, tabs: ids, groups: groups) })
+              store.mutateWithoutUndo({ $0.applyTidy(inSpace: spaceID, tabs: ids, groups: groups) })
         else {
             // Arc's toast when the model found no groups.
             return showToast("No tab groups found")
@@ -43,7 +43,7 @@ extension BrowserWindowController {
     func removeTabGroupHeader(_ groupID: UUID) {
         guard let space = store.state.spaces.first(where: { $0.tabGroups.contains { $0.id == groupID } }) else { return }
         let before = (space.tabs.map(\.id), space.tabGroups)
-        store.mutate { _ = $0.removeTabGroupHeader(groupID) }
+        store.mutateWithoutUndo { _ = $0.removeTabGroupHeader(groupID) }
         registerTodayUndo(spaceID: space.id, restoring: before, name: "Remove Header")
     }
 
@@ -52,9 +52,9 @@ extension BrowserWindowController {
         guard let space = store.state.spaces.first(where: { $0.id == spaceID }) else { return }
         let after = (space.tabs.map(\.id), space.tabGroups)
         window?.undoManager?.registerUndo(withTarget: self) { controller in
-            controller.store.mutate { $0.restoreToday(inSpace: spaceID, tabs: before.0, groups: before.1) }
+            controller.store.mutateWithoutUndo { $0.restoreToday(inSpace: spaceID, tabs: before.0, groups: before.1) }
             controller.window?.undoManager?.registerUndo(withTarget: controller) { controller in
-                controller.store.mutate { $0.restoreToday(inSpace: spaceID, tabs: after.0, groups: after.1) }
+                controller.store.mutateWithoutUndo { $0.restoreToday(inSpace: spaceID, tabs: after.0, groups: after.1) }
             }
             controller.window?.undoManager?.setActionName(name)
         }

@@ -133,7 +133,7 @@ final class ScriptWindow: NSObject {
     @objc(insertInAppleScriptTabs:)
     func insertInAppleScriptTabs(_ tab: ScriptTab) {
         guard let controller, let url = ScriptTab.requireURL(tab.newURL) else { return }
-        let id = controller.store.mutate { $0.openTab(url: url) }
+        let id = controller.store.mutateWithoutUndo { $0.openTab(url: url) }
         tab.attach(controller: controller, id: id, container: objectSpecifier, key: "appleScriptTabs")
     }
 
@@ -204,13 +204,13 @@ final class ScriptTab: NSObject {
             guard let url = Foundation.URL(string: newValue), url.scheme != nil else {
                 return Self.fail(Int(errAEParamMissed), "Not a URL: \(newValue)")
             }
-            controller.store.mutate { $0.update(tab: id) { $0.url = url } }
+            controller.store.mutateWithoutUndo { $0.update(tab: id) { $0.url = url } }
             livePage?.load(url)
         }
     }
 
     @objc func handleSelectScriptCommand(_ command: NSScriptCommand) -> Any? {
-        if let id { controller?.store.mutate { $0.select(tab: id) } }
+        if let id { controller?.store.mutateWithoutUndo { $0.select(tab: id) } }
         return nil
     }
 
@@ -307,7 +307,7 @@ final class ScriptSpace: NSObject {
     func insertInAppleScriptTabs(_ tab: ScriptTab) {
         guard let controller, let url = ScriptTab.requireURL(tab.newURL) else { return }
         let spaceID = id
-        guard let tabID = controller.store.mutate({ AppleScripting.openTab(url: url, inSpace: spaceID, state: &$0) }) else {
+        guard let tabID = controller.store.mutateWithoutUndo({ AppleScripting.openTab(url: url, inSpace: spaceID, state: &$0) }) else {
             return ScriptTab.fail(Int(errAENoSuchObject), "The space is gone.")
         }
         tab.attach(controller: controller, id: tabID, container: objectSpecifier, key: "appleScriptTabs")
@@ -321,7 +321,7 @@ final class ScriptSpace: NSObject {
             return nil
         }
         let spaceID = id
-        controller.store.mutate { $0.selectSpace(spaceID) }
+        controller.store.mutateWithoutUndo { $0.selectSpace(spaceID) }
         return nil
     }
 
