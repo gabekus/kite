@@ -43,6 +43,7 @@ let usage = """
       kite probe APP [tree | capture] [...]          The same for another app, e.g. Arc (kite probe --help)
       kite tools                                     List every tool
       kite mcp                                       Run as an MCP server on stdin/stdout
+      kite setup [--print]                           Set Kite up with Claude Code, step by step (or print the guide)
 
     Without --tab, commands act on the tab in front.
     Options: --socket PATH (default: the Kite profile's, or $KITE_SUPPORT_PATH's)
@@ -422,6 +423,9 @@ func main() async -> Int32 {
     if name == "--version" || name == "version" {
         print("kite \(version)")
         return 0
+    }
+    if name == "setup" {
+        return Setup.run(raw)
     }
     do {
         let args = try Arguments(raw[...])

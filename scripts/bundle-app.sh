@@ -30,6 +30,8 @@ BUNDLE_ID="${KITE_BUNDLE_ID:-$([[ "$CONFIG" == debug ]] && echo dev.gabek.Kite.d
 cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 # The AppleScript dictionary (Info.plist's OSAScriptingDefinition).
 cp Resources/Kite.sdef "$CONTENTS/Resources/Kite.sdef"
+# The setup guide `kite setup` hands to Claude Code.
+cp Resources/SETUP.md "$CONTENTS/Resources/SETUP.md"
 cp Sources/KiteMac/Shaders/*.metal "$CONTENTS/Resources/Shaders/"
 # Kite's helper extension (lists and manages extensions), loaded at launch.
 rm -rf "$CONTENTS/Resources/KiteHelperExtension"

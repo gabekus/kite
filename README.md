@@ -42,6 +42,15 @@ branch), in a separate `../kite-release` worktree. /Applications/Kite.app is the
 that gets used and tested. If it's open, the new build is staged and goes in when you quit
 Kite; pass `--restart` to quit it now (tabs are saved) and reopen it.
 
+### Sharing a build
+
+`scripts/package-share.sh` builds a release Kite.app (in its own worktree, never
+touching /Applications) and packs `dist/Kite/` plus a zip of it: Kite.app,
+`install.sh`, a README and [SETUP.md](Resources/SETUP.md). The person unzips it and
+runs `bash install.sh`, which installs Kite and starts `kite setup`: Claude Code with
+the setup guide, which walks them through connecting Claude Code and the Claude app.
+The build is signed but not notarized yet, so install.sh clears macOS's quarantine flag.
+
 For quick UI work without Chromium, `swift run Kite` runs on WebKit.
 `swift test` runs the core tests.
 

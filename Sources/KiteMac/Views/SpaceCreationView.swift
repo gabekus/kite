@@ -51,7 +51,7 @@ struct SpaceCreationView: View {
                         .textFieldStyle(.plain)
                         .font(.system(size: M.rowFontSize))
                         .onSubmit(create)
-                        .help("Claude reads this to open tabs in the right space, e.g. “Komado business: store, suppliers, ads”.")
+                        .help("Claude reads this to open tabs in the right space, e.g. “My bakery: orders, suppliers, the shop’s money”.")
                 }
                 .padding(.top, M.profileGap)
                 if actions.showsProfiles {

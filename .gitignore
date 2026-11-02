@@ -14,3 +14,4 @@ xcuserdata/
 *.key
 secrets/
 Sources/KiteAdblock/rust/target/
+dist/
