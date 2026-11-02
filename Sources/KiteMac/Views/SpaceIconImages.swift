@@ -43,6 +43,17 @@ enum SpaceIconImages {
         return Space.imagePrefix + name
     }
 
+    /// Deletes the picture behind `oldIcon` once the picker has replaced or removed it. Only that file:
+    /// every stored picture gets a fresh name, so no other space (in a Blank Window's own sidebar, say)
+    /// can be using it, but `spaces` is checked anyway.
+    static func discard(_ oldIcon: String, unlessUsedIn spaces: [Space]) {
+        guard oldIcon.hasPrefix(Space.imagePrefix), !spaces.contains(where: { $0.icon == oldIcon }) else { return }
+        let name = String(oldIcon.dropFirst(Space.imagePrefix.count))
+        guard Space.isValidIconImageName(name) else { return }
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        cache.removeObject(forKey: name as NSString)
+    }
+
     static func store(contentsOf url: URL) -> String? {
         guard let image = NSImage(contentsOf: url) else { return nil }
         return store(image)

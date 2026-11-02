@@ -85,7 +85,7 @@ struct SpaceIconPicker: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 if let icon = space?.icon, !icon.isEmpty {
-                    Button { store.mutate { $0.setSpaceIcon(spaceID, to: "") } } label: {
+                    Button { pick("") } label: {
                         Image(systemName: "trash").font(.system(size: 14))
                     }
                     .buttonStyle(.plain)
@@ -213,7 +213,9 @@ struct SpaceIconPicker: View {
         panel.message = "Choose a picture for this space’s icon"
         panel.begin { response in
             guard response == .OK, let url = panel.url, let icon = SpaceIconImages.store(contentsOf: url) else { return }
+            let old = store.state.spaces.first { $0.id == spaceID }?.icon ?? ""
             store.mutate { $0.setSpaceIcon(spaceID, to: icon) }
+            SpaceIconImages.discard(old, unlessUsedIn: store.state.spaces)
         }
     }
 
@@ -225,7 +227,9 @@ struct SpaceIconPicker: View {
     }
 
     private func pick(_ icon: String) {
+        let old = space?.icon ?? ""
         store.mutate { $0.setSpaceIcon(spaceID, to: icon) }
+        SpaceIconImages.discard(old, unlessUsedIn: store.state.spaces)
     }
 
     private func cell<Content: View>(@ViewBuilder _ content: () -> Content, action: @escaping () -> Void) -> some View {
