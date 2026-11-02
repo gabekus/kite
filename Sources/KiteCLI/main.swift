@@ -25,7 +25,7 @@ let usage = """
       kite open URL [--here | --tab ID]              Open URL in a new background tab (or navigate one)
       kite open URL --space NAME [--session NAME] [--plain] [--active]
                                                      Open URL in that space's Claude folder, in Claude › SESSION
-                                                     with --session (--plain or --active: a plain tab, for the user)
+                                                     with --session (--plain: a plain tab, for the user; --active: to the front)
       kite call move_to_folder '{"folder":"claude"}' File the front tab in its space's Claude folder
       kite screenshot [--tab ID] [--format png] [-o FILE]
                                                      Save a screenshot of a tab (JPEG unless --format png)
