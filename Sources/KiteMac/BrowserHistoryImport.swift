@@ -107,7 +107,7 @@ enum BrowserHistoryImport {
 
     /// Opens a copy of the database (with its write-ahead log) and runs `body` on it. Firefox
     /// keeps places.sqlite locked while it runs; the copy can still be read.
-    private static func withCopy<T>(_ file: URL, _ body: (OpaquePointer?) throws -> T) throws -> T {
+    static func withCopy<T>(_ file: URL, _ body: (OpaquePointer?) throws -> T) throws -> T {
         let fm = FileManager.default
         guard fm.fileExists(atPath: file.path) else { throw Failure.unreadable }
         guard canRead(file) else { throw Failure.noAccess }

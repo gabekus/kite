@@ -7,7 +7,8 @@ import UniformTypeIdentifiers
 // Arc shuts down on 2026-12-22. Some time after that, delete this file, the
 // "Import from Arc…" item in MainMenu.swift, KiteCore/ArcImport.swift, ArcArchiveImport.swift,
 // ArcSettingsImport.swift, ArcKeyBindingsImport.swift, ArcHistoryImport.swift,
-// ArcSiteSearchImport.swift, ArcLinkRoutingImport.swift, ArcExtensionsImport.swift,
+// ArcSiteSearchImport.swift, ArcLinkRoutingImport.swift, ArcExtensionsImport.swift, ArcCookieImport.swift,
+// ArcCookiesInstaller.swift,
 // ArcExtensionsInstaller.swift with its item in ExtensionsMenuBar.swift, BrowserState.arcProfileMap,
 // and the Arc*Tests files; then make AppDelegate.airTraffic and ExtensionManifest.strippingBOM private again.
 
@@ -281,8 +282,8 @@ enum ArcImportController {
             lines.append("Importing again also replaces the Air Traffic Control routes that came from Arc.")
         }
 
-        /// Imports, leaving out unnamed spaces unless `includeUntitled`.
-        func perform(includeUntitled: Bool) {
+        /// Imports, leaving out unnamed spaces unless `includeUntitled`; Arc's cookies too with `signIns`.
+        func perform(includeUntitled: Bool, signIns: Bool) {
             let spaces = result.spaces.filter { includeUntitled || !result.untitledSpaceIDs.contains($0.id) }
             var merged: BrowserState.ArcMerge?
             store.mutateWithoutUndo {
@@ -305,12 +306,15 @@ enum ArcImportController {
             if let routes = routes?.keeping(spaces: Set(store.state.spaces.map(\.id))), !routes.isEmpty {
                 (NSApp.delegate as? AppDelegate)?.airTraffic.state.merge(arc: routes)
             }
+            #if canImport(CEFBridge)
+            if signIns, let profiles = merged?.profiles { importSignIns(profiles, folder: folder, window: window) }
+            #endif
         }
 
         if let test = testMode {
             testLog(lines.joined(separator: " | "))
             guard test.imports else { return }
-            perform(includeUntitled: false)
+            perform(includeUntitled: false, signIns: ProcessInfo.processInfo.environment["KITE_TEST_IMPORT_SIGNINS"] == "1")
             if let routing = (NSApp.delegate as? AppDelegate)?.airTraffic.state {
                 testLog("imported; Air Traffic Control has \(count(routing.rules.count, "route")), default \(routing.defaultDestination.map { "\($0)" } ?? "the Little Kite setting")")
             }
@@ -323,6 +327,7 @@ enum ArcImportController {
         alert.addButton(withTitle: "Import")
         alert.addButton(withTitle: "Cancel")
 
+        var boxes: [NSButton] = []
         // Arc has unnamed spaces the user often never set up; leave them out unless asked.
         var untitledBox: NSButton?
         if !result.untitledSpaceIDs.isEmpty {
@@ -333,17 +338,68 @@ enum ArcImportController {
                 target: nil,
                 action: nil
             )
-            box.state = .off
-            box.sizeToFit()
-            alert.accessoryView = box
+            boxes.append(box)
             untitledBox = box
+        }
+        // Off unless asked: Kite would hold every session Arc has.
+        var signInsBox: NSButton?
+        #if canImport(CEFBridge)
+        if (NSApp.delegate as? AppDelegate)?.engine is ChromiumEngine {
+            let box = NSButton(
+                checkboxWithTitle: "Bring sign-ins: Arc's cookies, so sites stay signed in (macOS asks to let Kite use Arc's key)",
+                target: nil,
+                action: nil
+            )
+            boxes.append(box)
+            signInsBox = box
+        }
+        #endif
+        if !boxes.isEmpty {
+            boxes.forEach { $0.state = .off }
+            let stack = NSStackView(views: boxes)
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 6
+            stack.frame.size = stack.fittingSize
+            alert.accessoryView = stack
         }
 
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else { return }
-            MainActor.assumeIsolated { perform(includeUntitled: untitledBox?.state == .on) }
+            MainActor.assumeIsolated {
+                perform(includeUntitled: untitledBox?.state == .on, signIns: signInsBox?.state == .on)
+            }
         }
     }
+
+    #if canImport(CEFBridge)
+    /// Arc's cookies into the Kite profiles `profiles` (Arc profile folder → Kite's) maps them to.
+    /// Getting Arc's key makes macOS ask the user; reading and decrypting stay off the main thread.
+    private static func importSignIns(_ profiles: [String: String], folder: URL, window: NSWindow) {
+        Task {
+            let read = await Task.detached { () -> Result<[(kite: String, cookies: [ArcCookieImport.Cookie])], Error> in
+                Result {
+                    let key = try ArcCookiesInstaller.key(arcFolder: folder)
+                    return profiles.keys.sorted().map { arc in
+                        (profiles[arc]!, ArcCookiesInstaller.read(profile: arc, arcFolder: folder, key: key))
+                    }
+                }
+            }.value
+            guard case .success(let perProfile) = read else {
+                return showError("Kite couldn't get Arc's key, so sign-ins didn't come over.",
+                                 detail: "Import from Arc again and allow Kite to use \"Arc Safe Storage\" when macOS asks.", window: window)
+            }
+            var total = 0
+            for (kite, cookies) in perProfile where !cookies.isEmpty {
+                total += await withCheckedContinuation { done in
+                    ArcCookiesInstaller.set(cookies, inProfile: kite) { done.resume(returning: $0) }
+                }
+            }
+            NSLog("Kite: Arc import: set %ld cookies", total)
+            if testMode != nil { testLog("sign-ins: set \(count(total, "cookie"))") }
+        }
+    }
+    #endif
 
     // MARK: Test hook
 
