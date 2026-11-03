@@ -180,6 +180,7 @@ std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t spaceIndex
     header.id = space.id;
     header.title = space.name;
     header.icon = space.icon;
+    header.look = SpaceIconLookOf(space.icon, space.theme);
     header.hasPinned = !space.pinnedItems.empty();
     header.pinnedCollapsed = IsPinnedSectionCollapsed(state, space.id);
     const bool collapsed = header.pinnedCollapsed;

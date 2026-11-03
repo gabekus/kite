@@ -245,8 +245,45 @@ button and + button at its ends (drawn; what they open comes later), and a cell
 per space centred between them on a 34pt pitch, or from the room's leading edge
 when they don't fit, scrolled with a sideways wheel or Shift and the wheel
 (`core/SpaceBar.h`). A cell shows its emoji in colour for the space you're in and
-greyed (saturation 0, at 45%) for the others, or a dot for an icon-less space;
-SF Symbol and picture icons show as a dot until W9b2. A switch's slide relights
+greyed (saturation 0, at 45%) for the others, or a dot for an icon-less space.
+SF Symbol and picture icons (W9b2) draw in the bar and the page header
+(`core/SpaceIcon.h`, `shell/SpaceIconPainter.h`). Apple's SF Symbols only draw on
+Apple's systems, so each of the Icon tab's 56 symbols (and "briefcase" and
+"photo") has a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where
+Fluent isn't installed, picked by eye from every glyph each font has and checked
+against both fonts' character maps. A symbol fills its glyph's outline, centred
+on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
+factor for every symbol), in the theme's accent when lit and in the label colour
+at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
+side with 22% corners, its PNG from the profile's SpaceIcons folder scaled to the
+square's pixels, greyed as an emoji is; a missing file shows "photo". Pictures
+are read and decoded on a worker thread (none over 1 MB or 2048px), which posts
+to the window when they're ready, and the cells and headers showing one draw
+again; a file that can't be read keeps its placeholder and is looked for again
+at a draw 2 s on (`core/PictureLoads.h`). One painter, the sidebar's, serves
+the bar and the headers. Known differences:
+Fluent has one weight where the Mac's symbols are semibold (the placeholder's
+"photo" is regular on the Mac), and its briefcase is 1.5pt taller for the same
+width; several stand-ins are outlines of filled symbols, cloud and cloud.fill
+share a glyph, and nine have no such object in either font (bookmark, paw, bed,
+cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks) and show the
+nearest glyph until W9b4 draws them; symbols are centred on their ink where the
+Mac centres the symbol's image (checked only for the briefcase, within 0.25pt);
+an SF Symbol name outside the 58 (which the Mac draws, from automation or a
+hand-edited session) shows the dot in the bar and a blank icon slot in the
+header; a picture shows nothing until its decode arrives (the Mac reads it in its
+layout), at launch, after a DPI change (new sizes) and in a jump's slide to a page
+not built yet; a file over 1 MB or 2048px or in a format WIC can't read (PDF, SVG;
+HEIC without its extension) shows the placeholder where the Mac draws it, and an
+embedded colour profile or JPEG orientation isn't applied (only a file put there
+by hand can be any of these); if the worker thread can't start, pictures are
+decoded on the UI thread as a last resort; a file that turns up after a miss shows
+at the icon's next redraw (a switch, or a hover over the page's rows; the bar's
+hover only moves its backing), as the Mac's next reload reads it;
+a picture's corners are circular where the Mac's are continuous; the MDL2 fallback (Windows without
+Segoe Fluent Icons) is checked against the font's map but not yet seen drawn;
+and the tip over a cell comes in W9b3.
+A switch's slide relights
 the cells with the pages: each cell's two layers have DirectComposition opacity
 animations on the strip's spring (its light is linear in the strip's offset,
 `HighlightAlongSettle`), so the slide still draws nothing. A click selects the
