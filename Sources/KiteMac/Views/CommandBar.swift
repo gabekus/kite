@@ -322,7 +322,7 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
             }
             row.configure(suggestion: item, engine: engine, accent: accent)
             row.onHover = { [weak self] in self?.highlighted = index }
-            row.onClick = { [weak self] in self?.onCommit(item) }
+            row.onClick = { [weak self] in self?.commit(item) }
         }
         if highlighted >= items.count { highlighted = 0 }
         applyHighlight()
@@ -398,6 +398,18 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         field.currentEditor()?.selectedRange = NSRange(location: (text as NSString).length, length: 0)
     }
 
+    /// Learns ⌘T picks, so what was typed leads to the same tab next time.
+    private func commit(_ item: CommandSuggestion) {
+        // Not in a Site Search, whose query is for the site, nor while a completion shows (no pick leads then).
+        if mode == .newTab, site == nil, completed == nil {
+            let tab: UUID? = if case .switchTab(let tab) = item { tab.id } else { nil }
+            if store.state.commandBarPickChanges(typed: typed, tab: tab) {
+                store.mutateWithoutUndo { $0.recordCommandBarPick(typed: typed, tab: tab) }
+            }
+        }
+        onCommit(item)
+    }
+
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
         case #selector(NSResponder.moveDown(_:)):
@@ -410,10 +422,10 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
             // Arc: "Press Shift + Enter for any web search to instantly open the top result."
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true, site == nil, InstantLinksController.isEnabled,
                InstantLinks.applies(to: query) {
-                onCommit(.instantLinks(query.trimmingCharacters(in: .whitespacesAndNewlines)))
+                commit(.instantLinks(query.trimmingCharacters(in: .whitespacesAndNewlines)))
                 return true
             }
-            if items.indices.contains(highlighted) { onCommit(items[highlighted]) }
+            if items.indices.contains(highlighted) { commit(items[highlighted]) }
             return true
         case #selector(NSResponder.insertTab(_:)):
             guard let target = tabTarget else { return true }

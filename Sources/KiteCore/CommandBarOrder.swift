@@ -5,6 +5,7 @@ import Foundation
 /// varies; this follows what it did for a favorite it hadn't learned. A matching tab sits right under the typed
 /// search (and any strong menu command above that), above the search engine's suggestions. One tab can lead,
 /// above the search or the Open row, so Return switches to it:
+/// - the tab you picked for this text before (Kite's own: `learnedTab`);
 /// - a favorite whose address you're typing ("mai" … "mail.googl" for mail.google.com), at any length;
 /// - for a query of up to three characters that doesn't look like a URL, the best match when it starts the tab's
 ///   title, a word or its host.
@@ -18,10 +19,14 @@ public enum CommandBarOrder {
     /// `shown`. It may be outside `typedMatches`.
     public static func leader(_ typed: String, shown: String, in state: BrowserState, typedMatches: [TabSearch.Match],
                               looksLikeURL: Bool) -> BrowserTab? {
+        // What you picked for this text before, unless a completion shows something else in the field.
+        let sameAsField = typed.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            == shown.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if sameAsField, let learned = state.learnedTab(for: typed) { return learned }
         if let favorite = TabSearch.addressFavorite(typed, shown: shown, in: state) { return favorite }
         // Not while a completion shows ("w" + "iki"): the row would disagree with the field.
         let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !looksLikeURL, text.lowercased() == shown.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+        guard !looksLikeURL, sameAsField,
               let best = typedMatches.first, best.strength >= shortQueryMinStrength, text.count <= shortQueryMaxLength
         else { return nil }
         return best.tab
