@@ -607,9 +607,8 @@ never touching the screen, the real pointer or another app.
 2. **Mini Player: works, and a bug found.** With `--autoplay-policy=no-user-gesture-required`, a local page playing a
    looping tone, then another tab selected: the Mini Player shows (AXGroup "Mini Player" [8,690 224×66], "Tone",
    "Pause"), and a posted click on Pause paused the page's audio (`paused` true) and turned the button to "Play".
-   **Bug:** a tab opened straight onto a page that starts playing never reports its media: no speaker button, no Mini
-   Player. The media scripts are added with `Page.addScriptToEvaluateOnNewDocument`, asynchronously, while the
-   tab's first document is already loading; the same page loaded again in the tab reports normally. Planned as M1e.
+   **Bug:** a tab opened straight onto a page that starts playing never reported its media: no speaker button, no Mini
+   Player (0 of 5); a tab navigated to the page reported (5 of 5). Cause and fix: Helix M1e, below.
 3. **The 1Password key: checked in M1** (#289): a posted click logs the action it would take ("would add 1Password"),
    and its frame and label match main (AXButton "Add 1Password to this profile" [260,49 30×30]). Opening Gabe's real
    1Password can only be confirmed on his real profile.
@@ -645,3 +644,34 @@ Picking through the hook: Pin Tab on a Today tab pins it (3 → 4 pinned items);
 - Spring-loaded folders: a tab held 1.2 s over a collapsed folder opens it and drops in (closed, 1 tab → open, 2).
 
 Still not verified: edge-of-list space switching during a drag, a real two-finger swipe, VoiceOver.
+
+## Helix M1e: a tab's first document gets Kite's page scripts
+
+**Cause, measured:** Chromium answers a new tab's DevTools calls only once its first document has a renderer (a
+`Page.getFrameTree` sent before the first load was never answered), so every script ChromiumPage registers with
+`Page.addScriptToEvaluateOnNewDocument` (the verification-code world, the media world and its page hook, the mail
+handler) missed the tab's first document. A trace of execution contexts showed no `kite-media` or `kite-codes` world
+in any tab's first document, and both in every later one. `runImmediately` didn't help: the call isn't handled
+until the document exists.
+
+**Fix:** the scripts are one table (`ChromiumPage.documentScripts`). As the first document starts loading (a new
+optional `browserMainFrameDidStartLoading:` from the bridge), Kite asks the renderer for nothing (`Runtime.evaluate
+"0"`), which it answers after any report already sent; with no media report, the scripts run late: main-world ones
+after their bindings are added again, isolated worlds made with `Page.createIsolatedWorld` and given their binding by
+context id (by world name it didn't reach them: measured 0 of 1, by id 1 of 1). The media script picks up what's
+already playing.
+
+**Measured (bundled test builds, headless):**
+- A tab opened straight onto a playing page reports: 5 of 5 (was 0 of 5). Navigated to it: 5 of 5, as before; the
+  direct-opened tab navigated again: 5 of 5.
+- A tab restored on relaunch reports. The Mini Player showed for the hidden tab on the first build of the fix; on the
+  final build accessibility returned 0×0 frames for every app (Finder, Arc), so it wasn't read again.
+- A first document that calls `registerProtocolHandler` 1.5 s in gets Kite's prompt (its popover window).
+- Not affected: the ad blocker's main-frame script (run by CEF, not DevTools, plus the bridge's load-start replay:
+  its `style[data-kite]` is in the first document) and the Google results buttons (1 on a results page opened
+  directly, 3 after navigating; registered with `runImmediately` once the address is known).
+
+**Limits:** what the page does before load start isn't seen: Media Session handlers or a `registerProtocolHandler`
+call made while it parses. An element that played and paused before then isn't picked up. Not checked: the code
+world on a first document (it's made the same way as the media world), and FrameAdblock's `Target.setAutoAttach`,
+also sent at init, for iframes in a first document.
