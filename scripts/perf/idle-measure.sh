@@ -41,6 +41,14 @@ if [[ -n "${RELOAD:-}" ]]; then
       "$CLI" ui input '{"keys":"cmd+r"}' >/dev/null 2>&1; sleep 0.5
     done ) &
 fi
+# TYPE=1: open the command bar, type a query and close it, every second, while sampling.
+if [[ -n "${TYPE:-}" ]]; then
+  ( end=$((SECONDS + SECS)); while (( SECONDS < end )); do
+      "$CLI" ui input '{"keys":"cmd+t"}' >/dev/null 2>&1
+      "$CLI" ui input '{"text":"static page"}' >/dev/null 2>&1; sleep 0.6
+      "$CLI" ui input '{"keys":"escape"}' >/dev/null 2>&1; sleep 0.4
+    done ) &
+fi
 RUSAGE="$(dirname "$0")/../../build/perf/rusage"
 [[ -x "$RUSAGE" ]] || cc -O2 -o "$RUSAGE" "$(dirname "$0")/rusage.c"
 echo "$LABEL $("$RUSAGE" $PID "$SECS")"

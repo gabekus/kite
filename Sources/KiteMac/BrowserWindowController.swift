@@ -54,7 +54,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     let claudeBubble = ClaudeBubbleModel()
     private var claudeBubbleHost: NSHostingView<ClaudeBubble>!
     private var trafficLights: TrafficLights!
-    private var commandBarHost: NSHostingView<CommandBarOverlay>!
+    private var commandBarHost: CommandBarOverlayView!
     private lazy var instantLinks = InstantLinksController(store: store, supportDirectory: AppDelegate.supportDirectory)
     /// Hover cards for Gmail, Calendar and other favorites (Arc's favorite previews).
     lazy var favoritePreviews = FavoritePreviewController(host: .init(
@@ -331,10 +331,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         toolbarHost.sizingOptions = []
         toolbarHost.isHidden = true
         contentClip.toolbar = toolbarHost
-        commandBarHost = NSHostingView(rootView: CommandBarOverlay(store: store) { [weak self] suggestion, mode in
+        commandBarHost = CommandBarOverlayView(store: store) { [weak self] suggestion, mode in
             self?.commit(suggestion, mode: mode)
-        })
-        commandBarHost.sizingOptions = []
+        }
         commandBarHost.isHidden = true
         claudeBubbleHost = NSHostingView(rootView: ClaudeBubble(model: claudeBubble, store: store))
         claudeBubbleHost.sizingOptions = []
@@ -995,8 +994,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// straight after ⌘T or ⌘L lands in the bar rather than the page. SwiftUI's own focus
     /// request (onAppear) comes a run loop later, after those keys are gone.
     private func focusCommandBar(attempt: Int = 0) {
-        // Builds the bar's views now instead of on the next display pass.
-        commandBarHost.layoutSubtreeIfNeeded()
+        // Builds the bar's views now instead of on the next pass.
+        commandBarHost.syncNow()
         guard let field = Self.editableField(in: commandBarHost) else {
             // The bar's first open in a session: SwiftUI makes the field on a later pass.
             // Hold what's typed meanwhile so it lands in the bar, not the page.
