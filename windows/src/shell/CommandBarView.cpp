@@ -114,9 +114,6 @@ HRESULT MakeAlphaStrip(ID2D1DeviceContext* context, const std::vector<float>& al
     return context->CreateBitmap(size, pixels.data(), row ? count * 4 : 4, &props, out.ReleaseAndGetAddressOf());
 }
 
-bool IsDeviceLost(HRESULT hr) {
-    return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET || hr == static_cast<HRESULT>(D2DERR_RECREATE_TARGET);
-}
 
 std::wstring Widen(std::string_view utf8) {
     if (utf8.empty()) return {};

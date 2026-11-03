@@ -1,12 +1,24 @@
 #pragma once
 // Kite's top-level browser window: a Win32 window with no redirection bitmap, so all it shows
 // is its DirectComposition tree (shell/Compositor.h) over the system backdrop; see docs/windows.md.
+// It has no caption: the client area runs up to the window's top edge (the Mac's
+// .fullSizeContentView), keeping Windows' resize borders, and the title bar's buttons and drag
+// areas are Kite's (hitTest, shell/CaptionButtonsView.h).
 
 #include <windows.h>
 
+#include <array>
 #include <functional>
+#include <optional>
+
+#include "core/TitleBar.h"
 
 namespace kite {
+
+// The title bar's areas as WM_NCHITTEST codes (Windows 11 shows Snap Layouts over HTMAXBUTTON),
+// and back.
+LRESULT HitTestCodeOf(TitleBarArea area);
+std::optional<CaptionButton> CaptionButtonOfHit(WPARAM hit);
 
 class MainWindow {
 public:
@@ -70,6 +82,9 @@ public:
     std::function<void()> onMove;
     // The client area changed size (also after a DPI change); GetClientRect has the new one.
     std::function<void()> onSize;
+    // What a client point is, in points (at Dpi()), below the top resize border. Unset, all of
+    // it is Client.
+    std::function<TitleBarArea(float x, float y)> hitTest;
     // Sees every message first (the command bar takes the keyboard and mouse while it's
     // open); true when it handled the message, with `result`.
     std::function<bool(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result)> filter;
@@ -78,11 +93,23 @@ private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT Handle(UINT message, WPARAM wParam, LPARAM lParam);
     void ResizeClient(int width, int height);
+    // The window rect around a client area `width` × `height` px: the frame's borders but no
+    // caption (WM_NCCALCSIZE takes it off).
+    RECT FrameAround(int width, int height) const;
+    // The resize border's thickness, in the monitor's px (a maximized window hangs this far off
+    // the screen on every side).
+    int ResizeBorder() const;
+    // Which edges of the monitor `window` (a window rect) is on have an auto-hiding taskbar
+    // (ABE_LEFT, TOP, RIGHT, BOTTOM), asked of Explorer once per monitor and again after a
+    // settings change.
+    std::array<bool, 4> AutoHideTaskbars(const RECT& window);
 
     HWND hwnd_ = nullptr;
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool allowLargerThanScreen_ = false;
     bool fixedScale_ = false;
+    HMONITOR autoHideMonitor_ = nullptr;
+    std::array<bool, 4> autoHide_{};
 };
 
 }  // namespace kite

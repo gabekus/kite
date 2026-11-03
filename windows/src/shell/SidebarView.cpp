@@ -105,23 +105,13 @@ std::wstring Widen(const std::string& utf8) {
     return out;
 }
 
-bool IsDeviceLost(HRESULT hr) {
-    return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET || hr == static_cast<HRESULT>(D2DERR_RECREATE_TARGET);
-}
-
 D2D1_RECT_F Rect(float left, float top, float right, float bottom) { return D2D1_RECT_F{left, top, right, bottom}; }
 
 }  // namespace
 
 std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons, std::wstring& error) {
     std::unique_ptr<SidebarView> view(new SidebarView(window, favicons));
-    D2D1_FACTORY_OPTIONS options{};
-    HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1), &options,
-                                   reinterpret_cast<void**>(view->d2dFactory_.GetAddressOf()));
-    if (FAILED(hr)) {
-        error = HResultMessage(L"D2D1CreateFactory", hr);
-        return nullptr;
-    }
+    HRESULT hr = S_OK;
     if (FAILED(hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                                         reinterpret_cast<IUnknown**>(view->dwrite_.GetAddressOf())))) {
         error = HResultMessage(L"DWriteCreateFactory", hr);
@@ -178,28 +168,20 @@ void SidebarView::UseCompositor(Compositor* compositor) {
 }
 
 bool SidebarView::CreateGpu(std::wstring& error) {
-    ComPtr<IDXGIDevice> dxgi;
-    HRESULT hr = compositor_->GetRenderer().Device()->QueryInterface(IID_PPV_ARGS(dxgi.GetAddressOf()));
-    if (SUCCEEDED(hr)) hr = d2dFactory_->CreateDevice(dxgi.Get(), d2dDevice_.ReleaseAndGetAddressOf());
-    if (SUCCEEDED(hr)) hr = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, context_.ReleaseAndGetAddressOf());
-    if (SUCCEEDED(hr)) hr = context_->CreateSolidColorBrush(D2D1_COLOR_F{0, 0, 0, 1}, brush_.ReleaseAndGetAddressOf());
+    HRESULT hr = compositor_->D2D()->CreateSolidColorBrush(D2D1_COLOR_F{0, 0, 0, 1}, brush_.ReleaseAndGetAddressOf());
     if (SUCCEEDED(hr)) hr = compositor_->Device()->CreateVisual(visual_.ReleaseAndGetAddressOf());
     if (SUCCEEDED(hr)) hr = compositor_->Chrome()->AddVisual(visual_.Get(), FALSE, nullptr);
     if (FAILED(hr)) {
         deviceLost_ = IsDeviceLost(hr);
-        error = HResultMessage(L"creating the sidebar's Direct2D device", hr);
+        error = HResultMessage(L"creating the sidebar's visual", hr);
         ReleaseGpu();
         return false;
     }
-    // Grayscale, as the Mac draws text on its translucent sidebar (ClearType needs an opaque
-    // background).
-    context_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     return true;
 }
 
 void SidebarView::ReleaseGpu() {
     faviconBitmaps_.clear();
-    if (context_) context_->SetTarget(nullptr);
     if (visual_ && compositor_) {
         visual_->SetContent(nullptr);
         compositor_->Chrome()->RemoveVisual(visual_.Get());
@@ -208,8 +190,6 @@ void SidebarView::ReleaseGpu() {
     surface_.Reset();
     surfaceWidth_ = surfaceHeight_ = 0;
     brush_.Reset();
-    context_.Reset();
-    d2dDevice_.Reset();
 }
 
 void SidebarView::Update(const BrowserState& state) {
@@ -282,10 +262,9 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     if (height != surfaceHeight_ || width != surfaceWidth_) dirty_ = true;
     if (!dirty_ && !readBack) return {};
     std::wstring error;
-    if (!context_ && !CreateGpu(error)) return error;
+    if (!visual_ && !CreateGpu(error)) return error;
     auto fail = [this](const wchar_t* what, HRESULT hr) {
         deviceLost_ = IsDeviceLost(hr);
-        if (context_) context_->SetTarget(nullptr);
         return HResultMessage(what, hr);
     };
     HRESULT hr = S_OK;
@@ -302,63 +281,20 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     surfaceWidth_ = width;
     surfaceHeight_ = height;
 
-    const D2D1_BITMAP_PROPERTIES1 targetProps =
-        D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-                                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), static_cast<float>(dpi_),
-                                static_cast<float>(dpi_));
-    // Into `surface` (a DirectComposition surface, or the capture's texture) at `offset` px.
-    auto render = [&](IDXGISurface* surface, POINT offset) -> HRESULT {
-        ComPtr<ID2D1Bitmap1> target;
-        HRESULT made = context_->CreateBitmapFromDxgiSurface(surface, &targetProps, target.GetAddressOf());
-        if (FAILED(made)) return made;
-        context_->SetTarget(target.Get());
-        context_->SetDpi(static_cast<float>(dpi_), static_cast<float>(dpi_));
-        context_->BeginDraw();
-        context_->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x) / scale, static_cast<float>(offset.y) / scale));
-        // A surface's update can sit in a shared atlas: draw only inside it.
-        context_->PushAxisAlignedClip(Rect(0, 0, static_cast<float>(width) / scale, static_cast<float>(height) / scale),
-                                      D2D1_ANTIALIAS_MODE_ALIASED);
-        context_->Clear(D2D1_COLOR_F{0, 0, 0, 0});
-        for (auto& entry : faviconBitmaps_) entry.second.used = false;
-        DrawContent(context_.Get());
-        // Only the icons this draw showed stay on the GPU.
-        std::erase_if(faviconBitmaps_, [](const auto& entry) { return !entry.second.used; });
-        context_->PopAxisAlignedClip();
-        made = context_->EndDraw();
-        context_->SetTarget(nullptr);
-        return made;
-    };
-    ComPtr<IDXGISurface> update;
-    POINT offset{};
-    if (FAILED(hr = surface_->BeginDraw(nullptr, IID_PPV_ARGS(update.GetAddressOf()), &offset))) {
-        return fail(L"starting to draw the sidebar", hr);
+    error = compositor_->DrawSurface(
+        surface_.Get(), width, height, dpi_,
+        [&](ID2D1DeviceContext* context) {
+            for (auto& entry : faviconBitmaps_) entry.second.used = false;
+            DrawContent(context);
+            // Only the icons this draw showed stay on the GPU.
+            std::erase_if(faviconBitmaps_, [](const auto& entry) { return !entry.second.used; });
+        },
+        readBack, hr);
+    if (!error.empty()) {
+        deviceLost_ = IsDeviceLost(hr);
+        return L"the sidebar: " + error;
     }
-    hr = render(update.Get(), offset);
-    const HRESULT ended = surface_->EndDraw();
-    if (FAILED(hr)) return fail(L"drawing the sidebar", hr);
-    if (FAILED(ended)) return fail(L"finishing the sidebar's surface", ended);
     dirty_ = false;
-
-    if (readBack) {
-        // The same drawing into a texture of its own, read back as DirectComposition shows it.
-        D3D11_TEXTURE2D_DESC desc{};
-        desc.Width = width;
-        desc.Height = height;
-        desc.MipLevels = desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        desc.SampleDesc.Count = 1;
-        desc.Usage = D3D11_USAGE_DEFAULT;
-        desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-        ComPtr<ID3D11Texture2D> texture;
-        ComPtr<IDXGISurface> surface;
-        if (FAILED(hr = compositor_->GetRenderer().Device()->CreateTexture2D(&desc, nullptr, texture.GetAddressOf())) ||
-            FAILED(hr = texture.As(&surface)) || FAILED(hr = render(surface.Get(), POINT{}))) {
-            return fail(L"drawing the sidebar for the capture", hr);
-        }
-        auto pixels = compositor_->GetRenderer().ReadBack(texture.Get(), error);
-        if (!pixels) return error;
-        *readBack = std::move(*pixels);
-    }
     return {};
 }
 

@@ -120,14 +120,11 @@ private:
     Compositor* compositor_ = nullptr;
 
     // Device-independent.
-    Microsoft::WRL::ComPtr<ID2D1Factory1> d2dFactory_;
     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> addressFormat_, headerFormat_, tabFormat_, folderFormat_, emojiFormat_, iconFormat_;
     std::map<IDWriteTextFormat*, float> baselines_;  // each format's first baseline from its line's top
 
-    // GPU.
-    Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
-    Microsoft::WRL::ComPtr<ID2D1DeviceContext> context_;
+    // GPU (drawn with the compositor's context).
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
     Microsoft::WRL::ComPtr<IDCompositionVisual> visual_;
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
