@@ -26,7 +26,8 @@ public:
     bool IsValid() const { return hwnd_ != nullptr; }
     HWND Handle() const { return hwnd_; }
     void Show(int showCommand);
-    // Client area in DIPs (96 DPI points), scaled to the window's monitor.
+    // Client area in DIPs (96 DPI points), scaled to the window's monitor. Can be larger
+    // than the screen, so a capture has the same size on every machine.
     void SetClientSize(int width, int height);
 
     // Runs before the window is destroyed, e.g. to save the session.
@@ -39,6 +40,7 @@ private:
 
     HWND hwnd_ = nullptr;
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
+    bool allowLargerThanScreen_ = false;
 };
 
 }  // namespace kite

@@ -45,6 +45,8 @@ void MainWindow::Show(int showCommand) {
 }
 
 void MainWindow::SetClientSize(int width, int height) {
+    // Windows otherwise caps a window at the screen size (WM_GETMINMAXINFO's ptMaxTrackSize).
+    allowLargerThanScreen_ = true;
     RECT rect{0, 0, Scale(width, dpi_), Scale(height, dpi_)};
     AdjustWindowRectExForDpi(&rect, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
                              static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), dpi_);
@@ -84,6 +86,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
         info->ptMinTrackSize.x = Scale(kMinimumWidth, dpi_);
         info->ptMinTrackSize.y = Scale(kMinimumHeight, dpi_);
+        if (allowLargerThanScreen_) info->ptMaxTrackSize = {32767, 32767};
         return 0;
     }
     case WM_SETTINGCHANGE:
