@@ -245,8 +245,24 @@ button and + button at its ends (drawn; what they open comes later), and a cell
 per space centred between them on a 34pt pitch, or from the room's leading edge
 when they don't fit, scrolled with a sideways wheel or Shift and the wheel
 (`core/SpaceBar.h`). A cell shows its emoji in colour for the space you're in and
-greyed (saturation 0, at 45%) for the others, or a dot for an icon-less space;
-SF Symbol and picture icons show as a dot until W9b2. A switch's slide relights
+greyed (saturation 0, at 45%) for the others, or a dot for an icon-less space.
+SF Symbol and picture icons (W9b2) draw in the bar and the page header
+(`core/SpaceIcon.h`, `shell/SpaceIconPainter.h`). Apple's SF Symbols only draw on
+Apple's systems, so each of the Icon tab's 56 symbols (and "briefcase" and
+"photo") has a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where
+Fluent isn't installed, picked by eye from every glyph each font has and checked
+against both fonts' character maps. A symbol fills its glyph's outline, centred
+on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
+factor for every symbol), in the theme's accent when lit and in the label colour
+at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
+side with 22% corners, its PNG from the profile's SpaceIcons folder scaled to the
+square's pixels, greyed as an emoji is; a missing file shows "photo". Known
+differences: Fluent has one weight where the Mac's symbols are semibold, several
+stand-ins are outlines of filled symbols, nine have no such object in either font
+(bookmark, paw, bed, cutlery, dumbbell, bandage, baseball, takeaway bag, theatre
+masks) and show the nearest glyph until W9b4 draws them, a picture's corners are
+circular where the Mac's are continuous, and the tip over a cell comes in W9b3.
+A switch's slide relights
 the cells with the pages: each cell's two layers have DirectComposition opacity
 animations on the strip's spring (its light is linear in the strip's offset,
 `HighlightAlongSettle`), so the slide still draws nothing. A click selects the

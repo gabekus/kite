@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "core/Models.h"
+#include "core/SpaceIcon.h"
 #include "core/Sidebar.h"
 #include "core/SpaceSwipe.h"
 
@@ -90,15 +91,15 @@ std::optional<size_t> SpaceCellAt(const SpaceBarLayout& layout, float x, float y
 // What one space's cell shows.
 struct SpaceCell {
     std::string spaceID;
-    std::string icon;
-    bool dot = false;   // no icon this platform draws yet (SpaceIconShowsDot): an 8pt dot
+    std::string icon;   // as Space.icon holds it
+    SpaceIconLook look;  // what it shows (SpaceIconLookOf)
     size_t number = 1;  // 1-based place (the tip's Alt+n for the first nine)
     double lit = 0;     // 0 greyed (or a faint dot) ... 1 in colour
     bool selected = false;
+    // An icon-less space's 8pt dot.
+    bool Dot() const { return look.kind == SpaceIconLook::Kind::Dot; }
     bool operator==(const SpaceCell&) const = default;
 };
-// Whether a space's icon shows as a dot: none, or (until W9b2) an SF Symbol or a picture.
-bool SpaceIconShowsDot(const std::string& icon);
 // The cells for the session at rest: the selected space lit, the rest greyed.
 std::vector<SpaceCell> SpaceCells(const BrowserState& state);
 

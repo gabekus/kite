@@ -39,6 +39,7 @@ add_library(KiteCoreWin STATIC
   src/core/OKLab.cpp
   src/core/SessionStore.cpp
   src/core/SpaceBar.cpp
+  src/core/SpaceIcon.cpp
   src/core/SpaceSwipe.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
@@ -109,6 +110,7 @@ if(WIN32)
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
+    src/shell/SpaceIconPainter.cpp
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
@@ -170,6 +172,7 @@ add_executable(KiteCoreTests
   tests/LiveTabPolicyTests.cpp
   tests/SidebarTests.cpp
   tests/SpaceBarTests.cpp
+  tests/SpaceIconTests.cpp
   tests/SpaceSwipeTests.cpp
   tests/TabClosingTests.cpp
   tests/SupportDirectoryTests.cpp

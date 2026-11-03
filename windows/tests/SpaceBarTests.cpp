@@ -166,11 +166,12 @@ TEST(theSpaceYoureInIsLit) {
     state.SelectSpace("b");
     const auto cells = SpaceCells(state);
     CHECK(cells.size() == 3);
-    CHECK(cells[0].lit == 0 && !cells[0].selected && cells[0].icon == "🏃" && !cells[0].dot && cells[0].number == 1);
-    CHECK(cells[1].lit == 1 && cells[1].selected && cells[1].icon.empty() && cells[1].dot && cells[1].number == 2);
-    // An SF Symbol or a picture is a dot until W9b2.
-    CHECK(cells[2].lit == 0 && cells[2].spaceID == "c" && cells[2].dot && cells[2].number == 3);
-    CHECK(SpaceIconShowsDot("image:abc.png") && !SpaceIconShowsDot("🏠"));
+    CHECK(cells[0].lit == 0 && !cells[0].selected && cells[0].icon == "🏃" && !cells[0].Dot() && cells[0].number == 1);
+    CHECK(cells[0].look.kind == SpaceIconLook::Kind::Emoji && cells[0].look.text == "🏃");
+    CHECK(cells[1].lit == 1 && cells[1].selected && cells[1].icon.empty() && cells[1].Dot() && cells[1].number == 2);
+    // An SF Symbol is drawn (in its theme's accent), not a dot.
+    CHECK(cells[2].lit == 0 && cells[2].spaceID == "c" && !cells[2].Dot() && cells[2].number == 3);
+    CHECK(cells[2].look.kind == SpaceIconLook::Kind::Symbol && cells[2].look.accent == Accent(c.theme));
 }
 
 TEST(aCellsLightFollowsTheSlideLinearly) {

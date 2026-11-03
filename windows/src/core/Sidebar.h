@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "core/Models.h"
+#include "core/SpaceIcon.h"
 
 namespace kite {
 
@@ -77,6 +78,7 @@ struct SidebarRow {
     // Header: the space's icon (an emoji, "symbol:NAME", "image:FILE" or empty), whether it has
     // pinned items, and whether they're collapsed.
     std::string icon;
+    SpaceIconLook look;  // what the icon shows (SpaceIconLookOf)
     bool hasPinned = false;
     bool pinnedCollapsed = false;
     // Tab.

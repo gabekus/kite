@@ -21,6 +21,7 @@
 #include <dwrite.h>
 #include <wrl/client.h>
 
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -37,13 +38,15 @@
 #include "shell/Compositor.h"
 #include "shell/Favicons.h"
 #include "shell/SpaceBarView.h"
+#include "shell/SpaceIconPainter.h"
 
 namespace kite {
 
 class SidebarView {
 public:
-    // `favicons` may be null (a capture): every tab shows the globe.
-    static std::unique_ptr<SidebarView> Create(HWND window, Favicons* favicons, std::wstring& error);
+    // `favicons` may be null (a capture): every tab shows the globe. `spaceIcons` is the
+    // profile's SpaceIcons folder (the spaces' pictures).
+    static std::unique_ptr<SidebarView> Create(HWND window, Favicons* favicons, const std::filesystem::path& spaceIcons, std::wstring& error);
     ~SidebarView();
     SidebarView(const SidebarView&) = delete;
     SidebarView& operator=(const SidebarView&) = delete;
@@ -183,6 +186,7 @@ private:
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
     std::map<std::string, Page> pages_;  // by space id: the built pages' GPU side
     std::map<FaviconKey, Microsoft::WRL::ComPtr<ID2D1Bitmap1>> faviconBitmaps_;
+    std::unique_ptr<SpaceIconPainter> icons_;  // the header's symbols and pictures
     std::set<FaviconKey>* drawnIcons_ = nullptr;  // the page being drawn's
     UINT surfaceWidth_ = 0, surfaceHeight_ = 0;
     UINT clipWidth_ = 0;  // the pages' clip, in px

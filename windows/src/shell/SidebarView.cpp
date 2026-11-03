@@ -33,6 +33,7 @@ constexpr float kHeaderTextX = 41;   // in the window
 constexpr float kHeaderFontSize = 13;
 constexpr float kHeaderTextOpacity = 0.45f;
 constexpr float kHeaderEmojiSize = 15;
+constexpr float kHeaderSymbolSize = 15;  // SpaceIconImageView's size in the header: symbols and pictures
 constexpr float kIconSize = 18;
 constexpr float kIconTextGap = 8;
 constexpr float kNestingIndent = 16;
@@ -104,7 +105,8 @@ D2D1_RECT_F Rect(float left, float top, float right, float bottom) { return D2D1
 
 }  // namespace
 
-std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons, std::wstring& error) {
+std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons, const std::filesystem::path& spaceIcons,
+                                                 std::wstring& error) {
     std::unique_ptr<SidebarView> view(new SidebarView(window, favicons));
     HRESULT hr = S_OK;
     if (FAILED(hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
@@ -145,8 +147,10 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
         ComPtr<IDWriteInlineObject> ellipsis;
         if (SUCCEEDED(view->dwrite_->CreateEllipsisTrimmingSign(f, ellipsis.GetAddressOf()))) f->SetTrimming(&trimming, ellipsis.Get());
     }
-    view->bar_ = SpaceBarView::Create(view->dwrite_.Get(), error);
+    view->bar_ = SpaceBarView::Create(view->dwrite_.Get(), spaceIcons, error);
     if (!view->bar_) return nullptr;
+    view->icons_ = SpaceIconPainter::Create(view->dwrite_.Get(), spaceIcons, error);
+    if (!view->icons_) return nullptr;
     // Emoji and symbols sit in the middle of their box.
     for (IDWriteTextFormat* f : {view->emojiFormat_.Get(), view->iconFormat_.Get()}) {
         f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -187,6 +191,7 @@ bool SidebarView::CreateGpu(std::wstring& error) {
 
 void SidebarView::ReleaseGpu() {
     faviconBitmaps_.clear();
+    if (icons_) icons_->ReleaseDevice();
     for (auto& [id, page] : pages_) {
         if (page.visual && strip_) {
             page.visual->SetContent(nullptr);
@@ -659,10 +664,15 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
         // An icon-less space has no icon slot: its name starts at the icon's place.
         float x = M::kHeaderIconX;
         const D2D1_RECT_F iconBox = Rect(x, top + M::kHeaderIconTop, x + M::kHeaderIconSize, top + M::kHeaderIconTop + M::kHeaderIconSize);
-        if (!row.icon.empty()) {
-            // An emoji is drawn; SF Symbols and pictures keep their slot for now.
-            if (!row.icon.starts_with("symbol:") && !row.icon.starts_with("image:")) {
-                const std::wstring icon = Widen(row.icon);
+        if (row.look.kind != SpaceIconLook::Kind::Dot) {
+            if (row.look.kind != SpaceIconLook::Kind::Emoji) {
+                // A symbol in the theme's accent, or a picture (SpaceIconImageView, never greyed here).
+                const ThemeColor& a = row.look.accent;
+                icons_->Draw(context, brush_.Get(), row.look,
+                             D2D1::Point2F((iconBox.left + iconBox.right) / 2, (iconBox.top + iconBox.bottom) / 2), M::kHeaderSymbolSize,
+                             static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI, D2D1_COLOR_F{a.r, a.g, a.b, 1}, model_.dark);
+            } else {
+                const std::wstring icon = Widen(row.look.text);
                 ComPtr<IDWriteTextLayout> layout;
                 if (SUCCEEDED(dwrite_->CreateTextLayout(icon.c_str(), static_cast<UINT32>(icon.size()), emojiFormat_.Get(), M::kHeaderIconSize,
                                                         M::kHeaderIconSize, layout.GetAddressOf()))) {

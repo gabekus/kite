@@ -130,7 +130,7 @@ std::wstring BrowserWindowController::Init() {
     // The sidebar, over the backdrop: what the session lists, with favicons fetched off the UI
     // thread (none in a capture, which mustn't depend on the network).
     if (!options_.capture) favicons_ = Favicons::Create(window_.Handle(), kFaviconsMessage);
-    sidebar_ = SidebarView::Create(window_.Handle(), favicons_.get(), error);
+    sidebar_ = SidebarView::Create(window_.Handle(), favicons_.get(), options_.spaceIcons, error);
     if (!sidebar_) return L"Kite couldn't make the sidebar: " + error;
     sidebar_->UseCompositor(compositor_.get());
     sidebar_->Layout(static_cast<float>(kSidebarWidth), window_.Dpi());

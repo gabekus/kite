@@ -220,8 +220,8 @@ if(NOT target STREQUAL "pinnedChevron" OR NOT collapsed)
   message(FATAL_ERROR "click on the chevron gave ${hit}, then ${bar}")
 endif()
 # The space bar: Personal and Work centred between the end buttons (cells at 85 and 119, 8pt
-# into the 50pt bar), Personal lit, its emoji drawn and Work's SF Symbol a dot (until W9b2). A
-# click on Work's cell, in the bar at the window's bottom, selects it.
+# into the 50pt bar), Personal lit, its emoji drawn and Work's SF Symbol (briefcase) as Segoe
+# Fluent's E821, in its theme's accent. A click on Work's cell, in the bar at the window's bottom, selects it.
 string(JSON cells LENGTH "${bar}" spaceBar cells)
 string(JSON left0 GET "${bar}" spaceBar cells 0 left)
 string(JSON left1 GET "${bar}" spaceBar cells 1 left)
@@ -229,10 +229,12 @@ string(JSON top0 GET "${bar}" spaceBar cells 0 top)
 string(JSON lit0 GET "${bar}" spaceBar cells 0 lit)
 string(JSON lit1 GET "${bar}" spaceBar cells 1 lit)
 string(JSON workID GET "${bar}" spaceBar cells 1 id)
-string(JSON dot0 GET "${bar}" spaceBar cells 0 dot)
-string(JSON dot1 GET "${bar}" spaceBar cells 1 dot)
-if(NOT cells EQUAL 2 OR NOT left0 EQUAL 85 OR NOT left1 EQUAL 119 OR NOT top0 EQUAL 8 OR NOT lit0 EQUAL 1 OR NOT lit1 EQUAL 0 OR dot0
-   OR NOT dot1)
+string(JSON shows0 GET "${bar}" spaceBar cells 0 shows)
+string(JSON shows1 GET "${bar}" spaceBar cells 1 shows)
+string(JSON glyph1 GET "${bar}" spaceBar cells 1 glyph fluent)
+string(JSON accent1 ERROR_VARIABLE noAccent GET "${bar}" spaceBar cells 1 accent)
+if(NOT cells EQUAL 2 OR NOT left0 EQUAL 85 OR NOT left1 EQUAL 119 OR NOT top0 EQUAL 8 OR NOT lit0 EQUAL 1 OR NOT lit1 EQUAL 0
+   OR NOT shows0 STREQUAL "emoji" OR NOT shows1 STREQUAL "symbol" OR NOT glyph1 STREQUAL "E821" OR noAccent)
   message(FATAL_ERROR "the space bar gave ${bar}")
 endif()
 sidebar_kitecore(hit click 140 795)
