@@ -150,6 +150,8 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
     if (!view->icons_) return nullptr;
     view->bar_ = SpaceBarView::Create(view->dwrite_.Get(), view->icons_.get(), error);
     if (!view->bar_) return nullptr;
+    view->tip_ = SpaceTipView::Create(window, view->dwrite_.Get(), error);
+    if (!view->tip_) return nullptr;
     // Emoji and symbols sit in the middle of their box.
     for (IDWriteTextFormat* f : {view->emojiFormat_.Get(), view->iconFormat_.Get()}) {
         f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -163,6 +165,7 @@ SidebarView::~SidebarView() { ReleaseGpu(); }
 void SidebarView::UseCompositor(Compositor* compositor) {
     ReleaseGpu();
     bar_->UseCompositor(compositor, compositor ? compositor->Chrome() : nullptr);
+    tip_->UseCompositor(compositor);
     compositor_ = compositor;
     deviceLost_ = false;
     dirty_ = true;
@@ -190,6 +193,7 @@ bool SidebarView::CreateGpu(std::wstring& error) {
 
 void SidebarView::ReleaseGpu() {
     faviconBitmaps_.clear();
+    if (tip_) tip_->UseCompositor(nullptr);
     if (icons_) icons_->ReleaseDevice();
     for (auto& [id, page] : pages_) {
         if (page.visual && strip_) {
@@ -230,6 +234,11 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
     }
     icons_->Retain(pictures);
     bar_->Update(std::move(cells), next.dark);
+    // The spaces' tips; one showing (or waiting) for a space that's gone goes (the Mac's bar
+    // hides a removed cell's).
+    tips_.clear();
+    for (size_t i = 0; i < state.spaces.size(); ++i) tips_.emplace(state.spaces[i].id, SpaceTipOf(state, i));
+    if (tipHover_ && !tips_.contains(*tipHover_)) TipHoverChanged(std::nullopt);
     if (barSlidePending_) {
         barSlidePending_ = false;
         const std::optional<size_t> left = anchor ? state.SpaceIndex(*anchor) : std::nullopt;
@@ -359,6 +368,7 @@ void SidebarView::Layout(float width, UINT dpi) {
         dirty_ = true;
         for (auto& [id, page] : pages_) page.dirty = true;
         bar_->Layout(width, dpi);
+        HideTip();
         // A slide's animation is in the old scale's pixels: it lands.
         if (slide_) SetPageOffset(pageOffset_);
     }
@@ -400,7 +410,61 @@ bool SidebarView::NeedsDraw() const {
     return dirty_ || bar_->NeedsDraw() || std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
 }
 
-bool SidebarView::HandleMessage(UINT message) {
+void SidebarView::TipHoverChanged(const std::optional<std::string>& spaceID) {
+    if (spaceID == tipHover_) return;
+    // mouseExited hides the old cell's tip; mouseEntered starts the new one's 0.4 s.
+    tipHover_ = spaceID;
+    KillTimer(window_, kTipTimer);
+    tip_->Hide();
+    if (spaceID) SetTimer(window_, kTipTimer, static_cast<UINT>(std::lround(space_bar_metrics::kTipDelay * 1000)), nullptr);
+}
+
+void SidebarView::HideTip() {
+    // Until the pointer comes onto a cell again.
+    KillTimer(window_, kTipTimer);
+    tip_->Hide();
+    tipHover_.reset();
+}
+
+std::optional<BarRect> SidebarView::CellInWindow(const std::string& spaceID) const {
+    const auto& cells = bar_->Cells();
+    const auto cell = std::find_if(cells.begin(), cells.end(), [&](const SpaceCell& c) { return c.spaceID == spaceID; });
+    if (cell == cells.end()) return std::nullopt;
+    const BarRect& r = bar_->Geometry().cells[static_cast<size_t>(cell - cells.begin())];
+    // From the bar's points to the window's: the bar starts at SpaceBarTop, at the sidebar's left.
+    const float top = SpaceBarTop(Height());
+    return BarRect{r.left, r.top + top, r.right, r.bottom + top};
+}
+
+void SidebarView::ShowTip() {
+    // guard self.hovering, !self.dragging, self.window != nil: still over the cell, not dragging
+    // it, and the window on screen.
+    const bool dragging = barPress_ && barPress_->dragged && bar_->Cells().size() > 1;
+    if (!tipHover_ || !compositor_ || dragging || !IsWindowVisible(window_) || IsIconic(window_)) return;
+    const auto tip = tips_.find(*tipHover_);
+    const std::optional<BarRect> cell = CellInWindow(*tipHover_);
+    if (!cell || tip == tips_.end()) return;
+    if (std::wstring problem = tip_->Show(*tipHover_, tip->second, *cell, dpi_); !problem.empty()) {
+        OutputDebugStringW((L"Kite: the space tip couldn't show: " + problem + L"\n").c_str());
+        if (tip_->DeviceLost()) deviceLost_ = true;
+    }
+}
+
+std::wstring SidebarView::RenderTip(size_t index, Pixels& out, POINT& origin) {
+    const auto& cells = bar_->Cells();
+    if (index >= cells.size()) return L"there's no such space";
+    const auto tip = tips_.find(cells[index].spaceID);
+    const std::optional<BarRect> cell = CellInWindow(cells[index].spaceID);
+    if (tip == tips_.end() || !cell) return L"there's no such space";
+    return tip_->Render(tip->second, *cell, dpi_, out, origin);
+}
+
+bool SidebarView::HandleMessage(UINT message, WPARAM wParam) {
+    if (message == WM_TIMER && wParam == kTipTimer) {
+        KillTimer(window_, kTipTimer);
+        ShowTip();
+        return true;
+    }
     if (message != kRedrawMessage) return false;
     redrawPosted_ = false;
     if (NeedsDraw() && compositor_) {
@@ -869,6 +933,7 @@ void SidebarView::RefreshHover() {
     }
     bar_->SetHover(barHover);
     if (bar_->NeedsDraw()) ScheduleDraw();
+    TipHoverChanged(barHover);
     if (hover == hover_) return;
     hover_ = std::move(hover);
     InvalidateSelectedPage();
@@ -963,6 +1028,14 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             // In the bar's points, wherever the pointer has gone.
             const D2D1_POINT_2F p = PointOf(*pointer_);
             SpaceBarMove(*barPress_, p.x, p.y - SpaceBarTop(Height()));
+            // A drag takes the tip away (cellDragged's setDragging), but not with one space,
+            // which can't be dragged (it returns first).
+            // The hover stays (no tracking-area events during a drag), so a release over the
+            // same cell doesn't bring the tip back.
+            if (barPress_->dragged && bar_->Cells().size() > 1) {
+                KillTimer(window_, kTipTimer);
+                tip_->Hide();
+            }
         }
         RefreshHover();
         return false;

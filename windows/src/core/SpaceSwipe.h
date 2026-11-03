@@ -94,6 +94,16 @@ struct CubicSegment {
 std::vector<CubicSegment> SettleSegments(double from, double response, int count = 16);
 double ValueAt(const std::vector<CubicSegment>& segments, double end, double time);
 
+// A CAMediaTimingFunction's cubic Bézier, (0,0) (x1,y1) (x2,y2) (1,1): its value at `progress`
+// (0...1 of the time), as Core Animation evaluates it.
+double TimingCurveAt(double x1, double y1, double x2, double y2, double progress);
+// The same curve over `duration` seconds as cubic segments of the time since it began (Hermite
+// pieces, within 0.002 of it), for IDCompositionAnimation::AddCubic; it ends at 1.
+std::vector<CubicSegment> TimingCurveSegments(double x1, double y1, double x2, double y2, double duration, int count = 8);
+// Core Animation's default timing (kCAMediaTimingFunctionDefault), which NSAnimationContext's
+// animator uses when none is set.
+constexpr double kDefaultTiming[4] = {0.25, 0.1, 0.25, 1.0};
+
 // The theme crossfade's progress `elapsed` seconds into a space switch that started at
 // `startProgress` (0 for a switch, the swipe's progress when one is let go): the step response
 // of the Mac's spring, 1 from kThemeDuration on (ThemeView.draw).

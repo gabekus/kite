@@ -39,6 +39,7 @@
 #include "shell/Favicons.h"
 #include "shell/SpaceBarView.h"
 #include "shell/SpaceIconPainter.h"
+#include "shell/SpaceTipView.h"
 
 namespace kite {
 
@@ -108,13 +109,27 @@ public:
     std::wstring Draw(Pixels* readBack = nullptr);
     bool DeviceLost() const { return deviceLost_ || (bar_ && bar_->DeviceLost()); }
 
-    // The window's messages: its posted redraw. True when it handled `message`; if the GPU was
-    // lost meanwhile, DeviceLost says so and the window rebuilds.
-    bool HandleMessage(UINT message);
+    // The window's messages: its posted redraw, and the space tip's timer. True when it handled
+    // `message`; if the GPU was lost meanwhile, DeviceLost says so and the window rebuilds.
+    bool HandleMessage(UINT message, WPARAM wParam);
     static constexpr UINT kRedrawMessage = WM_APP + 3;
+    static constexpr UINT_PTR kTipTimer = 0x4B44;  // 'KD'; the command bar's caret is 0x4B42
+
+    // Hides the space tip: the window moved, resized or minimized (an owned window would come
+    // back with it, where it was).
+    void HideTip();
+    // For --capture: space `index`'s tip as it shows at rest over its cell, at the window's
+    // scale, and its top-left in client px.
+    std::wstring RenderTip(size_t index, Pixels& out, POINT& origin);
 
 private:
     SidebarView(HWND window, Favicons* favicons) : window_(window), favicons_(favicons) {}
+    // The bar's hovered cell changed: the tip goes, and a new one comes kTipDelay later.
+    void TipHoverChanged(const std::optional<std::string>& spaceID);
+    // The timer: the tip over the cell still hovered (SpaceCellView's tipWork).
+    void ShowTip();
+    // Space `spaceID`'s cell in window points.
+    std::optional<BarRect> CellInWindow(const std::string& spaceID) const;
 
     // A built space page: its rows, drawn into its own surface.
     struct PageModel {
@@ -212,6 +227,9 @@ private:
     bool barSlidePending_ = false;  // the bar relights with the slide once it has the new cells
     bool redrawPosted_ = false;
     std::unique_ptr<SpaceBarView> bar_;
+    std::unique_ptr<SpaceTipView> tip_;
+    std::map<std::string, SpaceTip> tips_;  // each space's, by id (from the last Update)
+    std::optional<std::string> tipHover_;  // the cell the tip's timer, or the tip, is for
 
     // Pointer.
     Actions actions_;

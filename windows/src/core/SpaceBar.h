@@ -147,15 +147,79 @@ CellOpacityAlong CellOpacityAlongSettle(bool dot, const LinearLit& light);
 // Each segment's value v mapped to `scale * v + offset` (the settle's offset as a cell's opacity).
 std::vector<CubicSegment> MapSegments(const std::vector<CubicSegment>& segments, double scale, double offset);
 
-// The tip above a hovered cell (the Mac's SpaceTip): the space's name, then Alt and its number
-// for the first nine (the Mac's ⌃n is Alt+n here). Its fill is the accent at 45% of its OKLab
-// lightness, like Arc's navy pill over an indigo theme.
+// The tip above a hovered cell (the Mac's SpaceTip, SidebarView.swift): the space's name, its
+// profile's name in a white chip (the Mac shows it in every window but an incognito one, which
+// Windows hasn't yet), then the keys that select it for the first nine: the Mac's ⌃n is Alt+n
+// here (KeyBindings), so "Alt" and the digit, each in a keycap. Its fill is the accent at 45% of
+// its OKLab lightness, like Arc's navy pill over an indigo theme.
 struct SpaceTip {
     std::string name;
+    std::optional<std::string> profile;
     std::optional<size_t> number;
+    std::vector<std::string> keys;  // the keycaps' labels: Alt and the number, for the first nine
     ThemeColor fill, accent;
     bool operator==(const SpaceTip&) const = default;
 };
-SpaceTip SpaceTipOf(const Space& space, size_t number);
+SpaceTip SpaceTipOf(const Space& space, size_t number, std::optional<std::string> profile = std::nullopt);
+// Space `index`'s tip (its 1-based place, its profile's name).
+SpaceTip SpaceTipOf(const BrowserState& state, size_t index);
+
+// The tip's sizes in points, from SpaceTip's SwiftUI.
+namespace space_tip_metrics {
+constexpr float kHeight = 28;
+constexpr float kPadding = 10;  // either side, inside the capsule
+constexpr float kSpacing = 8;   // between the name, the chip and the keys
+constexpr float kBorderWidth = 1;
+constexpr float kBorderOpacity = 0.15f;  // white, inside the edge
+constexpr float kNameFontSize = 13;       // white; SF's semibold inks as heavy as Segoe's bold (the UI gate)
+constexpr float kChipHeight = 21;
+constexpr float kChipPadding = 7;
+constexpr float kChipSpacing = 4;  // the face to the profile's name
+constexpr float kChipFontSize = 13;      // semibold (Segoe's bold), in the accent
+// face.smiling at 11pt semibold, as the Mac's 2x capture inks it: a disc 11.25pt across in its
+// 13.5pt image, with the eyes and the smile cut out of it (in points from the disc's centre).
+constexpr float kChipFaceWidth = 13.5f;
+constexpr float kChipFaceDiameter = 11.25f;
+constexpr float kChipFaceDrop = 0.5f;  // its centre below the chip's (SF's symbol baseline)
+constexpr float kChipFaceEyeX = 1.5f, kChipFaceEyeY = -1.1f;       // each eye's centre (x either side)
+constexpr float kChipFaceEyeWidth = 1.0f, kChipFaceEyeHeight = 1.3f;
+constexpr float kChipFaceSmileX = 1.9f, kChipFaceSmileY = 1.35f;   // the smile's ends
+constexpr float kChipFaceSmileDepth = 2.3f;                         // its lowest point, from the centre
+constexpr float kChipFaceSmileWidth = 0.9f;                         // its stroke
+constexpr float kChipOpacity = 0.9f;     // white
+constexpr float kKeySize = 18;           // a keycap's side (the Mac's ⌃ and digit fit it)
+constexpr float kKeySpacing = 3;
+constexpr float kKeyRadius = 4;
+constexpr float kKeyFontSize = 12;      // bold, in the accent
+constexpr float kKeyOpacity = 0.85f;    // white
+// Windows' "Alt" doesn't fit 18pt as the Mac's ⌃ does: a wider label gets this either side.
+constexpr float kKeyLabelPadding = 4;
+constexpr double kFadeIn = 0.15;  // SpaceTipWindow's alpha, 0 to 1
+}  // namespace space_tip_metrics
+
+// Where the tip's parts sit, in points from its top-left. The shell measures the text (DirectWrite
+// advances, in points) and draws these.
+struct SpaceTipWidths {
+    float name = 0;
+    float chipSymbol = space_tip_metrics::kChipFaceWidth, chipText = 0;  // the profile chip's face and name (ignored without a profile)
+    std::vector<float> keys;             // each keycap's label
+};
+struct SpaceTipLayout {
+    float width = 0, height = space_tip_metrics::kHeight;
+    float nameX = 0;
+    std::optional<BarRect> chip;
+    float chipSymbolX = 0, chipTextX = 0;
+    std::vector<BarRect> keys;
+    bool operator==(const SpaceTipLayout&) const = default;
+};
+SpaceTipLayout LayOutSpaceTip(const SpaceTip& tip, const SpaceTipWidths& widths);
+// The tip's top-left in window points: centred over `cell` (window points), kTipGap above it, on
+// whole pixels at `scale` px a point (the Mac rounds its x to whole points; its window may reach
+// past the browser window's edges, as Arc's does).
+struct TipOrigin {
+    float x = 0, y = 0;
+    bool operator==(const TipOrigin&) const = default;
+};
+TipOrigin SpaceTipOrigin(const BarRect& cell, float width, float height, float scale);
 
 }  // namespace kite

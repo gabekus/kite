@@ -96,7 +96,7 @@ public:
     std::wstring SmokeTest();
     // The window's frame as the screen shows it: the backdrop with the sidebar, the caption
     // buttons and (with `barText`) the command bar opened with that text, composed over it.
-    std::wstring Capture(Pixels& pixels, const std::optional<std::string>& barText);
+    std::wstring Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip = std::nullopt);
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
