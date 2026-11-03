@@ -551,6 +551,7 @@ final class FavoritesEmptyStateView: SidebarFlippedView {
 @MainActor
 final class CenteredLabel: NSView {
     var text = "" { didSet { needsDisplay = true } }
+    var color: NSColor = .labelColor { didSet { needsDisplay = true } }
     private let font: NSFont
     init(size: CGFloat, weight: NSFont.Weight, opacity: Double) {
         font = .systemFont(ofSize: size, weight: weight)
@@ -569,7 +570,7 @@ final class CenteredLabel: NSView {
     override func accessibilityValue() -> Any? { text }
 
     override func draw(_ dirtyRect: NSRect) {
-        let string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+        let string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color])
         let size = string.size()
         // Centred, its origin on the pixel grid like SwiftUI's.
         string.draw(at: NSPoint(x: ((bounds.width - size.width) / 2 * 2).rounded() / 2, y: 0))
