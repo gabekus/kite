@@ -3,6 +3,7 @@
 #include "shell/SidebarView.h"
 
 #include <d3d11.h>
+#include <windowsx.h>
 
 #include <algorithm>
 #include <cmath>
@@ -19,38 +20,31 @@ namespace {
 // ArcMetrics.Sidebar, in points: the rows' geometry from core, and how the view draws them.
 namespace M {
 using namespace sidebar_metrics;
-constexpr float kPadding = 8;  // the list, address field and pills sit this far in from each side
-constexpr float kTopRowY = 7.5f;
-constexpr float kTopRowHeight = 32;
-constexpr float kUrlFieldTopGap = 6.5f;
-constexpr float kUrlFieldHeight = 36;
 constexpr float kUrlFieldTextInset = 12;
 constexpr float kUrlFieldFontSize = 13;
 constexpr float kUrlFieldTextOpacity = 0.6f;
 constexpr float kCornerRadius = 11;  // the address field and the pills
 constexpr float kFieldFill = 0.10f;  // white over the theme, for the address field
-constexpr float kHeaderIconSize = 26;
 constexpr float kHeaderIconX = 13;   // in the window
-constexpr float kHeaderIconTop = 5;
 constexpr float kHeaderTextX = 41;   // in the window
 constexpr float kHeaderFontSize = 13;
 constexpr float kHeaderTextOpacity = 0.45f;
 constexpr float kHeaderEmojiSize = 15;
-constexpr float kPillHeight = 36;
 constexpr float kIconSize = 18;
-constexpr float kIconInset = 9;      // the favicon's leading edge in the pill
 constexpr float kIconTextGap = 8;
 constexpr float kNestingIndent = 16;
 constexpr float kTabFontSize = 14;
 constexpr float kTabTextOpacity = 0.865f;
 constexpr float kSelectedFill = 0.20f;
 constexpr float kSelectedFillLight = 0.85f;
+// A hovered pill: white 10% on a dark theme. A hovered tab on a light one is a dark wash
+// instead (tabPillFill); folders and New Tab keep the white wash, 3.5 times as strong.
+constexpr float kHoverFill = 0.10f;
+constexpr float kHoverFillLight = 0.05f;
+constexpr D2D1_COLOR_F kHoverWashLight{0.055f, 0.059f, 0.063f, kHoverFillLight};
 constexpr float kDividerInset = 10;
 constexpr float kDividerThickness = 0.5f;
 constexpr float kDividerOpacity = 0.08f;
-constexpr float kBottomBarHeight = 50;
-// The header (top row and address field) the space page starts under.
-constexpr float kHeaderAreaHeight = kTopRowY + kTopRowHeight + kUrlFieldTopGap + kUrlFieldHeight;
 }  // namespace M
 
 // NSColor.labelColor: black (light) or white (dark) at 85%. The Mac's sidebar labels are that
@@ -79,6 +73,9 @@ constexpr float kSymbolOpacity = 0.8f;
 constexpr float kFolderIconOpacity = 0.75f;
 constexpr float kNewTabOpacity = M::kTabTextOpacity * 0.75f;
 constexpr float kHeaderChevronOpacity = 0.5f;
+constexpr float kFolderChevronOpacity = 0.5f;
+// A wheel notch scrolls 100pt for Windows' default 3 lines, as Chromium scrolls a page.
+constexpr float kWheelLine = 100.0f / 3;
 
 // Segoe Fluent Icons (Windows 11) and Segoe MDL2 Assets (Windows 10) code points for the SF
 // Symbols the Mac draws: globe, folder / folder.fill, plus, chevron.right, and the symbols of
@@ -88,6 +85,7 @@ constexpr wchar_t kFolder = 0xE8B7;
 constexpr wchar_t kFolderFill = 0xE8D5;
 constexpr wchar_t kPlus = 0xE710;
 constexpr wchar_t kChevronRight = 0xE76C;
+constexpr wchar_t kChevronDown = 0xE70D;  // chevron.right turned a quarter (an open folder or section)
 constexpr wchar_t kHistory = 0xE81C;
 constexpr wchar_t kArchive = 0xE7B8;
 constexpr wchar_t kSettings = 0xE713;
@@ -217,17 +215,32 @@ void SidebarView::Update(const BrowserState& state) {
     next.dark = !PrefersDarkForeground(state.SelectedSpace().theme);
     next.address = AddressFieldText(state);
     next.rows = SidebarRows(state, state.SelectedSpaceIndex());
+    next.spaceID = state.SelectedSpace().id;
     if (next == model_) return;
+    // Each space keeps its own place in its list, as each of the Mac's has its scroll view.
+    if (next.spaceID != model_.spaceID) {
+        if (!model_.spaceID.empty()) scrolls_[model_.spaceID] = scrollExact_;
+        auto kept = scrolls_.find(next.spaceID);
+        scrollExact_ = kept == scrolls_.end() ? 0 : kept->second;
+    }
     model_ = std::move(next);
     Invalidate();
+    // Rows moved under a still pointer: it now hovers whatever is there.
+    SetScroll(scrollExact_);
+    RefreshHover();
 }
 
 void SidebarView::Layout(float width, UINT dpi) {
     // The height comes with the window's: Draw draws again only when it changes what's shown.
-    if (width == width_ && dpi == dpi_) return;
-    width_ = width;
-    dpi_ = dpi;
-    dirty_ = true;
+    if (width != width_ || dpi != dpi_) {
+        width_ = width;
+        dpi_ = dpi;
+        dirty_ = true;
+    }
+    // A taller window (or another scale) can leave the list past its end, and the pointer
+    // over something else.
+    SetScroll(scrollExact_);
+    RefreshHover();
 }
 
 void SidebarView::Invalidate() {
@@ -258,8 +271,8 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     // The surface runs down to the last row, or to where the list is cut off above the space
     // bar, whichever is higher: a window resize that moves neither draws nothing.
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
-    const float contentBottom = M::kHeaderAreaHeight + (model_.rows.empty() ? 0 : model_.rows.back().top + model_.rows.back().height);
-    const float listBottom = std::max(M::kHeaderAreaHeight, static_cast<float>(client.bottom) / scale - M::kBottomBarHeight);
+    const float contentBottom = M::kHeaderAreaHeight + SidebarContentHeight(model_.rows) - scroll_;
+    const float listBottom = SidebarListBottom(static_cast<float>(client.bottom) / scale);
     const float bottom = std::max(M::kHeaderAreaHeight, std::min(contentBottom, listBottom));
     const UINT largest = compositor_->GetRenderer().MaxTextureSize();
     const UINT width = std::clamp(static_cast<UINT>(std::ceil(width_ * scale)), 1u, largest);
@@ -443,7 +456,7 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
     DrawGlyph(context, kGlobe, side / kGlyphInk, box, Primary(kLabelAlpha * kGlobeOpacity));
 }
 
-void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, float top) {
+void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, float top, bool hovered) {
     const float left = M::kPadding, right = width_ - M::kPadding;  // the row, in window points
     // The pill sits 2.5pt into its row: whole pixels at 2x as on the Mac's screens, snapped to
     // them at other scales so its edges and the favicon stay sharp.
@@ -453,6 +466,13 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
     const float pillBottom = snap(pillTop + M::kPillHeight);
     // The favicon's square, a whole number of pixels on the pixel grid.
     const float iconSide = std::round(M::kIconSize * scale) / scale;
+    auto washPill = [&](D2D1_COLOR_F color) {
+        brush_->SetColor(color);
+        context->FillRoundedRectangle(D2D1::RoundedRect(Rect(snap(left), pillTop, snap(right), pillBottom), M::kCornerRadius, M::kCornerRadius),
+                                      brush_.Get());
+    };
+    // chromeFill(hoverFill): the folder's and New Tab's hover.
+    const D2D1_COLOR_F hoverWash{1, 1, 1, model_.dark ? M::kHoverFill : std::min(M::kHoverFill * 3.5f, 0.7f)};
     auto faviconBox = [&](float x) {
         const float iconLeft = snap(x), iconTop = snap(pillTop + (M::kPillHeight - M::kIconSize) / 2);
         return Rect(iconLeft, iconTop, iconLeft + iconSide, iconTop + iconSide);
@@ -483,9 +503,10 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
             // The chevron's slot: shown while the pinned tabs are collapsed (and on hover).
             end -= M::kIconInset - M::kPadding;
             end -= M::kHeaderIconSize;
-            if (row.pinnedCollapsed) {
-                DrawGlyph(context, kChevronRight, 9 / kGlyphInk, Rect(end, iconBox.top, end + M::kHeaderIconSize, iconBox.bottom),
-                          Primary(kLabelAlpha * kHeaderChevronOpacity));
+            // Collapsed it shows; expanded, only while the header is hovered, turned down.
+            if (row.pinnedCollapsed || hovered) {
+                DrawGlyph(context, row.pinnedCollapsed ? kChevronRight : kChevronDown, 9 / kGlyphInk,
+                          Rect(end, iconBox.top, end + M::kHeaderIconSize, iconBox.bottom), Primary(kLabelAlpha * kHeaderChevronOpacity));
             }
             end -= kHeaderGap;
         }
@@ -498,9 +519,9 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
     case SidebarRow::Kind::Tab: {
         if (row.selected) {
             // White on both appearances: 20% on a dark theme, 85% on a light one.
-            brush_->SetColor(D2D1_COLOR_F{1, 1, 1, model_.dark ? M::kSelectedFill : M::kSelectedFillLight});
-            context->FillRoundedRectangle(D2D1::RoundedRect(Rect(snap(left), pillTop, snap(right), pillBottom), M::kCornerRadius, M::kCornerRadius),
-                                          brush_.Get());
+            washPill(D2D1_COLOR_F{1, 1, 1, model_.dark ? M::kSelectedFill : M::kSelectedFillLight});
+        } else if (hovered) {
+            washPill(model_.dark ? D2D1_COLOR_F{1, 1, 1, M::kHoverFill} : M::kHoverWashLight);
         }
         const float x = left + M::kIconInset + static_cast<float>(row.depth) * M::kNestingIndent;
         DrawFavicon(context, row, faviconBox(x));
@@ -511,12 +532,20 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
         break;
     }
     case SidebarRow::Kind::Folder: {
+        if (hovered) washPill(hoverWash);
         const float x = left + M::kIconInset + static_cast<float>(row.depth) * M::kNestingIndent;
         // folder (open) or folder.fill (closed) at 14pt in the favicon's square.
         DrawGlyph(context, row.expanded ? kFolder : kFolderFill, 14 / kGlyphInk, faviconBox(x), Primary(kLabelAlpha * kFolderIconOpacity));
         const float textX = x + M::kIconSize + M::kIconTextGap;
         const float textEnd = right - M::kIconInset - kFolderChevronWidth - M::kIconTextGap - M::kIconTextGap;
         DrawText(context, row.title, folderFormat_.Get(), textX, tabBaseline, textEnd - textX, Primary(kLabelAlpha * M::kTabTextOpacity));
+        if (hovered) {
+            // Its chevron, at the pill's end: turned down while it's open.
+            const float centerX = right - M::kIconInset - kFolderChevronWidth / 2, centerY = (pillTop + pillBottom) / 2;
+            DrawGlyph(context, row.expanded ? kChevronDown : kChevronRight, 9 / kGlyphInk,
+                      Rect(centerX - M::kIconSize / 2, centerY - M::kIconSize / 2, centerX + M::kIconSize / 2, centerY + M::kIconSize / 2),
+                      Primary(kLabelAlpha * kFolderChevronOpacity));
+        }
         break;
     }
     case SidebarRow::Kind::Divider:
@@ -528,6 +557,7 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
         }
         break;
     case SidebarRow::Kind::NewTab: {
+        if (hovered) washPill(hoverWash);
         const float x = left + M::kIconInset;
         DrawGlyph(context, kPlus, 14 / kGlyphInk, faviconBox(x), Primary(kLabelAlpha * kNewTabOpacity));
         const float textX = x + M::kIconSize + M::kIconTextGap;
@@ -560,11 +590,186 @@ void SidebarView::DrawContent(ID2D1DeviceContext* context) {
     const float listTop = M::kHeaderAreaHeight;
     const float listBottom = std::max(listTop, height);
     context->PushAxisAlignedClip(Rect(0, listTop, width_, listBottom), D2D1_ANTIALIAS_MODE_ALIASED);
-    for (const SidebarRow& row : model_.rows) {
-        if (listTop + row.top >= listBottom) break;
-        DrawRow(context, row, listTop + row.top);
+    for (size_t i = 0; i < model_.rows.size(); ++i) {
+        const SidebarRow& row = model_.rows[i];
+        const float top = listTop + row.top - scroll_;
+        if (top >= listBottom) break;
+        if (top + row.height <= listTop) continue;
+        const bool hovered = hover_ && hover_->first == row.kind && hover_->second == row.id;
+        DrawRow(context, row, top, hovered);
     }
     context->PopAxisAlignedClip();
+}
+
+// Pointer --------------------------------------------------------------------------------
+
+D2D1_POINT_2F SidebarView::PointOf(POINT client) const {
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return D2D1_POINT_2F{static_cast<float>(client.x) / scale, static_cast<float>(client.y) / scale};
+}
+
+float SidebarView::Height() const {
+    RECT client{};
+    GetClientRect(window_, &client);
+    return static_cast<float>(client.bottom) / (static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI);
+}
+
+SidebarHit SidebarView::HitAt(D2D1_POINT_2F p) const {
+    if (p.x < 0 || p.x >= width_) return {};
+    return SidebarHitTest(model_.rows, width_, Height(), scroll_, p.x, p.y);
+}
+
+void SidebarView::RefreshHover() {
+    // A press keeps the hover where it began until it's let go, as the Mac's tracking areas
+    // (no .enabledDuringMouseDrag) send no enter or exit during a drag.
+    if (press_) return;
+    const SidebarHit hit = pointer_ ? HitAt(PointOf(*pointer_)) : SidebarHit{};
+    // What draws hovered is a row (the header's chevron is part of its row); the address field
+    // has no hover of its own yet (its buttons come with the toolbar).
+    // Held by the row's item, so a row that moves (during a press, say) keeps its hover.
+    std::optional<std::pair<SidebarRow::Kind, std::string>> hover;
+    if ((hit.target == SidebarHit::Target::Row || hit.target == SidebarHit::Target::PinnedChevron) && hit.row < model_.rows.size()) {
+        hover.emplace(model_.rows[hit.row].kind, model_.rows[hit.row].id);
+    }
+    if (hover == hover_) return;
+    hover_ = std::move(hover);
+    Invalidate();
+}
+
+void SidebarView::ForgetActivation() {
+    activating_ = false;
+}
+
+void SidebarView::ClearHover() {
+    pointer_.reset();
+    press_.reset();
+    activating_ = false;
+    RefreshHover();
+}
+
+void SidebarView::SetScroll(float scroll) {
+    // The wheel's position is kept as it comes (a touchpad's small steps add up); the list
+    // draws and takes the pointer at it rounded to whole pixels, so rows keep crisp edges.
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const float limit = SidebarMaxScroll(model_.rows, Height(), scale);
+    scrollExact_ = std::clamp(scroll, 0.0f, limit);
+    const float snapped = std::min(std::round(scrollExact_ * scale) / scale, limit);
+    if (snapped == scroll_) return;
+    scroll_ = snapped;
+    Invalidate();
+    RefreshHover();
+}
+
+void SidebarView::Perform(const SidebarTap& tap) {
+    using Action = SidebarTap::Action;
+    switch (tap.action) {
+    case Action::SelectTab:
+        if (actions_.selectTab) actions_.selectTab(tap.id);
+        break;
+    case Action::SetFolderExpanded:
+        if (actions_.setFolderExpanded) actions_.setFolderExpanded(tap.id, tap.expanded);
+        break;
+    case Action::TogglePinnedSection:
+        if (actions_.togglePinnedSection) actions_.togglePinnedSection(tap.id);
+        break;
+    case Action::NewTab:
+        if (actions_.newTab) actions_.newTab();
+        break;
+    case Action::EditAddress:
+        if (actions_.editAddress) actions_.editAddress();
+        break;
+    case Action::None:
+        break;
+    }
+}
+
+bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_MOUSEACTIVATE: {
+        // A click that brings the window forward: rows take no part in it (below). Only one in
+        // the sidebar counts; a click on the page activates through its own window.
+        POINT at{};
+        GetCursorPos(&at);
+        ScreenToClient(window_, &at);
+        const D2D1_POINT_2F p = PointOf(at);
+        // Only a left click's (the one the rows would take), and only until the next left press,
+        // whoever takes it (ForgetActivation).
+        activating_ = HIWORD(lParam) == WM_LBUTTONDOWN && LOWORD(lParam) == HTCLIENT && p.x >= 0 && p.x < width_;
+        return false;  // DefWindowProc activates
+    }
+    case WM_MOUSEMOVE: {
+        if (!trackingLeave_) {
+            TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, window_, 0};
+            trackingLeave_ = TrackMouseEvent(&track) != FALSE;
+        }
+        pointer_ = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        RefreshHover();
+        return false;
+    }
+    case WM_MOUSELEAVE:
+        trackingLeave_ = false;
+        pointer_.reset();
+        RefreshHover();
+        return false;
+    case WM_LBUTTONDOWN: {
+        const bool activating = activating_;
+        activating_ = false;
+        const POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        const D2D1_POINT_2F p = PointOf(at);
+        if (p.x < 0 || p.x >= width_) return false;
+        // NSEvent's clickCount: presses within the double-click time and distance count up.
+        const DWORD time = static_cast<DWORD>(GetMessageTime());
+        const bool again = clicks_ > 0 && time - lastClickTime_ <= GetDoubleClickTime() &&
+                           std::abs(at.x - lastClickAt_.x) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
+                           std::abs(at.y - lastClickAt_.y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+        clicks_ = again ? clicks_ + 1 : 1;
+        lastClickTime_ = time;
+        lastClickAt_ = at;
+        pointer_ = at;
+        RefreshHover();
+        press_ = SidebarPressAt(model_.rows, width_, Height(), scroll_, p.x, p.y, clicks_, activating);
+        if (press_) SetCapture(window_);
+        return true;
+    }
+    case WM_LBUTTONUP: {
+        if (!press_) return false;
+        const SidebarPress press = *press_;
+        press_.reset();
+        if (GetCapture() == window_) ReleaseCapture();
+        const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        // As the Mac's mouseUp: on release, over what was pressed, wherever its row is now.
+        const SidebarTap tap = p.x < 0 || p.x >= width_ ? SidebarTap{} : SidebarRelease(press, model_.rows, width_, Height(), scroll_, p.x, p.y);
+        RefreshHover();
+        Perform(tap);  // a copy: the action rebuilds the rows
+        return true;
+    }
+    case WM_CAPTURECHANGED:
+        if (press_) {
+            press_.reset();
+            RefreshHover();
+        }
+        return false;
+    case WM_MOUSEWHEEL: {
+        POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};  // screen coordinates
+        ScreenToClient(window_, &at);
+        const D2D1_POINT_2F p = PointOf(at);
+        const float height = Height();
+        // The list's scroll view: inside its padding, between the header and the space bar.
+        if (p.x < M::kPadding || p.x >= width_ - M::kPadding || p.y < M::kHeaderAreaHeight || p.y >= SidebarListBottom(height)) {
+            return false;
+        }
+        UINT lines = 3;
+        if (!SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0)) lines = 3;
+        const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
+        const float distance = lines == WHEEL_PAGESCROLL ? notches * (SidebarListBottom(height) - M::kHeaderAreaHeight)
+                                                         : notches * static_cast<float>(lines) * kWheelLine;
+        pointer_ = at;
+        SetScroll(scrollExact_ - distance);
+        return true;
+    }
+    default:
+        return false;
+    }
 }
 
 }  // namespace kite

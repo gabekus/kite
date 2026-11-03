@@ -281,6 +281,27 @@ void BrowserState::Select(const std::string& tabID, Timestamp now) {
     if (Tab* tab = TabAt(*location)) tab->lastActiveAt = now;
 }
 
+namespace {
+bool UpdateFolder(std::vector<PinnedItem>& items, const std::string& id, bool expanded) {
+    for (PinnedItem& item : items) {
+        Folder* folder = std::get_if<Folder>(&item.value);
+        if (!folder) continue;
+        if (folder->id == id) {
+            folder->isExpanded = expanded;
+            return true;
+        }
+        if (UpdateFolder(folder->items, id, expanded)) return true;
+    }
+    return false;
+}
+}  // namespace
+
+void BrowserState::SetFolderExpanded(const std::string& folderID, bool expanded) {
+    for (Space& space : spaces) {
+        if (UpdateFolder(space.pinnedItems, folderID, expanded)) return;
+    }
+}
+
 void BrowserState::SelectSpace(const std::string& id) {
     if (SpaceIndex(id)) selectedSpaceID = id;
 }

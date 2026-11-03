@@ -7,7 +7,8 @@
 //
 // It's one DirectComposition surface in the window's chrome (Compositor::Chrome), over the
 // backdrop and behind the page, drawn with Direct2D and DirectWrite only when what it shows
-// changes. For now it's static: no hover, clicks, scrolling, top row, favorites or space bar.
+// changes. It shows hover and takes clicks and the wheel (HandleMouse); what a click does goes
+// to Actions. Not yet: the top row, favorites or the space bar.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -19,6 +20,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,6 +40,28 @@ public:
     ~SidebarView();
     SidebarView(const SidebarView&) = delete;
     SidebarView& operator=(const SidebarView&) = delete;
+
+    // What clicks do (the Mac's tapped(at:) and the header's buttons). Each changes the session;
+    // the caller then calls Update.
+    struct Actions {
+        std::function<void(const std::string& tabID)> selectTab;
+        std::function<void(const std::string& folderID, bool expanded)> setFolderExpanded;
+        std::function<void(const std::string& spaceID)> togglePinnedSection;
+        std::function<void()> newTab;       // the New Tab row
+        std::function<void()> editAddress;  // the address field
+    };
+    void SetActions(Actions actions) { actions_ = std::move(actions); }
+
+    // The window's mouse messages (client coordinates; the wheel's in screen ones): hover, presses
+    // and releases over the sidebar, and the wheel over its list. True when it took `message`.
+    // As on the Mac, the click that brings the window forward doesn't tap a row (rows don't
+    // accept first mouse); it does press the address field and the chevron.
+    bool HandleMouse(UINT message, WPARAM wParam, LPARAM lParam);
+    // Forgets the pointer and any press (the command bar opened over the window).
+    void ClearHover();
+    // A left press went to something else (the command bar): the click that brought the window
+    // forward is over, and the next one on a row taps.
+    void ForgetActivation();
 
     // The window's compositor, whose chrome it draws in; null drops every GPU object (before
     // the compositor is rebuilt after a lost device).
@@ -69,13 +93,20 @@ private:
         bool dark = true;
         std::string address;
         std::vector<SidebarRow> rows;
+        std::string spaceID;
         bool operator==(const Model&) const = default;
     };
 
     bool CreateGpu(std::wstring& error);
     void ReleaseGpu();
     void DrawContent(ID2D1DeviceContext* context);
-    void DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, float top);
+    void DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, float top, bool hovered);
+    D2D1_POINT_2F PointOf(POINT client) const;
+    float Height() const;  // the window's, in points
+    SidebarHit HitAt(D2D1_POINT_2F point) const;
+    void RefreshHover();
+    void SetScroll(float scroll);
+    void Perform(const SidebarTap& tap);
     void DrawText(ID2D1DeviceContext* context, const std::string& text, IDWriteTextFormat* format, float x, float baseline,
                   float maxWidth, D2D1_COLOR_F color);
     void DrawGlyph(ID2D1DeviceContext* context, wchar_t glyph, float size, D2D1_RECT_F box, D2D1_COLOR_F color);
@@ -113,6 +144,20 @@ private:
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool dirty_ = true;
     bool redrawPosted_ = false;
+
+    // Pointer.
+    Actions actions_;
+    float scroll_ = 0;                // points the list is drawn scrolled down (whole pixels)
+    float scrollExact_ = 0;           // and where the wheel has taken it
+    std::map<std::string, float> scrolls_;  // other spaces' places in their lists
+    std::optional<POINT> pointer_;    // client px, while it's over the window
+    bool trackingLeave_ = false;
+    std::optional<std::pair<SidebarRow::Kind, std::string>> hover_;  // the hovered row's kind and id
+    std::optional<SidebarPress> press_;
+    bool activating_ = false;         // the next press brings the window forward
+    int clicks_ = 0;
+    DWORD lastClickTime_ = 0;
+    POINT lastClickAt_{};
 };
 
 }  // namespace kite

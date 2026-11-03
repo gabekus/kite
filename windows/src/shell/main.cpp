@@ -358,7 +358,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
         stateChanged();
     };
-    barCallbacks.opened = [&] { blockPages(true); };
+    barCallbacks.opened = [&] {
+        blockPages(true);
+        sidebar->ClearHover();  // the bar takes the pointer while it's open
+    };
     barCallbacks.closed = [&] { blockPages(false); };
     barCallbacks.dpi = [&] { return window.Dpi(); };
     commandBar = kite::CommandBarView::Create(window.Handle(), std::move(barCallbacks), gpuError);
@@ -423,6 +426,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         draw();
         if (commandBar) commandBar->Layout();
     };
+    // The sidebar's clicks (the Mac's row taps and the header's buttons). With Chromium, a
+    // selected tab's page shows too (below).
+    kite::SidebarView::Actions sidebarActions;
+    sidebarActions.selectTab = [&](const std::string& id) {
+        state.Select(id);
+        stateChanged();
+    };
+    sidebarActions.setFolderExpanded = [&](const std::string& id, bool expanded) {
+        state.SetFolderExpanded(id, expanded);
+        stateChanged();
+    };
+    sidebarActions.togglePinnedSection = [&](const std::string& spaceID) {
+        kite::TogglePinnedSection(state, spaceID);
+        stateChanged();
+    };
+    sidebarActions.newTab = [&] { openCommandBar(kite::CommandBarMode::NewTab); };
+    // The Mac's field action: the bar edits the page's address, or opens a new tab with none.
+    sidebarActions.editAddress = [&] { openCommandBar(kite::CommandBarMode::EditCurrent); };
+    sidebar->SetActions(sidebarActions);
     // Ctrl+T, wherever the keyboard is in Kite's own window (a page's comes through Chromium).
     window.filter = [&](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
         // A key typed straight after Ctrl+T in a page can come before Chromium's note that
@@ -430,7 +452,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if ((message == WM_KEYDOWN || message == WM_CHAR) && commandBar && !commandBar->IsOpen() && keysForBar()) {
             openCommandBar(kite::CommandBarMode::NewTab);
         }
-        if (commandBar && commandBar->HandleMessage(message, wParam, lParam, result)) return true;
+        if (commandBar && commandBar->HandleMessage(message, wParam, lParam, result)) {
+            if (message == WM_LBUTTONDOWN) sidebar->ForgetActivation();
+            return true;
+        }
+        if (sidebar->HandleMouse(message, wParam, lParam)) return true;
         if (sidebar->HandleMessage(message)) {
             // Its own redraw found the GPU gone: the window's draw rebuilds everything.
             if (sidebar->DeviceLost()) draw();
@@ -531,6 +557,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     };
     if (!capture) {
         showPage = showSelectedTab;
+        // A tab clicked in the sidebar shows its page. One that closed itself is made again
+        // (W5 drops such a tab instead).
+        sidebarActions.selectTab = [&](const std::string& id) {
+            closedPages.erase(id);
+            state.Select(id);
+            showSelectedTab();
+            stateChanged();
+        };
+        sidebar->SetActions(sidebarActions);
         loadInTab = [&](const std::string& id, const std::string& url) {
             // kite:// pages are drawn by the window, never loaded (the Mac's InternalPage).
             if (url.starts_with("kite:")) return;

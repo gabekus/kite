@@ -58,6 +58,7 @@ int Usage() {
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
         "       kitecore [--profile DIR] sidebar [SPACE_ID]\n"
         "       kitecore [--profile DIR] collapse SPACE_ID\n"
+        "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]\n"
@@ -280,6 +281,31 @@ int main(int argc, char** argv) {
         json::Object out{{"address", AddressFieldText(state)}, {"rows", json::Value(std::move(rows))}};
         std::puts(json::Write(json::Value(std::move(out))).c_str());
         return kOk;
+    } else if (command == "click" && args.size() >= 3 && args.size() <= 5) {
+        // A click (press and release) in the selected space's sidebar, 240pt wide, HEIGHT tall,
+        // scrolled SCROLL: prints what it pressed and what the window does, and does it.
+        float values[4] = {0, 0, 820, 0};
+        for (size_t i = 1; i < args.size(); ++i) {
+            auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), values[i - 1]);
+            if (error != std::errc() || end != args[i].data() + args[i].size()) return Usage();
+        }
+        const auto rows = SidebarRows(state, state.SelectedSpaceIndex());
+        const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1);
+        static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron"};
+        static constexpr const char* kActions[] = {"none", "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded", "newTab"};
+        json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
+        if (press) {
+            if (!press->id.empty()) out.emplace("id", press->id);
+            const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1]);
+            out.emplace("action", std::string(kActions[static_cast<int>(tap.action)]));
+            switch (tap.action) {
+            case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;
+            case SidebarTap::Action::SetFolderExpanded: state.SetFolderExpanded(tap.id, tap.expanded); changed = true; break;
+            case SidebarTap::Action::TogglePinnedSection: TogglePinnedSection(state, tap.id); changed = true; break;
+            default: break;  // the command bar's, in the window
+            }
+        }
+        std::puts(json::Write(json::Value(std::move(out))).c_str());
     } else if (command == "collapse" && args.size() == 2) {
         const std::string id = Id(args[1]);
         if (!state.SpaceIndex(id)) return kNotFound;
