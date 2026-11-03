@@ -248,11 +248,11 @@ when they don't fit, scrolled with a sideways wheel or Shift and the wheel
 greyed (saturation 0, at 45%) for the others, or a dot for an icon-less space.
 SF Symbol and picture icons (W9b2) draw in the bar and the page header
 (`core/SpaceIcon.h`, `shell/SpaceIconPainter.h`). Apple's SF Symbols only draw on
-Apple's systems, so each of the Icon tab's 56 symbols (and "briefcase" and
-"photo") has a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where
-Fluent isn't installed, picked by eye from every glyph each font has and checked
-against both fonts' character maps. A symbol fills its glyph's outline, centred
-on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
+Apple's systems, so the Icon tab's 56 symbols, "briefcase" and "photo" each
+have a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where Fluent
+isn't installed, picked by eye from every glyph each font has and checked
+against both fonts' character maps, except nine drawn as shapes (below). A
+symbol fills its glyph's outline, centred on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
 factor for every symbol), in the theme's accent when lit and in the label colour
 at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
 side with 22% corners, its PNG from the profile's SpaceIcons folder scaled to the
@@ -266,8 +266,8 @@ Fluent has one weight where the Mac's symbols are semibold (the placeholder's
 "photo" is regular on the Mac), and its briefcase is 1.5pt taller for the same
 width; several stand-ins are outlines of filled symbols, cloud and cloud.fill
 share a glyph, and nine have no such object in either font (bookmark, paw, bed,
-cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks) and show the
-nearest glyph until W9b4 draws them; symbols are centred on their ink where the
+cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks), which W9b4
+draws as Kite's own shapes (see below); glyphs are centred on their ink where the
 Mac centres the symbol's image (checked only for the briefcase, within 0.25pt);
 an SF Symbol name outside the 58 (which the Mac draws, from automation or a
 hand-edited session) shows the dot in the bar and a blank icon slot in the
@@ -295,6 +295,23 @@ on whole pixels at every scale (core snaps them), so they draw where they take
 clicks. Known differences: in the 2pt where two cells overlap only the later
 cell's backing shows (the Mac shows both), and a touchpad's sideways scroll over
 the bar scrolls the strip until W9c sends it to the swipe.
+
+The nine (W9b4) are Kite's own simple shapes (`core/SymbolShape.h`), not
+Apple's outlines: each is filled figures in the bar's 12.5pt about the icon's
+centre, in layers joined or cut in order (so the front theatre mask cuts a gap
+round itself in the one behind), drawn by the same painter through one Direct2D
+geometry per symbol and scaled for the header's 15pt. Each inks the box the
+Mac's symbol inks in its cell (keeping its offset from the centre), measured
+from the Mac's 2x renders to a quarter point, and comes within an eighth of its
+inked area, so it sits and weighs as the Mac's (`SymbolShapeTests`); the PC's
+captures give every one the Mac's ink box in the bar, centred within 0.15pt,
+and within half a point of it in the header. Known differences: the drawings are Kite's own,
+so details differ (the bed's headboard, the bandage's pad marked by two cuts and
+four holes, the baseball's seams and stitches, the masks' faces); the header's
+are the bar's scaled by 1.2, where the Mac's symbol is redrawn at 15pt (the
+captures' header boxes agree to half a point); and the masks reach past the
+header's 26pt slot as the Mac's do (only their width was measured from the bar,
+the slot's capture clips them).
 
 The tip over a hovered cell (W9b3) is the Mac's SpaceTip in SpaceTipWindow's place:
 0.4 s after the pointer comes onto a cell, a capsule 28pt tall centred over it, its

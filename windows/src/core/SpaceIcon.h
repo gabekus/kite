@@ -4,7 +4,8 @@
 // none (the bar's dot). Port of the Mac's Space.icon prefixes and SpaceIconImageView's choice
 // (Models.swift, SidebarListRows.swift). Windows draws an SF Symbol as the nearest glyph in
 // Segoe Fluent Icons (Windows 11), or Segoe MDL2 Assets where that's missing (Windows 10), both
-// in the system: SF Symbols themselves are Apple's and only draw on Apple's systems.
+// in the system, and the nine neither font has as Kite's own shapes (core/SymbolShape.h): SF
+// Symbols themselves are Apple's and only draw on Apple's systems.
 
 #include <optional>
 #include <string>
@@ -18,11 +19,11 @@ namespace kite {
 inline constexpr std::string_view kSymbolIconPrefix = "symbol:";
 inline constexpr std::string_view kImageIconPrefix = "image:";
 
-// A symbol's glyph in each icon font (a private-use code point). `standIn`: neither font has the
-// symbol's object, so it's the nearest glyph until it's drawn as geometry (W9b4).
+// A symbol's glyph in each icon font (a private-use code point). `drawn`: neither font has the
+// symbol's object, so Kite draws its own shape (SymbolShapeFor has one) and the code points are 0.
 struct SymbolGlyph {
     char16_t fluent = 0, mdl2 = 0;
-    bool standIn = false;
+    bool drawn = false;
     bool operator==(const SymbolGlyph&) const = default;
 };
 // The glyph standing in for an SF Symbol: every name the Mac's Icon tab offers (EmojiCatalog.symbols),

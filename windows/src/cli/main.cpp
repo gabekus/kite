@@ -181,20 +181,23 @@ json::Value ThemeSummary(const Theme& theme, int width, int height) {
                                     {"backdrop", json::Value(std::move(backdrop))}});
 }
 
-// What an icon shows: "dot", "emoji", "symbol" (with its Segoe Fluent and MDL2 glyphs as hex)
-// or "picture". A header draws no dot: it has no icon slot for an icon-less space ("none"), and a
-// blank one for a symbol with no stand-in ("blank").
+// What an icon shows: "dot", "emoji", "symbol" (with its Segoe Fluent and MDL2 glyphs as hex,
+// or "drawn" for one Kite draws as its own shape) or "picture". A header draws no dot: it has no
+// icon slot for an icon-less space ("none"), and a blank one for a symbol with no stand-in
+// ("blank").
 enum class LookIn { Bar, Header };
 void AddLook(json::Object& o, const SpaceIconLook& look, LookIn in = LookIn::Bar, bool headerSlot = false) {
     static constexpr const char* kShows[] = {"dot", "emoji", "symbol", "picture"};
     const char* shows = kShows[static_cast<int>(look.kind)];
     if (in == LookIn::Header && look.kind == SpaceIconLook::Kind::Dot) shows = headerSlot ? "blank" : "none";
     o.emplace("shows", std::string(shows));
-    if (look.glyph) {
+    if (look.glyph && look.glyph->drawn) {
+        o.emplace("glyph", json::Object{{"drawn", true}});
+    } else if (look.glyph) {
         char fluent[8], mdl2[8];
         std::snprintf(fluent, sizeof fluent, "%04X", static_cast<unsigned>(look.glyph->fluent));
         std::snprintf(mdl2, sizeof mdl2, "%04X", static_cast<unsigned>(look.glyph->mdl2));
-        o.emplace("glyph", json::Object{{"fluent", std::string(fluent)}, {"mdl2", std::string(mdl2)}, {"standIn", look.glyph->standIn}});
+        o.emplace("glyph", json::Object{{"fluent", std::string(fluent)}, {"mdl2", std::string(mdl2)}});
     }
     if (look.kind == SpaceIconLook::Kind::Symbol) o.emplace("accent", Hex(look.accent));
 }

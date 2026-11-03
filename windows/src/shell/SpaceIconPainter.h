@@ -8,6 +8,8 @@
 // filled from the glyph's outline in the colour it's given, centred on its ink, at a size made so
 // the briefcase inks as wide as the Mac's semibold one (15pt at 12.5, measured in its 2x
 // capture): the same factor for every symbol, so they keep their sizes relative to each other.
+// The nine neither font has are Kite's own shapes (core/SymbolShape.h), scaled from the bar's
+// 12.5 and centred as the Mac's ink sits in its cell, which need neither font.
 // A picture is core's PictureFrameAt (the Mac's rounded square), the stored PNG's centred square
 // scaled to its pixels; a picture whose file can't be read shows the "photo" symbol. Greying (the
 // bar's) is the caller's.
@@ -38,6 +40,7 @@
 
 #include "core/PictureLoads.h"
 #include "core/SpaceIcon.h"
+#include "core/SymbolShape.h"
 #include "shell/Capture.h"
 
 namespace kite {
@@ -75,7 +78,8 @@ public:
     // Keeps only the pictures named here (the spaces' icons now).
     void Retain(const std::set<std::string>& names);
     // Drops what belongs to the device: the pictures' bitmaps (their decoded pixels stay), and
-    // the glyphs' outlines (their factory's). The views call it from their ReleaseGpu.
+    // the glyphs' outlines and drawn shapes (their factory's). The views call it from their
+    // ReleaseGpu.
     void ReleaseDevice();
 
     struct Shared;  // the worker's queue (SpaceIconPainter.cpp)
@@ -109,6 +113,9 @@ private:
     const Outline* OutlineIn(Face& face, char16_t codePoint);
     void DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SymbolGlyph& glyph, D2D1_POINT_2F centre, float size,
                     D2D1_COLOR_F color);
+    // A drawn symbol's geometry (its layers joined and cut in order), made once per factory;
+    // null when it can't be made (tried again with the next factory).
+    ID2D1Geometry* ShapeGeometry(const SymbolShape& shape);
     // A decode's answer for `name`: `pixels` for each of `sides`, or none when it can't be read.
     // True when what shows changed.
     bool Arrived(const std::string& name, const std::vector<UINT>& sides, std::vector<Pixels> pixels);
@@ -117,6 +124,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID2D1Factory> d2d_;
     std::optional<Face> fluent_, mdl2_;
+    std::map<const SymbolShape*, Microsoft::WRL::ComPtr<ID2D1Geometry>> shapes_;  // null: couldn't be made
     std::shared_ptr<Shared> shared_;
     bool synchronous_ = false;
     bool requested_ = false;  // jobs queued since the last SendRequests

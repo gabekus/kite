@@ -262,10 +262,11 @@ if(NOT workShows STREQUAL "symbol" OR NOT workGlyph STREQUAL "E821" OR NOT workA
   message(FATAL_ERROR "Work's header gave ${work}")
 endif()
 # Work's icon as a picture (a valid name and an invalid one), as a symbol Windows has no
-# stand-in for, and as none: a picture in the bar and the header; the dot in the bar with a blank
-# slot in the header; the dot with no slot.
+# stand-in for, as one Kite draws as its own shape, and as none: a picture in the bar and the
+# header; the dot in the bar with a blank slot in the header; the drawn symbol in both; the dot
+# with no slot.
 file(READ "${CMAKE_CURRENT_LIST_DIR}/../helix/states/sidebar.json" sidebarState)
-foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "")
+foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "symbol:pawprint.fill" "")
   set(other "${WORK}-icon")
   file(REMOVE_RECURSE "${other}")
   file(MAKE_DIRECTORY "${other}")
@@ -282,6 +283,14 @@ foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "")
   elseif(icon STREQUAL "")
     set(wantCell "dot")
     set(wantHead "none")
+  elseif(icon STREQUAL "symbol:pawprint.fill")
+    set(wantCell "symbol")
+    set(wantHead "symbol")
+    string(JSON cellDrawn GET "${out}" spaceBar cells 1 glyph drawn)
+    string(JSON headDrawn GET "${out}" rows 0 glyph drawn)
+    if(NOT cellDrawn STREQUAL "ON" OR NOT headDrawn STREQUAL "ON")
+      message(FATAL_ERROR "Work's drawn symbol gave ${out}")
+    endif()
   else()
     set(wantCell "dot")
     set(wantHead "blank")
