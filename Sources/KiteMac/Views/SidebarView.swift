@@ -85,7 +85,10 @@ struct SidebarView: View {
     var swipe = SpaceSwipeModel()
     /// The Mini Player's buttons; nil shows no Mini Player.
     var miniPlayer: MiniPlayerActions?
-    @State private var drag = SidebarDragModel()
+    /// The sidebar's drags; the AppKit pages and the overlay share it.
+    var drag = SidebarDragModel()
+    /// Where the space pages go (an AppKit view the column lays over this placeholder), in sidebar points.
+    var pagesFrame: (CGRect) -> Void = { _ in }
     /// Whether the pointer is over the sidebar: Arc's URL row reads `sidebarHovered` for its buttons.
     var hover = SidebarHoverModel()
 
@@ -95,6 +98,7 @@ struct SidebarView: View {
         GeometryReader { proxy in
             column(width: proxy.size.width)
         }
+        .coordinateSpace(.named(Self.space))
         .ignoresSafeArea()
     }
 
@@ -172,9 +176,10 @@ struct SidebarView: View {
                     .background(NoWindowDrag().padding(.horizontal, -M.padding))
                 }
 
-                SpacePages(store: store, swipe: swipe) { space in
-                    spaceList(space)
-                }
+                // The space pages: AppKit (`SidebarPagesView`), laid over this by the column.
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: { pagesFrame($0) }
 
                 if let miniPlayer, let id = store.miniPlayerTabID, let tab = state.tab(id), let page = store.pages[id],
                    page.media != nil || page.capturingSince != nil {
@@ -194,17 +199,12 @@ struct SidebarView: View {
         .padding(.horizontal, M.padding)
         .frame(width: width, alignment: .leading)
         .foregroundStyle(.primary)
-        .overlay { SidebarDragOverlay(drag: drag) }
         .onAppear { drag.store = store }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.bounds = $0 }
         .environment(\.sidebarDrag, drag)
     }
 
-    /// One space's page: its header, pinned items, new tab and today's tabs (an AppKit table).
-    private func spaceList(_ space: Space) -> some View {
-        SidebarSpaceListRepresentable(store: store, space: space, actions: actions, claude: claude, drag: drag,
-                                      supportsDarkPages: supportsDarkPages)
-    }
+    private static let space = "sidebar"
 
     /// Nil hides the moon: nothing to darken, or the engine can't.
     private func darkPageState(for tab: BrowserTab?) -> Bool? {

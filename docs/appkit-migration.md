@@ -242,3 +242,31 @@ name, Return); Clear (in its keep-the-selected-tab mode) clears the other Today 
 Not verified: the icon picker opening from the header (a popover), the space menu (a modal menu), Tidy's
 turning wand and Clear's pressed arrow frame by frame, the arrow (clear-all) mode of Clear pixel-wise, and the
 Instant Links row in place (it needs Instant Links running).
+
+## PR 3: the column and space pages
+
+`SidebarColumnView` (AppKit) is the sidebar now: the space pages are an AppKit strip (`SidebarPagesView`)
+that a swipe or a space switch's settle moves as one view; the chrome SwiftUI still draws (header row,
+address field, favorites, Mini Player, space bar) is one hosting view under them, with a placeholder where the
+pages go; the drag overlay is shown only while something is dragged. `SidebarRowsAnimator` (NSTableView
+swizzling for SwiftUI's List) and `BrowserStore`'s per-mutation row snapshot are gone.
+
+| Scenario (median of 3) | CPU ms/s main before #262 → PR 3 | Wakeups/s | Footprint MB |
+|---|---|---|---|
+| Switching spaces every 0.5 s (`SWITCH=1`, 20 s) | 218.24 → 181.20 | 111.4 → 94.6 | 347 → 349 |
+| Idle | 2.65 → 2.76 | 4.40 → 4.33 | 186 → 185 |
+| After hover + scroll | 2.40 → 3.91 | 4.32 → 4.28 | 186 → 189 |
+| Claude's rings | 126.85 → 14.95 | 145.6 → 29.3 | 190 → 191 |
+
+(One switching run overlapped a compile; it is the slowest of the three and not the median.)
+
+Pixels (whole sidebar, captured back to back with main from before #262): 10 dark tabs idle and hovered max 56,
+mean 0.046; rich dark and light idle and hovered (header, divider, folder, split) max 56–85, mean ≤ 0.06, all
+on emoji and SF Symbol edges. Captures of the same build an hour apart differ by up to 2/255 everywhere (the
+window background drifts), so before/after pairs are now taken back to back. After ⌃2/⌃1 the pages land in the
+same place as main's (back on the first space: max 56).
+
+Not verified: a two-finger swipe (synthetic `ui input` scrolls don't reach the space-swipe interceptor on
+either build), and the theme crossfade after a space switch on screen: in a covered test window both builds
+freeze the crossfade part-way (main at a different point each run), since a covered window's display link
+stops; ThemeView catches up when the window is visible.
