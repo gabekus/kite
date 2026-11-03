@@ -161,6 +161,15 @@ jobs:
               }
             } finally { $bitmap.Dispose() }
           }
+      - name: Upload Kite.exe
+        # The Release build, for trying it on a Windows machine without Visual Studio.
+        uses: actions/upload-artifact@v4
+        with:
+          name: kite-windows-x64
+          path: |
+            windows/build/Release/Kite.exe
+            windows/build/Release/kitecore.exe
+          if-no-files-found: error
       - name: Upload the capture
         if: always()
         uses: actions/upload-artifact@v4
