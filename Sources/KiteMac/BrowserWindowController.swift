@@ -35,6 +35,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let contentClip = ContentClipView()
     /// View → Show Toolbar's bar across the top of the card.
     private var toolbarHost: PageToolbarHost!
+    /// The page toolbar's place; the SwiftUI bar is in the window only while it shows.
+    private var toolbarContainer: DetachingContainer!
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
     private var sidebarHost: SidebarColumnView!
@@ -50,9 +52,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// Window › Open Library… (⇧⌘L): covers the sidebar and the card while open.
     let library = LibraryModel()
     private var libraryHost: NSHostingView<LibraryView>!
+    /// The Library's place; its SwiftUI view is in the window only while it's open.
+    private var libraryContainer: DetachingContainer!
     /// Claude's chat bubble over the page; AppDelegate connects it to Claude Tasks.
     let claudeBubble = ClaudeBubbleModel()
     private var claudeBubbleHost: NSHostingView<ClaudeBubble>!
+    /// The ⌘J bar's place; its SwiftUI view is in the window only while it's open.
+    private var claudeBubbleContainer: DetachingContainer!
     private var trafficLights: TrafficLights!
     private var commandBarHost: CommandBarOverlayView!
     private lazy var instantLinks = InstantLinksController(store: store, supportDirectory: AppDelegate.supportDirectory)
@@ -329,20 +335,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         self.toolbarHost = toolbarHost
         toolbarHost.sizingOptions = []
-        toolbarHost.isHidden = true
-        contentClip.toolbar = toolbarHost
+        toolbarContainer = DetachingContainer(host: toolbarHost)
+        contentClip.toolbar = toolbarContainer
         commandBarHost = CommandBarOverlayView(store: store) { [weak self] suggestion, mode in
             self?.commit(suggestion, mode: mode)
         }
         commandBarHost.isHidden = true
         claudeBubbleHost = NSHostingView(rootView: ClaudeBubble(model: claudeBubble, store: store))
         claudeBubbleHost.sizingOptions = []
-        claudeBubbleHost.isHidden = true
+        claudeBubbleContainer = DetachingContainer(host: claudeBubbleHost)
         claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
         claudeBubble.postToProject = { [weak self] page, message in self?.postToClaudeProject(page, message: message) }
         libraryHost = NSHostingView(rootView: makeLibraryView())
         libraryHost.sizingOptions = []
-        libraryHost.isHidden = true
+        libraryContainer = DetachingContainer(host: libraryHost)
         library.onOpenChange = { [weak self] open in self?.libraryOpened(open) }
         NotificationCenter.default.addObserver(self, selector: #selector(downloadDidStart(_:)), name: DownloadsModel.didStartDownload, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(themeCSSSharingChanged), name: .kiteThemeCSSSharingChanged, object: nil)
@@ -365,7 +371,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         materialView.blendingMode = .behindWindow
         materialView.state = .followsWindowActiveState
 
-        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, libraryHost!, claudeBubbleHost!, commandBarHost!, peekEdge, peekZone, sidebarHoverZone] as [NSView] {
+        for view in [materialView, themeView, peekCard, sidebarHost!, contentFrame, glowView, resizeHandle, libraryContainer!, claudeBubbleContainer!, commandBarHost!, peekEdge, peekZone, sidebarHoverZone] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             rootView.addSubview(view)
         }
@@ -445,15 +451,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             glowView.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor, constant: Layout.glowMargin),
 
             // ⌘J sits where ⌘T does, so it covers the window the same way.
-            claudeBubbleHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
-            claudeBubbleHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-            claudeBubbleHost.topAnchor.constraint(equalTo: rootView.topAnchor),
-            claudeBubbleHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            claudeBubbleContainer.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            claudeBubbleContainer.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            claudeBubbleContainer.topAnchor.constraint(equalTo: rootView.topAnchor),
+            claudeBubbleContainer.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
-            libraryHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
-            libraryHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
-            libraryHost.topAnchor.constraint(equalTo: rootView.topAnchor),
-            libraryHost.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            libraryContainer.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            libraryContainer.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
+            libraryContainer.topAnchor.constraint(equalTo: rootView.topAnchor),
+            libraryContainer.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
 
             commandBarHost.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             commandBarHost.trailingAnchor.constraint(equalTo: rootView.trailingAnchor),
@@ -464,10 +470,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
         // The peeking sidebar draws over the page; its views are raised by z-position rather
         // than reordered, which would drop their constraints.
-        for view in [peekCard, sidebarHost!, resizeHandle, libraryHost!, claudeBubbleHost!, commandBarHost!] as [NSView] { view.wantsLayer = true }
+        for view in [peekCard, sidebarHost!, resizeHandle, libraryContainer!, claudeBubbleContainer!, commandBarHost!] as [NSView] { view.wantsLayer = true }
         commandBarHost.layer?.zPosition = 20
-        claudeBubbleHost.layer?.zPosition = 15
-        libraryHost.layer?.zPosition = 13
+        claudeBubbleContainer.layer?.zPosition = 15
+        libraryContainer.layer?.zPosition = 13
         peekCard.isHidden = true
         peekEdge.onHover = { [weak self] inside in self?.edgeHovered(inside) }
         sidebarHoverZone.onHover = { [weak self] inside in self?.sidebarHover.isHovered = inside }
@@ -558,7 +564,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         pool.updateThemeCSS()
         let appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
         sidebarHost.appearance = appearance
-        libraryHost.appearance = appearance
+        libraryContainer.appearance = appearance
         materialView.appearance = appearance
         peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil)
         peekCard.material.appearance = appearance
@@ -674,11 +680,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let ids = shownTabIDs
         if ids.count > 1 {
             splitPanes.setPanes(ids.compactMap { id in paneView(id).map { (id, $0) } })
-            contentClip.addSubview(splitPanes, positioned: .below, relativeTo: toolbarHost)
+            contentClip.addSubview(splitPanes, positioned: .below, relativeTo: toolbarContainer)
             contentClip.page = splitPanes
         } else if let id = ids.first, let view = paneView(id) {
             view.autoresizingMask = []
-            contentClip.addSubview(view, positioned: .below, relativeTo: toolbarHost)
+            contentClip.addSubview(view, positioned: .below, relativeTo: toolbarContainer)
             contentClip.page = view
         } else {
             contentClip.page = nil
@@ -825,7 +831,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 host.autoresizingMask = [.width, .height]
             }
             if host.superview == nil {
-                contentClip.addSubview(host, positioned: .below, relativeTo: toolbarHost)
+                contentClip.addSubview(host, positioned: .below, relativeTo: toolbarContainer)
             }
             internalPages[id] = (url, host)
         }
@@ -883,7 +889,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func updateToolbar() {
         // Arc disables Show Toolbar in split view tabs; the bar belongs to a single page.
         let visible = store.state.showsToolbar && shownTabIDs.count <= 1
-        toolbarHost.isHidden = !visible
+        toolbarContainer.isHidden = !visible
         contentClip.topInset = visible ? PageToolbar.Metrics.inset : 0
     }
 
@@ -913,7 +919,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             setPeeking(false)
             libraryHost.rootView = makeLibraryView()
         }
-        libraryHost.isHidden = !open
+        libraryContainer.isHidden = !open
         for view in [sidebarHost!, contentFrame, glowView, resizeHandle, peekCard] as [NSView] {
             view.alphaValue = open ? 0 : 1
         }
@@ -937,7 +943,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     private func claudeBubbleOpened(_ open: Bool) {
-        claudeBubbleHost.isHidden = !open
+        claudeBubbleContainer.isHidden = !open
         if open {
             // ⌘J and ⌘T share a spot: only one shows at a time.
             store.hideCommandBar()

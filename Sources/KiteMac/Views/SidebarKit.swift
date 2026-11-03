@@ -590,3 +590,40 @@ enum SymbolOrigins {
     image?.isTemplate = true
     return image
 }
+
+/// Holds a SwiftUI hosting view in the window only while it's shown: hidden, the host leaves the window, so its
+/// view graph stops updating with the store (a hidden host in the window still re-renders on every change). The
+/// container keeps the host's place: its constraints, z-order and appearance.
+final class DetachingContainer: NSView {
+    let host: NSView
+
+    init(host: NSView) {
+        self.host = host
+        super.init(frame: .zero)
+        wantsLayer = true
+        host.autoresizingMask = [.width, .height]
+        host.translatesAutoresizingMaskIntoConstraints = true
+        super.isHidden = true
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override var isHidden: Bool {
+        didSet {
+            guard isHidden != oldValue || (host.superview == nil) != isHidden else { return }
+            if isHidden {
+                host.removeFromSuperview()
+            } else if host.superview !== self {
+                host.frame = bounds
+                addSubview(host)
+            }
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        host.frame = bounds
+    }
+
+    override var acceptsFirstResponder: Bool { false }
+}
