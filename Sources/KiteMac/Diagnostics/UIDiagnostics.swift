@@ -45,9 +45,9 @@ final class UIDiagnostics {
             let note = awake ? "" : "SwiftUI's elements are missing: they need Accessibility permission for Kite "
                 + "(System Settings → Privacy & Security → Accessibility).\n"
             return .text(header(window) + note + UIReport.tree(start, rootPath: root ?? "0", depth: depth, match: match, maxNodes: maxNodes))
-        case let .capture(number, region, format, pixels, image, save):
+        case let .capture(number, region, format, pixels, image, save, source):
             return try await UICapture.run(window: try window(number), region: region, format: format, pixels: pixels,
-                                           image: image, save: save)
+                                           image: image, save: save, source: source)
         case let .pointer(number, points, modifiers):
             let window = try self.window(number)
             let probe = UIPointerProbe(window: window, modifiers: UIInputSender.flags(modifiers))

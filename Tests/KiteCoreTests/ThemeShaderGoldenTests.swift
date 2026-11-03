@@ -34,7 +34,7 @@ import Testing
     static let repository = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
 
-    /// ThemeView.draw(in:)'s uniforms, byte for byte (ThemeUniforms in Kite.metal, 176 bytes).
+    /// ThemeView.uniforms(size:progress:)'s uniforms, byte for byte (ThemeUniforms in Kite.metal, 176 bytes).
     static func uniforms(from: Theme, to: Theme, progress: Float, width: Int, height: Int) -> [UInt8] {
         var bytes = [UInt8](repeating: 0, count: 176)
         func put<T>(_ value: T, at offset: Int) {

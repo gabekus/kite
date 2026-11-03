@@ -82,8 +82,10 @@ action and in `kite probe`. Web page content is read with the page tools
 (`read_page`, `screenshot`), not `ui`.
 
 A `KITE_DIAGNOSTICS=1` run opens behind other windows and never activates. It needs
-Accessibility (SwiftUI elements in `tree`) and Screen Recording (`capture`)
-permission, which a test build inherits from the app that launched it. Clicks on
+Accessibility (SwiftUI elements in `tree`), which a test build inherits from the app
+that launched it. `capture` uses Screen Recording the same way when it's granted, and
+otherwise draws the window in-process (`--in-process`; blurred materials come out
+unblurred, and it lists where they are). Clicks on
 views that don't accept first mouse (the resize handle) are dropped while Kite is
 in the background; `input` says so. See docs/automation.md for what else works in
 the background.

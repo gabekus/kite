@@ -51,6 +51,14 @@ public enum ImageFormat: String, Hashable, Sendable {
     public var mimeType: String { "image/\(rawValue)" }
 }
 
+/// Where `ui capture` gets a window's pixels. `screen` is ScreenCaptureKit (exact; needs Screen Recording, and fails
+/// rather than asking); `inProcess` has Kite draw the window itself: the views, the Metal theme and the pages, blurred
+/// materials unblurred. `auto` takes ScreenCaptureKit when Screen Recording is granted, else the in-process render.
+public enum CaptureSource: String, Hashable, Sendable, CaseIterable {
+    case auto, screen
+    case inProcess = "in-process"
+}
+
 /// What `wait_for` waits for.
 public enum WaitCondition: Hashable, Sendable {
     /// The page finishes loading (returns at once if it isn't loading).
