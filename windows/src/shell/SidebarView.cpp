@@ -1030,7 +1030,12 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             SpaceBarMove(*barPress_, p.x, p.y - SpaceBarTop(Height()));
             // A drag takes the tip away (cellDragged's setDragging), but not with one space,
             // which can't be dragged (it returns first).
-            if (barPress_->dragged && bar_->Cells().size() > 1) HideTip();
+            // The hover stays (no tracking-area events during a drag), so a release over the
+            // same cell doesn't bring the tip back.
+            if (barPress_->dragged && bar_->Cells().size() > 1) {
+                KillTimer(window_, kTipTimer);
+                tip_->Hide();
+            }
         }
         RefreshHover();
         return false;
