@@ -107,6 +107,27 @@ final class SidebarDragModel {
 
     func forget(_ row: Row) { rows[row.key] = nil }
 
+    /// AppKit lists hand over their rows when a drag needs them, rather than reporting every frame
+    /// as they scroll: each source replaces its space's rows before a drag aims.
+    @ObservationIgnored private var rowSources: [UUID: () -> [Row]] = [:]
+
+    func addRowSource(for space: UUID, _ source: @escaping () -> [Row]) { rowSources[space] = source }
+
+    func removeRowSource(for space: UUID) {
+        rowSources[space] = nil
+        rows = rows.filter { $0.value.space != space }
+    }
+
+    /// Fresh frames from every AppKit list.
+    func refreshRowSources() {
+        guard !rowSources.isEmpty else { return }
+        var next = rows.filter { rowSources[$0.value.space] == nil }
+        for source in rowSources.values {
+            for row in source() { next[row.key] = row }
+        }
+        if next != rows { rows = next }
+    }
+
     /// A row whose kind or place changed without moving (a folder collapsing): keep its frame.
     func refresh(_ row: Row) {
         guard let frame = rows[row.key]?.frame else { return }
@@ -128,6 +149,7 @@ final class SidebarDragModel {
     }
 
     func begin(_ ids: [UUID], row: Row, at start: CGPoint, ghost: AnyView, tileGhost: AnyView? = nil) {
+        refreshRowSources()
         session = Session(ids: ids, row: row, start: start, location: start)
         self.ghost = ghost
         self.tileGhost = tileGhost
@@ -135,6 +157,7 @@ final class SidebarDragModel {
 
     func move(to location: CGPoint, in state: BrowserState) {
         guard var session else { return }
+        refreshRowSources()
         session.location = location
         let resolved = resolve(location, session: &session, state: state)
         session.target = resolved.flatMap { state.canDrop(session.ids, on: $0) ? $0 : nil }
@@ -462,62 +485,6 @@ extension EnvironmentValues {
     @Entry var sidebarDrag: SidebarDragModel? = nil
 }
 
-/// Makes a sidebar row draggable and reports where it is.
-struct SidebarDragSource<Ghost: View>: ViewModifier {
-    @Environment(\.sidebarDrag) private var drag
-    let store: BrowserStore
-    let row: SidebarDragModel.Row
-    /// Rows that only take drops (header, divider, New Tab) don't start one.
-    var draggable = true
-    var onDrop: (SidebarDropOutcome) -> Void = { _ in }
-    @ViewBuilder let ghost: () -> Ghost
-
-    func body(content: Content) -> some View {
-        content
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-                var row = row
-                row.frame = frame
-                drag?.report(row)
-            }
-            .onDisappear { drag?.forget(row) }
-            .onChange(of: row) { _, row in drag?.refresh(row) }
-            .gesture(draggable ? gesture : nil)
-    }
-
-    /// Arc swaps a tab's drag image for a favorite tile, the size of the tray's open slot, once
-    /// it's over the tray (`collectionView:updateDraggingItemsForDrag:`, decompiled).
-    private var tileGhost: AnyView? {
-        let state = store.state
-        let tabs: [BrowserTab] = switch row.kind {
-        case .tab: state.tab(row.id).map { [$0] } ?? []
-        case .split: ((state.spaces.flatMap(\.splits) + state.favoriteSplits).first { $0.id == row.id }?.tabIDs ?? []).compactMap(state.tab)
-        default: []
-        }
-        return tabs.isEmpty ? nil : AnyView(FavoriteGhost(tabs: tabs))
-    }
-
-    private var gesture: some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .global)
-            .onChanged { value in
-                guard let drag else { return }
-                if !drag.isDragging {
-                    var row = row
-                    row.frame = drag.frame(of: row) ?? .zero
-                    drag.begin([row.id], row: row, at: value.startLocation, ghost: AnyView(ghost()), tileGhost: tileGhost)
-                }
-                drag.move(to: value.location, in: store.state)
-            }
-            .onEnded { value in
-                guard let drag, let drop = drag.end(at: value.location, in: store.state) else { return }
-                var outcome: SidebarDropOutcome?
-                withAnimation(.easeInOut(duration: 0.12)) {
-                    store.mutate { outcome = $0.dropSidebarItems(drop.ids, on: drop.target) }
-                }
-                if let outcome { onDrop(outcome) }
-            }
-    }
-}
-
 extension SidebarDragModel {
     func frame(of row: Row) -> CGRect? { rows[row.key]?.frame }
     func tileFrame(_ id: UUID) -> CGRect? { tiles[id] }
@@ -589,50 +556,10 @@ private struct InsertionLine: View {
     }
 }
 
-/// A tab row while a drag offers to split it (Arc, incognito capture): the row keeps its own half
-/// and the other half is a plain pill, white at about 53% over the sidebar, 12pt apart.
-struct SplitDropPreview<Content: View>: View {
-    static var gap: CGFloat { 12 }
-    static var fill: Double { 0.53 }
-    let side: SplitDropSide?
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        if let side {
-            GeometryReader { geometry in
-                let half = (geometry.size.width - Self.gap) / 2
-                HStack(spacing: Self.gap) {
-                    if side == .left { pill(half) }
-                    content.frame(width: half)
-                    if side == .right { pill(half) }
-                }
-            }
-            .frame(height: ArcMetrics.Sidebar.pillHeight)
-        } else {
-            content
-        }
-    }
-
-    private func pill(_ width: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: ArcMetrics.Sidebar.cornerRadius, style: .continuous)
-            .fill(Color(red: 0.98, green: 0.984, blue: 1).opacity(Self.fill))
-            .frame(width: width, height: ArcMetrics.Sidebar.pillHeight)
-    }
+/// A tab row offering a split while a drag rests on it: the tab takes one half, a pale pill the other,
+/// 12pt apart.
+enum SplitDropPreview {
+    static let gap: CGFloat = 12
+    static let fill: Double = 0.53
 }
 
-/// Finds the enclosing list's scroll view and the sidebar's hosting view for drag autoscroll.
-struct SidebarScrollViewFinder: NSViewRepresentable {
-    let drag: SidebarDragModel
-
-    func makeNSView(context: Context) -> NSView { NSView() }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        DispatchQueue.main.async {
-            guard let scrollView = view.enclosingScrollView else { return }
-            drag.scrollView = scrollView
-            var host: NSView? = scrollView
-            while let v = host, !(v is NSHostingView<SidebarView>) { host = v.superview }
-            drag.sidebarView = host
-        }
-    }
-}

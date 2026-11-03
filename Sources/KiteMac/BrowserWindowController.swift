@@ -37,7 +37,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var toolbarHost: PageToolbarHost!
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
-    private var sidebarHost: SidebarHostingView!
+    private var sidebarHost: SidebarColumnView!
     /// The sidebar's Claude button; the app delegate connects it (not in incognito windows).
     let claudeButton = ClaudeButtonModel()
     /// Claude's control pill: where it sits across the window, and its strip's bottom constraint.
@@ -320,8 +320,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             sidebar.fieldAccessory = AnyView(ExtensionsSelectionView(selection: extensions) { PasswordManagerFieldButton(model: $0) })
         }
         #endif
-        sidebarHost = SidebarHostingView(rootView: sidebar)
-        SidebarRowsAnimator.register(sidebarHost)
+        sidebarHost = SidebarColumnView(sidebar: sidebar, store: store, swipe: spaceSwipe.model)
         let toolbarHost = PageToolbarHost(rootView: toolbar)
         // Arc's right-click menu on the bar (Copy URL … Hide Toolbar).
         toolbarHost.contextMenu = { [weak self, weak toolbarHost] in
@@ -335,10 +334,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         commandBarHost = NSHostingView(rootView: CommandBarOverlay(store: store) { [weak self] suggestion, mode in
             self?.commit(suggestion, mode: mode)
         })
-        for host in [sidebarHost as NSView, commandBarHost] {
-            (host as? NSHostingView<SidebarView>)?.sizingOptions = []
-            (host as? NSHostingView<CommandBarOverlay>)?.sizingOptions = []
-        }
+        commandBarHost.sizingOptions = []
         commandBarHost.isHidden = true
         claudeBubbleHost = NSHostingView(rootView: ClaudeBubble(model: claudeBubble, store: store))
         claudeBubbleHost.sizingOptions = []
