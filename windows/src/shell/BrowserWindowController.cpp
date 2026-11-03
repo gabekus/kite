@@ -316,12 +316,15 @@ std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& 
 void BrowserWindowController::StateChanged() {
     SyncSpace();
     sidebar_->Update(state_, pagesAnchor_);
-    // A slide begins at once: the new page drawn and the strip's animation committed now, not
-    // on the next pass (the crossfade's first frame comes with the clock).
+    // A slide begins at once: the new page and the caption buttons' appearance drawn and the
+    // strip's animation committed now, not on the next pass (the crossfade's first frame comes
+    // with the clock).
     if (slideStarted_) {
         slideStarted_ = false;
-        if (std::wstring problem = sidebar_->Draw(); problem.empty()) compositor_->Commit();
-        else if (sidebar_->DeviceLost()) Draw();
+        std::wstring problem = sidebar_->Draw();
+        if (problem.empty()) problem = caption_->Draw();
+        if (problem.empty()) compositor_->Commit();
+        else if (sidebar_->DeviceLost() || caption_->DeviceLost()) Draw();
     }
     if (commandBar_) commandBar_->Refresh();
 }

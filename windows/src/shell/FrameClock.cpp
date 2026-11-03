@@ -7,8 +7,8 @@ namespace kite {
 
 namespace {
 
-// DCompositionWaitForCompositorClock (Windows 11): returns at the compositor's next frame, which
-// follows the fastest display Kite is on. Looked up at run time: older Windows and MinGW's
+// DCompositionWaitForCompositorClock (Windows 11): returns at the compositor's next frame. Its
+// clock is the system's: with several displays it follows the fastest. Looked up at run time: older Windows and MinGW's
 // headers don't have it.
 using WaitForCompositorClock = DWORD(WINAPI*)(UINT count, const HANDLE* handles, DWORD timeoutInMs);
 // DCompositionBoostCompositorClock (Windows 11): while boosted, a display with a dynamic
@@ -92,6 +92,7 @@ double FrameClock::NextFrameTime(IDCompositionDevice* device) {
 void FrameClock::Run() {
     const WaitForCompositorClock compositorClock = CompositorClock();
     double lastFrame = 0;
+    int tooSoon = 0;  // frames in a row that came too soon after the last
     std::unique_lock lock(mutex_);
     for (;;) {
         wake_.wait(lock, [this] { return quit_ || running_; });
@@ -108,7 +109,13 @@ void FrameClock::Run() {
             if (FAILED(DwmFlush())) Sleep(16);
             else if (Now() - flushed < 0.001) Sleep(1);
         }
-        if (Now() - lastFrame < 0.00025) Sleep(16);
+        // One short return is a late wake catching up with the next tick; three in a row is a
+        // wait that isn't waiting.
+        if (Now() - lastFrame < 0.00025) {
+            if (++tooSoon >= 3) Sleep(16);
+        } else {
+            tooSoon = 0;
+        }
         lastFrame = Now();
         if (!posted_.exchange(true)) {
             if (!PostMessageW(window_, message_, 0, 0)) posted_ = false;
