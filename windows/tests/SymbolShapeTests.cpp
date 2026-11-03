@@ -108,6 +108,23 @@ TEST(aDrawnSymbolsHolesAndGapsShowThrough) {
     CHECK(Covers(masks, -5, -4) && Covers(masks, 5, 3));
     CHECK(Covers(masks, -0.75f, 0) && !Covers(masks, 0.25f, 0) && Covers(masks, 1.0f, 0));
     CHECK(!Covers(masks, -4.4f, 1.17f) && Covers(masks, -4.4f, 4.0f));
+    // Every other cut and part, each next to ink: the masks' eyes and the back one's mouth, the
+    // bandage's cuts, a stitch, the gap round the cup and the straw, the fork's head under its
+    // tines, a toe apart from the next.
+    const auto pinned = [](const char* name, float x, float y, float inkX, float inkY) {
+        const SymbolShape& shape = *SymbolShapeFor(name);
+        return !Covers(shape, x, y) && Covers(shape, inkX, inkY);
+    };
+    CHECK(pinned("theatermasks.fill", 2.76f, -0.69f, 2.40f, 0.56f));    // the back mask's eye
+    CHECK(pinned("theatermasks.fill", 3.64f, 3.83f, 3.89f, 2.97f));     // its frown
+    CHECK(pinned("theatermasks.fill", -7.55f, -1.96f, -7.89f, -3.32f));  // the front mask's eye
+    CHECK(pinned("bandage.fill", 1.63f, -1.62f, 2.31f, -2.30f));
+    CHECK(pinned("baseball.fill", -1.55f, -0.56f, -1.86f, 0.28f));
+    CHECK(pinned("takeoutbag.and.cup.and.straw.fill", 0.4f, 2.0f, -1.0f, 2.0f) &&
+          Covers(*SymbolShapeFor("takeoutbag.and.cup.and.straw.fill"), 3.5f, 2.0f));
+    CHECK(pinned("takeoutbag.and.cup.and.straw.fill", 5.0f, -3.6f, 5.95f, -2.9f));  // the straw
+    CHECK(pinned("fork.knife", -3.25f, -5.5f, -3.25f, -3.0f));
+    CHECK(pinned("pawprint.fill", 0.25f, -4.4f, -1.75f, -4.4f) && Covers(*SymbolShapeFor("pawprint.fill"), -4.95f, -0.7f));
     CHECK(!Covers(*SymbolShapeFor("pawprint.fill"), -1.75f, -2.0f));  // between a toe and the pad
 }
 

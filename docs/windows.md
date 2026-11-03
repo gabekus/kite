@@ -304,8 +304,8 @@ geometry per symbol and scaled for the header's 15pt. Each inks the box the
 Mac's symbol inks in its cell (keeping its offset from the centre), measured
 from the Mac's 2x renders to a quarter point, and comes within an eighth of its
 inked area, so it sits and weighs as the Mac's (`SymbolShapeTests`); the PC's
-captures put every one within a quarter point of the Mac's centre in the bar and
-the header. Known differences: the drawings are Kite's own,
+captures give every one the Mac's ink box in the bar, centred within 0.15pt,
+and within half a point of it in the header. Known differences: the drawings are Kite's own,
 so details differ (the bed's headboard, the bandage's pad marked by two cuts and
 four holes, the baseball's seams and stitches, the masks' faces); the header's
 are the bar's scaled by 1.2, where the Mac's symbol is redrawn at 15pt (the
