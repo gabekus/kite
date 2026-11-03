@@ -442,10 +442,10 @@ void SpaceIconPainter::Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* b
         if (look.glyph && look.glyph->drawn) {
             // Kite's own shape, from the bar's 12.5 to `size`, its origin on `centre`.
             if (ID2D1Geometry* geometry = ShapeGeometry(look.text)) {
-                const float scale = size / kSymbolShapeSize;
+                const float factor = size / kSymbolShapeSize;
                 D2D1_MATRIX_3X2_F transform{};
                 context->GetTransform(&transform);
-                context->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale) * D2D1::Matrix3x2F::Translation(centre.x, centre.y) * transform);
+                context->SetTransform(D2D1::Matrix3x2F::Scale(factor, factor) * D2D1::Matrix3x2F::Translation(centre.x, centre.y) * transform);
                 brush->SetColor(symbol);
                 context->FillGeometry(geometry, brush);
                 context->SetTransform(transform);
