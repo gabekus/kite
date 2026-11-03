@@ -108,8 +108,9 @@ public enum ArcExtensionsImport {
     /// list of reasons or (older) a bit mask. Others, like a permissions increase (2), aren't the
     /// user's choice, so those still come over.
     static func isTurnedOff(_ entry: [String: Any]) -> Bool {
-        if let list = entry["disable_reasons"] as? [Int] { return list.contains(1) }
-        if let bits = entry["disable_reasons"] as? Int { return bits & 1 != 0 }
+        // Through NSNumber, which JSONSerialization gives on every platform.
+        if let list = entry["disable_reasons"] as? [Any] { return list.contains { ($0 as? NSNumber)?.intValue == 1 } }
+        if let bits = (entry["disable_reasons"] as? NSNumber)?.intValue { return bits & 1 != 0 }
         return false
     }
 }

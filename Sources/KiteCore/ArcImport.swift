@@ -459,6 +459,8 @@ extension BrowserState {
         let placedBefore = Set(arcProfileMap.keys).union([Profile.defaultDirectory])
         var map = existingProfiles(forArc: arcProfiles, names: names)
         var made: [String] = []
+        // Put in Default only because no profile could be made: not remembered, so a later import tries again.
+        var fellBack: Set<String> = []
         for arc in arcProfiles where map[arc] == nil {
             // Taken by a Kite profile that isn't this one, or by another Arc profile of the same name.
             let name = Self.arcProfileName(arc, names: names)
@@ -467,9 +469,9 @@ extension BrowserState {
             }.first.flatMap { try? createProfile(named: $0) }
             // Only a Kite profile named for each candidate stops this; the spaces stay in Default.
             map[arc] = profile?.directory ?? Profile.defaultDirectory
-            if let profile { made.append(profile.directory) }
+            if let profile { made.append(profile.directory) } else { fellBack.insert(arc) }
         }
-        for (arc, directory) in map where arc != Profile.defaultDirectory {
+        for (arc, directory) in map where arc != Profile.defaultDirectory && !fellBack.contains(arc) {
             arcProfileMap[arc] = profile(directory).dataStoreID
         }
 

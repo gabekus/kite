@@ -101,7 +101,9 @@ enum ArcExtensionsInstaller {
         }
         let item = queue.removeFirst()
         guard let store = ChromeWebStore.detailURL(for: item.id) else { return next(engine: engine, window: window) }
-        running = BackgroundExtensionInstall(extensionID: item.id, storeURL: store, engine: engine, source: nil, window: window) {
+        // The window that started the run, while it's open; else the main one.
+        let parent = window?.isVisible == true ? window : nil
+        running = BackgroundExtensionInstall(extensionID: item.id, storeURL: store, engine: engine, source: nil, window: parent) {
             // Cancelled in Chrome's dialog, or the store has no Add button: stop the run there.
             if !BackgroundExtensionInstall.installedIDs(profile: profile).contains(item.id) {
                 failed.insert(item.id)

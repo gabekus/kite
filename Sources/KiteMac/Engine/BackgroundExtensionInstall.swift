@@ -30,7 +30,8 @@ final class BackgroundExtensionInstall {
     /// The store script tries to click Add for 10 s after load.
     private static let noAddButtonDelay: TimeInterval = 15
 
-    /// `window` parents Chrome's dialog; the main window when nil.
+    /// `window` holds the hidden store page (the main window when nil). Chrome's dialog still
+    /// opens over the front Kite window (KCExtensionWindows.mm).
     init(extensionID: String, storeURL: URL, engine: WebEngine, source: WebPage?, window: NSWindow? = nil,
          onFinish: @escaping () -> Void) {
         self.extensionID = extensionID
@@ -85,7 +86,8 @@ final class BackgroundExtensionInstall {
         // Manifest V2 extension, or one taken off the store).
         if !dialogOpen, dialogClosedAt == nil, let loadedAt, Date().timeIntervalSince(loadedAt) > Self.noAddButtonDelay {
             page.evaluateJavaScript(WebStoreScript.offersAddScript) { [weak self] result in
-                guard let self, (result as? Bool) != true, !self.dialogOpen else { return }
+                // Only a definite "no button"; a script error says nothing.
+                guard let self, (result as? Bool) == false, !self.dialogOpen else { return }
                 self.finish(installed: false)
             }
         }
