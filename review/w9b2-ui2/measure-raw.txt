@@ -1,0 +1,51 @@
+﻿## a2-two-spaces-work
+bar briefcase (threshold 40): ink 30x28 px = 15x14 pt, box px (259,1576)-(288,1603), centre (137, 25) pt; strongest ink 215,75,134 on background 235,180,164
+bar briefcase (threshold 8): ink 85x81 px = 42.5x40.5 pt, box px (232,1550)-(316,1630), centre (137.25, 25.25) pt; strongest ink 215,75,134 on background 235,180,164
+  solid ink colours (within 6 of the strongest): 215,75,134 x169; background beside it 236,180,166
+header icon (threshold 40): ink 36x34 px = 18x17 pt, box px (34,183)-(69,216), centre (26, 100) pt; strongest ink 215,75,134 on background 238,186,162
+header icon (threshold 8): ink 63x69 px = 31.5x34.5 pt, box px (18,166)-(80,234), centre (24.75, 100.25) pt; strongest ink 215,75,134 on background 238,186,162
+## c1-picture-personal
+bar picture (threshold 20): ink 30x30 px = 15x15 pt, box px (191,1575)-(220,1604), centre (103, 25) pt; strongest ink 255,0,0 on background 24,24,24
+  row runs from the top (px): 24 26 28 30 30 30 30 30 30 30 of 30; corner inset on the top row 3 px
+  quadrant centres: TL 255,0,0; TR 0,255,0; BL 0,0,255; BR 255,255,0; background 24,24,24
+  grey implied at 45% over that background (R,G,B solved separately; equal = colourless): TL 537/-29/-29; TR -29/537/-29; BL -29/-29/537; BR 537/537/-29
+header picture (threshold 20): ink 36x36 px = 18x18 pt, box px (34,182)-(69,217), centre (26, 100) pt; strongest ink 255,0,0 on background 29,29,29
+  row runs from the top (px): 28 30 32 34 36 36 36 36 36 36 of 36; corner inset on the top row 4 px
+  quadrant centres: TL 255,0,0; TR 0,255,0; BL 0,0,255; BR 255,255,0; background 29,29,29
+  grey implied at 45% over that background (R,G,B solved separately; equal = colourless): TL 531/-35/-35; TR -35/531/-35; BL -35/-35/531; BR 531/531/-35
+## c2-picture-work
+bar picture (threshold 20): ink 30x30 px = 15x15 pt, box px (191,1575)-(220,1604), centre (103, 25) pt; strongest ink 136,106,98 on background 236,181,164
+  row runs from the top (px): 15 18 21 23 23 21 24 25 25 25 of 30; corner inset on the top row 7.5 px
+  quadrant centres: TL 153,123,114; TR 214,183,174; BL 143,111,102; BR 239,209,200; background 236,181,164
+  grey implied at 45% over that background (R,G,B solved separately; equal = colourless): TL 52/52/53; TR 187/185/186; BL 29/25/26; BR 243/243/244
+header picture (threshold 20): ink 36x34 px = 18x17 pt, box px (34,183)-(69,216), centre (26, 100) pt; strongest ink 215,75,134 on background 238,186,162
+  row runs from the top (px): 14 16 16 6 6 6 6 6 30 32 of 36; corner inset on the top row 11 px
+  quadrant centres: TL 215,75,134; TR 215,75,134; BL 240,187,163; BR 250,195,170; background 238,186,162
+  grey implied at 45% over that background (R,G,B solved separately; equal = colourless): TL 187/-61/100; TR 187/-61/100; BL 242/188/164; BR 265/206/180
+## e1-con-personal
+bar picture (threshold 20): ink 30x30 px = 15x15 pt, box px (191,1575)-(220,1604), centre (103, 25) pt; strongest ink 255,0,0 on background 24,24,24
+  row runs from the top (px): 24 26 28 30 30 30 30 30 30 30 of 30; corner inset on the top row 3 px
+  quadrant centres: TL 255,0,0; TR 0,255,0; BL 0,0,255; BR 255,255,0; background 24,24,24
+  grey implied at 45% over that background (R,G,B solved separately; equal = colourless): TL 537/-29/-29; TR -29/537/-29; BL -29/-29/537; BR 537/537/-29
+header picture (threshold 20): ink 36x36 px = 18x18 pt, box px (34,182)-(69,217), centre (26, 100) pt; strongest ink 255,0,0 on background 29,29,29
+  row runs from the top (px): 28 30 32 34 36 36 36 36 36 36 of 36; corner inset on the top row 4 px
+  quadrant centres: TL 255,0,0; TR 0,255,0; BL 0,0,255; BR 255,255,0; background 29,29,29
+  grey implied at 45% over that background (R,G,B solved separately; equal = colourless): TL 531/-35/-35; TR -35/531/-35; BL -35/-35/531; BR 531/531/-35
+## e2-con-work
+bar picture (threshold 20): ink 30x30 px = 15x15 pt, box px (191,1575)-(220,1604), centre (103, 25) pt; strongest ink 136,106,98 on background 236,181,164
+  row runs from the top (px): 15 18 21 23 23 21 24 25 25 25 of 30; corner inset on the top row 7.5 px
+  quadrant centres: TL 153,123,114; TR 214,183,174; BL 143,111,102; BR 239,209,200; background 236,181,164
+  grey implied at 45% over that background (R,G,B solved separately; equal = colourless): TL 52/52/53; TR 187/185/186; BL 29/25/26; BR 243/243/244
+header picture (threshold 20): ink 36x34 px = 18x17 pt, box px (34,183)-(69,216), centre (26, 100) pt; strongest ink 215,75,134 on background 238,186,162
+  row runs from the top (px): 14 16 16 6 6 6 6 6 30 32 of 36; corner inset on the top row 11 px
+  quadrant centres: TL 215,75,134; TR 215,75,134; BL 240,187,163; BR 250,195,170; background 238,186,162
+  grey implied at 45% over that background (R,G,B solved separately; equal = colourless): TL 187/-61/100; TR 187/-61/100; BL 242/188/164; BR 265/206/180
+## d1-missing-personal
+bar placeholder (threshold 30): ink 24x24 px = 12x12 pt, box px (194,1578)-(217,1601), centre (103, 25) pt; strongest ink 151,151,151 on background 24,24,24
+header placeholder (threshold 30): ink 30x30 px = 15x15 pt, box px (37,185)-(66,214), centre (26, 100) pt; strongest ink 153,153,153 on background 29,29,29
+## f1-hare-personal
+bar cell 1 (threshold 30): ink 16x16 px = 8x8 pt, box px (198,1582)-(213,1597), centre (103, 25) pt; strongest ink 255,255,255 on background 24,24,24
+header icon slot x 9..40 pt (threshold 30): ink 53x18 px = 26.5x9 pt, box px (28,191)-(80,208), centre (27.25, 100) pt; strongest ink 116,116,116 on background 29,29,29
+## f2-hare-work
+bar cell 1 (threshold 30): ink 16x16 px = 8x8 pt, box px (198,1582)-(213,1597), centre (103, 25) pt; strongest ink 180,138,126 on background 236,181,164
+header icon slot x 9..40 pt (threshold 30): ink 36x34 px = 18x17 pt, box px (34,183)-(69,216), centre (26, 100) pt; strongest ink 215,75,134 on background 238,186,162
