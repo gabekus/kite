@@ -170,6 +170,8 @@ typedef NS_ENUM(NSInteger, KCJavaScriptDialogKind) {
 /// Asked before each main-frame navigation; the script runs at document start
 /// in every new document until the next navigation.
 - (nullable NSString *)browser:(KCBrowser *)browser documentStartScriptForURL:(NSURL *)url;
+/// The main frame's document started loading (it has committed).
+- (void)browserMainFrameDidStartLoading:(KCBrowser *)browser;
 /// Find-in-page results; `activeMatch` is 1-based. Arrives several times per search.
 - (void)browser:(KCBrowser *)browser findResultCount:(int)count activeMatch:(int)activeMatch final:(BOOL)final;
 /// The page's renderer crashed or was killed; `code` is its exit code (11 for a segfault).

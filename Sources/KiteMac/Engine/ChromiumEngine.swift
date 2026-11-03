@@ -113,7 +113,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         self.appliesBoosts = appliesBoosts
         super.init()
         browser.delegate = self
-        prepareVerificationCodes()
+        prepareDocumentScripts()
         if let adblocker, KCRuntime.supportsAdblock {
             frameAdblock = FrameAdblock(browser: browser, adblocker: adblocker, pageURL: { [weak self] in self?.address })
         }
@@ -130,50 +130,93 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         )
     }
 
-    /// Every page gets Kite's code-field script in its own world (VerificationCodeScript);
-    /// the binding exists only there, so pages can't ask for codes themselves.
-    private func prepareVerificationCodes() {
-        browser.pageFeatureEventHandler = { [weak self] method, params in self?.handlePageFeatureEvent(method, params) }
-        browser.executeDevToolsMethod(
-            "Runtime.addBinding",
-            params: ["name": VerificationCodeScript.bindingName, "executionContextName": VerificationCodeScript.worldName],
-            completion: nil
-        )
-        browser.executeDevToolsMethod("Page.enable", params: nil, completion: nil)
-        browser.executeDevToolsMethod(
-            "Page.addScriptToEvaluateOnNewDocument",
-            params: ["source": VerificationCodeScript.source, "worldName": VerificationCodeScript.worldName],
-            completion: nil
-        )
-        prepareMediaState()
-        prepareMailHandler()
-    }
-
-    /// The page's registerProtocolHandler reports to a main-world binding (MailHandlers.script),
-    /// which the script takes off the page's global object.
-    private func prepareMailHandler() {
-        browser.executeDevToolsMethod("Runtime.addBinding", params: ["name": Self.mailBindingName], completion: nil)
-        let send = "(() => { const b = globalThis.\(Self.mailBindingName); try { delete globalThis.\(Self.mailBindingName); } catch (e) {} "
-            + "return typeof b === 'function' ? (s) => b(s) : null; })()"
-        browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: ["source": MailHandlers.script(send: send)], completion: nil)
+    /// A script Kite runs in every document's main frame: in the page's world, or in an isolated
+    /// `world`; `binding` is how it reports.
+    private struct DocumentScript {
+        let source: String
+        var world: String?
+        var binding: String?
     }
 
     private static let mailBindingName = "kiteMailHandler"
 
-    /// The media script reports what the page plays (MediaStateScript) from its own world;
-    /// the page hook runs in the page's world to reach its Media Session handlers.
-    private func prepareMediaState() {
-        browser.executeDevToolsMethod(
-            "Runtime.addBinding",
-            params: ["name": MediaStateScript.bindingName, "executionContextName": MediaStateScript.worldName],
-            completion: nil
-        )
-        browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: ["source": MediaStateScript.pageHook], completion: nil)
-        browser.executeDevToolsMethod(
-            "Page.addScriptToEvaluateOnNewDocument",
-            params: ["source": MediaStateScript.source, "worldName": MediaStateScript.worldName],
-            completion: nil
-        )
+    private static let documentScripts = [
+        // Kite's code-field script (VerificationCodeScript); the binding exists only in its world,
+        // so pages can't ask for codes themselves.
+        DocumentScript(source: VerificationCodeScript.source, world: VerificationCodeScript.worldName,
+                       binding: VerificationCodeScript.bindingName),
+        // What the page plays (MediaStateScript); the page hook runs in the page's world to reach its
+        // Media Session handlers.
+        DocumentScript(source: MediaStateScript.source, world: MediaStateScript.worldName, binding: MediaStateScript.bindingName),
+        DocumentScript(source: MediaStateScript.pageHook),
+        // The page's registerProtocolHandler reports to a main-world binding (MailHandlers.script),
+        // which the script takes off the page's global object.
+        DocumentScript(
+            source: MailHandlers.script(
+                send: "(() => { const b = globalThis.\(mailBindingName); try { delete globalThis.\(mailBindingName); } catch (e) {} "
+                    + "return typeof b === 'function' ? (s) => b(s) : null; })()"
+            ),
+            binding: mailBindingName
+        ),
+    ]
+
+    private func prepareDocumentScripts() {
+        browser.pageFeatureEventHandler = { [weak self] method, params in self?.handlePageFeatureEvent(method, params) }
+        browser.executeDevToolsMethod("Page.enable", params: nil, completion: nil)
+        for script in Self.documentScripts {
+            addBinding(for: script)
+            var params: [String: Any] = ["source": script.source]
+            if let world = script.world { params["worldName"] = world }
+            browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: params, completion: nil)
+        }
+    }
+
+    private func addBinding(for script: DocumentScript) {
+        guard let binding = script.binding else { return }
+        var params: [String: Any] = ["name": binding]
+        if let world = script.world { params["executionContextName"] = world }
+        browser.executeDevToolsMethod("Runtime.addBinding", params: params, completion: nil)
+    }
+
+    // MARK: The first document
+
+    private var firstDocumentChecked = false
+    /// Whether the media script has reported in this page: it reports as each document starts.
+    private var mediaReported = false
+
+    /// Chromium handles a new tab's DevTools calls only once its first document has a renderer, so
+    /// that document starts without the document scripts: no media reports, codes or mail handler
+    /// until the tab navigates. Checked as that document starts loading: if the scripts ran, the media
+    /// script has reported, and the renderer answers the evaluate only after that report. Without
+    /// one, they run now; what the page did before then (a handler it set while parsing) they miss.
+    private func checkFirstDocument() {
+        guard !firstDocumentChecked else { return }
+        firstDocumentChecked = true
+        browser.callDevToolsMethod("Runtime.evaluate", params: ["expression": "0"]) { [weak self] _, error in
+            // An error (the document already gone) says nothing about the scripts.
+            guard let self, error == nil, !mediaReported else { return }
+            browser.callDevToolsMethod("Page.getFrameTree", params: nil) { [weak self] result, _ in
+                guard let self, let frame = (result?["frameTree"] as? [String: Any])?["frame"] as? [String: Any],
+                      let frameID = frame["id"] as? String else { return }
+                for script in Self.documentScripts { runLate(script, frame: frameID) }
+            }
+        }
+    }
+
+    private func runLate(_ script: DocumentScript, frame: String) {
+        guard let world = script.world else {
+            // Added again: one added before the renderer existed may not reach this document.
+            addBinding(for: script)
+            return browser.executeDevToolsMethod("Runtime.evaluate", params: ["expression": script.source], completion: nil)
+        }
+        browser.callDevToolsMethod("Page.createIsolatedWorld", params: ["frameId": frame, "worldName": world]) { [weak self] result, _ in
+            guard let self, let context = result?["executionContextId"] as? Int else { return }
+            // A world made here doesn't get bindings added by world name.
+            if let binding = script.binding {
+                browser.executeDevToolsMethod("Runtime.addBinding", params: ["name": binding, "executionContextId": context], completion: nil)
+            }
+            browser.executeDevToolsMethod("Runtime.evaluate", params: ["expression": script.source, "contextId": context], completion: nil)
+        }
     }
 
     /// The media script's execution context, from its latest report; commands run there.
@@ -435,6 +478,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         case "Runtime.executionContextsCleared":
             kiteContexts.removeAll()
         case "Runtime.bindingCalled" where params["name"] as? String == MediaStateScript.bindingName:
+            mediaReported = true
             if let call = CallControls.parse(params["payload"] as? String ?? "") {
                 if let context = params["executionContextId"] as? Int { mediaContext = context }
                 return onEvent?(.callControls(call)) ?? ()
@@ -495,6 +539,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     }
     func browser(_ browser: KCBrowser, faviconDidChange url: URL?) { onEvent?(.favicon(url)) }
     func browser(_ browser: KCBrowser, progressDidChange progress: Double) { onEvent?(.progress(progress)) }
+
+    @objc(browserMainFrameDidStartLoading:)
+    func browserMainFrameDidStartLoading(_ browser: KCBrowser) {
+        checkFirstDocument()
+    }
 
     func browserLoadingStateDidChange(_ browser: KCBrowser) {
         onEvent?(.navigationState(isLoading: browser.isLoading, canGoBack: browser.canGoBack, canGoForward: browser.canGoForward))
