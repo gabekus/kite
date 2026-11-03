@@ -151,6 +151,7 @@ Sources/KiteMac      macOS shell: AppKit window, SwiftUI sidebar and command bar
 Sources/CEFBridge    Objective-C++ wrapper over CEF's C++ API, exposed to Swift.
 Sources/KiteHelper   Chromium helper process (renderer, GPU, ...).
 Sources/KiteMac/Shaders/Kite.metal   Theme backdrop and loading glow.
+windows/             Kite for Windows: native C++20 on Win32 (docs/windows.md).
 ```
 
 ## Performance notes

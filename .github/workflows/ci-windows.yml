@@ -1,6 +1,8 @@
 name: CI (Windows)
 
-# Only KiteCore and its tests build on Windows, so this runs only when they change.
+# Builds and tests the Swift KiteCore on Windows, so this runs only when it changes.
+# Kite for Windows itself is native C++ (windows/, ci-windows-native.yml) and doesn't use
+# KiteCore's code; this job only keeps KiteCore portable.
 # A path filter on the trigger (not a separate "changes" job) means no extra job
 # hop before the build starts.
 on:
@@ -27,8 +29,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Keeps KiteCore portable for the Windows shell. Only KiteCore and its tests
-  # build on Windows, so the job runs only when those change.
+  # Keeps the Swift KiteCore building on Windows (Kite for Windows is C++ and
+  # doesn't need it); runs only when KiteCore or its tests change.
   windows:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'windows-latest' || vars.WINDOWS_RUNNER || 'windows-latest' }}
     timeout-minutes: 30
