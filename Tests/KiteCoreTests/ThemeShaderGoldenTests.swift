@@ -128,9 +128,11 @@ import Testing
             let lean = signedSums.map { counted > 0 ? abs($0) / Double(counted) : .infinity }.max() ?? 0
             let report = "\(c.name): \(off)/\(c.samples.count) off, mean |diff| \(meanAbsolute), largest mean lean \(lean)"
             print("ThemeShaderGoldenTests: " + report)
-            #expect(offShare <= 0.1, "\(report)")
-            #expect(meanAbsolute <= 5e-4, "\(report)")
-            #expect(lean <= 3e-4, "\(report)")
+            // First run (Apple GPU, 2026-11-03): no sample off, mean |diff| at most 1.6e-5, lean at
+            // most 7.4e-6. The limits leave room for other GPUs and stay well under the dither's 1e-3.
+            #expect(offShare <= 0.05, "\(report)")
+            #expect(meanAbsolute <= 1e-4, "\(report)")
+            #expect(lean <= 5e-5, "\(report)")
         }
     }
 }
