@@ -27,10 +27,13 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "core/CommandBar.h"
+#include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
 #include "core/Sidebar.h"
@@ -64,6 +67,7 @@ int Usage() {
         "       kitecore [--profile DIR] close TAB_ID\n"
         "       kitecore [--profile DIR] reopen [TAB_ID]\n"
         "       kitecore [--profile DIR] archive-stale [NOW]\n"
+        "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
         "       kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n",
         stderr);
@@ -367,6 +371,38 @@ int main(int argc, char** argv) {
         if (auto interval = state.ArchiveAfterSeconds()) {
             for (const Tab& tab : state.ArchiveStaleTabs(*interval, now)) std::puts(tab.id.c_str());
             changed = true;
+        }
+    } else if (command == "evict" && args.size() >= 2) {
+        // The live-page cap (LiveTabPolicy): of the pages given with when each was last shown,
+        // the ones past MAX that the shell would ask to close, least recently shown first. The
+        // shown tab stays, and so does a popup or its opener while both tabs exist.
+        LiveTabPolicy policy;
+        auto [end, error] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), policy.maxLiveTabs);
+        if (error != std::errc() || end != args[1].data() + args[1].size()) return Usage();
+        std::map<std::string, Timestamp> live;
+        std::set<std::string> keep;
+        std::map<std::string, std::string> popupOpeners;
+        for (size_t i = 2; i < args.size(); ++i) {
+            if (args[i] == "--shown" && i + 1 < args.size()) {
+                keep.insert(Id(args[++i]));
+                continue;
+            }
+            const bool popup = args[i] == "--popup" && i + 1 < args.size();
+            const std::string& pair = popup ? args[++i] : args[i];
+            const size_t equals = pair.find('=');
+            if (equals == std::string::npos) return Usage();
+            const std::string value = pair.substr(equals + 1);
+            if (popup) {
+                popupOpeners[Id(pair.substr(0, equals))] = Id(value);
+                continue;
+            }
+            double shown = 0;
+            auto [at, failed] = std::from_chars(value.data(), value.data() + value.size(), shown);
+            if (failed != std::errc() || at != value.data() + value.size()) return Usage();
+            live[Id(pair.substr(0, equals))] = shown;
+        }
+        for (const std::string& id : policy.TabsToEvict(live, keep)) {
+            if (!IsLinkedToPopup(popupOpeners, state, id)) std::puts(id.c_str());
         }
     } else if (command == "space" && args.size() >= 2) {
         const std::string& action = args[1];

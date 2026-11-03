@@ -228,12 +228,30 @@ struct Chromium::Shared {
     // pages close, unless one is tied to a popup, using the camera or microphone, or playing
     // sound (asked of the page first, on CEF's thread; Discard gets the answer).
     void Evict();
+    // The pages that count, with when each was last shown: not one whose tab already closed
+    // (closeWhenMade), which goes on its own once made.
+    std::map<std::string, Timestamp> LivePages() const {
+        std::map<std::string, Timestamp> live;
+        for (const auto& [id, page] : pages) {
+            if (!page.closeWhenMade) live.emplace(id, page.lastShown);
+        }
+        return live;
+    }
+    std::vector<std::string> OverTheLimit() const {
+        std::set<std::string> keep;
+        if (!shown.empty()) keep.insert(shown);
+        return policy.TabsToEvict(LivePages(), keep);
+    }
     void Discard(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, bool busy) {
         auto it = pages.find(tabID);
         if (busy || closing || tabID == shown || it == pages.end() || !it->second.browser || !it->second.browser->IsSame(browser) ||
             it->second.mediaInUse || (events.keepAlive && events.keepAlive(tabID))) {
             return;
         }
+        // Still over the limit, and still among the least recently shown: a tab closed, or
+        // this one was shown again, while the page was being asked.
+        const std::vector<std::string> over = OverTheLimit();
+        if (std::find(over.begin(), over.end(), tabID) == over.end()) return;
         ClosePage(it);
         if (events.pageDiscarded) events.pageDiscarded(tabID);
     }
@@ -362,9 +380,7 @@ public:
         settings.background_color = kPageBackdrop;
         shared_->Count(+1, 0);
         shared_->Post([shared = shared_, opener = tabID_, id, url = targetURL.ToString()] {
-            // So Show doesn't create a second browser for it. It's in its opener's profile.
-            Chromium::Shared::Page& page = shared->pages.try_emplace(id).first->second;
-            if (auto it = shared->pages.find(opener); it != shared->pages.end()) page.profile = it->second.profile;
+            shared->pages.try_emplace(id);  // so Show doesn't create a second browser for it
             if (shared->events.popupOpened) shared->events.popupOpened(opener, id, url);
         });
         return false;
@@ -475,22 +491,25 @@ public:
         });
     }
 
-    void OnAddressChange(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, const CefString& url) override {
+    // A page's news reaches its tab only while it's still the tab's page: one Kite closed (its
+    // tab closed, or the live-page limit) says nothing more, as the Mac's discard drops onEvent.
+
+    void OnAddressChange(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, const CefString& url) override {
         if (!frame->IsMain()) return;
-        shared_->Post([shared = shared_, id = tabID_, address = url.ToString()] {
-            if (shared->events.addressChanged) shared->events.addressChanged(id, address);
+        shared_->Post([shared = shared_, id = tabID_, browser, address = url.ToString()] {
+            if (shared->PageFor(id, browser) && shared->events.addressChanged) shared->events.addressChanged(id, address);
         });
     }
 
-    void OnTitleChange(CefRefPtr<CefBrowser>, const CefString& title) override {
-        shared_->Post([shared = shared_, id = tabID_, text = title.ToString()] {
-            if (shared->events.titleChanged) shared->events.titleChanged(id, text);
+    void OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString& title) override {
+        shared_->Post([shared = shared_, id = tabID_, browser, text = title.ToString()] {
+            if (shared->PageFor(id, browser) && shared->events.titleChanged) shared->events.titleChanged(id, text);
         });
     }
 
-    void OnFaviconURLChange(CefRefPtr<CefBrowser>, const std::vector<CefString>& urls) override {
-        shared_->Post([shared = shared_, id = tabID_, url = urls.empty() ? std::string() : urls.front().ToString()] {
-            if (shared->events.faviconChanged) shared->events.faviconChanged(id, url);
+    void OnFaviconURLChange(CefRefPtr<CefBrowser> browser, const std::vector<CefString>& urls) override {
+        shared_->Post([shared = shared_, id = tabID_, browser, url = urls.empty() ? std::string() : urls.front().ToString()] {
+            if (shared->PageFor(id, browser) && shared->events.faviconChanged) shared->events.faviconChanged(id, url);
         });
     }
 
@@ -551,9 +570,9 @@ public:
 
     // CefLoadHandler
 
-    void OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading, bool, bool) override {
-        shared_->Post([shared = shared_, id = tabID_, isLoading] {
-            if (shared->events.loadingChanged) shared->events.loadingChanged(id, isLoading);
+    void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading, bool, bool) override {
+        shared_->Post([shared = shared_, id = tabID_, browser, isLoading] {
+            if (shared->PageFor(id, browser) && shared->events.loadingChanged) shared->events.loadingChanged(id, isLoading);
         });
     }
 
@@ -597,15 +616,13 @@ private:
 }  // namespace
 
 void Chromium::Shared::Evict() {
-    std::map<std::string, Timestamp> live;
-    for (const auto& [id, page] : pages) live.emplace(id, page.lastShown);
-    std::set<std::string> keep;
-    if (!shown.empty()) keep.insert(shown);
-    for (const std::string& id : policy.TabsToEvict(live, keep)) {
+    if (pages.size() <= policy.maxLiveTabs) return;
+    for (const std::string& id : OverTheLimit()) {
         const Page& page = pages.at(id);
         // A page still being made can't be asked; it counts, and goes on a later pass.
         if (!page.browser || page.mediaInUse || (events.keepAlive && events.keepAlive(id))) continue;
         RunOnCefUIThread([browser = page.browser] {
+            // Every page's client is a PageClient (Show and OnBeforePopup make them).
             CefRefPtr<CefClient> client = browser->GetHost()->GetClient();
             if (client) static_cast<PageClient*>(client.get())->CheckBusy(browser);
         });
@@ -725,6 +742,8 @@ void Chromium::Show(const std::string& tabID, const std::string& profileDirector
         // Its tab came back (Ctrl+Shift+T) before the page being made for it was closed.
         it->second.closeWhenMade = false;
         it->second.lastShown = Now();
+        // A popup's page counts as its tab's space's, as the Mac's openTab(with:) records it.
+        if (it->second.profile.empty()) it->second.profile = profileDirectory;
     }
     if (!shared_->pages.contains(tabID)) {
         // A space's own profile gets its own request context, a folder beside Default, as
