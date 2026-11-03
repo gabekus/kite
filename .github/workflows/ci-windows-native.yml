@@ -134,7 +134,8 @@ jobs:
               $w = 1280 * $scale; $h = 820 * $scale
               Write-Host "capture ${scale}x: $($bitmap.Width)x$($bitmap.Height) px"
               if ($bitmap.Width -ne $w -or $bitmap.Height -ne $h) { throw "capture is $($bitmap.Width)x$($bitmap.Height), expected ${w}x${h}" }
-              foreach ($point in @(@(0, 0), @($w - 1, 0), @(0, $h - 1), @($w - 1, $h - 1), @($w / 2, $h / 2))) {
+              # Parenthesised: PowerShell's comma binds tighter than minus.
+              foreach ($point in @(@(0, 0), @(($w - 1), 0), @(0, ($h - 1)), @(($w - 1), ($h - 1)), @(($w / 2), ($h / 2)))) {
                 $pixel = $bitmap.GetPixel($point[0], $point[1])
                 Write-Host "  pixel $($point -join ','): #$($pixel.Name)"
                 if ($pixel.A -ne 255) { throw "capture pixel $($point -join ',') isn't opaque" }
