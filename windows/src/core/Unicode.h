@@ -20,12 +20,17 @@ bool IsWhitespace(char32_t c);
 bool IsLetter(char32_t c);  // Alphabetic: Swift's Character.isLetter on a character starting with c
 bool IsNumber(char32_t c);  // Numeric_Type isn't None: Swift's Character.isNumber, likewise
 
-// Text split into characters the way Swift's String is: extended grapheme clusters (UAX #29),
-// so "e" + U+0301 or a Hangul syllable written as jamo is one character. Follows GB3–GB9b;
-// emoji ZWJ sequences and flag pairs (GB11–GB13) are split, which no caller can tell apart
-// since none of their parts is a letter or a number. Indic conjuncts (GB9c, Unicode 15.1) are
-// split too: a TLD like "क्ष" counts as two characters here and may count as one on the Mac.
+// Text split into characters the way Swift's String is: extended grapheme clusters (UAX #29,
+// Unicode 15.1, every rule GB3–GB13 including GB9c's Indic conjuncts), so "e" + U+0301, a
+// Hangul syllable written as jamo, an emoji ZWJ sequence or a flag is one character.
 std::vector<std::u32string> Characters(std::string_view utf8);
+// The same, as where characters start: starts[i] for each code point, and starts[size()],
+// which is always true.
+std::vector<bool> CharacterStarts(std::u32string_view text);
+
+// Canonical decomposition (NFD): canonically equivalent text ("é" and "e" + U+0301) comes
+// out identical, so comparing it compares the way Swift's Character == does.
+std::string Decomposed(std::string_view utf8);
 
 // Trims leading and trailing Unicode whitespace.
 std::string_view Trim(std::string_view utf8);
@@ -33,5 +38,9 @@ std::string_view Trim(std::string_view utf8);
 // Lowercased scalar by scalar with Unicode's full Lowercase_Mapping, as Swift's
 // String.lowercased() does (no Final_Sigma context: "ΑΣ" becomes "ασ", not "ας").
 std::string Lowercased(std::string_view utf8);
+
+// Lowercased, then decomposed: the code points text is compared by when Swift compares the
+// lowercased() strings' Characters (Character == is canonical equivalence).
+std::u32string Folded(std::string_view utf8);
 
 }  // namespace kite::unicode

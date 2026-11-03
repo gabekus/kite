@@ -231,9 +231,9 @@ int main(int argc, char** argv) {
         for (const CommandSuggestion& row : CommandBarSuggestions(Join(words, 0), state, mode)) {
             const char* kind = row.kind == CommandSuggestion::Kind::Open ? "open"
                                : row.kind == CommandSuggestion::Kind::Search ? "search" : "switchTab";
-            json::Object o{{"kind", std::string(kind)}, {"url", row.url}};
-            if (!row.text.empty()) o.emplace("text", row.text);
+            json::Object o{{"kind", std::string(kind)}, {"url", row.url}, {"title", row.title}, {"detail", row.detail}};
             if (!row.tabID.empty()) o.emplace("tabID", row.tabID);
+            if (row.faviconURL) o.emplace("faviconURL", *row.faviconURL);
             rows.emplace_back(std::move(o));
         }
         std::puts(json::Write(json::Value(std::move(rows))).c_str());

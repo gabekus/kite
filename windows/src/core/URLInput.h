@@ -13,6 +13,8 @@ enum class SearchEngine { Google, DuckDuckGo, Kagi, Bing };
 // "google", "duckDuckGo", "kagi", "bing": the Mac's raw values in session.json.
 std::optional<SearchEngine> SearchEngineFromRaw(std::string_view raw);
 std::string SearchURL(SearchEngine engine, std::string_view query);
+// "Google", "DuckDuckGo", "Kagi", "Bing" (SearchEngine.displayName).
+const char* DisplayName(SearchEngine engine);
 
 namespace url_input {
 

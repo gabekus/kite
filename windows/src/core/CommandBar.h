@@ -21,14 +21,16 @@ std::optional<int> Score(std::string_view query, std::string_view title);
 
 namespace tab_search {
 
+// Points into the state it was ranked in: valid until that state changes.
 struct Match {
     const Tab* tab;
-    std::string spaceID;  // the selected space for a favorite
+    const Space* space;  // the selected space for a favorite
     int score;
 };
 
 // Open tabs matching `query`, best first (then most recently used): favorites and the
-// selected space's tabs get a bonus.
+// selected space's tabs get a bonus. Runs on every keystroke in the bar: an ASCII title or
+// address (most of them) is compared in place, with no allocation.
 std::vector<Match> Rank(std::string_view query, const BrowserState& state, size_t limit = 6);
 // `query` already trimmed and lowercased.
 std::optional<int> Score(std::string_view query, const Tab& tab);
@@ -38,12 +40,16 @@ std::optional<int> Score(std::string_view query, const Tab& tab);
 // The Mac's CommandBarMode: a new tab (Ctrl+T) or the current tab's address (Ctrl+L).
 enum class CommandBarMode { NewTab, EditCurrent };
 
+// One row, with what the bar draws (the Mac's SuggestionRow): a snapshot of the state the
+// rows were made from, so the bar makes them again when the state changes.
 struct CommandSuggestion {
     enum class Kind { Open, Search, SwitchTab };
     Kind kind;
-    std::string url;    // what Enter loads (Open, Search) or the tab's address (SwitchTab)
-    std::string text;   // the query (Search), or nothing
-    std::string tabID;  // SwitchTab
+    std::string url;     // what Enter loads (Open, Search) or the tab's address (SwitchTab)
+    std::string title;   // the URL (Open), the query (Search), the tab's display title (SwitchTab)
+    std::string detail;  // the dim label before the arrow: "Open", "Search Google", "Switch to Tab"
+    std::string tabID;   // SwitchTab
+    std::optional<std::string> faviconURL;  // SwitchTab
     bool operator==(const CommandSuggestion&) const = default;
 };
 
