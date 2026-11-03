@@ -121,11 +121,10 @@ enum UICapture {
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 
-    /// A browser window drawn in Kite, back to front: the backdrop (the material's unblurred fallback, the Metal theme
-    /// drawn again off screen), the views over it, then what a view render can't draw (each page from Chromium's own
-    /// frame, other Metal themes), each in its card with the views above it (overlays, the command bar, the Library)
-    /// drawn over it again. Nil for windows that
-    /// aren't browser windows; its notes say which pages didn't answer.
+    /// A browser window drawn in Kite, back to front: the backdrop (the materials' unblurred fallback, the Metal themes
+    /// drawn again off screen), the views over it, then each page from Chromium's own frame in its card, with the views
+    /// above it (overlays, the command bar, the Library) drawn over it again. Nil for windows that aren't browser
+    /// windows; its notes say which pages didn't answer.
     private static func composedRender(_ window: NSWindow) async -> (CGImage, [String])? {
         guard let controller = window.windowController as? BrowserWindowController,
               let root = window.contentView?.superview ?? window.contentView else { return nil }
@@ -152,33 +151,30 @@ enum UICapture {
             if let image = bitmap.cgImage { context.draw(image, in: place(view.convert(view.bounds, to: root))) }
         }
 
-        controller.drawCaptureBackdrop(view: draw) { image, view in context.draw(image, in: place(view.convert(view.bounds, to: root))) }
+        for part in controller.captureBackdrop {
+            context.saveGState()
+            switch part {
+            case let .view(view, clip):
+                if let clip, let mask = cardMask(clip) { context.clip(to: CGRect(origin: .zero, size: size), mask: mask) }
+                draw(view)
+            case let .image(image, view, clip):
+                if let clip, let mask = cardMask(clip) { context.clip(to: CGRect(origin: .zero, size: size), mask: mask) }
+                context.draw(image, in: place(view.convert(view.bounds, to: root)))
+            }
+            context.restoreGState()
+        }
         controller.withCaptureBackdropHidden { draw(root) }
 
         var notes: [String] = []
-        // Every page first, each clipped to its card; then, per card, the views above its page, clipped to that card,
-        // so overlays end up on top and nothing outside a card is drawn twice (split panes are cards side by side).
-        var cards: [(view: NSView, mask: CGImage?)] = []
-        // Metal draws nothing in a view render: other themes (the sidebar peek card's) go under their views like pages.
-        var metal: [NSView] = []
-        func findMetal(_ view: NSView) {
-            guard !view.isHidden, view.alphaValue > 0 else { return }
-            if let theme = view as? ThemeView, !controller.isCaptureBackdrop(theme) {
-                if let image = theme.snapshot() {
-                    let mask = cardMask(theme)
-                    context.saveGState()
-                    if let mask { context.clip(to: CGRect(origin: .zero, size: size), mask: mask) }
-                    context.draw(image, in: place(theme.convert(theme.bounds, to: root)))
-                    context.restoreGState()
-                    cards.append((theme, mask))
-                }
-                return
-            }
-            if view is GlowView { metal.append(view) }
-            view.subviews.forEach(findMetal)
+        // What a view render can't draw: each page, from Chromium's own (opaque) frame. Each goes in its card, back to
+        // front, and the views above it are drawn again inside that card, so overlays stay on top, a card above another
+        // repaints its own page, and nothing outside a card is composited twice.
+        var underlays: [(view: NSView, image: CGImage)] = []
+        func findGlow(_ view: NSView) -> Bool {
+            guard !view.isHidden, view.alphaValue > 0 else { return false }
+            return view is GlowView || view.subviews.contains(where: findGlow)
         }
-        findMetal(root)
-        if !metal.isEmpty { notes.append("The loading glow (Metal) isn't drawn.") }
+        if findGlow(root) { notes.append("The loading glow (Metal) isn't drawn.") }
         for page in controller.capturePages {
             let data: Data?
             do {
@@ -188,26 +184,22 @@ enum UICapture {
                 continue
             }
             guard page.view.window === window, let data, let image = NSBitmapImageRep(data: data)?.cgImage else { continue }
-            let mask = cardMask(page.view)
-            context.saveGState()
-            if let mask { context.clip(to: CGRect(origin: .zero, size: size), mask: mask) }
-            context.draw(image, in: place(page.view.convert(page.view.bounds, to: root)))
-            context.restoreGState()
-            cards.append((page.view, mask))
+            underlays.append((page.view, image))
         }
-        for (underlay, mask) in cards {
+        for (view, image) in underlays.sorted(by: { stackOrder($0.view, root).lexicographicallyPrecedes(stackOrder($1.view, root)) }) {
             context.saveGState()
-            if let mask {
+            if let mask = cardMask(view) {
                 context.clip(to: CGRect(origin: .zero, size: size), mask: mask)
             } else {
-                context.clip(to: place(underlay.convert(underlay.bounds, to: root)))
+                context.clip(to: place(view.convert(view.bounds, to: root)))
             }
-            // What's above it on screen: its later siblings at every level up to the window.
-            var child: NSView = underlay
+            context.draw(image, in: place(view.convert(view.bounds, to: root)))
+            // What's above it on screen: the siblings stacked over it at every level up to the window.
+            var child: NSView = view
             while let parent = child.superview {
-                if let index = parent.subviews.firstIndex(of: child) {
-                    for view in parent.subviews[(index + 1)...] where !view.isHidden && view.alphaValue > 0 { draw(view) }
-                }
+                let key = stackKey(child, in: parent)
+                for sibling in parent.subviews where sibling !== child && !sibling.isHidden && sibling.alphaValue > 0
+                    && stackKey(sibling, in: parent) > key { draw(sibling) }
                 if parent === root { break }
                 child = parent
             }
@@ -225,6 +217,28 @@ enum UICapture {
             return roundedMask(device, radius: layer.cornerRadius * scale, curve: layer.cornerCurve, width: width, height: height)
         }
         return context.makeImage().map { ($0, notes) }
+    }
+
+    /// Where `view` stacks among its siblings: its layer's zPosition first, then its place in `parent.subviews`.
+    private static func stackKey(_ view: NSView, in parent: NSView) -> StackKey {
+        StackKey(z: view.layer?.zPosition ?? 0, index: parent.subviews.firstIndex(of: view) ?? 0)
+    }
+
+    /// `view`'s stacking from `root` down, back to front: one key per level.
+    private static func stackOrder(_ view: NSView, _ root: NSView) -> [StackKey] {
+        var keys: [StackKey] = []
+        var child = view
+        while child !== root, let parent = child.superview {
+            keys.append(stackKey(child, in: parent))
+            child = parent
+        }
+        return keys.reversed()
+    }
+
+    private struct StackKey: Comparable {
+        let z: CGFloat
+        let index: Int
+        static func < (a: StackKey, b: StackKey) -> Bool { (a.z, a.index) < (b.z, b.index) }
     }
 
     /// The frames of the materials an in-process render can't blur, so a diff can treat them as material-only.

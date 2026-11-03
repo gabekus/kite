@@ -1627,26 +1627,36 @@ extension BrowserWindowController {
     }
 }
 
+/// One layer of the window's backdrop for `ui capture`'s in-process render: a view drawn where it is, or an image over a
+/// view's frame; `clip`, when set, is the rounded view it's drawn inside.
+enum CaptureBackdropPart {
+    case view(NSView, clip: NSView?)
+    case image(CGImage, over: NSView, clip: NSView?)
+}
+
 extension BrowserWindowController {
-    /// `ui capture`'s in-process render: the window's backdrop, back to front: the material (its unblurred fallback)
-    /// and the Metal theme, drawn again off screen. `drawView` draws a view where it is; `drawImage` an image over a view.
-    func drawCaptureBackdrop(view drawView: (NSView) -> Void, image drawImage: (CGImage, NSView) -> Void) {
-        drawView(materialView)
-        if let image = themeView.snapshot() { drawImage(image, themeView) }
+    /// `ui capture`'s in-process render: the window's backdrop, back to front. The material (its unblurred fallback)
+    /// and the Metal theme, drawn again off screen; then, while the sidebar peeks, its card's own material and theme
+    /// inside the card's rounded corners.
+    var captureBackdrop: [CaptureBackdropPart] {
+        var parts: [CaptureBackdropPart] = [.view(materialView, clip: nil)]
+        if let image = themeView.snapshot() { parts.append(.image(image, over: themeView, clip: nil)) }
+        if !peekCard.isHiddenOrHasHiddenAncestor, peekCard.alphaValue > 0 {
+            parts.append(.view(peekCard.material, clip: peekCard))
+            if let image = peekCard.theme.snapshot() { parts.append(.image(image, over: peekCard.theme, clip: peekCard)) }
+        }
+        return parts
     }
 
-    /// Runs `body` with the backdrop out of the way, so the views over it draw on their own.
+    /// Runs `body` with the backdrop out of the way, so the views over it draw on their own (the peek card draws
+    /// only its border then).
     func withCaptureBackdropHidden(_ body: () -> Void) {
-        let hidden = (materialView.isHidden, themeView.isHidden)
-        materialView.isHidden = true
-        themeView.isHidden = true
+        let views: [NSView] = [materialView, themeView, peekCard.material, peekCard.theme]
+        let hidden = views.map(\.isHidden)
+        views.forEach { $0.isHidden = true }
         body()
-        materialView.isHidden = hidden.0
-        themeView.isHidden = hidden.1
+        zip(views, hidden).forEach { $0.isHidden = $1 }
     }
-
-    /// Whether `view` is part of the backdrop `drawCaptureBackdrop` already drew.
-    func isCaptureBackdrop(_ view: NSView) -> Bool { view === materialView || view === themeView }
 
     /// The pages showing in this window: the tabs on screen and an open link preview's.
     var capturePages: [WebPage] {
