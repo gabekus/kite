@@ -63,6 +63,11 @@ struct PageEvents {
     // Ctrl+W and Ctrl+Shift+T in a page: Kite's Archive Tab and Restore Last Closed Tab.
     std::function<void()> archiveTab;
     std::function<void()> reopenClosedTab;
+    // Past six live pages the least recently shown close (the Mac's PagePool). Asked first:
+    // true keeps the tab's page (a popup and its opener, PagePool.isLinkedToPopup).
+    std::function<bool(const std::string& tabID)> keepAlive;
+    // A page closed for the limit; its tab stays and loads again when it's next shown.
+    std::function<void(const std::string& tabID)> pageDiscarded;
 };
 
 class Chromium {

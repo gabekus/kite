@@ -40,6 +40,7 @@
 #include <vector>
 
 #include "core/CommandBar.h"
+#include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
 #include "core/SupportDirectory.h"
@@ -689,6 +690,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             std::erase_if(popupOpeners, [&](const auto& entry) { return entry.second == id; });
             showSelectedTab();
             stateChanged();
+        };
+        // A popup and its opener keep their pages while both tabs exist; a page closed for the
+        // limit can't be anyone's opener or popup again (the Mac's PagePool.discard).
+        events.keepAlive = [&](const std::string& id) { return kite::IsLinkedToPopup(popupOpeners, state, id); };
+        events.pageDiscarded = [&](const std::string& id) {
+            std::erase_if(popupOpeners, [&](const auto& entry) { return entry.first == id || entry.second == id; });
         };
         events.archiveTab = [&] { archiveTab(); };
         events.reopenClosedTab = [&] { reopenClosedTab(); };

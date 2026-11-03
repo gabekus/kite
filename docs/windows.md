@@ -146,7 +146,12 @@ opener and its tab leaves the session, as closing it would (W5). A tab Kite
 closes (its close button, Ctrl+W, the auto-archive) or unloads (a pinned tab)
 takes its browser with it: Kite hides the page and force-closes it on CEF's
 thread, and remembers its own closes, so `DoClose` doesn't report them as a
-page closing itself. A page whose browser isn't made yet closes as it arrives. Ctrl-click and middle-click open a link in a background tab,
+page closing itself. A page whose browser isn't made yet closes as it arrives.
+As on the Mac, at most six pages stay alive (W5b): past that, showing a tab
+closes the least recently shown page, unless it's tied to a popup, using the
+camera or microphone, or playing sound (asked of the page with the Mac's
+script through DevTools' `Runtime.evaluate`). Its tab stays and loads again
+when it's next shown. Ctrl-click and middle-click open a link in a background tab,
 Ctrl+Shift-click in a foreground one (a `target=_blank` link opens as a popup
 tab either way, as on the Mac). The first page is made once the window is on
 screen and not minimized. `--smoke-test` loads
