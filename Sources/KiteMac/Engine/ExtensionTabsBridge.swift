@@ -25,8 +25,6 @@ protocol ExtensionTabsHost: AnyObject {
     /// A new tab, loaded now even if it stays in the background.
     func openTabForExtension(url: URL?, active: Bool) -> ChromiumPage?
     func activateTabForExtension(_ id: UUID)
-    /// Where a popup the extension opened itself (action.openPopup) hangs.
-    var extensionPopupAnchor: (rect: NSRect, view: NSView) { get }
 }
 
 /// Makes Kite's tabs visible to extensions (tabs.query, windows.*, tabs.create, …), and
@@ -254,8 +252,11 @@ final class ExtensionTabsBridge {
                   ExtensionOrigin.origin(of: url) == origin, let engine else {
                 return completion(nil, "Extension does not have a popup on the active tab.")
             }
-            let anchor = host.extensionPopupAnchor
-            ExtensionPopover.show(url, engine: engine, relativeTo: anchor.rect, of: anchor.view)
+            // The window in front, which needn't be this bridge's host.
+            guard let (view, rect) = ExtensionsMenuBar.anchor() else {
+                return completion(nil, "Could not find an active browser window.")
+            }
+            ExtensionPopover.show(url, engine: engine, relativeTo: rect, of: view)
             completion(nil, nil)
         default:
             completion(nil, "Kite doesn't support \(op)")
