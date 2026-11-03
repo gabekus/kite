@@ -166,7 +166,7 @@ final class FavoritesTrayView: SidebarFlippedView {
     }
 
     private func contentHeight(width: CGFloat) -> CGFloat {
-        if slots.isEmpty { return showsEmpty ? FavoritesEmptyStateView.height : 0 }
+        if slots.isEmpty { return showsEmpty ? empty.height(forWidth: width) : 0 }
         let cols = FavoritesTrayLayout.columns(count: slots.count, width: width)
         let rows = (slots.count + cols - 1) / cols
         return CGFloat(rows) * M.favoriteHeight + CGFloat(max(rows - 1, 0)) * M.favoriteSpacing
@@ -489,8 +489,11 @@ final class FavoritePaneView: SidebarFlippedView {
 /// outline, with a close button on hover that hides it until a drag needs somewhere to drop.
 @MainActor
 final class FavoritesEmptyStateView: SidebarFlippedView {
-    /// 47pt at least, 6pt above and below.
-    static let height: CGFloat = M.favoriteHeight + 12
+    /// 47pt at least, more when the subtitle needs more lines, and 6pt above and below (SwiftUI's
+    /// `.frame(minHeight: 47)` and `.padding(.vertical, 6)`).
+    func height(forWidth width: CGFloat) -> CGFloat {
+        max(M.favoriteHeight, title.height(forWidth: width - 32) + 2 + subtitle.height(forWidth: width - 32)) + 12
+    }
     var onDismiss: () -> Void = {}
     var dismissable = true { didSet { updateClose() } }
     private let outline = CAShapeLayer()
@@ -508,6 +511,11 @@ final class FavoritesEmptyStateView: SidebarFlippedView {
         layer?.addSublayer(outline)
         title.text = "Drag to add Favorites"
         subtitle.text = "Favorites keep your most used sites and apps close"
+        // SwiftUI wrapped both within the 16pt insets: the subtitle's lines each centred, the title's (a narrow sidebar)
+        // flush left in a centred block.
+        title.wraps = true
+        title.lineAlignment = .left
+        subtitle.wraps = true
         addSubview(title)
         addSubview(subtitle)
         close.opacity = 0.5
@@ -535,7 +543,7 @@ final class FavoritesEmptyStateView: SidebarFlippedView {
         CATransaction.commit()
         // Title and subtitle 2pt apart, centred in the 47pt box between the 6pt insets.
         let box = CGRect(x: 16, y: 6, width: bounds.width - 32, height: bounds.height - 12)
-        let th = title.lineHeight, sh = subtitle.lineHeight
+        let th = title.height(forWidth: box.width), sh = subtitle.height(forWidth: box.width)
         let top = box.minY + ((box.height - th - 2 - sh) / 2).rounded(.down)
         title.frame = CGRect(x: box.minX, y: top, width: box.width, height: th)
         subtitle.frame = CGRect(x: box.minX, y: top + th + 2, width: box.width, height: sh)
@@ -556,11 +564,17 @@ final class FavoritesEmptyStateView: SidebarFlippedView {
     override func mouseExited(with event: NSEvent) { hovering = false }
 }
 
-/// A line of text centred across its frame, its line box at the frame's top (SwiftUI's `Text` in a VStack with
-/// centred alignment).
+/// Text centred across its frame, its line box at the frame's top (SwiftUI's `Text` in a VStack with centred
+/// alignment): one line, or with `wraps` as many as it needs, each centred.
 @MainActor
 final class CenteredLabel: NSView {
     var text = "" { didSet { needsDisplay = true } }
+    /// Wraps onto more lines at word breaks, each centred (SwiftUI's `Text` with `.multilineTextAlignment(.center)`),
+    /// instead of one line.
+    var wraps = false { didSet { needsDisplay = true } }
+    /// How wrapped lines line up: each centred (`.multilineTextAlignment(.center)`), or flush left in a block that's
+    /// centred (SwiftUI's default, `.leading`).
+    var lineAlignment: NSTextAlignment = .center { didSet { needsDisplay = true } }
     var color: NSColor = .labelColor { didSet { needsDisplay = true } }
     private let font: NSFont
     init(size: CGFloat, weight: NSFont.Weight, opacity: Double) {
@@ -576,11 +590,53 @@ final class CenteredLabel: NSView {
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     var lineHeight: CGFloat { ceil(font.ascender - font.descender + font.leading) }
+    /// From one wrapped line's top to the next's, as SwiftUI spaces a wrapped Text's lines: the ascender and descender
+    /// each rounded up (14 for 11pt, 15 for 12pt semibold, measured on screen against the SwiftUI view before #268).
+    var linePitch: CGFloat { ceil(font.ascender) + ceil(-font.descender) }
+
+    /// The lines `text` takes at `width`.
+    func height(forWidth width: CGFloat) -> CGFloat {
+        let lines = lineCount(width: width)
+        // One line is as tall as an unwrapped label, as SwiftUI's single-line Text is.
+        return lines <= 1 ? lineHeight : CGFloat(lines) * (linePitch)
+    }
+
+    private func lineCount(width: CGFloat) -> Int {
+        guard wraps, width > 0 else { return 1 }
+        let pitch = linePitch
+        let rect = attributed(wrapping: true).boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude),
+                                             options: [.usesLineFragmentOrigin])
+        return max(1, Int((rect.height / pitch).rounded()))
+    }
+
+    private func attributed(wrapping: Bool) -> NSAttributedString {
+        var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        if wrapping {
+            let style = NSMutableParagraphStyle()
+            style.alignment = lineAlignment == .center ? .center : .left
+            style.lineBreakMode = .byWordWrapping
+            style.minimumLineHeight = linePitch
+            style.maximumLineHeight = linePitch
+            attributes[.paragraphStyle] = style
+        }
+        return NSAttributedString(string: text, attributes: attributes)
+    }
 
     override func accessibilityValue() -> Any? { text }
 
     override func draw(_ dirtyRect: NSRect) {
-        let string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color])
+        if wraps, lineCount(width: bounds.width) > 1 {
+            // As SwiftUI lays a wrapped Text out: a block as wide as its widest line, centred on the pixel grid, the lines
+            // inside it centred or flush left.
+            let string = attributed(wrapping: true)
+            let scale = window?.backingScaleFactor ?? 2
+            let widest = string.boundingRect(with: NSSize(width: bounds.width, height: .greatestFiniteMagnitude),
+                                             options: [.usesLineFragmentOrigin]).width
+            let block = ceil(widest * scale) / scale
+            let x = ((bounds.width - block) / 2 * scale).rounded() / scale
+            return string.draw(with: CGRect(x: x, y: 0, width: block, height: bounds.height), options: [.usesLineFragmentOrigin])
+        }
+        let string = attributed(wrapping: false)
         let size = string.size()
         // Centred, its origin on the pixel grid like SwiftUI's.
         string.draw(at: NSPoint(x: ((bounds.width - size.width) / 2 * 2).rounded() / 2, y: 0))
