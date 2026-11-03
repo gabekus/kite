@@ -200,6 +200,11 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         // The taskbar's auto-hide may have changed (it changes the work area), or the
         // monitors did (a handle can come back for another one).
         autoHideMonitor_ = nullptr;
+        // A maximized window may have been refit before this came: fit it again with what's
+        // true now.
+        if (IsZoomed(hwnd_)) {
+            SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
         break;
     case WM_NCHITTEST: {
         // The left, right and bottom borders are still Windows' frame.
@@ -224,7 +229,8 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_GETDPISCALEDSIZE: {
         // The window's size at the new DPI (wParam): its client area scaled, plus the frame
         // without a caption, which Windows' own linear guess doesn't know about.
-        if (fixedScale_) return FALSE;
+        // Minimized, there's no client area to scale: Windows' own guess will do.
+        if (fixedScale_ || IsIconic(hwnd_)) return FALSE;
         const UINT dpi = static_cast<UINT>(wParam);
         RECT client{};
         GetClientRect(hwnd_, &client);
