@@ -17,11 +17,11 @@ struct SymbolEntry {
 // Each SF Symbol's stand-in, in Segoe Fluent Icons then Segoe MDL2 Assets: the Icon tab's 56 in
 // its order, then "briefcase" (the test sessions' Work space) and the picture placeholder's "photo".
 // Each code point was checked against both fonts' cmaps (Fluent 1.54, MDL2 1.86) and picked by
-// eye from every glyph they have. Where neither font has the object (`true`: a stand-in), the
-// nearest stands in until it's drawn as geometry (W9b4).
+// eye from every glyph they have. Where neither font has the object (`true`), Kite draws its own
+// shape instead (core/SymbolShape.h), so there's no glyph.
 constexpr SymbolEntry kSymbols[] = {
     {"star.fill", {u'\uE735', u'\uE735'}},
-    {"bookmark.fill", {u'\uE728', u'\uE728', true}},
+    {"bookmark.fill", {0, 0, true}},
     {"heart.fill", {u'\uEB52', u'\uEB52'}},
     {"flag.fill", {u'\uEB4B', u'\uEB4B'}},
     {"bolt.fill", {u'\uE945', u'\uE945'}},
@@ -55,24 +55,24 @@ constexpr SymbolEntry kSymbols[] = {
     {"globe.americas.fill", {u'\uE909', u'\uE909'}},
     {"leaf.fill", {u'\uE8BE', u'\uE8BE'}},
     {"cloud.fill", {u'\uE753', u'\uE753'}},
-    {"pawprint.fill", {u'\uEBE8', u'\uF1AD', true}},
+    {"pawprint.fill", {0, 0, true}},
     {"basket.fill", {u'\uE7BF', u'\uE7BF'}},
     {"gift.fill", {u'\uF133', u'\uF133'}},
-    {"bed.double.fill", {u'\uE80F', u'\uE80F', true}},
-    {"fork.knife", {u'\uED56', u'\uED56', true}},
-    {"dumbbell.fill", {u'\uE726', u'\uE726', true}},
+    {"bed.double.fill", {0, 0, true}},
+    {"fork.knife", {0, 0, true}},
+    {"dumbbell.fill", {0, 0, true}},
     {"airplane", {u'\uE709', u'\uE709'}},
     {"music.note", {u'\uEC4F', u'\uEC4F'}},
     {"paintpalette.fill", {u'\uF354', u'\uF354'}},
     {"video.fill", {u'\uEA0C', u'\uEA0C'}},
-    {"bandage.fill", {u'\uE95E', u'\uE95E', true}},
+    {"bandage.fill", {0, 0, true}},
     {"chevron.left.forwardslash.chevron.right", {u'\uF54C', u'\uE943'}},
-    {"baseball.fill", {u'\uE7FC', u'\uE7FC', true}},
+    {"baseball.fill", {0, 0, true}},
     {"cloud", {u'\uE753', u'\uE753'}},
     {"map.fill", {u'\uE800', u'\uE826'}},
     {"flame.fill", {u'\uECAD', u'\uECAD'}},
-    {"takeoutbag.and.cup.and.straw.fill", {u'\uEC32', u'\uEC32', true}},
-    {"theatermasks.fill", {u'\uE899', u'\uE899', true}},
+    {"takeoutbag.and.cup.and.straw.fill", {0, 0, true}},
+    {"theatermasks.fill", {0, 0, true}},
     {"scroll.fill", {u'\uF000', u'\uF000'}},
     {"hand.thumbsup.fill", {u'\uF3BF', u'\uE8E1'}},
     {"tram.fill", {u'\uEB4D', u'\uEB4D'}},

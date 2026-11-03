@@ -266,8 +266,8 @@ Fluent has one weight where the Mac's symbols are semibold (the placeholder's
 "photo" is regular on the Mac), and its briefcase is 1.5pt taller for the same
 width; several stand-ins are outlines of filled symbols, cloud and cloud.fill
 share a glyph, and nine have no such object in either font (bookmark, paw, bed,
-cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks) and show the
-nearest glyph until W9b4 draws them; symbols are centred on their ink where the
+cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks), which W9b4
+draws as Kite's own shapes (see below); symbols are centred on their ink where the
 Mac centres the symbol's image (checked only for the briefcase, within 0.25pt);
 an SF Symbol name outside the 58 (which the Mac draws, from automation or a
 hand-edited session) shows the dot in the bar and a blank icon slot in the
@@ -295,6 +295,21 @@ on whole pixels at every scale (core snaps them), so they draw where they take
 clicks. Known differences: in the 2pt where two cells overlap only the later
 cell's backing shows (the Mac shows both), and a touchpad's sideways scroll over
 the bar scrolls the strip until W9c sends it to the swipe.
+
+The nine (W9b4) are Kite's own simple shapes (`core/SymbolShape.h`), not
+Apple's outlines: each is filled figures in the bar's 12.5pt about the icon's
+centre, in layers joined or cut in order (so the front theatre mask cuts a gap
+round itself in the one behind), drawn by the same painter through one Direct2D
+geometry per symbol and scaled for the header's 15pt. Each inks the box the
+Mac's symbol inks in its cell, measured from the Mac's 2x renders to a quarter
+point, and comes within an eighth of its inked area, so it sits and weighs as
+the Mac's (`SymbolShapeTests`). Known differences: the drawings are Kite's own,
+so details differ (the bed's headboard, the bandage's pad marked by two cuts and
+four holes, the baseball's seams and stitches, the masks' faces); the header's
+are the bar's scaled by 1.2, where the Mac's symbol is redrawn at 15pt, so an
+edge can land up to half a pixel from the Mac's; and the masks reach past the
+header's 26pt slot as the Mac's do (only their width was measured from the bar,
+the slot's capture clips them).
 
 The tip over a hovered cell (W9b3) is the Mac's SpaceTip in SpaceTipWindow's place:
 0.4 s after the pointer comes onto a cell, a capsule 28pt tall centred over it, its

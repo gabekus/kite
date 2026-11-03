@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include "core/SymbolShape.h"
 #include "shell/Errors.h"
 #include "shell/Text.h"
 
@@ -215,6 +216,7 @@ void SpaceIconPainter::ReleaseDevice() {
     for (std::optional<Face>* face : {&fluent_, &mdl2_}) {
         if (*face) (*face)->outlines.clear();
     }
+    shapes_.clear();
     d2d_.Reset();
 }
 
@@ -285,6 +287,62 @@ void SpaceIconPainter::DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBr
     brush->SetColor(color);
     context->FillGeometry(outline->geometry.Get(), brush);
     context->SetTransform(transform);
+}
+
+namespace {
+
+// One layer's figures as a path, filled by the nonzero rule (core orients them for it).
+ComPtr<ID2D1PathGeometry> LayerPath(ID2D1Factory* d2d, const ShapeLayer& layer) {
+    ComPtr<ID2D1PathGeometry> path;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(d2d->CreatePathGeometry(path.GetAddressOf())) || FAILED(path->Open(sink.GetAddressOf()))) return nullptr;
+    sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+    for (const ShapeFigure& figure : layer.figures) {
+        sink->BeginFigure(D2D1::Point2F(figure.start.x, figure.start.y), D2D1_FIGURE_BEGIN_FILLED);
+        for (const ShapeSegment& segment : figure.segments) {
+            if (segment.cubic) {
+                sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(segment.c1.x, segment.c1.y), D2D1::Point2F(segment.c2.x, segment.c2.y),
+                                                    D2D1::Point2F(segment.to.x, segment.to.y)));
+            } else {
+                sink->AddLine(D2D1::Point2F(segment.to.x, segment.to.y));
+            }
+        }
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    }
+    return SUCCEEDED(sink->Close()) ? path : nullptr;
+}
+
+// How closely a cut or a join follows the curves, in the shape's points: a hundredth, well under
+// a pixel at the header's 15pt on a 4x screen.
+constexpr float kShapeTolerance = 0.01f;
+
+}  // namespace
+
+ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const std::string& name) {
+    if (auto it = shapes_.find(name); it != shapes_.end()) return it->second.Get();
+    const SymbolShape* shape = SymbolShapeFor(name);
+    if (!shape || shape->layers.empty() || !d2d_) return nullptr;
+    ComPtr<ID2D1Geometry> joined;
+    for (const ShapeLayer& layer : shape->layers) {
+        ComPtr<ID2D1PathGeometry> path = LayerPath(d2d_.Get(), layer);
+        if (!path) return nullptr;
+        if (!joined) {
+            if (layer.cut) continue;  // nothing to cut yet
+            joined = path;
+            continue;
+        }
+        ComPtr<ID2D1PathGeometry> combined;
+        ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(d2d_->CreatePathGeometry(combined.GetAddressOf())) || FAILED(combined->Open(sink.GetAddressOf())) ||
+            FAILED(joined->CombineWithGeometry(path.Get(), layer.cut ? D2D1_COMBINE_MODE_EXCLUDE : D2D1_COMBINE_MODE_UNION, nullptr,
+                                               kShapeTolerance, sink.Get())) ||
+            FAILED(sink->Close())) {
+            return nullptr;
+        }
+        joined = combined;
+    }
+    if (!joined) return nullptr;
+    return shapes_.emplace(name, std::move(joined)).first->second.Get();
 }
 
 double SpaceIconPainter::Now() {
@@ -381,7 +439,20 @@ void SpaceIconPainter::Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* b
                             float size, float scale, D2D1_COLOR_F symbol, bool dark) {
     UseFactoryOf(context);
     if (look.kind == SpaceIconLook::Kind::Symbol) {
-        if (look.glyph) DrawSymbol(context, brush, *look.glyph, centre, size, symbol);
+        if (look.glyph && look.glyph->drawn) {
+            // Kite's own shape, from the bar's 12.5 to `size`, its origin on `centre`.
+            if (ID2D1Geometry* geometry = ShapeGeometry(look.text)) {
+                const float scale = size / kSymbolShapeSize;
+                D2D1_MATRIX_3X2_F transform{};
+                context->GetTransform(&transform);
+                context->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale) * D2D1::Matrix3x2F::Translation(centre.x, centre.y) * transform);
+                brush->SetColor(symbol);
+                context->FillGeometry(geometry, brush);
+                context->SetTransform(transform);
+            }
+        } else if (look.glyph) {
+            DrawSymbol(context, brush, *look.glyph, centre, size, symbol);
+        }
         return;
     }
     if (look.kind != SpaceIconLook::Kind::Picture) return;

@@ -11,6 +11,7 @@
 #include "core/Sidebar.h"
 #include "core/SpaceBar.h"
 #include "core/SpaceIcon.h"
+#include "core/SymbolShape.h"
 
 using namespace kite;
 using Kind = SpaceIconLook::Kind;
@@ -73,16 +74,21 @@ TEST(everySymbolTheIconTabOffersHasAPrivateUseGlyphForBothFonts) {
     all.push_back("photo");
     for (std::string_view name : all) {
         const auto glyph = SymbolGlyphFor(name);
-        CHECK(glyph && glyph->fluent >= 0xE700 && glyph->fluent <= 0xF8FF && glyph->mdl2 >= 0xE700 && glyph->mdl2 <= 0xF8FF);
+        CHECK(glyph);
+        if (glyph->drawn) continue;
+        CHECK(glyph->fluent >= 0xE700 && glyph->fluent <= 0xF8FF && glyph->mdl2 >= 0xE700 && glyph->mdl2 <= 0xF8FF);
     }
     // That each is in its font is the PC's cmap check (the table's comment). Where the fonts differ:
     CHECK(SymbolGlyphFor("folder.fill") == (SymbolGlyph{u'\uE8D5', u'\uF12B'}));
     CHECK(SymbolGlyphFor("briefcase") == (SymbolGlyph{u'\uE821', u'\uE821'}));
-    // Nine have no such object in either font: the nearest stands in until W9b4 draws them.
-    size_t standIns = 0;
-    for (std::string_view name : all) standIns += SymbolGlyphFor(name)->standIn ? 1 : 0;
-    CHECK(standIns == 9);
-    CHECK(SymbolGlyphFor("pawprint.fill")->standIn && !SymbolGlyphFor("star.fill")->standIn);
+    // Nine have no such object in either font: Kite draws its own shape for each, and only those.
+    std::vector<std::string_view> drawn;
+    for (std::string_view name : all) {
+        if (SymbolGlyphFor(name)->drawn) drawn.push_back(name);
+        CHECK(SymbolGlyphFor(name)->drawn == (SymbolShapeFor(name) != nullptr));
+    }
+    CHECK(drawn == DrawnSymbols());
+    CHECK(SymbolGlyphFor("pawprint.fill") == (SymbolGlyph{0, 0, true}) && !SymbolGlyphFor("star.fill")->drawn);
 }
 
 TEST(aPictureIsTheMacsRoundedSquareOnThePixelGrid) {
