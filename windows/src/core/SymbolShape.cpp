@@ -17,6 +17,10 @@ ShapePoint CubicAt(ShapePoint p0, ShapePoint p1, ShapePoint p2, ShapePoint p3, f
 
 float Distance(ShapePoint a, ShapePoint b) { return std::hypot(b.x - a.x, b.y - a.y); }
 
+// How far a circular arc's cubic puts its control points along the tangents, per unit radius, for
+// an arc turning `turn` radians.
+float ArcHandle(float turn) { return 4.0f / 3.0f * std::tan(turn / 4); }
+
 std::vector<ShapePoint> FlattenFigure(const ShapeFigure& figure, float tolerance) {
     std::vector<ShapePoint> points{figure.start};
     ShapePoint from = figure.start;
@@ -48,7 +52,6 @@ ShapeFigure Reversed(const ShapeFigure& figure) {
     std::vector<ShapePoint> starts{figure.start};
     for (const ShapeSegment& s : figure.segments) starts.push_back(s.to);
     ShapeFigure out;
-    out.hole = figure.hole;
     out.start = starts.back();
     for (size_t i = figure.segments.size(); i-- > 0;) {
         const ShapeSegment& s = figure.segments[i];
@@ -61,7 +64,7 @@ ShapeFigure Reversed(const ShapeFigure& figure) {
 
 ShapeBuilder& ShapeBuilder::Move(float x, float y) {
     if (open_) Close();
-    Figures().push_back(ShapeFigure{{x, y}, {}, hole_});
+    Figures().push_back(ShapeFigure{{x, y}, {}});
     open_ = true;
     current_ = {x, y};
     return *this;
@@ -88,7 +91,7 @@ ShapeBuilder& ShapeBuilder::Arc(float cx, float cy, float r, float a0, float a1)
     else Move(first.x, first.y);
     const int pieces = std::max(1, static_cast<int>(std::ceil(std::fabs(end - start) / (kPi / 2) - 1e-4f)));
     const float step = (end - start) / pieces;
-    const float k = 4.0f / 3.0f * std::tan(step / 4);
+    const float k = ArcHandle(step);
     float a = start;
     for (int i = 0; i < pieces; ++i) {
         const float b = a + step;
@@ -159,7 +162,7 @@ ShapeBuilder& ShapeBuilder::RoundedPolygon(const std::vector<Corner>& corners) {
         if (i == 0) Move(a.x, a.y);
         else Line(a.x, a.y);
         if (cutBack > 0) {
-            const float h = 4.0f / 3.0f * std::tan(turn / 4) * radius;
+            const float h = ArcHandle(turn) * radius;
             Cubic(a.x - d0.x * h, a.y - d0.y * h, b.x - d1.x * h, b.y - d1.y * h, b.x, b.y);
         }
     }
@@ -168,34 +171,19 @@ ShapeBuilder& ShapeBuilder::RoundedPolygon(const std::vector<Corner>& corners) {
 
 ShapeBuilder& ShapeBuilder::Append(const SymbolShape& shape) {
     Close();
-    hole_ = false;
     for (const ShapeLayer& layer : shape.layers) shape_.layers.push_back(layer);
     shape_.layers.push_back(ShapeLayer{});
     return *this;
 }
 
-ShapeBuilder& ShapeBuilder::Hole() {
-    Close();
-    hole_ = true;
-    return *this;
-}
-
-ShapeBuilder& ShapeBuilder::Solid() {
-    Close();
-    hole_ = false;
-    return *this;
-}
-
 ShapeBuilder& ShapeBuilder::Cut() {
     Close();
-    hole_ = false;
     shape_.layers.push_back(ShapeLayer{true, {}});
     return *this;
 }
 
 ShapeBuilder& ShapeBuilder::Add() {
     Close();
-    hole_ = false;
     shape_.layers.push_back(ShapeLayer{false, {}});
     return *this;
 }
@@ -217,8 +205,8 @@ ShapeBuilder& ShapeBuilder::Rotate(float degrees, float cx, float cy) {
     return *this;
 }
 
-ShapeBuilder& ShapeBuilder::Scale(float sx, float sy, float dx, float dy) {
-    Map(sx, 0, 0, sy, dx, dy);
+ShapeBuilder& ShapeBuilder::Translate(float dx, float dy) {
+    Map(1, 0, 0, 1, dx, dy);
     return *this;
 }
 
@@ -226,22 +214,28 @@ SymbolShape ShapeBuilder::Build() {
     Close();
     for (ShapeLayer& layer : shape_.layers) {
         for (ShapeFigure& figure : layer.figures) {
-            const bool clockwise = SignedArea(FlattenFigure(figure, 0.05f)) > 0;
-            if (clockwise == figure.hole) figure = Reversed(figure);
+            if (SignedArea(FlattenFigure(figure, 0.05f)) < 0) figure = Reversed(figure);
         }
     }
     std::erase_if(shape_.layers, [](const ShapeLayer& l) { return l.figures.empty(); });
     SymbolShape out = std::move(shape_);
     shape_ = SymbolShape{{ShapeLayer{}}};
-    open_ = hole_ = false;
+    open_ = false;
     return out;
 }
 
-std::vector<std::vector<ShapePoint>> Flatten(const ShapeLayer& layer, float tolerance) {
-    std::vector<std::vector<ShapePoint>> out;
+namespace {
+
+using Polygons = std::vector<std::vector<ShapePoint>>;
+
+// A layer's figures as polygons, each about `tolerance` points from its curves.
+Polygons Flatten(const ShapeLayer& layer, float tolerance = 0.01f) {
+    Polygons out;
     for (const ShapeFigure& figure : layer.figures) out.push_back(FlattenFigure(figure, tolerance));
     return out;
 }
+
+}  // namespace
 
 ShapeBounds BoundsOf(const SymbolShape& shape) {
     ShapeBounds b{1e9f, 1e9f, -1e9f, -1e9f};
@@ -260,8 +254,6 @@ ShapeBounds BoundsOf(const SymbolShape& shape) {
 }
 
 namespace {
-
-using Polygons = std::vector<std::vector<ShapePoint>>;
 
 bool Inside(const Polygons& polygons, float x, float y) {
     int winding = 0;
@@ -298,14 +290,73 @@ std::vector<Polygons> FlattenLayers(const SymbolShape& shape) {
 
 bool Covers(const SymbolShape& shape, float x, float y) { return Covered(shape, FlattenLayers(shape), x, y); }
 
+namespace {
+
+using Spans = std::vector<std::pair<float, float>>;  // sorted, apart
+
+// Where row `y` is inside a layer's polygons (the nonzero rule), left to right.
+Spans SpansAt(const Polygons& polygons, float y) {
+    std::vector<std::pair<float, int>> crossings;
+    for (const auto& polygon : polygons) {
+        for (size_t i = 0; i < polygon.size(); ++i) {
+            const ShapePoint a = polygon[i], b = polygon[(i + 1) % polygon.size()];
+            if ((a.y <= y) == (b.y <= y)) continue;
+            const float x = a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x);
+            crossings.emplace_back(x, b.y > a.y ? 1 : -1);
+        }
+    }
+    std::sort(crossings.begin(), crossings.end());
+    Spans out;
+    int winding = 0;
+    float from = 0;
+    for (const auto& [x, step] : crossings) {
+        const int before = winding;
+        winding += step;
+        if (before == 0 && winding != 0) from = x;
+        else if (before != 0 && winding == 0 && x > from) out.emplace_back(from, x);
+    }
+    return out;
+}
+
+Spans Joined(const Spans& a, const Spans& b) {
+    Spans all(a);
+    all.insert(all.end(), b.begin(), b.end());
+    std::sort(all.begin(), all.end());
+    Spans out;
+    for (const auto& span : all) {
+        if (!out.empty() && span.first <= out.back().second) out.back().second = std::max(out.back().second, span.second);
+        else out.push_back(span);
+    }
+    return out;
+}
+
+Spans Without(const Spans& a, const Spans& cut) {
+    Spans out;
+    for (auto [from, to] : a) {
+        for (const auto& [c0, c1] : cut) {
+            if (c1 <= from || c0 >= to) continue;
+            if (c0 > from) out.emplace_back(from, c0);
+            from = std::max(from, c1);
+            if (from >= to) break;
+        }
+        if (from < to) out.emplace_back(from, to);
+    }
+    return out;
+}
+
+}  // namespace
+
 float InkedArea(const SymbolShape& shape, float step) {
     const ShapeBounds b = BoundsOf(shape);
     const auto layers = FlattenLayers(shape);
     float area = 0;
     for (float y = b.top + step / 2; y < b.bottom; y += step) {
-        for (float x = b.left + step / 2; x < b.right; x += step) {
-            if (Covered(shape, layers, x, y)) area += step * step;
+        Spans inked;
+        for (size_t i = 0; i < layers.size(); ++i) {
+            const Spans spans = SpansAt(layers[i], y);
+            inked = shape.layers[i].cut ? Without(inked, spans) : Joined(inked, spans);
         }
+        for (const auto& [from, to] : inked) area += (to - from) * step;
     }
     return area;
 }
@@ -331,10 +382,11 @@ SymbolShape Bookmark() {
 SymbolShape Pawprint() {
     // A pad and four toes: box -6.5..7.0 x -6.5..6.5.
     ShapeBuilder b;
-    b.Ellipse(-1.75f, -4.5f, 1.45f, 2.0f, -8).Ellipse(2.25f, -4.5f, 1.45f, 2.0f, 8);
-    b.Ellipse(-5.0f, -0.7f, 1.45f, 2.05f, -22).Ellipse(5.5f, -0.7f, 1.45f, 2.05f, 22);
+    b.Ellipse(-1.75f, -4.4f, 1.55f, 2.1f, -8).Ellipse(2.25f, -4.4f, 1.55f, 2.1f, 8);
+    b.Ellipse(-4.95f, -0.7f, 1.55f, 2.15f, -22).Ellipse(5.45f, -0.7f, 1.55f, 2.15f, 22);
     b.RoundedPolygon(
-        {C{-1.0f, -1.6f, 1.5f}, C{1.5f, -1.6f, 1.5f}, C{5.0f, 4.0f, 1.8f}, C{3.7f, 6.5f, 1.5f}, C{-3.2f, 6.5f, 1.5f}, C{-4.5f, 4.0f, 1.8f}});
+        {C{-1.0f, -1.6f, 1.5f}, C{1.5f, -1.6f, 1.5f}, C{5.0f, 4.0f, 1.8f},  // the top and right
+         C{3.7f, 6.5f, 1.5f}, C{-3.2f, 6.5f, 1.5f}, C{-4.5f, 4.0f, 1.8f}});
     return b.Build();
 }
 
@@ -369,42 +421,43 @@ SymbolShape Dumbbell() {
         rect(6.6f, -3.0f, 8.5f, 3.4f, 0.95f);
         rect(3.1f, -4.63f, 6.0f, 5.0f, 1.3f);
     }
-    b.RoundRect(-2.4f, -1.0f, 2.4f, 1.4f, 0.25f);
+    b.RoundRect(-2.4f, -1.15f, 2.4f, 1.55f, 0.25f);
     return b.Build();
 }
 
 SymbolShape Bandage() {
-    // A strip across from bottom left to top right, its pad marked by two cuts and four holes:
+    // A strip across from bottom left to top right, its pad marked by two cuts and four dots:
     // box -6.62..6.14 x -6.13..6.63.
     ShapeBuilder b;
     b.RoundRect(-7.9f, -2.7f, 7.9f, 2.7f, 2.7f);
-    b.Cut().RoundRect(-2.95f, -3.0f, -2.3f, 3.0f, 0).RoundRect(2.3f, -3.0f, 2.95f, 3.0f, 0);
+    b.Cut().RoundRect(-3.05f, -3.0f, -2.25f, 3.0f, 0).RoundRect(2.25f, -3.0f, 3.05f, 3.0f, 0);
     for (const float x : {-0.85f, 0.85f}) {
         for (const float y : {-0.85f, 0.85f}) b.Circle(x, y, 0.5f);
     }
-    return b.Rotate(-45, 0, 0).Scale(1, 1, -0.24f, 0.25f).Build();
+    return b.Rotate(-45, 0, 0).Translate(-0.24f, 0.25f).Build();
 }
 
 SymbolShape Baseball() {
-    // A ball with two seams bowing in, stitched: box -6.5..6.5 square.
+    // A ball with two seams bowing in from the left and the right, three stitches across each:
+    // box -6.5..6.5 square.
     ShapeBuilder b;
     b.Circle(0, 0, 6.5f);
     b.Cut();
     for (const float side : {-1.0f, 1.0f}) {
-        // A band 0.7 wide on the circle centred 10.3 out, bowing towards the middle.
-        const float cx = side * 10.3f, inner = 6.3f, outer = 7.15f;
-        const float from = side < 0 ? -40.0f : 140.0f, to = side < 0 ? 40.0f : 220.0f;
+        // A band 1.0 wide on the circle centred 9.2 out, bowing towards the middle.
+        const float cx = side * 9.2f, inner = 6.2f, outer = 7.2f;
+        const float from = side < 0 ? -52.0f : 128.0f, to = side < 0 ? 52.0f : 232.0f;
         b.Arc(cx, 0, outer, from, to).Arc(cx, 0, inner, to, from).Close();
-        // Stitches: short cuts across the band.
-        for (const float t : {-24.0f, -8.0f, 8.0f, 24.0f}) {
-            const float a = (side < 0 ? t : 180 + t) * 3.14159265f / 180;
-            const float ux = std::cos(a), uy = std::sin(a), px = -uy * 0.3f, py = ux * 0.3f;
-            const float r0 = inner - 0.9f, r1 = outer + 0.9f;
+        // Stitches: short cuts across the band, sticking out either side.
+        for (const float t : {-24.0f, 0.0f, 24.0f}) {
+            const float a = (side < 0 ? t : 180 + t) * kPi / 180;
+            const float ux = std::cos(a), uy = std::sin(a), px = -uy * 0.32f, py = ux * 0.32f;
+            const float r0 = inner - 0.75f, r1 = outer + 0.75f;
             b.Move(cx + ux * r0 - px, uy * r0 - py).Line(cx + ux * r0 + px, uy * r0 + py);
             b.Line(cx + ux * r1 + px, uy * r1 + py).Line(cx + ux * r1 - px, uy * r1 - py).Close();
         }
     }
-    return b.Rotate(40, 0, 0).Build();
+    return b.Rotate(20, 0, 0).Build();
 }
 
 SymbolShape TakeoutBagAndCup() {
@@ -413,10 +466,11 @@ SymbolShape TakeoutBagAndCup() {
     ShapeBuilder b;
     b.RoundRect(-6.2f, -7.0f, -0.2f, -4.2f, 1.1f);
     b.RoundedPolygon(
-        {C{-6.6f, -4.6f, 0.6f}, C{0.2f, -4.6f, 0.6f}, C{2.3f, -2.6f, 0.6f}, C{2.3f, 6.1f, 1.1f}, C{-8.0f, 6.1f, 1.1f}, C{-8.0f, -2.6f, 0.6f}});
-    b.Cut().RoundRect(-4.4f, -6.0f, -2.0f, -5.0f, 0.5f);
+        {C{-6.6f, -4.6f, 0.6f}, C{0.2f, -4.6f, 0.6f}, C{2.3f, -2.6f, 0.6f},  // the folded top
+         C{2.3f, 6.1f, 1.1f}, C{-8.0f, 6.1f, 1.1f}, C{-8.0f, -2.6f, 0.6f}});
+    b.Cut().RoundRect(-5.2f, -6.05f, -1.2f, -4.95f, 0.55f);
     // The cup's outline and the gap round it.
-    b.RoundedPolygon({C{0.1f, -2.4f, 0.9f}, C{8.7f, -2.4f, 0.9f}, C{7.6f, 8.3f, 1.4f}, C{1.2f, 8.3f, 1.4f}});
+    b.RoundedPolygon({C{-0.3f, -2.8f, 1.0f}, C{8.7f, -2.8f, 1.0f}, C{7.6f, 8.3f, 1.4f}, C{0.6f, 8.3f, 1.4f}});
     b.Add().RoundRect(0.8f, -1.7f, 8.0f, -0.6f, 0.55f);
     b.RoundedPolygon({C{1.3f, -1.0f, 0}, C{7.5f, -1.0f, 0}, C{6.9f, 7.59f, 0.9f}, C{1.9f, 7.59f, 0.9f}});
     b.RoundedPolygon({C{3.5f, -1.2f, 0.2f}, C{4.4f, -1.2f, 0.2f}, C{7.6f, -4.3f, 0.45f}, C{6.95f, -4.95f, 0.45f}});
@@ -426,7 +480,8 @@ SymbolShape TakeoutBagAndCup() {
 // A mask's outline about its centre: a shield, its top a little wider than its chin.
 void Shield(ShapeBuilder& b, float w, float h) {
     b.RoundedPolygon(
-        {C{-w / 2, -h / 2, 1.6f}, C{w / 2, -h / 2, 1.6f}, C{w * 0.44f, h * 0.12f, 3.0f}, C{0, h / 2, 2.6f}, C{-w * 0.44f, h * 0.12f, 3.0f}});
+        {C{-w / 2, -h / 2, 1.6f}, C{w / 2, -h / 2, 1.6f}, C{w * 0.44f, h * 0.12f, 3.0f},  // the brow and right cheek
+         C{0, h / 2, 2.6f}, C{-w * 0.44f, h * 0.12f, 3.0f}});
 }
 
 SymbolShape TheaterMasks() {
@@ -436,19 +491,19 @@ SymbolShape TheaterMasks() {
     Shield(back, 10.4f, 13.6f);
     back.Cut().Circle(-2.1f, -1.9f, 0.8f).Circle(2.1f, -1.9f, 0.8f);
     back.Arc(0, 4.4f, 2.6f, 215, 325).Arc(0, 4.4f, 1.85f, 325, 215).Close();
-    back.Rotate(16, 0, 0).Scale(1, 1, 4.25f, 1.72f);
+    back.Rotate(16, 0, 0).Translate(4.25f, 1.72f);
 
     ShapeBuilder front;
     Shield(front, 10.6f, 12.2f);
     front.Cut().Arc(-2.3f, -1.5f, 1.05f, 180, 360).Close().Arc(2.3f, -1.5f, 1.05f, 180, 360).Close();
-    front.Arc(0, 1.2f, 2.8f, 0, 180).Close();
-    front.Rotate(-14, 0, 0).Scale(1, 1, -4.86f, -0.67f);
+    front.Arc(0, 0.7f, 2.4f, 0, 180).Close();
+    front.Rotate(-14, 0, 0).Translate(-4.86f, -0.67f);
     const SymbolShape face = front.Build();
 
     ShapeBuilder gap;
     gap.Cut();
-    Shield(gap, 12.2f, 13.8f);
-    gap.Rotate(-14, 0, 0).Scale(1, 1, -4.86f, -0.67f);
+    Shield(gap, 13.0f, 14.6f);
+    gap.Rotate(-14, 0, 0).Translate(-4.86f, -0.67f);
 
     return ShapeBuilder().Append(back.Build()).Append(gap.Build()).Append(face).Build();
 }

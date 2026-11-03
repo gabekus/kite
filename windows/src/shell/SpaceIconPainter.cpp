@@ -13,7 +13,6 @@
 #include <thread>
 #include <vector>
 
-#include "core/SymbolShape.h"
 #include "shell/Errors.h"
 #include "shell/Text.h"
 
@@ -312,18 +311,19 @@ ComPtr<ID2D1PathGeometry> LayerPath(ID2D1Factory* d2d, const ShapeLayer& layer) 
     return SUCCEEDED(sink->Close()) ? path : nullptr;
 }
 
-// How closely a cut or a join follows the curves, in the shape's points: a hundredth, well under
-// a pixel at the header's 15pt on a 4x screen.
-constexpr float kShapeTolerance = 0.01f;
+// How closely a cut or a join follows the curves, in the shape's points: a fifth of a pixel at
+// the header's 15pt (1.2x the shape) on a 4x screen, as Direct2D's default is a quarter.
+constexpr float kShapeTolerance = 0.05f;
 
 }  // namespace
 
-ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const std::string& name) {
-    if (auto it = shapes_.find(name); it != shapes_.end()) return it->second.Get();
-    const SymbolShape* shape = SymbolShapeFor(name);
-    if (!shape || shape->layers.empty() || !d2d_) return nullptr;
+ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const SymbolShape& shape) {
+    if (auto it = shapes_.find(&shape); it != shapes_.end()) return it->second.Get();
+    if (!d2d_) return nullptr;
+    // Kept even when it fails, so a failure isn't retried every frame (the next factory tries).
+    ComPtr<ID2D1Geometry>& made = shapes_[&shape];
     ComPtr<ID2D1Geometry> joined;
-    for (const ShapeLayer& layer : shape->layers) {
+    for (const ShapeLayer& layer : shape.layers) {
         ComPtr<ID2D1PathGeometry> path = LayerPath(d2d_.Get(), layer);
         if (!path) return nullptr;
         if (!joined) {
@@ -333,16 +333,15 @@ ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const std::string& name) {
         }
         ComPtr<ID2D1PathGeometry> combined;
         ComPtr<ID2D1GeometrySink> sink;
+        const D2D1_COMBINE_MODE mode = layer.cut ? D2D1_COMBINE_MODE_EXCLUDE : D2D1_COMBINE_MODE_UNION;
         if (FAILED(d2d_->CreatePathGeometry(combined.GetAddressOf())) || FAILED(combined->Open(sink.GetAddressOf())) ||
-            FAILED(joined->CombineWithGeometry(path.Get(), layer.cut ? D2D1_COMBINE_MODE_EXCLUDE : D2D1_COMBINE_MODE_UNION, nullptr,
-                                               kShapeTolerance, sink.Get())) ||
-            FAILED(sink->Close())) {
+            FAILED(joined->CombineWithGeometry(path.Get(), mode, nullptr, kShapeTolerance, sink.Get())) || FAILED(sink->Close())) {
             return nullptr;
         }
         joined = combined;
     }
-    if (!joined) return nullptr;
-    return shapes_.emplace(name, std::move(joined)).first->second.Get();
+    made = std::move(joined);
+    return made.Get();
 }
 
 double SpaceIconPainter::Now() {
@@ -441,11 +440,13 @@ void SpaceIconPainter::Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* b
     if (look.kind == SpaceIconLook::Kind::Symbol) {
         if (look.glyph && look.glyph->drawn) {
             // Kite's own shape, from the bar's 12.5 to `size`, its origin on `centre`.
-            if (ID2D1Geometry* geometry = ShapeGeometry(look.text)) {
+            const SymbolShape* shape = SymbolShapeFor(look.text);
+            if (ID2D1Geometry* geometry = shape ? ShapeGeometry(*shape) : nullptr) {
                 const float factor = size / kSymbolShapeSize;
                 D2D1_MATRIX_3X2_F transform{};
                 context->GetTransform(&transform);
-                context->SetTransform(D2D1::Matrix3x2F::Scale(factor, factor) * D2D1::Matrix3x2F::Translation(centre.x, centre.y) * transform);
+                context->SetTransform(D2D1::Matrix3x2F::Scale(factor, factor) * D2D1::Matrix3x2F::Translation(centre.x, centre.y) *
+                                      transform);
                 brush->SetColor(symbol);
                 context->FillGeometry(geometry, brush);
                 context->SetTransform(transform);

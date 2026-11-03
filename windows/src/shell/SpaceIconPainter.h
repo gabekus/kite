@@ -40,6 +40,7 @@
 
 #include "core/PictureLoads.h"
 #include "core/SpaceIcon.h"
+#include "core/SymbolShape.h"
 #include "shell/Capture.h"
 
 namespace kite {
@@ -113,8 +114,8 @@ private:
     void DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SymbolGlyph& glyph, D2D1_POINT_2F centre, float size,
                     D2D1_COLOR_F color);
     // A drawn symbol's geometry (its layers joined and cut in order), made once per factory;
-    // null when it can't be made (tried again at the next draw).
-    ID2D1Geometry* ShapeGeometry(const std::string& name);
+    // null when it can't be made (tried again with the next factory).
+    ID2D1Geometry* ShapeGeometry(const SymbolShape& shape);
     // A decode's answer for `name`: `pixels` for each of `sides`, or none when it can't be read.
     // True when what shows changed.
     bool Arrived(const std::string& name, const std::vector<UINT>& sides, std::vector<Pixels> pixels);
@@ -123,7 +124,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID2D1Factory> d2d_;
     std::optional<Face> fluent_, mdl2_;
-    std::map<std::string, Microsoft::WRL::ComPtr<ID2D1Geometry>> shapes_;
+    std::map<const SymbolShape*, Microsoft::WRL::ComPtr<ID2D1Geometry>> shapes_;  // null: couldn't be made
     std::shared_ptr<Shared> shared_;
     bool synchronous_ = false;
     bool requested_ = false;  // jobs queued since the last SendRequests

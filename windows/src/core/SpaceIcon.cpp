@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "core/OKLab.h"
+#include "core/SymbolShape.h"
 #include "core/Unicode.h"
 
 namespace kite {
@@ -17,11 +18,11 @@ struct SymbolEntry {
 // Each SF Symbol's stand-in, in Segoe Fluent Icons then Segoe MDL2 Assets: the Icon tab's 56 in
 // its order, then "briefcase" (the test sessions' Work space) and the picture placeholder's "photo".
 // Each code point was checked against both fonts' cmaps (Fluent 1.54, MDL2 1.86) and picked by
-// eye from every glyph they have. Where neither font has the object (`true`), Kite draws its own
-// shape instead (core/SymbolShape.h), so there's no glyph.
+// eye from every glyph they have. Where neither font has the object (0), Kite draws its own shape
+// instead (core/SymbolShape.h, which says which).
 constexpr SymbolEntry kSymbols[] = {
     {"star.fill", {u'\uE735', u'\uE735'}},
-    {"bookmark.fill", {0, 0, true}},
+    {"bookmark.fill", {0, 0}},
     {"heart.fill", {u'\uEB52', u'\uEB52'}},
     {"flag.fill", {u'\uEB4B', u'\uEB4B'}},
     {"bolt.fill", {u'\uE945', u'\uE945'}},
@@ -55,24 +56,24 @@ constexpr SymbolEntry kSymbols[] = {
     {"globe.americas.fill", {u'\uE909', u'\uE909'}},
     {"leaf.fill", {u'\uE8BE', u'\uE8BE'}},
     {"cloud.fill", {u'\uE753', u'\uE753'}},
-    {"pawprint.fill", {0, 0, true}},
+    {"pawprint.fill", {0, 0}},
     {"basket.fill", {u'\uE7BF', u'\uE7BF'}},
     {"gift.fill", {u'\uF133', u'\uF133'}},
-    {"bed.double.fill", {0, 0, true}},
-    {"fork.knife", {0, 0, true}},
-    {"dumbbell.fill", {0, 0, true}},
+    {"bed.double.fill", {0, 0}},
+    {"fork.knife", {0, 0}},
+    {"dumbbell.fill", {0, 0}},
     {"airplane", {u'\uE709', u'\uE709'}},
     {"music.note", {u'\uEC4F', u'\uEC4F'}},
     {"paintpalette.fill", {u'\uF354', u'\uF354'}},
     {"video.fill", {u'\uEA0C', u'\uEA0C'}},
-    {"bandage.fill", {0, 0, true}},
+    {"bandage.fill", {0, 0}},
     {"chevron.left.forwardslash.chevron.right", {u'\uF54C', u'\uE943'}},
-    {"baseball.fill", {0, 0, true}},
+    {"baseball.fill", {0, 0}},
     {"cloud", {u'\uE753', u'\uE753'}},
     {"map.fill", {u'\uE800', u'\uE826'}},
     {"flame.fill", {u'\uECAD', u'\uECAD'}},
-    {"takeoutbag.and.cup.and.straw.fill", {0, 0, true}},
-    {"theatermasks.fill", {0, 0, true}},
+    {"takeoutbag.and.cup.and.straw.fill", {0, 0}},
+    {"theatermasks.fill", {0, 0}},
     {"scroll.fill", {u'\uF000', u'\uF000'}},
     {"hand.thumbsup.fill", {u'\uF3BF', u'\uE8E1'}},
     {"tram.fill", {u'\uEB4D', u'\uEB4D'}},
@@ -85,7 +86,10 @@ constexpr size_t kIconTabCount = 56;
 
 std::optional<SymbolGlyph> SymbolGlyphFor(std::string_view name) {
     for (const SymbolEntry& entry : kSymbols) {
-        if (entry.name == name) return entry.glyph;
+        if (entry.name != name) continue;
+        SymbolGlyph glyph = entry.glyph;
+        glyph.drawn = SymbolShapeFor(name) != nullptr;
+        return glyph;
     }
     return std::nullopt;
 }

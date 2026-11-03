@@ -182,8 +182,9 @@ json::Value ThemeSummary(const Theme& theme, int width, int height) {
 }
 
 // What an icon shows: "dot", "emoji", "symbol" (with its Segoe Fluent and MDL2 glyphs as hex,
-// or "drawn" for one Kite draws as its own shape) or "picture". A header draws no dot: it has no icon slot for an icon-less space ("none"), and a
-// blank one for a symbol with no stand-in ("blank").
+// or "drawn" for one Kite draws as its own shape) or "picture". A header draws no dot: it has no
+// icon slot for an icon-less space ("none"), and a blank one for a symbol with no stand-in
+// ("blank").
 enum class LookIn { Bar, Header };
 void AddLook(json::Object& o, const SpaceIconLook& look, LookIn in = LookIn::Bar, bool headerSlot = false) {
     static constexpr const char* kShows[] = {"dot", "emoji", "symbol", "picture"};

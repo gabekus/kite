@@ -25,15 +25,21 @@ TEST(aShapesCircleAndRoundedRectHaveTheirBoundsAndArea) {
     CHECK(Covers(rect, 2, 1) && !Covers(rect, 0.02f, 0.02f) && !Covers(rect, 5, 1));
 }
 
-TEST(aShapesHolesCutWhicheverWayTheyWereWritten) {
-    // The hole drawn clockwise (as a rect's arcs go) is turned round, so it cuts the solid.
-    const SymbolShape ring = ShapeBuilder().Circle(0, 0, 3).Hole().Circle(0, 0, 1).Build();
+TEST(aShapesCutsAndJoinsGoInOrderWhicheverWayFiguresWereWritten) {
+    // A cut layer takes its figures out of what's before it, and a later added layer puts ink back.
+    const SymbolShape ring = ShapeBuilder().Circle(0, 0, 3).Cut().Circle(0, 0, 1).Build();
     CHECK(!Covers(ring, 0, 0) && Covers(ring, 2, 0));
     CHECK(Near(InkedArea(ring, 0.02f), 3.14159f * 8, 0.06f));
     // A solid written anticlockwise still fills, and overlapping solids join (nonzero).
     const SymbolShape two = ShapeBuilder().Move(0, 0).Line(0, 2).Line(2, 2).Line(2, 0).Close().RoundRect(1, 0, 3, 2, 0).Build();
     CHECK(Covers(two, 0.5f, 1) && Covers(two, 1.5f, 1) && Covers(two, 2.5f, 1));
     CHECK(Near(InkedArea(two, 0.02f), 6, 0.02f));
+    const SymbolShape dot = ShapeBuilder().Circle(0, 0, 3).Cut().Circle(0, 0, 2).Add().Circle(0, 0, 1).Build();
+    CHECK(Covers(dot, 0, 0) && !Covers(dot, 1.5f, 0) && Covers(dot, 2.5f, 0));
+    CHECK(Near(InkedArea(dot, 0.02f), 3.14159f * 6, 0.06f));
+    // A cut before anything is inked takes nothing.
+    const SymbolShape first = ShapeBuilder().Cut().Circle(0, 0, 1).Add().Circle(0, 0, 2).Build();
+    CHECK(Covers(first, 0, 0) && Near(InkedArea(first, 0.02f), 3.14159f * 4, 0.04f));
 }
 
 TEST(anArcRunsEitherWayRoundItsCircle) {
@@ -78,7 +84,7 @@ TEST(eachDrawnSymbolInksTheMacsBoxWithItsWeight) {
             Near(b.left, m.left, 0.25f) && Near(b.right, m.right, 0.25f) && Near(b.top, m.top, 0.25f) && Near(b.bottom, m.bottom, 0.25f);
         if (!boxed) std::fprintf(stderr, "%s: %.2f %.2f %.2f %.2f\n", m.name, b.left, b.right, b.top, b.bottom);
         CHECK(boxed);
-        const float area = InkedArea(*shape, 0.05f);
+        const float area = InkedArea(*shape);
         if (std::fabs(area - m.area) > m.area / 8) std::fprintf(stderr, "%s: area %.1f\n", m.name, area);
         CHECK(std::fabs(area - m.area) <= m.area / 8);
     }

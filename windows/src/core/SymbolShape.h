@@ -7,11 +7,9 @@
 // A shape is layers of filled figures in points for a 12.5 pt icon (the space bar's), its origin
 // on the point the icon is centred on; it scales with the icon's size. Each layer is added to
 // what's drawn so far or cut out of it, in order (so a front mask can cut a gap round itself in
-// the one behind). In a layer, figures fill with the nonzero rule, solids clockwise and holes
-// counter-clockwise (made so here whichever way they were written), so overlapping solids join
-// and a hole cuts every solid of its layer under it once.
+// the one behind). In a layer, figures fill with the nonzero rule, each made clockwise here
+// whichever way it was written, so overlapping figures join.
 
-#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -31,7 +29,6 @@ struct ShapeSegment {
 struct ShapeFigure {
     ShapePoint start;
     std::vector<ShapeSegment> segments;
-    bool hole = false;
 };
 
 struct ShapeLayer {
@@ -49,7 +46,7 @@ struct ShapeBounds {
     float Height() const { return bottom - top; }
 };
 
-// Builds figures, then orients them (solids clockwise on screen, y down; holes the other way).
+// Builds figures, then orients them (clockwise on screen, y down).
 class ShapeBuilder {
 public:
     ShapeBuilder& Move(float x, float y);
@@ -72,35 +69,29 @@ public:
     ShapeBuilder& RoundedPolygon(const std::vector<Corner>& corners);
     // Another shape's layers after these, as they are.
     ShapeBuilder& Append(const SymbolShape& shape);
-    // The next figure (and every one after, until Solid()) is a hole.
-    ShapeBuilder& Hole();
-    ShapeBuilder& Solid();
     // The figures after this are a new layer cut out of everything before (Cut) or added to it
     // (Add).
     ShapeBuilder& Cut();
     ShapeBuilder& Add();
     // Turns everything so far `degrees` clockwise about (cx, cy).
     ShapeBuilder& Rotate(float degrees, float cx, float cy);
-    // Maps everything so far by x' = x * sx + dx, y' = y * sy + dy.
-    ShapeBuilder& Scale(float sx, float sy, float dx = 0, float dy = 0);
+    // Moves everything so far by (dx, dy).
+    ShapeBuilder& Translate(float dx, float dy);
     SymbolShape Build();
 
 private:
     std::vector<ShapeFigure>& Figures() { return shape_.layers.back().figures; }
     void Map(float a, float b, float c, float d, float e, float f);  // x' = ax + cy + e, y' = bx + dy + f
     SymbolShape shape_{{ShapeLayer{}}};
-    bool open_ = false, hole_ = false;
+    bool open_ = false;
     ShapePoint current_;
 };
 
-// A layer's figures flattened to polygons, each about `tolerance` points from its curves.
-std::vector<std::vector<ShapePoint>> Flatten(const ShapeLayer& layer, float tolerance = 0.01f);
-// The bounds of the added layers' figures (a cut that trims an edge isn't counted).
+// For tests: the bounds of the added layers' figures (a cut that trims an edge isn't counted),
+// whether (x, y) is inked, and the inked area in square points (exact along rows `step` apart).
 ShapeBounds BoundsOf(const SymbolShape& shape);
-// Whether (x, y) is inked (the nonzero rule).
 bool Covers(const SymbolShape& shape, float x, float y);
-// The inked area in square points (sampled on a grid `step` apart, for tests).
-float InkedArea(const SymbolShape& shape, float step = 0.05f);
+float InkedArea(const SymbolShape& shape, float step = 0.02f);
 
 // The shape for an SF Symbol name, for the names drawn this way; none for every other.
 const SymbolShape* SymbolShapeFor(std::string_view name);
