@@ -182,10 +182,12 @@ json::Value ThemeSummary(const Theme& theme, int width, int height) {
 }
 
 // What an icon shows: "dot", "emoji", "symbol" (with its Segoe Fluent and MDL2 glyphs as hex)
-// or "picture".
-void AddLook(json::Object& o, const SpaceIconLook& look) {
+// or "picture". In a header that keeps the icon's slot (any icon), one that shows the bar's dot
+// (a symbol with no stand-in) is a blank slot: "blank".
+void AddLook(json::Object& o, const SpaceIconLook& look, bool headerSlot = false) {
     static constexpr const char* kShows[] = {"dot", "emoji", "symbol", "picture"};
-    o.emplace("shows", std::string(kShows[static_cast<int>(look.kind)]));
+    const bool blank = headerSlot && look.kind == SpaceIconLook::Kind::Dot;
+    o.emplace("shows", std::string(blank ? "blank" : kShows[static_cast<int>(look.kind)]));
     if (look.glyph) {
         char fluent[8], mdl2[8];
         std::snprintf(fluent, sizeof fluent, "%04X", static_cast<unsigned>(look.glyph->fluent));
@@ -318,7 +320,7 @@ int main(int argc, char** argv) {
             case SidebarRow::Kind::Header:
                 o.emplace("title", row.title);
                 o.emplace("icon", row.icon);
-                AddLook(o, row.look);
+                AddLook(o, row.look, !row.icon.empty());
                 o.emplace("pinnedCollapsed", row.pinnedCollapsed);
                 break;
             case SidebarRow::Kind::Tab:

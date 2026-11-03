@@ -257,17 +257,23 @@ factor for every symbol), in the theme's accent when lit and in the label colour
 at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
 side with 22% corners, its PNG from the profile's SpaceIcons folder scaled to the
 square's pixels, greyed as an emoji is; a missing file shows "photo". Pictures
-decode once per size and device, before the draw that shows them, and a file
-that can't be read is remembered, so redraws and hovers don't go to the disk.
-Known differences: Fluent has one weight where the Mac's symbols are semibold
-(the placeholder's "photo" is regular on the Mac), several stand-ins are outlines
-of filled symbols, nine have no such object in either font (bookmark, paw, bed,
+are read and decoded on a worker thread (none over 1 MB or 2048px), which posts
+to the window when they're ready, and the cells and headers showing one draw
+again; a file that can't be read is looked for again at a draw 2 s on. One
+painter, the sidebar's, serves the bar and the headers. Known differences:
+Fluent has one weight where the Mac's symbols are semibold (the placeholder's
+"photo" is regular on the Mac), and its briefcase is 1.5pt taller for the same
+width; several stand-ins are outlines of filled symbols, cloud and cloud.fill
+share a glyph, and nine have no such object in either font (bookmark, paw, bed,
 cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks) and show the
-nearest glyph until W9b4 draws them, symbols are centred on their ink where the
-Mac centres the symbol's image (checked only for the briefcase, within 0.25pt),
+nearest glyph until W9b4 draws them; symbols are centred on their ink where the
+Mac centres the symbol's image (checked only for the briefcase, within 0.25pt);
 an SF Symbol name outside the 58 (which the Mac draws, from automation or a
-hand-edited session) shows the dot, a picture's corners are circular where the
-Mac's are continuous, and the tip over a cell comes in W9b3.
+hand-edited session) shows the dot in the bar and a blank icon slot in the
+header; a picture shows nothing until its decode arrives, and its corners are
+circular where the Mac's are continuous; the MDL2 fallback (Windows without
+Segoe Fluent Icons) is checked against the font's map but not yet seen drawn;
+and the tip over a cell comes in W9b3.
 A switch's slide relights
 the cells with the pages: each cell's two layers have DirectComposition opacity
 animations on the strip's spring (its light is linear in the strip's offset,

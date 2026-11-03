@@ -1,7 +1,8 @@
 #pragma once
 // Draws a space's SF Symbol or picture icon (core/SpaceIcon.h), for the space bar's cells and the
 // page's header: the Mac's SpaceIconImageView (SidebarListRows.swift) for those two kinds. Emoji
-// and the dot are drawn by their views, as before.
+// and the dot are drawn by their views, as before. SidebarView owns the one painter and lends it
+// to the bar.
 //
 // A symbol is its glyph in Segoe Fluent Icons (Segoe MDL2 Assets where Fluent isn't installed),
 // filled from the glyph's outline in the colour it's given, centred on its ink, at a size made so
@@ -11,17 +12,20 @@
 // scaled to its pixels; a picture whose file can't be read shows the "photo" symbol. Greying (the
 // bar's) is the caller's.
 //
-// Pictures are decoded on the UI thread, by Prepare, outside any surface's draw: Kite stores them
-// as 128px PNGs (SpaceIconImages.pixelSize), so that's a fraction of a millisecond, once per
-// picture, size and device. Each view keeps one painter, used at one icon size.
+// Pictures are read and decoded on a worker thread (nothing that touches the disk runs on the UI
+// thread), which posts `message` to the window when they're ready; the caller's TakeResults moves
+// them in and the views draw again. Until then a picture draws nothing. A file over 1 MB or 2048px
+// on a side isn't decoded (Kite stores 128px PNGs: SpaceIconImages.pixelSize). A file that can't
+// be read shows the placeholder, and is looked for again at a draw 2 s on, as the Mac looks again
+// at its next layout. A --capture run decodes in place, so its one frame has the pictures.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
 #include <d2d1_1.h>
 #include <dwrite.h>
-#include <wincodec.h>
 #include <wrl/client.h>
 
+#include <chrono>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -31,32 +35,43 @@
 #include <utility>
 
 #include "core/SpaceIcon.h"
+#include "shell/Capture.h"
 
 namespace kite {
 
 class SpaceIconPainter {
 public:
-    // `pictures` is the profile's SpaceIcons folder.
-    static std::unique_ptr<SpaceIconPainter> Create(IDWriteFactory* dwrite, std::filesystem::path pictures, std::wstring& error);
+    struct Pictures {
+        std::filesystem::path folder;  // the profile's SpaceIcons folder
+        UINT message = 0;              // posted to the window when pictures are ready
+        bool synchronous = false;      // a --capture run: decode in place
+    };
+    static std::unique_ptr<SpaceIconPainter> Create(IDWriteFactory* dwrite, HWND window, const Pictures& pictures, std::wstring& error);
+    // Tells the worker to stop; it isn't waited for.
     ~SpaceIconPainter();
     SpaceIconPainter(const SpaceIconPainter&) = delete;
     SpaceIconPainter& operator=(const SpaceIconPainter&) = delete;
 
-    // Decodes `look`'s picture (if it is one) for an icon size `size` at the window's `scale`,
-    // for `context`'s device, unless it's already there. Call it before the draw that shows it
-    // begins; Draw does it too, as a fallback. A file that can't be read is remembered as such.
+    // Asks for `look`'s picture (if it is one) for an icon size `size` at the window's `scale`,
+    // and makes its bitmap for `context`'s device once it's decoded. Call it before the draw that
+    // shows it begins; Draw does it too, as a fallback.
     void Prepare(ID2D1DeviceContext* context, const SpaceIconLook& look, float size, float scale);
+    // On `message`: moves the decoded pictures in. True when one arrived that now draws (or
+    // turned out unreadable), so the views draw again.
+    bool TakeResults();
     // Draws `look` (a symbol or a picture; anything else draws nothing) centred on `centre`, in
     // `context`'s points at the window's `scale`, for an icon size `size` (the Mac's 12.5 in the
     // bar, 15 in the header): a symbol in `symbol`, filled with `brush`. `dark` is the
     // appearance, for the missing picture's placeholder.
     void Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SpaceIconLook& look, D2D1_POINT_2F centre, float size,
               float scale, D2D1_COLOR_F symbol, bool dark);
-    // Keeps only the pictures named here (the icons shown now).
+    // Keeps only the pictures named here (the spaces' icons now).
     void Retain(const std::set<std::string>& names);
-    // Drops what belongs to the device: the pictures' bitmaps, and the glyphs' outlines (their
-    // factory's).
+    // Drops what belongs to the device: the pictures' bitmaps (their decoded pixels stay), and
+    // the glyphs' outlines (their factory's). The views call it from their ReleaseGpu.
     void ReleaseDevice();
+
+    struct Shared;  // the worker's queue (SpaceIconPainter.cpp)
 
 private:
     SpaceIconPainter() = default;
@@ -72,30 +87,31 @@ private:
         bool calibrated = false;
         std::map<char16_t, std::optional<Outline>> outlines;
     };
-    // A picture at one size: no bitmap when its file can't be read.
+    // A picture at one size.
     struct Picture {
-        UINT pixels = 0;
-        Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;
+        enum class State { Loading, Ready, Unreadable } state = State::Loading;
+        bool requested = false;  // queued for the worker
+        std::chrono::steady_clock::time_point unreadableAt;
+        Pixels pixels;  // decoded, premultiplied BGRA
+        Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;  // the device's, made from `pixels`
         Microsoft::WRL::ComPtr<ID2D1BitmapBrush> brush;
     };
+    using PictureKey = std::pair<std::string, UINT>;  // name, pixels on a side
 
-    // Outlines and bitmaps are their factory's: a context from another (a new device) drops them.
+    // Outlines are their factory's: a context from another (a new device) drops them.
     void UseFactoryOf(ID2D1DeviceContext* context);
     // The font that has `glyph` (Fluent first) and its outline; null when neither has it.
     std::pair<Face*, const Outline*> OutlineOf(const SymbolGlyph& glyph);
     const Outline* OutlineIn(Face& face, char16_t codePoint);
     void DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SymbolGlyph& glyph, D2D1_POINT_2F centre, float size,
                     D2D1_COLOR_F color);
-    // The file `name` decoded, its centred square scaled to `pixels` on a side; null when it
-    // can't be read.
-    Microsoft::WRL::ComPtr<ID2D1Bitmap> Decode(ID2D1DeviceContext* context, const std::string& name, UINT pixels, float scale);
+    void Arrived(const PictureKey& key, std::optional<Pixels> pixels);
 
     Microsoft::WRL::ComPtr<ID2D1Factory> d2d_;
-    Microsoft::WRL::ComPtr<IWICImagingFactory> wic_;
-    bool comInitialized_ = false;
-    std::filesystem::path folder_;  // absolute, with the \\?\ prefix
     std::optional<Face> fluent_, mdl2_;
-    std::map<std::string, Picture> pictures_;
+    std::shared_ptr<Shared> shared_;
+    bool synchronous_ = false;
+    std::map<PictureKey, Picture> pictures_;
 };
 
 }  // namespace kite

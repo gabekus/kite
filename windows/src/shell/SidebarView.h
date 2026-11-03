@@ -44,9 +44,10 @@ namespace kite {
 
 class SidebarView {
 public:
-    // `favicons` may be null (a capture): every tab shows the globe. `spaceIcons` is the
-    // profile's SpaceIcons folder (the spaces' pictures).
-    static std::unique_ptr<SidebarView> Create(HWND window, Favicons* favicons, const std::filesystem::path& spaceIcons, std::wstring& error);
+    // `favicons` may be null (a capture): every tab shows the globe. `pictures` is where the
+    // spaces' pictures come from (SpaceIconPainter).
+    static std::unique_ptr<SidebarView> Create(HWND window, Favicons* favicons, const SpaceIconPainter::Pictures& pictures,
+                                               std::wstring& error);
     ~SidebarView();
     SidebarView(const SidebarView&) = delete;
     SidebarView& operator=(const SidebarView&) = delete;
@@ -98,6 +99,8 @@ public:
     // Icons arrived (Favicons::TakeResults): the pages, whose rows wait for them, draw again
     // (the address field has none).
     void InvalidatePages();
+    // On the pictures' message: those that arrived draw, in the bar and the headers.
+    void PicturesArrived();
 
     // Draws now if anything changed since the last draw; with `readBack`, always, also
     // copying the sidebar (premultiplied BGRA, at the window's top-left) there for --capture.
@@ -186,7 +189,7 @@ private:
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
     std::map<std::string, Page> pages_;  // by space id: the built pages' GPU side
     std::map<FaviconKey, Microsoft::WRL::ComPtr<ID2D1Bitmap1>> faviconBitmaps_;
-    std::unique_ptr<SpaceIconPainter> icons_;  // the header's symbols and pictures
+    std::unique_ptr<SpaceIconPainter> icons_;  // the headers' and the bar's symbols and pictures
     std::set<FaviconKey>* drawnIcons_ = nullptr;  // the page being drawn's
     UINT surfaceWidth_ = 0, surfaceHeight_ = 0;
     UINT clipWidth_ = 0;  // the pages' clip, in px

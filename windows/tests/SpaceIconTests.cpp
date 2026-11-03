@@ -8,6 +8,8 @@
 
 #include "Check.h"
 #include "core/OKLab.h"
+#include "core/Sidebar.h"
+#include "core/SpaceBar.h"
 #include "core/SpaceIcon.h"
 
 using namespace kite;
@@ -30,6 +32,21 @@ TEST(aSymbolWindowsHasNoStandInForShowsTheDot) {
     const SpaceIconLook look = SpaceIconLookOf("symbol:hare.fill", Theme{});
     CHECK(look.kind == Kind::Dot && look.text == "hare.fill" && !look.glyph);
     CHECK(!SymbolGlyphFor("") && !SymbolGlyphFor("star"));
+}
+
+TEST(aHeaderKeepsTheSlotOfAnIconThatShowsTheDot) {
+    // SpaceHeaderRowCell keeps the icon's slot for any icon: the header row has the raw icon for
+    // that, and the look for what draws (nothing, for a dot), while the bar shows the dot.
+    BrowserState state;
+    Space space;
+    space.id = "s";
+    space.icon = "symbol:hare.fill";
+    state.spaces = {space};
+    state.SelectSpace("s");
+    const auto rows = SidebarRows(state, 0);
+    CHECK(rows.front().kind == SidebarRow::Kind::Header && rows.front().icon == "symbol:hare.fill");
+    CHECK(rows.front().look.kind == Kind::Dot);
+    CHECK(SpaceCells(state).front().Dot());
 }
 
 TEST(aPictureNameIsABareFileName) {

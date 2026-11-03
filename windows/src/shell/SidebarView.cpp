@@ -104,7 +104,7 @@ D2D1_RECT_F Rect(float left, float top, float right, float bottom) { return D2D1
 
 }  // namespace
 
-std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons, const std::filesystem::path& spaceIcons,
+std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons, const SpaceIconPainter::Pictures& pictures,
                                                  std::wstring& error) {
     std::unique_ptr<SidebarView> view(new SidebarView(window, favicons));
     HRESULT hr = S_OK;
@@ -146,10 +146,10 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
         ComPtr<IDWriteInlineObject> ellipsis;
         if (SUCCEEDED(view->dwrite_->CreateEllipsisTrimmingSign(f, ellipsis.GetAddressOf()))) f->SetTrimming(&trimming, ellipsis.Get());
     }
-    view->bar_ = SpaceBarView::Create(view->dwrite_.Get(), spaceIcons, error);
-    if (!view->bar_) return nullptr;
-    view->icons_ = SpaceIconPainter::Create(view->dwrite_.Get(), spaceIcons, error);
+    view->icons_ = SpaceIconPainter::Create(view->dwrite_.Get(), window, pictures, error);
     if (!view->icons_) return nullptr;
+    view->bar_ = SpaceBarView::Create(view->dwrite_.Get(), view->icons_.get(), error);
+    if (!view->bar_) return nullptr;
     // Emoji and symbols sit in the middle of their box.
     for (IDWriteTextFormat* f : {view->emojiFormat_.Get(), view->iconFormat_.Get()}) {
         f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -222,7 +222,14 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
     const size_t selected = state.SelectedSpaceIndex();
     next.dark = !PrefersDarkForeground(state.SelectedSpace().theme);
     // The space bar's cells, and their light along a slide that has just begun.
-    bar_->Update(SpaceCells(state), next.dark);
+    std::vector<SpaceCell> cells = SpaceCells(state);
+    // The pictures any space shows, in the bar or its header: the painter keeps only these.
+    std::set<std::string> pictures;
+    for (const SpaceCell& cell : cells) {
+        if (cell.look.kind == SpaceIconLook::Kind::Picture) pictures.insert(cell.look.text);
+    }
+    icons_->Retain(pictures);
+    bar_->Update(std::move(cells), next.dark);
     if (barSlidePending_) {
         barSlidePending_ = false;
         const std::optional<size_t> left = anchor ? state.SpaceIndex(*anchor) : std::nullopt;
@@ -278,11 +285,6 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         it = pages_.erase(it);
     }
     model_ = std::move(next);
-    std::set<std::string> pictures;
-    for (const PageModel& page : model_.pages) {
-        if (!page.rows.empty() && page.rows.front().look.kind == SpaceIconLook::Kind::Picture) pictures.insert(page.rows.front().look.text);
-    }
-    icons_->Retain(pictures);
     PlacePages();
     ScheduleDraw();
     // Rows moved under a still pointer: it now hovers whatever is there.
@@ -371,6 +373,16 @@ void SidebarView::InvalidatePages() {
     ScheduleDraw();
 }
 
+void SidebarView::PicturesArrived() {
+    if (!icons_->TakeResults()) return;
+    bar_->InvalidatePictures();
+    for (auto& [id, page] : pages_) {
+        const auto model = std::find_if(model_.pages.begin(), model_.pages.end(), [&](const PageModel& p) { return p.spaceID == id; });
+        if (model != model_.pages.end() && !model->rows.empty() && model->rows.front().look.kind == SpaceIconLook::Kind::Picture) page.dirty = true;
+    }
+    ScheduleDraw();
+}
+
 void SidebarView::InvalidateSelectedPage() {
     if (auto found = pages_.find(model_.spaceID); found != pages_.end()) found->second.dirty = true;
     ScheduleDraw();
@@ -445,7 +457,7 @@ std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixe
     }
     gpu.width = width;
     gpu.height = height;
-    // The header's picture decoded before the page's draw begins.
+    // The header's picture's bitmap, made before the page's draw begins.
     if (!page.rows.empty() && page.rows.front().kind == SidebarRow::Kind::Header) {
         icons_->Prepare(compositor_->D2D(), page.rows.front().look, M::kHeaderIconFontSize, scale);
     }
@@ -669,11 +681,15 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
     const float tabBaseline = pillTop + TextTop(M::kPillHeight, tabLine) + M::kTabFontSize * kAscender;
     switch (row.kind) {
     case SidebarRow::Kind::Header: {
-        // An icon-less space has no icon slot: its name starts at the icon's place.
+        // An icon-less space has no icon slot: its name starts at the icon's place. Any icon keeps
+        // the slot (SpaceHeaderRowCell's showsIcon), even one that draws nothing: a symbol with
+        // no stand-in.
         float x = M::kHeaderIconX;
         const D2D1_RECT_F iconBox = Rect(x, top + M::kHeaderIconTop, x + M::kHeaderIconSize, top + M::kHeaderIconTop + M::kHeaderIconSize);
-        if (row.look.kind != SpaceIconLook::Kind::Dot) {
-            if (row.look.kind != SpaceIconLook::Kind::Emoji) {
+        if (!row.icon.empty()) {
+            if (row.look.kind == SpaceIconLook::Kind::Dot) {
+                // Blank.
+            } else if (row.look.kind != SpaceIconLook::Kind::Emoji) {
                 // A symbol in the theme's accent, or a picture (SpaceIconImageView, never greyed here).
                 const ThemeColor& a = row.look.accent;
                 icons_->Draw(context, brush_.Get(), row.look,

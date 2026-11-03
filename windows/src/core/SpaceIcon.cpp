@@ -100,6 +100,8 @@ const std::vector<std::string_view>& IconTabSymbols() {
 }
 
 bool IsValidIconImageName(std::string_view name) {
+    // By bytes where Swift compares characters: a name starting with a dot and a combining mark
+    // passes on the Mac and not here, which Kite's own (UUID) names never are.
     if (name.empty() || name.starts_with('.')) return false;
     if (name.find_first_of("/\\:") != std::string_view::npos) return false;
     // Swift's String.count: characters (grapheme clusters), not bytes.

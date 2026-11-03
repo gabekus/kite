@@ -7,8 +7,8 @@
 // It's DirectComposition visuals in the sidebar's chrome: the bar's surface (the end buttons,
 // drawn only for a new width, scale or appearance), then, clipped to the strip's viewport, the
 // hovered cell's backing (its own small visual that moves) and each cell's icon (an emoji, or a
-// symbol or a picture as SpaceIconPainter draws them) twice, greyed and in colour, or its dot, each in its own small surface with an opacity. A space switch's slide
-// relights the cells as the pages slide (SpaceSwipe::Highlight), as DirectComposition animations
+// symbol or a picture as SpaceIconPainter draws them) twice, greyed and in colour, or its dot,
+// each in its own small surface with an opacity. A space switch's slide relights the cells as the pages slide (SpaceSwipe::Highlight), as DirectComposition animations
 // of those opacities on the same spring as the strip's, so no frame of it draws; hovering and
 // scrolling move visuals and draw nothing. What a cell shows and what a press does are core's
 // (core/SpaceBar.h). Not yet: the Library and the + menu (the buttons draw, and take no clicks),
@@ -36,8 +36,9 @@ namespace kite {
 
 class SpaceBarView {
 public:
-    // `pictures` is the profile's SpaceIcons folder.
-    static std::unique_ptr<SpaceBarView> Create(IDWriteFactory* dwrite, const std::filesystem::path& pictures, std::wstring& error);
+    // `painter` (SidebarView's, which outlives the bar) draws its symbols and pictures; the
+    // sidebar releases its device objects.
+    static std::unique_ptr<SpaceBarView> Create(IDWriteFactory* dwrite, SpaceIconPainter* painter, std::wstring& error);
     ~SpaceBarView();
     SpaceBarView(const SpaceBarView&) = delete;
     SpaceBarView& operator=(const SpaceBarView&) = delete;
@@ -55,6 +56,8 @@ public:
     // SettleSegments), with the pages `built` around `selected`, `pageWidth` apart.
     void Slide(const std::vector<CubicSegment>& segments, double duration, double from, double to, double pageWidth,
                const std::vector<size_t>& built, size_t selected);
+    // Pictures arrived: the cells showing one draw again.
+    void InvalidatePictures();
     // At rest: each cell as it is (the slide's end, or a slide cut short), from the next draw.
     void Land();
     // Scrolls the strip by `by` points (positive shows later spaces) when the spaces don't fit.
@@ -121,7 +124,7 @@ private:
 
     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> emojiFormat_;
-    std::unique_ptr<SpaceIconPainter> painter_;
+    SpaceIconPainter* painter_ = nullptr;
 
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
     Microsoft::WRL::ComPtr<ID2D1Effect> saturation_;  // greys an emoji or a picture (the Mac's CIColorControls)

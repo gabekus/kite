@@ -36,6 +36,7 @@ constexpr UINT_PTR kSettleTimer = 3;
 constexpr UINT kFaviconsMessage = WM_APP + 4;
 // Posted by the frame clock once a composition frame while something animates.
 constexpr UINT kFrameMessage = WM_APP + 5;
+constexpr UINT kSpaceIconsMessage = WM_APP + 6;
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -130,7 +131,8 @@ std::wstring BrowserWindowController::Init() {
     // The sidebar, over the backdrop: what the session lists, with favicons fetched off the UI
     // thread (none in a capture, which mustn't depend on the network).
     if (!options_.capture) favicons_ = Favicons::Create(window_.Handle(), kFaviconsMessage);
-    sidebar_ = SidebarView::Create(window_.Handle(), favicons_.get(), options_.spaceIcons, error);
+    sidebar_ = SidebarView::Create(window_.Handle(), favicons_.get(),
+                                   SpaceIconPainter::Pictures{options_.spaceIcons, kSpaceIconsMessage, options_.capture}, error);
     if (!sidebar_) return L"Kite couldn't make the sidebar: " + error;
     sidebar_->UseCompositor(compositor_.get());
     sidebar_->Layout(static_cast<float>(kSidebarWidth), window_.Dpi());
@@ -682,6 +684,10 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     // The pages' slide has ended on the compositor.
     if (message == WM_TIMER && wParam == kSettleTimer) {
         FinishSettling();
+        return true;
+    }
+    if (message == kSpaceIconsMessage) {
+        sidebar_->PicturesArrived();
         return true;
     }
     if (message == kFaviconsMessage) {

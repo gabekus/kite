@@ -96,7 +96,7 @@ struct SpaceCell {
     size_t number = 1;  // 1-based place (the tip's Alt+n for the first nine)
     double lit = 0;     // 0 greyed (or a faint dot) ... 1 in colour
     bool selected = false;
-    // An icon-less space's 8pt dot.
+    // The 8pt dot: an icon-less space's, or a symbol's with no stand-in.
     bool Dot() const { return look.kind == SpaceIconLook::Kind::Dot; }
     bool operator==(const SpaceCell&) const = default;
 };

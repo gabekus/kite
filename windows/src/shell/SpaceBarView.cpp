@@ -42,11 +42,10 @@ D2D1_RECT_F Rect(float left, float top, float right, float bottom) { return D2D1
 
 }  // namespace
 
-std::unique_ptr<SpaceBarView> SpaceBarView::Create(IDWriteFactory* dwrite, const std::filesystem::path& pictures, std::wstring& error) {
+std::unique_ptr<SpaceBarView> SpaceBarView::Create(IDWriteFactory* dwrite, SpaceIconPainter* painter, std::wstring& error) {
     std::unique_ptr<SpaceBarView> view(new SpaceBarView());
     view->dwrite_ = dwrite;
-    view->painter_ = SpaceIconPainter::Create(dwrite, pictures, error);
-    if (!view->painter_) return nullptr;
+    view->painter_ = painter;
     HRESULT hr = dwrite->CreateTextFormat(L"Segoe UI Emoji", nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL,
                                           DWRITE_FONT_STRETCH_NORMAL, kEmojiFontSize, L"", view->emojiFormat_.GetAddressOf());
     if (SUCCEEDED(hr)) hr = view->emojiFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -141,7 +140,6 @@ void SpaceBarView::ReleaseGpu() {
     surface_.Reset();
     surfaceWidth_ = surfaceHeight_ = 0;
     brush_.Reset();
-    if (painter_) painter_->ReleaseDevice();
     saturation_.Reset();
     box_.Reset();
     roundCaps_.Reset();
@@ -171,11 +169,6 @@ void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
     // pointer comes and goes).
     cells_ = std::move(cells);
     dark_ = dark;
-    std::set<std::string> pictures;
-    for (const SpaceCell& cell : cells_) {
-        if (cell.look.kind == SpaceIconLook::Kind::Picture) pictures.insert(cell.look.text);
-    }
-    painter_->Retain(pictures);
     if (reshaped) {
         layout_ = LayOutSpaceBar(width_, cells_.size(), layout_.scroll, Scale());
         placed_ = false;
@@ -207,6 +200,12 @@ void SpaceBarView::Slide(const std::vector<CubicSegment>& segments, double durat
     opacitiesApplied_ = false;
     // The cells' new light comes with the strip's commit.
     ApplyOpacities();
+}
+
+void SpaceBarView::InvalidatePictures() {
+    for (size_t i = 0; i < cells_.size() && i < cellGpu_.size(); ++i) {
+        if (cells_[i].look.kind == SpaceIconLook::Kind::Picture) cellGpu_[i].dirty = true;
+    }
 }
 
 void SpaceBarView::Land() {
@@ -385,7 +384,7 @@ std::wstring SpaceBarView::DrawCell(size_t index, CellGpu& gpu, bool readBack, b
         if (gpu.grey.visual) gpu.visual->RemoveVisual(gpu.grey.visual.Get());
         gpu.grey = Layer{};
     } else {
-        // A picture's decode, before the layers' draws begin.
+        // A picture's bitmap, made before the layers' draws begin.
         painter_->Prepare(compositor_->D2D(), cell.look, M::kIconFontSize, Scale());
         error = DrawLayer(gpu.lit, width, height, [&](ID2D1DeviceContext* context) { DrawIcon(context, cell, false); }, readBack, hr, fresh);
         if (error.empty() && GreysByTint(cell.look.kind)) {
