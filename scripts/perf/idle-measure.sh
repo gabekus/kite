@@ -35,6 +35,12 @@ if [[ -n "${SWITCH:-}" ]]; then
       "$CLI" ui input '{"keys":"ctrl+1"}' >/dev/null 2>&1; sleep 0.5
     done ) &
 fi
+# RELOAD=1: reload the front tab (⌘R) every half second while sampling: page status changes.
+if [[ -n "${RELOAD:-}" ]]; then
+  ( end=$((SECONDS + SECS)); while (( SECONDS < end )); do
+      "$CLI" ui input '{"keys":"cmd+r"}' >/dev/null 2>&1; sleep 0.5
+    done ) &
+fi
 RUSAGE="$(dirname "$0")/../../build/perf/rusage"
 [[ -x "$RUSAGE" ]] || cc -O2 -o "$RUSAGE" "$(dirname "$0")/rusage.c"
 echo "$LABEL $("$RUSAGE" $PID "$SECS")"

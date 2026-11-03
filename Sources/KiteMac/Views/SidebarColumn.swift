@@ -16,9 +16,9 @@ final class SpaceSwipeModel {
     var pageWidth: CGFloat = 0
 }
 
-/// The sidebar: an AppKit column holding the space pages (`SidebarPagesView`), the chrome still drawn by
-/// SwiftUI around them (header row, address field, favorites, Mini Player, space bar; one hosting view the
-/// sidebar's size), and the drag overlay over everything.
+/// The sidebar: an AppKit column holding the header row and address field (`SidebarHeaderView`), the space
+/// pages (`SidebarPagesView`), the chrome still drawn by SwiftUI around them (favorites, Mini Player, space bar;
+/// one hosting view the sidebar's size), and the drag overlay over everything.
 ///
 /// It clips what it draws to its bounds with a layer mask rather than `clipsToBounds`: clipping would bound
 /// the pages' visible rect, so a neighbouring page's list would drop its rows while it sits off to the side
@@ -27,6 +27,7 @@ final class SpaceSwipeModel {
 @MainActor
 final class SidebarColumnView: NSView {
     let chrome: NSHostingView<SidebarView>
+    let header: SidebarHeaderView
     let pages: SidebarPagesView
     private let overlay: SidebarOverlayHost
     private let clip = CALayer()
@@ -39,6 +40,11 @@ final class SidebarColumnView: NSView {
         pages = SidebarPagesView(store: store, swipe: swipe, drag: drag, actions: sidebar.actions, claude: sidebar.claude,
                                  supportsDarkPages: sidebar.supportsDarkPages)
         overlay = SidebarOverlayHost(rootView: SidebarDragOverlay(drag: drag))
+        header = SidebarHeaderView(store: store, actions: sidebar.actions, hover: sidebar.hover,
+                                   supportsDarkPages: sidebar.supportsDarkPages, accessory: sidebar.fieldAccessory)
+        header.showExtensions = sidebar.showExtensions
+        header.showSiteControls = sidebar.showSiteControls
+        header.installApp = sidebar.installApp
         chrome = NSHostingView(rootView: sidebar)
         super.init(frame: .zero)
         sidebar.pagesFrame = { [weak self] frame in self?.setPagesFrame(frame) }
@@ -47,8 +53,10 @@ final class SidebarColumnView: NSView {
         overlay.sizingOptions = []
         wantsLayer = true
         addSubview(chrome)
+        addSubview(header)
         addSubview(pages)
         addSubview(overlay)
+        header.onHeightChange = { [weak self] in self?.needsLayout = true }
         overlay.isHidden = true
         watchDrag(drag)
     }
@@ -76,6 +84,7 @@ final class SidebarColumnView: NSView {
         super.layout()
         chrome.frame = bounds
         overlay.frame = bounds
+        header.frame = CGRect(x: 0, y: 0, width: bounds.width, height: header.height)
         // The pages span the whole sidebar, not just its padded column.
         pages.frame = CGRect(x: 0, y: pagesFrame.minY, width: bounds.width, height: max(pagesFrame.height, 0))
         guard let layer else { return }

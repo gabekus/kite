@@ -107,50 +107,17 @@ struct SidebarView: View {
         let state = store.state
         let space = state.selectedSpace
         let selectedID = space.selectedTabID
-        let page = selectedID.flatMap { store.pages[$0] } ?? PageStatus()
-        let selectedTab = state.selectedTab
 
         VStack(alignment: .leading, spacing: 0) {
-            // One row with the traffic lights: sidebar toggle after them, navigation at the far end.
-            // With View → Show Toolbar, navigation and the URL move to the bar over the page.
-            let header = HeaderLayout(sidebarWidth: width)
-            HStack(spacing: 0) {
-                // Arc's compact header drops the toggle into the More menu.
-                if !header.isCompact {
-                    ToolbarButton(symbol: "sidebar.left", help: "Toggle Sidebar", enabled: true, action: actions.toggleSidebar)
-                        .padding(.leading, M.toggleX - M.padding)
-                }
-                Spacer(minLength: 0)
-                if !state.showsToolbar {
-                    NavigationButtons(layout: header, page: page, hasTab: selectedID != nil,
-                                  developerReload: state.isInDeveloperMode(selectedTab?.url) ? state.devModeReloadState : nil,
-                                  actions: actions)
-                } else if header.isCompact {
-                    NavigationMoreButton(size: header.buttonSize, page: page, hasTab: selectedID != nil, showsReload: false, actions: actions)
-                }
-            }
-            .frame(height: M.topRowHeight)
-            .padding(.top, M.topRowY)
-            .padding(.trailing, M.navTrailing - M.padding)
+            // The header row and the address field: AppKit (`SidebarHeaderView`), laid over these placeholders.
+            Color.clear.frame(height: M.topRowY + M.topRowHeight)
 
             // + › New Space: Arc's Create a Space page takes the place of everything under the top row.
             if let creation = store.spaceCreation, creation.spaceID == space.id {
                 SpaceCreationView(store: store, actions: actions, creation: creation)
             } else {
                 if !state.showsToolbar {
-                    AddressPill(
-                        text: selectedTab?.url?.host() ?? "Search or enter URL",
-                        isDark: darkPageState(for: selectedTab),
-                        action: { store.showCommandBar(selectedTab == nil ? .newTab : .editCurrent) },
-                        toggleDark: { store.mutate { $0.toggleDarkPage(for: selectedTab?.url) } },
-                        showExtensions: showExtensions,
-                        showSiteControls: SiteControls.applies(to: selectedTab?.url) ? showSiteControls : nil,
-                        accessory: fieldAccessory,
-                        installAppName: installApp == nil ? nil : WebAppInstallOffers.shared.offer(for: selectedID)?.name,
-                        installApp: installApp,
-                        sidebarHovered: hover.isHovered
-                    )
-                    .padding(.top, M.urlFieldTopGap)
+                    Color.clear.frame(height: M.urlFieldTopGap + M.urlFieldHeight)
                 }
 
                 // Arc's tray shows while dragging even when there are no favorites (`AppTrayDisplayMode.onDrag`).
@@ -206,11 +173,6 @@ struct SidebarView: View {
 
     private static let space = "sidebar"
 
-    /// Nil hides the moon: nothing to darken, or the engine can't.
-    private func darkPageState(for tab: BrowserTab?) -> Bool? {
-        guard supportsDarkPages, let url = tab?.url, url.host() != nil else { return nil }
-        return store.state.wantsDarkPage(for: url, systemIsDark: store.systemIsDark)
-    }
 }
 
 private typealias M = ArcMetrics.Sidebar
@@ -293,29 +255,6 @@ struct TabPillFill: ViewModifier {
     }
 }
 
-private struct ToolbarButton: View {
-    let symbol: String
-    let help: String
-    let enabled: Bool
-    var size: CGFloat = M.navButtonSize
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 15, weight: .regular))
-                .frame(width: size, height: size)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .opacity(enabled ? 0.6 : 0.25)
-        .disabled(!enabled)
-        .help(help)
-        // Otherwise VoiceOver and the ui tree read the SF Symbol's own name.
-        .accessibilityLabel(help)
-    }
-}
-
 /// Arc's header layouts by sidebar width (see `ArcMetrics.Sidebar.headerCompactBelow`).
 struct HeaderLayout: Equatable {
     let isCompact: Bool
@@ -326,199 +265,6 @@ struct HeaderLayout: Equatable {
         isCompact = sidebarWidth < M.headerCompactBelow
         buttonSize = isCompact ? M.compactNavButtonSize : M.navButtonSize
         spacing = isCompact ? M.compactNavButtonSpacing : M.navButtonSpacing
-    }
-}
-
-/// Back, forward and reload at the header's right end. Arc 1.169's compact layout (from its
-/// binary, `BrowserNavigationButtons`) shrinks them to 28pt with no gap and swaps the sidebar
-/// toggle and reload for a More menu, which fits down to Arc's 164pt minimum.
-private struct NavigationButtons: View {
-    let layout: HeaderLayout
-    let page: PageStatus
-    let hasTab: Bool
-    /// The reload setting when the page's site is in Developer Mode, nil otherwise.
-    let developerReload: DeveloperTabReloadSetting?
-    let actions: SidebarActions
-
-    var body: some View {
-        HStack(spacing: layout.spacing) {
-            ToolbarButton(symbol: "arrow.left", help: "Back", enabled: page.canGoBack, size: layout.buttonSize, action: actions.goBack)
-            ToolbarButton(symbol: "arrow.right", help: "Forward", enabled: page.canGoForward, size: layout.buttonSize, action: actions.goForward)
-            if layout.isCompact {
-                NavigationMoreButton(size: layout.buttonSize, page: page, hasTab: hasTab, showsReload: true, actions: actions)
-            } else {
-                ToolbarButton(symbol: page.isLoading ? "xmark" : developerReload == .forceReload ? "arrow.clockwise.circle" : "arrow.clockwise",
-                              help: developerReload == .forceReload ? "Refresh (Ignore Cache)" : "Reload",
-                              enabled: hasTab, size: layout.buttonSize, action: actions.reloadButton)
-                if let developerReload {
-                    DeveloperReloadOptionsButton(setting: developerReload, size: layout.buttonSize, hasTab: hasTab, actions: actions)
-                }
-            }
-        }
-    }
-}
-
-/// Arc's `reloadOptionsButton`, shown beside reload on a Developer Mode site ("A button that
-/// shows a list of reload options"). Items from the strings beside it in Arc's binary; the
-/// layout and the checkmark are Kite's guess.
-private struct DeveloperReloadOptionsButton: View {
-    let setting: DeveloperTabReloadSetting
-    let size: CGFloat
-    let hasTab: Bool
-    let actions: SidebarActions
-
-    var body: some View {
-        Menu {
-            Toggle("Reload this page", isOn: .init(get: { setting == .reload }, set: { _ in actions.developerReload(.reload) }))
-            Toggle("Refresh (Ignore Cache)", isOn: .init(get: { setting == .forceReload }, set: { _ in actions.developerReload(.forceReload) }))
-            Divider()
-            Button("Clear Cookies and Refresh", action: actions.clearCookiesAndRefresh)
-        } label: {
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .semibold))
-                .frame(width: size / 2, height: size)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .frame(width: size / 2, height: size)
-        .opacity(0.6)
-        .disabled(!hasTab)
-        .help("Refresh options")
-        .accessibilityLabel("Refresh options")
-    }
-}
-
-/// Arc's `navigationButtonsMore`: reload, the sidebar toggle and force reload, from the strings
-/// beside it in Arc's binary. Item order and wording are unverified.
-private struct NavigationMoreButton: View {
-    let size: CGFloat
-    let page: PageStatus
-    let hasTab: Bool
-    /// False while View → Show Toolbar has reload over the page.
-    let showsReload: Bool
-    let actions: SidebarActions
-
-    var body: some View {
-        Menu {
-            if showsReload {
-                Button(page.isLoading ? "Stop" : "Reload", action: actions.reload).disabled(!hasTab)
-            }
-            Button("Toggle Sidebar", action: actions.toggleSidebar)
-            if showsReload {
-                Button("Force Reload", action: actions.forceReload).disabled(!hasTab)
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 15, weight: .regular))
-                .frame(width: size, height: size)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .frame(width: size, height: size)
-        .opacity(0.6)
-        .help("More")
-        .accessibilityLabel("More")
-    }
-}
-
-private struct AddressPill: View {
-    let text: String
-    /// Whether the page is shown dark; nil hides the toggle.
-    let isDark: Bool?
-    let action: () -> Void
-    let toggleDark: () -> Void
-    var showExtensions: ((NSView) -> Void)?
-    var showSiteControls: ((NSView) -> Void)?
-    var accessory: AnyView?
-    /// The installable app's name; nil hides the install icon.
-    var installAppName: String?
-    var installApp: ((NSView) -> Void)?
-    /// The field's buttons, all but the password manager and extensions, show only while the
-    /// pointer is over the sidebar.
-    var sidebarHovered = false
-    // Settings → Advanced → Toolbar can hide each button; their commands still work from the menu bar.
-    @AppStorage(ChromeButton.passwordManager.hiddenKey) private var hidesPasswordManager = false
-    @AppStorage(ChromeButton.darkPage.hiddenKey) private var hidesDarkPage = false
-    @AppStorage(ChromeButton.siteControls.hiddenKey) private var hidesSiteControls = false
-    @AppStorage(ChromeButton.extensions.hiddenKey) private var hidesExtensions = false
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Button(action: action) {
-                Text(text)
-                    .font(.system(size: M.urlFieldFontSize))
-                    .opacity(M.urlFieldTextOpacity)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, M.urlFieldTextInset)
-                    .frame(height: M.urlFieldHeight)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            // Arc's buttons at the field's right end are 30pt wide on a 28pt pitch. Arc shows them only
-            // while the sidebar is hovered (its URL row's `sidebarHovered`); Kite always shows the
-            // password manager's key and the extensions button, rightmost (Gabe's calls, 2026-11-01/02).
-            let isDark = hidesDarkPage ? nil : isDark
-            let showSiteControls = hidesSiteControls ? nil : showSiteControls
-            let showExtensions = hidesExtensions ? nil : showExtensions
-            let revealed = sidebarHovered || SiteControlsPopover.isShown
-            HStack(spacing: -2) {
-                HStack(spacing: -2) {
-                    if let isDark {
-                        DarkPageToggle(isDark: isDark, action: toggleDark)
-                    }
-                    if let showSiteControls {
-                        SiteControlsFieldButton(action: showSiteControls)
-                    }
-                    // Chrome's install icon sits at the field's right end; the extensions button stays rightmost.
-                    if let installAppName, let installApp {
-                        InstallAppFieldButton(appName: installAppName, size: ExtensionsFieldButton.size, action: installApp)
-                    }
-                }
-                .opacity(revealed ? 1 : 0)
-                .allowsHitTesting(revealed)
-                .accessibilityHidden(!revealed)
-                .animation(.easeInOut(duration: M.urlFieldButtonsFade), value: revealed)
-                if let accessory, !hidesPasswordManager { accessory }
-                if let showExtensions {
-                    ExtensionsFieldButton(action: showExtensions)
-                }
-            }
-            .padding(.trailing, isDark != nil || showExtensions != nil || showSiteControls != nil || installAppName != nil
-                || (accessory != nil && !hidesPasswordManager) ? 4 : 0)
-        }
-        .modifier(ChromeFill(strength: M.fieldFill))
-    }
-}
-
-/// The address field's extensions button: opens the extensions popover under it.
-private struct ExtensionsFieldButton: View {
-    let action: (NSView) -> Void
-    @State private var anchor: NSView?
-    @State private var hovering = false
-
-    static let size: CGFloat = 30
-
-    var body: some View {
-        Button { if let anchor { action(anchor) } } label: {
-            Image(systemName: "puzzlepiece.extension")
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: Self.size, height: Self.size)
-                .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0, cornerRadius: 6))
-                .background(AnchorView(view: $anchor))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .opacity(hovering ? 0.9 : 0.6)
-        .onHover { hovering = $0 }
-        .help("Extensions")
-        .accessibilityLabel("Extensions")
     }
 }
 
@@ -546,52 +292,6 @@ struct InstallAppFieldButton: View {
         .onHover { hovering = $0 }
         .help("Install \(appName)")
         .accessibilityLabel("Install \(appName)")
-    }
-}
-
-/// Site Control Center's sliders button in the address field.
-private struct SiteControlsFieldButton: View {
-    let action: (NSView) -> Void
-    @State private var anchor: NSView?
-    @State private var hovering = false
-
-    var body: some View {
-        Button { if let anchor { action(anchor) } } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: ExtensionsFieldButton.size, height: ExtensionsFieldButton.size)
-                .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0, cornerRadius: 6))
-                .background(AnchorView(view: $anchor))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .opacity(hovering ? 0.9 : 0.6)
-        .onHover { hovering = $0 }
-        .help("Site Control Center")
-        .accessibilityLabel("Site Control Center")
-    }
-}
-
-/// Flips dark pages for the current site. Filled when the page is dark.
-private struct DarkPageToggle: View {
-    let isDark: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: isDark ? "moon.fill" : "moon")
-                .font(.system(size: 11, weight: .semibold))
-                .frame(width: 24, height: 24)
-                .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0, cornerRadius: 6))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .opacity(isDark || hovering ? 0.9 : 0.5)
-        .onHover { hovering = $0 }
-        .help(isDark ? "Show This Site Light" : "Show This Site Dark")
-        .accessibilityLabel("Dark page")
-        .accessibilityValue(isDark ? "On" : "Off")
     }
 }
 

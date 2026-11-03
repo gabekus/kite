@@ -270,3 +270,35 @@ Not verified: a two-finger swipe (synthetic `ui input` scrolls don't reach the s
 either build), and the theme crossfade after a space switch on screen: in a covered test window both builds
 freeze the crossfade part-way (main at a different point each run), since a covered window's display link
 stops; ThemeView catches up when the window is visible.
+
+## PR 4: header row and address field
+
+`SidebarHeaderView` (AppKit): the sidebar toggle, back, forward, reload and the Developer Mode reload menu (or
+the compact layout's More menu), and the address field with its moon, Site Controls and install icon fading in
+on sidebar hover, the password manager's key (still SwiftUI, hosted) and the extensions button. The SwiftUI
+column keeps placeholders where they were and no longer reads the selected tab's page status, so a page that
+loads no longer re-renders the SwiftUI sidebar.
+
+| Scenario (median of 3) | CPU ms/s main before #262 → PR 4 | Wakeups/s |
+|---|---|---|
+| **Reloading the front tab every 0.5 s** (`RELOAD=1`) | **120.10 → 69.05** | **65.55 → 42.30** |
+| Switching spaces every 0.5 s | 218.24 → 182.06 | 111.4 → 95.95 |
+| Idle | 2.65 → 1.97 | 4.40 → 4.20 |
+| After hover + scroll | 2.40 → 1.96 | 4.32 → 4.25 |
+| Claude's rings | 126.85 → 14.60 | 145.6 → 29.0 |
+
+Symbols: SwiftUI's placement of SF Symbols didn't follow any one rule across the 19 measured (half-pixel rounding
+goes either way per glyph), so `SymbolOrigins` records where SwiftUI draws each symbol the sidebar uses (ImageRenderer,
+quarter-point search), corrected for the header's against captures of the SwiftUI sidebar on screen
+(ImageRenderer put five of them half a point higher than a window does). Symbols not in the table use the rule.
+
+Pixels (captured back to back with main before #262, header region): idle max 28, mean 0.02. `SymbolButton`'s
+tracking area is now its bounds: an `.inVisibleRect` area showed the extensions button hovered with the pointer
+at (700, 400) (macOS 14+ views don't clip). Disabled back/forward dim to 0.125 like SwiftUI's disabled plain
+buttons.
+
+Behaviour (both builds): a click on the field opens the command bar; the toggle hides the sidebar.
+
+Not verified: the field buttons' own hover state against main (SwiftUI's buttons in the big hosting view
+don't take `ui pointer` hover in a background window; the AppKit ones show the wash as specified: 0.1 white,
+6pt corners, opacity 0.9), the developer reload and More menus (modal), the compact layout under 212pt.

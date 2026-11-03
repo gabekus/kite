@@ -190,9 +190,10 @@ final class SymbolButton: NSView {
         imageView.image = symbolImage(symbol, pointSize: pointSize, weight: weight, box: box, placement: .center)
     }
 
+    /// SwiftUI's `.opacity` on the button: the symbol and its hover wash together.
     private func applyOpacity() {
         let base = isHovered ? (hoverOpacity ?? opacity) : opacity
-        imageView.alphaValue = isEnabled ? base : disabledOpacity
+        alphaValue = isEnabled ? base : disabledOpacity
     }
 
     private func applyHover() {
@@ -208,7 +209,9 @@ final class SymbolButton: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        // Its own bounds, not `.inVisibleRect`: since macOS 14 views don't clip, so a visible-rect area on a view
+        // near the window's root can span the whole window.
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
         addTrackingArea(area)
         tracking = area
     }
@@ -430,7 +433,69 @@ enum SymbolPlacement {
     if pointSize > 0, let configured = symbol.withSymbolConfiguration(.init(pointSize: pointSize, weight: weight)) {
         symbol = configured
     }
+    if placement == .center, let at = SymbolOrigins.measured[.init(name, pointSize, weight, box.width, box.height)] {
+        let size = symbol.size
+        let out = NSImage(size: box, flipped: false) { _ in
+            symbol.draw(in: NSRect(x: at.x, y: box.height - at.top - size.height, width: size.width, height: size.height))
+            return true
+        }
+        out.isTemplate = true
+        return out
+    }
     return place(symbol, in: box, placement: placement)
+}
+
+/// Where SwiftUI draws each SF Symbol the sidebar uses in its frame: the symbol image's origin (x, and top from
+/// the frame's top), in points. SwiftUI lays a symbol out by metrics AppKit doesn't expose and rounds them to
+/// the pixel grid in ways no single rule reproduced (measured on 2 Nov 2026, macOS 15, at 2x: each symbol
+/// rendered by ImageRenderer in its frame, then the AppKit drawing searched in quarter points for the closest
+/// match; the max channel delta left, all glyph-edge anti-aliasing, is noted). ImageRenderer doesn't round
+/// every symbol the way a window does: the header's were then checked against captures of the SwiftUI sidebar
+/// on screen, and the ones that landed half a point (or a quarter) high there carry that correction. Symbols
+/// not here fall back to `place(_:in:placement:)`'s rule.
+enum SymbolOrigins {
+    struct Key: Hashable {
+        let name: String
+        let size: CGFloat
+        let weight: CGFloat
+        let width: CGFloat
+        let height: CGFloat
+
+        init(_ name: String, _ size: CGFloat, _ weight: NSFont.Weight, _ width: CGFloat, _ height: CGFloat) {
+            self.name = name
+            self.size = size
+            self.weight = weight.rawValue
+            self.width = width
+            self.height = height
+        }
+    }
+
+    static let measured: [Key: (x: CGFloat, top: CGFloat)] = [
+        Key("xmark", 9.0, .bold, 24.0, 24.0): (7.5, 7.0), // max 66
+        Key("xmark", 9.0, .bold, 16.0, 16.0): (3.5, 3.0), // max 66
+        Key("arrow.uturn.backward", 10.0, .semibold, 24.0, 24.0): (6.5, 6.0), // max 62
+        Key("stop.fill", 8.0, .bold, 24.0, 24.0): (7.5, 7.75), // max 73
+        Key("plus", 14.0, .medium, 18.0, 18.0): (2.0, 2.0), // max 46
+        Key("folder", 14.0, .regular, 18.0, 18.0): (-0.5, 1.0), // max 40
+        Key("folder.fill", 14.0, .regular, 18.0, 18.0): (-0.5, 1.0), // max 35
+        Key("sidebar.left", 15.0, .regular, 32.0, 32.0): (5.5, 8.0), // max 50
+        Key("arrow.left", 15.0, .regular, 32.0, 32.0): (7.0, 9.0), // max 53 (on screen: +0.5)
+        Key("arrow.right", 15.0, .regular, 32.0, 32.0): (7.0, 9.0), // max 55 (on screen: +0.5)
+        Key("arrow.left", 15.0, .regular, 28.0, 28.0): (5.0, 7.0), // max 53 (inferred from its neighbours on screen: +0.5)
+        Key("arrow.right", 15.0, .regular, 28.0, 28.0): (5.0, 7.0), // max 55 (inferred from its neighbours on screen: +0.5)
+        Key("arrow.clockwise", 15.0, .regular, 32.0, 32.0): (8.0, 7.0), // max 80 (on screen: +0.25)
+        Key("arrow.clockwise.circle", 15.0, .regular, 32.0, 32.0): (7.0, 7.75), // max 66 (inferred from its neighbours on screen: +0.25)
+        Key("xmark", 15.0, .regular, 32.0, 32.0): (8.0, 9.0), // max 51 (inferred from its neighbours on screen: +0.25)
+        Key("chevron.down", 9.0, .semibold, 16.0, 32.0): (3.0, 12.0), // max 59
+        Key("ellipsis", 15.0, .regular, 28.0, 28.0): (5.5, 11.25), // max 67
+        Key("ellipsis", 15.0, .regular, 32.0, 32.0): (7.5, 13.25), // max 67
+        Key("moon", 11.0, .semibold, 24.0, 24.0): (5.5, 6.0), // max 53 (on screen: +0.5)
+        Key("moon.fill", 11.0, .semibold, 24.0, 24.0): (5.5, 5.5), // max 94 (inferred from its neighbours on screen: +0.5)
+        Key("slider.horizontal.3", 12.0, .semibold, 30.0, 30.0): (7.5, 8.5), // max 83 (on screen: +0.5)
+        Key("desktopcomputer.and.arrow.down", 12.0, .semibold, 30.0, 30.0): (6.5, 6.5), // max 36 (inferred from its neighbours on screen: +0.5)
+        Key("puzzlepiece.extension", 12.0, .semibold, 30.0, 30.0): (6.5, 8.0), // max 81 (on screen: +0.5)
+        Key("chevron.right", 9.0, .bold, 26.0, 26.0): (9.5, 7.0), // max 42
+    ]
 }
 
 /// `image` (a template) drawn into a `box`-sized template image by its alignment rect.
