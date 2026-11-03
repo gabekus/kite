@@ -1,6 +1,8 @@
 // Kite's window chrome shaders. Each draw is one full-screen triangle generated
 // from the vertex ID (no vertex buffers), and both views only render on demand.
-// Keep the math in sync with the HLSL port planned in docs/windows.md.
+// Kite for Windows ports kite_theme_fragment to windows/src/shell/shaders/Theme.hlsl, with a
+// CPU reference in windows/src/core/ThemeBackdrop.cpp. Change all three together and regenerate
+// Tests/Fixtures/theme-backdrop.json (gen-theme-golden), or ThemeShaderGoldenTests fails.
 
 #include <metal_stdlib>
 using namespace metal;

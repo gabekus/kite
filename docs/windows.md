@@ -70,8 +70,31 @@ the rest of the window, so nothing (glow, Peek, command bar) could overlap the p
   theme backdrop, sidebar, page texture, glow, command bar. It's the same
   layering as the macOS window, all on the GPU.
 - **Port the shaders to HLSL** (`Kite.metal` is about 150 lines of pure math:
-  OKLab blend, grain, rounded-rect SDF glow). Keep them in sync with a
-  golden-image test that renders both versions at fixed inputs.
+  OKLab blend, grain, rounded-rect SDF glow). `windows/src/shell/shaders/`
+  holds the ports; fxc compiles them when Kite builds, so nothing compiles
+  at startup. `core/ThemeBackdrop` is a CPU reference of the Metal shader,
+  and `Kite.exe --backdrop-test` checks the GPU's float output against it in
+  CI (`kitecore theme` prints the same reference's corner pixels, which CI
+  compares with Kite.exe's capture). The reference is pinned to a golden
+  file, `Tests/Fixtures/theme-backdrop.json`, that the Mac suite renders
+  with Kite.metal and compares (`ThemeShaderGoldenTests`), so the Windows
+  port is checked against the Mac's own shader, not a second reading of it.
+- **Lost GPU:** a driver update, TDR or hybrid-GPU switch removes the D3D11
+  device. Kite listens for it (`RegisterDeviceRemovedEvent`) and also checks
+  every `Present`/`ResizeBuffers`, then rebuilds the renderer and composition
+  tree on whatever adapter is there and redraws.
+- **Captures** (`--capture`, the Helix UI gate) read back the frame the
+  window presents, laid out at `--capture-scale`× on any monitor. Today that's
+  the one backdrop swap chain; when the sidebar and page become sibling
+  visuals (W4, W6), the capture has to read the composed window instead
+  (Windows.Graphics.Capture), not re-render the layers.
+- **Material:** the Mac's `.sidebar` material, blended behind the window, is
+  Windows 11's acrylic system backdrop (`DWMSBT_TRANSIENTWINDOW`) under a
+  window with no redirection bitmap. Where there's none (Windows 10, Windows
+  11 before 22H2, Server) the backdrop is drawn over a solid colour, Mica's
+  base (#202020 dark, #F3F3F3 light); whether acrylic's own fallback differs
+  isn't checked yet. As on the Mac, the material's light or dark appearance
+  follows the space's theme.
 - **Input:** the off-screen path forwards mouse, keyboard and IME events to
   CEF (`SendMouseClickEvent`, `SendKeyEvent`, ...). This is the most work and
   the main risk, so prototype it first.

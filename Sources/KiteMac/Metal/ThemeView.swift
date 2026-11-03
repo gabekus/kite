@@ -2,7 +2,8 @@ import KiteCore
 import MetalKit
 import QuartzCore
 
-/// Must match `ThemeUniforms` in Kite.metal (176 bytes).
+/// Must match `ThemeUniforms` in Kite.metal (176 bytes). ThemeShaderGoldenTests builds the
+/// same bytes the same way (draw(in:)); change both together.
 private struct ThemeUniforms {
     typealias Palette = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
     var fromLab: Palette

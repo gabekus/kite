@@ -1,7 +1,7 @@
 name: CI (Windows app)
 
-# Kite for Windows (native C++, windows/). Runs only when it or the session fixture it
-# shares with the Mac changes.
+# Kite for Windows (native C++, windows/). Runs only when it or the fixtures it shares with
+# the Mac (Tests/Fixtures) change.
 on:
   push:
     branches: [main]
@@ -32,6 +32,12 @@ jobs:
           cmake -S windows -B /tmp/kite-core
           cmake --build /tmp/kite-core -j
           ctest --test-dir /tmp/kite-core --output-on-failure --timeout 120
+      - name: Golden backdrop fixture is current
+        # The CPU reference must write exactly the file the Mac's Kite.metal is tested against;
+        # after a deliberate shader change, regenerate it with this target.
+        run: |
+          cmake --build /tmp/kite-core --target gen-theme-golden
+          /tmp/kite-core/gen-theme-golden | diff -u Tests/Fixtures/theme-backdrop.json -
       - name: Cross-compile Kite.exe (MinGW-w64)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq g++-mingw-w64-x86-64 > /dev/null
@@ -98,6 +104,17 @@ jobs:
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 1) { throw "--smoke-test without KITE_SUPPORT_PATH: expected exit 1, got $code" }
           $global:LASTEXITCODE = 0
+      - name: Backdrop matches the Mac's shader (GPU vs CPU reference)
+        timeout-minutes: 5
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'backdrop-test.txt'
+          $err = Join-Path $env:RUNNER_TEMP 'backdrop-test-stderr.txt'
+          $process = Start-Process -FilePath (Resolve-Path windows/build/Release/Kite.exe) -ArgumentList '--backdrop-test' `
+            -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+          $null = $process.Handle
+          if (-not $process.WaitForExit(240000)) { $process.Kill(); throw 'Kite.exe --backdrop-test hung' }
+          if (Test-Path $out) { Get-Content $out -Raw | Write-Host }
+          if ($process.ExitCode -ne 0) { throw "--backdrop-test exited with $($process.ExitCode): $(Get-Content $err -Raw)" }
       - name: Capture (Helix UI gate plumbing)
         timeout-minutes: 3
         run: |
@@ -105,35 +122,60 @@ jobs:
           New-Item -ItemType Directory -Path $profileDir | Out-Null
           Copy-Item windows/helix/states/two-spaces.json (Join-Path $profileDir 'session.json')
           $env:KITE_SUPPORT_PATH = $profileDir
-          $png = Join-Path $env:RUNNER_TEMP 'kite-capture.png'
-          $stderrFile = Join-Path $env:RUNNER_TEMP 'kite-capture-stderr.txt'
-          $process = Start-Process -FilePath (Resolve-Path windows/build/Release/Kite.exe) `
-            -ArgumentList '--capture', $png, '--window-size', '1280,820' -RedirectStandardError $stderrFile -PassThru
-          $null = $process.Handle
-          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Kite.exe --capture hung' }
-          if ($process.ExitCode -ne 0) { throw "Kite.exe --capture exited with $($process.ExitCode): $(Get-Content $stderrFile -Raw)" }
-          $bytes = [System.IO.File]::ReadAllBytes($png)
-          $width = [System.BitConverter]::ToUInt32(@($bytes[19], $bytes[18], $bytes[17], $bytes[16]), 0)
-          $height = [System.BitConverter]::ToUInt32(@($bytes[23], $bytes[22], $bytes[21], $bytes[20]), 0)
-          Write-Host "capture: ${width}x${height} px"
-          # The runner's display is at 100%, so points are pixels.
-          if ($width -ne 1280 -or $height -ne 820) { throw "capture is ${width}x${height}, expected 1280x820" }
-          # Until W3 draws the backdrop the client area is the black placeholder, so a crop that
-          # took in the title bar or frame shows up as a non-black corner.
+          # Captures at 1x and 2x (the window laid out at that scale, so 2x works on the runner's
+          # 100% display). Each sampled pixel must match core's CPU reference of the Mac's shader
+          # (kitecore theme: the same theme, stored at 8 bits like the swap chain, over the same solid
+          # material) within one level: that catches the wrong material, tint, grain, size or space.
           Add-Type -AssemblyName System.Drawing
-          $bitmap = [System.Drawing.Bitmap]::new($png)
-          try {
-            foreach ($point in @(@(0, 0), @(1279, 0), @(0, 819), @(1279, 819), @(640, 410))) {
-              $pixel = $bitmap.GetPixel($point[0], $point[1])
-              if ($pixel.R -ne 0 -or $pixel.G -ne 0 -or $pixel.B -ne 0 -or $pixel.A -ne 255) {
-                throw "capture pixel $($point -join ',') is $($pixel.Name), expected the black placeholder"
+          $kitecore = Resolve-Path windows/build/Release/kitecore.exe
+          $state = & $kitecore state
+          if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
+          $space = ($state | ConvertFrom-Json).selectedSpaceID
+          foreach ($scale in 1, 2) {
+            $png = Join-Path $env:RUNNER_TEMP "kite-capture-${scale}x.png"
+            $stderrFile = Join-Path $env:RUNNER_TEMP "kite-capture-${scale}x-stderr.txt"
+            $process = Start-Process -FilePath (Resolve-Path windows/build/Release/Kite.exe) `
+              -ArgumentList '--capture', $png, '--window-size', '1280,820', '--capture-scale', $scale `
+              -RedirectStandardError $stderrFile -PassThru
+            $null = $process.Handle
+            if (-not $process.WaitForExit(60000)) { $process.Kill(); throw "Kite.exe --capture ($scale x) hung" }
+            if ($process.ExitCode -ne 0) { throw "Kite.exe --capture ($scale x) exited with $($process.ExitCode): $(Get-Content $stderrFile -Raw)" }
+            $w = 1280 * $scale; $h = 820 * $scale
+            $reference = (& $kitecore theme $space $w $h | ConvertFrom-Json).backdrop
+            if ($LASTEXITCODE -ne 0) { throw "kitecore theme exited with $LASTEXITCODE" }
+            $bitmap = [System.Drawing.Bitmap]::new($png)
+            try {
+              Write-Host "capture ${scale}x: $($bitmap.Width)x$($bitmap.Height) px, material $($reference.material)"
+              if ($bitmap.Width -ne $w -or $bitmap.Height -ne $h) { throw "capture is $($bitmap.Width)x$($bitmap.Height), expected ${w}x${h}" }
+              # Parenthesised: PowerShell's comma binds tighter than minus.
+              $points = [ordered]@{ topLeft = @(0, 0); topRight = @(($w - 1), 0); bottomLeft = @(0, ($h - 1));
+                                    bottomRight = @(($w - 1), ($h - 1)); centre = @(($w / 2), ($h / 2)) }
+              foreach ($name in $points.Keys) {
+                $point = $points[$name]
+                $pixel = $bitmap.GetPixel($point[0], $point[1])
+                $expected = [Convert]::ToInt32($reference.$name.Substring(1), 16)
+                $er = ($expected -shr 16) -band 255; $eg = ($expected -shr 8) -band 255; $eb = $expected -band 255
+                Write-Host "  $name $($point -join ','): #$($pixel.Name), reference $($reference.$name)"
+                if ($pixel.A -ne 255) { throw "capture pixel $name isn't opaque" }
+                if ([Math]::Abs($pixel.R - $er) -gt 1 -or [Math]::Abs($pixel.G - $eg) -gt 1 -or [Math]::Abs($pixel.B - $eb) -gt 1) {
+                  throw "capture pixel $name is #$($pixel.Name), the reference is $($reference.$name)"
+                }
               }
-            }
-          } finally { $bitmap.Dispose() }
+            } finally { $bitmap.Dispose() }
+          }
+      - name: Upload Kite.exe
+        # The Release build, for trying it on a Windows machine without Visual Studio.
+        uses: actions/upload-artifact@v4
+        with:
+          name: kite-windows-x64
+          path: |
+            windows/build/Release/Kite.exe
+            windows/build/Release/kitecore.exe
+          if-no-files-found: error
       - name: Upload the capture
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kite-windows-capture
-          path: ${{ runner.temp }}/kite-capture.png
+          path: ${{ runner.temp }}/kite-capture-*.png
           if-no-files-found: ignore

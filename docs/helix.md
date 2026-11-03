@@ -45,10 +45,13 @@ for as long as it needs to. An agent can't override a gate.
      `KITE_SUPPORT_PATH=<fresh profile>` and `KITE_WINDOW_SIZE=W,H`, captured
      with `kite ui capture`. The sidebar width comes from the dev bundle's
      defaults, so reset it first: `defaults delete dev.gabek.Kite.dev SidebarWidth`.
-   - Windows (a monitor at 200% scale): `Kite.exe --capture out.png
-     --window-size W,H --capture-scale 2` with `KITE_SUPPORT_PATH` set the same
-     way. `--capture-scale` fails the run if the monitor isn't at 200%, so the
-     pixels line up with the Mac's.
+   - Windows (any monitor): `Kite.exe --capture out.png --window-size W,H
+     --capture-scale 2` with `KITE_SUPPORT_PATH` set the same way. Kite lays
+     the window out at 2× whatever the monitor's scale (a 200% display isn't
+     needed) and saves the frame the window presents, so the pixels line up
+     with the Mac's. A capture draws over the solid material fallback, while
+     the Mac capture shows its blurred material, so the backdrop's tint is
+     compared, not what's behind the window.
    A visual reviewer (a fresh subagent that sees only the two images and the
    checkpoint's description) lists every difference with a severity
    (blocker, major, minor) and a location. Anything fixable in code is a
@@ -82,6 +85,6 @@ Where each gate runs:
 | gate | where |
 |---|---|
 | behaviour | anywhere (the model and its tests are standard C++); the full app compiles off Windows with MinGW (`windows/cmake/mingw-w64.cmake`) and for real on Windows CI with MSVC |
-| UI match | Gabe's Mac for the reference, a Windows machine at 200% for Kite for Windows |
+| UI match | Gabe's Mac for the reference; Kite for Windows captures on Windows CI (or any Windows machine) |
 | adversarial review | anywhere |
 | Gabe | the PR |
