@@ -125,6 +125,9 @@ std::optional<std::pair<int, int>> ParseSize(std::wstring_view text) {
 }
 
 constexpr UINT_PTR kSmokeTimer = 1;
+// The auto-archive's pass, every 15 minutes as on the Mac (AppDelegate's archiveTimer).
+constexpr UINT_PTR kArchiveTimer = 2;
+constexpr UINT kArchiveIntervalMs = 15 * 60 * 1000;
 // Posted by the favicon worker when icons arrive (Favicons.h).
 constexpr UINT kFaviconsMessage = WM_APP + 4;
 
@@ -270,6 +273,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     std::string saveError;
     std::wstring loadError;
     if (auto* error = std::get_if<kite::SessionStore::Error>(&loaded); error && !maySave) loadError = Widen(error->message);
+    // Unpinned tabs left unused past Archive Tabs After go to the archive as Kite starts, as
+    // the Mac's applicationDidFinishLaunching does (and every 15 minutes, below). A capture
+    // shows its session as given.
+    if (!capture) {
+        if (auto interval = state.ArchiveAfterSeconds()) state.ArchiveStaleTabs(*interval);
+    }
 
     // The GPU first: everything below is set up before the window shows, so it never
     // appears empty or with the wrong title bar.
@@ -327,6 +336,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     };
     std::function<void(const std::string& tabID, const std::string& url)> loadInTab = [](const std::string&, const std::string&) {};
     std::function<void()> showPage = [] {};
+    // A tab left the session (closed, unloaded or archived): its page goes (Chromium, below).
+    std::function<void(const std::string& tabID)> pageGone = [](const std::string&) {};
     std::function<void(bool blocked)> blockPages = [](bool) {};
     std::function<bool()> keysForBar = [] { return false; };
     kite::CommandBarView::Callbacks barCallbacks;
@@ -444,6 +455,27 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     sidebarActions.newTab = [&] { openCommandBar(kite::CommandBarMode::NewTab); };
     // The Mac's field action: the bar edits the page's address, or opens a new tab with none.
     sidebarActions.editAddress = [&] { openCommandBar(kite::CommandBarMode::EditCurrent); };
+    // A tab's close button and Ctrl+W (the Mac's close(tab:)). With Chromium, its page goes too.
+    std::function<void(const std::string& tabID)> closeTab = [&](const std::string& id) {
+        if (state.Close(id) == kite::CloseOutcome::NotFound) return;
+        pageGone(id);
+        showPage();
+        stateChanged();
+    };
+    sidebarActions.closeTab = [&](const std::string& id) { closeTab(id); };
+    // Ctrl+W (Archive Tab): the open command bar closes first, else the selected tab.
+    auto archiveTab = [&] {
+        if (commandBar && commandBar->IsOpen()) commandBar->Hide();
+        else if (const kite::Tab* tab = state.SelectedTab()) closeTab(tab->id);
+        else MessageBeep(MB_OK);
+    };
+    // Ctrl+Shift+T (Restore Last Closed Tab).
+    std::function<void()> reopenClosedTab = [&] {
+        if (state.ReopenLastClosed()) {
+            showPage();
+            stateChanged();
+        }
+    };
     sidebar->SetActions(sidebarActions);
     // Ctrl+T, wherever the keyboard is in Kite's own window (a page's comes through Chromium).
     window.filter = [&](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
@@ -451,6 +483,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         // Ctrl+T was pressed: it opens the bar itself, and the note then finds it open.
         if ((message == WM_KEYDOWN || message == WM_CHAR) && commandBar && !commandBar->IsOpen() && keysForBar()) {
             openCommandBar(kite::CommandBarMode::NewTab);
+        }
+        // Ctrl+W and Ctrl+Shift+T, wherever the keyboard is in Kite's own window (the bar's
+        // field included); a page's come through Chromium.
+        if (message == WM_KEYDOWN && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0) {
+            const bool shift = GetKeyState(VK_SHIFT) < 0;
+            if (wParam == 'W' && !shift) {
+                archiveTab();
+                result = 0;
+                return true;
+            }
+            if (wParam == 'T' && shift) {
+                reopenClosedTab();
+                result = 0;
+                return true;
+            }
         }
         if (commandBar && commandBar->HandleMessage(message, wParam, lParam, result)) {
             if (message == WM_LBUTTONDOWN) sidebar->ForgetActivation();
@@ -460,6 +507,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (sidebar->HandleMessage(message)) {
             // Its own redraw found the GPU gone: the window's draw rebuilds everything.
             if (sidebar->DeviceLost()) draw();
+            return true;
+        }
+        if (message == WM_TIMER && wParam == kArchiveTimer) {
+            if (auto interval = state.ArchiveAfterSeconds()) {
+                for (const kite::Tab& tab : state.ArchiveStaleTabs(*interval)) pageGone(tab.id);
+                stateChanged();
+            }
             return true;
         }
         if (message == kFaviconsMessage) {
@@ -522,10 +576,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     bool pageLoaded = false, pageLoading = false;
     ULONGLONG closeAskedAt = 0;  // when the smoke test asked the window to close
     bool firstPageMade = false;
-    // Until W5 closes tabs, a page that closed itself leaves its tab in the session: Kite
-    // never shows it again this run (that would load it afresh, a sign-in page say).
-    std::set<std::string> closedPages;
-    std::map<std::string, std::string> popupOpeners;  // popup tab → the tab that opened it
+    // Each open popup's tab and the tab that opened it (the Mac's PagePool.popupOpeners).
+    std::map<std::string, std::string> popupOpeners;
     auto contentBounds = [&] {
         RECT client{};
         GetClientRect(window.Handle(), &client);
@@ -538,8 +590,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     };
     auto showSelectedTab = [&] {
         const kite::Tab* tab = state.SelectedTab();
-        // The Mac's empty state arrives with the command bar (W7).
-        if (!tab || closedPages.contains(tab->id)) return;
+        // No tab: the card shows through (the Mac's "Press ⌘T to open a tab" comes later).
+        if (!tab) return chromium->ShowNothing();
         // As the Mac's makePage: the tab's address, or a blank page for none or for one of
         // Kite's own pages (kite://, which come later).
         std::string url = tab->url.value_or("");
@@ -557,10 +609,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     };
     if (!capture) {
         showPage = showSelectedTab;
-        // A tab clicked in the sidebar shows its page. One that closed itself is made again
-        // (W5 drops such a tab instead).
+        pageGone = [&](const std::string& id) {
+            chromium->Close(id);
+            // A closed page can't be anyone's opener or popup again.
+            std::erase_if(popupOpeners, [&](const auto& entry) { return entry.first == id || entry.second == id; });
+        };
+        // A tab clicked in the sidebar shows its page.
         sidebarActions.selectTab = [&](const std::string& id) {
-            closedPages.erase(id);
             state.Select(id);
             showSelectedTab();
             stateChanged();
@@ -569,8 +624,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         loadInTab = [&](const std::string& id, const std::string& url) {
             // kite:// pages are drawn by the window, never loaded (the Mac's InternalPage).
             if (url.starts_with("kite:")) return;
-            // A page that closed itself is made again, now with somewhere to go.
-            closedPages.erase(id);
+            // A tab whose page closed itself (an unloaded pinned tab) gets a new one.
             if (!chromium->Navigate(id, url)) showSelectedTab();
         };
         keysForBar = [&] { return chromium->KeysComeToKite(); };
@@ -625,29 +679,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             stateChanged();
         };
         events.pageClosed = [&](const std::string& id) {
-            closedPages.insert(id);
+            // A page that closed itself (window.close() after a sign-in): its tab closes, and a
+            // popup on screen hands it back to its opener, as the Mac's PagePool does.
             const auto opener = popupOpeners.extract(id);
-            const kite::Tab* selected = state.SelectedTab();
-            if (!selected || selected->id != id) return;
-            // A popup hands the screen back to the tab that opened it, as the Mac's PagePool
-            // does; otherwise (or with its opener gone too) Kite moves to the space's most
-            // recently used other tab.
-            auto usable = [&](const std::string& tabID) { return state.Location(tabID) && !closedPages.contains(tabID); };
-            std::string next;
-            if (opener && usable(opener.mapped())) {
-                next = opener.mapped();
-            } else {
-                const kite::Tab* recent = nullptr;
-                for (const kite::Tab* tab : state.SidebarTabs(state.SelectedSpaceIndex())) {
-                    if (usable(tab->id) && (!recent || tab->lastActiveAt > recent->lastActiveAt)) recent = tab;
-                }
-                if (recent) next = recent->id;
-            }
-            if (next.empty()) return;
-            state.Select(next);
+            state.PageClosedItself(id, opener ? std::optional<std::string>(opener.mapped()) : std::nullopt);
+            std::erase_if(popupOpeners, [&](const auto& entry) { return entry.second == id; });
             showSelectedTab();
             stateChanged();
         };
+        events.archiveTab = [&] { archiveTab(); };
+        events.reopenClosedTab = [&] { reopenClosedTab(); };
         events.newTab = [&] {
             // Not when the bar has already opened for the keys typed after Ctrl+T and been
             // closed again (closing it gives the keys back to the pages).
@@ -735,6 +776,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 #endif
         SetTimer(window.Handle(), kSmokeTimer, smokeMs, [](HWND hwnd, UINT, UINT_PTR, DWORD) { PostMessageW(hwnd, WM_CLOSE, 0, 0); });
     }
+    // The auto-archive's later passes (the launch's ran above). A capture never archives.
+    if (!capture) SetTimer(window.Handle(), kArchiveTimer, kArchiveIntervalMs, nullptr);
     std::wstring captureError;
     if (capture) {
         // The window's own frame, read back as it's presented: at --capture-scale× when given

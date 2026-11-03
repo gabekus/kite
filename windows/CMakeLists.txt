@@ -38,6 +38,7 @@ add_library(KiteCoreWin STATIC
   src/core/OKLab.cpp
   src/core/SessionStore.cpp
   src/core/Sidebar.cpp
+  src/core/TabClosing.cpp
   src/core/SupportDirectory.cpp
   src/core/ThemeBackdrop.cpp
   src/core/Unicode.cpp
@@ -156,6 +157,7 @@ add_executable(KiteCoreTests
   tests/JsonTests.cpp
   tests/ModelTests.cpp
   tests/SidebarTests.cpp
+  tests/TabClosingTests.cpp
   tests/SupportDirectoryTests.cpp
   tests/ThemeBackdropTests.cpp
   tests/ThemeTests.cpp

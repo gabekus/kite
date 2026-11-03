@@ -106,6 +106,49 @@ if(NOT action STREQUAL "selectTab" OR NOT hitID STREQUAL id)
 endif()
 expect_exit_early(1 click 100)
 
+# Closing: Hacker News's close button (24pt, 6pt from the pill's end: x 202 to 226, y 195.5 to
+# 219.5) closes it, and Wikipedia, sliding into its place, is selected. Ctrl+Shift+T brings it
+# back where it was.
+kitecore(hit click 214 207)
+string(JSON target GET "${hit}" target)
+string(JSON action GET "${hit}" action)
+kitecore(state state)
+string(JSON tabCount LENGTH "${state}" spaces 0 tabs)
+string(JSON selectedURL GET "${state}" selectedTab url)
+string(JSON closedID GET "${state}" recentlyClosed 0 id)
+string(JSON archivedID GET "${state}" archived 0 id)
+if(NOT target STREQUAL "closeButton" OR NOT action STREQUAL "closeTab" OR NOT tabCount EQUAL 1 OR
+   NOT selectedURL STREQUAL "https://www.wikipedia.org" OR NOT closedID STREQUAL id OR NOT archivedID STREQUAL id)
+  message(FATAL_ERROR "click on Hacker News's close button gave ${hit}, then ${state}")
+endif()
+kitecore(reopened reopen)
+kitecore(state state)
+string(JSON first GET "${state}" spaces 0 tabs 0 id)
+string(JSON selected GET "${state}" selectedTab id)
+string(JSON closedCount LENGTH "${state}" recentlyClosed)
+string(JSON archivedCount LENGTH "${state}" archived)
+if(NOT reopened STREQUAL id OR NOT first STREQUAL id OR NOT selected STREQUAL id OR NOT closedCount EQUAL 0 OR NOT archivedCount EQUAL 0)
+  message(FATAL_ERROR "reopen gave ${reopened}, then ${state}")
+endif()
+# By id, and back by id; nothing left to reopen, and no such tab to close.
+kitecore(outcome close "${id}")
+kitecore(reopened reopen "${id}")
+if(NOT outcome STREQUAL "removed" OR NOT reopened STREQUAL id)
+  message(FATAL_ERROR "close and reopen by id gave ${outcome}, ${reopened}")
+endif()
+expect_exit_early(5 reopen)
+expect_exit_early(5 close 00000000-0000-0000-0000-000000000000)
+# The auto-archive, as of 2100: every tab but the selected one goes (archiveAfter is 12 hours).
+kitecore(state state)
+string(JSON wikipedia GET "${state}" spaces 0 tabs 1 id)
+kitecore(swept archive-stale 4102444800)
+kitecore(state state)
+string(JSON tabCount LENGTH "${state}" spaces 0 tabs)
+string(JSON archivedID GET "${state}" archived 0 id)
+if(NOT swept STREQUAL wikipedia OR NOT tabCount EQUAL 1 OR NOT archivedID STREQUAL wikipedia)
+  message(FATAL_ERROR "archive-stale gave ${swept}, then ${state}")
+endif()
+
 # Folders and the pinned section, on the UI gate's sidebar session (Personal: pinned Docs,
 # the Work stuff folder holding Renamed and the closed Old projects, then today's tabs).
 set(SIDEBAR "${WORK}-sidebar")

@@ -137,7 +137,7 @@ std::vector<const Tab*> Space::AllTabs() const {
 // MARK: BrowserState
 
 BrowserState BrowserState::MakeDefault(std::optional<std::string> seedURL) {
-    Space personal{NewUuid(), "Personal", "\xF0\x9F\x8F\xA0", Theme::Presets()[0], {}, {}, std::nullopt, {}};  // 🏠
+    Space personal{NewUuid(), "Personal", "\xF0\x9F\x8F\xA0", Theme::Presets()[0], {}, {}, std::nullopt, {}, {}};  // 🏠
     if (seedURL) {
         Tab tab;
         tab.id = NewUuid();
@@ -146,7 +146,7 @@ BrowserState BrowserState::MakeDefault(std::optional<std::string> seedURL) {
         personal.selectedTabID = tab.id;
         personal.tabs.push_back(std::move(tab));
     }
-    Space work{NewUuid(), "Work", "\xF0\x9F\x92\xBC", Theme::Presets()[1], {}, {}, std::nullopt, {}};  // 💼
+    Space work{NewUuid(), "Work", "\xF0\x9F\x92\xBC", Theme::Presets()[1], {}, {}, std::nullopt, {}, {}};  // 💼
     BrowserState state;
     state.selectedSpaceID = personal.id;
     state.spaces = {std::move(personal), std::move(work)};
@@ -313,7 +313,7 @@ void BrowserState::SelectAdjacentSpace(int offset) {
 }
 
 std::string BrowserState::AddSpace(std::string name, std::string icon, Theme theme) {
-    Space space{NewUuid(), std::move(name), std::move(icon), std::move(theme), {}, {}, std::nullopt, {}};
+    Space space{NewUuid(), std::move(name), std::move(icon), std::move(theme), {}, {}, std::nullopt, {}, {}};
     selectedSpaceID = space.id;
     spaces.push_back(std::move(space));
     return selectedSpaceID;
@@ -514,6 +514,96 @@ std::optional<Theme> DecodeTheme(const Value& v) {
     return Theme::Make(std::move(colors), *grain, tint);
 }
 
+// Swift's synthesized Codable: every member required but expandedTabID.
+Value Encode(const SplitView& split) {
+    Object o = split.extra;
+    Put(o, "id", split.id);
+    Array ids;
+    for (const auto& id : split.tabIDs) ids.push_back(Value(id));
+    Put(o, "tabIDs", Value(std::move(ids)));
+    Array factors;
+    for (double f : split.widthFactors) factors.push_back(Value(f));
+    Put(o, "widthFactors", Value(std::move(factors)));
+    Put(o, "orientation", split.orientation);
+    PutIf(o, "expandedTabID", split.expandedTabID);
+    return Value(std::move(o));
+}
+
+std::optional<SplitView> DecodeSplitView(const Value& v) {
+    if (!v.IsObject()) return std::nullopt;
+    bool invalid = false;
+    auto id = UuidMember(v, "id", invalid);
+    auto expanded = UuidMember(v, "expandedTabID", invalid);
+    auto* orientation = String(v, "orientation");
+    const Value* ids = v.Find("tabIDs");
+    const Value* factors = v.Find("widthFactors");
+    // SplitOrientation's two cases; JSONDecoder refuses any other.
+    if (!id || invalid || !orientation || (*orientation != "horizontal" && *orientation != "vertical") || !ids ||
+        !ids->AsArray() || !factors || !factors->AsArray()) {
+        return std::nullopt;
+    }
+    SplitView split;
+    split.id = *id;
+    for (const auto& element : *ids->AsArray()) {
+        auto* text = element.AsString();
+        auto normalized = text ? NormalizeUuid(*text) : std::nullopt;
+        if (!normalized) return std::nullopt;
+        split.tabIDs.push_back(*normalized);
+    }
+    for (const auto& element : *factors->AsArray()) {
+        if (!element.AsNumber()) return std::nullopt;
+        split.widthFactors.push_back(*element.AsNumber());
+    }
+    split.orientation = *orientation;
+    split.expandedTabID = expanded;
+    split.extra = Extra(v, {"id", "tabIDs", "widthFactors", "orientation", "expandedTabID"});
+    return split;
+}
+
+Value Encode(const ClosedTab& closed) {
+    Object o = closed.extra;
+    Put(o, "tab", Encode(closed.tab));
+    Put(o, "spaceID", closed.spaceID);
+    Put(o, "index", static_cast<double>(closed.index));
+    if (closed.archivedAt) Put(o, "archivedAt", *closed.archivedAt);
+    if (closed.reason) Put(o, "reason", std::string(*closed.reason == ArchiveReason::Auto ? "auto" : "manual"));
+    if (closed.littleKite) Put(o, "littleKite", *closed.littleKite);
+    return Value(std::move(o));
+}
+
+std::optional<ClosedTab> DecodeClosedTab(const Value& v) {
+    if (!v.IsObject()) return std::nullopt;
+    bool invalid = false;
+    auto spaceID = UuidMember(v, "spaceID", invalid);
+    const Value* tabValue = v.Find("tab");
+    auto tab = tabValue ? DecodeTab(*tabValue) : std::nullopt;
+    const Value* index = v.Find("index");
+    // An Int: JSONDecoder refuses a fraction or a number past Int's range.
+    const std::optional<double> number = index ? index->AsNumber() : std::nullopt;
+    if (!spaceID || invalid || !tab || !number) return std::nullopt;
+    const double position = number.value();
+    if (position != std::floor(position) || std::fabs(position) > 9.0e15) return std::nullopt;
+    ClosedTab closed;
+    closed.tab = std::move(*tab);
+    closed.spaceID = *spaceID;
+    closed.index = static_cast<long long>(position);
+    if (const Value* at = v.Find("archivedAt"); at && !at->IsNull()) {
+        if (!at->AsNumber()) return std::nullopt;
+        closed.archivedAt = *at->AsNumber();
+    }
+    if (const Value* reason = v.Find("reason"); reason && !reason->IsNull()) {
+        const std::string* raw = reason->AsString();
+        if (!raw || (*raw != "manual" && *raw != "auto")) return std::nullopt;
+        closed.reason = *raw == "auto" ? ArchiveReason::Auto : ArchiveReason::Manual;
+    }
+    if (const Value* little = v.Find("littleKite"); little && !little->IsNull()) {
+        if (!little->AsBool()) return std::nullopt;
+        closed.littleKite = *little->AsBool();
+    }
+    closed.extra = Extra(v, {"tab", "spaceID", "index", "archivedAt", "reason", "littleKite"});
+    return closed;
+}
+
 Value Encode(const Space& space) {
     Object o = space.extra;
     Put(o, "id", space.id);
@@ -523,6 +613,9 @@ Value Encode(const Space& space) {
     Put(o, "pinnedItems", EncodeArray(space.pinnedItems));
     Put(o, "tabs", EncodeArray(space.tabs));
     PutIf(o, "selectedTabID", space.selectedTabID);
+    // Written only when there are any, as the Mac does.
+    if (space.splits.empty()) o.erase("splits");
+    else Put(o, "splits", EncodeArray(space.splits));
     return Value(std::move(o));
 }
 
@@ -554,7 +647,12 @@ std::optional<Space> DecodeSpace(const Value& v) {
         for (auto& tab : *decoded) space.pinnedItems.push_back(PinnedItem{std::move(tab)});
     }
     space.selectedTabID = selectedTab;
-    space.extra = Extra(v, {"id", "name", "icon", "theme", "pinnedItems", "pinned", "tabs", "selectedTabID"});
+    if (const Value* splits = v.Find("splits"); splits && !splits->IsNull()) {
+        auto decoded = DecodeArray<SplitView>(splits, DecodeSplitView);
+        if (!decoded) return std::nullopt;
+        space.splits = std::move(*decoded);
+    }
+    space.extra = Extra(v, {"id", "name", "icon", "theme", "pinnedItems", "pinned", "tabs", "selectedTabID", "splits"});
     return space;
 }
 
@@ -572,6 +670,15 @@ Value Encode(const BrowserState& state) {
     }
     if (others.empty()) o.erase("profileFavorites");
     else Put(o, "profileFavorites", Value(std::move(others)));
+    Object splits;
+    for (const auto& [directory, list] : state.favoriteSplitsByProfile) {
+        if (!list.empty()) splits.emplace(directory, EncodeArray(list));
+    }
+    if (splits.empty()) o.erase("favoriteSplits");
+    else Put(o, "favoriteSplits", Value(std::move(splits)));
+    Put(o, "recentlyClosed", EncodeArray(state.recentlyClosed));
+    Put(o, "archived", EncodeArray(state.archived));
+    Put(o, "archiveAfter", state.archiveAfter);
     Put(o, "searchEngine", state.searchEngine);
     return Value(std::move(o));
 }
@@ -599,8 +706,35 @@ std::optional<BrowserState> DecodeBrowserState(const Value& v) {
         if (!decoded) return std::nullopt;
         if (!decoded->empty()) state.favoritesByProfile[BrowserState::kDefaultProfile] = std::move(*decoded);
     }
+    if (const Value* splits = v.Find("favoriteSplits"); splits && !splits->IsNull()) {
+        if (!splits->AsObject()) return std::nullopt;
+        for (const auto& [directory, list] : *splits->AsObject()) {
+            auto decoded = DecodeArray<SplitView>(&list, DecodeSplitView);
+            if (!decoded) return std::nullopt;
+            if (!decoded->empty()) state.favoriteSplitsByProfile[directory] = std::move(*decoded);
+        }
+    }
+    for (auto [key, list] : {std::pair{"recentlyClosed", &state.recentlyClosed}, std::pair{"archived", &state.archived}}) {
+        const Value* value = v.Find(key);
+        if (!value || value->IsNull()) continue;
+        auto decoded = DecodeArray<ClosedTab>(value, DecodeClosedTab);
+        if (!decoded) return std::nullopt;
+        *list = std::move(*decoded);
+    }
+    if (const Value* after = v.Find("archiveAfter"); after && !after->IsNull()) {
+        // ArchiveInterval's decoder: the first version's names, and twelve hours for anything
+        // else it doesn't know (it never fails).
+        const std::string* raw = after->AsString();
+        if (!raw) return std::nullopt;
+        static const std::map<std::string, std::string, std::less<>> renamed{
+            {"day", "twentyFourHours"}, {"week", "sevenDays"}, {"month", "thirtyDays"}};
+        auto it = renamed.find(*raw);
+        state.archiveAfter = it != renamed.end() ? it->second : *raw;
+        if (!state.ArchiveAfterSeconds() && state.archiveAfter != "never") state.archiveAfter = "twelveHours";
+    }
     if (auto engine = OptionalString(v, "searchEngine")) state.searchEngine = *engine;
-    state.extra = Extra(v, {"spaces", "selectedSpaceID", "favorites", "profileFavorites", "searchEngine"});
+    state.extra = Extra(v, {"spaces", "selectedSpaceID", "favorites", "profileFavorites", "favoriteSplits", "recentlyClosed",
+                            "archived", "archiveAfter", "searchEngine"});
     return state;
 }
 

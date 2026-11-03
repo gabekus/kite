@@ -18,7 +18,7 @@
 // each browser is through DoClose or closed, the window is asked to close again, and closes
 // once all are. That destroys the browsers' windows, and Shutdown waits for their
 // OnBeforeClose before CefShutdown. A page that closes itself (window.close(), as a sign-in
-// popup does) takes only its own window with it.
+// popup does) takes only its own window with it; so does Close, when Kite closes a tab.
 
 #include <windows.h>
 
@@ -60,6 +60,9 @@ struct PageEvents {
     // A key (`character` false: a virtual-key code) or a typed UTF-16 unit (`character` true)
     // that reached a page while its keys go to Kite.
     std::function<void(bool character, unsigned code, bool ctrl, bool shift)> keyForwarded;
+    // Ctrl+W and Ctrl+Shift+T in a page: Kite's Archive Tab and Restore Last Closed Tab.
+    std::function<void()> archiveTab;
+    std::function<void()> reopenClosedTab;
 };
 
 class Chromium {
@@ -79,6 +82,12 @@ public:
     // Shows the tab's page in `bounds` (client pixels) and hides every other tab's. The
     // browser is created the first time, in the profile's request context, loading `url`.
     void Show(const std::string& tabID, const std::string& profileDirectory, const std::string& url, const RECT& bounds);
+    // No tab is selected: every page is hidden (the card shows through).
+    void ShowNothing();
+    // Kite closed the tab, or unloaded it (a pinned tab): its page closes, without a
+    // pageClosed, and Show makes a new one if it comes back. A page still being made closes
+    // once it exists. Back/forward history goes with it (the Mac keeps none either here).
+    void Close(const std::string& tabID);
     // Moves the shown page, after the window is resized (and shows it again after a minimize).
     void SetBounds(const RECT& bounds);
     // The window was minimized: the shown page is hidden too, so Chromium stops drawing it.

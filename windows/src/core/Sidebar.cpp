@@ -202,6 +202,9 @@ std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t spaceIndex
 
     float top = 0;
     for (SidebarRow& row : rows) {
+        // A tab Claude opened in its folders has none (unless it closes for good); every
+        // unpinned tab has one.
+        if (row.kind == SidebarRow::Kind::Tab) row.showsClose = !row.pinned || state.ShowsCloseButton(row.id);
         switch (row.kind) {
         case SidebarRow::Kind::Header: row.height = M::kHeaderHeight + M::kListTopSpacer; break;
         case SidebarRow::Kind::Divider: row.height = M::kDividerRowHeight; break;
@@ -259,6 +262,15 @@ SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, floa
     default: {
         const float pillTop = (M::kRowPitch - M::kPillHeight) / 2;
         if (inRow < pillTop || inRow >= pillTop + M::kPillHeight) return {};
+        // A tab's close button: 24pt, 6pt in from the pill's end, centred in it. It shows
+        // whenever the pointer is on the row, so it's there to press whenever it's pointed at.
+        if (row.kind == SidebarRow::Kind::Tab && row.showsClose) {
+            const float right = width - M::kPadding - M::kCloseButtonEndInset;
+            const float buttonTop = pillTop + (M::kPillHeight - M::kCloseButtonSize) / 2;
+            if (x >= right - M::kCloseButtonSize && x < right && inRow >= buttonTop && inRow < buttonTop + M::kCloseButtonSize) {
+                return {Target::CloseButton, *index};
+            }
+        }
         return {Target::Row, *index};
     }
     }
@@ -269,7 +281,8 @@ std::optional<SidebarPress> SidebarPressAt(const std::vector<SidebarRow>& rows, 
     using Target = SidebarHit::Target;
     const SidebarHit hit = SidebarHitTest(rows, width, height, scroll, x, y);
     if (hit.target == Target::None) return std::nullopt;
-    // Rows don't accept first mouse (NSView's default); the field and SymbolButton do.
+    // Rows don't accept first mouse (NSView's default); the field and SymbolButtons (the
+    // chevron, a tab's close button) do.
     if (activating && hit.target == Target::Row) return std::nullopt;
     SidebarPress press{hit.target, SidebarRow::Kind::Tab, {}, clicks};
     if (hit.target != Target::AddressField) {
@@ -294,12 +307,12 @@ SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRo
     case Target::AddressField:
         if (SidebarHitTest(rows, width, height, scroll, x, y).target == Target::AddressField) return {Action::EditAddress, {}, false};
         return {};
-    case Target::PinnedChevron: {
+    case Target::PinnedChevron:
+    case Target::CloseButton: {
+        // A button acts when let go over itself (SymbolButton's mouseUp), whatever the clicks.
         const auto row = pressedRow();
-        if (row && SidebarHitTest(rows, width, height, scroll, x, y) == SidebarHit{Target::PinnedChevron, *row}) {
-            return {Action::TogglePinnedSection, press.id, false};
-        }
-        return {};
+        if (!row || SidebarHitTest(rows, width, height, scroll, x, y) != SidebarHit{press.target, *row}) return {};
+        return {press.target == Target::CloseButton ? Action::CloseTab : Action::TogglePinnedSection, press.id, false};
     }
     case Target::Row: {
         const auto row = pressedRow();

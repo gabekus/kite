@@ -34,6 +34,8 @@ constexpr float kRowPitch = 41;
 constexpr float kPillHeight = 36;
 constexpr float kIconInset = 9;  // the favicon's leading edge in the pill
 constexpr float kDividerRowHeight = 25;
+constexpr float kCloseButtonSize = 24;      // a tab's close button (SidebarRowCell's place(close))
+constexpr float kCloseButtonEndInset = 6;  // from the pill's end
 }  // namespace sidebar_metrics
 
 // View → Collapse Pinned Tabs, per space: the Mac's spacesWithCollapsedPinnedSections, which
@@ -80,6 +82,7 @@ struct SidebarRow {
     // Tab.
     bool pinned = false;
     bool selected = false;
+    bool showsClose = true;  // its close button shows on hover (BrowserState::ShowsCloseButton)
     FaviconSource favicon;
     // Folder.
     bool expanded = true;
@@ -111,11 +114,11 @@ float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height, float 
 // What's under a point of a sidebar `width`×`height` points scrolled `scroll` down (the Mac's
 // hitTest and acceptsPress): the address field's text button, a row's pill (tabs, folders, New
 // Tab), the space header (all of its cell) or its chevron (Collapse Pinned Tabs, while the space has
-// pinned items). The divider and the space around pills take nothing.
+// pinned items), or a tab's close button. The divider and the space around pills take nothing.
 struct SidebarHit {
-    enum class Target { None, AddressField, Row, PinnedChevron };
+    enum class Target { None, AddressField, Row, PinnedChevron, CloseButton };
     Target target = Target::None;
-    size_t row = 0;  // Row and PinnedChevron: which row
+    size_t row = 0;  // Row, PinnedChevron and CloseButton: which row
     bool operator==(const SidebarHit&) const = default;
 };
 SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y);
@@ -128,25 +131,25 @@ std::optional<size_t> SidebarRowAt(const std::vector<SidebarRow>& rows, float wi
 // and the header's buttons).
 struct SidebarPress {
     SidebarHit::Target target = SidebarHit::Target::None;
-    SidebarRow::Kind kind = SidebarRow::Kind::Tab;  // Row and PinnedChevron: the row's
+    SidebarRow::Kind kind = SidebarRow::Kind::Tab;  // all but AddressField: the row's
     std::string id;
     int clicks = 1;  // NSEvent's clickCount: 2 for the second press of a double-click
     bool operator==(const SidebarPress&) const = default;
 };
 // Nothing when the point takes no presses. An activating click (the window was in the
-// background) presses only what accepts first mouse on the Mac: the address field and the
-// chevron, not the rows.
+// background) presses only what accepts first mouse on the Mac: the address field, the
+// chevron and a close button, not the rows.
 std::optional<SidebarPress> SidebarPressAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x,
                                            float y, int clicks, bool activating = false);
 struct SidebarTap {
-    enum class Action { None, EditAddress, TogglePinnedSection, SelectTab, SetFolderExpanded, NewTab };
+    enum class Action { None, EditAddress, TogglePinnedSection, SelectTab, SetFolderExpanded, NewTab, CloseTab };
     Action action = Action::None;
     std::string id;         // the tab, folder or space
     bool expanded = false;  // SetFolderExpanded: open (true) or closed
     bool operator==(const SidebarTap&) const = default;
 };
-// Letting go of `press` at a point of the sidebar as it is now: the field and the chevron act
-// when it ends over them; a row taps when it ends inside its bounds, on a single click (the
+// Letting go of `press` at a point of the sidebar as it is now: the field, the chevron and a
+// close button act when it ends over them; a row taps when it ends inside its bounds, on a single click (the
 // second click of a double-click renames instead, which comes later). The space's header
 // takes no tap yet (a click on its name renames).
 SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRow>& rows, float width, float height, float scroll,

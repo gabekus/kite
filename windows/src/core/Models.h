@@ -6,8 +6,9 @@
 // session that goes Mac → Windows → Mac loses nothing.
 //
 // Ported so far: tabs, folders, spaces, themes, favorites per profile, selection,
-// opening and selecting tabs, spaces. Not yet: closing/archiving, splits, profiles,
-// live folders, Tidy Tabs. Those arrive as Helix checkpoints (docs/helix.md).
+// opening, selecting, closing, archiving and reopening tabs (TabClosing.cpp), spaces, and
+// splits as data (closing keeps them whole). Not yet: making splits, profiles, live folders,
+// Tidy Tabs. Those arrive as Helix checkpoints (docs/helix.md).
 
 #include <map>
 #include <optional>
@@ -38,6 +39,9 @@ struct Tab {
 
     // Rename, then the page's title, then the host, then the URL, then "New Tab".
     std::string DisplayTitle() const;
+    // A tab that never had a page (no address, or about:blank, and no pinned one either): a
+    // split pane nobody filled. Closing a pinned one removes it (PinnedURL.swift's isBlank).
+    bool IsBlank() const;
     bool operator==(const Tab&) const = default;
 };
 
@@ -90,6 +94,25 @@ struct Theme {
     bool operator==(const Theme&) const = default;
 };
 
+// Tabs shown side by side in one sidebar row (SplitView.swift). The members stay in their
+// space's pinned or unpinned list; the split only groups them. Windows doesn't make or show
+// splits yet: it keeps them whole when a member closes (NormalizeSplits).
+struct SplitView {
+    std::string id;
+    std::vector<std::string> tabIDs;     // pane order
+    std::vector<double> widthFactors;    // each pane's share, summing to 1
+    std::string orientation = "horizontal";
+    std::optional<std::string> expandedTabID;
+    json::Object extra;
+
+    // `widthFactors` when they fit the panes and are all positive (scaled to sum to 1), else
+    // equal shares.
+    std::vector<double> NormalizedFactors() const;
+    // Drops a pane, giving its share to the others in proportion (SplitView.remove).
+    void Remove(const std::string& tabID);
+    bool operator==(const SplitView&) const = default;
+};
+
 struct Space {
     std::string id;
     std::string name;
@@ -98,13 +121,34 @@ struct Space {
     std::vector<PinnedItem> pinnedItems;
     std::vector<Tab> tabs;  // unpinned, newest first
     std::optional<std::string> selectedTabID;
-    json::Object extra;  // splits, tabGroups, profile, about
+    std::vector<SplitView> splits;
+    json::Object extra;  // tabGroups, profile, about
 
     std::vector<const Tab*> Pinned() const { return TabsIn(pinnedItems); }
     // Sidebar order: pinned, then unpinned.
     std::vector<const Tab*> AllTabs() const;
     bool operator==(const Space&) const = default;
 };
+
+// Why a tab went into the archive (Archive.swift's ArchiveReason).
+enum class ArchiveReason { Manual, Auto };
+
+// A tab that was closed: in Recently Closed (Ctrl+Shift+T) and in the archive (ClosedTab).
+struct ClosedTab {
+    Tab tab;
+    std::string spaceID;
+    long long index = 0;  // where it was in its space's unpinned tabs
+    std::optional<Timestamp> archivedAt;     // none for entries from before Kite kept it
+    std::optional<ArchiveReason> reason;     // likewise
+    std::optional<bool> littleKite;          // a Little Kite window's page, not a sidebar tab
+    json::Object extra;
+    bool operator==(const ClosedTab&) const = default;
+};
+
+// What closing a tab did (BrowserState.close's CloseOutcome): an unpinned tab (or a blank or
+// split-pane pinned one) is removed and archived; a pinned tab or favorite stays as a row and
+// only loses its page.
+enum class CloseOutcome { NotFound, Removed, Unloaded };
 
 enum class TabSection { Favorite, Pinned, Unpinned };
 
@@ -120,6 +164,15 @@ struct BrowserState {
     static constexpr const char* kDefaultProfile = "Default";  // Profile.defaultDirectory
     // Favorites grids by Chromium profile folder; an empty grid has no entry, as on the Mac.
     std::map<std::string, std::vector<Tab>> favoritesByProfile;
+    // Favorite splits by profile folder, like the grids.
+    std::map<std::string, std::vector<SplitView>> favoriteSplitsByProfile;
+    std::vector<ClosedTab> recentlyClosed;  // oldest first, at most kRecentlyClosedLimit
+    std::vector<ClosedTab> archived;        // oldest first, at most kArchiveLimit
+    static constexpr size_t kRecentlyClosedLimit = 25;
+    static constexpr size_t kArchiveLimit = 500;
+    // "Archive tabs after" (ArchiveInterval's raw value): never, oneHour, sixHours,
+    // twelveHours (the default, as Arc's), twentyFourHours, sevenDays, thirtyDays.
+    std::string archiveAfter = "twelveHours";
     std::string searchEngine = "google";
     json::Object extra;  // everything else the Mac stores
 
@@ -153,6 +206,42 @@ struct BrowserState {
     void SetFolderExpanded(const std::string& folderID, bool expanded);
     std::string AddSpace(std::string name, std::string icon, Theme theme);
 
+    // MARK: Closing, archiving and reopening (TabClosing.cpp, BrowserState.swift)
+
+    // Closes a tab: an unpinned one goes to Recently Closed and the archive; a pinned tab or
+    // favorite only unloads, unless it closes for good. A selected tab hands the selection to
+    // its split neighbour, else to the tab that slides into its place, else the one above.
+    CloseOutcome Close(const std::string& tabID);
+    // A pinned tab or favorite that closing removes rather than unloads: a split pane, or a
+    // tab that never had a page.
+    bool ClosesForGood(const std::string& tabID) const;
+    // Whether its sidebar row shows the close button: not for tabs Claude opened in its
+    // folders (Claude closes them), unless they close for good.
+    bool ShowsCloseButton(const std::string& tabID) const;
+    // Whether the tab sits directly in one of Claude's folders (Folder::ephemeral).
+    bool IsInEphemeralFolder(const std::string& tabID) const;
+    // Removes a pinned tab without archiving it; with `droppingEmptyFolder`, a folder it
+    // leaves empty goes too, and Claude folders left empty after that.
+    bool RemovePinnedTab(const std::string& tabID, bool droppingEmptyFolder = false);
+    // Ctrl+Shift+T: the last closed tab back where it was, selected. Its id, or none.
+    std::optional<std::string> ReopenLastClosed(Timestamp now = Now());
+    // Undo Archive Tab: that tab back, if it's still among the recently closed.
+    std::optional<std::string> ReopenClosed(const std::string& tabID, Timestamp now = Now());
+    // Unpinned tabs (and tabs in Claude's folders) untouched for `interval` seconds go to the
+    // archive, except each space's selected tab. Returns the tabs that went.
+    std::vector<Tab> ArchiveStaleTabs(double interval, Timestamp now = Now());
+    // archiveAfter in seconds; none for never (or a value this build doesn't know).
+    std::optional<double> ArchiveAfterSeconds() const;
+    // A page that closed itself (window.close() after a sign-in): its tab closes, and a popup
+    // that was on screen hands it back to the tab that opened it, as the Mac's PagePool does.
+    void PageClosedItself(const std::string& tabID, const std::optional<std::string>& openerTabID);
+    // Adds to the archive, stamped with when and why, dropping the oldest past kArchiveLimit.
+    void AppendToArchive(std::vector<ClosedTab> tabs, ArchiveReason reason = ArchiveReason::Manual, Timestamp now = Now());
+    // Splits keep only members that exist, each tab in one split, two panes or more.
+    void NormalizeSplits();
+    // The split holding a tab: its space (the selected one for a favorite split) and itself.
+    const SplitView* SplitContaining(const std::string& tabID) const;
+
     bool operator==(const BrowserState&) const = default;
 
     const Tab* TabAt(const TabLocation& location) const;
@@ -167,12 +256,16 @@ json::Value Encode(const PinnedItem&);
 json::Value Encode(const Theme&);
 json::Value Encode(const Space&);
 json::Value Encode(const BrowserState&);
+json::Value Encode(const SplitView&);
+json::Value Encode(const ClosedTab&);
 
 // nullopt when a required member is missing or has the wrong type.
 std::optional<Tab> DecodeTab(const json::Value&);
 std::optional<PinnedItem> DecodePinnedItem(const json::Value&);
 std::optional<Theme> DecodeTheme(const json::Value&);
 std::optional<Space> DecodeSpace(const json::Value&);
+std::optional<SplitView> DecodeSplitView(const json::Value&);
+std::optional<ClosedTab> DecodeClosedTab(const json::Value&);
 std::optional<BrowserState> DecodeBrowserState(const json::Value&);
 
 }  // namespace kite

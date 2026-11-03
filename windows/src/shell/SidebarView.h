@@ -49,13 +49,14 @@ public:
         std::function<void(const std::string& spaceID)> togglePinnedSection;
         std::function<void()> newTab;       // the New Tab row
         std::function<void()> editAddress;  // the address field
+        std::function<void(const std::string& tabID)> closeTab;  // a tab's close button
     };
     void SetActions(Actions actions) { actions_ = std::move(actions); }
 
     // The window's mouse messages (client coordinates; the wheel's in screen ones): hover, presses
     // and releases over the sidebar, and the wheel over its list. True when it took `message`.
     // As on the Mac, the click that brings the window forward doesn't tap a row (rows don't
-    // accept first mouse); it does press the address field and the chevron.
+    // accept first mouse); it does press the address field, the chevron and a close button.
     bool HandleMouse(UINT message, WPARAM wParam, LPARAM lParam);
     // Forgets the pointer and any press (the command bar opened over the window).
     void ClearHover();

@@ -142,8 +142,11 @@ is `root_cache_path`, the default profile is `Chromium\Default`, and a
 space's other profile gets its own request context in `Chromium\<directory>`.
 Popups and `target=_blank` links open as tabs that keep `window.opener`, as
 on the Mac, and a popup that closes itself hands the screen back to its
-opener; its tab stays in the session until W5 closes tabs, but this run never
-shows it again. Ctrl-click and middle-click open a link in a background tab,
+opener and its tab leaves the session, as closing it would (W5). A tab Kite
+closes (its close button, Ctrl+W, the auto-archive) or unloads (a pinned tab)
+takes its browser with it: Kite hides the page and force-closes it on CEF's
+thread, and remembers its own closes, so `DoClose` doesn't report them as a
+page closing itself. A page whose browser isn't made yet closes as it arrives. Ctrl-click and middle-click open a link in a background tab,
 Ctrl+Shift-click in a foreground one (a `target=_blank` link opens as a popup
 tab either way, as on the Mac). The first page is made once the window is on
 screen and not minimized. `--smoke-test` loads
