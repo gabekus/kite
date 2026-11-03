@@ -452,6 +452,37 @@ unchanged.
 
 Not verified: the ⌘J bar opening (its host is attached the same way), and pixels (see above).
 
+## PR 10: Claude's page border, sign-in pill and handoff card
+
+The page border Claude draws while it drives the tab in front is one layer now (`ClaudeControlBorderView`: a 2pt
+border in #D97757 at 0.85, radius 6, continuous corners, fading over 0.2 s ease-in-out like the SwiftUI
+`.animation`). sign_in's pill and the handoff card stay SwiftUI, but each sits in a `DetachingContainer` that holds
+its host in the window only while it shows; clicks on the container itself go through to the page.
+The card waits a turn after its host attaches before it shows (`HandoffCardGate`), so it still slides in, and
+its host leaves 0.4 s after it closes, so it still fades out.
+
+Idle window (`ui tree`, a fresh profile, nothing from Claude):
+
+| | main (dc7f03c) | PR 10 |
+|---|---|---|
+| Claude views in the window | `BannerHostingView<ClaudeControlBorder>` [330,10 940×800], `HandoffHostingView` [330,10 940×800], `BannerHostingView<ClaudeBannerStrip>` [0,772 1280×28] | `ClaudeControlBorderView` [330,10 940×800] opacity 0 |
+| Tracking areas over the page | the handoff host's tooltip area [330,10 940×800] | none |
+
+Main-thread SwiftUI samples in a 15 s `sample` while the front tab reloads every 0.5 s: 1 → 0 (two runs each).
+SwiftUI was already cheap here after PR 9, so the gain is fewer views and layers, not CPU.
+
+Behaviour (`ui tree` while driving Kite with `kite call` on a fresh profile):
+- Claude drives the front tab: the border goes to opacity 1, frame [330,10 940×800], the same as the old host.
+- handoff (a command step): the card's host attaches and shows the "Claude needs you: 1 steps" pill.
+- sign_in on the front tab with a handoff waiting: the pill's host attaches, its label "Claude is waiting for you to
+  sign in" is there within 1 s (3 of 3 runs, the same as main), and the handoff host leaves. One earlier run, in
+  a longer script, didn't show the pill within 4 s; it didn't repeat in six more runs.
+- A click on the pill's Cancel at the button's centre (`ui input`) lands on the page on both main and this
+  build, so that is not a change from this PR. Not checked whether a real click does the same.
+
+Not verified: pixels (captures still hang), the card's slide-in and fade-out (only the timing is in code), the
+handoff card's Done and Skip after the move (its buttons weren't in the tree as named buttons).
+
 ## Checks of what PR 1–6 left unverified
 
 **Context menus** (KITE_TEST_CONTEXT_MENU, which the sidebar's AppKit menus now go through): a right-click on each
