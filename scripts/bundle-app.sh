@@ -119,9 +119,9 @@ fi
 # Gabe's own install-app.sh one included, stay as they were: no timestamp server needed, debuggable.
 HARDEN=()
 if [[ "${KITE_HARDENED_RUNTIME:-}" == 1 ]]; then
-    # Read into a variable first: grep -q exits at the first match, and pipefail would see SIGPIPE.
+    # Matched in a variable, not with grep -q: under pipefail its early exit can fail the pipe (SIGPIPE).
     IDENTITIES="$(security find-identity -v -p codesigning)"
-    if [[ "$SIGN_ID" != "-" ]] && grep -Fi "$SIGN_ID" <<<"$IDENTITIES" | grep -q '"Developer ID Application: '; then
+    if [[ "$SIGN_ID" != "-" && "$(grep -Fi "$SIGN_ID" <<<"$IDENTITIES" || true)" == *'"Developer ID Application: '* ]]; then
         HARDEN=(-o runtime --timestamp)
         echo "note: hardened runtime and secure timestamps, for notarization"
     else
