@@ -59,12 +59,11 @@ final class SidebarHoverModel {
     var isHovered = false
 }
 
-/// Arc's sidebar, top to bottom: navigation, address pill, favorites grid,
-/// the space's pinned items (with folders), new tab and today's tabs, spaces.
-struct SidebarView: View {
+/// What the sidebar (`SidebarColumnView`) is built from: the window's store, its actions, and the models
+/// and callbacks the window controller hands it.
+@MainActor
+struct SidebarConfiguration {
     let store: BrowserStore
-    /// Live folder rows show GitHub's mark in the sidebar's appearance.
-    @Environment(\.colorScheme) private var colorScheme
     let actions: SidebarActions
     /// False on WebKit, which can't force pages dark.
     let supportsDarkPages: Bool
@@ -85,78 +84,10 @@ struct SidebarView: View {
     var swipe = SpaceSwipeModel()
     /// The Mini Player's buttons; nil shows no Mini Player.
     var miniPlayer: MiniPlayerActions?
-    /// The sidebar's drags; the AppKit pages and the overlay share it.
+    /// The sidebar's drags; the pages, the tray, the space bar and the overlay share it.
     var drag = SidebarDragModel()
-    /// The AppKit parts' sizes the SwiftUI chrome lays out around.
-    var chromeMetrics = SidebarChromeMetrics()
-    /// Where the space pages go (an AppKit view the column lays over this placeholder), in sidebar points.
-    var pagesFrame: (CGRect) -> Void = { _ in }
     /// Whether the pointer is over the sidebar: Arc's URL row reads `sidebarHovered` for its buttons.
     var hover = SidebarHoverModel()
-
-    var body: some View {
-        // The host's width, not the column's: the column must never be wider than the sidebar, or
-        // SwiftUI centres it and everything spills off both edges.
-        GeometryReader { proxy in
-            column(width: proxy.size.width)
-        }
-        .coordinateSpace(.named(Self.space))
-        .ignoresSafeArea()
-    }
-
-    @ViewBuilder
-    private func column(width: CGFloat) -> some View {
-        let state = store.state
-        let space = state.selectedSpace
-        let selectedID = space.selectedTabID
-
-        VStack(alignment: .leading, spacing: 0) {
-            // The header row and the address field: AppKit (`SidebarHeaderView`), laid over these placeholders.
-            Color.clear.frame(height: M.topRowY + M.topRowHeight)
-
-            // + › New Space: Arc's Create a Space page takes the place of everything under the top row.
-            if let creation = store.spaceCreation, creation.spaceID == space.id {
-                SpaceCreationView(store: store, actions: actions, creation: creation)
-            } else {
-                if !state.showsToolbar {
-                    Color.clear.frame(height: M.urlFieldTopGap + M.urlFieldHeight)
-                }
-
-                // The favorites tray: AppKit (`FavoritesTrayView`), laid over this placeholder.
-                if chromeMetrics.favoritesHeight > 0 {
-                    Color.clear.frame(height: chromeMetrics.favoritesHeight)
-                }
-
-                // The space pages: AppKit (`SidebarPagesView`), laid over this by the column.
-                Color.clear
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: { pagesFrame($0) }
-
-                if let miniPlayer, let id = store.miniPlayerTabID, let tab = state.tab(id), let page = store.pages[id],
-                   page.media != nil || page.capturingSince != nil {
-                    MiniPlayerView(
-                        tab: tab, media: page.media?.state, isRecording: page.capturingSince != nil, call: page.callControls,
-                        isMuted: page.isAudioMuted, volume: page.tabVolume, actions: miniPlayer
-                    )
-                        .id(id)
-                        .padding(.top, M.padding)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-            }
-
-            // The space bar: AppKit (`SpaceBarView`), laid over this placeholder.
-            Color.clear.frame(height: M.bottomBarHeight)
-        }
-        .padding(.horizontal, M.padding)
-        .frame(width: width, alignment: .leading)
-        .foregroundStyle(.primary)
-        .onAppear { drag.store = store }
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.bounds = $0 }
-        .environment(\.sidebarDrag, drag)
-    }
-
-    private static let space = "sidebar"
-
 }
 
 private typealias M = ArcMetrics.Sidebar

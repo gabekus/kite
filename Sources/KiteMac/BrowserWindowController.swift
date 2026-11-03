@@ -293,7 +293,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
                 self?.peekCard.theme.finishInteractiveTheme(landingOn: theme)
             }
         )
-        var sidebar = SidebarView(
+        var sidebar = SidebarConfiguration(
             store: store,
             actions: actions,
             supportsDarkPages: pool.engine.supportsDarkPages,
@@ -320,7 +320,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             sidebar.fieldAccessory = AnyView(ExtensionsSelectionView(selection: extensions) { PasswordManagerFieldButton(model: $0) })
         }
         #endif
-        sidebarHost = SidebarColumnView(sidebar: sidebar, store: store, swipe: spaceSwipe.model)
+        sidebarHost = SidebarColumnView(configuration: sidebar)
         let toolbarHost = PageToolbarHost(rootView: toolbar)
         // Arc's right-click menu on the bar (Copy URL … Hide Toolbar).
         toolbarHost.contextMenu = { [weak self, weak toolbarHost] in

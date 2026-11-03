@@ -359,3 +359,27 @@ Today tab on Work's icon moves it there (rows taking the first click for the tes
 
 Not verified: the hover backing and tip against main (main's cells take no `ui pointer` hover in a background
 window), the + menu and space menu (modal), overflowing strips (scrolling), and the download badge.
+
+## PR 7: no SwiftUI root in the sidebar
+
+`SidebarColumnView` lays out the whole sidebar itself: header, favorites, pages, space bar, and, while they show,
+the Mini Player and Arc's Create a Space page, each still SwiftUI in a hosting view that exists only then (the
+sidebar-sized hosting view with placeholders for the AppKit parts is gone). `SidebarView` is now
+`SidebarConfiguration`, the plain value the window controller builds the sidebar from. The column lays out again
+only when what shows changes.
+
+| Scenario (median of 3) | CPU ms/s main before #262 → PR 7 | Wakeups/s |
+|---|---|---|
+| Switching spaces every 0.5 s | 218.24 → 158.57 | 111.4 → 96.30 |
+| Reloading the front tab every 0.5 s | 120.10 → 67.78 | 65.55 → 41.45 |
+| Idle | 2.65 → 1.95 | 4.40 → 4.20 |
+| After hover + scroll | 2.40 → 1.93 | 4.32 → 4.22 |
+| Claude's rings | 126.85 → 14.55 | 145.6 → 27.2 |
+
+Pixels (captured back to back with main before #262, whole sidebar): the rich session idle max 142 (the list
+favicons' resampled edges, as in PR 6), mean 0.13; Create a Space (opened with a test key binding in the profile's
+keybindings.json) max 41 in the sidebar, the rest the window background's ambient ±1 drift. The page fills the room
+between the top row and the space bar, as SwiftUI's did (its stack ends in a Spacer).
+
+Not verified: the Mini Player (the test page's audio autoplay was blocked, so nothing played), and Create a Space's
+controls (typing a name, the theme row, Create, Cancel).
