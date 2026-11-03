@@ -320,6 +320,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // The selected tab's page on the content card. A capture leaves Chromium out: it saves
     // the backdrop alone until W4 captures the composed window.
     bool pageLoaded = false, pageLoading = false;
+    ULONGLONG closeAskedAt = 0;  // when the smoke test asked the window to close
     auto contentBounds = [&] {
         RECT client{};
         GetClientRect(window.Handle(), &client);
@@ -353,7 +354,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             if (loading) pageLoading = true;
             else if (pageLoading && !pageLoaded) {
                 pageLoaded = true;
-                if (smokeTest) PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
+                if (smokeTest) {
+                    closeAskedAt = GetTickCount64();
+                    PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
+                }
             }
         };
         events.popupOpened = [&](const std::string& openerID, const std::string& id, const std::string& url) {
@@ -461,6 +465,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
 #ifdef KITE_HAS_CEF
     if (smokeTest && chromium && !pageLoaded) return Fail(quiet, L"the first page didn't finish loading within 30 s", kWindowFailed);
+    // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
+    // would otherwise hide a close that hangs.
+    if (smokeTest && chromium && GetTickCount64() - closeAskedAt > 5'000) {
+        return Fail(quiet, L"the window took " + std::to_wstring((GetTickCount64() - closeAskedAt) / 1000) + L" s to close", kWindowFailed);
+    }
 #endif
     if (!maySave) {
         return Fail(quiet, L"Kite couldn't read your session (" + loadError + L"), so it left the file as it was and didn't save this run's tabs.",
