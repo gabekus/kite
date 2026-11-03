@@ -211,7 +211,9 @@ Mac's menus come before its field editor, but for the keys the field edits with
 Ctrl+1 to Ctrl+8 select the space's nth tab and Ctrl+9 its last, in the Mac's
 order: favorites, pinned and then today's tabs, top to bottom, including tabs in
 closed folders (the Windows sidebar doesn't draw favorites yet), with a split
-counted once. Developer Tools opens in a window of its own (Chrome style: CEF
+counted once. Next and Previous Space are the Mac's Ctrl+Shift+S, Ctrl+Alt+Right
+and Ctrl+Alt+Left; Space 1 to 9, the Mac's ⌃1 to ⌃9, are Alt+1 to Alt+9 here,
+since Ctrl+1 to Ctrl+9 are Tab 1 to 9. Developer Tools opens in a window of its own (Chrome style: CEF
 makes no Alloy-style DevTools), counted with the pages so Chromium's shutdown
 waits for it. Not yet: Settings → Shortcuts (the
 file is read at launch; the table will be swapped atomically), the "Press
@@ -219,6 +221,32 @@ Ctrl+D again" prompt for Use Both, the toast after Copy URL, Ctrl+W closing a
 focused Developer Tools window, and Print (Ctrl+P): with CEF 156 on Windows 11,
 once the print dialog is cancelled CEF never prints again and Chromium's
 shutdown hangs, so Print waits until that's fixed.
+
+## Spaces
+
+Switching spaces (W9a) is the Mac's `sync()`: the title bar's dark mode, the
+material and the caption buttons take the new space's appearance at once, and
+the backdrop crossfades to its theme over 0.3 s with Arc's spring (response
+0.15, damping 0.95; `core/SpaceSwipe.h`'s `ThemeCrossfade`, with the Mac's
+rule for a switch interrupted before halfway), redrawn on each of the frame
+clock's frames. The sidebar's pages are composition visuals, one per built
+space (the selected one and its neighbours, `SpaceSwipe::BuiltPages`), a
+sidebar's width apart in a strip that a clip keeps inside the sidebar, under
+the address field. A switch slides only the strip, from a page's width to rest
+on a critically damped spring (response 0.1 s). The slide is a DirectComposition
+animation (`SettleSegments`, cubic pieces within 0.05 pt of the spring), so the
+compositor runs it and no frame of it runs Kite's code or redraws the sidebar;
+a timer at its end builds the new space's neighbours and drops the page left
+behind. A page no longer built loses its place in its list, as the Mac's list
+goes with its scroll view.
+
+Known differences from the Mac: during the 0.2 s slide only the selected page
+takes clicks and shows hover (the Mac's outgoing page is a live list too), and
+Space n for a missing space is passed on from Kite's own window but still kept
+from a page (Chromium's key thread doesn't know the spaces). Not yet: the space
+bar (W9b), a touchpad's swipe (W9c), reordering spaces and the space menu
+(W9d). `Kite.exe --frame-log FILE` writes each frame the clock delivered in a
+test run.
 
 ## Refresh rate
 
@@ -232,11 +260,19 @@ Windows that means:
   `CefBrowserHost::SendExternalBeginFrame` from our own vsync clock instead, so
   the page renders at the panel's rate and stops when nothing changes (only send
   begin frames while the page has damage or animations).
-- **Our vsync clock** comes from DirectComposition: `DCompositionWaitForCompositorClock`
-  (Windows 11) or `IDXGIOutput::WaitForVBlank` on the output the window is on,
-  on a dedicated thread. It must follow the window to another monitor
-  (`WM_DISPLAYCHANGE`, `WM_DPICHANGED`, `MonitorFromWindow`), the same way the
-  macOS `FrameClock` follows `NSScreen`.
+- **Our vsync clock** (`shell/FrameClock.h`, W9a) comes from DirectComposition:
+  a thread waits on `DCompositionWaitForCompositorClock` (Windows 11), or
+  `DwmFlush` before it, and posts the window one message a frame, only while
+  something has to redraw each frame (the theme's crossfade, a shader mix that
+  a compositor property can't do). While it runs it calls
+  `DCompositionBoostCompositorClock`, so a display with a dynamic refresh rate
+  runs at its highest, as the Mac asks for the screen's maximum rate. The
+  compositor's clock is the system's: with several displays it follows the
+  fastest, not necessarily the window's. Each frame is drawn for
+  DirectComposition's estimate of when it reaches the screen
+  (`GetFrameStatistics`), as the Mac's `FrameClock.targetTimestamp`. What a
+  compositor property can do (the pages' slide) is an `IDCompositionAnimation`
+  instead, with no frames of Kite's.
 - **Swap chains** are flip-model (`DXGI_SWAP_EFFECT_FLIP_DISCARD`) composition
   swap chains with a frame-latency waitable object, so frames present on the
   next vblank of a high-refresh or variable-refresh (G-Sync/FreeSync) display

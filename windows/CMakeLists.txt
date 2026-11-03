@@ -38,6 +38,7 @@ add_library(KiteCoreWin STATIC
   src/core/Models.cpp
   src/core/OKLab.cpp
   src/core/SessionStore.cpp
+  src/core/SpaceSwipe.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
   src/core/TabClosing.cpp
@@ -101,6 +102,7 @@ if(WIN32)
     src/shell/CommandBarView.cpp
     src/shell/Compositor.cpp
     src/shell/Favicons.cpp
+    src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
     src/shell/Renderer.cpp
@@ -165,6 +167,7 @@ add_executable(KiteCoreTests
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
   tests/SidebarTests.cpp
+  tests/SpaceSwipeTests.cpp
   tests/TabClosingTests.cpp
   tests/SupportDirectoryTests.cpp
   tests/ThemeBackdropTests.cpp

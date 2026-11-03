@@ -9,7 +9,9 @@
 #include <cmath>
 
 #include "core/OKLab.h"
+#include "core/SpaceSwipe.h"
 #include "shell/Errors.h"
+#include "shell/FrameClock.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -161,36 +163,66 @@ void SidebarView::UseCompositor(Compositor* compositor) {
 }
 
 bool SidebarView::CreateGpu(std::wstring& error) {
+    IDCompositionDevice* device = compositor_->Device();
     HRESULT hr = compositor_->D2D()->CreateSolidColorBrush(D2D1_COLOR_F{0, 0, 0, 1}, brush_.ReleaseAndGetAddressOf());
-    if (SUCCEEDED(hr)) hr = compositor_->Device()->CreateVisual(visual_.ReleaseAndGetAddressOf());
+    if (SUCCEEDED(hr)) hr = device->CreateVisual(visual_.ReleaseAndGetAddressOf());
     if (SUCCEEDED(hr)) hr = compositor_->Chrome()->AddVisual(visual_.Get(), FALSE, nullptr);
+    // The pages over the address field.
+    if (SUCCEEDED(hr)) hr = device->CreateVisual(pagesClip_.ReleaseAndGetAddressOf());
+    if (SUCCEEDED(hr)) hr = compositor_->Chrome()->AddVisual(pagesClip_.Get(), TRUE, visual_.Get());
+    if (SUCCEEDED(hr)) hr = device->CreateVisual(strip_.ReleaseAndGetAddressOf());
+    if (SUCCEEDED(hr)) hr = pagesClip_->AddVisual(strip_.Get(), FALSE, nullptr);
     if (FAILED(hr)) {
         deviceLost_ = IsDeviceLost(hr);
-        error = HResultMessage(L"creating the sidebar's visual", hr);
+        error = HResultMessage(L"creating the sidebar's visuals", hr);
         ReleaseGpu();
         return false;
     }
+    clipWidth_ = 0;
     return true;
 }
 
 void SidebarView::ReleaseGpu() {
     faviconBitmaps_.clear();
-    if (visual_ && compositor_) {
-        visual_->SetContent(nullptr);
-        compositor_->Chrome()->RemoveVisual(visual_.Get());
+    for (auto& [id, page] : pages_) {
+        if (page.visual && strip_) {
+            page.visual->SetContent(nullptr);
+            strip_->RemoveVisual(page.visual.Get());
+        }
+        page = Page{};
     }
+    if (strip_ && pagesClip_) pagesClip_->RemoveVisual(strip_.Get());
+    if (compositor_) {
+        if (pagesClip_) compositor_->Chrome()->RemoveVisual(pagesClip_.Get());
+        if (visual_) {
+            visual_->SetContent(nullptr);
+            compositor_->Chrome()->RemoveVisual(visual_.Get());
+        }
+    }
+    // A slide's animation is the old device's: the rebuilt strip sits where it was going.
+    slide_.reset();
+    strip_.Reset();
+    pagesClip_.Reset();
     visual_.Reset();
     surface_.Reset();
     surfaceWidth_ = surfaceHeight_ = 0;
+    clipWidth_ = 0;
     brush_.Reset();
 }
 
-void SidebarView::Update(const BrowserState& state) {
+void SidebarView::Update(const BrowserState& state, const std::optional<std::string>& anchor) {
     Model next;
+    const size_t selected = state.SelectedSpaceIndex();
     next.dark = !PrefersDarkForeground(state.SelectedSpace().theme);
     next.address = AddressFieldText(state);
-    next.rows = SidebarRows(state, state.SelectedSpaceIndex());
     next.spaceID = state.SelectedSpace().id;
+    next.index = selected;
+    const std::optional<size_t> anchorIndex = anchor ? state.SpaceIndex(*anchor) : std::nullopt;
+    for (size_t index : SpaceSwipe::BuiltPages(selected, anchorIndex, state.spaces.size())) {
+        PageModel page{state.spaces[index].id, index, SidebarRows(state, index)};
+        if (index == selected) next.rows = page.rows;
+        next.pages.push_back(std::move(page));
+    }
     if (next == model_) return;
     // Each space keeps its own place in its list, as each of the Mac's has its scroll view.
     if (next.spaceID != model_.spaceID) {
@@ -198,11 +230,93 @@ void SidebarView::Update(const BrowserState& state) {
         auto kept = scrolls_.find(next.spaceID);
         scrollExact_ = kept == scrolls_.end() ? 0 : kept->second;
     }
+    // What has to draw again: the address field when it or the appearance changed, and each
+    // page that's new, lists other rows, or became or stopped being the selected one (which
+    // shows hover and its own scroll).
+    if (next.address != model_.address || next.dark != model_.dark) dirty_ = true;
+    for (const PageModel& page : next.pages) {
+        auto old = std::find_if(model_.pages.begin(), model_.pages.end(), [&](const PageModel& p) { return p.spaceID == page.spaceID; });
+        const bool wasSelected = old != model_.pages.end() && old->spaceID == model_.spaceID;
+        if (old == model_.pages.end() || old->rows != page.rows || next.dark != model_.dark || wasSelected != (page.spaceID == next.spaceID)) {
+            pages_[page.spaceID].dirty = true;
+        }
+    }
+    // Pages no longer built go, GPU side and all.
+    for (auto it = pages_.begin(); it != pages_.end();) {
+        const bool built = std::any_of(next.pages.begin(), next.pages.end(), [&](const PageModel& p) { return p.spaceID == it->first; });
+        if (built) {
+            ++it;
+            continue;
+        }
+        if (it->second.visual && strip_) {
+            it->second.visual->SetContent(nullptr);
+            strip_->RemoveVisual(it->second.visual.Get());
+        }
+        // And its place in its list, as the Mac's list goes with its scroll view: built again,
+        // it's at the top.
+        if (it->first != next.spaceID) scrolls_.erase(it->first);
+        it = pages_.erase(it);
+    }
     model_ = std::move(next);
-    Invalidate();
+    PlacePages();
+    ScheduleDraw();
     // Rows moved under a still pointer: it now hovers whatever is there.
     SetScroll(scrollExact_);
     RefreshHover();
+}
+
+void SidebarView::SetPageOffset(float offset) {
+    if (offset == pageOffset_ && !slide_) return;
+    pageOffset_ = offset;
+    slide_.reset();
+    PlaceStrip();
+    // At rest the rows have moved under a still pointer; mid-swipe, as AppKit's, hover waits.
+    if (offset == 0) RefreshHover();
+}
+
+double SidebarView::SlidePages(float from, float to) {
+    const double duration = SettleDuration(from - to, space_motion::kPageResponse);
+    // Where it rests, and where a rebuilt tree (a lost GPU) puts it.
+    pageOffset_ = to;
+    slide_.reset();
+    if (duration > 0 && strip_ && compositor_) {
+        const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+        Slide slide{SettleSegments(from - to, space_motion::kPageResponse), duration, to, FrameClock::Now(), nullptr};
+        HRESULT hr = compositor_->Device()->CreateAnimation(slide.animation.GetAddressOf());
+        for (const CubicSegment& segment : slide.segments) {
+            if (FAILED(hr)) break;
+            hr = slide.animation->AddCubic(segment.begin, static_cast<float>((segment.constant + to) * scale),
+                                           static_cast<float>(segment.linear * scale), static_cast<float>(segment.quadratic * scale),
+                                           static_cast<float>(segment.cubic * scale));
+        }
+        if (SUCCEEDED(hr)) hr = slide.animation->End(duration, to * scale);
+        if (SUCCEEDED(hr)) slide_ = std::move(slide);
+    }
+    PlaceStrip();
+    return slide_ ? duration : 0;
+}
+
+float SidebarView::PageOffset() const {
+    if (!slide_) return pageOffset_;
+    return static_cast<float>(slide_->to + ValueAt(slide_->segments, slide_->duration, FrameClock::Now() - slide_->start));
+}
+
+void SidebarView::PlaceStrip() {
+    if (!strip_) return;
+    // The slide runs on the compositor from the next commit; at rest the strip just sits.
+    if (slide_) strip_->SetOffsetX(slide_->animation.Get());
+    else strip_->SetOffsetX(pageOffset_ * static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI);
+}
+
+void SidebarView::PlacePages() {
+    if (!strip_) return;
+    // A sidebar's width apart, in whole pixels, the selected page at rest at the strip's origin.
+    const float pitch = static_cast<float>(clipWidth_);
+    for (const PageModel& page : model_.pages) {
+        auto found = pages_.find(page.spaceID);
+        if (found == pages_.end() || !found->second.visual) continue;
+        found->second.visual->SetOffsetX((static_cast<float>(page.index) - static_cast<float>(model_.index)) * pitch);
+    }
 }
 
 void SidebarView::Layout(float width, UINT dpi) {
@@ -211,6 +325,9 @@ void SidebarView::Layout(float width, UINT dpi) {
         width_ = width;
         dpi_ = dpi;
         dirty_ = true;
+        for (auto& [id, page] : pages_) page.dirty = true;
+        // A slide's animation is in the old scale's pixels: it lands.
+        if (slide_) SetPageOffset(pageOffset_);
     }
     // A taller window (or another scale) can leave the list past its end, and the pointer
     // over something else.
@@ -218,15 +335,28 @@ void SidebarView::Layout(float width, UINT dpi) {
     RefreshHover();
 }
 
-void SidebarView::Invalidate() {
-    dirty_ = true;
+void SidebarView::InvalidatePages() {
+    for (auto& [id, page] : pages_) page.dirty = true;
+    ScheduleDraw();
+}
+
+void SidebarView::InvalidateSelectedPage() {
+    if (auto found = pages_.find(model_.spaceID); found != pages_.end()) found->second.dirty = true;
+    ScheduleDraw();
+}
+
+void SidebarView::ScheduleDraw() {
     if (!redrawPosted_) redrawPosted_ = PostMessageW(window_, kRedrawMessage, 0, 0) != FALSE;
+}
+
+bool SidebarView::NeedsDraw() const {
+    return dirty_ || std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
 }
 
 bool SidebarView::HandleMessage(UINT message) {
     if (message != kRedrawMessage) return false;
     redrawPosted_ = false;
-    if (dirty_ && compositor_) {
+    if (NeedsDraw() && compositor_) {
         if (std::wstring problem = Draw(); !problem.empty()) {
             OutputDebugStringW((L"Kite: the sidebar couldn't draw: " + problem + L"\n").c_str());
         } else {
@@ -236,6 +366,72 @@ bool SidebarView::HandleMessage(UINT message) {
     return true;
 }
 
+float SidebarView::PageScroll(const PageModel& page) const {
+    if (page.spaceID == model_.spaceID) return scroll_;
+    auto kept = scrolls_.find(page.spaceID);
+    if (kept == scrolls_.end()) return 0;
+    // Where it was left, as SetScroll draws it: whole pixels, within its list.
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const float limit = SidebarMaxScroll(page.rows, Height(), scale);
+    return std::min(std::round(std::clamp(kept->second, 0.0f, limit) * scale) / scale, limit);
+}
+
+std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixels* readBack) {
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const float scroll = PageScroll(page);
+    // The page's surface runs from the sidebar's top (so it draws in the sidebar's points, as
+    // the address field's does) down to its last row, or to where the list is cut off above the
+    // space bar, whichever is higher: a window resize that moves neither draws nothing.
+    const float contentBottom = M::kHeaderAreaHeight + SidebarContentHeight(page.rows) - scroll;
+    const float bottom = std::max(M::kHeaderAreaHeight, std::min(contentBottom, SidebarListBottom(Height())));
+    const UINT largest = compositor_->GetRenderer().MaxTextureSize();
+    const UINT width = std::clamp(static_cast<UINT>(std::ceil(width_ * scale)), 1u, largest);
+    const UINT height = std::clamp(static_cast<UINT>(std::ceil(bottom * scale)), 1u, largest);
+    if (width != gpu.width || height != gpu.height) gpu.dirty = true;
+    if (!gpu.dirty && !readBack) return {};
+    auto fail = [this](const wchar_t* what, HRESULT hr) {
+        deviceLost_ = IsDeviceLost(hr);
+        return HResultMessage(what, hr);
+    };
+    HRESULT hr = S_OK;
+    if (!gpu.visual) {
+        if (FAILED(hr = compositor_->Device()->CreateVisual(gpu.visual.GetAddressOf())) ||
+            FAILED(hr = strip_->AddVisual(gpu.visual.Get(), FALSE, nullptr))) {
+            gpu.visual.Reset();
+            return fail(L"creating a sidebar page's visual", hr);
+        }
+        PlacePages();
+    }
+    if (!gpu.surface) {
+        if (FAILED(hr = compositor_->Device()->CreateVirtualSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
+                                                                     gpu.surface.GetAddressOf())) ||
+            FAILED(hr = gpu.visual->SetContent(gpu.surface.Get()))) {
+            gpu.surface.Reset();
+            return fail(L"creating a sidebar page's surface", hr);
+        }
+    } else if (width != gpu.width || height != gpu.height) {
+        if (FAILED(hr = gpu.surface->Resize(width, height))) return fail(L"resizing a sidebar page's surface", hr);
+    }
+    gpu.width = width;
+    gpu.height = height;
+    std::set<FaviconKey> icons;
+    drawnIcons_ = &icons;
+    std::wstring error = compositor_->DrawSurface(
+        gpu.surface.Get(), width, height, dpi_,
+        [&](ID2D1DeviceContext* context) {
+            DrawPage(context, page, scroll, static_cast<float>(height) / scale, page.spaceID == model_.spaceID);
+        },
+        readBack, hr);
+    drawnIcons_ = nullptr;
+    if (!error.empty()) {
+        deviceLost_ = IsDeviceLost(hr);
+        return L"a sidebar page: " + error;
+    }
+    gpu.icons = std::move(icons);
+    gpu.dirty = false;
+    return {};
+}
+
 std::wstring SidebarView::Draw(Pixels* readBack) {
     if (!compositor_) return L"no compositor";
     if (deviceLost_) return L"the GPU device was lost";
@@ -243,51 +439,71 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     GetClientRect(window_, &client);
     // Minimized: nothing to draw into until it's restored (onSize lays it out again).
     if (client.bottom <= 0 || client.right <= 0) return {};
-    // The surface runs down to the last row, or to where the list is cut off above the space
-    // bar, whichever is higher: a window resize that moves neither draws nothing.
-    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
-    const float contentBottom = M::kHeaderAreaHeight + SidebarContentHeight(model_.rows) - scroll_;
-    const float listBottom = SidebarListBottom(static_cast<float>(client.bottom) / scale);
-    const float bottom = std::max(M::kHeaderAreaHeight, std::min(contentBottom, listBottom));
-    const UINT largest = compositor_->GetRenderer().MaxTextureSize();
-    const UINT width = std::clamp(static_cast<UINT>(std::ceil(width_ * scale)), 1u, largest);
-    const UINT height = std::clamp(static_cast<UINT>(std::ceil(bottom * scale)), 1u, largest);
-    if (height != surfaceHeight_ || width != surfaceWidth_) dirty_ = true;
-    if (!dirty_ && !readBack) return {};
     std::wstring error;
     if (!visual_ && !CreateGpu(error)) return error;
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const UINT largest = compositor_->GetRenderer().MaxTextureSize();
+    const UINT width = std::clamp(static_cast<UINT>(std::ceil(width_ * scale)), 1u, largest);
+    // The pages show only over the sidebar, whichever way they slide.
+    if (width != clipWidth_) {
+        clipWidth_ = width;
+        pagesClip_->SetClip(D2D_RECT_F{0, 0, static_cast<float>(width), static_cast<float>(largest)});
+        PlacePages();
+        PlaceStrip();
+    }
+
+    // The address field's surface: the sidebar's top, down to the list.
+    const UINT height = std::clamp(static_cast<UINT>(std::ceil(M::kHeaderAreaHeight * scale)), 1u, largest);
+    if (height != surfaceHeight_ || width != surfaceWidth_) dirty_ = true;
     auto fail = [this](const wchar_t* what, HRESULT hr) {
         deviceLost_ = IsDeviceLost(hr);
         return HResultMessage(what, hr);
     };
     HRESULT hr = S_OK;
-    if (!surface_) {
-        if (FAILED(hr = compositor_->Device()->CreateVirtualSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
-                                                                     surface_.GetAddressOf())) ||
-            FAILED(hr = visual_->SetContent(surface_.Get()))) {
-            surface_.Reset();
-            return fail(L"creating the sidebar's surface", hr);
+    Pixels header, selectedPage;
+    if (dirty_ || readBack) {
+        if (!surface_) {
+            if (FAILED(hr = compositor_->Device()->CreateVirtualSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM,
+                                                                         DXGI_ALPHA_MODE_PREMULTIPLIED, surface_.GetAddressOf())) ||
+                FAILED(hr = visual_->SetContent(surface_.Get()))) {
+                surface_.Reset();
+                return fail(L"creating the sidebar's surface", hr);
+            }
+        } else if (width != surfaceWidth_ || height != surfaceHeight_) {
+            if (FAILED(hr = surface_->Resize(width, height))) return fail(L"resizing the sidebar's surface", hr);
         }
-    } else if (width != surfaceWidth_ || height != surfaceHeight_) {
-        if (FAILED(hr = surface_->Resize(width, height))) return fail(L"resizing the sidebar's surface", hr);
+        surfaceWidth_ = width;
+        surfaceHeight_ = height;
+        error = compositor_->DrawSurface(
+            surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawHeader(context); }, readBack ? &header : nullptr,
+            hr);
+        if (!error.empty()) {
+            deviceLost_ = IsDeviceLost(hr);
+            return L"the sidebar: " + error;
+        }
+        dirty_ = false;
     }
-    surfaceWidth_ = width;
-    surfaceHeight_ = height;
 
-    error = compositor_->DrawSurface(
-        surface_.Get(), width, height, dpi_,
-        [&](ID2D1DeviceContext* context) {
-            for (auto& entry : faviconBitmaps_) entry.second.used = false;
-            DrawContent(context);
-            // Only the icons this draw showed stay on the GPU.
-            std::erase_if(faviconBitmaps_, [](const auto& entry) { return !entry.second.used; });
-        },
-        readBack, hr);
-    if (!error.empty()) {
-        deviceLost_ = IsDeviceLost(hr);
-        return L"the sidebar: " + error;
+    // The built pages, each in its own surface.
+    for (const PageModel& page : model_.pages) {
+        const bool selected = page.spaceID == model_.spaceID;
+        if (error = DrawPageSurface(page, pages_[page.spaceID], readBack && selected ? &selectedPage : nullptr); !error.empty()) {
+            return error;
+        }
     }
-    dirty_ = false;
+    // Only the icons the pages show stay on the GPU.
+    std::erase_if(faviconBitmaps_, [this](const auto& entry) {
+        return std::none_of(pages_.begin(), pages_.end(), [&](const auto& page) { return page.second.icons.contains(entry.first); });
+    });
+
+    if (readBack) {
+        // As the screen shows it at rest: the selected page over the address field.
+        readBack->width = width;
+        readBack->height = std::max(header.height, selectedPage.height);
+        readBack->bgra.assign(static_cast<size_t>(readBack->width) * readBack->height * 4, 0);
+        ComposeOver(*readBack, header, POINT{0, 0});
+        ComposeOver(*readBack, selectedPage, POINT{0, 0});
+    }
     return {};
 }
 
@@ -364,17 +580,17 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
                 ComPtr<ID2D1Bitmap1> bitmap;
                 if (SUCCEEDED(context->CreateBitmap(D2D1::SizeU(pixels->width, pixels->height), pixels->bgra.data(), pixels->width * 4,
                                                     &props, bitmap.GetAddressOf()))) {
-                    found = faviconBitmaps_.emplace(key, FaviconBitmap{bitmap, false}).first;
+                    found = faviconBitmaps_.emplace(key, bitmap).first;
                 }
             }
         }
         if (found != faviconBitmaps_.end()) {
-            found->second.used = true;
+            if (drawnIcons_) drawnIcons_->insert(key);
             // Stretched to the square, its corners rounded (FaviconImageView's layer).
             ComPtr<ID2D1BitmapBrush1> brush;
             const D2D1_BITMAP_BRUSH_PROPERTIES1 props{D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP, D2D1_INTERPOLATION_MODE_LINEAR};
-            if (SUCCEEDED(context->CreateBitmapBrush(found->second.bitmap.Get(), &props, nullptr, brush.GetAddressOf()))) {
-                const D2D1_SIZE_F size = found->second.bitmap->GetSize();
+            if (SUCCEEDED(context->CreateBitmapBrush(found->second.Get(), &props, nullptr, brush.GetAddressOf()))) {
+                const D2D1_SIZE_F size = found->second->GetSize();
                 brush->SetTransform(D2D1::Matrix3x2F::Scale(side / size.width, side / size.height) *
                                     D2D1::Matrix3x2F::Translation(box.left, box.top));
                 const float corner = side * kFaviconCorner;
@@ -506,11 +722,8 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
     }
 }
 
-void SidebarView::DrawContent(ID2D1DeviceContext* context) {
-    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
-    const float height = static_cast<float>(surfaceHeight_) / scale;
+void SidebarView::DrawHeader(ID2D1DeviceContext* context) {
     const float left = M::kPadding, right = width_ - M::kPadding;
-
     // The address field: the white wash (stronger on a light theme) and the host.
     const float fieldTop = M::kTopRowY + M::kTopRowHeight + M::kUrlFieldTopGap;
     brush_->SetColor(D2D1_COLOR_F{1, 1, 1, model_.dark ? M::kFieldFill : std::min(M::kFieldFill * 3.5f, 0.7f)});
@@ -523,18 +736,19 @@ void SidebarView::DrawContent(ID2D1DeviceContext* context) {
     // With no buttons in the field, the text runs to 2pt from its end (SidebarHeader's layout).
     DrawText(context, model_.address, addressFormat_.Get(), addressX, addressBaseline, right - 2 - addressX,
              Primary(kLabelAlpha * M::kUrlFieldTextOpacity));
+}
 
-    // The space's page, under the header and above the space bar (where Draw ends the
-    // surface); rows past it are cut off (the Mac's list scrolls there).
+void SidebarView::DrawPage(ID2D1DeviceContext* context, const PageModel& page, float scroll, float bottom, bool selected) {
+    // The space's page, under the header and above the space bar (where its surface ends);
+    // rows past it are cut off (the Mac's list scrolls there). Only the selected page hovers.
     const float listTop = M::kHeaderAreaHeight;
-    const float listBottom = std::max(listTop, height);
+    const float listBottom = std::max(listTop, bottom);
     context->PushAxisAlignedClip(Rect(0, listTop, width_, listBottom), D2D1_ANTIALIAS_MODE_ALIASED);
-    for (size_t i = 0; i < model_.rows.size(); ++i) {
-        const SidebarRow& row = model_.rows[i];
-        const float top = listTop + row.top - scroll_;
+    for (const SidebarRow& row : page.rows) {
+        const float top = listTop + row.top - scroll;
         if (top >= listBottom) break;
         if (top + row.height <= listTop) continue;
-        const bool hovered = hover_ && hover_->first == row.kind && hover_->second == row.id;
+        const bool hovered = selected && hover_ && hover_->first == row.kind && hover_->second == row.id;
         DrawRow(context, row, top, hovered);
     }
     context->PopAxisAlignedClip();
@@ -553,9 +767,16 @@ float SidebarView::Height() const {
     return static_cast<float>(client.bottom) / (static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI);
 }
 
+D2D1_POINT_2F SidebarView::OnPage(D2D1_POINT_2F p) const {
+    // Under the address field the selected page is where the strip has it.
+    if (p.y >= M::kHeaderAreaHeight) p.x -= PageOffset();
+    return p;
+}
+
 SidebarHit SidebarView::HitAt(D2D1_POINT_2F p) const {
     if (p.x < 0 || p.x >= width_) return {};
-    return SidebarHitTest(model_.rows, width_, Height(), scroll_, p.x, p.y);
+    const D2D1_POINT_2F q = OnPage(p);
+    return SidebarHitTest(model_.rows, width_, Height(), scroll_, q.x, q.y);
 }
 
 void SidebarView::RefreshHover() {
@@ -572,7 +793,7 @@ void SidebarView::RefreshHover() {
     }
     if (hover == hover_) return;
     hover_ = std::move(hover);
-    Invalidate();
+    InvalidateSelectedPage();
 }
 
 void SidebarView::ForgetActivation() {
@@ -595,7 +816,7 @@ void SidebarView::SetScroll(float scroll) {
     const float snapped = std::min(std::round(scrollExact_ * scale) / scale, limit);
     if (snapped == scroll_) return;
     scroll_ = snapped;
-    Invalidate();
+    InvalidateSelectedPage();
     RefreshHover();
 }
 
@@ -669,7 +890,8 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         lastClickAt_ = at;
         pointer_ = at;
         RefreshHover();
-        press_ = SidebarPressAt(model_.rows, width_, Height(), scroll_, p.x, p.y, clicks_, activating);
+        const D2D1_POINT_2F q = OnPage(p);
+        press_ = SidebarPressAt(model_.rows, width_, Height(), scroll_, q.x, q.y, clicks_, activating);
         if (press_) SetCapture(window_);
         return true;
     }
@@ -680,7 +902,9 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         if (GetCapture() == window_) ReleaseCapture();
         const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
         // As the Mac's mouseUp: on release, over what was pressed, wherever its row is now.
-        const SidebarTap tap = p.x < 0 || p.x >= width_ ? SidebarTap{} : SidebarRelease(press, model_.rows, width_, Height(), scroll_, p.x, p.y);
+        const D2D1_POINT_2F q = OnPage(p);
+        const SidebarTap tap =
+            p.x < 0 || p.x >= width_ ? SidebarTap{} : SidebarRelease(press, model_.rows, width_, Height(), scroll_, q.x, q.y);
         RefreshHover();
         Perform(tap);  // a copy: the action rebuilds the rows
         return true;
