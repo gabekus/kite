@@ -100,6 +100,9 @@ enum MainMenu {
             item("Ask Claude", #selector(BrowserWindowController.toggleClaudeBubble(_:)), "j", id: "askClaude"),
             // The user's own Claude Code sessions (terminal and the Claude app's Code tab), in the same bar.
             item("Claude Code Sessions", #selector(BrowserWindowController.toggleClaudeCode(_:)), "j", [.command, .control], id: "claudeCodeSessions"),
+            // Shown only while the front tab is a Linear issue.
+            item("Test This Ticket", #selector(BrowserWindowController.testThisTicket(_:))),
+            item("Open in Spool", #selector(BrowserWindowController.openInSpool(_:))),
             .separator(),
             item("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)), toTarget: false),
             item("Open Claude’s Tabs in a Claude Folder", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),

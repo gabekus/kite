@@ -138,6 +138,12 @@ final class ClaudeBubbleModel {
         attachTab = false
     }
 
+    /// Test This Ticket: a ticket test on `ticket`, followed in the bar.
+    func testTicket(_ ticket: LinearTicket, tasks: ClaudeTasksController) {
+        guard let id = tasks.testTicket(TicketTest.Request(ticket: ticket)) else { return }
+        open(task: id)
+    }
+
     func followUp() {
         guard let tasks, let taskID else { return }
         tasks.followUp(taskID, text: draft)
@@ -253,6 +259,12 @@ struct ClaudeBubble: View {
                     barButton(desktop ? "Opens in the Claude app (click to run here in Kite)" : "Runs here in Kite (click to open in the Claude app)",
                               symbol: desktop ? "arrow.up.forward.app.fill" : "arrow.up.forward.app",
                               active: desktop) { tasks.runsIn = desktop ? .kite : .desktop }
+                }
+                if task == nil, let ticket = LinearTicket(url: frontTab?.url) {
+                    barButton("Test This Ticket (\(ticket.key))", symbol: "checklist") { model.testTicket(ticket, tasks: tasks) }
+                    if Spool.isInstalled {
+                        barButton("Open \(ticket.key) in Spool", symbol: "arrow.up.forward.square") { Spool.open(ticket) }
+                    }
                 }
                 if task == nil, let frontTab {
                     barButton(model.attachTab ? "Attached “\(frontTab.displayTitle)”" : "Attach this tab",

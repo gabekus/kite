@@ -14,7 +14,7 @@ public enum ClaudeInvocation {
     /// - `dontAsk` refuses anything not allowed up front; every Kite tool is allowed,
     ///   and Kite itself asks before anything that commits on the user's behalf.
     public static func arguments(kiteCLI: String, profile: String?, taskID: UUID, resume sessionID: String?,
-                                 model: String? = nil) -> [String] {
+                                 model: String? = nil, systemPrompt: String = systemPrompt) -> [String] {
         var arguments = [
             "-p",
             "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -40,6 +40,11 @@ public enum ClaudeInvocation {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return (try? encoder.encode(config)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    }
+
+    /// The system prompt for a task: a ticket test (`ClaudeTask.ticket`) adds `TicketTest.systemPrompt`.
+    public static func systemPrompt(ticket: String?) -> String {
+        ticket == nil ? systemPrompt : systemPrompt + "\n\n" + TicketTest.systemPrompt
     }
 
     public static let systemPrompt = """

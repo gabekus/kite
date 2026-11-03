@@ -1350,6 +1350,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if let valid = validateBoostItem(item) { return valid }
         if let valid = validateSplitLayoutItem(item) { return valid }
         if let valid = validateSplitSideItem(item) { return valid }
+        if let valid = validateTicketItem(item) { return valid }
         switch item.action {
         case #selector(setDarkPagesMode(_:)):
             let modes = DarkPagesMode.allCases

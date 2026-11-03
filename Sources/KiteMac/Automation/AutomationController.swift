@@ -133,6 +133,10 @@ final class AutomationController {
     @ObservationIgnored var isRunningTask: ((UUID) -> Bool)?
     /// `session` is the short name Claude gave its work (tabs_create's `session`), which names the task's folder.
     @ObservationIgnored var taskOpenedTab: ((_ task: UUID, _ tab: UUID, _ session: String?) -> Void)?
+    /// Ticket tests (`TicketTest`): which tasks are one, so Kite keeps them from posting on Linear, and
+    /// `kite test-ticket` starting one (`TicketTest.wireTool`, never an MCP tool).
+    @ObservationIgnored var isTicketTest: ((UUID) -> Bool)?
+    @ObservationIgnored var startTicketTest: ((JSONValue) -> ToolOutput)?
 
     struct NeedsConfirmation: Error {
         let request: ConfirmationRequest
@@ -525,6 +529,11 @@ final class AutomationController {
 
     func perform(_ request: AutomationWire.Request, connection: Int) async -> ToolOutput {
         guard isEnabled else { return .failure(.disabled) }
+        if request.tool == TicketTest.wireTool {
+            // Only the user's own `kite test-ticket`: a Claude task can't start another task.
+            guard request.task == nil else { return .failure(AutomationError(.denied, "A Claude task can't start a ticket test.")) }
+            return startTicketTest?(request.arguments) ?? .failure(AutomationError(.unsupported, "This Kite can't run ticket tests."))
+        }
         do {
             let command = try AutomationCommand(tool: request.tool, arguments: request.arguments)
             let task = request.task.flatMap(UUID.init(uuidString:)).flatMap { isRunningTask?($0) == true ? $0 : nil }
@@ -569,6 +578,11 @@ final class AutomationController {
     // MARK: Confirmation
 
     func authorize(_ action: AutomationAction, tab: BrowserTab) async throws {
+        // A ticket test drafts its report on Linear; only the user posts it.
+        if let task = Self.agentTask, isTicketTest?(task) == true,
+           let refusal = TicketTest.blocksPosting(action, host: store.state.tab(tab.id)?.url?.host()) {
+            throw AutomationError(.denied, refusal)
+        }
         switch AutomationPolicy.evaluate(action, host: store.state.tab(tab.id)?.url?.host()) {
         case .allow:
             // Ask Before Claude Acts: Jev takes a second look at clicks the word list let through.
