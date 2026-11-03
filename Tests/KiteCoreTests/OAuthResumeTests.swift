@@ -121,6 +121,16 @@ import Testing
         #expect(resume.observe(url("https://claude.ai/oauth/authorize?client_id=a&redirect_uri=x"), tab: tab, now: start + 2) == plain)
     }
 
+    @Test func losingOnlyTheChallengeStillResumes() {
+        // Back with client_id, redirect_uri and state but no code_challenge: that page looks like a request
+        // of its own, yet it's the drop, and the remembered PKCE request is what loads.
+        var resume = OAuthResume()
+        #expect(resume.observe(request, tab: tab, now: start) == nil)
+        #expect(resume.observe(url("https://claude.ai/login"), tab: tab, now: start + 1) == nil)
+        let withoutChallenge = url("https://claude.ai/oauth/authorize?code=true&client_id=9d1c&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=xyz")
+        #expect(resume.observe(withoutChallenge, tab: tab, now: start + 20) == request)
+    }
+
     @Test func anotherSitesOAuthIsNeverReplayed() {
         var resume = OAuthResume()
         let okta = url("https://carbonarc.okta.com/oauth2/v1/authorize?client_id=a&redirect_uri=https%3A%2F%2Fapp.example%2Fcb&state=s")

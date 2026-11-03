@@ -230,7 +230,9 @@ final class ClaudeTasksController {
     /// A finished task that ran in Kite can carry on in Desktop's Code tab, as the same session.
     func canOpenInDesktop(_ id: UUID) -> Bool {
         guard ClaudeDesktop.isInstalled, runs[id] == nil, let task = task(id) else { return false }
-        return task.sessionID != nil
+        // Desktop's Kite connection carries no task, so a ticket test continued there would lose the guard
+        // that keeps it from posting on Linear (TicketTest.blocksPosting). Its follow-ups stay in Kite.
+        return task.sessionID != nil && task.ticket == nil
     }
 
     func openInDesktop(_ id: UUID) {

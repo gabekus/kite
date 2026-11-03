@@ -414,7 +414,9 @@ identifier names everything: Spool's session, the git branch, and the Claude fol
   reading and typing (`TicketTest.blocksPosting`). Every other click is refused, since status, assignee and label
   pickers save on click, and so are `form_input`, Return, Space outside a text field, `type` with submit, page
   scripts, uploads, drags, and coordinate clicks with nothing Kite can identify under them
-  (`authorizeUndescribed`). The app under test keeps Kite's usual rules and confirmations.
+  (`authorizeUndescribed`). The app under test keeps Kite's usual rules and confirmations. A ticket test has no
+  "Continue in the Claude App": Desktop's Kite connection carries no task, so the guard wouldn't apply there, and
+  its follow-ups stay in Kite.
 - **What changes for the task.** Its turns get `TicketTest.systemPrompt` after the usual Claude Tasks prompt, Jev
   doesn't size it (it's never a quick lookup), and **Close Tabs** closes only the tabs it opened, not the shared
   Claude › PRO-1234 folder.

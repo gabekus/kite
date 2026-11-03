@@ -42,6 +42,15 @@ public struct OAuthResume: Sendable {
         if let entry = resumed[tab], now.timeIntervalSince(entry.at) > Self.window { resumed[tab] = nil }
         guard let url, let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return nil }
 
+        // The remembered request's page back without a parameter it had: the drop this fixes. Checked before
+        // treating the page as a new request, since one that kept client_id, redirect_uri and state but lost
+        // code_challenge still looks like a request.
+        if let entry = pending[tab], Self.sameEndpoint(url, entry.request), Self.dropsParameters(url, of: entry.request) {
+            guard entry.passedSignIn else { return nil }
+            pending[tab] = nil
+            resumed[tab] = (entry.request, now)
+            return entry.request
+        }
         if Self.isAuthorizeRequest(url) {
             remember(url, tab: tab, now: now, passedSignIn: false)
             return nil
@@ -52,12 +61,8 @@ public struct OAuthResume: Sendable {
             return nil
         }
         guard var entry = pending[tab] else { return nil }
-        if Self.sameEndpoint(url, entry.request) {
-            guard entry.passedSignIn, Self.dropsParameters(url, of: entry.request) else { return nil }
-            pending[tab] = nil
-            resumed[tab] = (entry.request, now)
-            return entry.request
-        }
+        // Back on the request's page with its parameters: nothing to do.
+        if Self.sameEndpoint(url, entry.request) { return nil }
         if Self.isSignInPage(url) {
             entry.passedSignIn = true
             pending[tab] = entry
