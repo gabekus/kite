@@ -567,6 +567,24 @@ import Testing
         #expect(leader("inbox", state) == nil)
     }
 
+    @Test func aOneLetterSearchKeepsLongerPicks() {
+        var (state, mail, _) = setup()
+        state.recordCommandBarPick(typed: "gmail", tab: mail)
+        #expect(!state.commandBarPickChanges(typed: "g", tab: nil))
+        state.recordCommandBarPick(typed: "g", tab: nil)
+        #expect(state.commandBarPicks.map(\.query) == ["gmail"])
+    }
+
+    @Test func aSessionOverTheCapIsTrimmedOnTheNextPick() {
+        var (state, mail, _) = setup()
+        state.commandBarPicks = (0..<(BrowserState.commandBarPickLimit + 50)).map {
+            CommandBarPick(query: "q\($0)", tabID: mail, pickedAt: Date(timeIntervalSince1970: Double($0)))
+        }
+        state.recordCommandBarPick(typed: "gmail", tab: mail)
+        #expect(state.commandBarPicks.count == BrowserState.commandBarPickLimit)
+        #expect(state.commandBarPicks.first?.query == "gmail")
+    }
+
     @Test func picksForClosedTabsAreDropped() {
         var (state, mail, inbox) = setup()
         state.recordCommandBarPick(typed: "inbox", tab: inbox)
