@@ -8,96 +8,106 @@ import KiteCore
 
 @MainActor
 enum ArcExtensionsInstaller {
-    /// Arc's extensions for the Kite profile `engine` uses (see `BrowserState.arcProfiles`),
-    /// leaving out ones turned off in Arc and ones the profile already has.
-    static func missing(for engine: WebEngine, state: BrowserState) -> [ArcExtensionsImport.Extension] {
-        guard let profile = engine.profileDirectory else { return [] }
+    /// Arc's extensions for the Kite profile `engine` uses (see `BrowserState.arcProfiles`), less
+    /// the ones it has and ones that didn't go in this session. Nothing on a test build without
+    /// `KITE_ARC_DATA_PATH`, so tests never read the real Arc's.
+    static func missing(for engine: WebEngine, state: BrowserState) -> ArcExtensionsImport.Found {
+        guard let profile = engine.profileDirectory, readsArc else { return .init() }
         let installed = BackgroundExtensionInstall.installedIDs(profile: profile)
-        var result: [ArcExtensionsImport.Extension] = []
+        var result = ArcExtensionsImport.Found()
         for arc in state.arcProfiles(inKiteProfile: profile) {
-            for item in read(profile: arc) where !installed.contains(item.id) && !result.contains(where: { $0.id == item.id }) {
-                result.append(item)
+            let found = read(profile: arc)
+            for item in found.available where !installed.contains(item.id) && !failed.contains(item.id)
+                && !result.available.contains(item) {
+                result.available.append(item)
             }
+            for item in found.unavailable where !result.unavailable.contains(item) { result.unavailable.append(item) }
         }
         return result
     }
 
-    /// One Arc profile's enabled Web Store extensions, by name.
-    static func read(profile: String, in arcFolder: URL = ArcImportController.arcDirectory) -> [ArcExtensionsImport.Extension] {
-        let folder = arcFolder.appendingPathComponent("User Data", isDirectory: true)
-            .appendingPathComponent(profile, isDirectory: true)
-        let files = FileManager.default
-        let preferences = ["Secure Preferences", "Preferences"].compactMap { try? Data(contentsOf: folder.appendingPathComponent($0)) }
-        let disabled = ArcExtensionsImport.disabledIDs(preferences: preferences)
-        let extensions = folder.appendingPathComponent("Extensions", isDirectory: true)
-        var result: [ArcExtensionsImport.Extension] = []
-        for id in (try? files.contentsOfDirectory(atPath: extensions.path)) ?? [] where !disabled.contains(id) {
-            // The newest version folder that has a manifest.
-            let versions = ((try? files.contentsOfDirectory(atPath: extensions.appendingPathComponent(id).path)) ?? [])
-                .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
-            for version in versions {
-                let root = extensions.appendingPathComponent(id).appendingPathComponent(version, isDirectory: true)
-                guard let manifest = try? Data(contentsOf: root.appendingPathComponent("manifest.json")) else { continue }
-                let item = ArcExtensionsImport.storeExtension(id: id, manifest: manifest) { locale in
-                    try? Data(contentsOf: root.appendingPathComponent("_locales/\(locale)/messages.json"))
-                }
-                if let item { result.append(item) }
-                break
-            }
+    static var readsArc: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["KITE_SUPPORT_PATH"] == nil || environment["KITE_ARC_DATA_PATH"] != nil
+    }
+
+    /// One Arc profile's extensions. Kept while the profile's Extensions folder and preferences
+    /// are unchanged, since the menu asks every time it's rebuilt.
+    static func read(profile: String, in arcFolder: URL = ArcImportController.arcDirectory) -> ArcExtensionsImport.Found {
+        let folder = arcFolder.appendingPathComponent("User Data", isDirectory: true).appendingPathComponent(profile, isDirectory: true)
+        let stamp = ["Extensions", "Secure Preferences", "Preferences"].map {
+            (try? FileManager.default.attributesOfItem(atPath: folder.appendingPathComponent($0).path)[.modificationDate] as? Date)?
+                .timeIntervalSince1970 ?? 0
         }
-        return result.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        if let cached = cache[folder], cached.stamp == stamp { return cached.found }
+        let found = ArcExtensionsImport.read(profileFolder: folder)
+        cache[folder] = (stamp, found)
+        return found
     }
 
-    /// Adding, by profile: the ones still to go and the install running now.
-    private static var queues: [String: [ArcExtensionsImport.Extension]] = [:]
-    private static var running: [String: BackgroundExtensionInstall] = [:]
+    private static var cache: [URL: (stamp: [Double], found: ArcExtensionsImport.Found)] = [:]
 
-    static func isAdding(in engine: WebEngine) -> Bool {
-        engine.profileDirectory.map { running[$0] != nil } ?? false
-    }
+    // MARK: Adding
 
-    /// Asks, then adds `extensions` to `engine`'s profile one at a time; Chrome asks for each.
-    static func add(_ extensions: [ArcExtensionsImport.Extension], to engine: WebEngine, window: NSWindow?) {
-        guard let profile = engine.profileDirectory, !extensions.isEmpty, running[profile] == nil else { return }
-        let names = extensions.map(\.name)
+    /// One run at a time, app-wide: Chrome's dialog says nothing about which profile it's for,
+    /// and an install takes any dialog closing as its own.
+    private static var queue: [ArcExtensionsImport.Extension] = []
+    private static var running: BackgroundExtensionInstall?
+    /// From the menu press until the run ends or the sheet is cancelled.
+    private(set) static var isBusy = false
+    /// Ones the store wouldn't add this session (cancelled, or no Add button): not offered again.
+    private static var failed: Set<String> = []
+
+    /// Asks, then adds `found.available` to `engine`'s profile one at a time; Chrome asks for each.
+    static func add(_ found: ArcExtensionsImport.Found, to engine: WebEngine, window: NSWindow?) {
+        guard engine.profileDirectory != nil, !found.available.isEmpty, !isBusy else { return }
+        let names = found.available.map(\.name)
         if BrowserImportController.testMode != nil {
             // Chrome's dialogs can't be answered from a test, so this only says what it would add.
-            FileHandle.standardError.write(Data("KITE_TEST_IMPORT: Arc extensions for \(profile): \(names.joined(separator: " | "))\n".utf8))
+            let profile = engine.profileDirectory ?? ""
+            let unavailable = found.unavailable.isEmpty ? "" : "; not available: \(found.unavailable.map(\.name).joined(separator: " | "))"
+            FileHandle.standardError.write(Data("KITE_TEST_IMPORT: Arc extensions for \(profile): \(names.joined(separator: " | "))\(unavailable)\n".utf8))
             return
         }
+        isBusy = true
         let alert = NSAlert()
-        alert.messageText = "Add \(extensions.count == 1 ? "1 extension" : "\(extensions.count) extensions") from Arc?"
-        alert.informativeText = names.joined(separator: "\n")
-            + "\n\nKite adds each from the Chrome Web Store, and Chrome asks you to confirm it."
+        alert.messageText = "Add \(found.available.count == 1 ? "1 extension" : "\(found.available.count) extensions") from Arc to this profile?"
+        var text = names.joined(separator: "\n")
+            + "\n\nKite adds each from the Chrome Web Store, and Chrome asks you to confirm it. Cancel one to stop."
+        if !found.unavailable.isEmpty {
+            text += "\n\nNot available in Kite (built for an older Chrome): " + found.unavailable.map(\.name).joined(separator: ", ") + "."
+        }
+        alert.informativeText = text
         alert.addButton(withTitle: "Add")
         alert.addButton(withTitle: "Cancel")
-        let start = {
-            queues[profile] = extensions
-            next(profile: profile, engine: engine)
+        let answer: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .alertFirstButtonReturn else { return isBusy = false }
+            queue = found.available
+            next(engine: engine, window: window)
         }
-        guard let window else {
-            if alert.runModal() == .alertFirstButtonReturn { start() }
-            return
-        }
+        guard let window else { return answer(alert.runModal()) }
         alert.beginSheetModal(for: window) { response in
-            guard response == .alertFirstButtonReturn else { return }
-            MainActor.assumeIsolated { start() }
+            MainActor.assumeIsolated { answer(response) }
         }
     }
 
-    private static func next(profile: String, engine: WebEngine) {
-        guard var queue = queues[profile], !queue.isEmpty else {
-            queues[profile] = nil
-            running[profile] = nil
-            ExtensionsModel.shared(engine: engine).refresh()
+    private static func next(engine: WebEngine, window: NSWindow?) {
+        ExtensionsModel.shared(engine: engine).refresh()
+        guard !queue.isEmpty, let profile = engine.profileDirectory else {
+            queue = []
+            running = nil
+            isBusy = false
             return
         }
         let item = queue.removeFirst()
-        queues[profile] = queue
-        guard let store = ChromeWebStore.detailURL(for: item.id) else { return next(profile: profile, engine: engine) }
-        running[profile] = BackgroundExtensionInstall(extensionID: item.id, storeURL: store, engine: engine, source: nil) {
-            ExtensionsModel.shared(engine: engine).refresh()
-            next(profile: profile, engine: engine)
+        guard let store = ChromeWebStore.detailURL(for: item.id) else { return next(engine: engine, window: window) }
+        running = BackgroundExtensionInstall(extensionID: item.id, storeURL: store, engine: engine, source: nil, window: window) {
+            // Cancelled in Chrome's dialog, or the store has no Add button: stop the run there.
+            if !BackgroundExtensionInstall.installedIDs(profile: profile).contains(item.id) {
+                failed.insert(item.id)
+                queue = []
+            }
+            next(engine: engine, window: window)
         }
     }
 }

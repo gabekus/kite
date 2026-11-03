@@ -425,7 +425,7 @@ extension BrowserState {
         for arc in directories {
             if arc == Profile.defaultDirectory {
                 result[arc] = Profile.defaultDirectory
-            } else if let earlier = arcProfileMap[arc], let profile = profiles.first(where: { $0.dataStoreID == earlier }) {
+            } else if let earlier = arcProfileMap[arc], let profile = allProfiles.first(where: { $0.dataStoreID == earlier }) {
                 // By data store, which is never reused: a deleted profile's folder name is.
                 result[arc] = profile.directory
             } else {
@@ -469,7 +469,7 @@ extension BrowserState {
             map[arc] = profile?.directory ?? Profile.defaultDirectory
             if let profile { made.append(profile.directory) }
         }
-        for (arc, directory) in map where arc != Profile.defaultDirectory && directory != Profile.defaultDirectory {
+        for (arc, directory) in map where arc != Profile.defaultDirectory {
             arcProfileMap[arc] = profile(directory).dataStoreID
         }
 

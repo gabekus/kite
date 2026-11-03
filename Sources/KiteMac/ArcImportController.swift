@@ -8,8 +8,8 @@ import UniformTypeIdentifiers
 // "Import from Arc…" item in MainMenu.swift, KiteCore/ArcImport.swift, ArcArchiveImport.swift,
 // ArcSettingsImport.swift, ArcKeyBindingsImport.swift, ArcHistoryImport.swift,
 // ArcSiteSearchImport.swift, ArcLinkRoutingImport.swift, ArcExtensionsImport.swift,
-// ArcExtensionsInstaller.swift with its item in ExtensionsMenuBar.swift, and BrowserState.arcProfileMap,
-// and make AppDelegate.airTraffic private again.
+// ArcExtensionsInstaller.swift with its item in ExtensionsMenuBar.swift, BrowserState.arcProfileMap,
+// and the Arc*Tests files; then make AppDelegate.airTraffic and ExtensionManifest.strippingBOM private again.
 
 extension BrowserWindowController {
     @objc func importFromArc(_ sender: Any?) {
@@ -265,9 +265,9 @@ enum ArcImportController {
         }
         if let profiles = profilesLine(named, names: profileNames, state: store.state) { lines.append(profiles) }
         #if canImport(CEFBridge)
-        let extensionCount = Set(ArcImport.Result.withDefault(named).flatMap { ArcExtensionsInstaller.read(profile: $0, in: folder).map(\.id) }).count
-        if extensionCount > 0 {
-            lines.append("Your Arc profiles have \(count(extensionCount, "extension")). After importing, add them to each Kite profile with Extensions › Add Extensions from Arc… (Chrome asks you to confirm each).")
+        let arcExtensions = Set(ArcImport.Result.withDefault(named).flatMap { ArcExtensionsInstaller.read(profile: $0, in: folder).available.map(\.id) })
+        if !arcExtensions.isEmpty {
+            lines.append("Your Arc profiles have \(count(arcExtensions.count, "extension")) Kite can add. After importing, open a window in each Kite profile and choose Extensions › Add Extensions from Arc… (Chrome asks you to confirm each).")
         }
         #endif
         if result.profiles.contains(where: { !named.contains($0) }) {

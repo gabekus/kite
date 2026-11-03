@@ -8,7 +8,7 @@ import SwiftUI
 /// then Add Extension… and Manage Extensions…. It's how extensions are reached while
 /// the sidebar is shown and the page toolbar (with its pinned icons) is off.
 @MainActor
-final class ExtensionsMenuBar: NSObject, NSMenuDelegate {
+final class ExtensionsMenuBar: NSObject, NSMenuDelegate, NSMenuItemValidation {
     let item: NSMenuItem
     private var model: ExtensionsModel
     private var managePopover: NSPopover?
@@ -73,10 +73,11 @@ final class ExtensionsMenuBar: NSObject, NSMenuDelegate {
         manage.target = self
         menu.addItem(manage)
         // Temporary: remove with ArcExtensionsInstaller.swift after Arc shuts down (2026-12-22).
-        if let state = Self.frontController()?.store.state, !ArcExtensionsInstaller.missing(for: model.engine, state: state).isEmpty {
+        if let state = Self.frontController()?.store.state,
+           !ArcExtensionsInstaller.missing(for: model.engine, state: state).available.isEmpty {
+            menu.addItem(.separator())
             let arc = NSMenuItem(title: "Add Extensions from Arc…", action: #selector(addFromArc(_:)), keyEquivalent: "")
             arc.target = self
-            arc.isEnabled = !ArcExtensionsInstaller.isAdding(in: model.engine)
             menu.addItem(arc)
         }
     }
@@ -92,6 +93,11 @@ final class ExtensionsMenuBar: NSObject, NSMenuDelegate {
     @objc private func addExtension(_ sender: Any?) {
         guard let url = URL(string: "https://chromewebstore.google.com/") else { return }
         NSApp.sendAction(#selector(AppDelegate.openURLFromExtensionsMenu(_:)), to: nil, from: url as NSURL)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(addFromArc(_:)) { return !ArcExtensionsInstaller.isBusy }
+        return menuItem.isEnabled
     }
 
     @objc private func addFromArc(_ sender: Any?) {
