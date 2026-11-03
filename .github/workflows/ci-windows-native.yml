@@ -61,7 +61,8 @@ jobs:
           path: |
             windows/ThirdParty/cef
             !windows/ThirdParty/cef/build-*
-          key: cef-windows64-${{ hashFiles('windows/scripts/fetch-cef.ps1') }}
+          # The pinned $CefVersion and $CefSha1 in fetch-cef.ps1; change with them.
+          key: cef-windows64-156.0.7+g47dbc1d-e13cb97c5be44784c2dba6df960791ea5cf6d406
       - name: Fetch CEF and build its wrapper
         timeout-minutes: 15
         run: |
@@ -197,6 +198,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kite-windows-x64
+          retention-days: 7  # over 400 MB with Chromium's runtime
           path: |
             windows/build/Release/
             !windows/build/Release/**/*.lib

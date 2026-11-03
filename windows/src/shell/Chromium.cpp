@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -25,6 +26,10 @@ namespace {
 // The Mac's KCPageBackdropColor: what a page shows before it first paints. A page that sets
 // no background of its own still gets white (the DevTools override in OnAfterCreated).
 constexpr cef_color_t kPageBackdrop = 0xFF323232;
+
+// How long closing the window waits for the browsers before it goes ahead anyway.
+constexpr UINT kCloseDeadlineMs = 5'000;
+constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; main.cpp's timers are small numbers
 
 CefRect ToCefRect(const RECT& r) { return CefRect(r.left, r.top, r.right - r.left, r.bottom - r.top); }
 
@@ -45,6 +50,15 @@ private:
 
 void RunOnCefUIThread(std::function<void()> work) { CefPostTask(TID_UI, new FunctionTask(std::move(work))); }
 
+// Chromium's widget window inside CEF's host window: its one child, of a class Chromium
+// numbers as it registers it (Chrome_WidgetWin_0, _1, ...), so matched by prefix.
+HWND FindPageWidget(HWND host) {
+    const HWND child = GetWindow(host, GW_CHILD);
+    wchar_t name[64] = {};
+    if (!child || !GetClassNameW(child, name, static_cast<int>(std::size(name)))) return nullptr;
+    return std::wstring_view(name).starts_with(L"Chrome_WidgetWin_") ? child : nullptr;
+}
+
 }  // namespace
 
 struct Chromium::Shared {
@@ -56,6 +70,8 @@ struct Chromium::Shared {
     // Both threads, under the mutex.
     std::mutex mutex;
     std::deque<std::function<void()>> pending;  // for Kite's UI thread
+    bool wakePosted = false;                    // a kWakeMessage is on its way
+    std::atomic<bool> widgetMissing{false};     // a page had no Chromium widget window (FindPageWidget)
     RECT bounds{};                              // where a new popup's window goes
     int creating = 0;  // asked for (CreateBrowser, an allowed popup), no OnAfterCreated or abort yet
     int alive = 0;     // OnAfterCreated, no OnBeforeClose yet
@@ -80,16 +96,20 @@ struct Chromium::Shared {
     std::map<std::string, CefRefPtr<CefRequestContext>> contexts;  // by profile directory
     std::string shown;
     bool minimized = false;
+    ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
 
     // Hands work to Kite's UI thread; one wake per batch.
     void Post(std::function<void()> work) {
-        bool wake;
         {
             std::lock_guard lock(mutex);
-            wake = pending.empty();
             pending.push_back(std::move(work));
+            if (wakePosted) return;
+            wakePosted = true;
         }
-        if (wake) PostMessageW(window, MainWindow::kWakeMessage, 0, 0);
+        if (!PostMessageW(window, MainWindow::kWakeMessage, 0, 0)) {
+            std::lock_guard lock(mutex);
+            wakePosted = false;  // the next post tries again
+        }
     }
 
     void Count(int creatingDelta, int aliveDelta) {
@@ -107,11 +127,13 @@ struct Chromium::Shared {
 
     // Puts the shown tab's window on the card and the rest at 0×0, on CEF's thread, which
     // owns them, and only for windows whose placement changed. 0×0 makes CEF shrink the
-    // page's widget, and the widget window itself (Chromium's Chrome_WidgetWin_1, the host
-    // window's child) is hidden and shown: that's what Chromium reads as the page's
+    // page's widget, and the widget window itself (Chromium's Chrome_WidgetWin_N, the host
+    // window's child; FindPageWidget) is hidden and shown: that's what Chromium reads as the page's
     // visibility (HWNDMessageHandler's SWP_SHOWWINDOW/SWP_HIDEWINDOW), so a background tab
     // reports hidden and stops drawing, and reports visible again when it's back. Resizing
-    // or hiding only CEF's host window left a page hidden for good (seen on Gabe's PC).
+    // or hiding only CEF's host window left a page hidden for good (seen on Gabe's PC). It
+    // leans on Chromium's window layout, so a missing widget is reported (widgetMissing,
+    // which fails --smoke-test); W10's off-screen pages replace it with WasHidden.
     void Layout() {
         const RECT card = Bounds();
         std::vector<std::pair<HWND, Placement>> changes;
@@ -130,7 +152,7 @@ struct Chromium::Shared {
         RunOnCefUIThread([changes = std::move(changes)] {
             for (const auto& [host, placement] : changes) {
                 const RECT& r = placement.rect;
-                const HWND widget = FindWindowExW(host, nullptr, L"Chrome_WidgetWin_1", nullptr);
+                const HWND widget = FindPageWidget(host);
                 if (!placement.visible && widget) ShowWindow(widget, SW_HIDE);
                 SetWindowPos(host, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
                 if (placement.visible && widget) ShowWindow(widget, SW_SHOWNA);
@@ -153,7 +175,9 @@ struct Chromium::Shared {
         Page& page = pages[tabID];
         page.browser = browser;
         page.hwnd = hwnd;
-        page.placed = {true, Bounds()};
+        // Never matches, so the first Layout always places it: the window may have been
+        // resized or maximized since the browser was asked for.
+        page.placed = {true, RECT{-1, -1, -1, -1}};
         if (closing) {
             browser->GetHost()->CloseBrowser(true);
             return;
@@ -213,6 +237,10 @@ public:
         if (!firstURL_.empty()) browser->GetMainFrame()->LoadURL(firstURL_);
 
         const HWND hwnd = browser->GetHost()->GetWindowHandle();
+        if (!FindPageWidget(hwnd)) {
+            shared_->widgetMissing = true;
+            OutputDebugStringW(L"Kite: no Chromium widget window in the page's host window; background tabs won't be hidden\n");
+        }
         shared_->Post([shared = shared_, id = tabID_, browser, hwnd] { shared->Attach(id, browser, hwnd); });
         {
             std::lock_guard lock(shared_->mutex);
@@ -496,10 +524,19 @@ bool Chromium::MayCloseWindow() {
     RunPending();  // a DoClose or OnBeforeClose that just ran may have its note queued
     if (!shared_->closing) {
         shared_->closing = true;
+        shared_->closingSince = GetTickCount64();
         for (auto& [id, page] : shared_->pages) {
             if (page.browser) page.browser->GetHost()->CloseBrowser(true);
         }
+        // A browser that never answers mustn't keep the window open: after this the close
+        // goes ahead, and the destructor's bounded wait covers the rest.
+        SetTimer(shared_->window, kCloseDeadlineTimer, kCloseDeadlineMs,
+                 [](HWND hwnd, UINT, UINT_PTR id, DWORD) {
+                     KillTimer(hwnd, id);
+                     PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                 });
     }
+    if (GetTickCount64() - shared_->closingSince >= kCloseDeadlineMs) return true;
     {
         std::lock_guard lock(shared_->mutex);
         if (shared_->creating > 0) return false;
@@ -510,11 +547,14 @@ bool Chromium::MayCloseWindow() {
     return true;
 }
 
+bool Chromium::PagesCanBeHidden() const { return !shared_->widgetMissing; }
+
 void Chromium::RunPending() {
     std::deque<std::function<void()>> work;
     {
         std::lock_guard lock(shared_->mutex);
         work.swap(shared_->pending);
+        shared_->wakePosted = false;
     }
     for (auto& item : work) item();
 }

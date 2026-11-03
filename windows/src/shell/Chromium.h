@@ -8,8 +8,11 @@
 // Threads: CEF runs its own UI thread (multi_threaded_message_loop), so Kite's message loop
 // and DirectComposition stay as they are. Everything CEF reports arrives on that thread and
 // is handed to Kite's UI thread through PostMessage (MainWindow::kWakeMessage). The page
-// windows belong to CEF's thread, so Kite moves and hides them there too (CefPostTask),
-// never waiting on it. The public methods here are for Kite's UI thread only.
+// windows belong to CEF's thread, so Kite moves and hides them there too (CefPostTask)
+// rather than waiting on it. Win32 still makes some calls between the two threads
+// synchronous, because a child window on another thread shares its parent's input
+// (focus changes, DPI changes, destroying the window); W10's off-screen pages remove the
+// child windows and with them those waits. The public methods are for Kite's UI thread only.
 //
 // Closing the window: the first WM_CLOSE force-closes every browser and is cancelled; as
 // each browser is through DoClose or closed, the window is asked to close again, and closes
@@ -75,6 +78,9 @@ public:
     bool MayCloseWindow();
     // Runs what CEF's thread handed over. MainWindow::kWakeMessage calls it.
     void RunPending();
+    // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden
+    // tabs would keep drawing (a CEF update moved it). --smoke-test fails on it.
+    bool PagesCanBeHidden() const;
 
     struct Shared;  // state both threads touch, behind a mutex (Chromium.cpp)
 

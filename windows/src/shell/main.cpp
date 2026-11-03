@@ -497,6 +497,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
 #ifdef KITE_HAS_CEF
     if (smokeTest && chromium && !pageLoaded) return Fail(quiet, L"the first page didn't finish loading within 30 s", kWindowFailed);
+    if (smokeTest && chromium && !chromium->PagesCanBeHidden()) {
+        return Fail(quiet, L"a page had no Chromium widget window to hide: background tabs would keep drawing", kWindowFailed);
+    }
     // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
     // would otherwise hide a close that hangs.
     if (smokeTest && chromium && GetTickCount64() - closeAskedAt > 5'000) {

@@ -13,6 +13,7 @@ param([switch] $AllowUnpinned, [string[]] $Configs = @('Release', 'Debug'))
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # Windows PowerShell 5.1's progress bar slows downloads to a crawl
 
+# Changing either also changes CI's CEF cache key (.github/workflows/ci-windows-native.yml).
 $CefVersion = '156.0.7+g47dbc1d+chromium-156.0.8078.17'
 $CefPlatform = 'windows64'
 # The archive's SHA-1, like scripts/fetch-cef.sh pins the macOS one (2026-11-03, matched the

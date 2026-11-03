@@ -107,12 +107,21 @@ flexible.
 built (W10). `shell/Chromium` creates one Alloy-style browser per tab (as
 the Mac's) as a child window over the content card (right of the sidebar's
 240pt, inset 10pt). Other tabs' windows, and the shown one while Kite is
-minimized, are sized 0×0, which CEF documents as hiding the widget and
-saving resources; `windows/helix/pages/popup-opener.html` logs the page's
-`visibilityState` in its title to check it (on Gabe's PC, not in CI). CEF runs its own UI thread
-(`multi_threaded_message_loop`), so Kite's message loop and DirectComposition
-are untouched; CEF's callbacks reach Kite's thread through `PostMessage`, and
-Kite moves its page windows on CEF's thread, never waiting on it. A second
+minimized, are sized 0×0 and their Chromium widget window (the host's
+`Chrome_WidgetWin_N` child) is hidden, which is what Chromium reads as the
+page's visibility: they report `hidden` and stop drawing, and `visible` when
+they're back. That leans on Chromium's window layout, so `--smoke-test` fails
+if the widget isn't found; W10's off-screen pages replace it with `WasHidden`.
+A Kite window that's covered rather than minimized still draws its page
+(Chromium's occlusion tracking covers only its own top-level windows).
+`windows/helix/pages/popup-opener.html` logs the page's `visibilityState` in
+its title to check all this (on Gabe's PC, not in CI). CEF runs its own UI
+thread (`multi_threaded_message_loop`), so Kite's message loop and
+DirectComposition are untouched; CEF's callbacks reach Kite's thread through
+`PostMessage`, and Kite moves its page windows on CEF's thread. Some calls
+stay synchronous between the threads, because a child window on another
+thread shares its parent's input (focus and DPI changes, destroying the
+window), until W10 removes the child windows. A second
 launch hands over to the running Kite (Chromium allows one per profile). Profiles sit where the Mac keeps them: `<support>\Chromium`
 is `root_cache_path`, the default profile is `Chromium\Default`, and a
 space's other profile gets its own request context in `Chromium\<directory>`.
