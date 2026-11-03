@@ -161,7 +161,7 @@ candidates:)` in the binary), so these are its orders for items it hadn't learne
 
 | Query | Arc | Kite |
 |---|---|---|
-| 1, 2, 3 letters starting a favorite's title (regular window) | Favorite's "Switch to Tab" row first and selected; Return switched the window to it | Same, when the query starts the tab's title, a word or its host (strength ≥ 70) |
+| 1, 2, 3 letters starting a favorite's title (regular window) | Favorite's "Switch to Tab" row first and selected; Return switched the window to it | Same; Kite also does it when the query starts one of the title's words or the host (inferred: "127" was a host prefix) |
 | 4, 5, 6, 8, 11 letters of the same favorite | Typed search first, the favorite second, then suggestions | Same |
 | Incognito open tabs: "127" (their host's start) | A tab first | Same |
 | Incognito: "inbox" (5 letters, a title's start) | The tab first | Search first, tab second (**mismatch**: Arc's learned order) |
@@ -169,10 +169,14 @@ candidates:)` in the binary), so these are its orders for items it hadn't learne
 | Incognito: "kite", "calendar", "gmail" | Tab 3rd or 4th, under history and autocomplete rows | Tab right under the search (**mismatch**) |
 | The tab you're on ("mailer" typed on the Mailer tab) | Not offered in ⌘T, as a tab or as history | Left out before the 5-tab limit, and from history |
 
-Not observed in Arc: a menu command and a tab matching together (Kite keeps strong commands on top), the
-address-edit mode (Kite keeps its old order), a URL-looking query on the tab you're on (Kite leaves it out
-there too), panes of the current split (Kite offers them), and weak short
-matches such as "ai" inside mail.google.com (Kite keeps them under the search).
+Not observed in Arc, so Kite's own choice: a menu command and a tab matching together (strong commands stay on
+top); several matching tabs (all go above the engine's suggestions; with a short query only the best goes above
+the search); short word or host prefixes of a favorite; the address-edit mode (same order as before, but the tab
+you're on is now left out of tabs and history there too); a URL-looking query on the tab you're on (left out);
+panes of the current split (offered); weak short matches such as "ai" inside a title (kept under the search).
+A Site Search shortcut's inline completion turns "gi" into "github.com", so a favorite on a site with a shortcut
+gets the URL row first, not its tab (Arc completed "gmail" to "gmail.com" the same way; not checked against a
+favorite on such a site). History is left out by exact URL, so the current page under another fragment still shows.
 
 ## Arc vs Kite
 

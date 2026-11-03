@@ -10,6 +10,7 @@ public enum TabSearch {
         public var strength: Int
     }
 
+    /// Match strengths, strongest first.
     public static let titlePrefix = 100, wordPrefix = 80, hostPrefix = 70, inTitle = 60, inAddress = 40
 
     public static func rank(_ query: String, in state: BrowserState, limit: Int = 6) -> [Match] {
