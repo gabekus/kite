@@ -153,12 +153,53 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     /// which the script takes off the page's global object.
     private func prepareMailHandler() {
         browser.executeDevToolsMethod("Runtime.addBinding", params: ["name": Self.mailBindingName], completion: nil)
-        let send = "(() => { const b = globalThis.\(Self.mailBindingName); try { delete globalThis.\(Self.mailBindingName); } catch (e) {} "
-            + "return typeof b === 'function' ? (s) => b(s) : null; })()"
-        browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: ["source": MailHandlers.script(send: send)], completion: nil)
+        browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: ["source": Self.mailScript], completion: nil)
     }
 
     private static let mailBindingName = "kiteMailHandler"
+    private static let mailScript = MailHandlers.script(
+        send: "(() => { const b = globalThis.\(mailBindingName); try { delete globalThis.\(mailBindingName); } catch (e) {} "
+            + "return typeof b === 'function' ? (s) => b(s) : null; })()"
+    )
+
+    // MARK: The first document
+
+    /// Whether the first document has been checked for Kite's document scripts (`checkFirstDocument`).
+    private var firstDocumentChecked = false
+    /// Whether the first document has started loading.
+    private var firstDocumentStarted = false
+    /// Whether the media script has reported in this page: it reports as each document starts.
+    private var mediaReported = false
+
+    /// Chromium handles a new tab's DevTools calls only once its first document has a renderer, so
+    /// that document starts without the scripts registered above: no media reports, codes or mail
+    /// handler until the tab navigates. The media script reports as it starts, so no report by the
+    /// time the document has loaded means it missed them all; they run now instead. A world made
+    /// here doesn't get the bindings added by world name, so each gets its own.
+    private func checkFirstDocument() {
+        guard !firstDocumentChecked else { return }
+        firstDocumentChecked = true
+        guard !mediaReported else { return }
+        for source in [MediaStateScript.pageHook, Self.mailScript] {
+            browser.executeDevToolsMethod("Runtime.evaluate", params: ["expression": source], completion: nil)
+        }
+        browser.callDevToolsMethod("Page.getFrameTree", params: nil) { [weak self] result, _ in
+            guard let self, let frame = (result?["frameTree"] as? [String: Any])?["frame"] as? [String: Any],
+                  let frameID = frame["id"] as? String else { return }
+            for (world, binding, source) in Self.firstDocumentWorlds {
+                browser.callDevToolsMethod("Page.createIsolatedWorld", params: ["frameId": frameID, "worldName": world]) { [weak self] result, _ in
+                    guard let self, let context = result?["executionContextId"] as? Int else { return }
+                    browser.executeDevToolsMethod("Runtime.addBinding", params: ["name": binding, "executionContextId": context], completion: nil)
+                    browser.executeDevToolsMethod("Runtime.evaluate", params: ["expression": source, "contextId": context], completion: nil)
+                }
+            }
+        }
+    }
+
+    private static let firstDocumentWorlds = [
+        (VerificationCodeScript.worldName, VerificationCodeScript.bindingName, VerificationCodeScript.source),
+        (MediaStateScript.worldName, MediaStateScript.bindingName, MediaStateScript.source),
+    ]
 
     /// The media script reports what the page plays (MediaStateScript) from its own world;
     /// the page hook runs in the page's world to reach its Media Session handlers.
@@ -434,7 +475,10 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
             if let id = params["executionContextId"] as? Int { kiteContexts[id] = nil }
         case "Runtime.executionContextsCleared":
             kiteContexts.removeAll()
+        case "Page.domContentEventFired":
+            checkFirstDocument()
         case "Runtime.bindingCalled" where params["name"] as? String == MediaStateScript.bindingName:
+            mediaReported = true
             if let call = CallControls.parse(params["payload"] as? String ?? "") {
                 if let context = params["executionContextId"] as? Int { mediaContext = context }
                 return onEvent?(.callControls(call)) ?? ()
@@ -500,6 +544,8 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         onEvent?(.navigationState(isLoading: browser.isLoading, canGoBack: browser.canGoBack, canGoForward: browser.canGoForward))
         cosmeticGeneration += 1
         if !browser.isLoading { pollCosmetics(generation: cosmeticGeneration) }
+        // In case the document loaded before Chromium sent its events (Page.domContentEventFired).
+        if browser.isLoading { firstDocumentStarted = true } else if firstDocumentStarted { checkFirstDocument() }
     }
 
     /// Generic hiding rules depend on the classes and ids a page uses, which only

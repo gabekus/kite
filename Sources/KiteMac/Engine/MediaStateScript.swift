@@ -139,7 +139,9 @@ enum MediaStateScript {
           }
         },
       };
-      send('null');
+      // Already playing when the script starts (it ran late: ChromiumPage.checkFirstDocument).
+      const already = playing();
+      if (already && !already.muted && wantedOf(already) > 0) { current = already; apply(already); report(); } else send('null');
       reportCall();
     })();
     """#
@@ -149,7 +151,8 @@ enum MediaStateScript {
       if (window !== window.top || typeof MediaSession === 'undefined') return;
       const proto = MediaSession.prototype;
       const original = proto.setActionHandler;
-      if (typeof original !== 'function') return;
+      // Once per document, though it can run twice (ChromiumPage.checkFirstDocument).
+      if (typeof original !== 'function' || original.__kiteMedia) return;
       const handlers = new Map();
       const wanted = ['previoustrack', 'nexttrack', 'togglemicrophone', 'togglecamera'];
       proto.setActionHandler = function (action, handler) {
@@ -160,6 +163,7 @@ enum MediaStateScript {
         }
         return result;
       };
+      proto.setActionHandler.__kiteMedia = true;
       // A call's microphone and camera state (the Mini Player's Toggle Microphone / Toggle Camera).
       for (const [name, key] of [['setMicrophoneActive', 'mic'], ['setCameraActive', 'cam']]) {
         const set = proto[name];
