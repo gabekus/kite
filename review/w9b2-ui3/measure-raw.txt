@@ -1,0 +1,22 @@
+﻿## c1-picture-personal
+bar picture (threshold 20): ink 30x30 px = 15x15 pt, box px (191,1575)-(220,1604), centre (103, 25) pt; strongest ink 255,0,0 on background 24,24,24
+  row runs from the top (px): 24 26 28 30 30 30 30 30 30 30 of 30; corner inset on the top row 3 px
+  quadrant centres: TL 255,0,0; TR 0,255,0; BL 0,0,255; BR 255,255,0; background 24,24,24
+  grey implied at 45% over that background (R,G,B solved separately; equal = colourless): TL 537/-29/-29; TR -29/537/-29; BL -29/-29/537; BR 537/537/-29
+header picture (threshold 20): ink 36x36 px = 18x18 pt, box px (34,182)-(69,217), centre (26, 100) pt; strongest ink 255,0,0 on background 29,29,29
+  row runs from the top (px): 28 30 32 34 36 36 36 36 36 36 of 36; corner inset on the top row 4 px
+  quadrant centres: TL 255,0,0; TR 0,255,0; BL 0,0,255; BR 255,255,0; background 29,29,29
+  grey implied at 45% over that background (R,G,B solved separately; equal = colourless): TL 531/-35/-35; TR -35/531/-35; BL -35/-35/531; BR 531/531/-35
+## d1-missing-personal
+bar placeholder (threshold 30): ink 24x24 px = 12x12 pt, box px (194,1578)-(217,1601), centre (103, 25) pt; strongest ink 151,151,151 on background 24,24,24
+header placeholder (threshold 30): ink 30x30 px = 15x15 pt, box px (37,185)-(66,214), centre (26, 100) pt; strongest ink 153,153,153 on background 29,29,29
+## g1-3000px-personal
+bar placeholder (threshold 30): ink 24x24 px = 12x12 pt, box px (194,1578)-(217,1601), centre (103, 25) pt; strongest ink 151,151,151 on background 24,24,24
+header placeholder (threshold 30): ink 30x30 px = 15x15 pt, box px (37,185)-(66,214), centre (26, 100) pt; strongest ink 153,153,153 on background 29,29,29
+## f1-hare-personal
+bar cell 1 (threshold 30): ink 16x16 px = 8x8 pt, box px (198,1582)-(213,1597), centre (103, 25) pt; strongest ink 255,255,255 on background 24,24,24
+header icon slot x 9..40 pt (threshold 30): ink -99999x-99999 px = -49999.5x-49999.5 pt, box px (99999,99999)-(-1,-1), centre (24999.75, 24999.75) pt; strongest ink ,, on background 29,29,29
+c1-picture-personal header: ink pixels in the icon slot (x 13-39 pt) 1256; space name text starts at x 84 px = 42 pt
+d1-missing-personal header: ink pixels in the icon slot (x 13-39 pt) 381; space name text starts at x 84 px = 42 pt
+f1-hare-personal header: ink pixels in the icon slot (x 13-39 pt) 0; space name text starts at x 84 px = 42 pt
+g1-3000px-personal header: ink pixels in the icon slot (x 13-39 pt) 381; space name text starts at x 84 px = 42 pt
