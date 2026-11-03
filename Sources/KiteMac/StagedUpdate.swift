@@ -51,6 +51,8 @@ enum StagedUpdate {
             mv "$claimed" "$dest"
             /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$dest"
             touch "$dest"
+            # install-app.sh's waiter ends by itself once its file is gone.
+            rm -f "$(dirname "$dest")/.Kite.app.waiter"
         fi
         if [ "$how" = exec ]; then
             exec "$dest/Contents/MacOS/Kite"
