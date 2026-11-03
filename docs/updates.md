@@ -38,11 +38,29 @@ A release must be signed with Gabe's Developer ID (release.sh refuses anything e
 only installs an update signed by the same team as the Kite that's running, and 1Password only
 trusts a Developer ID browser.
 
-Updates don't need notarization. Sparkle downloads the update itself, so it never carries
-macOS's quarantine flag, and Gatekeeper doesn't assess it. Notarization matters only for the
-first install from a browser download, which `install.sh` handles by clearing the flag. It
-would need the hardened runtime on Kite and its CEF helpers (with Chromium's JIT
-entitlements), and notarytool credentials.
+Release builds (`bundle-app.sh release` with a Developer ID) are signed with the hardened runtime
+and a secure timestamp, and each helper gets Chromium's entitlements from `Resources/entitlements`:
+
+| Signed code | Entitlements | Why |
+|---|---|---|
+| Kite.app | camera, microphone, location, calendars, Apple events | web pages' camera, mic and location; favorite previews' calendar; VPN tool's Tunnelblick scripting |
+| Kite Helper (utility processes) | JIT, camera, microphone | V8 in the proxy resolver; Chromium's audio and video capture services |
+| Kite Helper (Renderer), (GPU) | JIT | V8, SwiftShader |
+| Kite Helper (Plugin) | unsigned executable memory, no library validation | Chromium's plugin helper |
+| Helpers/kite | Apple events | `kite vpn` drives Tunnelblick through osascript |
+
+The CEF framework's dylibs are signed one by one, since the helpers' library validation only loads
+code from the same team. Debug builds stay unhardened, so a debugger can still attach. The
+designated requirement doesn't change (Developer ID, team 948JHP35FF), so 1Password's trust in
+Kite holds.
+
+`release.sh` and `package-share.sh` then run `scripts/notarize.sh`: it zips the app, submits it
+with `xcrun notarytool submit --wait`, prints Apple's log if it's rejected, staples the ticket
+(`xcrun stapler staple`) and checks Gatekeeper sees `source=Notarized Developer ID`. Stapling
+changes the app, so the release zip and its Sparkle signature are made after it. Updates
+themselves don't need it (Sparkle's downloads never carry the quarantine flag); a first install
+from a browser download does. `KITE_SKIP_NOTARIZE=1` skips it for a local test build, never with
+`--publish`.
 
 ## One-time setup (Gabe's Mac)
 
@@ -51,7 +69,13 @@ entitlements), and notarytool credentials.
    `Resources/Info.plist` as `SUPublicEDKey`.
 2. Back the key file up in 1Password. Without it, no installed Kite can be updated again
    (they'd need a new build by hand).
-3. A release worktree that nothing else uses:
+3. Create the notarytool keychain profile, `kite-notary` (an app-specific password from
+   [account.apple.com](https://account.apple.com) › Sign-In and Security › App-Specific
+   Passwords; notarytool asks for it, and checks it with Apple before saving):
+   `xcrun notarytool store-credentials kite-notary --apple-id <Apple ID> --team-id 948JHP35FF`.
+   An App Store Connect API key works too (`--key`, `--key-id`, `--issuer`).
+   `KITE_NOTARY_PROFILE` picks another profile name.
+4. A release worktree that nothing else uses:
    `git -C ~/dev/kite worktree add --detach ~/dev/kite-ship origin/main`, then
    `ln -s ~/dev/kite/ThirdParty/cef ~/dev/kite-ship/ThirdParty/cef` (the codecs CEF).
 

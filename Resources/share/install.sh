@@ -38,7 +38,8 @@ fi
 
 echo "Installing Kite to $DEST_DIR…"
 ditto "$SRC" "$DEST"
-# This build isn't notarized yet, and macOS refuses to open downloaded apps that aren't.
+# Shared builds are notarized, so Gatekeeper opens them anyway; this is for a test build that
+# isn't (package-share.sh with KITE_SKIP_NOTARIZE=1), which macOS refuses to open once downloaded.
 # The quarantine flag is what marks it as downloaded; removing it is the same as
 # System Settings › Privacy & Security › Open Anyway.
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
