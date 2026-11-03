@@ -100,9 +100,16 @@ struct Chromium::Shared {
         CefRefPtr<CefBrowser> browser;  // null until OnAfterCreated
         HWND hwnd = nullptr;
         bool closeReady = false;  // through DoClose while closing
+        bool closeWhenMade = false;  // Kite closed its tab before the browser existed
         Placement placed;         // as last sent to CEF's thread
         std::string pendingURL;   // Navigate before the browser existed
     };
+    // Kite's UI thread only. Browsers Kite closed (Close) whose DoClose hasn't come back yet:
+    // out of `pages`, so their tab can have a new page, but the window waits for them.
+    std::vector<CefRefPtr<CefBrowser>> retiring;
+    void Retired(const CefRefPtr<CefBrowser>& browser) {
+        std::erase_if(retiring, [&](const CefRefPtr<CefBrowser>& b) { return b->IsSame(browser); });
+    }
     std::map<std::string, Page> pages;  // by tab id
     std::map<std::string, CefRefPtr<CefRequestContext>> contexts;  // by profile directory
     std::string shown;
@@ -192,11 +199,33 @@ struct Chromium::Shared {
         return &it->second;
     }
 
+    // Closes a page Kite is done with (its tab closed or unloaded): hidden at once, then closed
+    // on CEF's thread. It's no longer in `pages`, so its DoClose reports no pageClosed.
+    void ClosePage(std::map<std::string, Page>::iterator it) {
+        CefRefPtr<CefBrowser> browser = it->second.browser;
+        const HWND hwnd = it->second.hwnd;
+        if (shown == it->first) shown.clear();
+        pages.erase(it);
+        retiring.push_back(browser);
+        RunOnCefUIThread([browser, hwnd] {
+            if (hwnd) {
+                if (const HWND widget = FindPageWidget(hwnd)) ShowWindow(widget, SW_HIDE);
+                ShowWindow(hwnd, SW_HIDE);
+            }
+            browser->GetHost()->CloseBrowser(true);
+        });
+    }
+
     // `closed`: OnAfterCreated already closed it, Kite having started closing by then.
     void Attach(const std::string& tabID, CefRefPtr<CefBrowser> browser, HWND hwnd, bool closed) {
         Page& page = pages[tabID];
         page.browser = browser;
         page.hwnd = hwnd;
+        if (page.closeWhenMade && !closing) {
+            // Its tab closed while the browser was being made.
+            ClosePage(pages.find(tabID));
+            return;
+        }
         // Never matches, so the first Layout always places it: the window may have been
         // resized or maximized since the browser was asked for.
         page.placed = {true, RECT{-1, -1, -1, -1}};
@@ -329,12 +358,19 @@ public:
 
     bool DoClose(CefRefPtr<CefBrowser> browser) override {
         if (!shared_->closing) {
-            // The page closed itself (window.close(), as a sign-in popup does when it's done):
-            // only its own window goes, as the Mac's KCBrowser tears down just its view.
+            // Only its own window goes, as the Mac's KCBrowser tears down just its view.
             // Returning false would send WM_CLOSE to Kite's window and quit.
             RunOnCefUIThread([hwnd = browser->GetHost()->GetWindowHandle()] { DestroyWindow(hwnd); });
-            shared_->Post([shared = shared_, id = tabID_] {
-                if (shared->events.pageClosed) shared->events.pageClosed(id);
+            shared_->Post([shared = shared_, id = tabID_, browser] {
+                // Still its tab's page: it closed itself (window.close(), as a sign-in popup
+                // does when it's done), and Kite hears of it. Otherwise Kite closed it.
+                if (shared->PageFor(id, browser)) {
+                    if (shared->shown == id) shared->shown.clear();
+                    shared->pages.erase(id);
+                    if (shared->events.pageClosed) shared->events.pageClosed(id);
+                } else {
+                    shared->Retired(browser);
+                }
             });
             return true;
         }
@@ -343,6 +379,7 @@ public:
         // false, but Kite's window is on another thread; an extra one is harmless.
         shared_->Post([shared = shared_, id = tabID_, browser] {
             if (Chromium::Shared::Page* page = shared->PageFor(id, browser)) page->closeReady = true;
+            else shared->Retired(browser);
             PostMessageW(shared->window, WM_CLOSE, 0, 0);
         });
         return false;
@@ -365,6 +402,7 @@ public:
         for (const auto& id : abandoned) AbandonPopup(id);
         shared_->Post([shared = shared_, id = tabID_, browser] {
             if (shared->PageFor(id, browser)) shared->pages.erase(id);
+            shared->Retired(browser);
             if (shared->closing) PostMessageW(shared->window, WM_CLOSE, 0, 0);
         });
         shared_->Count(0, -1);
@@ -419,6 +457,17 @@ public:
             // After the wake is posted; a key Kite still takes first opens the bar itself
             // (KeysComeToKite).
             SetFocus(shared_->window);
+            return true;
+        }
+        // Ctrl+W (Archive Tab) and Ctrl+Shift+T (Restore Last Closed Tab): Kite's, as ⌘W and
+        // ⇧⌘T are the Mac's menu shortcuts, which a page never sees.
+        if (keyDown && !shared_->keysToKite && ctrl &&
+            ((event.windows_key_code == 'W' && !shift) || (event.windows_key_code == 'T' && shift))) {
+            const bool reopen = event.windows_key_code == 'T';
+            shared_->Post([shared = shared_, reopen] {
+                if (reopen && shared->events.reopenClosedTab) shared->events.reopenClosedTab();
+                if (!reopen && shared->events.archiveTab) shared->events.archiveTab();
+            });
             return true;
         }
         if (!shared_->keysToKite) return false;
@@ -561,6 +610,7 @@ bool Chromium::Shutdown() {
     }
     if (!allClosed) OutputDebugStringW(L"Kite: browsers still open after 10 s; shutting Chromium down anyway\n");
     shared_->pages.clear();
+    shared_->retiring.clear();  // browsers Kite closed that never came back (a forced close)
     shared_->contexts.clear();
     {
         std::lock_guard lock(shared_->mutex);
@@ -580,6 +630,8 @@ void Chromium::Show(const std::string& tabID, const std::string& profileDirector
     }
     const bool switched = shared_->shown != tabID;
     shared_->shown = tabID;
+    // Its tab came back (Ctrl+Shift+T) before the page being made for it was closed.
+    if (auto it = shared_->pages.find(tabID); it != shared_->pages.end()) it->second.closeWhenMade = false;
     if (!shared_->pages.contains(tabID)) {
         // A space's own profile gets its own request context, a folder beside Default, as
         // the Mac's KCRequestContext does; the default profile is CEF's global context.
@@ -612,6 +664,27 @@ void Chromium::Show(const std::string& tabID, const std::string& profileDirector
     }
     shared_->Layout();
     if (switched && GetForegroundWindow() == shared_->window) shared_->FocusShown();
+}
+
+void Chromium::ShowNothing() {
+    shared_->shown.clear();
+    shared_->Layout();
+    // The keyboard was in the page that went: it comes back to Kite's window (else keys such
+    // as Ctrl+Shift+T go nowhere), unless the command bar has it.
+    if (!shared_->inputBlocked && GetForegroundWindow() == shared_->window) SetFocus(shared_->window);
+}
+
+void Chromium::Close(const std::string& tabID) {
+    auto it = shared_->pages.find(tabID);
+    if (it == shared_->pages.end() || shared_->closing) return;
+    if (it->second.browser) {
+        shared_->ClosePage(it);
+    } else {
+        // Still being made (a popup, or a page just asked for): closed once it exists.
+        it->second.closeWhenMade = true;
+        if (shared_->shown == tabID) shared_->shown.clear();
+    }
+    shared_->Layout();
 }
 
 void Chromium::SetBounds(const RECT& bounds) {
@@ -689,6 +762,8 @@ bool Chromium::MayCloseWindow() {
         if (!ready) break;
         ready = page.browser && page.closeReady;
     }
+    // And for the pages Kite closed, so none outlives its parent window.
+    ready = ready && shared_->retiring.empty();
     if (ready) return goAhead();
     if (GetTickCount64() - shared_->closingSince < kCloseDeadlineMs) return false;
     OutputDebugStringW(L"Kite: a browser didn't close within 5 s; closing the window anyway\n");

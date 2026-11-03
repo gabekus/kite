@@ -74,6 +74,7 @@ constexpr float kFolderIconOpacity = 0.75f;
 constexpr float kNewTabOpacity = M::kTabTextOpacity * 0.75f;
 constexpr float kHeaderChevronOpacity = 0.5f;
 constexpr float kFolderChevronOpacity = 0.5f;
+constexpr float kCloseButtonOpacity = 0.6f;  // SymbolButton's opacity, the same hovered or not
 // A wheel notch scrolls 100pt for Windows' default 3 lines, as Chromium scrolls a page.
 constexpr float kWheelLine = 100.0f / 3;
 
@@ -85,6 +86,7 @@ constexpr wchar_t kFolder = 0xE8B7;
 constexpr wchar_t kFolderFill = 0xE8D5;
 constexpr wchar_t kPlus = 0xE710;
 constexpr wchar_t kChevronRight = 0xE76C;
+constexpr wchar_t kClose = 0xE711;  // xmark
 constexpr wchar_t kChevronDown = 0xE70D;  // chevron.right turned a quarter (an open folder or section)
 constexpr wchar_t kHistory = 0xE81C;
 constexpr wchar_t kArchive = 0xE7B8;
@@ -526,8 +528,16 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
         const float x = left + M::kIconInset + static_cast<float>(row.depth) * M::kNestingIndent;
         DrawFavicon(context, row, faviconBox(x));
         const float textX = x + M::kIconSize + M::kIconTextGap;
-        // Nothing trails a tab that isn't hovered: the title runs to 6pt and a gap from the end.
-        const float textEnd = right - 6 - M::kIconTextGap;
+        // Trailing, from the pill's end (6pt in): the close button while hovered, and the title
+        // up to a gap before it; with nothing there, to a gap before the 6pt.
+        float textEnd = right - M::kCloseButtonEndInset - M::kIconTextGap;
+        if (hovered && row.showsClose) {
+            const float closeRight = right - M::kCloseButtonEndInset, closeLeft = closeRight - M::kCloseButtonSize;
+            const float closeTop = pillTop + (M::kPillHeight - M::kCloseButtonSize) / 2;
+            DrawGlyph(context, kClose, 9 / kGlyphInk, Rect(closeLeft, closeTop, closeRight, closeTop + M::kCloseButtonSize),
+                      Primary(kLabelAlpha * kCloseButtonOpacity));
+            textEnd = closeLeft - M::kIconTextGap - M::kIconTextGap;
+        }
         DrawText(context, row.title, tabFormat_.Get(), textX, tabBaseline, textEnd - textX, Primary(kLabelAlpha * M::kTabTextOpacity));
         break;
     }
@@ -624,11 +634,11 @@ void SidebarView::RefreshHover() {
     // (no .enabledDuringMouseDrag) send no enter or exit during a drag.
     if (press_) return;
     const SidebarHit hit = pointer_ ? HitAt(PointOf(*pointer_)) : SidebarHit{};
-    // What draws hovered is a row (the header's chevron is part of its row); the address field
-    // has no hover of its own yet (its buttons come with the toolbar).
-    // Held by the row's item, so a row that moves (during a press, say) keeps its hover.
+    // What draws hovered is a row (the header's chevron and a tab's close button are part of
+    // theirs); the address field has no hover of its own yet (its buttons come with the
+    // toolbar). Held by the row's item, so a row that moves (during a press, say) keeps it.
     std::optional<std::pair<SidebarRow::Kind, std::string>> hover;
-    if ((hit.target == SidebarHit::Target::Row || hit.target == SidebarHit::Target::PinnedChevron) && hit.row < model_.rows.size()) {
+    if (hit.target != SidebarHit::Target::None && hit.target != SidebarHit::Target::AddressField && hit.row < model_.rows.size()) {
         hover.emplace(model_.rows[hit.row].kind, model_.rows[hit.row].id);
     }
     if (hover == hover_) return;
@@ -677,6 +687,9 @@ void SidebarView::Perform(const SidebarTap& tap) {
         break;
     case Action::EditAddress:
         if (actions_.editAddress) actions_.editAddress();
+        break;
+    case Action::CloseTab:
+        if (actions_.closeTab) actions_.closeTab(tap.id);
         break;
     case Action::None:
         break;

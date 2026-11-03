@@ -56,11 +56,18 @@ SidebarRow TabRow(const Tab& tab, bool pinned, bool selected, int depth) {
     return row;
 }
 
-void AppendPinned(const std::vector<PinnedItem>& items, int depth, const std::optional<std::string>& selectedID,
-                  std::vector<SidebarRow>& rows) {
+// A pinned tab's close button (BrowserState.showsCloseButton): none for a tab Claude opened in
+// its folders, unless it closes for good. Known from the walk, without looking the tab up.
+bool PinnedShowsClose(const Tab& tab, bool inEphemeralFolder) {
+    return !inEphemeralFolder || tab.splitPane == true || tab.IsBlank();
+}
+
+void AppendPinned(const BrowserState& state, const std::vector<PinnedItem>& items, bool ephemeral, int depth,
+                  const std::optional<std::string>& selectedID, std::vector<SidebarRow>& rows) {
     for (const PinnedItem& item : items) {
         if (const Tab* tab = std::get_if<Tab>(&item.value)) {
             rows.push_back(TabRow(*tab, true, selectedID && *selectedID == tab->id, depth));
+            rows.back().showsClose = PinnedShowsClose(*tab, ephemeral);
             continue;
         }
         const Folder& folder = std::get<Folder>(item.value);
@@ -72,11 +79,14 @@ void AppendPinned(const std::vector<PinnedItem>& items, int depth, const std::op
         row.expanded = folder.isExpanded;
         rows.push_back(std::move(row));
         if (folder.isExpanded) {
-            AppendPinned(folder.items, depth + 1, selectedID, rows);
+            AppendPinned(state, folder.items, folder.ephemeral == true, depth + 1, selectedID, rows);
         } else if (selectedID) {
             // Like Arc, a collapsed folder still shows its selected tab, from however deep in it.
             for (const Tab* tab : TabsIn(folder.items)) {
-                if (tab->id == *selectedID) rows.push_back(TabRow(*tab, true, true, depth + 1));
+                if (tab->id != *selectedID) continue;
+                // From however deep: one lookup for its own folder.
+                rows.push_back(TabRow(*tab, true, true, depth + 1));
+                rows.back().showsClose = state.ShowsCloseButton(tab->id);
             }
         }
     }
@@ -176,10 +186,12 @@ std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t spaceIndex
 
     // ShownPinnedItems, walked in place (this runs on every page event).
     if (!collapsed) {
-        AppendPinned(space.pinnedItems, 0, space.selectedTabID, rows);
+        AppendPinned(state, space.pinnedItems, false, 0, space.selectedTabID, rows);
     } else if (space.selectedTabID) {
         for (const Tab* tab : space.Pinned()) {
-            if (tab->id == *space.selectedTabID) rows.push_back(TabRow(*tab, true, true, 0));
+            if (tab->id != *space.selectedTabID) continue;
+            rows.push_back(TabRow(*tab, true, true, 0));
+            rows.back().showsClose = state.ShowsCloseButton(tab->id);
         }
     }
 
@@ -259,6 +271,15 @@ SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, floa
     default: {
         const float pillTop = (M::kRowPitch - M::kPillHeight) / 2;
         if (inRow < pillTop || inRow >= pillTop + M::kPillHeight) return {};
+        // A tab's close button: 24pt, 6pt in from the pill's end, centred in it. It shows
+        // whenever the pointer is on the row, so it's there to press whenever it's pointed at.
+        if (row.kind == SidebarRow::Kind::Tab && row.showsClose) {
+            const float right = width - M::kPadding - M::kCloseButtonEndInset;
+            const float buttonTop = pillTop + (M::kPillHeight - M::kCloseButtonSize) / 2;
+            if (x >= right - M::kCloseButtonSize && x < right && inRow >= buttonTop && inRow < buttonTop + M::kCloseButtonSize) {
+                return {Target::CloseButton, *index};
+            }
+        }
         return {Target::Row, *index};
     }
     }
@@ -269,7 +290,8 @@ std::optional<SidebarPress> SidebarPressAt(const std::vector<SidebarRow>& rows, 
     using Target = SidebarHit::Target;
     const SidebarHit hit = SidebarHitTest(rows, width, height, scroll, x, y);
     if (hit.target == Target::None) return std::nullopt;
-    // Rows don't accept first mouse (NSView's default); the field and SymbolButton do.
+    // Rows don't accept first mouse (NSView's default); the field and SymbolButtons (the
+    // chevron, a tab's close button) do.
     if (activating && hit.target == Target::Row) return std::nullopt;
     SidebarPress press{hit.target, SidebarRow::Kind::Tab, {}, clicks};
     if (hit.target != Target::AddressField) {
@@ -294,12 +316,12 @@ SidebarTap SidebarRelease(const SidebarPress& press, const std::vector<SidebarRo
     case Target::AddressField:
         if (SidebarHitTest(rows, width, height, scroll, x, y).target == Target::AddressField) return {Action::EditAddress, {}, false};
         return {};
-    case Target::PinnedChevron: {
+    case Target::PinnedChevron:
+    case Target::CloseButton: {
+        // A button acts when let go over itself (SymbolButton's mouseUp), whatever the clicks.
         const auto row = pressedRow();
-        if (row && SidebarHitTest(rows, width, height, scroll, x, y) == SidebarHit{Target::PinnedChevron, *row}) {
-            return {Action::TogglePinnedSection, press.id, false};
-        }
-        return {};
+        if (!row || SidebarHitTest(rows, width, height, scroll, x, y) != SidebarHit{press.target, *row}) return {};
+        return {press.target == Target::CloseButton ? Action::CloseTab : Action::TogglePinnedSection, press.id, false};
     }
     case Target::Row: {
         const auto row = pressedRow();

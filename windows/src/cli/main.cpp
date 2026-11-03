@@ -61,6 +61,9 @@ int Usage() {
         "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
+        "       kitecore [--profile DIR] close TAB_ID\n"
+        "       kitecore [--profile DIR] reopen [TAB_ID]\n"
+        "       kitecore [--profile DIR] archive-stale [NOW]\n"
         "       kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n",
         stderr);
@@ -98,6 +101,13 @@ json::Value Summary(const BrowserState& state) {
     json::Object root{{"selectedSpaceID", state.selectedSpaceID}, {"searchEngine", state.searchEngine},
                       {"favorites", json::Value(std::move(favorites))}, {"spaces", json::Value(std::move(spaces))}};
     if (const Tab* tab = state.SelectedTab()) root.emplace("selectedTab", TabSummary(*tab));
+    // Newest first, as Ctrl+Shift+T and the archive page list them.
+    json::Array recent, archived;
+    for (auto it = state.recentlyClosed.rbegin(); it != state.recentlyClosed.rend(); ++it) recent.push_back(TabSummary(it->tab));
+    for (auto it = state.archived.rbegin(); it != state.archived.rend(); ++it) archived.push_back(TabSummary(it->tab));
+    root.emplace("recentlyClosed", json::Value(std::move(recent)));
+    root.emplace("archived", json::Value(std::move(archived)));
+    root.emplace("archiveAfter", state.archiveAfter);
     return json::Value(std::move(root));
 }
 
@@ -291,8 +301,9 @@ int main(int argc, char** argv) {
         }
         const auto rows = SidebarRows(state, state.SelectedSpaceIndex());
         const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1);
-        static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron"};
-        static constexpr const char* kActions[] = {"none", "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded", "newTab"};
+        static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton"};
+        static constexpr const char* kActions[] = {"none",      "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
+                                                   "newTab",    "closeTab"};
         json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
         if (press) {
             if (!press->id.empty()) out.emplace("id", press->id);
@@ -302,6 +313,7 @@ int main(int argc, char** argv) {
             case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;
             case SidebarTap::Action::SetFolderExpanded: state.SetFolderExpanded(tap.id, tap.expanded); changed = true; break;
             case SidebarTap::Action::TogglePinnedSection: TogglePinnedSection(state, tap.id); changed = true; break;
+            case SidebarTap::Action::CloseTab: state.Close(tap.id); changed = true; break;
             default: break;  // the command bar's, in the window
             }
         }
@@ -330,6 +342,32 @@ int main(int argc, char** argv) {
         if (!state.Location(id)) return kNotFound;
         state.Select(id);
         changed = true;
+    } else if (command == "close" && args.size() == 2) {
+        // Ctrl+W on a tab: prints whether it was removed (and archived) or only unloaded.
+        const CloseOutcome outcome = state.Close(Id(args[1]));
+        if (outcome == CloseOutcome::NotFound) return kNotFound;
+        std::puts(outcome == CloseOutcome::Removed ? "removed" : "unloaded");
+        changed = true;
+    } else if (command == "reopen" && args.size() <= 2) {
+        // Ctrl+Shift+T, or Undo Archive Tab for one tab: prints the tab that came back.
+        auto reopened = args.size() == 2 ? state.ReopenClosed(Id(args[1])) : state.ReopenLastClosed();
+        if (!reopened) return kNotFound;
+        std::puts(reopened->c_str());
+        changed = true;
+    } else if (command == "archive-stale" && args.size() <= 2) {
+        // The auto-archive's pass, as of NOW (Unix seconds; the clock by default): prints the
+        // tabs it archived.
+        Timestamp now = Now();
+        if (args.size() == 2) {
+            double seconds = 0;
+            auto [end, error] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), seconds);
+            if (error != std::errc() || end != args[1].data() + args[1].size()) return Usage();
+            now = FromUnixTime(seconds);
+        }
+        if (auto interval = state.ArchiveAfterSeconds()) {
+            for (const Tab& tab : state.ArchiveStaleTabs(*interval, now)) std::puts(tab.id.c_str());
+            changed = true;
+        }
     } else if (command == "space" && args.size() >= 2) {
         const std::string& action = args[1];
         if (action == "next") state.SelectAdjacentSpace(1);

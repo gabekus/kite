@@ -444,3 +444,57 @@ TEST(aPressFollowsItsItemWhenRowsMove) {
     CHECK(SidebarRelease(*c, rows, 240, 800, 0, 100, 330) == SidebarTap{});
     CHECK(SidebarRelease(*c, rows, 240, 800, 0, 100, 370) == SidebarTap{});
 }
+
+// A tab's close button (SidebarRowCell's place(close)): 24pt, 6pt from the pill's end, centred;
+// it acts on release over itself, takes the click that brings the window forward (a
+// SymbolButton), and isn't there for a tab in one of Claude's folders.
+TEST(aTabsCloseButtonClosesIt) {
+    using T = SidebarHit::Target;
+    using A = SidebarTap::Action;
+    Fixture f = CollapseState();
+    auto rows = SidebarRows(f.state, 0);  // header, A, F, B, divider, New Tab, C (310 to 351)
+    auto hit = [&](float x, float y) { return SidebarHitTest(rows, 240, 800, 0, x, y); };
+    CHECK(hit(202, 318.5f) == (SidebarHit{T::CloseButton, 6}));
+    CHECK(hit(225.9f, 342.4f) == (SidebarHit{T::CloseButton, 6}));
+    CHECK(hit(201.9f, 330) == (SidebarHit{T::Row, 6}));
+    CHECK(hit(226, 330) == (SidebarHit{T::Row, 6}));
+    CHECK(hit(214, 318.4f) == (SidebarHit{T::Row, 6}));
+    CHECK(hit(214, 342.5f) == (SidebarHit{T::Row, 6}));
+    // Pinned tabs have one too; folders and New Tab don't.
+    CHECK(hit(214, 140) == (SidebarHit{T::CloseButton, 1}));
+    CHECK(hit(214, 182) == (SidebarHit{T::Row, 2}));
+    CHECK(hit(214, 289) == (SidebarHit{T::Row, 5}));
+
+    const auto press = SidebarPressAt(rows, 240, 800, 0, 214, 330, 1);
+    CHECK(press == (SidebarPress{T::CloseButton, K::Tab, f.c, 1}));
+    CHECK(SidebarRelease(*press, rows, 240, 800, 0, 210, 335) == (SidebarTap{A::CloseTab, f.c, false}));
+    CHECK(SidebarRelease(*press, rows, 240, 800, 0, 150, 330) == SidebarTap{});  // let go on the row
+    // The second click of a double-click on it still closes (a button ignores the count).
+    const auto again = SidebarPressAt(rows, 240, 800, 0, 214, 330, 2);
+    CHECK(SidebarRelease(*again, rows, 240, 800, 0, 214, 330) == (SidebarTap{A::CloseTab, f.c, false}));
+    // It takes the click that activates the window; the row around it doesn't.
+    CHECK(SidebarPressAt(rows, 240, 800, 0, 214, 330, 1, true) == press);
+    CHECK(!SidebarPressAt(rows, 240, 800, 0, 150, 330, 1, true));
+
+    // A tab Claude opened in its folder has none: its row takes the press.
+    Space& space = f.state.spaces[0];
+    Folder claude = MakeFolder("Claude", {PinnedItem{MakeTab("https://claude.example", "Task")}});
+    claude.ephemeral = true;
+    space.pinnedItems.insert(space.pinnedItems.begin(), PinnedItem{claude});
+    rows = SidebarRows(f.state, 0);  // header, Claude, Task, A, ...
+    CHECK(rows[2].kind == K::Tab && !rows[2].showsClose && rows[3].showsClose);
+    CHECK(SidebarHitTest(rows, 240, 800, 0, 214, 82 + rows[2].top + 20) == (SidebarHit{T::Row, 2}));
+    // One that never had a page closes for good, so it has one.
+    std::get<Folder>(space.pinnedItems[0].value).items.push_back(PinnedItem{MakeTab("about:blank", "Blank")});
+    rows = SidebarRows(f.state, 0);  // header, Claude, Task, Blank, A, ...
+    CHECK(rows[3].kind == K::Tab && rows[3].showsClose);
+    // Selected inside the closed folder, or the collapsed section, it still has none.
+    const std::string task = std::get<Tab>(std::get<Folder>(space.pinnedItems[0].value).items[0].value).id;
+    std::get<Folder>(space.pinnedItems[0].value).isExpanded = false;
+    f.state.Select(task);
+    rows = SidebarRows(f.state, 0);  // header, Claude, Task, A, ...
+    CHECK(rows[2].id == task && !rows[2].showsClose && rows[3].showsClose);
+    TogglePinnedSection(f.state, space.id);
+    rows = SidebarRows(f.state, 0);  // header, Task, divider, ...
+    CHECK(rows[1].id == task && !rows[1].showsClose);
+}
