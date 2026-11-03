@@ -101,9 +101,10 @@ extension AutomationController {
                 guard let tab = step.tab, waitingStep(on: tab)?.id == step.id, let page = host.livePages[tab] else { continue }
                 if !isOnScreen(page), let actions = page.automation as? PageActions {
                     let script = UserHandoff.ringScript(.init(step: step, scroll: false, probe: true))
+                    let at = store.state.tab(tab)?.url
                     guard let json = try? await actions.runIsolated(script, world: UserHandoff.worldName, binding: UserHandoff.bindingName),
                           let state = UserHandoff.RingState(json: json) else { continue }
-                    setLook(step.id, state, tab: tab)
+                    setLook(step.id, state, tab: tab, at: at)
                 }
                 if handoffs.first(where: { $0.id == id })?.steps.first(where: { $0.id == step.id })?.found == false { missing = true }
             }
@@ -118,15 +119,16 @@ extension AutomationController {
 
     /// What a look at a step's control saw. Where the control is found becomes the step's page (so a step that
     /// happens after a redirect, or on the page an earlier step leads to, gets that page). A control missing for a
-    /// while, on a tab at another address than its page, means the tab has left it.
-    private func setLook(_ stepID: String, _ state: UserHandoff.RingState, tab: UUID) {
+    /// while, on a tab at another address than its page, means the tab has left it. `at` is the tab's address when
+    /// the look began: a look a navigation overtook teaches nothing about where the control is.
+    private func setLook(_ stepID: String, _ state: UserHandoff.RingState, tab: UUID, at: URL?) {
         let current = store.state.tab(tab)?.url
         let now = Date()
         if state.found { controlMissingSince[stepID] = nil } else if controlMissingSince[stepID] == nil { controlMissingSince[stepID] = now }
         let missing = controlMissingSince[stepID].map { now.timeIntervalSince($0) >= UserHandoff.offPageDelay } ?? false
         update(handoffID(of: stepID)) { h in
             guard let i = h.steps.firstIndex(where: { $0.id == stepID }), h.steps[i].isWaiting else { return }
-            if state.found, let current, Handoff.canReturn(to: current), h.steps[i].url != current.absoluteString {
+            if state.found, let current, current == at, Handoff.canReturn(to: current), h.steps[i].url != current.absoluteString {
                 h.steps[i].url = current.absoluteString
             }
             let off = missing && Handoff.isOffPage(stepURL: h.steps[i].url, current: current)
@@ -225,7 +227,7 @@ extension AutomationController {
 
     /// The step's tab was closed (and isn't back).
     func stepTabIsClosed(_ step: Handoff.Step) -> Bool {
-        step.tab.map { store.state.tab($0) == nil } ?? false
+        step.tab.map { !store.state.allTabIDs.contains($0) } ?? false
     }
 
     /// Reopen Tab can bring the tab back, or at least open the step's page.
@@ -249,7 +251,7 @@ extension AutomationController {
     /// and this handoff's steps on the old tab move to it.
     func reopenStepTab(_ stepID: String) {
         guard let step = waitingHandoffSteps.first(where: { $0.step.id == stepID })?.step, let id = step.tab,
-              store.state.tab(id) == nil else { return }
+              stepTabIsClosed(step) else { return }
         if store.mutateWithoutUndo({ $0.reopenClosed(tab: id) }) == nil {
             guard let url = step.url.flatMap(URL.init(string:)), Handoff.canReturn(to: url) else { return }
             let opened = store.mutateWithoutUndo { $0.openTab(url: url) }
@@ -321,6 +323,11 @@ extension AutomationController {
                 }
             }
         }
+        // Steps that ended, and pages off screen, start the missing-control clock afresh when next looked at.
+        let watched = Set(handoffs.flatMap(\.waiting).compactMap { step in
+            step.tab.flatMap { host.livePages[$0] }.map(isOnScreen) == true ? step.id : nil
+        })
+        controlMissingSince = controlMissingSince.filter { watched.contains($0.key) }
         // What a page that isn't live any more (Kite slept it) showed is old news: forget it until Kite can look again.
         for handoff in handoffs where !handoff.isFinished {
             for step in handoff.waiting where step.tab.map({ live.contains($0) && host.livePages[$0] == nil }) == true
@@ -340,6 +347,7 @@ extension AutomationController {
                 try? await track(id, page: page, actions: actions)
                 let first = ringShown[id] != step.id
                 let script = UserHandoff.ringScript(.init(step: step, scroll: first))
+                let at = store.state.tab(id)?.url
                 guard let json = try? await actions.runIsolated(script, world: UserHandoff.worldName, binding: UserHandoff.bindingName),
                       let state = UserHandoff.RingState(json: json) else { continue }
                 ringShown[id] = step.id
@@ -347,7 +355,7 @@ extension AutomationController {
                 if let done = state.done {
                     update(handoff) { $0.finish(step.id, .done, how: UserHandoff.describe(done)) }
                 } else {
-                    setLook(step.id, state, tab: id)
+                    setLook(step.id, state, tab: id, at: at)
                 }
             } else {
                 _ = try? await actions.runIsolated(UserHandoff.clearScript, world: UserHandoff.worldName, binding: UserHandoff.bindingName)
