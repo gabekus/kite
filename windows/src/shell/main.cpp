@@ -252,6 +252,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (!window.IsValid()) return Fail(quiet, L"CreateWindowExW failed", kWindowFailed);
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
     window.onClose = [&] {
+#ifdef KITE_HAS_CEF
+        // What the pages reported and Kite hasn't run yet (at logoff no WM_CLOSE comes first).
+        if (chromium) chromium->RunPending();
+#endif
         if (maySave) saveError = session.Save(state);
     };
 
@@ -334,6 +338,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // the backdrop alone until W4 captures the composed window.
     bool pageLoaded = false, pageLoading = false;
     ULONGLONG closeAskedAt = 0;  // when the smoke test asked the window to close
+    bool firstPageMade = false;
     // Until W5 closes tabs, a page that closed itself leaves its tab in the session: Kite
     // never shows it again this run (that would load it afresh, a sign-in page say).
     std::set<std::string> closedPages;
@@ -352,8 +357,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         const kite::Tab* tab = state.SelectedTab();
         // The Mac's empty state arrives with the command bar (W7).
         if (!tab || closedPages.contains(tab->id)) return;
-        const std::string url = tab->url ? *tab->url : tab->pinnedURL.value_or("");
+        // As the Mac's makePage: the tab's address, or a blank page for none or for one of
+        // Kite's own pages (kite://, which come later).
+        std::string url = tab->url.value_or("");
+        if (url.starts_with("kite:")) url.clear();
         chromium->Show(tab->id, state.SelectedProfileDirectory(), url, contentBounds());
+    };
+    // The first page is made once the window is on screen and not minimized. Made before
+    // the window showed, it could come up hidden for good (an empty card until the first
+    // click, 1 launch in 7 on Gabe's PC); made while minimized, it would lay out at 1×1.
+    auto showFirstPage = [&] {
+        if (firstPageMade || !chromium || IsIconic(window.Handle())) return;
+        firstPageMade = true;
+        showSelectedTab();
     };
     if (!capture) {
         auto tabNamed = [&](const std::string& id) -> kite::Tab* {
@@ -362,7 +378,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         };
         kite::PageEvents events;
         events.addressChanged = [&, tabNamed](const std::string& id, const std::string& url) {
-            if (kite::Tab* tab = tabNamed(id)) tab->url = url;
+            if (kite::Tab* tab = tabNamed(id); tab && !url.empty()) tab->url = url;
         };
         events.titleChanged = [&, tabNamed](const std::string& id, const std::string& title) {
             // An empty title keeps the last one, as the Mac's BrowserStore does.
@@ -380,18 +396,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             }
         };
         events.popupOpened = [&](const std::string& openerID, const std::string& id, const std::string& url) {
-            std::optional<std::string> spaceID;
-            if (auto location = state.Location(openerID); location && location->space) spaceID = state.spaces[*location->space].id;
-            // window.open('') has no address yet, which the session keeps as none (the Mac's nil).
-            state.OpenTab(url.empty() ? std::nullopt : std::optional<std::string>(url), spaceID, true, kite::Now(), id);
+            // In the current space, as the Mac's openTab(id:url:). window.open('') has no
+            // address yet, which the session keeps as none (the Mac's nil).
+            state.OpenTab(url.empty() ? std::nullopt : std::optional<std::string>(url), std::nullopt, true, kite::Now(), id);
             popupOpeners[id] = openerID;
             showSelectedTab();
         };
-        events.openInNewTab = [&](const std::string& openerID, const std::string& url, bool foreground) {
-            // In the space of the tab the link was in, as the Mac's openTab(url:select:).
-            std::optional<std::string> spaceID;
-            if (auto location = state.Location(openerID); location && location->space) spaceID = state.spaces[*location->space].id;
-            state.OpenTab(url, spaceID, foreground);
+        events.openInNewTab = [&](const std::string&, const std::string& url, bool foreground) {
+            // In the current space, as the Mac's openTab(url:select:).
+            state.OpenTab(url, std::nullopt, foreground);
             if (foreground) showSelectedTab();
         };
         events.pageClosed = [&](const std::string& id) {
@@ -427,7 +440,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         case kite::Chromium::StartResult::Started: break;
         // Another Kite has this profile and was told to come forward; this one leaves quietly,
         // before its window shows or it saves anything.
-        case kite::Chromium::StartResult::AlreadyRunning: return kOk;
+        // A test run that found one tested nothing, so it fails.
+        case kite::Chromium::StartResult::AlreadyRunning:
+            return quiet ? Fail(quiet, L"another Kite has this profile open", kWindowFailed) : kOk;
         case kite::Chromium::StartResult::Failed: return Fail(quiet, L"Kite couldn't start Chromium: " + chromiumError, kWindowFailed);
         }
         window.onWake = [&] { chromium->RunPending(); };
@@ -436,9 +451,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         window.mayClose = [&] { return chromium->MayCloseWindow(); };
         window.onFocus = [&] { chromium->Focus(); };
         window.onSize = [&] {
-            draw();
+            // The page first, so CEF's thread moves it while Kite draws.
             chromium->SetBounds(contentBounds());
+            draw();
             chromium->WindowMoved();
+            showFirstPage();  // restored after a minimized launch
         };
     }
 #endif
@@ -447,10 +464,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (quiet) window.ShowBehindOtherWindows();
     else window.Show(showCommand);
 #ifdef KITE_HAS_CEF
-    // The first page is made once the window is on screen. Made before, it could come up
-    // in a window that was still hidden, which Chromium took as a hidden page that nothing
-    // then showed (an empty card until the first click, 1 launch in 7 on Gabe's PC).
-    if (chromium) showSelectedTab();
+    showFirstPage();
 #endif
     if (capture && !window.HasClientSize(size->first, size->second)) {
         // A capture is compared pixel for pixel with the Mac's, so a window Windows resized

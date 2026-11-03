@@ -131,7 +131,9 @@ Popups and `target=_blank` links open as tabs that keep `window.opener`, as
 on the Mac, and a popup that closes itself hands the screen back to its
 opener; its tab stays in the session until W5 closes tabs, but this run never
 shows it again. Ctrl-click and middle-click open a link in a background tab,
-Ctrl+Shift-click in a foreground one. `--smoke-test` loads
+Ctrl+Shift-click in a foreground one (a `target=_blank` link opens as a popup
+tab either way, as on the Mac). The first page is made once the window is on
+screen and not minimized. `--smoke-test` loads
 `windows/helix/pages/smoke.html` in CI and fails unless one `WM_CLOSE`
 closes every browser in time. Not yet: the card's 6pt corners (a child window can't be clipped
 smoothly; W10), the sandbox (W6b), and the page in `--capture` (W4).

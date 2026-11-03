@@ -64,6 +64,9 @@ HWND FindPageWidget(HWND host) {
 
 struct Chromium::Shared {
     HWND window = nullptr;
+    // Where Post's wakes go: the window until it's about to be destroyed, then null, so CEF's
+    // late callbacks never post to a handle Windows may have reused.
+    std::atomic<HWND> wakeTarget{nullptr};
     PageEvents events;
     std::filesystem::path root;
     std::atomic<bool> closing{false};
@@ -108,7 +111,8 @@ struct Chromium::Shared {
             if (wakePosted) return;
             wakePosted = true;
         }
-        if (!PostMessageW(window, MainWindow::kWakeMessage, 0, 0)) {
+        const HWND target = wakeTarget.load();
+        if (!target || !PostMessageW(target, MainWindow::kWakeMessage, 0, 0)) {
             std::lock_guard lock(mutex);
             wakePosted = false;  // the next post tries again
         }
@@ -424,6 +428,7 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
 
     auto shared = std::make_shared<Shared>();
     shared->window = window;
+    shared->wakeTarget = window;
     shared->events = std::move(events);
     shared->root = resolved;
     shared->allClosed = CreateEventW(nullptr, TRUE, TRUE, nullptr);
@@ -464,6 +469,7 @@ Chromium::~Chromium() { Shutdown(); }
 bool Chromium::Shutdown() {
     if (shutDown_) return cleanShutdown_;
     shutDown_ = true;
+    shared_->wakeTarget = nullptr;
     // The main window is gone by now, and with it every browser's window; CEF finishes
     // closing them on its thread. Bounded, so a wedged browser can't keep Kite from exiting.
     // (A browser not yet through DoClose means Kite left early, on an error path.)
@@ -564,22 +570,24 @@ void Chromium::WindowMoved() {
 void Chromium::Focus() { shared_->FocusShown(); }
 
 bool Chromium::MayCloseWindow() {
+    const bool started = !shared_->closing.exchange(true);  // before the queue, so it opens no new page
     RunPending();  // a DoClose or OnBeforeClose that just ran may have its note queued
-    if (!shared_->closing) {
-        shared_->closing = true;
+    if (started) {
         shared_->closingSince = GetTickCount64();
         for (auto& [id, page] : shared_->pages) {
             if (page.browser) page.browser->GetHost()->CloseBrowser(true);
         }
         // A browser that never answers mustn't keep the window open: after this the close
-        // goes ahead, and the destructor's bounded wait covers the rest.
+        // goes ahead, and Shutdown's bounded wait covers the rest. The timer repeats (it goes
+        // with the window), since its tick and GetTickCount64's can disagree by one step.
         SetTimer(shared_->window, kCloseDeadlineTimer, kCloseDeadlineMs,
-                 [](HWND hwnd, UINT, UINT_PTR id, DWORD) {
-                     KillTimer(hwnd, id);
-                     PostMessageW(hwnd, WM_CLOSE, 0, 0);
-                 });
+                 [](HWND hwnd, UINT, UINT_PTR, DWORD) { PostMessageW(hwnd, WM_CLOSE, 0, 0); });
     }
     bool ready = true;
+    const auto goAhead = [this] {
+        shared_->wakeTarget = nullptr;  // the window is destroyed next
+        return true;
+    };
     {
         std::lock_guard lock(shared_->mutex);
         ready = shared_->creating == 0;
@@ -588,11 +596,11 @@ bool Chromium::MayCloseWindow() {
         if (!ready) break;
         ready = page.browser && page.closeReady;
     }
-    if (ready) return true;
+    if (ready) return goAhead();
     if (GetTickCount64() - shared_->closingSince < kCloseDeadlineMs) return false;
     OutputDebugStringW(L"Kite: a browser didn't close within 5 s; closing the window anyway\n");
     shared_->closeForced = true;
-    return true;
+    return goAhead();
 }
 
 bool Chromium::PagesCanBeHidden() const { return !shared_->widgetMissing; }
