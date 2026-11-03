@@ -51,7 +51,7 @@ public enum AirTrafficControl {
     }
 
     /// Where a routed link opens. Arc's `LinkDestination` cases are `space`, `littleArc`,
-    /// `profile` and `mostRecent`; Kite has no profiles, so there's no `profile` case.
+    /// `profile` and `mostRecent`; Kite's routes don't open in a profile, so there's no `profile` case.
     public enum Destination: Codable, Hashable, Sendable {
         case mostRecentSpace
         case littleKite
