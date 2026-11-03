@@ -22,12 +22,12 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     /// from an existing install, and records a new profile's onboarding as started.
     static func shouldShowAtLaunch() -> Bool {
         let environment = ProcessInfo.processInfo.environment
-        let sessionExisted = FileManager.default.fileExists(
-            atPath: AppDelegate.supportDirectory.appendingPathComponent("session.json").path)
+        // session.json, or what an install keeps beside it if that was moved aside as unreadable.
+        let profileExisted = [AppDelegate.sessionURL, AppDelegate.supportDirectory.appendingPathComponent("history.json"),
+                              AppDelegate.supportDirectory.appendingPathComponent("windows.json")]
+            .contains { FileManager.default.fileExists(atPath: $0.path) }
         let state = Onboarding.load(from: stateURL)
-        let show = Onboarding.shouldShow(sessionExisted: sessionExisted, state: state,
-                                         testProfile: environment["KITE_SUPPORT_PATH"] != nil,
-                                         forced: environment["KITE_ONBOARDING"] == "1")
+        let show = Onboarding.shouldShow(environment: environment, sessionExisted: profileExisted, state: state)
         if show, state == nil {
             try? FileManager.default.createDirectory(at: AppDelegate.supportDirectory, withIntermediateDirectories: true)
             Onboarding.save(.init(completed: false), to: stateURL)
@@ -35,10 +35,10 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         return show
     }
 
-    /// `importFromArc` runs the importer on the browser window once onboarding has closed, so the two
-    /// never show at once.
-    static func show(importFromArc: @escaping () -> Void) {
-        let onboarding = shown ?? OnboardingWindow(importFromArc: importFromArc)
+    /// `browser` gives a browser window to land in (opening one if the user closed them all), where
+    /// Import from Arc… runs the importer once onboarding has closed, so the two never show at once.
+    static func show(browser: @escaping () -> BrowserWindowController?) {
+        let onboarding = shown ?? OnboardingWindow(browser: browser)
         shown = onboarding
         onboarding.go(to: 0, animated: false)
         if UIDiagnostics.enabledByEnvironment {
@@ -48,8 +48,6 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
             onboarding.window.makeKeyAndOrderFront(nil)
         }
     }
-
-    static var isShown: Bool { shown != nil }
 
     enum Metrics {
         static let size = NSSize(width: 720, height: 560)
@@ -65,16 +63,21 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     private enum Step: Int, CaseIterable { case welcome, claude, done }
 
     private let window: NSWindow
-    private let importFromArc: () -> Void
+    private let browser: () -> BrowserWindowController?
+    /// Bumped by every `go`, so a fade that finishes after another `go` doesn't swap in its old step.
+    private var generation = 0
+    private var sheetObserver: NSObjectProtocol?
     private let content = NSView()
     private let backButton = OnboardingTextButton(title: "‹ Back")
     private let dots = NSStackView()
     private var step = Step.welcome
+    /// A step fading out: its buttons are still on screen but no longer count.
+    private var transitioning = false
     private var copyButton: OnboardingButton?
     private var copiedReset: DispatchWorkItem?
 
-    private init(importFromArc: @escaping () -> Void) {
-        self.importFromArc = importFromArc
+    private init(browser: @escaping () -> BrowserWindowController?) {
+        self.browser = browser
         window = NSWindow(contentRect: NSRect(origin: .zero, size: Metrics.size),
                           styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init()
@@ -87,6 +90,15 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         window.identifier = NSUserInterfaceItemIdentifier("onboardingWindow")
         window.delegate = self
         window.center()
+        // A sheet starting on a browser window (File › Import from Arc…, say) closes onboarding, so
+        // onboarding never sits over the importer.
+        sheetObserver = NotificationCenter.default.addObserver(forName: NSWindow.willBeginSheetNotification, object: nil,
+                                                               queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard (note.object as? NSWindow)?.windowController is BrowserWindowController else { return }
+                self?.window.close()
+            }
+        }
 
         let backdrop = OnboardingBackdrop()
         window.contentView = backdrop
@@ -95,6 +107,8 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
 
         backButton.target = self
         backButton.action = #selector(back)
+        backButton.setAccessibilityLabel("Back")
+        backButton.setAccessibilityIdentifier("onboardingBack")
         backButton.translatesAutoresizingMaskIntoConstraints = false
         backdrop.addSubview(backButton)
 
@@ -126,8 +140,10 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     // MARK: Steps
 
     private func go(to index: Int, animated: Bool) {
-        guard let next = Step(rawValue: index) else { return }
+        guard let next = Step(rawValue: index), !transitioning || !animated else { return }
         step = next
+        generation += 1
+        let generation = generation
         copiedReset?.cancel()
         let column = makeColumn(for: next)
         let swap = {
@@ -146,15 +162,20 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
             dot.layer?.backgroundColor = NSColor.white.withAlphaComponent(i == next.rawValue ? 0.9 : 0.3).cgColor
         }
         guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            transitioning = false
+            content.alphaValue = 1
             swap()
             return
         }
+        transitioning = true
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = Metrics.stepFade / 2
             content.animator().alphaValue = 0
         }, completionHandler: {
             MainActor.assumeIsolated {
+                guard generation == self.generation else { return }
                 swap()
+                self.transitioning = false
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = Metrics.stepFade / 2
                     self.content.animator().alphaValue = 1
@@ -168,22 +189,21 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         case .welcome:
             return column(icon: kiteIcon(), title: "Welcome to Kite.",
                           body: "Spaces, pinned tabs, the command bar and split view, the way Arc had them. With Claude built in.",
-                          buttons: [primary("Get Started", #selector(next))])
+                          buttons: [primary("Get Started", #selector(next), id: "onboardingGetStarted")])
         case .claude:
-            let copy = primary("Copy Prompt for Claude", #selector(copyPrompt))
-            copy.setAccessibilityIdentifier("onboardingCopyPrompt")
+            let copy = primary("Copy Prompt for Claude", #selector(copyPrompt), id: "onboardingCopyPrompt")
             copyButton = copy
             return column(icon: ClaudeMarkIcon(), title: "Set Kite up with Claude.",
                           body: "Paste this prompt into Claude Code or the Claude app. Claude connects itself to Kite and walks you through the rest, asking before it changes anything.",
                           extra: promptPreview(),
-                          buttons: [copy, secondary("Continue", #selector(next))])
+                          buttons: [copy, secondary("Continue", #selector(next), id: "onboardingContinue")])
         case .done:
             var buttons = [NSButton]()
             if Self.arcDataExists {
-                buttons.append(primary("Import from Arc…", #selector(importArc)))
-                buttons.append(secondary("Start Browsing", #selector(finish)))
+                buttons.append(primary("Import from Arc…", #selector(importArc), id: "onboardingImportFromArc"))
+                buttons.append(secondary("Start Browsing", #selector(finish), id: "onboardingStartBrowsing"))
             } else {
-                buttons.append(primary("Start Browsing", #selector(finish)))
+                buttons.append(primary("Start Browsing", #selector(finish), id: "onboardingStartBrowsing"))
             }
             return column(icon: kiteIcon(), title: "You're all set.",
                           body: Self.arcDataExists
@@ -225,8 +245,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     }
 
     private func kiteIcon() -> NSView {
-        let view = NSImageView(image: Self.resource("AppIcon", "icns").flatMap(NSImage.init(contentsOf:))
-                                   ?? NSApp.applicationIconImage ?? NSImage())
+        let view = NSImageView(image: Self.icon)
         view.imageScaling = .scaleProportionallyUpOrDown
         view.setAccessibilityLabel("Kite")
         NSLayoutConstraint.activate([view.widthAnchor.constraint(equalToConstant: Metrics.iconSide + 16),
@@ -234,17 +253,25 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         return view
     }
 
-    private func primary(_ title: String, _ action: Selector) -> OnboardingButton {
+    /// The step's main button, which Return presses.
+    /// Kite's icon; a dev build has no bundle icon, so it reads the repo's.
+    private static let icon: NSImage = (Bundle.main.bundleURL.pathExtension == "app" ? NSApp.applicationIconImage : nil)
+        ?? resource("AppIcon", "icns").flatMap(NSImage.init(contentsOf:)) ?? NSImage()
+
+    private func primary(_ title: String, _ action: Selector, id: String) -> OnboardingButton {
         let button = OnboardingButton(title: title, primary: true)
         button.target = self
         button.action = action
+        button.keyEquivalent = "\r"
+        button.setAccessibilityIdentifier(id)
         return button
     }
 
-    private func secondary(_ title: String, _ action: Selector) -> OnboardingButton {
+    private func secondary(_ title: String, _ action: Selector, id: String) -> OnboardingButton {
         let button = OnboardingButton(title: title, primary: false)
         button.target = self
         button.action = action
+        button.setAccessibilityIdentifier(id)
         return button
     }
 
@@ -257,7 +284,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         box.layer?.borderWidth = 1
         box.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
         // Its opening request; the guide follows it on the clipboard.
-        let request = Self.prompt().components(separatedBy: "\n\n").first ?? ""
+        let request = Self.prompt.components(separatedBy: "\n\n").first ?? ""
         let text = NSTextField(wrappingLabelWithString: request)
         let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         text.font = font
@@ -280,12 +307,18 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
 
     // MARK: The prompt
 
-    /// The setup prompt with SETUP.md inside it, and the path of the kite tool in this Kite.app.
-    static func prompt() -> String {
-        let guide = guideURL().flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
-        let kite = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/kite").path
-        return ClaudeSetupPrompt.withGuide(guide, kite: kite)
-    }
+    /// The setup prompt with SETUP.md inside it, and the path of this Kite's kite tool. Read once.
+    static let prompt: String = {
+        let kite = AutomationController.cliPath
+        var prompt = guideURL().flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+            .map { ClaudeSetupPrompt.withGuide($0, kite: kite) }
+            ?? ClaudeSetupPrompt.pointingAt(guidePath: ClaudeSetupPrompt.guideOnGitHub, kite: kite)
+        // A test build: Claude's kite commands need the same profile to find this Kite.
+        if let profile = ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] {
+            prompt += "\n\n(This Kite runs on a test profile: run kite commands with KITE_SUPPORT_PATH=\(profile).)"
+        }
+        return prompt
+    }()
 
     private static func guideURL() -> URL? { resource("SETUP", "md") }
 
@@ -302,9 +335,12 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         return nil
     }
 
-    /// Arc's sidebar file is where the importer looks for it (checked, never read, here).
+    /// Arc's sidebar file is where the importer looks for it (checked, never read, here). A test profile
+    /// offers the import only from KITE_ARC_DATA_PATH's hand-made files, never the user's Arc.
     private static var arcDataExists: Bool {
-        FileManager.default.fileExists(atPath: ArcImportController.sidebarFile.path)
+        let environment = ProcessInfo.processInfo.environment
+        if environment["KITE_SUPPORT_PATH"] != nil, environment["KITE_ARC_DATA_PATH"] == nil { return false }
+        return FileManager.default.fileExists(atPath: ArcImportController.sidebarFile.path)
     }
 
     // MARK: Actions
@@ -314,26 +350,47 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     @objc private func back() { go(to: step.rawValue - 1, animated: true) }
 
     @objc private func copyPrompt() {
-        // The general pasteboard, or KITE_TEST_PASTEBOARD's on a test profile.
-        let pasteboard = BrowserWindowController.capturePasteboard
+        guard !transitioning else { return }
+        // The general pasteboard, or KITE_TEST_PASTEBOARD's on a test profile. A diagnostics run never
+        // writes the user's clipboard, named pasteboard or not.
+        var pasteboard = BrowserWindowController.capturePasteboard
+        if UIDiagnostics.enabledByEnvironment, pasteboard == .general {
+            pasteboard = NSPasteboard(name: NSPasteboard.Name("dev.gabek.Kite.onboarding-test"))
+        }
         pasteboard.clearContents()
-        pasteboard.setString(Self.prompt(), forType: .string)
+        pasteboard.setString(Self.prompt, forType: .string)
         copyButton?.title = "Copied ✓"
+        if let copyButton {
+            NSAccessibility.post(element: copyButton, notification: .announcementRequested,
+                                 userInfo: [.announcement: "Prompt copied", .priority: NSAccessibilityPriorityLevel.high.rawValue])
+        }
         copiedReset?.cancel()
         let reset = DispatchWorkItem { [weak self] in self?.copyButton?.title = "Copy Prompt for Claude" }
         copiedReset = reset
         DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: reset)
     }
 
-    @objc private func finish() { window.close() }
+    @objc private func finish() {
+        guard !transitioning else { return }
+        // Onboarding is never the last window: closing it would quit Kite.
+        _ = browser()
+        window.close()
+    }
 
     @objc private func importArc() {
+        guard !transitioning, let controller = browser(), let browserWindow = controller.window else { return }
         window.close()
+        // An importer already up (from the File menu) isn't started twice.
+        guard browserWindow.attachedSheet == nil else { return }
         // The next turn, once onboarding is gone, so the importer's sheet is the only thing up.
-        DispatchQueue.main.async { [importFromArc] in importFromArc() }
+        DispatchQueue.main.async {
+            if !UIDiagnostics.enabledByEnvironment { browserWindow.makeKeyAndOrderFront(nil) }
+            controller.importFromArc(nil)
+        }
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let sheetObserver { NotificationCenter.default.removeObserver(sheetObserver) }
         copiedReset?.cancel()
         Onboarding.save(.init(completed: true), to: Self.stateURL)
         Self.shown = nil
@@ -360,10 +417,11 @@ private final class OnboardingBackdrop: NSView {
                        NSColor(srgbRed: 0x42 / 255, green: 0x8B / 255, blue: 0xFF / 255, alpha: 0).cgColor]
         glow.startPoint = CGPoint(x: 0.7, y: 0.25)
         glow.endPoint = CGPoint(x: 1.25, y: 0.95)
-        grain.contents = Self.grainImage
-        grain.contentsGravity = .resize
-        grain.opacity = 0.07
-        grain.compositingFilter = "overlayBlendMode"
+        // Tiled at one image pixel per screen pixel, so the grain stays even at any window size.
+        if let image = Self.grainImage {
+            grain.backgroundColor = NSColor(patternImage: NSImage(cgImage: image, size: NSSize(width: 128, height: 128))).cgColor
+        }
+        grain.opacity = 0.05
         layer?.addSublayer(gradient)
         layer?.addSublayer(glow)
         layer?.addSublayer(grain)
@@ -381,7 +439,7 @@ private final class OnboardingBackdrop: NSView {
 
     /// Fixed-seed noise, made once.
     private static let grainImage: CGImage? = {
-        let side = 512
+        let side = 256
         var state: UInt32 = 0x2545F491
         var pixels = [UInt8](repeating: 0, count: side * side)
         for i in pixels.indices {

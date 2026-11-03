@@ -22,6 +22,17 @@ import Testing
         #expect(!Onboarding.shouldShow(sessionExisted: false, state: Onboarding.State(completed: true), testProfile: true, forced: true))
     }
 
+    @Test func readsTheEnvironment() {
+        #expect(Onboarding.shouldShow(environment: [:], sessionExisted: false, state: nil))
+        #expect(!Onboarding.shouldShow(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1"], sessionExisted: false, state: nil))
+        #expect(!Onboarding.shouldShow(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1", "KITE_ONBOARDING": "0"],
+                                       sessionExisted: false, state: nil))
+        #expect(Onboarding.shouldShow(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1", "KITE_ONBOARDING": "1"],
+                                      sessionExisted: false, state: nil))
+        // KITE_ONBOARDING means nothing on a real profile: an existing install still never sees it.
+        #expect(!Onboarding.shouldShow(environment: ["KITE_ONBOARDING": "1"], sessionExisted: true, state: nil))
+    }
+
     @Test func stateRoundTrips() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

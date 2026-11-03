@@ -3757,4 +3757,8 @@ three steps (Welcome; Set Kite up with Claude with Copy Prompt for Claude; You'r
 when Arc's StorableSidebar.json exists), page dots and Back. It shows on a profile's first launch only
 (no session.json yet, recorded in onboarding.json until finished), never on an existing install, and on a
 `KITE_SUPPORT_PATH` test profile only with `KITE_ONBOARDING=1`. Import from Arc… closes onboarding first, then
-runs the importer on the browser window, so the two never show at once. Help › Getting Started opens it any time.
+runs the importer on the browser window, and a sheet starting on a browser window (File › Import from Arc…)
+closes onboarding, so the two never show at once.
+
+Deliberate differences from Arc: Kite's Help › Getting Started reopens onboarding (Arc's reopens its "basics"
+cards, which Kite doesn't have), and it stays enabled in incognito windows.

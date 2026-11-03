@@ -635,7 +635,9 @@ final class AutomationController {
     // MARK: Setup help
 
     /// The CLI inside the app bundle, or next to the executable in a `swift build`.
-    var cliPath: String {
+    var cliPath: String { Self.cliPath }
+
+    static var cliPath: String {
         let executable = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
         let bundled = executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Helpers/kite")
         if FileManager.default.isExecutableFile(atPath: bundled.path) { return bundled.path }

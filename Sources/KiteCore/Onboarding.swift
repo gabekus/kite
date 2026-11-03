@@ -15,7 +15,7 @@ public enum Onboarding {
 
     /// Whether to show onboarding at launch.
     /// - Parameters:
-    ///   - sessionExisted: session.json was there before this launch. A profile that already has a
+    ///   - sessionExisted: session.json (or history.json, windows.json) was there before this launch. A profile that already has a
     ///     session is an existing install, so it never gets onboarding it didn't start.
     ///   - state: onboarding.json, nil when it isn't there.
     ///   - testProfile: a throwaway profile (`KITE_SUPPORT_PATH`). Tests get onboarding only when
@@ -25,6 +25,12 @@ public enum Onboarding {
         if testProfile { return forced && state?.completed != true }
         if let state { return !state.completed }
         return !sessionExisted
+    }
+
+    /// The same, reading `KITE_SUPPORT_PATH` and `KITE_ONBOARDING` from `environment`.
+    public static func shouldShow(environment: [String: String], sessionExisted: Bool, state: State?) -> Bool {
+        shouldShow(sessionExisted: sessionExisted, state: state, testProfile: environment["KITE_SUPPORT_PATH"] != nil,
+                   forced: environment["KITE_ONBOARDING"] == "1")
     }
 
     public static func load(from url: URL) -> State? {
@@ -39,8 +45,12 @@ public enum Onboarding {
 }
 
 /// The prompt that sets Kite up with Claude: what `kite setup` starts Claude Code with, and what
-/// onboarding's Copy Prompt for Claude puts on the clipboard.
+/// onboarding's Copy Prompt for Claude puts on the clipboard. The Mac's wording ("on this Mac",
+/// Terminal); Kite for Windows needs its own.
 public enum ClaudeSetupPrompt {
+    /// Where the guide lives when a Kite is missing its copy.
+    public static let guideOnGitHub = "https://github.com/gabekus/kite/blob/main/Resources/SETUP.md"
+
     /// For Claude Code, which reads the guide from disk (`kite setup`).
     public static func pointingAt(guidePath: String, kite: String) -> String {
         """
