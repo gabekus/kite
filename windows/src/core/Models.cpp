@@ -307,6 +307,10 @@ void BrowserState::SelectSpace(const std::string& id) {
     if (SpaceIndex(id)) selectedSpaceID = id;
 }
 
+void BrowserState::SelectSpaceAt(size_t index) {
+    if (index < spaces.size()) selectedSpaceID = spaces[index].id;
+}
+
 void BrowserState::SelectAdjacentSpace(int offset) {
     const long count = static_cast<long>(spaces.size());
     long next = ((static_cast<long>(SelectedSpaceIndex()) + offset) % count + count) % count;

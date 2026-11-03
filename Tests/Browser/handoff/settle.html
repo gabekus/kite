@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Handoff: settling page</title>
+<!-- A single-page app that redraws its DOM several times before it settles, like Cloudflare's dashboard
+     and Squarespace: first a skeleton whose container mentions the control, then the control, then the same
+     control redrawn. The ring should end up on the final button, never on the skeleton. -->
+<style>body{font:14px system-ui;margin:40px} .panel{padding:16px;border:1px solid #ccc;width:420px}</style>
+<div id="app"><div class="panel" tabindex="-1">Loading… Members will appear here, then you can Invite members.</div></div>
+<p class="help" tabindex="0">Tip: use Invite members to add people to this account.</p>
+<p><a href="#members">Members route</a> · <a href="settle.html?other=1">Another page</a></p>
+<script>
+const app = document.getElementById('app');
+window.clicks = [];
+function draw(n) {
+  app.innerHTML = '<div class="panel" data-round="' + n + '"><h3>Members</h3>'
+    + '<button id="invite' + n + '" onclick="clicks.push(' + n + ')">Invite members</button> '
+    + '<button disabled title="Only Super Administrators can remove members">Remove member</button> '
+    + '<span><button aria-disabled="true" aria-describedby="why">Transfer ownership</button>'
+    + '<span id="why" hidden>Verify your email address first.</span></span></div>';
+}
+setTimeout(() => draw(1), 1500);
+setTimeout(() => draw(2), 2200);
+setTimeout(() => draw(3), 2900);
+</script>

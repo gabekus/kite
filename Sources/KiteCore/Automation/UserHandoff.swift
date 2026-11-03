@@ -23,6 +23,12 @@ public enum UserHandoff {
     public static let maxWait: Double = 600
     /// How often Kite looks at the page in front while a step waits on it.
     public static let pollInterval: TimeInterval = 0.5
+    /// How many looks, half a second apart, Kite takes at a new step's control before telling Claude it's missing.
+    public static let probeAttempts = 3
+    /// How long a step's control must be missing, on a tab at another address, before the card offers Take Me Back.
+    public static let offPageDelay: TimeInterval = 1.5
+    /// How long a step stays blocked before a waiting handoff_status returns to tell Claude.
+    public static let blockedReportDelay: TimeInterval = 2
     /// The isolated world the ring lives in, and the binding it reports clicks through.
     public static let worldName = "kite-handoff"
     public static let bindingName = "kiteHandoffEvent"
@@ -146,6 +152,17 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             case marker(String, label: String?, path: String? = nil)
         }
 
+        /// Why the user can't do the step on the page right now, from the last look.
+        public enum Blocker: Hashable, Sendable {
+            /// The control is on the page but turned off (disabled or aria-disabled), with the page's own
+            /// words about it when it gives some ("Only Super Administrators can invite members").
+            case disabled(why: String?)
+            /// The tab is at another address than the step's page, and the control has been missing for a while.
+            case offPage
+            /// The step's tab is closed.
+            case tabClosed
+        }
+
         /// "h1.2": the handoff and the step's number.
         public let id: String
         /// From 1, in the order Claude gave.
@@ -155,14 +172,21 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         public var command: String?
         public var tab: UUID?
         public var locator: Locator?
+        /// The step's page: where Kite last found its control (http or https only), to take the user back there when
+        /// they lose it.
+        public var url: String?
         public var state: State = .waiting
         /// What finished it, in words for Claude: "the user clicked the highlighted control".
         public var how: String?
         /// Whether the ring found the control on the page the last time Kite looked.
         public var found: Bool?
+        /// Why the step can't be done right now, from the last look; nil when nothing is in the way. Only the step a
+        /// tab shows is looked at, so a step waiting behind another on its tab (whose control the first one turns on)
+        /// isn't called blocked.
+        public var blocker: Blocker?
 
         public init(id: String, number: Int, instruction: String, why: String? = nil, command: String? = nil, tab: UUID? = nil,
-                    locator: Locator? = nil) {
+                    locator: Locator? = nil, url: String? = nil) {
             self.id = id
             self.number = number
             self.instruction = instruction
@@ -170,12 +194,38 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             self.command = command
             self.tab = tab
             self.locator = locator
+            self.url = url
         }
 
         public var isWaiting: Bool { state == .waiting }
 
-        /// `found` is only what the last look saw, so it isn't saved.
-        enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, state, how }
+        /// The words on the step's control, for "“Invite members” can't be clicked yet".
+        public var targetName: String? {
+            switch locator {
+            case .text(let text)?: text
+            case .marker(_, let label?, _)?: label
+            default: nil
+            }
+        }
+
+        /// What's in the way, in words for Claude. `blocked` is false while an earlier step of the handoff waits: that
+        /// step may be what turns the control on.
+        public func blockerNote(blocked: Bool) -> String? {
+            switch blocker {
+            case .disabled? where !blocked: "its control is turned off for now, probably until the steps before it are done"
+            case .disabled(let why)?:
+                "BLOCKED: its control is on the page but turned off (disabled), so the user can't click it"
+                    // The page's own words, which it controls: marked as page content, like everything else read off a page.
+                    + (why.map { ". The page says: " + UntrustedContent.wrap($0, source: "the step's control") }
+                        ?? ". Something it needs (a field, a choice, a permission) is probably missing")
+            case .offPage?: "the tab is no longer on the step's page (\(url ?? "unknown")); Kite offers the user a button to go back"
+            case .tabClosed?: "its tab is closed; Kite offers the user a button to reopen it. Wait, or withdraw the handoff if it's no longer needed"
+            case nil: found == false ? "Kite can't find its control on the page right now" : nil
+            }
+        }
+
+        /// `found` and `blocker` are only what the last look saw, so they aren't saved.
+        enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, url, state, how }
     }
 
     /// "h1", "h2": short enough for Claude to pass back.
@@ -195,6 +245,16 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
     }
 
     public var waiting: [Step] { steps.filter(\.isWaiting) }
+
+    /// A waiting step whose control is turned off while no earlier step of the handoff waits: the user is stuck on
+    /// it. (While an earlier one waits, that step may be what turns the control on.)
+    /// Only a turned-off control is: a page left or a tab closed is a click on the card away.
+    public func isBlocked(_ step: Step) -> Bool {
+        guard step.isWaiting, case .disabled? = step.blocker else { return false }
+        return !steps.contains { $0.isWaiting && $0.number < step.number }
+    }
+
+    public var blockedSteps: [Step] { steps.filter(isBlocked) }
     public var isFinished: Bool { !steps.contains(where: \.isWaiting) }
 
     /// The step a tab shows: its first waiting one, so "Approve, then Save" on one tab goes in order.
@@ -211,7 +271,7 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         return true
     }
 
-    /// Ends every waiting step (the user dismissed the handoff, Claude withdrew it, or the tab closed).
+    /// Ends every waiting step (the user dismissed the handoff, or Claude withdrew it).
     public mutating func finishAll(_ state: Step.State, how: String, where include: (Step) -> Bool = { _ in true }) {
         for index in steps.indices where steps[index].isWaiting && include(steps[index]) {
             steps[index].state = state
@@ -229,6 +289,7 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         for step in steps {
             var line = "\(step.number). [\(step.state.rawValue)] \(step.instruction)"
             if let how = step.how { line += " (\(how))" }
+            if step.isWaiting, let note = step.blockerNote(blocked: isBlocked(step)) { line += " — \(note)" }
             if let tab = step.tab {
                 if let place = place(tab) {
                     line += " · tab \(tab.uuidString) at \(place.url ?? "an unknown URL") (“\(place.title)”)"
@@ -242,6 +303,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             lines.append(skipped == 0
                 ? "The user did every step. Read the pages to check they took, then carry on."
                 : "Skipped steps weren't done: don't do them yourself. Say what's left and why, then carry on with what you can.")
+        } else if !blockedSteps.isEmpty {
+            lines.append("The user can't do a blocked step as it is. Fix what blocks it yourself if you may, or withdraw this "
+                + "handoff (handoff_status cancel) and hand over the steps again in order, with what turns the control on "
+                + "first. Then call handoff_status with id \"\(id)\" and wait.")
         } else if waitedOut {
             lines.append("The steps stay in Kite for the user. Call handoff_status with id \"\(id)\" and wait to keep waiting, "
                 + "or carry on with work that doesn't need them.")
@@ -250,6 +315,49 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
                 + "\(Int(UserHandoff.maxWait)) seconds) to hear when they're done.")
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// When a waiting handoff_status (or handoff) ends early to tell Claude a step is blocked: once a step has stayed
+/// blocked for `delay`, and only once per step, so a control the page redraws can't end every wait.
+public struct HandoffBlockWatch: Sendable {
+    /// Steps Claude has already been told are blocked.
+    public var reported: Set<String>
+    private var since: [String: Date] = [:]
+
+    public init(reported: Set<String> = []) {
+        self.reported = reported
+    }
+
+    /// One look at the handoff: true when a step not yet reported has been blocked for `delay`.
+    public mutating func shouldReport(_ handoff: Handoff, now: Date = Date(), delay: TimeInterval) -> Bool {
+        let blocked = Set(handoff.blockedSteps.map(\.id)).subtracting(reported)
+        since = since.filter { blocked.contains($0.key) }
+        for id in blocked where since[id] == nil { since[id] = now }
+        return since.values.contains { now.timeIntervalSince($0) >= delay }
+    }
+}
+
+extension Handoff {
+    /// Whether a tab at `current` is at another address than a step's page (`stepURL`, where its control was last
+    /// found). Kite only calls it a page left once the control has been missing for `UserHandoff.offPageDelay`.
+    public static func isOffPage(stepURL: String?, current: URL?) -> Bool {
+        guard let stepURL, let page = URL(string: stepURL), let current, canReturn(to: page) else { return false }
+        return address(page) != address(current)
+    }
+
+    /// A page Kite may load again for the user: a web page, not a file, data or internal one.
+    public static func canReturn(to url: URL) -> Bool {
+        ["http", "https"].contains(url.scheme?.lowercased() ?? "") && url.host != nil
+    }
+
+    /// An address to compare: the host's case, a default port and a trailing slash don't count.
+    private static func address(_ url: URL) -> String {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url.absoluteString }
+        parts.host = parts.host?.lowercased()
+        if (parts.scheme == "https" && parts.port == 443) || (parts.scheme == "http" && parts.port == 80) { parts.port = nil }
+        if parts.path.hasSuffix("/") { parts.path.removeLast() }
+        return parts.string ?? url.absoluteString
     }
 }
 
@@ -323,12 +431,15 @@ extension UserHandoff {
         public var path: String?
         /// Scroll the control into view the first time it's found.
         public var scroll: Bool
+        /// Only look: report whether the control is there and can be used, without drawing the ring.
+        public var probe: Bool
 
-        public init(step: Handoff.Step, scroll: Bool) {
+        public init(step: Handoff.Step, scroll: Bool, probe: Bool = false) {
             self.step = step.id
             number = step.number
             label = step.instruction
             self.scroll = scroll
+            self.probe = probe
             switch step.locator {
             case .selector(let selector)?: self.selector = selector
             case .text(let text)?: self.text = text
@@ -347,11 +458,19 @@ extension UserHandoff {
         public var found: Bool
         /// How the user finished the step, if they did since the last look ("click", "change").
         public var done: String?
+        /// The control is there but turned off, and the page's words about why when it gives some.
+        public var disabled: Bool?
+        public var why: String?
 
-        public init(found: Bool, done: String? = nil) {
+        public init(found: Bool, done: String? = nil, disabled: Bool? = nil, why: String? = nil) {
             self.found = found
             self.done = done
+            self.disabled = disabled
+            self.why = why
         }
+
+        /// What blocks the step, as far as this look saw.
+        public var blocker: Handoff.Step.Blocker? { found && disabled == true ? .disabled(why: why) : nil }
 
         public init?(json: String) {
             guard let state = try? JSONDecoder().decode(RingState.self, from: Data(json.utf8)) else { return nil }
@@ -389,80 +508,233 @@ extension UserHandoff {
 
     /// The ring itself. It lives in a closed shadow root on a host element that takes no clicks, in an isolated
     /// world, so the page can neither style it nor read or fake its state. Every frame it follows the control's
-    /// box; the control is looked up again when the page redraws it.
+    /// box.
+    ///
+    /// Single-page apps (Cloudflare, Squarespace, Gmail) draw a page several times before it settles: a skeleton,
+    /// then the controls, then the same controls again. So the ring looks the control up again whenever the page
+    /// changes, moves only to a candidate that has stayed put for `settle` ms, and prefers a real control that says
+    /// exactly the words over a block of text that merely mentions them. It looks in same-origin frames too. A
+    /// control that's disabled is still ringed (dashed, grey) and reported, with the page's own reason when it
+    /// gives one, so Claude and the user hear why the step can't be done yet.
     static let ringFunction = #"""
         (cfg) => {
-          const K = window.__kiteHandoff || (window.__kiteHandoff = { step: null, el: null, done: null, scrolled: false, raf: 0, retry: 0 });
+          const settle = 300;
+          const K = window.__kiteHandoff || (window.__kiteHandoff = { step: null, el: null, cand: null, candAt: 0, done: null,
+            scrolled: false, raf: 0, timer: 0, retry: 0 });
+          if (!K.docs) K.docs = new WeakSet();
           const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+          const style = (el) => (el.ownerDocument.defaultView || window).getComputedStyle(el);
           const shown = (el) => {
-            const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+            const r = el.getBoundingClientRect(), s = style(el);
             return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
           };
-          const controls = 'button,a[href],input:not([type=hidden]),select,textarea,label,summary,[role=button],[role=link],'
-            + '[role=checkbox],[role=switch],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=option],[tabindex]';
+          // The page and its same-origin frames, which Squarespace and Gmail draw parts of the page in.
+          const docs = () => {
+            const out = [];
+            const walk = (d, depth) => {
+              out.push(d);
+              if (depth >= 3) return;
+              for (const f of d.querySelectorAll('iframe,frame')) {
+                let inner = null;
+                try { inner = f.contentDocument; } catch (e) {}
+                if (inner && inner.documentElement) walk(inner, depth + 1);
+              }
+            };
+            walk(document, 0);
+            return out;
+          };
+          // Where a frame's element sits in the top page, and the part of the top page its frames show (an element
+          // scrolled out of its frame isn't on screen).
+          const offset = (el) => {
+            let x = 0, y = 0, clip = null, w = el.ownerDocument.defaultView;
+            while (w && w !== window) {
+              let fe = null;
+              try { fe = w.frameElement; } catch (e) {}
+              if (!fe) break;
+              const r = fe.getBoundingClientRect();
+              const view = { left: r.left + fe.clientLeft, top: r.top + fe.clientTop, width: fe.clientWidth, height: fe.clientHeight };
+              // Earlier (inner) clips were in this frame's coordinates: move them out with the rest.
+              if (clip) clip = { left: clip.left + view.left, top: clip.top + view.top, right: clip.right + view.left, bottom: clip.bottom + view.top };
+              const own = { left: view.left, top: view.top, right: view.left + view.width, bottom: view.top + view.height };
+              clip = clip ? { left: Math.max(clip.left, own.left), top: Math.max(clip.top, own.top),
+                right: Math.min(clip.right, own.right), bottom: Math.min(clip.bottom, own.bottom) } : own;
+              x += view.left; y += view.top;
+              w = fe.ownerDocument.defaultView;
+            }
+            return { x, y, clip };
+          };
+          const real = 'button,a[href],input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=checkbox],'
+            + '[role=switch],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option]';
+          const controls = real + ',label,[tabindex]';
+          // A focusable block that's no control: a dialog, a panel, a help line.
+          const loose = '[tabindex]:not(' + real + ',label)';
           const words = (el) => norm(el.getAttribute('aria-label') || el.innerText || el.value || el.title
             || (el.labels && el.labels[0] && el.labels[0].innerText) || '');
+          // An element's text, read only up to `max` characters: null past that.
+          const textUpTo = (el, max) => {
+            const walk = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+            let text = '';
+            for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+              text += n.data;
+              if (text.length > max) return null;
+            }
+            return text;
+          };
+          // Cheap first look, before layout: could this element say the words at all? A big block can't be a match
+          // (see byText), so its text is read only so far.
+          const mentions = (el, want) => {
+            const named = norm([el.getAttribute('aria-label'), el.value, el.title,
+              el.labels && el.labels[0] && el.labels[0].textContent].join(' '));
+            if (named.includes(want)) return true;
+            const text = textUpTo(el, (want.length + 40) * 4);
+            // Block children's words run together in text nodes ("Continue" "with Google"): compare without spaces.
+            return text !== null && norm(text).replace(/ /g, '').includes(want.replace(/ /g, ''));
+          };
+          // Why a control can't be used, or null when it can: disabled or aria-disabled, with the page's own
+          // words about it when it gives some (a title, a description, a tooltip attribute).
+          const blocked = (el) => {
+            // Not inert: that's usually a dialog in front of the page, not a control that's off.
+            const off = el.disabled === true || el.matches(':disabled') || !!el.closest('[aria-disabled="true"]');
+            if (!off) return null;
+            const own = words(el), said = [];
+            const desc = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+              .map((id) => el.ownerDocument.getElementById(id)).filter(Boolean).map((n) => n.textContent).join(' ');
+            said.push(el.getAttribute('aria-description'), desc);
+            for (let n = el, i = 0; n && n.getAttribute && i < 4; n = n.parentElement, i++) {
+              said.push(n.getAttribute('title'), n.getAttribute('data-tooltip'), n.getAttribute('data-tip'), n.getAttribute('data-title'));
+            }
+            const why = said.map((s) => (s || '').replace(/\s+/g, ' ').trim()).find((s) => s && norm(s) !== own) || '';
+            return { why: why.slice(0, 200) };
+          };
           const byText = (want) => {
             want = norm(want);
             if (!want) return null;
             let best = null, score = 0;
-            for (const el of document.querySelectorAll(controls)) {
-              if (!shown(el)) continue;
-              const t = words(el);
-              if (!t) continue;
-              const s = t === want ? 3 : t.startsWith(want) ? 2 : t.includes(want) ? 1 : 0;
-              // A tighter match wins; at a tie, the smaller element (a button inside a matching row).
-              if (s > score || (s === score && s > 0 && best && best.contains(el))) { best = el; score = s; }
+            for (const d of docs()) {
+              for (const el of d.querySelectorAll(controls)) {
+                if (el === K.host) continue;
+                // A focusable block only counts when it says exactly the words: skip big ones before reading their
+                // text or any layout.
+                if (el.matches(loose) && !el.getAttribute('aria-label')
+                  && (el.childElementCount > 8 || textUpTo(el, want.length * 2 + 10) === null)) continue;
+                if (!mentions(el, want)) continue;
+                if (!shown(el)) continue;
+                const t = words(el);
+                if (!t) continue;
+                // Exact words first. A partial match only counts on a control or label that says little else (a
+                // panel or a help line that mentions "Invite members" isn't the button), or a control whose words
+                // start with them ("Delete" for "Delete this repository…").
+                const control = el.matches(real), partial = t.length <= want.length + 40 && !el.matches(loose);
+                let s = t === want ? 30 : t.startsWith(want) && (partial || control) ? 20 : partial && t.includes(want) ? 10 : 0;
+                if (!s) continue;
+                if (control) s += 4;
+                if (!blocked(el)) s += 1;
+                // At a tie, the smaller element (a button inside a matching row).
+                if (s > score || (s === score && best && best.contains(el))) { best = el; score = s; }
+              }
             }
             return best;
           };
-          // The control's own box. A label or other block that holds a short control ("☐ Super Administrator"
-          // across a whole row) is ringed around what it shows, not its full width.
-          const box = (el) => {
+          const firstShown = (selector) => {
+            for (const d of docs()) {
+              let all = [];
+              try { all = d.querySelectorAll(selector); } catch (e) { return null; }
+              for (const el of all) if (shown(el)) return el;
+            }
+            return null;
+          };
+          // The control's own box, in the top page. A label or other block that holds a short control
+          // ("☐ Super Administrator" across a whole row) is ringed around what it shows, not its full width.
+          const box = (el, clipped = true) => {
+            const o = offset(el), move = (r) => {
+              const m = { left: r.left + o.x, top: r.top + o.y, right: r.right + o.x, bottom: r.bottom + o.y, width: r.width, height: r.height };
+              return clipped && o.clip && (m.right <= o.clip.left || m.left >= o.clip.right || m.bottom <= o.clip.top || m.top >= o.clip.bottom) ? null : m;
+            };
             const r = el.getBoundingClientRect();
-            if (getComputedStyle(el).display === 'inline' || el.matches('input,select,textarea,button')) return r;
-            const range = document.createRange();
+            if (style(el).display === 'inline' || el.matches('input,select,textarea,button')) return move(r);
+            const range = el.ownerDocument.createRange();
             range.selectNodeContents(el);
             const c = range.getBoundingClientRect();
-            if (c.width <= 0 || c.height <= 0 || c.width >= r.width - 1) return r;
-            return { left: c.left, top: Math.min(c.top, r.top), right: c.right, bottom: Math.max(c.bottom, r.bottom),
-              width: c.width, height: Math.max(c.bottom, r.bottom) - Math.min(c.top, r.top) };
+            if (c.width <= 0 || c.height <= 0 || c.width >= r.width - 1) return move(r);
+            return move({ left: c.left, top: Math.min(c.top, r.top), right: c.right, bottom: Math.max(c.bottom, r.bottom),
+              width: c.width, height: Math.max(c.bottom, r.bottom) - Math.min(c.top, r.top) });
           };
           const find = (c) => {
             if (c.marker) {
-              const marked = document.querySelector('[data-kite-handoff="' + CSS.escape(c.marker) + '"]');
+              // The element Claude named, while it's on the page at all: hidden (a closed menu), it's nothing,
+              // never another control with the same words.
+              const mark = '[data-kite-handoff="' + CSS.escape(c.marker) + '"]';
+              const marked = firstShown(mark);
               if (marked) return marked;
+              if (docs().some((d) => d.querySelector(mark))) return null;
             }
-            if (c.selector) { try { return document.querySelector(c.selector); } catch (e) { return null; } }
+            if (c.selector) return firstShown(c.selector);
             // After a reload: the same place in the page, if it still says the same; otherwise its words.
             if (c.path) {
               let placed = null;
               try { placed = document.querySelector(c.path); } catch (e) {}
-              if (placed && (!c.text || words(placed) === norm(c.text))) return placed;
+              if (placed && shown(placed) && (!c.text || words(placed) === norm(c.text))) return placed;
             }
             return c.text ? byText(c.text) : null;
           };
+          const state = (el) => {
+            const b = el ? blocked(el) : null;
+            return JSON.stringify({ found: !!el, done: cfg && !cfg.probe ? K.done : null, disabled: !!b, why: b && b.why || null });
+          };
+          // A look without the ring: is the control there, and can it be used?
+          if (cfg && cfg.probe) return state(find(cfg));
           if (!K.clear) {
             K.clear = () => {
-              K.step = null; K.el = null; K.cfg = null; K.done = null;
+              K.step = null; K.el = null; K.cand = null; K.cfg = null; K.done = null; K.retry = 0; K.idle = 0;
               if (K.raf) cancelAnimationFrame(K.raf);
-              K.raf = 0;
+              if (K.timer) clearTimeout(K.timer);
+              K.raf = 0; K.timer = 0;
+              // Stop watching the pages: nothing is looked for until the next step.
+              for (const stop of K.watching || []) stop();
+              K.watching = []; K.docs = new WeakSet();
               if (K.host) K.host.remove();
               K.host = null;
             };
-            const report = (how) => (e) => {
-              if (!e.isTrusted || !K.step || !K.el || K.done) return;
-              const path = e.composedPath ? e.composedPath() : [];
-              if (!(path.includes(K.el) || K.el.contains(e.target))) return;
-              K.done = how;
-              try { window.kiteHandoffEvent(JSON.stringify({ step: K.step, how })); } catch (err) {}
-            };
-            document.addEventListener('click', report('click'), true);
-            document.addEventListener('change', report('change'), true);
           }
+          const report = (how) => (e) => {
+            if (!e.isTrusted || !K.step || K.done) return;
+            // The ringed control, or the live one about to take its place (a page that redrew it under the pointer, or
+            // a control the user clicked before the ring settled on it).
+            const path = e.composedPath ? e.composedPath() : [];
+            const hit = [K.el, !K.el || !K.el.isConnected ? K.cand : null]
+              .find((el) => el && el.isConnected && (path.includes(el) || el.contains(e.target)));
+            if (!hit || blocked(hit)) return;
+            K.done = how;
+            try { window.kiteHandoffEvent(JSON.stringify({ step: K.step, how })); } catch (err) {}
+          };
+          // Each document once, until K.clear(): hear the user's click, and look again soon after the page redraws.
+          const watch = () => {
+            if (!K.watching) K.watching = [];
+            for (const d of docs()) {
+              if (K.docs.has(d)) continue;
+              K.docs.add(d);
+              const click = report('click'), change = report('change');
+              d.addEventListener('click', click, true);
+              d.addEventListener('change', change, true);
+              // While the control is missing, a page that never stops changing (Gmail) still gets the idle backoff.
+              const observer = new MutationObserver(() => soon(K.el ? 1000 : Math.max(150, K.idle || 150)));
+              observer.observe(d, { subtree: true, childList: true, characterData: true,
+                attributes: true, attributeFilter: ['disabled', 'aria-disabled', 'inert', 'hidden', 'aria-hidden', 'aria-label'] });
+              K.watching.push(() => {
+                observer.disconnect();
+                d.removeEventListener('click', click, true);
+                d.removeEventListener('change', change, true);
+              });
+            }
+          };
           if (!cfg) return JSON.stringify({ found: false });
-          if (K.step !== cfg.step) { K.step = cfg.step; K.el = null; K.done = null; K.scrolled = false; }
+          // Kite asks for a scroll on its first look at a step only; the control may settle after a later one.
+          if (K.step !== cfg.step) {
+            K.step = cfg.step; K.el = null; K.cand = null; K.done = null; K.scrolled = false; K.retry = 0; K.idle = 0;
+            K.wantScroll = cfg.scroll;
+          }
           K.cfg = cfg;
+          watch();
           if (!K.host || !K.host.isConnected) {
             const host = document.createElement('kite-handoff');
             host.style.cssText = 'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;display:block;';
@@ -471,38 +743,80 @@ extension UserHandoff {
               + ':host{all:initial}'
               + '.ring{position:fixed;display:none;box-sizing:border-box;border:2px solid #D97757;border-radius:8px;'
               + 'box-shadow:0 0 0 4px rgba(217,119,87,.25);animation:kh 1.6s ease-in-out infinite;pointer-events:none}'
+              + '.ring.off{border:2px dashed #8E8E93;box-shadow:none;animation:none}'
               + '@keyframes kh{50%{box-shadow:0 0 0 8px rgba(217,119,87,.12)}}'
               + '.tag{position:fixed;display:none;max-width:320px;padding:4px 9px;border-radius:7px;background:#D97757;color:#fff;'
               + 'font:600 12px/16px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;white-space:nowrap;overflow:hidden;'
               + 'text-overflow:ellipsis;box-shadow:0 2px 8px rgba(0,0,0,.18);pointer-events:none}'
+              + '.tag.off{background:#636366}'
               + '@media (prefers-reduced-motion:reduce){.ring{animation:none}}'
               + '</style><div class="ring"></div><div class="tag"></div>';
             (document.documentElement || document.body).appendChild(host);
             K.host = host; K.ring = root.querySelector('.ring'); K.tag = root.querySelector('.tag');
           }
-          K.tag.textContent = 'Claude needs you · ' + cfg.number + '. ' + cfg.label;
+          // Looks the control up again (it walks the page, so on a timer, never in a frame), and keeps the tag's words
+          // and the ring's style in step with it.
+          const look = () => {
+            const now = Date.now();
+            if (now - K.retry >= 100) {
+              K.retry = now;
+              watch();
+              const el = find(K.cfg);
+              if (el !== K.cand) { K.cand = el; K.candAt = now; }
+            }
+            // Move only once the page has stopped redrawing that part, so the ring doesn't land on a skeleton. A ringed
+            // control the page replaced (or hid) gives way to its live successor at once.
+            const lost = K.el && !(K.el.isConnected && shown(K.el));
+            if (K.cand !== K.el && (now - K.candAt >= settle || (lost && K.cand))) K.el = K.cand;
+            const el = K.el && K.el.isConnected && shown(K.el) ? K.el : null;
+            const b = el ? blocked(el) : null;
+            K.off = !!b;
+            // A turned-off control says so first: the tag's end is cut off on a narrow page.
+            const text = (K.off ? 'Not clickable yet · ' : 'Claude needs you · ') + K.cfg.number + '. ' + K.cfg.label;
+            if (K.tag && K.tag.textContent !== text) { K.tag.textContent = text; K.tagSize = null; }
+            if (K.ring) { K.ring.classList.toggle('off', K.off); K.tag.classList.toggle('off', K.off); }
+            return el;
+          };
+          // The next look: soon while a control settles, backing off to 1s while it's missing and the page is still,
+          // every 2s once found (for changes the observer can't see). A page change brings it forward (watch).
+          const tick = () => {
+            K.timer = 0;
+            // A hidden page needs no looks; Kite's own look starts them again when it's back on screen.
+            if (!K.cfg || document.hidden) return;
+            const el = look();
+            K.idle = el || K.cand !== K.el ? 0 : Math.min(1000, Math.max(150, (K.idle || 75) * 2));
+            soon(K.cand !== K.el ? settle / 2 : el ? 2000 : K.idle);
+          };
+          function soon(ms) {
+            if (!K.cfg) return;
+            const at = Date.now() + ms;
+            if (K.timer && K.timerAt <= at) return;
+            if (K.timer) clearTimeout(K.timer);
+            K.timerAt = at;
+            K.timer = setTimeout(tick, ms);
+          }
+          // Every frame, only follows the control's box.
           const place = () => {
             K.raf = 0;
             if (!K.cfg || !K.host) return;
-            if (!K.el || !K.el.isConnected || !shown(K.el)) {
-              const now = Date.now();
-              // Looking the control up walks the page: at most every 400ms while it's missing.
-              if (now - K.retry > 400) { K.retry = now; K.el = find(K.cfg); }
-            }
             const el = K.el && K.el.isConnected && shown(K.el) ? K.el : null;
-            if (el) {
-              if (K.cfg.scroll && !K.scrolled) {
-                K.scrolled = true;
-                const r0 = el.getBoundingClientRect();
-                if (r0.top < 0 || r0.bottom > innerHeight || r0.left < 0 || r0.right > innerWidth) {
-                  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-                }
+            // The first look scrolls the control into view, its frame's too when it's below the frame's fold.
+            if (el && K.wantScroll && !K.scrolled) {
+              K.scrolled = true;
+              const all = box(el, false), seen = box(el);
+              if (!seen || all.top < 0 || all.bottom > innerHeight || all.left < 0 || all.right > innerWidth) {
+                el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
               }
-              const r = box(el), pad = 4;
+            }
+            const r = el ? box(el) : null;
+            if (el && r) {
+              const pad = 4;
               Object.assign(K.ring.style, { display: 'block', left: (r.left - pad) + 'px', top: (r.top - pad) + 'px',
                 width: (r.width + pad * 2) + 'px', height: (r.height + pad * 2) + 'px' });
               K.tag.style.display = 'block';
-              const th = K.tag.offsetHeight || 24, tw = K.tag.offsetWidth || 200, gap = 8;
+              // Measured once per wording, not every frame.
+              if (!K.tagSize) K.tagSize = { w: K.tag.offsetWidth || 200, h: K.tag.offsetHeight || 24 };
+              const th = K.tagSize.h, tw = K.tagSize.w, gap = 8;
               // Beside the control on its own line when there's room (so it hides nothing the user reads),
               // then above, then below.
               let left, top;
@@ -524,9 +838,12 @@ extension UserHandoff {
             }
             K.raf = requestAnimationFrame(place);
           };
+          // Kite's own look (twice a second while the tab is on screen) keeps things going in a page that gets no
+          // frames or timers. A control still settling counts as found.
+          const el = look() || (K.cand && K.cand.isConnected ? K.cand : null);
           if (!K.raf) place();
-          const el = K.el && K.el.isConnected ? K.el : (K.el = find(cfg));
-          return JSON.stringify({ found: !!(el && shown(el)), done: K.done });
+          soon(K.cand !== K.el ? settle / 2 : 150);
+          return state(el);
         }
         """#
 }

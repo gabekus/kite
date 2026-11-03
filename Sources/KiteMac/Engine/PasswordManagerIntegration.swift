@@ -62,6 +62,11 @@ enum PasswordManagerIntegration {
     /// asks, once per manager and profile.
     static func installIfNeeded(engine: WebEngine) {
         guard let profile = engine.profileDirectory, !wasOffered(current, profile) else { return }
+        // A test profile is always new, so this would offer the Add flow on every test launch.
+        if UIDiagnostics.enabledByEnvironment {
+            NSLog("Kite: diagnostics: would offer to add %@", current.name)
+            return
+        }
         install(in: engine)
     }
 

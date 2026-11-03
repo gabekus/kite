@@ -199,6 +199,27 @@ TEST(aUsersShortcutWinsOverDefaultsAndExtras) {
     CHECK(!table.contains(KeyShortcut("u", {M::Control, M::Option})));
     // View Source was rebound: its extra Ctrl+U stays, as the Mac's hidden alternates do.
     CHECK(CommandAt(table, KeyShortcut("u", {M::Control})) == "viewSource");
+    // The file's ⌘⇧S for Next Space is Ctrl+Shift+S, its default, and Ctrl+Alt+Right stays.
+    CHECK(CommandAt(table, KeyShortcut("s", {M::Control, M::Shift})) == "nextSpace");
+    CHECK(CommandAt(table, KeyShortcut("right", {M::Control, M::Option})) == "nextSpace");
+}
+
+TEST(spaceCommands) {
+    // The Mac's Spaces menu: ⇧⌘S and ⌥⌘→ Next Space, ⌥⌘← Previous Space, ⌃1–⌃9 Space n. Ctrl+n
+    // is Tab n here, so Space n is Alt+n.
+    const auto table = ShortcutTable(KeyBindings{});
+    CHECK(CommandAt(table, KeyShortcut("s", {M::Control, M::Shift})) == "nextSpace");
+    CHECK(CommandAt(table, KeyShortcut("right", {M::Control, M::Option})) == "nextSpace");
+    CHECK(CommandAt(table, KeyShortcut("left", {M::Control, M::Option})) == "previousSpace");
+    CHECK(CommandAt(table, KeyShortcut("1", {M::Option})) == "space1");
+    CHECK(CommandAt(table, KeyShortcut("9", {M::Option})) == "space9");
+    CHECK(CommandAt(table, KeyShortcut("1", {M::Control})) == "tab1");
+    // Arc's priorities: none of them over a page's keys.
+    for (const char* id : {"nextSpace", "previousSpace", "space1", "space9"}) CHECK(DefaultPriority(id) == KeyShortcutPriority::Low);
+    // Alt+Left and Alt+Right stay Back and Forward; Ctrl+Alt's arrows aren't the bar's editing
+    // keys, so they switch spaces from it too.
+    CHECK(CommandAt(table, KeyShortcut("left", {M::Option})) == "goBack");
+    CHECK(!EditsText(KeyShortcut("left", {M::Control, M::Option})));
 }
 
 TEST(extrasOutliveARemovedShortcutAndTakeItsPriority) {

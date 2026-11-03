@@ -67,6 +67,9 @@ private struct HandoffStepCard: View {
     let others: Int
     @State private var copied = false
 
+    private var tabClosed: Bool { automation.stepTabIsClosed(step) }
+    private var canReopen: Bool { automation.canReopenStepTab(step) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -160,10 +163,18 @@ private struct HandoffStepCard: View {
                 Text("Run it in Terminal, then press Done.")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
+            } else if tabClosed {
+                HandoffBlockedNote(text: "This step's tab is closed." + (canReopen ? "" : " Press Skip if you no longer need it."))
             } else if !onFront {
                 Text("This step is in another tab.")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
+            } else if case .disabled(let why)? = step.blocker {
+                HandoffBlockedNote(text: handoff.isBlocked(step)
+                    ? Self.disabledText(target: step.targetName, why: why)
+                    : "It's turned off for now. It may turn on once you've done the steps before it.")
+            } else if step.blocker == .offPage {
+                HandoffBlockedNote(text: "This tab is no longer on this step's page.")
             } else if step.locator != nil, step.found == false {
                 Text("Kite can't find it on this page yet. Do it by hand, then press Done.")
                     .font(.system(size: 11))
@@ -171,7 +182,15 @@ private struct HandoffStepCard: View {
             }
 
             HStack(spacing: 8) {
-                if !onFront {
+                if tabClosed, canReopen {
+                    Button("Reopen Tab") { automation.reopenStepTab(step.id) }
+                        .controlSize(.small)
+                        .help("Open this step's tab again")
+                } else if onFront, step.blocker == .offPage, step.url != nil {
+                    Button("Take Me Back") { automation.returnToStepPage(step.id) }
+                        .controlSize(.small)
+                        .help("Go back to \(step.url.flatMap { URL(string: $0)?.host } ?? "the step's page")")
+                } else if !onFront {
                     Button("Show Tab") { automation.showTab(of: step.id) }
                         .controlSize(.small)
                 }
@@ -204,6 +223,38 @@ private struct HandoffStepCard: View {
         .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Claude needs you: \(step.instruction)")
+    }
+
+    /// "“Invite members” is turned off on the page, so it can't be clicked yet. The page says “…”." The page's own
+    /// words are quoted and cut short: they're the page speaking, not Kite or Claude.
+    static func disabledText(target: String?, why: String?) -> String {
+        let control = target.map { "“\(short($0, 60))”" } ?? "The control"
+        let said = why.map { " The page says “\(short($0, 120))”." }
+            ?? " Something it needs may be missing, such as a field to fill in or a box to tick."
+        return "\(control) is turned off on the page, so it can't be clicked yet." + said + " If you can't change that, press Skip."
+    }
+
+    private static func short(_ text: String, _ limit: Int) -> String {
+        text.count <= limit ? text : String(text.prefix(limit - 1)) + "…"
+    }
+}
+
+/// What's in the way of a step, in the card.
+private struct HandoffBlockedNote: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.orange)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
     }
 }
 

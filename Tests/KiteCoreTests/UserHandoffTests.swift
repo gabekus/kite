@@ -137,6 +137,130 @@ import Testing
         #expect(UserHandoff.describe("change") == "the user changed the highlighted control")
     }
 
+    @Test func reportsBlockedSteps() throws {
+        var handoff = Handoff(id: "h2", reason: "Only you can invite", steps: [
+            .init(id: "h2.1", number: 1, instruction: "Invite members", tab: UUID(), locator: .text("Invite members")),
+            .init(id: "h2.2", number: 2, instruction: "Click Save", tab: UUID(), locator: .text("Save")),
+        ])
+        // The ring's report: a disabled control and the page's reason.
+        let state = try #require(UserHandoff.RingState(json: #"{"found":true,"done":null,"disabled":true,"why":"Only Super Administrators"}"#))
+        #expect(state.blocker == .disabled(why: "Only Super Administrators"))
+        #expect(UserHandoff.RingState(json: #"{"found":false,"disabled":true}"#)?.blocker == nil)
+        #expect(UserHandoff.RingState(json: #"{"found":true,"disabled":false}"#)?.blocker == nil)
+        handoff.steps[0].found = true
+        handoff.steps[0].blocker = state.blocker
+        handoff.steps[1].found = false
+        let report = handoff.report { _ in nil }
+        #expect(report.contains("1. [waiting] Invite members — BLOCKED: its control is on the page but turned off"))
+        // The reason is the page's words, so it reaches Claude marked as page content.
+        #expect(report.contains(UntrustedContent.wrap("Only Super Administrators", source: "the step's control")))
+        #expect(report.contains("2. [waiting] Click Save — Kite can't find its control on the page right now"))
+        #expect(report.contains("Fix what blocks it yourself"))
+        // Without a reason, the usual suspects.
+        handoff.steps[0].blocker = .disabled(why: nil)
+        #expect(handoff.report { _ in nil }.contains("is probably missing"))
+        // What blocks a step is only what the last look saw: it isn't saved.
+        let data = try JSONEncoder().encode(handoff)
+        let loaded = try JSONDecoder().decode(Handoff.self, from: data)
+        #expect(loaded.steps[0].blocker == nil && loaded.steps[0].found == nil)
+        // A probe asks the page script only to look.
+        let probe = UserHandoff.RingConfig(step: handoff.steps[0], scroll: false, probe: true)
+        #expect(UserHandoff.ringScript(probe).contains(#""probe":true"#))
+        #expect(handoff.steps[0].targetName == "Invite members")
+    }
+
+    @Test func blockedOnlyWithNothingBeforeIt() throws {
+        let tab = UUID(), other = UUID()
+        var handoff = Handoff(id: "h3", reason: "r", steps: [
+            .init(id: "h3.1", number: 1, instruction: "Grant yourself Super Admin", tab: other, locator: .text("Super Admin")),
+            .init(id: "h3.2", number: 2, instruction: "Invite members", tab: tab, locator: .text("Invite members")),
+        ])
+        handoff.steps[1].found = true
+        handoff.steps[1].blocker = .disabled(why: nil)
+        // Step 1 (on another tab) may be what turns step 2's control on: not blocked yet.
+        #expect(!handoff.isBlocked(handoff.steps[1]) && handoff.blockedSteps.isEmpty)
+        let early = handoff.report { _ in nil }
+        #expect(early.contains("turned off for now, probably until the steps before it are done"))
+        #expect(!early.contains("BLOCKED") && !early.contains("Fix what blocks it"))
+        handoff.finish("h3.1", .done, how: "the user pressed Done")
+        #expect(handoff.blockedSteps.map(\.id) == ["h3.2"])
+        #expect(handoff.report { _ in nil }.contains("BLOCKED"))
+    }
+
+    @Test func blockedStepsEndAWaitOncePerStep() throws {
+        var handoff = Handoff(id: "h4", reason: "r", steps: [
+            .init(id: "h4.1", number: 1, instruction: "Invite members", tab: UUID(), locator: .text("Invite members")),
+        ])
+        let start = Date(timeIntervalSince1970: 1_000)
+        var watch = HandoffBlockWatch()
+        let r1 = watch.shouldReport(handoff, now: start, delay: 2)
+        #expect(!r1)
+        handoff.steps[0].blocker = .disabled(why: nil)
+        let r2 = watch.shouldReport(handoff, now: start.addingTimeInterval(1), delay: 2)
+        #expect(!r2)
+        // A redraw that briefly shows no blocker starts the clock again.
+        handoff.steps[0].blocker = nil
+        let r3 = watch.shouldReport(handoff, now: start.addingTimeInterval(2), delay: 2)
+        #expect(!r3)
+        handoff.steps[0].blocker = .disabled(why: nil)
+        let r4 = watch.shouldReport(handoff, now: start.addingTimeInterval(3), delay: 2)
+        #expect(!r4)
+        let r5 = watch.shouldReport(handoff, now: start.addingTimeInterval(5), delay: 2)
+        #expect(r5)
+        // Handed over blocked: at once.
+        var fresh = HandoffBlockWatch()
+        let r6 = fresh.shouldReport(handoff, now: start, delay: 0)
+        #expect(r6)
+        // Already told: a later wait isn't cut short by the same step.
+        var told = HandoffBlockWatch(reported: ["h4.1"])
+        let r7 = told.shouldReport(handoff, now: start, delay: 0)
+        #expect(!r7)
+        let r8 = told.shouldReport(handoff, now: start.addingTimeInterval(60), delay: 2)
+        #expect(!r8)
+    }
+
+    @Test func knowsWhenATabHasLeftTheStepsPage() {
+        let step = "https://dash.cloudflare.com/abc/members/invite"
+        let url = { (s: String) in URL(string: s)! }
+        #expect(Handoff.isOffPage(stepURL: step, current: url("https://www.google.com/")))
+        #expect(Handoff.isOffPage(stepURL: step, current: url("https://dash.cloudflare.com/abc/home")))
+        // The same address, however it's written.
+        #expect(!Handoff.isOffPage(stepURL: step, current: url("https://DASH.cloudflare.com:443/abc/members/invite/")))
+        // A fragment is part of the page: Gmail keeps an open compose there.
+        #expect(Handoff.isOffPage(stepURL: "https://mail.google.com/mail/u/0/#inbox?compose=abc",
+                                  current: url("https://mail.google.com/mail/u/0/#inbox")))
+        // No page to go back to.
+        #expect(!Handoff.isOffPage(stepURL: nil, current: url("https://example.com")))
+        #expect(!Handoff.isOffPage(stepURL: "about:blank", current: url("https://example.com")))
+        #expect(!Handoff.canReturn(to: url("file:///etc/hosts")) && !Handoff.canReturn(to: url("data:text/html,hi")))
+        #expect(Handoff.canReturn(to: url("http://127.0.0.1:8080/x")))
+    }
+
+    @Test func offPageAndClosedTabsDontEndAWait() throws {
+        var handoff = Handoff(id: "h5", reason: "r", steps: [
+            .init(id: "h5.1", number: 1, instruction: "Tick Super Admin", tab: UUID(), locator: .text("Super Admin")),
+            .init(id: "h5.2", number: 2, instruction: "Send", tab: UUID(), locator: .text("Send"),
+                  url: "https://mail.google.com/mail/u/0/#inbox?compose=abc"),
+        ])
+        handoff.steps[1].blocker = .offPage
+        handoff.finish("h5.1", .done, how: "the user pressed Done")
+        // A page left or a tab closed is a click on the card away: Claude's wait goes on.
+        var watch = HandoffBlockWatch()
+        let left = watch.shouldReport(handoff, now: Date(), delay: 0)
+        #expect(!left && handoff.blockedSteps.isEmpty)
+        #expect(handoff.report { _ in nil }.contains("the tab is no longer on the step's page (https://mail.google.com/mail/u/0/#inbox?compose=abc)"))
+        handoff.steps[1].blocker = .tabClosed
+        let closed = watch.shouldReport(handoff, now: Date(), delay: 0)
+        #expect(!closed && handoff.blockedSteps.isEmpty)
+        #expect(handoff.report { _ in nil }.contains("its tab is closed; Kite offers the user a button to reopen it"))
+        // The page is saved with the step; what blocks it isn't.
+        let loaded = try JSONDecoder().decode(Handoff.self, from: JSONEncoder().encode(handoff))
+        #expect(loaded.steps[1].url == "https://mail.google.com/mail/u/0/#inbox?compose=abc" && loaded.steps[1].blocker == nil)
+        // A file saved before steps had pages still loads.
+        let old = #"{"id":"h1","reason":"r","created":0,"steps":[{"id":"h1.1","number":1,"instruction":"x","state":"waiting"}]}"#
+        #expect(try JSONDecoder().decode(Handoff.self, from: Data(old.utf8)).steps[0].url == nil)
+    }
+
     @Test func keepsHandoffsAcrossLaunches() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: folder) }

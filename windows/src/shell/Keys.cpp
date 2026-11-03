@@ -51,7 +51,10 @@ std::optional<KeyShortcut> ShortcutOfKey(UINT vk, bool ctrl, bool alt, bool shif
         key = static_cast<char>(vk);
         character = true;
     } else if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9) {
-        key = static_cast<char>('0' + (vk - VK_NUMPAD0));  // Ctrl+Numpad 1 is Ctrl+1, as in Chrome
+        // Ctrl+Numpad 1 is Ctrl+1, as in Chrome. Without Ctrl it's no shortcut: Alt and numpad
+        // digits type a character by its code (Alt+0233 is é), which Alt+1's Space 1 mustn't take.
+        if (!ctrl) return std::nullopt;
+        key = static_cast<char>('0' + (vk - VK_NUMPAD0));
     } else if (function) {
         key = "f" + std::to_string(vk - VK_F1 + 1);
     } else {

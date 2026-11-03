@@ -17,6 +17,10 @@
 //   Kite.exe --capture FILE.png --command-bar TEXT
 //                            the same with the command bar open (Ctrl+T) and TEXT typed in
 //                            it, composed over the window's frame as DirectComposition shows it.
+//   Kite.exe --frame-log FILE
+//                            a normal window on a test profile that writes each animation
+//                            frame (a space switch's slide and crossfade) to FILE as it
+//                            closes: one JSON object a line, `t`, `offset` and `theme`.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 //                            Prints a report; exits 0 when it matches, 5 when it differs, 3
@@ -157,7 +161,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     for (size_t i = 0; i < args.size(); ++i) {
         const std::wstring& a = args[i];
         if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
-        if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar") { ++i; continue; }
+        if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log") {
+            ++i;
+            continue;
+        }
         if (a.starts_with(L"-")) return Fail(true, L"unknown option " + a, kUsage);
     }
     if (HasFlag(args, L"--backdrop-test")) {
@@ -196,12 +203,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const OptionValue commandBarOption = Option(args, L"--command-bar");
     if (commandBarOption.present && !commandBarOption.value) return Fail(quiet, L"--command-bar takes the text typed in it", kUsage);
     if (commandBarOption.present && !captureOption.present) return Fail(quiet, L"--command-bar only goes with --capture", kUsage);
+    const OptionValue frameLogOption = Option(args, L"--frame-log");
+    if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
     // capture loads and re-saves the session, which must never be the user's own.
-    if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present) && !supportOverride) {
-        return Fail(quiet, L"--smoke-test, --capture, --window-size and --capture-scale need KITE_SUPPORT_PATH set to a test profile", kUsage);
+    if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present || frameLogOption.present) && !supportOverride) {
+        return Fail(quiet,
+                    L"--smoke-test, --capture, --window-size, --capture-scale and --frame-log need KITE_SUPPORT_PATH set to a test profile",
+                    kUsage);
     }
     auto resolved = kite::ResolveSupportDirectory(supportOverride, kite::EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<kite::SupportDirectoryError>(&resolved)) {
@@ -252,6 +263,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     kite::BrowserWindowController::Options options;
     options.capture = capture.has_value();
     options.smokeTest = smokeTest;
+    options.frameLog = frameLogOption.present;
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
     auto save = [&] {
         if (maySave) saveError = session.Save(state);
@@ -331,6 +343,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
     controller->RunMessageLoop();
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
+    if (frameLogOption.value) {
+        if (problem = controller->SaveFrameLog(*frameLogOption.value); !problem.empty()) {
+            return Fail(quiet, L"Couldn't write the frame log: " + problem, kSaveFailed);
+        }
+    }
 #ifdef KITE_HAS_CEF
     if (problem = controller->ShutDownChromium(); !problem.empty()) return Fail(quiet, problem, kWindowFailed);
 #endif

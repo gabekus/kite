@@ -49,6 +49,12 @@ extension BrowserWindowController {
     /// ⇧⌘X: the password manager's popup over the top right of the page, for the selected tab.
     @objc func showPasswordManager(_ sender: Any?) {
         if openPasswordManager() { return }
+        if UIDiagnostics.enabledByEnvironment {
+            // A test profile's run doesn't start adding the password manager.
+            let adds = !isIncognito && PasswordManagerIntegration.canInstall(in: pool.currentEngine)
+            NSLog("Kite: diagnostics: ⇧⌘X would %@", adds ? "add \(PasswordManagerIntegration.current.name)" : "beep")
+            return
+        }
         // Not in this space's profile yet: add it (Chrome's dialog asks).
         if !isIncognito, PasswordManagerIntegration.canInstall(in: pool.currentEngine) {
             PasswordManagerIntegration.install(in: pool.currentEngine)
@@ -61,6 +67,12 @@ extension BrowserWindowController {
     @discardableResult
     func openPasswordManager() -> Bool {
         guard !isIncognito else { return false }
+        if UIDiagnostics.enabledByEnvironment {
+            // A test profile's run opens no password manager: ⇧⌘X, the sign-in pill's button and sign_in log instead.
+            guard PasswordManagerIntegration.isExtensionInstalled(in: pool.currentEngine) else { return false }
+            NSLog("Kite: diagnostics: would open %@", PasswordManagerIntegration.current.name)
+            return true
+        }
         let bounds = contentFrame.bounds
         let anchor = NSRect(x: bounds.maxX - 40, y: contentFrame.isFlipped ? bounds.minY : bounds.maxY - 1, width: 1, height: 1)
         return PasswordManagerIntegration.showPopup(engine: pool.currentEngine, relativeTo: anchor, of: contentFrame)

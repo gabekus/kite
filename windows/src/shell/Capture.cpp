@@ -46,4 +46,19 @@ std::wstring SavePng(const Pixels& pixels, const std::filesystem::path& file) {
     return error;
 }
 
+void ComposeOver(Pixels& base, const Pixels& top, POINT origin) {
+    for (UINT y = 0; y < top.height; ++y) {
+        const LONG by = origin.y + static_cast<LONG>(y);
+        if (by < 0 || by >= static_cast<LONG>(base.height)) continue;
+        for (UINT x = 0; x < top.width; ++x) {
+            const LONG bx = origin.x + static_cast<LONG>(x);
+            if (bx < 0 || bx >= static_cast<LONG>(base.width)) continue;
+            const uint8_t* src = &top.bgra[(static_cast<size_t>(y) * top.width + x) * 4];
+            uint8_t* dst = &base.bgra[(static_cast<size_t>(by) * base.width + static_cast<size_t>(bx)) * 4];
+            const unsigned keep = 255u - src[3];
+            for (int c = 0; c < 4; ++c) dst[c] = static_cast<uint8_t>(src[c] + (dst[c] * keep + 127) / 255);
+        }
+    }
+}
+
 }  // namespace kite
