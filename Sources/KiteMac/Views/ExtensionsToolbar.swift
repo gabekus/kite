@@ -8,12 +8,8 @@ import SwiftUI
 /// as in Arc 1.169's content toolbar (measured on the Mac with the masked probe):
 /// 16pt icons on a 36pt pitch, 8pt below the bar's top, then a 32×28 button 2pt below
 /// the top, 12pt after the last icon. Its menu is a 262pt popover hanging from it.
-struct ExtensionsToolbarItems: View {
-    @ObservedObject var model: ExtensionsModel
-    @State private var showsMenu = false
-    @AppStorage(ChromeButton.pinnedExtensions.hiddenKey) private var hidesPinned = false
-    @AppStorage(ChromeButton.extensions.hiddenKey) private var hidesButton = false
-
+@MainActor
+final class ToolbarExtensionItems: NSView {
     enum Metrics {
         static let iconSize: CGFloat = 16
         static let iconPitch: CGFloat = 36
@@ -24,61 +20,174 @@ struct ExtensionsToolbarItems: View {
         static let siteControlsGap: CGFloat = 12
     }
 
-    var body: some View {
-        HStack(spacing: 0) {
-            let pinned = hidesPinned ? [] : model.pinned
-            ForEach(pinned) { item in
-                PinnedExtensionButton(item: item, model: model)
+    /// The width changed (an extension pinned or unpinned, a button hidden).
+    var onSizeChange: () -> Void = {}
+
+    private let selection: ExtensionsSelection
+    private let button = SymbolButton(symbol: "puzzlepiece.extension", pointSize: 13, weight: .medium, label: "Extensions")
+    private var icons: [PinnedExtensionIcon] = []
+    private var selectionChange: AnyCancellable?
+    private var modelChange: AnyCancellable?
+    private var defaultsObserver: NSObjectProtocol?
+    private var hidesPinned = false
+    private var hidesButton = false
+    private weak var popover: NSPopover?
+    /// A transient popover closes on the mouse-down on its own button, before the button acts.
+    private var menuClosedAt: Date?
+
+    init(selection: ExtensionsSelection) {
+        self.selection = selection
+        super.init(frame: .zero)
+        button.opacity = 1
+        button.tint = PageToolbar.Metrics.enabled
+        button.toolTip = "Extensions"
+        button.action = { [weak self] in self?.toggleMenu() }
+        addSubview(button)
+        selectionChange = selection.$model.sink { [weak self] model in
+            self?.modelChange = model.objectWillChange.sink { [weak self] in
+                // objectWillChange: read the model once the change is in.
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.update() } }
             }
-            if !hidesButton {
-                Button { showsMenu.toggle() } label: {
-                    Image(systemName: "puzzlepiece.extension")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(PageToolbar.Metrics.enabled)
-                        .frame(width: Metrics.buttonSize.width, height: Metrics.buttonSize.height)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Extensions")
-                .accessibilityLabel("Extensions")
-                // The pinned icons' 36pt slots leave 10pt after the last icon.
-                .padding(.leading, pinned.isEmpty ? 0 : Metrics.buttonGap - (Metrics.iconPitch - Metrics.iconSize) / 2)
-                .popover(isPresented: $showsMenu, arrowEdge: .bottom) {
-                    ExtensionsMenu(model: model) { showsMenu = false }
-                }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.update() } }
+        }
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
+                                                                  queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.update() }
+        }
+        update()
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+
+    func refresh() { selection.model.refresh() }
+
+    private var pinned: [InstalledExtension] { hidesPinned ? [] : selection.model.pinned }
+
+    /// Settings → Advanced → Toolbar can hide the pinned icons and the button.
+    var fittingWidth: CGFloat {
+        let count = CGFloat(pinned.count)
+        var width = count * Metrics.iconPitch
+        if !hidesButton {
+            // The pinned icons' 36pt slots leave 10pt after the last icon.
+            width += (count == 0 ? 0 : Metrics.buttonGap - (Metrics.iconPitch - Metrics.iconSize) / 2) + Metrics.buttonSize.width
+        }
+        return width
+    }
+
+    private func update() {
+        let defaults = UserDefaults.standard
+        hidesPinned = defaults.bool(forKey: ChromeButton.pinnedExtensions.hiddenKey)
+        hidesButton = defaults.bool(forKey: ChromeButton.extensions.hiddenKey)
+        let model = selection.model
+        let items = pinned
+        if icons.map(\.item) != items {
+            icons.forEach { $0.removeFromSuperview() }
+            icons = items.map { PinnedExtensionIcon(item: $0, model: model) }
+            icons.forEach { addSubview($0) }
+        }
+        button.isHidden = hidesButton
+        needsLayout = true
+        onSizeChange()
+    }
+
+    override func layout() {
+        super.layout()
+        let h = bounds.height
+        var x: CGFloat = 0
+        for icon in icons {
+            icon.frame = CGRect(x: x, y: 0, width: Metrics.iconPitch, height: h)
+            x += Metrics.iconPitch
+        }
+        if !icons.isEmpty { x += Metrics.buttonGap - (Metrics.iconPitch - Metrics.iconSize) / 2 }
+        button.frame = CGRect(x: x, y: (h - Metrics.buttonSize.height) / 2,
+                              width: Metrics.buttonSize.width, height: Metrics.buttonSize.height)
+    }
+
+    private func toggleMenu() {
+        if let popover, popover.isShown { return popover.close() }
+        if let menuClosedAt, Date().timeIntervalSince(menuClosedAt) < 0.3 { return }
+        let model = selection.model
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: ExtensionsMenu(model: model) { [weak popover] in popover?.close() })
+        var token: NSObjectProtocol?
+        token = NotificationCenter.default.addObserver(forName: NSPopover.didCloseNotification, object: popover, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.menuClosedAt = Date()
+                if let token { NotificationCenter.default.removeObserver(token) }
             }
         }
-        .onAppear { model.refresh() }
-        .onChange(of: showsMenu) { _, shown in if shown { model.refresh() } }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: ExtensionPopover.belowEdge(of: button))
+        self.popover = popover
+        model.refresh()
     }
 }
 
-/// One pinned extension: clicking opens its popup under the icon.
-private struct PinnedExtensionButton: View {
+/// One pinned extension: clicking opens its popup under the icon; the right-click menu pins, turns off or removes it.
+@MainActor
+private final class PinnedExtensionIcon: NSView {
     let item: InstalledExtension
-    let model: ExtensionsModel
-    @State private var anchor: NSView?
+    private let model: ExtensionsModel
+    private let image = SidebarImageView()
+    private var pressed = false
 
-    var body: some View {
-        Button { openPopup() } label: {
-            ExtensionIcon(file: item.iconFile, size: ExtensionsToolbarItems.Metrics.iconSize)
-                .frame(width: ExtensionsToolbarItems.Metrics.iconPitch, height: PageToolbar.Metrics.height)
-                .background(AnchorView(view: $anchor))
-                .contentShape(Rectangle())
+    init(item: InstalledExtension, model: ExtensionsModel) {
+        self.item = item
+        self.model = model
+        super.init(frame: .zero)
+        let size = ToolbarExtensionItems.Metrics.iconSize
+        if let file = item.iconFile, let icon = NSImage(contentsOf: file) {
+            image.imageScaling = .scaleProportionallyUpOrDown
+            image.image = icon
+        } else {
+            image.imageScaling = .scaleNone
+            image.contentTintColor = .labelColor
+            image.image = symbolImage("puzzlepiece.extension", pointSize: size * 0.75, box: NSSize(width: size, height: size),
+                                      placement: .center)
         }
-        .buttonStyle(.plain)
-        .help(item.name)
-        .accessibilityLabel(item.name)
-        .contextMenu { ExtensionActions(item: item, model: model) }
+        addSubview(image)
+        toolTip = item.name
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(item.name)
     }
 
-    private func openPopup() {
-        guard let anchor else { return }
-        if let popup = item.popupURL {
-            ExtensionPopover.show(popup, engine: model.engine, relativeTo: anchor.bounds, of: anchor)
-        } else if let options = item.optionsURL {
-            ExtensionPopover.show(options, engine: model.engine, relativeTo: anchor.bounds, of: anchor)
-        }
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func layout() {
+        super.layout()
+        let size = ToolbarExtensionItems.Metrics.iconSize
+        image.frame = CGRect(x: (bounds.width - size) / 2, y: (bounds.height - size) / 2, width: size, height: size)
+    }
+
+    override func mouseDown(with event: NSEvent) { pressed = true }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { pressed = false }
+        guard pressed, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        open()
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        open()
+        return true
+    }
+
+    private func open() {
+        guard let url = item.popupURL ?? item.optionsURL else { return }
+        ExtensionPopover.show(url, engine: model.engine, relativeTo: bounds, of: self)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? { ExtensionActions.menu(item: item, model: model) }
+
+    override func rightMouseDown(with event: NSEvent) {
+        NSMenu.popUpContextMenu(ExtensionActions.menu(item: item, model: model), with: event, for: self)
     }
 }
 
@@ -180,6 +289,28 @@ private struct ExtensionTile: View {
 
 /// Pin, turn on or off, options and remove: the tile's and pinned icon's right-click menu.
 private struct ExtensionActions: View {
+    /// The same items as an `NSMenu`, for the toolbar's pinned icons.
+    @MainActor static func menu(item: InstalledExtension, model: ExtensionsModel) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let pinned = model.isPinned(item.id)
+        func add(_ title: String, enabled: Bool = true, _ action: @escaping () -> Void) {
+            let entry = ToolbarMenuAction(title: title, action)
+            entry.isEnabled = enabled
+            menu.addItem(entry)
+        }
+        add(pinned ? "Unpin" : "Pin to Toolbar", enabled: item.enabled || pinned) { model.setPinned(item.id, !pinned) }
+        add(item.enabled ? "Turn Off" : "Turn On", enabled: item.mayDisable) { model.setEnabled(item.id, !item.enabled) }
+        if let options = item.optionsURL {
+            add("Options") {
+                NSApp.sendAction(#selector(AppDelegate.openURLFromExtensionsMenu(_:)), to: nil, from: options as NSURL)
+            }
+        }
+        menu.addItem(.separator())
+        add("Remove…") { model.remove(item.id) }
+        return menu
+    }
+
     let item: InstalledExtension
     let model: ExtensionsModel
 

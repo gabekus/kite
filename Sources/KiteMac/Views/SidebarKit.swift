@@ -509,6 +509,12 @@ enum SymbolOrigins {
         Key("desktopcomputer.and.arrow.down", 12.0, .semibold, 30.0, 30.0): (6.5, 6.5), // max 36 (inferred from its neighbours on screen: +0.5)
         Key("puzzlepiece.extension", 12.0, .semibold, 30.0, 30.0): (6.5, 8.0), // max 81 (on screen: +0.5)
         Key("chevron.right", 9.0, .bold, 26.0, 26.0): (9.5, 7.0), // max 42
+        // The page toolbar's, measured on screen against SwiftUI's toolbar (3 Nov 2026, 2x captures, quarter-point
+        // search; max channel delta at the glyph's edges).
+        Key("arrow.clockwise", 13.0, .medium, 37.0, 32.0): (12.0, 8.0), // max 79
+        Key("puzzlepiece.extension", 13.0, .medium, 32.0, 28.0): (7.0, 6.5), // max 37
+        Key("slider.horizontal.3", 8.0, .semibold, 37.0, 32.0): (13.5, 11.5), // max 42
+        Key("link", 11.0, .medium, 14.5, 16.0): (0.0, 0.5), // max 34
     ]
 }
 

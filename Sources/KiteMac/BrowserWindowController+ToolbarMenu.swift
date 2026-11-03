@@ -2,22 +2,6 @@ import AppKit
 import KiteCore
 import SwiftUI
 
-/// View › Show Toolbar's bar, with Arc's right-click menu (`ToolbarMenu` in KiteCore).
-final class PageToolbarHost: NSHostingView<PageToolbar> {
-    /// Builds the menu for a right-click (or ⌃-click) anywhere on the bar; nil for none.
-    var contextMenu: (() -> NSMenu?)?
-
-    override func menu(for event: NSEvent) -> NSMenu? {
-        contextMenu?() ?? super.menu(for: event)
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        guard let contextMenu else { return super.rightMouseDown(with: event) }
-        // Nil under the test hook too, which has already logged the menu.
-        if let menu = contextMenu() { NSMenu.popUpContextMenu(menu, with: event, for: self) }
-    }
-}
-
 extension BrowserWindowController {
     /// Arc's `commandBarToolbarContextMenuActions` for the selected tab. Under KITE_TEST_CONTEXT_MENU the
     /// menu is logged (and an item picked) instead of shown.
@@ -82,7 +66,7 @@ extension BrowserWindowController {
     }
 }
 
-private final class ToolbarMenuAction: NSMenuItem {
+final class ToolbarMenuAction: NSMenuItem {
     private let body: () -> Void
 
     init(title: String, _ body: @escaping () -> Void) {
