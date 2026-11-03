@@ -50,6 +50,14 @@ struct PageEvents {
     std::function<void(const std::string& tabID)> pageClosed;
     // Another launch of Kite found this one running (one Kite per profile, as Chromium allows).
     std::function<void()> relaunched;
+    // Ctrl+T in a page: Kite's shortcut, which the page never sees. Until Kite opens the bar
+    // and calls BlockInput, the keys typed into the page after it come to Kite instead
+    // (keyForwarded, in order), so what's typed straight after Ctrl+T lands in the bar, as the
+    // Mac holds keys until its field has focus. Kite answers with BlockInput, true or false.
+    std::function<void()> newTab;
+    // A key (`character` false: a virtual-key code) or a typed UTF-16 unit (`character` true)
+    // that reached a page while its keys go to Kite.
+    std::function<void(bool character, unsigned code, bool ctrl, bool shift)> keyForwarded;
 };
 
 class Chromium {
@@ -75,8 +83,17 @@ public:
     void Minimized();
     // The window is being moved or resized: open <select> and autofill popups follow it.
     void WindowMoved();
-    // Gives the shown page keyboard focus (the window was activated).
+    // Gives the shown page keyboard focus (the window was activated), unless input is blocked.
     void Focus();
+    // While something of Kite's is over the pages (the command bar), they take no input:
+    // their windows are disabled, so clicks go to Kite's window; they don't take the focus
+    // back (on a navigation, say); and keys that still reach one come to Kite (keyForwarded).
+    // Unblocked, the keys go to the pages again.
+    void BlockInput(bool blocked);
+    // Loads `url` in the tab's page (the command bar's Enter on the current tab); a page
+    // still being made loads it once it exists. False when the tab has no page (Show makes
+    // one with the tab's address).
+    bool Navigate(const std::string& tabID, const std::string& url);
     // Whether the window may close now. The first call starts closing every browser and
     // returns false (unless there are none); WM_CLOSE comes again as each one is ready.
     bool MayCloseWindow();

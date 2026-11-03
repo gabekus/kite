@@ -70,6 +70,9 @@ public:
     std::function<void()> onMove;
     // The client area changed size (also after a DPI change); GetClientRect has the new one.
     std::function<void()> onSize;
+    // Sees every message first (the command bar takes the keyboard and mouse while it's
+    // open); true when it handled the message, with `result`.
+    std::function<bool(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result)> filter;
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);

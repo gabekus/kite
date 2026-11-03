@@ -14,6 +14,9 @@
 //                            any monitor, and drawn over the solid material fallback rather
 //                            than whatever is behind it.
 //                            Pair with KITE_SUPPORT_PATH and a session from windows/helix/states.
+//   Kite.exe --capture FILE.png --command-bar TEXT
+//                            the same with the command bar open (Ctrl+T) and TEXT typed in
+//                            it, composed over the window's frame as DirectComposition shows it.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 //                            Prints a report; exits 0 when it matches, 5 when it differs, 3
@@ -36,6 +39,7 @@
 #include <variant>
 #include <vector>
 
+#include "core/CommandBar.h"
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
 #include "core/SupportDirectory.h"
@@ -45,6 +49,7 @@
 #include "shell/Chromium.h"
 #endif
 #include "shell/Capture.h"
+#include "shell/CommandBarView.h"
 #include "shell/Compositor.h"
 #include "shell/Errors.h"
 #include "shell/MainWindow.h"
@@ -137,6 +142,31 @@ void WriteUtf8(DWORD which, const std::wstring& text) {
     WriteFile(handle, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
 }
 
+std::string Narrow(const std::wstring& text) {
+    if (text.empty()) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<size_t>(std::max(size, 0)), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr);
+    return out;
+}
+
+// Puts `top` (premultiplied BGRA) over `base` with its top-left at `origin`, as
+// DirectComposition puts the command bar's target over the window's.
+void ComposeOver(kite::Pixels& base, const kite::Pixels& top, POINT origin) {
+    for (UINT y = 0; y < top.height; ++y) {
+        const LONG by = origin.y + static_cast<LONG>(y);
+        if (by < 0 || by >= static_cast<LONG>(base.height)) continue;
+        for (UINT x = 0; x < top.width; ++x) {
+            const LONG bx = origin.x + static_cast<LONG>(x);
+            if (bx < 0 || bx >= static_cast<LONG>(base.width)) continue;
+            const uint8_t* src = &top.bgra[(static_cast<size_t>(y) * top.width + x) * 4];
+            uint8_t* dst = &base.bgra[(static_cast<size_t>(by) * base.width + static_cast<size_t>(bx)) * 4];
+            const unsigned keep = 255u - src[3];
+            for (int c = 0; c < 4; ++c) dst[c] = static_cast<uint8_t>(src[c] + (dst[c] * keep + 127) / 255);
+        }
+    }
+}
+
 int Fail(bool quiet, const std::wstring& message, int code) {
     OutputDebugStringW((L"Kite: " + message + L"\n").c_str());
     WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + message + L"\n");
@@ -157,7 +187,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     for (size_t i = 0; i < args.size(); ++i) {
         const std::wstring& a = args[i];
         if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
-        if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale") { ++i; continue; }
+        if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar") { ++i; continue; }
         if (a.starts_with(L"-")) return Fail(true, L"unknown option " + a, kUsage);
     }
     if (HasFlag(args, L"--backdrop-test")) {
@@ -193,6 +223,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return Fail(quiet, L"--window-size takes W,H in points", kUsage);
     }
     if (scaleOption.present && !captureOption.present) return Fail(quiet, L"--capture-scale only goes with --capture", kUsage);
+    const OptionValue commandBarOption = Option(args, L"--command-bar");
+    if (commandBarOption.present && !commandBarOption.value) return Fail(quiet, L"--command-bar takes the text typed in it", kUsage);
+    if (commandBarOption.present && !captureOption.present) return Fail(quiet, L"--command-bar only goes with --capture", kUsage);
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
@@ -270,12 +303,74 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const kite::Rgba base = systemBackdrop ? kite::Rgba{} : kite::MaterialFallback(dark);
     std::unique_ptr<kite::Compositor> compositor = kite::Compositor::Create(window.Handle(), *renderer, gpuError);
     if (!compositor) return Fail(quiet, L"Kite couldn't start DirectComposition: " + gpuError, kWindowFailed);
+
+    // The command bar (Ctrl+T), over everything in the window. What it does with a row, and
+    // how a page shows, depend on Chromium, so they're filled in with it below.
+    std::function<void(const std::string& tabID, const std::string& url)> loadInTab = [](const std::string&, const std::string&) {};
+    std::function<void()> showPage = [] {};
+    std::function<void(bool blocked)> blockPages = [](bool) {};
+    kite::CommandBarView::Callbacks barCallbacks;
+    barCallbacks.suggestions = [&](std::string_view text, kite::CommandBarMode mode) {
+        return kite::CommandBarSuggestions(text, state, mode);
+    };
+    barCallbacks.commit = [&](const kite::CommandSuggestion& row, kite::CommandBarMode mode) {
+        // The Mac's BrowserWindowController.commit and open(_:mode:).
+        switch (row.kind) {
+        case kite::CommandSuggestion::Kind::Open:
+        case kite::CommandSuggestion::Kind::Search:
+            if (mode == kite::CommandBarMode::EditCurrent && state.SelectedTab()) {
+                const std::string id = state.SelectedTab()->id;
+                if (auto at = state.Location(id)) {
+                    if (kite::Tab* tab = state.TabAt(*at)) tab->url = row.url;
+                }
+                loadInTab(id, row.url);
+            } else {
+                state.OpenTab(row.url);
+                showPage();
+            }
+            break;
+        case kite::CommandSuggestion::Kind::SwitchTab:
+            if (state.Location(row.tabID)) {
+                state.Select(row.tabID);
+                showPage();
+            }
+            break;
+        }
+    };
+    barCallbacks.opened = [&] { blockPages(true); };
+    barCallbacks.closed = [&] { blockPages(false); };
+    barCallbacks.dpi = [&] { return window.Dpi(); };
+    std::unique_ptr<kite::CommandBarView> commandBar = kite::CommandBarView::Create(window.Handle(), std::move(barCallbacks), gpuError);
+    if (commandBar) {
+        commandBar->UseRenderer(renderer.get());
+    } else {
+        if (commandBarOption.present) return Fail(quiet, L"Kite couldn't make the command bar: " + gpuError, kWindowFailed);
+        OutputDebugStringW((L"Kite: no command bar: " + gpuError + L"\n").c_str());
+    }
+    auto barLook = [&] {
+        const kite::Theme& selected = state.SelectedSpace().theme;
+        return kite::CommandBarView::Look{!kite::PrefersDarkForeground(selected), kite::Accent(selected)};
+    };
+    // The Mac's newTab and openLocation: Ctrl+T, and (for the sidebar's address, W4) the
+    // current tab's address.
+    auto openCommandBar = [&](kite::CommandBarMode mode) {
+        if (!commandBar) return blockPages(false);
+        const kite::Tab* tab = state.SelectedTab();
+        if (!tab) mode = kite::CommandBarMode::NewTab;
+        commandBar->Show(mode, mode == kite::CommandBarMode::EditCurrent ? tab->url.value_or("") : "", barLook());
+    };
+    [[maybe_unused]] auto refreshBar = [&] {
+        if (commandBar) commandBar->Refresh();
+    };
+
     // After the GPU is reset or removed, both are rebuilt on whatever adapter is there now.
     auto rebuild = [&]() -> std::wstring {
         std::wstring problem;
+        if (commandBar) commandBar->UseRenderer(nullptr);
         compositor.reset();  // first: a window holds one composition target at a time
         renderer = kite::Renderer::Create(problem);
         if (renderer) compositor = kite::Compositor::Create(window.Handle(), *renderer, problem);
+        if (renderer && commandBar) commandBar->UseRenderer(renderer.get());
         return problem;
     };
     auto draw = [&](kite::Pixels* readBack = nullptr) -> std::wstring {
@@ -294,11 +389,28 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (!problem.empty()) OutputDebugStringW((L"Kite: drawing failed: " + problem + L"\n").c_str());
         return problem;
     };
-    window.onSize = [&] { draw(); };
-    // On an early return the compositor goes before the window: stop drawing first.
+    window.onSize = [&] {
+        draw();
+        if (commandBar) commandBar->Layout();
+    };
+    // Ctrl+T, wherever the keyboard is in Kite's own window (a page's comes through Chromium).
+    window.filter = [&](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+        if (commandBar && commandBar->HandleMessage(message, wParam, lParam, result)) return true;
+        const bool ctrlOnly = GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0 && GetKeyState(VK_SHIFT) >= 0;
+        if (message == WM_KEYDOWN && wParam == 'T' && ctrlOnly) {
+            openCommandBar(kite::CommandBarMode::NewTab);
+            result = 0;
+            return true;
+        }
+        return false;
+    };
+    // On an early return the compositor and the bar go before the window: stop drawing first.
     struct StopDrawing {
         kite::MainWindow& window;
-        ~StopDrawing() { window.onSize = nullptr; }
+        ~StopDrawing() {
+            window.onSize = nullptr;
+            window.filter = nullptr;
+        }
     } stopDrawing{window};
 
     // Sized after the swap chain exists, so a capture also goes through a resize, as a real
@@ -373,6 +485,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         showSelectedTab();
     };
     if (!capture) {
+        showPage = showSelectedTab;
+        loadInTab = [&](const std::string& id, const std::string& url) {
+            // A page that closed itself is made again, now with somewhere to go.
+            closedPages.erase(id);
+            if (!chromium->Navigate(id, url)) showSelectedTab();
+        };
+        blockPages = [&](bool blocked) {
+            chromium->BlockInput(blocked);
+            if (!blocked) chromium->Focus();
+        };
         auto tabNamed = [&](const std::string& id) -> kite::Tab* {
             auto location = state.Location(id);
             return location ? state.TabAt(*location) : nullptr;
@@ -380,10 +502,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         kite::PageEvents events;
         events.addressChanged = [&, tabNamed](const std::string& id, const std::string& url) {
             if (kite::Tab* tab = tabNamed(id); tab && !url.empty()) tab->url = url;
+            refreshBar();
         };
         events.titleChanged = [&, tabNamed](const std::string& id, const std::string& title) {
             // An empty title keeps the last one, as the Mac's BrowserStore does.
             if (kite::Tab* tab = tabNamed(id); tab && !title.empty()) tab->title = title;
+            refreshBar();
         };
         events.loadingChanged = [&](const std::string&, bool loading) {
             // A smoke test closes once the first page has loaded (or shown its error page).
@@ -402,11 +526,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             state.OpenTab(url.empty() ? std::nullopt : std::optional<std::string>(url), std::nullopt, true, kite::Now(), id);
             popupOpeners[id] = openerID;
             showSelectedTab();
+            refreshBar();
         };
         events.openInNewTab = [&](const std::string&, const std::string& url, bool foreground) {
             // In the current space, as the Mac's openTab(url:select:).
             state.OpenTab(url, std::nullopt, foreground);
             if (foreground) showSelectedTab();
+            refreshBar();
         };
         events.pageClosed = [&](const std::string& id) {
             closedPages.insert(id);
@@ -431,6 +557,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             state.Select(next);
             showSelectedTab();
         };
+        events.newTab = [&] { openCommandBar(kite::CommandBarMode::NewTab); };
+        events.keyForwarded = [&](bool character, unsigned code, bool ctrl, bool shift) {
+            if (!commandBar) return;
+            if (character) commandBar->ForwardCharacter(static_cast<wchar_t>(code));
+            else commandBar->ForwardKey(code, ctrl, shift);
+        };
         events.relaunched = [&] {
             // Kite was launched again: this one comes forward instead.
             if (IsIconic(window.Handle())) ShowWindow(window.Handle(), SW_RESTORE);
@@ -450,11 +582,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         window.onMinimize = [&] { chromium->Minimized(); };
         window.onMove = [&] { chromium->WindowMoved(); };
         window.mayClose = [&] { return chromium->MayCloseWindow(); };
-        window.onFocus = [&] { chromium->Focus(); };
+        window.onFocus = [&] {
+            // The open bar keeps the keyboard in Kite's window.
+            if (!commandBar || !commandBar->IsOpen()) chromium->Focus();
+        };
         window.onSize = [&] {
             // The page first, so CEF's thread moves it while Kite draws.
             chromium->SetBounds(contentBounds());
             draw();
+            if (commandBar) commandBar->Layout();
             chromium->WindowMoved();
             showFirstPage();  // restored after a minimized launch
         };
@@ -474,6 +610,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
 
     if (smokeTest) {
+        // The command bar opens over the window, draws with text in it, and closes.
+        if (!commandBar) return Fail(quiet, L"Kite couldn't make the command bar", kWindowFailed);
+        commandBar->Show(kite::CommandBarMode::NewTab, "kite smoke", barLook());
+        if (std::wstring problem = commandBar->Draw(); !problem.empty()) {
+            return Fail(quiet, L"the command bar couldn't draw: " + problem, kWindowFailed);
+        }
+        commandBar->Hide();
         // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt
         // and draw again (a real device removal can't be caused from a test).
         compositor.reset();
@@ -493,6 +636,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         // (the window is laid out at that scale on any monitor), else at the monitor's.
         kite::Pixels pixels;
         captureError = draw(&pixels);
+        if (captureError.empty() && commandBarOption.present) {
+            // The bar as Ctrl+T opens it, with the text typed in.
+            commandBar->Show(kite::CommandBarMode::NewTab, Narrow(*commandBarOption.value), barLook());
+            kite::Pixels bar;
+            POINT origin{};
+            captureError = commandBar->Draw(&bar, &origin);
+            if (captureError.empty()) ComposeOver(pixels, bar, origin);
+        }
         RECT client{};
         GetClientRect(window.Handle(), &client);
         if (captureError.empty() && (pixels.width != static_cast<UINT>(client.right) || pixels.height != static_cast<UINT>(client.bottom))) {

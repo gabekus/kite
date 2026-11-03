@@ -154,6 +154,9 @@ void Renderer::Flush() {
 
 void Renderer::DrawTheme(ID3D11RenderTargetView* target, UINT width, UINT height, const ThemeUniforms& uniforms,
                          const Rgba& base) {
+    // Direct2D (the command bar) draws with this device too and leaves its own pipeline state
+    // behind (rasterizer, samplers, shaders): start from the defaults.
+    context_->ClearState();
     const float clear[4] = {base.r, base.g, base.b, base.a};
     context_->ClearRenderTargetView(target, clear);
     context_->UpdateSubresource(themeUniforms_.Get(), 0, nullptr, &uniforms, 0, 0);
