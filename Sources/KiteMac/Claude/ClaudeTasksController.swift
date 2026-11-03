@@ -17,7 +17,7 @@ final class ClaudeTasksController {
     private(set) var runningIDs: Set<UUID> = []
     /// Claude Code is installed and signed in, and Kite's tools are on. Until then the
     /// sidebar's Claude button shows a yellow dot, and clicking it sets everything up.
-    private(set) var isSetUp = UserDefaults.standard.bool(forKey: ClaudeTasksController.setUpKey)
+    private(set) var isSetUp = OneShotFlags.standard.bool(forKey: ClaudeTasksController.setUpKey)
     var isSettingUp = false
 
     static let setUpKey = "claudeSetUp"
@@ -46,7 +46,7 @@ final class ClaudeTasksController {
 
     func markSetUp(_ setUp: Bool) {
         isSetUp = setUp
-        UserDefaults.standard.set(setUp, forKey: Self.setUpKey)
+        OneShotFlags.standard.set(setUp, forKey: Self.setUpKey)
     }
     /// The task the panel shows.
     var selectedID: UUID? {
