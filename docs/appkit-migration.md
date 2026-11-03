@@ -211,3 +211,34 @@ renames in place (typed name, Return). The no-CEF build and `swift test` pass (9
 - Animations frame by frame: rows fading in and out (same curve and duration as before), the speaker and
   Tidy Tab Titles rename (still SwiftUI, hosted), Claude's ring and mark (period and opacity range kept).
 - VoiceOver: roles and labels are set, but the accessibility tree differs from SwiftUI's in shape.
+
+## PR 2: header, Today divider and Instant Links rows
+
+The last SwiftUI rows in the space list (`SidebarListRows.swift`). The list is now AppKit throughout;
+`SpaceHeader`, `TodayDivider`, `InstantLinksRow` and its timeline-driven flower are gone.
+
+| Scenario | CPU ms/s after PR 1 → PR 2 | Wakeups/s | Footprint MB |
+|---|---|---|---|
+| Idle | 2.23 → 2.66 | 4.40 → 4.17 | 190.4 → 179.2 |
+| After hover + scroll | 1.93 → 2.48 | 4.17 → 4.33 | 185.4 → 178.0 |
+| Claude's rings | 15.14 → 15.04 | 29.2 → 29.3 | 192.0 → 189.1 |
+
+Flat within noise, as expected: these rows only animate while Claude tidies (the wand) or Instant Links loads
+(the flower, now Core Animation instead of a per-frame timeline).
+
+Pixels against main before PR 1 (list region): 10 dark tabs idle and hovered (header, tab) max 57, mean 0.06;
+hovered divider (Tidy and Clear showing) max 14 in the divider; rich dark/light idle and hovered header,
+chevron and divider max 57–85, mean ≤ 0.07. The emoji is drawn at its string size centred exactly, which is
+where SwiftUI's `Text` puts it (ImageRenderer: 15pt in 26pt lands at (2.5, 3.5)); the rest is glyph
+anti-aliasing. The Tidy pill is a capsule (SwiftUI clamps ChromeFill's 11pt corners to half its 18pt height).
+"Clear" sits half a point above plain centring, measured. Un-framed symbols (wand, arrow, folder chevron)
+draw at the image's own placement. The Max flower, drawn with the same geometry in Core Graphics, matches
+SwiftUI's Canvas to max 36 at 2x (ImageRenderer).
+
+Behaviour on the AppKit build (`ui input`, rows taking the first click for the test only): the chevron
+collapses and expands the pinned section; a click on the selected space's name renames it in place (typed
+name, Return); Clear (in its keep-the-selected-tab mode) clears the other Today tabs.
+
+Not verified: the icon picker opening from the header (a popover), the space menu (a modal menu), Tidy's
+turning wand and Clear's pressed arrow frame by frame, the arrow (clear-all) mode of Clear pixel-wise, and the
+Instant Links row in place (it needs Instant Links running).
