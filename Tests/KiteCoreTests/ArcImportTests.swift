@@ -332,8 +332,19 @@ import Testing
         #expect(try ArcImport.parse(Self.fixture).untitledSpaceIDs.isEmpty)
     }
 
+    @Test func picksTheSidebarFileThenItsNewestBackup() {
+        let names = ["StorableArchive.json", "StorableSidebar.2024-11-21-17-40-41-080.json", "StorableSidebar.json",
+                     "StorableSidebar.2026-11-01-21-05-17-932.json", "StorableSidebarX.txt"]
+        #expect(ArcImport.sidebarCandidates(in: names) == [
+            "StorableSidebar.json", "StorableSidebar.2026-11-01-21-05-17-932.json", "StorableSidebar.2024-11-21-17-40-41-080.json",
+        ])
+        #expect(ArcImport.sidebarCandidates(in: ["StorableSidebar.2026-11-01-21-05-17-932.json"]).count == 1)
+    }
+
     @Test func rejectsOtherFiles() {
         #expect(throws: ArcImport.Failure.notArcSidebar) { try ArcImport.parse(Data("{}".utf8)) }
+        // Cut short, as a file read while it's written would be.
+        #expect(throws: ArcImport.Failure.notJSON) { try ArcImport.parse(Self.fixture.prefix(200)) }
         let empty = try! JSONSerialization.data(withJSONObject: ["sidebar": ["containers": []]])
         #expect(throws: ArcImport.Failure.noSpaces) { try ArcImport.parse(empty) }
     }

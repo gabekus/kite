@@ -27,8 +27,13 @@ enum ArcImportController {
         if environment["KITE_SUPPORT_PATH"] != nil, let path = environment["KITE_ARC_DATA_PATH"] {
             return URL(fileURLWithPath: path, isDirectory: true)
         }
+        if let chosenDirectory { return chosenDirectory }
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Arc")
     }
+
+    /// The folder picked in the open panel when Kite couldn't read Arc's own; the other files
+    /// (history, archive, routes) are read from there too. Set and read on the main thread only.
+    nonisolated(unsafe) private static var chosenDirectory: URL?
 
     static var sidebarFile: URL { arcDirectory.appendingPathComponent("StorableSidebar.json") }
 
@@ -82,37 +87,65 @@ enum ArcImportController {
         if let test = testMode, test.dataPath == nil {
             return testLog("no KITE_ARC_DATA_PATH, so nothing read")
         }
-        if let data = try? Data(contentsOf: sidebarFile) {
-            confirm(data, store: store, window: window)
-            return
+        if let found = readSidebar(in: arcDirectory) {
+            return confirm(found.result, backup: found.backup, store: store, window: window)
         }
-        if testMode != nil { return testLog("no StorableSidebar.json") }
+        // Read, but nothing to import: say so rather than ask for another file.
+        if let data = try? Data(contentsOf: sidebarFile) {
+            do { _ = try ArcImport.parse(data) } catch ArcImport.Failure.noSpaces {
+                return showError("There are no spaces to import.", detail: "Arc's sidebar has no spaces with tabs in them.", window: window)
+            } catch {}
+        }
+        if testMode != nil { return testLog("no StorableSidebar.json that Kite can read") }
         let panel = NSOpenPanel()
-        panel.message = "Kite couldn't find Arc's data. Choose StorableSidebar.json from Arc's folder in Application Support."
+        panel.message = "Kite couldn't read Arc's data. Choose Arc's folder (Library › Application Support › Arc), or StorableSidebar.json in it."
         panel.prompt = "Import"
-        panel.allowedContentTypes = [.json]
-        panel.directoryURL = sidebarFile.deletingLastPathComponent()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.json, .folder]
+        panel.directoryURL = arcDirectory.deletingLastPathComponent()
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
             MainActor.assumeIsolated {
-                do {
-                    confirm(try Data(contentsOf: url), store: store, window: window)
-                } catch {
-                    showError("Kite couldn't read that file.", detail: error.localizedDescription, window: window)
+                let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+                let folder = isFolder ? url : url.deletingLastPathComponent()
+                if !isFolder, !url.lastPathComponent.hasPrefix("StorableSidebar") {
+                    return showError("That's \(url.lastPathComponent), not Arc's sidebar.",
+                                     detail: "Choose Arc's folder, or StorableSidebar.json in it.", window: window)
                 }
+                guard let found = isFolder ? readSidebar(in: folder) : readSidebar(file: url) else {
+                    return showError("Kite couldn't import from that.",
+                                     detail: "Choose Arc's folder (Library › Application Support › Arc), or StorableSidebar.json in it.", window: window)
+                }
+                chosenDirectory = folder
+                confirm(found.result, backup: found.backup, store: store, window: window)
             }
         }
     }
 
-    private static func confirm(_ data: Data, store: BrowserStore, window: NSWindow) {
-        let result: ArcImport.Result
-        do {
-            result = try ArcImport.parse(data)
-        } catch ArcImport.Failure.noSpaces {
-            return showError("There are no spaces to import.", detail: "Arc's sidebar has no spaces with tabs in them.", window: window)
-        } catch {
-            return showError("That isn't Arc's sidebar file.", detail: "Choose StorableSidebar.json from Arc's folder in Application Support.", window: window)
+    /// The first of Arc's sidebar files in `folder` that imports (see `ArcImport.sidebarCandidates`),
+    /// and whether it's a backup because the current one wouldn't. Why each one failed goes to the
+    /// log, without its contents.
+    private static func readSidebar(in folder: URL) -> (result: ArcImport.Result, backup: Bool)? {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        for name in ArcImport.sidebarCandidates(in: names) {
+            if let result = readSidebar(file: folder.appendingPathComponent(name)) {
+                return (result.result, name != "StorableSidebar.json")
+            }
         }
+        return nil
+    }
+
+    private static func readSidebar(file: URL) -> (result: ArcImport.Result, backup: Bool)? {
+        do {
+            return (try ArcImport.parse(Data(contentsOf: file)), false)
+        } catch {
+            NSLog("Kite: Arc import: %@ didn't import: %@", file.lastPathComponent, String(describing: error))
+            return nil
+        }
+    }
+
+    private static func confirm(_ result: ArcImport.Result, backup: Bool, store: BrowserStore, window: NSWindow) {
 
         // Incognito windows keep no history, so there's nowhere to put Arc's.
         let wantsHistory = store.historyRoot != nil
@@ -125,13 +158,13 @@ enum ArcImportController {
                 wantsHistory ? Dictionary(uniqueKeysWithValues: historyFiles.map { ($0.0, ArcHistoryImport.read(from: $0.1)) }) : [:]
             }.value
             // The window may have closed while the files were read.
-            confirm(result, histories: histories, store: store, window: window.isVisible ? window : NSApp.mainWindow ?? window)
+            confirm(result, backup: backup, histories: histories, store: store, window: window.isVisible ? window : NSApp.mainWindow ?? window)
         }
     }
 
     private static var isReading = false
 
-    private static func confirm(_ result: ArcImport.Result, histories: [String: [HistoryEntry]], store: BrowserStore, window: NSWindow) {
+    private static func confirm(_ result: ArcImport.Result, backup: Bool, histories: [String: [HistoryEntry]], store: BrowserStore, window: NSWindow) {
         let reimported = result.spaces.filter { store.state.spaceIndex($0.id) != nil }.count
         let siteSearches = ArcSiteSearchImport.read()
         let keyBindings = (try? Data(contentsOf: keyBindingsFile)).flatMap { try? ArcKeyBindingsImport.parse($0) } ?? []
@@ -146,6 +179,9 @@ enum ArcImportController {
         let shownRoutes = routes?.keeping(spaces: Set(result.spaces.filter { !result.untitledSpaceIDs.contains($0.id) }.map(\.id))
             .union(store.state.spaces.map(\.id)))
         var lines = [summary(result)]
+        if backup {
+            lines.append("Arc's current sidebar file couldn't be read, so this is from Arc's latest backup of it, which may be a little older.")
+        }
         let extras = [
             archive.isEmpty ? nil : count(archive.count, "archived tab"),
             historyCount == 0 ? nil : count(historyCount, "history page"),
