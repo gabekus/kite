@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>opener</title>
+<!-- The opener half of the popup test (scripts/test-popup-opener.sh). Served from
+     127.0.0.1:A; the popup comes from localhost:B. Each button opens the popup one way, the
+     popup posts {mode} to window.opener and closes itself, and window.results records what
+     reached this page. ?delay=MS makes the popup wait that long first. -->
+<style>body { font: 16px system-ui; } button, a { display: block; margin: 12px; font-size: 18px; }</style>
+<button id="features">window.open with features (Apple JS, Google)</button>
+<button id="tab">window.open without features</button>
+<button id="hop">window.open through a redirect</button>
+<a id="link" target="_blank" rel="opener">target=_blank rel=opener link</a>
+<pre id="log"></pre>
+<script>
+const params = new URLSearchParams(location.search);
+const popupOrigin = params.get("popup") || `http://localhost:${Number(location.port) + 1}`;
+const delay = params.get("delay") || 0;
+const popupURL = (mode) => `${popupOrigin}/popup.html?mode=${mode}&delay=${delay}&opener=${encodeURIComponent(location.origin)}`;
+window.results = {};
+const log = (line) => { document.getElementById("log").textContent += line + "\n"; };
+
+function watch(mode, popup) {
+    results[mode] = { opened: !!popup, message: false, closed: false };
+    if (!popup) return log(`${mode}: window.open returned null`);
+    const timer = setInterval(() => {
+        if (!popup.closed) return;
+        clearInterval(timer);
+        results[mode].closed = true;
+        log(`${mode}: popup closed`);
+    }, 100);
+}
+
+window.addEventListener("message", (event) => {
+    if (event.origin !== popupOrigin || !event.data || !event.data.mode) return;
+    const mode = event.data.mode;
+    results[mode] = Object.assign(results[mode] || { closed: false }, { message: true, from: event.origin });
+    log(`${mode}: message from ${event.origin}`);
+});
+
+features.onclick = () => watch("features", window.open(popupURL("features"), "kite_popup_test", "width=480,height=600"));
+tab.onclick = () => watch("tab", window.open(popupURL("tab")));
+hop.onclick = () => {
+    // Out to a third origin (127.0.0.1:B, cross-origin to both) and back, as an OAuth popup does.
+    const back = popupURL("hop");
+    const hopURL = `http://127.0.0.1:${new URL(popupOrigin).port}/hop?to=${encodeURIComponent(back)}`;
+    watch("hop", window.open(hopURL, "kite_popup_hop", "width=480,height=600"));
+};
+link.href = popupURL("link");
+link.onclick = () => { results.link = { opened: true, message: false, closed: false }; };
+</script>

@@ -34,7 +34,7 @@ enum SidebarRowsAnimator {
     }
 
     fileprivate static func animates(_ table: NSTableView) -> Bool {
-        CACurrentMediaTime() < armedUntil && hosts.allObjects.contains { table.isDescendant(of: $0) }
+        !(table is SidebarTableView) && CACurrentMediaTime() < armedUntil && hosts.allObjects.contains { table.isDescendant(of: $0) }
     }
 
     fileprivate static func isGrouped(_ table: NSTableView) -> Bool {

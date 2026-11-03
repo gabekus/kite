@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>popup</title>
+<!-- The popup half of the popup test: posts its mode to window.opener, then closes itself,
+     the way appleid.apple.com (response_mode=web_message) and Google Identity Services do. -->
+<pre id="log"></pre>
+<script>
+const params = new URLSearchParams(location.search);
+const mode = params.get("mode");
+const log = (line) => { document.getElementById("log").textContent += line + "\n"; };
+// ?delay=MS stays open that long first, as a popup does while the user approves it.
+setTimeout(() => {
+    if (window.opener) {
+        window.opener.postMessage({ mode }, params.get("opener") || "*");
+        log("posted to opener");
+        setTimeout(() => window.close(), 300);
+    } else {
+        document.title = "popup: no opener";
+        log("window.opener is null");
+    }
+}, Number(params.get("delay") || 0));
+</script>
