@@ -1,7 +1,7 @@
 #pragma once
 // The GPU side of Kite's chrome: one D3D11 device and the compiled shaders (shaders/*.hlsl),
-// drawing either into the window's swap chain (Compositor) or offscreen at any size, for
-// captures and the GPU-vs-reference backdrop test. The Mac's ShaderLibrary + ThemeView.
+// drawing either into the window's swap chain (Compositor) or offscreen in float for the
+// GPU-vs-reference backdrop test. The Mac's ShaderLibrary + ThemeView.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -39,6 +39,11 @@ public:
     bool IsSoftware() const { return software_; }
     // The adapter's name, e.g. for the backdrop test's report.
     const std::wstring& AdapterName() const { return adapterName_; }
+    // The largest texture side: 16384 px at feature level 11, 8192 at 10.x.
+    UINT MaxTextureSize() const { return maxTextureSize_; }
+    // Unbinds everything and submits pending work, so released swap chain buffers really are
+    // released (D3D11 destroys objects lazily) before ResizeBuffers.
+    void Flush();
 
     // Clears `target` to `base` (premultiplied) and draws the theme over it, as Core Animation
     // composites the Mac's ThemeView over the window's material.
@@ -66,6 +71,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11BlendState> premultipliedOver_;
     bool software_ = false;
     std::wstring adapterName_;
+    UINT maxTextureSize_ = D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION;
     HANDLE deviceRemoved_ = nullptr;
     DWORD deviceRemovedCookie_ = 0;
 };

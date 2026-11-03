@@ -4,7 +4,6 @@
 
 #include <dwmapi.h>
 
-
 namespace kite {
 namespace {
 
@@ -134,7 +133,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_SIZE:
-        if (wParam != SIZE_MINIMIZED && onSize) onSize(LOWORD(lParam), HIWORD(lParam));
+        if (wParam != SIZE_MINIMIZED && onSize) onSize();
         return 0;
     case WM_ERASEBKGND:
         return 1;  // nothing to erase: there's no redirection bitmap

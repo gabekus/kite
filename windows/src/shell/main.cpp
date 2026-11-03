@@ -5,12 +5,12 @@
 //                            the session and exits 0 (CI). Errors go to the exit code,
 //                            never a dialog.
 //   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]
-//                            opens the window at W×H points (client area), waits for its
-//                            first frame on screen, saves the window's layers as a PNG and
-//                            exits: the Helix UI gate (docs/helix.md). The layers are drawn
-//                            offscreen at N× (default: the monitor's scale), so a 2× capture
-//                            lines up with a Retina Mac on any monitor, over the solid
-//                            material fallback rather than whatever is behind the window.
+//                            opens the window at W×H points (client area), saves the frame
+//                            it presents as a PNG and exits: the Helix UI gate
+//                            (docs/helix.md). The window is laid out at N× (default: the
+//                            monitor's scale), so a 2× capture lines up with a Retina Mac on
+//                            any monitor, and drawn over the solid material fallback rather
+//                            than whatever is behind it.
 //                            Pair with KITE_SUPPORT_PATH and a session from windows/helix/states.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
@@ -19,6 +19,7 @@
 
 #include <shellapi.h>
 
+#include <algorithm>
 #include <charconv>
 #include <filesystem>
 #include <memory>
@@ -26,6 +27,7 @@
 #include <string>
 #include <vector>
 #include <string_view>
+#include <utility>
 #include <variant>
 
 #include "core/OKLab.h"
@@ -127,7 +129,6 @@ int Fail(bool quiet, const std::wstring& message, int code) {
     return code;
 }
 
-
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
@@ -172,10 +173,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (sizeOption.present && !(sizeOption.value && (size = ParseSize(*sizeOption.value)))) {
         return Fail(quiet, L"--window-size takes W,H in points", kUsage);
     }
-    // A capture is one texture, and D3D11's are at most 16384 px a side.
-    if (captureScale && size && std::max(size->first, size->second) * captureScale > 16384) {
-        return Fail(quiet, L"--window-size × --capture-scale must be at most 16384 px a side", kUsage);
-    }
+    if (scaleOption.present && !captureOption.present) return Fail(quiet, L"--capture-scale only goes with --capture", kUsage);
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
@@ -232,10 +230,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     window.onClose = [&] {
         if (maySave) saveError = session.Save(state);
     };
-    if (captureScale) window.UseFixedScale(captureScale);
-    // A capture always has a set size (the Mac's default unless asked), even on a small screen.
-    if (capture && !size) size = std::make_pair(kite::MainWindow::kDefaultWidth, kite::MainWindow::kDefaultHeight);
-    if (size) window.SetClientSize(size->first, size->second);
 
     // The backdrop: the selected space's theme over the system's acrylic, or over a solid
     // colour where there's none. A capture always uses the solid colour, so it doesn't depend
@@ -272,14 +266,31 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (!problem.empty()) OutputDebugStringW((L"Kite: drawing failed: " + problem + L"\n").c_str());
         return problem;
     };
-    window.onSize = [&](UINT, UINT) { draw(); };
+    window.onSize = [&] { draw(); };
     // On an early return the compositor goes before the window: stop drawing first.
     struct StopDrawing {
         kite::MainWindow& window;
         ~StopDrawing() { window.onSize = nullptr; }
     } stopDrawing{window};
-    if (std::wstring problem = draw(); !problem.empty() && quiet) {
-        return Fail(quiet, L"drawing the first frame failed: " + problem, kWindowFailed);
+
+    // Sized after the swap chain exists, so a capture also goes through a resize, as a real
+    // window does when it's moved to another monitor or maximized.
+    if (captureScale) window.UseFixedScale(captureScale);
+    // A capture always has a set size (the Mac's default unless asked), even on a small screen.
+    if (capture && !size) size = std::make_pair(kite::MainWindow::kDefaultWidth, kite::MainWindow::kDefaultHeight);
+    if (size) window.SetClientSize(size->first, size->second);
+    if (capture) {
+        // A capture is one texture: refuse one the GPU can't hold rather than save it stretched.
+        RECT client{};
+        GetClientRect(window.Handle(), &client);
+        if (static_cast<UINT>(std::max(client.right, client.bottom)) > renderer->MaxTextureSize()) {
+            return Fail(quiet, L"the capture would be " + std::to_wstring(client.right) + L"×" + std::to_wstring(client.bottom) +
+                                   L" px, more than this GPU's " + std::to_wstring(renderer->MaxTextureSize()) + L" px a side",
+                        kUsage);
+        }
+    }
+    if (std::wstring problem = draw(); !problem.empty()) {
+        return Fail(quiet, L"Kite couldn't draw its window: " + problem, kWindowFailed);
     }
 
     // Quiet runs open behind other windows without focus, and ignore a launcher's "start maximized".
@@ -306,7 +317,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         // (the window is laid out at that scale on any monitor), else at the monitor's.
         kite::Pixels pixels;
         captureError = draw(&pixels);
-        if (captureError.empty() && pixels.bgra.empty()) captureError = L"no frame was drawn";
+        RECT client{};
+        GetClientRect(window.Handle(), &client);
+        if (captureError.empty() && (pixels.width != static_cast<UINT>(client.right) || pixels.height != static_cast<UINT>(client.bottom))) {
+            captureError = L"the frame isn't the window's size";
+        }
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
     }

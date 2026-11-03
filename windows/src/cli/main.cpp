@@ -7,15 +7,16 @@
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]
-//   kitecore [--profile DIR] theme SPACE_ID
+//   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
 // isn't running on: both write session.json. `theme` prints the space's theme maths
-// (lightness, foreground, glow, accent) and its window backdrop (material and corner pixels
-// at 1280×820) as sRGB hex.
+// (lightness, foreground, glow, accent) and its window backdrop (material, and the corner and
+// centre pixels at WIDTH×HEIGHT px, default 1280×820) as sRGB hex.
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -48,7 +49,7 @@ int Usage() {
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]\n"
-        "       kitecore [--profile DIR] theme SPACE_ID\n",
+        "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n",
         stderr);
     return kUsage;
 }
@@ -118,11 +119,11 @@ std::string Hex(const ThemeColor& c) {
 
 std::string Hex(const Rgba& c) { return Hex(ThemeColor{c.r, c.g, c.b}); }
 
-json::Value ThemeSummary(const Theme& theme) {
-    // The window's backdrop at the Mac's default size (in pixels at 1×): the theme over the
-    // solid material colour, as Kite.exe --capture draws it.
+json::Value ThemeSummary(const Theme& theme, int width, int height) {
+    // The window's backdrop at width × height px: the theme over the solid material colour,
+    // as Kite.exe --capture draws it (CI compares the two).
     const Rgba material = MaterialFallback(!PrefersDarkForeground(theme));
-    const float w = 1280, h = 820;
+    const float w = static_cast<float>(width), h = static_cast<float>(height);
     const ThemeUniforms uniforms = MakeThemeUniforms(theme, w, h);
     auto at = [&](float x, float y) { return json::Value(Hex(Over(ShadeThemePixel(uniforms, x + 0.5f, y + 0.5f), material))); };
     json::Object backdrop{{"size", json::Value(json::Array{json::Value(w), json::Value(h)})},
@@ -131,7 +132,7 @@ json::Value ThemeSummary(const Theme& theme) {
                           {"topRight", at(w - 1, 0)},
                           {"bottomLeft", at(0, h - 1)},
                           {"bottomRight", at(w - 1, h - 1)},
-                          {"centre", at(w / 2, h / 2)}};
+                          {"centre", at(static_cast<float>(width / 2), static_cast<float>(height / 2))}};
     json::Array colors;
     for (const auto& c : theme.colors) colors.push_back(json::Value(Hex(c)));
     auto [glowA, glowB] = GlowColors(theme);
@@ -196,10 +197,18 @@ int main(int argc, char** argv) {
     if (command == "state") {
         std::puts(json::Write(Summary(state)).c_str());
         return kOk;
-    } else if (command == "theme" && args.size() == 2) {
+    } else if (command == "theme" && (args.size() == 2 || args.size() == 4)) {
         auto space = state.SpaceIndex(Id(args[1]));
         if (!space) return kNotFound;
-        std::puts(json::Write(ThemeSummary(state.spaces[*space].theme)).c_str());
+        int width = 1280, height = 820;
+        if (args.size() == 4) {
+            auto parse = [](const std::string& text, int& out) {
+                auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), out);
+                return error == std::errc() && end == text.data() + text.size() && out > 0 && out <= 16384;
+            };
+            if (!parse(args[2], width) || !parse(args[3], height)) return Usage();
+        }
+        std::puts(json::Write(ThemeSummary(state.spaces[*space].theme, width, height)).c_str());
         return kOk;
     } else if (command == "resolve") {
         auto url = url_input::Resolve(Join(args, 1), engine);

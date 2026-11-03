@@ -36,7 +36,7 @@ ComPtr<ID3DBlob> Compile(const char* entry, const char* target, std::wstring& er
         error = HResultMessage(L"compiling Theme.hlsl", hr);
         if (messages) {
             const char* text = static_cast<const char*>(messages->GetBufferPointer());
-            error += L": " + std::wstring(text, text + messages->GetBufferSize());
+            error += L": " + std::wstring(text, text + strnlen(text, messages->GetBufferSize()));
         }
         return nullptr;
     }
@@ -77,6 +77,7 @@ bool Renderer::Init(std::wstring& error) {
         error = HResultMessage(L"D3D11CreateDevice", hr);
         return false;
     }
+    if (device_->GetFeatureLevel() < D3D_FEATURE_LEVEL_11_0) maxTextureSize_ = 8192;  // D3D10_REQ_TEXTURE2D_U_OR_V_DIMENSION
     // Vendor 0x1414 is Microsoft: WARP, or the Basic Render Driver (WARP behind a "hardware"
     // adapter) on machines without a GPU driver.
     ComPtr<IDXGIDevice> dxgiDevice;
@@ -144,6 +145,11 @@ bool Renderer::Init(std::wstring& error) {
         return false;
     }
     return true;
+}
+
+void Renderer::Flush() {
+    context_->ClearState();
+    context_->Flush();
 }
 
 void Renderer::DrawTheme(ID3D11RenderTargetView* target, UINT width, UINT height, const ThemeUniforms& uniforms,

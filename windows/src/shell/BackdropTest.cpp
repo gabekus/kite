@@ -26,8 +26,8 @@ struct Case {
 // float maths in another order and hardware exp and pow. A channel off by more than
 // kTolerance is an outlier: far below the ±0.5/255 dither, so dropping the dither or
 // misplacing the grain fails. A few outliers can be where the grain hash's fract() lands on
-// the other side of 1 on a GPU; a missed row or column of the smallest case (1/640 of it) is
-// more than kMaxOutlierShare.
+// the other side of 1 on a GPU (Theme.hlsl marks the hash `precise` against that); a missed
+// row or column of the smallest case (333×217: 1/333 of it) is more than kMaxOutlierShare.
 constexpr double kTolerance = 1e-4;
 constexpr double kMaxOutlierShare = 0.0005;
 constexpr double kMaxMeanDifference = 1e-5;

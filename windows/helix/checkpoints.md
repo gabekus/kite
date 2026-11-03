@@ -8,9 +8,9 @@ gets its own `helix/W<n>-…` branch.
 
 | id | checkpoint | ports (Mac) | status |
 |---|---|---|---|
-| W0 | Win32 window, profile path, CI launch | AppDelegate.supportDirectory, BrowserWindowController (window sizes) | in review (#260) [UI gate not run: nothing to compare until W3 draws; no 200% Windows display yet] |
+| W0 | Win32 window, profile path, CI launch | AppDelegate.supportDirectory, BrowserWindowController (window sizes) | in review (#260) [UI gate not run: nothing to compare until W3 draws] |
 | W1 | Model core: tabs, folders, spaces, themes, favorites per profile, session.json shared with the Mac, `kitecore` | KiteCore Models, BrowserState (open, select, spaces), Profiles (favorites), SessionStore, URLInput | in review (#260) |
-| W2 | UI gate plumbing: Windows `--capture`, `--window-size`, `--capture-scale`; Mac `KITE_WINDOW_SIZE`; first `states/` fixture | `kite ui capture` | in review (#260) [CI checks the capture's size and pixels at 100%; the 2× run and the Mac side need Gabe's PC and Mac] |
+| W2 | UI gate plumbing: Windows `--capture`, `--window-size`, `--capture-scale`; Mac `KITE_WINDOW_SIZE`; first `states/` fixture | `kite ui capture` | in review (#260) [from W3 (#261) CI runs the 1× and 2× captures on its 100% display; the Mac side needs Gabe's Mac] |
 | W3a | Theme colour math (OKLab, lightness, glow, accent) | Theme.swift | in review (#260) |
 | W3 | DirectComposition root and the theme backdrop (HLSL port of Kite.metal), drawing only on change, rebuilt after a lost GPU; `--capture` saves the window's presented frame at a set scale | KiteMac/Metal, Shaders/Kite.metal | in progress (#261) |
 | W3b | Full-size content: the backdrop under the title bar with Windows' caption buttons over it, like the Mac's `.fullSizeContentView` with a transparent title bar | BrowserWindowController (styleMask, titlebar) | planned |

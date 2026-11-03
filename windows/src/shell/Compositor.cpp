@@ -25,8 +25,9 @@ std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, st
     std::unique_ptr<Compositor> compositor(new Compositor(renderer));
     RECT client{};
     GetClientRect(hwnd, &client);
-    compositor->width_ = static_cast<UINT>(std::clamp<LONG>(client.right - client.left, 1, D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION));
-    compositor->height_ = static_cast<UINT>(std::clamp<LONG>(client.bottom - client.top, 1, D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION));
+    const LONG largest = static_cast<LONG>(renderer.MaxTextureSize());
+    compositor->width_ = static_cast<UINT>(std::clamp<LONG>(client.right - client.left, 1, largest));
+    compositor->height_ = static_cast<UINT>(std::clamp<LONG>(client.bottom - client.top, 1, largest));
 
     ComPtr<IDXGIDevice> dxgiDevice;
     HRESULT hr = renderer.Device()->QueryInterface(IID_PPV_ARGS(dxgiDevice.GetAddressOf()));
@@ -86,9 +87,10 @@ Compositor::~Compositor() {
 
 std::wstring Compositor::Draw(UINT width, UINT height, const ThemeUniforms& uniforms, const Rgba& base, Pixels* readBack) {
     if (deviceLost_) return L"the GPU device was lost";
-    // D3D11's largest texture; a bigger window (8192 points at 300%) is stretched to fit.
-    width = std::clamp(width, 1u, static_cast<UINT>(D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION));
-    height = std::clamp(height, 1u, static_cast<UINT>(D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION));
+    // At most the GPU's largest texture; a bigger window (over 5461 points at 300%) is
+    // stretched to fit. A capture refuses that size instead (main.cpp).
+    width = std::clamp(width, 1u, renderer_.MaxTextureSize());
+    height = std::clamp(height, 1u, renderer_.MaxTextureSize());
     const bool unchanged = presented_ && width == width_ && height == height_ &&
                            std::memcmp(&uniforms, &lastUniforms_, sizeof(uniforms)) == 0 &&
                            std::memcmp(&base, &lastBase_, sizeof(base)) == 0;
@@ -100,22 +102,22 @@ std::wstring Compositor::Draw(UINT width, UINT height, const ThemeUniforms& unif
     };
     HRESULT hr = S_OK;
     if (width != width_ || height != height_) {
+        renderer_.Flush();
         if (FAILED(hr = swapChain_->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, kSwapChainFlags))) {
             return fail(L"ResizeBuffers", hr);
         }
         width_ = width;
         height_ = height;
     }
-    // Wait for the frame queue to have room, so this frame is the next one shown. Bounded, so
-    // a stalled compositor can't hang the UI thread.
-    if (frameLatency_) WaitForSingleObjectEx(frameLatency_, 1000, TRUE);
-
     ComPtr<ID3D11Texture2D> buffer;
     if (FAILED(hr = swapChain_->GetBuffer(0, IID_PPV_ARGS(buffer.GetAddressOf())))) return fail(L"GetBuffer", hr);
     ComPtr<ID3D11RenderTargetView> view;
     if (FAILED(hr = renderer_.Device()->CreateRenderTargetView(buffer.Get(), nullptr, view.GetAddressOf()))) {
         return fail(L"CreateRenderTargetView", hr);
     }
+    // Wait for the frame queue to have room, so this frame is the next one shown. Bounded, so
+    // a stalled compositor can't hang the UI thread.
+    if (frameLatency_) WaitForSingleObjectEx(frameLatency_, 1000, TRUE);
     renderer_.DrawTheme(view.Get(), width, height, uniforms, base);
     std::wstring readBackError;
     if (readBack) {

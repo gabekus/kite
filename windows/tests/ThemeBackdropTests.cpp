@@ -2,8 +2,13 @@
 // shader is checked against on the GPU. These pin the reference to what the Metal source says.
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <string>
 
 #include "Check.h"
+#include "core/Json.h"
 #include "core/OKLab.h"
 #include "core/ThemeBackdrop.h"
 
@@ -113,4 +118,63 @@ TEST(materialFallbackIsWindowsSolidBackdropColours) {
     Rgba dark = MaterialFallback(true), light = MaterialFallback(false);
     CHECK(std::lround(dark.r * 255) == 0x20 && dark.r == dark.g && dark.g == dark.b && dark.a == 1);
     CHECK(std::lround(light.r * 255) == 0xF3 && light.r == light.g && light.g == light.b && light.a == 1);
+}
+
+namespace {
+
+// The fixture's member `key`; the fixture is ours, so a missing one is a test bug.
+const json::Value& At(const json::Value& value, const char* key) {
+    static const json::Value null;
+    const json::Value* member = value.Find(key);
+    return member ? *member : null;
+}
+
+Theme ThemeFromJson(const json::Value& value) {
+    std::vector<ThemeColor> colors;
+    for (const json::Value& c : *At(value, "colors").AsArray()) {
+        const json::Array& rgb = *c.AsArray();
+        colors.push_back({static_cast<float>(*rgb[0].AsNumber()), static_cast<float>(*rgb[1].AsNumber()),
+                          static_cast<float>(*rgb[2].AsNumber())});
+    }
+    return Theme::Make(std::move(colors), static_cast<float>(*At(value, "grain").AsNumber()), static_cast<float>(*At(value, "tint").AsNumber()));
+}
+
+}  // namespace
+
+TEST(referenceMatchesTheGoldenFixtureTheMacChecksKiteMetalAgainst) {
+    // Tests/Fixtures/theme-backdrop.json: the Mac's ThemeShaderGoldenTests renders these themes
+    // with Kite.metal and compares, so this pins the CPU reference (and, through
+    // --backdrop-test, Theme.hlsl) to the Mac's shader. Regenerate with gen-theme-golden only
+    // for a deliberate change.
+    std::ifstream file(std::filesystem::path(KITE_FIXTURES_DIR) / "theme-backdrop.json", std::ios::binary);
+    std::stringstream text;
+    text << file.rdbuf();
+    auto parsed = json::Parse(text.str());
+    CHECK(std::holds_alternative<json::Value>(parsed));
+    if (!std::holds_alternative<json::Value>(parsed)) return;
+    const json::Value& root = std::get<json::Value>(parsed);
+    const json::Array& cases = *At(root, "cases").AsArray();
+    CHECK(cases.size() == 6);
+    for (const json::Value& c : cases) {
+        const json::Array& size = *At(c, "size").AsArray();
+        const ThemeUniforms u = MakeThemeUniforms(ThemeFromJson(At(c, "from")), ThemeFromJson(At(c, "to")),
+                                                  static_cast<float>(*At(c, "progress").AsNumber()),
+                                                  static_cast<float>(*size[0].AsNumber()), static_cast<float>(*size[1].AsNumber()));
+        // Another compiler can round the grain hash's last step differently at a pixel or two.
+        int off = 0;
+        for (const json::Value& sample : *At(c, "samples").AsArray()) {
+            const json::Array& v = *sample.AsArray();
+            const Rgba p = ShadeThemePixel(u, static_cast<float>(*v[0].AsNumber()) + 0.5f, static_cast<float>(*v[1].AsNumber()) + 0.5f);
+            const float expected[4] = {static_cast<float>(*v[2].AsNumber()), static_cast<float>(*v[3].AsNumber()),
+                                       static_cast<float>(*v[4].AsNumber()), static_cast<float>(*v[5].AsNumber())};
+            const float got[4] = {p.r, p.g, p.b, p.a};
+            for (int i = 0; i < 4; ++i) {
+                if (!(std::fabs(got[i] - expected[i]) <= 1e-5f)) {
+                    ++off;
+                    break;
+                }
+            }
+        }
+        CHECK(off <= 2);
+    }
 }

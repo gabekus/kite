@@ -44,16 +44,15 @@ public:
     // from the space's theme (dark text on a light theme), not from the system setting.
     void SetDarkAppearance(bool dark);
     // Windows 11's acrylic behind the client area, the counterpart of the Mac's .sidebar
-    // material blended behind the window. False where there's none (Windows 10, Server): the
-    // caller then draws an opaque base colour.
+    // material blended behind the window. False where there's none (Windows 10, Windows 11
+    // before 22H2, Server): the caller then draws an opaque base colour.
     bool UseSystemBackdrop();
-    UINT Dpi() const { return dpi_; }
 
     // Runs before the window is destroyed (WM_CLOSE), and at logoff or shutdown
     // (WM_ENDSESSION), e.g. to save the session.
     std::function<void()> onClose;
-    // The client area changed size, in pixels (also after a DPI change).
-    std::function<void(UINT width, UINT height)> onSize;
+    // The client area changed size (also after a DPI change); GetClientRect has the new one.
+    std::function<void()> onSize;
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);

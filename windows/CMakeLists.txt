@@ -124,6 +124,9 @@ add_executable(KiteCoreTests
   tests/URLInputTests.cpp
 )
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
+# Writes Tests/Fixtures/theme-backdrop.json (see the file); not run by the tests.
+add_executable(gen-theme-golden EXCLUDE_FROM_ALL tests/GenThemeGolden.cpp)
+target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
 # The session fixture shared with the Mac test suite.
 target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
                                                KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states")

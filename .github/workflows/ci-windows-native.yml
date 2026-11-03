@@ -116,11 +116,13 @@ jobs:
           New-Item -ItemType Directory -Path $profileDir | Out-Null
           Copy-Item windows/helix/states/two-spaces.json (Join-Path $profileDir 'session.json')
           $env:KITE_SUPPORT_PATH = $profileDir
-          # Captures at 1x and 2x (drawn offscreen, so 2x works on the runner's 100% display).
-          # The selected Work space has two colours over the light fallback (its orange wants dark
-          # text, as on the Mac): opaque everywhere,
-          # warm at the top left and pinker at the bottom right.
+          # Captures at 1x and 2x (the window laid out at that scale, so 2x works on the runner's
+          # 100% display). Each sampled pixel must match core's CPU reference of the Mac's shader
+          # (kitecore theme, the same theme over the same solid material) within two levels: that
+          # catches the wrong material, tint, grain, size or space in what the window shows.
           Add-Type -AssemblyName System.Drawing
+          $kitecore = Resolve-Path windows/build/Release/kitecore.exe
+          $space = (& $kitecore state | ConvertFrom-Json).selectedSpaceID
           foreach ($scale in 1, 2) {
             $png = Join-Path $env:RUNNER_TEMP "kite-capture-${scale}x.png"
             $stderrFile = Join-Path $env:RUNNER_TEMP "kite-capture-${scale}x-stderr.txt"
@@ -130,20 +132,26 @@ jobs:
             $null = $process.Handle
             if (-not $process.WaitForExit(60000)) { $process.Kill(); throw "Kite.exe --capture ($scale x) hung" }
             if ($process.ExitCode -ne 0) { throw "Kite.exe --capture ($scale x) exited with $($process.ExitCode): $(Get-Content $stderrFile -Raw)" }
+            $w = 1280 * $scale; $h = 820 * $scale
+            $reference = (& $kitecore theme $space $w $h | ConvertFrom-Json).backdrop
+            if ($LASTEXITCODE -ne 0) { throw "kitecore theme exited with $LASTEXITCODE" }
             $bitmap = [System.Drawing.Bitmap]::new($png)
             try {
-              $w = 1280 * $scale; $h = 820 * $scale
-              Write-Host "capture ${scale}x: $($bitmap.Width)x$($bitmap.Height) px"
+              Write-Host "capture ${scale}x: $($bitmap.Width)x$($bitmap.Height) px, material $($reference.material)"
               if ($bitmap.Width -ne $w -or $bitmap.Height -ne $h) { throw "capture is $($bitmap.Width)x$($bitmap.Height), expected ${w}x${h}" }
               # Parenthesised: PowerShell's comma binds tighter than minus.
-              foreach ($point in @(@(0, 0), @(($w - 1), 0), @(0, ($h - 1)), @(($w - 1), ($h - 1)), @(($w / 2), ($h / 2)))) {
+              $points = [ordered]@{ topLeft = @(0, 0); topRight = @(($w - 1), 0); bottomLeft = @(0, ($h - 1));
+                                    bottomRight = @(($w - 1), ($h - 1)); centre = @(($w / 2), ($h / 2)) }
+              foreach ($name in $points.Keys) {
+                $point = $points[$name]
                 $pixel = $bitmap.GetPixel($point[0], $point[1])
-                Write-Host "  pixel $($point -join ','): #$($pixel.Name)"
-                if ($pixel.A -ne 255) { throw "capture pixel $($point -join ',') isn't opaque" }
-              }
-              $topLeft = $bitmap.GetPixel(0, 0); $bottomRight = $bitmap.GetPixel($w - 1, $h - 1)
-              if ($topLeft.G -le $bottomRight.G -or $bottomRight.B -le $topLeft.B) {
-                throw "the gradient isn't there: top left #$($topLeft.Name), bottom right #$($bottomRight.Name)"
+                $expected = [Convert]::ToInt32($reference.$name.Substring(1), 16)
+                $er = ($expected -shr 16) -band 255; $eg = ($expected -shr 8) -band 255; $eb = $expected -band 255
+                Write-Host "  $name $($point -join ','): #$($pixel.Name), reference $($reference.$name)"
+                if ($pixel.A -ne 255) { throw "capture pixel $name isn't opaque" }
+                if ([Math]::Abs($pixel.R - $er) -gt 2 -or [Math]::Abs($pixel.G - $eg) -gt 2 -or [Math]::Abs($pixel.B - $eb) -gt 2) {
+                  throw "capture pixel $name is #$($pixel.Name), the reference is $($reference.$name)"
+                }
               }
             } finally { $bitmap.Dispose() }
           }
