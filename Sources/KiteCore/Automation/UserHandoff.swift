@@ -155,6 +155,11 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             /// The control is on the page but turned off (disabled or aria-disabled), with the page's own
             /// words about it when it gives some ("Only Super Administrators can invite members").
             case disabled(why: String?)
+            /// The tab has moved to another page than the one the step was handed over on, and the control isn't
+            /// on this one.
+            case offPage
+            /// The step's tab was closed.
+            case tabClosed
         }
 
         /// "h1.2": the handoff and the step's number.
@@ -166,6 +171,8 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         public var command: String?
         public var tab: UUID?
         public var locator: Locator?
+        /// The page the step was handed over on, to take the user back there (or reopen it) when they lose it.
+        public var url: String?
         public var state: State = .waiting
         /// What finished it, in words for Claude: "the user clicked the highlighted control".
         public var how: String?
@@ -177,7 +184,7 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         public var blocker: Blocker?
 
         public init(id: String, number: Int, instruction: String, why: String? = nil, command: String? = nil, tab: UUID? = nil,
-                    locator: Locator? = nil) {
+                    locator: Locator? = nil, url: String? = nil) {
             self.id = id
             self.number = number
             self.instruction = instruction
@@ -185,6 +192,7 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             self.command = command
             self.tab = tab
             self.locator = locator
+            self.url = url
         }
 
         public var isWaiting: Bool { state == .waiting }
@@ -208,12 +216,14 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
                     // The page's own words, which it controls: marked as page content, like everything else read off a page.
                     + (why.map { ". The page says: " + UntrustedContent.wrap($0, source: "the step's control") }
                         ?? ". Something it needs (a field, a choice, a permission) is probably missing")
+            case .offPage?: "the tab has left the step's page (\(url ?? "unknown")); Kite offers the user a button to go back"
+            case .tabClosed?: "its tab was closed; Kite offers the user a button to reopen \(url ?? "its page")"
             case nil: found == false ? "Kite can't find its control on the page right now" : nil
             }
         }
 
         /// `found` and `blocker` are only what the last look saw, so they aren't saved.
-        enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, state, how }
+        enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, url, state, how }
     }
 
     /// "h1", "h2": short enough for Claude to pass back.
@@ -236,8 +246,9 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
 
     /// A waiting step whose control is turned off while no earlier step of the handoff waits: the user is stuck on
     /// it. (While an earlier one waits, that step may be what turns the control on.)
+    /// Leaving the step's page isn't being stuck: the user can go back with a click.
     public func isBlocked(_ step: Step) -> Bool {
-        step.isWaiting && step.blocker != nil && !steps.contains { $0.isWaiting && $0.number < step.number }
+        step.isWaiting && step.blocker != nil && step.blocker != .offPage && !steps.contains { $0.isWaiting && $0.number < step.number }
     }
 
     public var blockedSteps: [Step] { steps.filter(isBlocked) }
@@ -321,6 +332,23 @@ public struct HandoffBlockWatch: Sendable {
         since = since.filter { blocked.contains($0.key) }
         for id in blocked where since[id] == nil { since[id] = now }
         return since.values.contains { now.timeIntervalSince($0) >= delay }
+    }
+}
+
+extension Handoff {
+    /// Whether a tab at `current` has left the page a step was handed over on. Another site always has. On the same
+    /// site another address only has while the control can't be found there: single-page apps change the address as
+    /// the user works.
+    public static func isOffPage(stepURL: String?, current: URL?, found: Bool?) -> Bool {
+        guard let stepURL, let page = URL(string: stepURL), let current, ["http", "https"].contains(page.scheme ?? "") else { return false }
+        if !isSameSite(page, current) { return true }
+        let address = { (url: URL) in url.absoluteString.hasSuffix("/") ? String(url.absoluteString.dropLast()) : url.absoluteString }
+        return found == false && address(page) != address(current)
+    }
+
+    /// Same scheme, host and port: where the step's page and its ring belong.
+    public static func isSameSite(_ a: URL, _ b: URL) -> Bool {
+        a.scheme?.lowercased() == b.scheme?.lowercased() && a.host?.lowercased() == b.host?.lowercased() && a.port == b.port
     }
 }
 

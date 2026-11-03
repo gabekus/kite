@@ -160,6 +160,8 @@ private struct HandoffStepCard: View {
                 Text("Run it in Terminal, then press Done.")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
+            } else if step.blocker == .tabClosed {
+                HandoffBlockedNote(text: "This step's tab was closed.")
             } else if !onFront {
                 Text("This step is in another tab.")
                     .font(.system(size: 11))
@@ -168,6 +170,8 @@ private struct HandoffStepCard: View {
                 HandoffBlockedNote(text: handoff.isBlocked(step)
                     ? Self.disabledText(target: step.targetName, why: why)
                     : "It's turned off for now. It may turn on once you've done the steps before it.")
+            } else if step.blocker == .offPage {
+                HandoffBlockedNote(text: "This tab has left the page for this step.")
             } else if step.locator != nil, step.found == false {
                 Text("Kite can't find it on this page yet. Do it by hand, then press Done.")
                     .font(.system(size: 11))
@@ -175,7 +179,11 @@ private struct HandoffStepCard: View {
             }
 
             HStack(spacing: 8) {
-                if !onFront {
+                if step.blocker == .tabClosed || step.blocker == .offPage, step.url != nil {
+                    Button(step.blocker == .tabClosed ? "Reopen Page" : "Take Me Back") { automation.returnToStepPage(step.id) }
+                        .controlSize(.small)
+                        .help(step.url ?? "")
+                } else if !onFront {
                     Button("Show Tab") { automation.showTab(of: step.id) }
                         .controlSize(.small)
                 }
