@@ -452,7 +452,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if ((message == WM_KEYDOWN || message == WM_CHAR) && commandBar && !commandBar->IsOpen() && keysForBar()) {
             openCommandBar(kite::CommandBarMode::NewTab);
         }
-        if (commandBar && commandBar->HandleMessage(message, wParam, lParam, result)) return true;
+        if (commandBar && commandBar->HandleMessage(message, wParam, lParam, result)) {
+            if (message == WM_LBUTTONDOWN) sidebar->ForgetActivation();
+            return true;
+        }
         if (sidebar->HandleMouse(message, wParam, lParam)) return true;
         if (sidebar->HandleMessage(message)) {
             // Its own redraw found the GPU gone: the window's draw rebuilds everything.

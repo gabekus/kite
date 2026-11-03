@@ -59,6 +59,9 @@ public:
     bool HandleMouse(UINT message, WPARAM wParam, LPARAM lParam);
     // Forgets the pointer and any press (the command bar opened over the window).
     void ClearHover();
+    // A left press went to something else (the command bar): the click that brought the window
+    // forward is over, and the next one on a row taps.
+    void ForgetActivation();
 
     // The window's compositor, whose chrome it draws in; null drops every GPU object (before
     // the compositor is rebuilt after a lost device).
@@ -149,7 +152,7 @@ private:
     std::map<std::string, float> scrolls_;  // other spaces' places in their lists
     std::optional<POINT> pointer_;    // client px, while it's over the window
     bool trackingLeave_ = false;
-    std::optional<size_t> hoverRow_;
+    std::optional<std::pair<SidebarRow::Kind, std::string>> hover_;  // the hovered row's kind and id
     std::optional<SidebarPress> press_;
     bool activating_ = false;         // the next press brings the window forward
     int clicks_ = 0;

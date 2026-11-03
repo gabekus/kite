@@ -595,7 +595,7 @@ void SidebarView::DrawContent(ID2D1DeviceContext* context) {
         const float top = listTop + row.top - scroll_;
         if (top >= listBottom) break;
         if (top + row.height <= listTop) continue;
-        const bool hovered = hoverRow_ == i;
+        const bool hovered = hover_ && hover_->first == row.kind && hover_->second == row.id;
         DrawRow(context, row, top, hovered);
     }
     context->PopAxisAlignedClip();
@@ -626,16 +626,24 @@ void SidebarView::RefreshHover() {
     const SidebarHit hit = pointer_ ? HitAt(PointOf(*pointer_)) : SidebarHit{};
     // What draws hovered is a row (the header's chevron is part of its row); the address field
     // has no hover of its own yet (its buttons come with the toolbar).
-    std::optional<size_t> row;
-    if (hit.target == SidebarHit::Target::Row || hit.target == SidebarHit::Target::PinnedChevron) row = hit.row;
-    if (row == hoverRow_) return;
-    hoverRow_ = row;
+    // Held by the row's item, so a row that moves (during a press, say) keeps its hover.
+    std::optional<std::pair<SidebarRow::Kind, std::string>> hover;
+    if ((hit.target == SidebarHit::Target::Row || hit.target == SidebarHit::Target::PinnedChevron) && hit.row < model_.rows.size()) {
+        hover.emplace(model_.rows[hit.row].kind, model_.rows[hit.row].id);
+    }
+    if (hover == hover_) return;
+    hover_ = std::move(hover);
     Invalidate();
+}
+
+void SidebarView::ForgetActivation() {
+    activating_ = false;
 }
 
 void SidebarView::ClearHover() {
     pointer_.reset();
     press_.reset();
+    activating_ = false;
     RefreshHover();
 }
 
@@ -684,7 +692,9 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         GetCursorPos(&at);
         ScreenToClient(window_, &at);
         const D2D1_POINT_2F p = PointOf(at);
-        activating_ = LOWORD(lParam) == HTCLIENT && p.x >= 0 && p.x < width_;
+        // Only a left click's (the one the rows would take), and only until the next left press,
+        // whoever takes it (ForgetActivation).
+        activating_ = HIWORD(lParam) == WM_LBUTTONDOWN && LOWORD(lParam) == HTCLIENT && p.x >= 0 && p.x < width_;
         return false;  // DefWindowProc activates
     }
     case WM_MOUSEMOVE: {
