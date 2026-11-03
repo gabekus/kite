@@ -400,6 +400,16 @@ import Testing
         #expect(leader("mail.goo", tabs, url: true) == nil)
     }
 
+    @Test func aRedirectedFavoriteLeadsByItsPinnedAddress() {
+        var (state, mail) = gmail()
+        state.update(tab: mail) {
+            $0.url = URL(string: "https://accounts.google.com/v3/signin/identifier")
+            $0.title = "Gmail"
+        }
+        #expect(state.tab(mail)?.pinnedURL?.host() == "mail.google.com")
+        #expect(leader("mail.goo", state, url: true) == mail)
+    }
+
     @Test func theFavoriteLeadsEvenBehindStrongerMatches() {
         // Six tabs whose titles start with "mail" outrank the favorite's host match; it still leads.
         var (state, mail) = gmail()

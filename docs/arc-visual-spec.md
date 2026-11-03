@@ -181,7 +181,8 @@ A Site Search shortcut's inline completion ("gi" + "thub.com") makes the query U
 a favorite's host starts with what was typed, as Arc did while completing a favorite's host inline (not checked with
 a shortcut). The three-letter rule doesn't apply to URL-like queries. Also not observed, Kite's choice: a favorite
 whose address is being typed leads even over stronger title matches ("ma" with a "Maps" tab open) and from one
-letter; "www." and schemes aren't matched against the host ("www.goo" gets no leader). History is left out by exact
+letter; a pinned tab or favorite is also found by its pinned page's host (a Gmail favorite sent to accounts.google.com
+to sign in still leads for "mail"); "www." and schemes aren't matched against the host ("www.goo" gets no leader). History is left out by exact
 URL, so the current page under another fragment still shows.
 
 ## Arc vs Kite

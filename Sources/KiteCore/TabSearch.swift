@@ -45,24 +45,25 @@ public enum TabSearch {
         return Array(rank(query, in: state, limit: limit == .max ? limit : limit + 1).filter { $0.tab.id != selected }.prefix(limit))
     }
 
-    static func host(_ tab: BrowserTab) -> String {
-        (tab.url?.host() ?? "").lowercased().replacingOccurrences(of: "www.", with: "")
+    /// The page's host and, for a pinned tab or favorite that has moved on (redirected to sign in, say), its
+    /// pinned page's.
+    static func hosts(_ tab: BrowserTab) -> [String] {
+        Set([tab.url, tab.pinnedURL]).compactMap { $0?.host()?.lowercased().replacingOccurrences(of: "www.", with: "") }
     }
 
     static func completesHost(_ q: String, _ tab: BrowserTab) -> Bool {
-        let host = host(tab)
-        return host.hasPrefix(q) && host != q
+        hosts(tab).contains { $0.hasPrefix(q) && $0 != q }
     }
 
     static func score(_ q: String, _ tab: BrowserTab) -> Int? {
         // A renamed tab is found by its name as well as its page's title.
         let title = [tab.customTitle, tab.title].compactMap { $0 }.joined(separator: " ").lowercased()
-        let host = host(tab)
+        let hosts = hosts(tab)
         let url = tab.url?.absoluteString.lowercased() ?? ""
 
         if title.hasPrefix(q) { return titlePrefix }
         if title.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(q) }) { return wordPrefix }
-        if host.hasPrefix(q) { return hostPrefix }
+        if hosts.contains(where: { $0.hasPrefix(q) }) { return hostPrefix }
         if title.contains(q) { return inTitle }
         if url.contains(q) { return inAddress }
         return nil
