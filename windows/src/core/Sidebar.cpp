@@ -212,4 +212,51 @@ std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t spaceIndex
     return rows;
 }
 
+float SidebarListBottom(float height) { return std::max(M::kHeaderAreaHeight, height - M::kBottomBarHeight); }
+
+float SidebarContentHeight(const std::vector<SidebarRow>& rows) { return rows.empty() ? 0 : rows.back().top + rows.back().height; }
+
+float SidebarMaxScroll(const std::vector<SidebarRow>& rows, float height) {
+    return std::max(0.0f, SidebarContentHeight(rows) - (SidebarListBottom(height) - M::kHeaderAreaHeight));
+}
+
+std::optional<size_t> SidebarRowAt(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y) {
+    if (x < M::kPadding || x >= width - M::kPadding || y < M::kHeaderAreaHeight || y >= SidebarListBottom(height)) return std::nullopt;
+    const float at = y - M::kHeaderAreaHeight + scroll;
+    for (size_t i = 0; i < rows.size(); ++i) {
+        if (at >= rows[i].top && at < rows[i].top + rows[i].height) return i;
+    }
+    return std::nullopt;
+}
+
+SidebarHit SidebarHitTest(const std::vector<SidebarRow>& rows, float width, float height, float scroll, float x, float y) {
+    using Target = SidebarHit::Target;
+    // The field's text button: all of it but the 2pt at its end (SidebarHeader's textArea, with
+    // no buttons in the field yet).
+    if (y >= M::kUrlFieldTop && y < M::kHeaderAreaHeight && x >= M::kPadding && x < width - M::kPadding - 2) {
+        return {Target::AddressField, 0};
+    }
+    const auto index = SidebarRowAt(rows, width, height, scroll, x, y);
+    if (!index) return {};
+    const SidebarRow& row = rows[*index];
+    const float inRow = y - M::kHeaderAreaHeight + scroll - row.top;
+    switch (row.kind) {
+    case SidebarRow::Kind::Header: {
+        // The chevron's 26pt button, 1pt in from the row's end.
+        const float right = width - M::kPadding - (M::kIconInset - M::kPadding);
+        if (row.hasPinned && x >= right - M::kHeaderIconSize && x < right && inRow >= M::kHeaderIconTop &&
+            inRow < M::kHeaderIconTop + M::kHeaderIconSize) {
+            return {Target::PinnedChevron, *index};
+        }
+        return {Target::Row, *index};
+    }
+    case SidebarRow::Kind::Divider: return {};
+    default: {
+        const float pillTop = (M::kRowPitch - M::kPillHeight) / 2;
+        if (inRow < pillTop || inRow >= pillTop + M::kPillHeight) return {};
+        return {Target::Row, *index};
+    }
+    }
+}
+
 }  // namespace kite

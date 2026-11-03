@@ -149,6 +149,8 @@ struct BrowserState {
     void Select(const std::string& tabID, Timestamp now = Now());
     void SelectSpace(const std::string& id);
     void SelectAdjacentSpace(int offset);
+    // Opens or closes a pinned folder, at any depth in any space.
+    void SetFolderExpanded(const std::string& folderID, bool expanded);
     std::string AddSpace(std::string name, std::string icon, Theme theme);
 
     bool operator==(const BrowserState&) const = default;
