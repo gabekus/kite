@@ -14,10 +14,11 @@ $ProgressPreference = 'SilentlyContinue'  # Windows PowerShell 5.1's progress ba
 
 $CefVersion = '156.0.7+g47dbc1d+chromium-156.0.8078.17'
 $CefPlatform = 'windows64'
-# The archive's SHA-1, like scripts/fetch-cef.sh pins the macOS one. Until it's set the
-# script refuses to run; -AllowUnpinned checks against the CDN's own .sha1 instead (which
-# guards only against corruption) and prints the value to pin here.
-$CefSha1 = ''
+# The archive's SHA-1, like scripts/fetch-cef.sh pins the macOS one (2026-11-03, matched the
+# CDN's .sha1). -AllowUnpinned checks against the CDN's own .sha1 instead (which guards only
+# against corruption) and prints the value to pin here, for a new $CefVersion.
+$CefSha1 = 'e13cb97c5be44784c2dba6df960791ea5cf6d406'
+if ($AllowUnpinned) { $CefSha1 = '' }
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot '..')  # windows/
 $ThirdParty = Join-Path $Root 'ThirdParty'
@@ -36,13 +37,14 @@ if ((Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $CefVersion)) 
     $url = 'https://cef-builds.spotifycdn.com/' + [uri]::EscapeDataString("$Name.tar.bz2")
     if (-not (Test-Path $Archive)) {
         Write-Host "Downloading $url"
-        Invoke-WebRequest -Uri $url -OutFile "$Archive.part"
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile "$Archive.part"
         Move-Item "$Archive.part" $Archive
     }
     $expected = $CefSha1
     if (-not $expected) {
         # .Content is a byte[] when the CDN doesn't send a text content type.
-        $body = (Invoke-WebRequest -Uri "$url.sha1").Content
+        # -UseBasicParsing: Windows PowerShell 5.1 otherwise throws without Internet Explorer.
+        $body = (Invoke-WebRequest -UseBasicParsing -Uri "$url.sha1").Content
         if ($body -is [byte[]]) { $body = [System.Text.Encoding]::ASCII.GetString($body) }
         $expected = ($body.Trim() -split '\s+')[0]
     }
@@ -73,10 +75,11 @@ foreach ($config in 'Release', 'Debug') {
     $buildDir = Join-Path $Dest ("build-" + $config.ToLower())
     $wrapper = Join-Path $buildDir 'libcef_dll_wrapper\libcef_dll_wrapper.lib'
     if (Test-Path $wrapper) { continue }
+    # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot.
     cmake -S $Dest -B $buildDir -G Ninja `
-        -DCMAKE_BUILD_TYPE=$config `
-        -DPROJECT_ARCH=x86_64 `
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+        "-DCMAKE_BUILD_TYPE=$config" `
+        '-DPROJECT_ARCH=x86_64' `
+        '-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
     if ($LASTEXITCODE -ne 0) { throw "cmake configure ($config) failed" }
     cmake --build $buildDir --target libcef_dll_wrapper
     if ($LASTEXITCODE -ne 0) { throw "cmake build ($config) failed" }

@@ -46,12 +46,30 @@ jobs:
 
   windows-app:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'windows-latest' || vars.WINDOWS_RUNNER || 'windows-latest' }}
-    timeout-minutes: 20
+    timeout-minutes: 35  # a cold CEF cache downloads and builds its wrapper
     defaults:
       run:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+      # Chromium (CEF): the pinned build from windows/scripts/fetch-cef.ps1, cached between
+      # runs (a few hundred MB unpacked). Kite.exe builds with pages when it's there.
+      - name: Cache CEF
+        id: cef-cache
+        uses: actions/cache@v4
+        with:
+          path: windows/ThirdParty/cef
+          key: cef-windows64-${{ hashFiles('windows/scripts/fetch-cef.ps1') }}
+      - name: Fetch CEF
+        if: steps.cef-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 15
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y --no-progress }
+          & windows/scripts/fetch-cef.ps1
       - name: Configure (MSVC)
         run: cmake -S windows -B windows/build -A x64  # newest Visual Studio found
       - name: Build
@@ -84,6 +102,9 @@ jobs:
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 0) { throw "--smoke-test exited with $code" }
           if (-not (Test-Path (Join-Path $profileDir 'session.json'))) { throw 'Kite.exe wrote no session.json' }
+          # With Chromium the smoke test loaded the selected tab's page in the default profile,
+          # where the Mac keeps it.
+          if (-not (Test-Path (Join-Path $profileDir 'Chromium\Default'))) { throw 'Chromium made no profile in Chromium\Default' }
           # The headless model reads what the app wrote.
           & windows/build/Release/kitecore.exe --profile $profileDir state
           if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
@@ -163,14 +184,18 @@ jobs:
               }
             } finally { $bitmap.Dispose() }
           }
-      - name: Upload Kite.exe
-        # The Release build, for trying it on a Windows machine without Visual Studio.
+      - name: Upload Kite
+        # The Release build with Chromium's runtime beside it, for trying it on a Windows
+        # machine without Visual Studio: unzip and run Kite.exe.
         uses: actions/upload-artifact@v4
         with:
           name: kite-windows-x64
           path: |
-            windows/build/Release/Kite.exe
-            windows/build/Release/kitecore.exe
+            windows/build/Release/
+            !windows/build/Release/**/*.lib
+            !windows/build/Release/**/*.pdb
+            !windows/build/Release/**/*.exp
+            !windows/build/Release/KiteCoreTests.exe
           if-no-files-found: error
       - name: Upload the capture
         if: always()
