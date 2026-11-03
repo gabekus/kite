@@ -149,6 +149,30 @@ if(NOT swept STREQUAL wikipedia OR NOT tabCount EQUAL 1 OR NOT archivedID STREQU
   message(FATAL_ERROR "archive-stale gave ${swept}, then ${state}")
 endif()
 
+# The live-page cap: past MAX, the least recently shown go, never the shown one; a popup and
+# its opener stay while both tabs exist. On a profile of its own.
+function(evict_checks)
+  set(WORK "${WORK}-evict")
+  file(REMOVE_RECURSE "${WORK}")
+  file(MAKE_DIRECTORY "${WORK}")
+  kitecore(evicted evict 2 --shown c a=1 b=2 c=0 d=3)
+  kitecore(none evict 6 a=1 b=2)
+  kitecore(opener open https://shop.example)
+  kitecore(popup open https://accounts.example)
+  # Both tabs exist: neither goes. x and y aren't tabs, so x goes.
+  kitecore(linked evict 1 --popup ${popup}=${opener} --popup x=y x=1 ${opener}=2 ${popup}=3 y=4)
+  # Once the popup's tab is gone, its opener can go too.
+  kitecore(closed close ${popup})
+  kitecore(unlinked evict 1 --popup ${popup}=${opener} ${opener}=2 y=4)
+  if(NOT evicted STREQUAL "a\nb" OR NOT none STREQUAL "" OR NOT linked STREQUAL "x" OR NOT unlinked STREQUAL "${opener}")
+    message(FATAL_ERROR "evict gave '${evicted}', '${none}', '${linked}', '${unlinked}'")
+  endif()
+  expect_exit_early(1 evict six a=1)
+  expect_exit_early(1 evict 2 a)
+  expect_exit_early(1 evict 2 a=nan)
+endfunction()
+evict_checks()
+
 # Folders and the pinned section, on the UI gate's sidebar session (Personal: pinned Docs,
 # the Work stuff folder holding Renamed and the closed Old projects, then today's tabs).
 set(SIDEBAR "${WORK}-sidebar")

@@ -37,6 +37,7 @@ add_library(KiteCoreWin STATIC
   src/core/Models.cpp
   src/core/OKLab.cpp
   src/core/SessionStore.cpp
+  src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
   src/core/TabClosing.cpp
   src/core/SupportDirectory.cpp
@@ -156,6 +157,7 @@ add_executable(KiteCoreTests
   tests/CommandBarTests.cpp
   tests/JsonTests.cpp
   tests/ModelTests.cpp
+  tests/LiveTabPolicyTests.cpp
   tests/SidebarTests.cpp
   tests/TabClosingTests.cpp
   tests/SupportDirectoryTests.cpp
