@@ -16,9 +16,11 @@ final class SpaceSwipeModel {
     var pageWidth: CGFloat = 0
 }
 
-/// The sidebar: an AppKit column holding the header row and address field (`SidebarHeaderView`), the space
-/// pages (`SidebarPagesView`), the chrome still drawn by SwiftUI around them (favorites, Mini Player, space bar;
-/// one hosting view the sidebar's size), and the drag overlay over everything.
+/// The sidebar, top to bottom: the header row and address field (`SidebarHeaderView`), the favorites tray
+/// (`FavoritesTrayView`), the space pages (`SidebarPagesView`), the Mini Player while something plays, and the
+/// space bar (`SpaceBarView`); on + › New Space, Arc's Create a Space page takes the place of everything between
+/// the top row and the space bar. The drag overlay sits over everything while something is dragged. The Mini
+/// Player and Create a Space are still SwiftUI, each in a hosting view that exists only while it shows.
 ///
 /// It clips what it draws to its bounds with a layer mask rather than `clipsToBounds`: clipping would bound
 /// the pages' visible rect, so a neighbouring page's list would drop its rows while it sits off to the side
@@ -26,59 +28,55 @@ final class SpaceSwipeModel {
 /// and draw nothing outside the sidebar.
 @MainActor
 final class SidebarColumnView: NSView {
-    let chrome: NSHostingView<SidebarView>
+    private typealias M = ArcMetrics.Sidebar
+
     let header: SidebarHeaderView
     let favorites: FavoritesTrayView
     let spaceBar: SpaceBarView
     let pages: SidebarPagesView
     private let overlay: SidebarOverlayHost
     private let clip = CALayer()
-    /// The pages' frame in the chrome, from its placeholder.
-    private var pagesFrame: CGRect = .zero
+    private let configuration: SidebarConfiguration
+    private let metrics = SidebarChromeMetrics()
+    private var miniPlayer: SidebarIslandHost?
+    private var miniPlayerTab: UUID?
+    private var creation: SidebarIslandHost?
+    private var updateScheduled = false
+    /// What the last pass laid out for: a page loading changes none of it.
+    private var laidOutFor: (creating: Bool, miniPlayer: UUID?, favorites: CGFloat)?
 
-    init(sidebar: SidebarView, store: BrowserStore, swipe: SpaceSwipeModel) {
-        var sidebar = sidebar
-        let drag = sidebar.drag
-        pages = SidebarPagesView(store: store, swipe: swipe, drag: drag, actions: sidebar.actions, claude: sidebar.claude,
-                                 supportsDarkPages: sidebar.supportsDarkPages)
+    init(configuration: SidebarConfiguration) {
+        self.configuration = configuration
+        let store = configuration.store, drag = configuration.drag
+        pages = SidebarPagesView(store: store, swipe: configuration.swipe, drag: drag, actions: configuration.actions,
+                                 claude: configuration.claude, supportsDarkPages: configuration.supportsDarkPages)
         overlay = SidebarOverlayHost(rootView: SidebarDragOverlay(drag: drag))
-        header = SidebarHeaderView(store: store, actions: sidebar.actions, hover: sidebar.hover,
-                                   supportsDarkPages: sidebar.supportsDarkPages, accessory: sidebar.fieldAccessory)
-        favorites = FavoritesTrayView(store: store, actions: sidebar.actions, drag: drag, metrics: sidebar.chromeMetrics)
-        spaceBar = SpaceBarView(store: store, actions: sidebar.actions, swipe: swipe, drag: drag, library: sidebar.library)
-        header.showExtensions = sidebar.showExtensions
-        header.showSiteControls = sidebar.showSiteControls
-        header.installApp = sidebar.installApp
-        chrome = NSHostingView(rootView: sidebar)
+        header = SidebarHeaderView(store: store, actions: configuration.actions, hover: configuration.hover,
+                                   supportsDarkPages: configuration.supportsDarkPages, accessory: configuration.fieldAccessory)
+        favorites = FavoritesTrayView(store: store, actions: configuration.actions, drag: drag, metrics: metrics)
+        spaceBar = SpaceBarView(store: store, actions: configuration.actions, swipe: configuration.swipe, drag: drag,
+                                library: configuration.library)
+        header.showExtensions = configuration.showExtensions
+        header.showSiteControls = configuration.showSiteControls
+        header.installApp = configuration.installApp
         super.init(frame: .zero)
-        sidebar.pagesFrame = { [weak self] frame in self?.setPagesFrame(frame) }
-        chrome.rootView = sidebar
-        chrome.sizingOptions = []
+        drag.store = store
         overlay.sizingOptions = []
         wantsLayer = true
-        addSubview(chrome)
         addSubview(header)
         addSubview(favorites)
         addSubview(spaceBar)
         addSubview(pages)
         addSubview(overlay)
-        header.onHeightChange = { [weak self] in self?.needsLayout = true }
         overlay.isHidden = true
+        header.onHeightChange = { [weak self] in self?.needsLayout = true }
         watchDrag(drag)
-        watchMetrics()
+        update()
     }
 
-    /// The favorites tray's height moves everything under it.
-    private func watchMetrics() {
-        withObservationTracking {
-            _ = favorites.metrics.favoritesHeight
-        } onChange: { [weak self] in
-            DispatchQueue.main.async { MainActor.assumeIsolated {
-                self?.needsLayout = true
-                self?.watchMetrics()
-            } }
-        }
-    }
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
 
     /// The overlay is there only while something is being dragged.
     private func watchDrag(_ drag: SidebarDragModel) {
@@ -89,26 +87,101 @@ final class SidebarColumnView: NSView {
         }
     }
 
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+    // MARK: Observing
 
-    override var isFlipped: Bool { true }
-
-    private func setPagesFrame(_ frame: CGRect) {
-        guard frame != pagesFrame else { return }
-        pagesFrame = frame
-        needsLayout = true
+    /// Which of Create a Space and the Mini Player show, and the tray's height.
+    private func update() {
+        withObservationTracking {
+            let store = configuration.store
+            let state = store.state
+            _ = metrics.favoritesHeight
+            // + › New Space: Arc's Create a Space page takes the place of everything under the top row.
+            if let spaceCreation = store.spaceCreation, spaceCreation.spaceID == state.selectedSpaceID {
+                if creation == nil {
+                    let host = SidebarIslandHost(rootView: AnyView(CreateSpaceSlot(store: store, actions: configuration.actions)
+                        .foregroundStyle(.primary)))
+                    host.onSizeChange = { [weak self] in self?.needsLayout = true }
+                    addSubview(host, positioned: .below, relativeTo: overlay)
+                    creation = host
+                }
+            } else if let creation {
+                creation.removeFromSuperview()
+                self.creation = nil
+            }
+            // The Mini Player, while the tab it follows plays or records.
+            var playing: UUID?
+            if configuration.miniPlayer != nil, store.spaceCreation == nil || creation == nil, let id = store.miniPlayerTabID,
+               state.tab(id) != nil, let page = store.pages[id], page.media != nil || page.capturingSince != nil {
+                playing = id
+            }
+            if playing != miniPlayerTab {
+                miniPlayer?.removeFromSuperview()
+                miniPlayer = nil
+                miniPlayerTab = playing
+                if playing != nil, let actions = configuration.miniPlayer {
+                    let host = SidebarIslandHost(rootView: AnyView(MiniPlayerSlot(store: store, actions: actions)
+                        .foregroundStyle(.primary)))
+                    host.onSizeChange = { [weak self] in self?.needsLayout = true }
+                    addSubview(host, positioned: .below, relativeTo: overlay)
+                    miniPlayer = host
+                }
+            }
+            let now = (creating: creation != nil, miniPlayer: miniPlayerTab, favorites: metrics.favoritesHeight)
+            if laidOutFor.map({ $0 != now }) ?? true {
+                laidOutFor = now
+                needsLayout = true
+            }
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated { self?.scheduleUpdate() }
+        }
     }
+
+    private func scheduleUpdate() {
+        guard !updateScheduled else { return }
+        updateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.updateScheduled = false
+            self.update()
+        }
+    }
+
+    // MARK: Layout
 
     override func layout() {
         super.layout()
-        chrome.frame = bounds
+        let width = bounds.width
         overlay.frame = bounds
-        header.frame = CGRect(x: 0, y: 0, width: bounds.width, height: header.height)
-        favorites.frame = CGRect(x: 0, y: header.height, width: bounds.width, height: favorites.metrics.favoritesHeight)
-        spaceBar.frame = CGRect(x: 0, y: bounds.height - ArcMetrics.Sidebar.bottomBarHeight, width: bounds.width,
-                                height: ArcMetrics.Sidebar.bottomBarHeight)
-        // The pages span the whole sidebar, not just its padded column.
-        pages.frame = CGRect(x: 0, y: pagesFrame.minY, width: bounds.width, height: max(pagesFrame.height, 0))
+        let headerHeight = header.height
+        header.frame = CGRect(x: 0, y: 0, width: width, height: headerHeight)
+        let barTop = bounds.height - M.bottomBarHeight
+        spaceBar.frame = CGRect(x: 0, y: barTop, width: width, height: M.bottomBarHeight)
+        let column = CGRect(x: M.padding, y: 0, width: width - 2 * M.padding, height: bounds.height)
+        if let creation {
+            favorites.frame = CGRect(x: 0, y: headerHeight, width: width, height: 0)
+            pages.isHidden = true
+            let top = M.topRowY + M.topRowHeight
+            // The page fills the room between the top row and the space bar (its stack has a Spacer).
+            creation.frame = CGRect(x: column.minX, y: top, width: column.width, height: max(barTop - top, 0))
+        } else {
+            pages.isHidden = false
+            let favoritesHeight = metrics.favoritesHeight
+            favorites.frame = CGRect(x: 0, y: headerHeight, width: width, height: favoritesHeight)
+            var bottom = barTop
+            if let miniPlayer {
+                let height = miniPlayer.fittingHeight(width: column.width)
+                miniPlayer.frame = CGRect(x: column.minX, y: barTop - height, width: column.width, height: height)
+                bottom = barTop - height - M.padding
+            }
+            let top = headerHeight + favoritesHeight
+            // The pages span the whole sidebar, not just its padded column.
+            pages.frame = CGRect(x: 0, y: top, width: width, height: max(bottom - top, 0))
+        }
+        if let window, let content = window.contentView {
+            // The drag's bounds: the sidebar in window points from the top-left.
+            let r = convert(bounds, to: nil)
+            configuration.drag.bounds = CGRect(x: r.minX, y: content.bounds.height - r.maxY, width: r.width, height: r.height)
+        }
         guard let layer else { return }
         if layer.mask !== clip {
             clip.backgroundColor = NSColor.black.cgColor
@@ -118,6 +191,57 @@ final class SidebarColumnView: NSView {
         CATransaction.setDisableActions(true)
         clip.frame = layer.bounds
         CATransaction.commit()
+    }
+}
+
+/// A SwiftUI view that sizes itself inside the AppKit sidebar (the Mini Player, Create a Space).
+final class SidebarIslandHost: NSHostingView<AnyView> {
+    var onSizeChange: () -> Void = {}
+
+    required init(rootView: AnyView) {
+        super.init(rootView: rootView)
+        sizingOptions = [.intrinsicContentSize]
+    }
+
+    @available(*, unavailable) @MainActor required init?(coder: NSCoder) { fatalError() }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func invalidateIntrinsicContentSize() {
+        super.invalidateIntrinsicContentSize()
+        onSizeChange()
+    }
+
+    /// Its height: the Mini Player's rows and Create a Space's stack don't depend on the width.
+    func fittingHeight(width: CGFloat) -> CGFloat { ceil(intrinsicContentSize.height) }
+}
+
+/// The Mini Player for the tab it follows, reading the store itself.
+private struct MiniPlayerSlot: View {
+    let store: BrowserStore
+    let actions: MiniPlayerActions
+
+    var body: some View {
+        if let id = store.miniPlayerTabID, let tab = store.state.tab(id), let page = store.pages[id],
+           page.media != nil || page.capturingSince != nil {
+            MiniPlayerView(
+                tab: tab, media: page.media?.state, isRecording: page.capturingSince != nil, call: page.callControls,
+                isMuted: page.isAudioMuted, volume: page.tabVolume, actions: actions
+            )
+            .id(id)
+        }
+    }
+}
+
+/// Arc's Create a Space page for the space being made.
+private struct CreateSpaceSlot: View {
+    let store: BrowserStore
+    let actions: SidebarActions
+
+    var body: some View {
+        if let creation = store.spaceCreation {
+            SpaceCreationView(store: store, actions: actions, creation: creation)
+        }
     }
 }
 

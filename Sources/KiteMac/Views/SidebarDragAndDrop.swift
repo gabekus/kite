@@ -481,10 +481,6 @@ protocol SidebarDragContentTarget: AnyObject {
     func sidebarDrag(_ ids: [UUID], droppedAt point: CGPoint) -> Bool
 }
 
-extension EnvironmentValues {
-    @Entry var sidebarDrag: SidebarDragModel? = nil
-}
-
 extension SidebarDragModel {
     func frame(of row: Row) -> CGRect? { rows[row.key]?.frame }
     func tileFrame(_ id: UUID) -> CGRect? { tiles[id] }
