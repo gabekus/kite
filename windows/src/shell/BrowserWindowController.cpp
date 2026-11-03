@@ -143,9 +143,15 @@ std::wstring BrowserWindowController::Init() {
     // list's scroll. Without DirectManipulation they stay the system's wheel messages.
     if (!options_.capture) {
         touchpad_ = TouchpadInput::Create(
-            window_.Handle(), [this](const SwipeInput& input) { SwipeInputArrived(input); }, error);
-        if (touchpad_) touchpad_->SetScale(static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI);
-        else OutputDebugStringW((L"Kite: no touchpad gestures: " + error + L"\n").c_str());
+            window_.Handle(), [this](const SwipeInput& input) { SwipeInputArrived(input); }, [this] { clock_->Start(); }, error);
+        if (touchpad_) {
+            touchpad_->SetScale(static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI);
+            // A hardware run's record of what DirectManipulation reported, with the frames.
+            if (options_.frameLog) touchpad_->log = [this](const std::string& line) { touchpadLog_.push_back(line); };
+        } else {
+            touchpadError_ = error;
+            OutputDebugStringW((L"Kite: no touchpad gestures: " + error + L"\n").c_str());
+        }
         error.clear();
     }
 
@@ -441,6 +447,7 @@ std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& 
                       frame.target - first, frame.offset, frame.theme);
         out << line;
     }
+    for (const std::string& record : touchpadLog_) out << record << '\n';
     out.flush();
     return out ? std::wstring{} : L"couldn't write " + file.wstring();
 }
@@ -754,7 +761,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     // the gesture is DirectManipulation's, and its frames come with the clock.
     if (message == DM_POINTERHITTEST && touchpad_) {
         const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
-        const bool taken = touchpad_->HitTest(wParam, [&](POINT at) {
+        const bool taken = touchpad_->HitTest(wParam, lParam, [&](POINT at) {
             RECT client{};
             GetClientRect(window_.Handle(), &client);
             return !(commandBar_ && commandBar_->IsOpen()) && at.x >= 0 && at.y >= 0 && at.y < client.bottom &&
@@ -909,6 +916,8 @@ std::wstring BrowserWindowController::SmokeTestSpaces() {
 }
 
 std::wstring BrowserWindowController::SmokeTestSwipe() {
+    // DirectManipulation is there on every Windows Kite runs on: without it, no touchpad swipes.
+    if (!touchpad_) return L"Kite couldn't take touchpad gestures: " + touchpadError_;
     // Touchpad events as DirectManipulation reports them, a frame apart, over the list.
     using Phase = SwipeInput::Phase;
     using Step = SpaceSwipeGesture::Step;
@@ -944,10 +953,25 @@ std::wstring BrowserWindowController::SmokeTestSwipe() {
         return L"the theme didn't follow the swipe";
     }
     if (std::wstring problem = Draw(); !problem.empty()) return L"a swipe's frame didn't draw: " + problem;
-    // Let go past half a page: it lands on the neighbour, its momentum swallowed.
+    // Let go past half a page: it lands on the neighbour, its momentum swallowed (the list
+    // doesn't scroll with it).
     if (send(Phase::Ended, 0, 0) != Step::Release || swipe_.Landing() != towards) return L"a swipe past half a page didn't land";
-    if (send(Phase::Momentum, -towards * 40.0, 30) != Step::Swallow) return L"a swipe's momentum wasn't swallowed";
+    if (state_.SelectedSpaceIndex() != index) return L"a swipe selected its space before the pages were at rest";
+    const float scrolled = sidebar_->ListScroll();
+    if (send(Phase::Momentum, -towards * 40.0, -30) != Step::Swallow || sidebar_->ListScroll() != scrolled) {
+        return L"a swipe's momentum wasn't swallowed";
+    }
     send(Phase::MomentumEnded, 0, 0);
+    // Fingers down again mid-settle: the landing is selected and the pages carry on from where
+    // they are, the new space's page where the neighbour's was.
+    const float settling = sidebar_->PageOffset();
+    send(Phase::Began, 0, 0);
+    send(Phase::Changed, -towards * 1.0, 0);
+    if (!swipe_.Swiping() || state_.SelectedSpaceIndex() != neighbour) return L"a swipe caught mid-settle didn't land the last one";
+    const float carried = settling + static_cast<float>(towards * kSidebarWidth) - static_cast<float>(towards);
+    // The spring moves on between the two readings: a few points at most.
+    if (std::abs(sidebar_->PageOffset() - carried) > 8) return L"a swipe caught mid-settle didn't carry on from the pages";
+    if (send(Phase::Ended, 0, 0) != Step::Release) return L"a swipe caught mid-settle didn't let go";
     if (std::wstring problem = RunToRest(L"A swipe"); !problem.empty()) return problem;
     if (state_.SelectedSpaceIndex() != neighbour) return L"a swipe didn't select the space it landed on";
 

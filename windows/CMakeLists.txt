@@ -44,6 +44,7 @@ add_library(KiteCoreWin STATIC
   src/core/PictureLoads.cpp
   src/core/SpaceSwipe.cpp
   src/core/SpaceSwipeGesture.cpp
+  src/core/TouchpadPhases.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
   src/core/TabClosing.cpp
@@ -181,6 +182,7 @@ add_executable(KiteCoreTests
   tests/PictureLoadsTests.cpp
   tests/SpaceSwipeTests.cpp
   tests/SpaceSwipeGestureTests.cpp
+  tests/TouchpadPhasesTests.cpp
   tests/SymbolShapeTests.cpp
   tests/TabClosingTests.cpp
   tests/SupportDirectoryTests.cpp

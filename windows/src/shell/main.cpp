@@ -229,8 +229,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         const std::string text = swipeOption.value ? Narrow(*swipeOption.value) : std::string();
         double dx = 0;
         auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), dx);
-        if (text.empty() || error != std::errc() || end != text.data() + text.size() || !(std::abs(dx) <= 10000)) {
-            return Fail(quiet, L"--swipe takes the points the fingers dragged, -10000 to 10000", kUsage);
+        if (text.empty() || error != std::errc() || end != text.data() + text.size() || dx == 0 || !(std::abs(dx) <= 10000)) {
+            return Fail(quiet, L"--swipe takes the points the fingers dragged, -10000 to 10000 and not 0", kUsage);
         }
         swipe = dx;
     }

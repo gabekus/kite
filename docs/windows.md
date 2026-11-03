@@ -352,15 +352,22 @@ swipe can catch the pages mid-settle and carries on from where they are. Windows
 wheel messages carry no gesture phases, so the touchpad's contact is taken on
 `DM_POINTERHITTEST` by a DirectManipulation viewport on manual updates
 (`shell/TouchpadInput.h`, Chromium's way), stepped once a frame by the frame clock
-while the gesture or its momentum runs; each frame draws the backdrop only when the
-swipe moved. `--capture FILE --swipe DX` holds a swipe DX points in, and the smoke
-test feeds the same handler a vertical gesture, a swipe that lands, a short one
-that stays and a flick back. Known differences: what moves the pages is
-DirectManipulation's content travel, which follows Windows' scrolling direction
-setting (the Mac's pages follow the fingers whichever way its natural scrolling
-is set; unverified on a real touchpad, since synthetic touchpad input doesn't
-exist), and a mouse's sideways wheel or Shift and the wheel never pages spaces
-(the Mac's doesn't either), it scrolls the bar's strip.
+while the fingers rest on it, the gesture or its momentum runs; each frame draws the
+backdrop only when the swipe moved. Core's `TouchpadPhases` turns the viewport's
+statuses and content reports into the Mac's phases and sends the viewport back over
+its content's middle after a gesture that moved it, the next gesture counting from
+there however late DirectManipulation applies it (its tests replay the sequences:
+momentum, fingers down mid-momentum, the system taking the viewport, the reset's own
+pass). `--capture FILE --swipe DX` holds a swipe DX points in, and the smoke test
+feeds the same handler a vertical gesture, a swipe that lands, one caught mid-settle,
+a short one that stays and a flick back; `--frame-log` also records every status and
+content report, for a run on a real touchpad. Known differences: what moves the
+pages is DirectManipulation's content travel, which follows Windows' scrolling
+direction setting (the Mac's pages follow the fingers whichever way its natural
+scrolling is set), and a mouse's sideways wheel or Shift and the wheel never pages
+spaces (the Mac's doesn't either), it scrolls the bar's strip. Unverified on a real
+touchpad (synthetic touchpad input doesn't exist): DirectManipulation's actual
+status sequences and their timing, the scrolling direction, and the hit test's point.
 
 Known differences from the Mac: during the 0.2 s slide only the selected page
 takes clicks and shows hover (the Mac's outgoing page is a live list too), and

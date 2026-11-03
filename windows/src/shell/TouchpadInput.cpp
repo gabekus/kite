@@ -3,6 +3,7 @@
 #include <directmanipulation.h>
 
 #include <atomic>
+#include <cstdio>
 
 #include "shell/Errors.h"
 #include "shell/FrameClock.h"
@@ -66,8 +67,9 @@ private:
     std::atomic<ULONG> references_{1};
 };
 
-std::unique_ptr<TouchpadInput> TouchpadInput::Create(HWND window, std::function<void(const SwipeInput&)> input, std::wstring& error) {
-    std::unique_ptr<TouchpadInput> touchpad(new TouchpadInput(window, std::move(input)));
+std::unique_ptr<TouchpadInput> TouchpadInput::Create(HWND window, std::function<void(const SwipeInput&)> input,
+                                                     std::function<void()> wantsFrames, std::wstring& error) {
+    std::unique_ptr<TouchpadInput> touchpad(new TouchpadInput(window, std::move(input), std::move(wantsFrames)));
     error = touchpad->Init();
     if (!error.empty()) return nullptr;
     return touchpad;
@@ -110,8 +112,10 @@ std::wstring TouchpadInput::Init() {
     activated_ = true;
     hr = viewport_->Enable();
     if (FAILED(hr)) return HResultMessage(L"DirectManipulation's viewport", hr);
+    // Over the middle from the start, so the first gesture counts from there.
     Recentre();
     updates_->Update(nullptr);
+    recentring_ = false;
     return {};
 }
 
@@ -128,72 +132,69 @@ TouchpadInput::~TouchpadInput() {
     if (manager_) manager_->Release();
 }
 
-bool TouchpadInput::HitTest(WPARAM wParam, const std::function<bool(POINT)>& take) {
+bool TouchpadInput::HitTest(WPARAM wParam, LPARAM lParam, const std::function<bool(POINT)>& take) {
     const UINT32 pointer = GET_POINTERID_WPARAM(wParam);
     POINTER_INPUT_TYPE type = PT_POINTER;
     if (!GetPointerType(pointer, &type) || type != PT_TOUCHPAD) return false;
-    POINTER_INFO info{};
-    if (!GetPointerInfo(pointer, &info)) return false;
-    POINT at = info.ptPixelLocation;
+    POINT at{static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))};
     ScreenToClient(window_, &at);
     if (!take(at) || FAILED(viewport_->SetContact(pointer))) return false;
     contact_ = at;
+    pointer_ = pointer;
+    contactTaken_ = true;
     pollUntil_ = FrameClock::Now() + kFirstWord;
     return true;
 }
 
-bool TouchpadInput::Active() const { return gesture_ != Gesture::None || FrameClock::Now() < pollUntil_; }
+bool TouchpadInput::Active() const {
+    if (phases_.Moving() || recentring_ || FrameClock::Now() < pollUntil_) return true;
+    // Fingers resting before they move: DirectManipulation's updates must keep coming until it
+    // says it's running, however long that takes.
+    POINTER_INFO info{};
+    return contactTaken_ && GetPointerInfo(pointer_, &info) && (info.pointerFlags & POINTER_FLAG_INCONTACT);
+}
 
 void TouchpadInput::Update() {
     if (updates_) updates_->Update(nullptr);
+    recentring_ = false;
 }
 
 void TouchpadInput::StatusChanged(int current, int previous) {
-    if (current == previous) return;
-    if (current == DIRECTMANIPULATION_RUNNING) {
-        // Fingers down again mid-momentum: that ends, and a gesture of its own begins.
-        if (gesture_ == Gesture::Inertia) Emit(SwipeInput::Phase::MomentumEnded, 0, 0);
-        gesture_ = Gesture::Running;
-        // Where the content starts from: DirectManipulation reports where it is, not how far it
-        // went.
-        baseline_ = ContentTransform(lastX_, lastY_);
-        pollUntil_ = 0;
-        Emit(SwipeInput::Phase::Began, 0, 0);
-    } else if (current == DIRECTMANIPULATION_INERTIA) {
-        if (gesture_ == Gesture::Running) Emit(SwipeInput::Phase::Ended, 0, 0);
-        gesture_ = Gesture::Inertia;
-    } else {
-        // At rest (or the system took the viewport away mid-gesture).
-        const Gesture was = gesture_;
-        gesture_ = Gesture::None;
-        if (was == Gesture::Running) {
-            Emit(current == DIRECTMANIPULATION_READY ? SwipeInput::Phase::Ended : SwipeInput::Phase::Cancelled, 0, 0);
-        } else if (was == Gesture::Inertia) {
-            Emit(SwipeInput::Phase::MomentumEnded, 0, 0);
-        }
-        if (current == DIRECTMANIPULATION_READY && was != Gesture::None) Recentre();
+    float x = 0, y = 0;
+    ContentTransform(x, y);
+    if (log) {
+        char line[160];
+        std::snprintf(line, sizeof line, "{\"dm\":\"status\",\"t\":%.6f,\"current\":%d,\"previous\":%d,\"x\":%.3f,\"y\":%.3f}", FrameClock::Now(),
+                      current, previous, x, y);
+        log(line);
     }
+    const bool recentre = phases_.StatusChanged(static_cast<ViewportStatus>(current), static_cast<ViewportStatus>(previous), x, y,
+                                                FrameClock::Now(), pending_);
+    if (current == DIRECTMANIPULATION_RUNNING || current == DIRECTMANIPULATION_INERTIA) {
+        contactTaken_ = false;  // DirectManipulation has it now
+        if (wantsFrames_) wantsFrames_();
+    }
+    if (recentre) Recentre();
+    Deliver();
 }
 
 void TouchpadInput::ContentMoved(float x, float y) {
-    // Only a gesture's movement: the viewport going back to the middle is none.
-    if (gesture_ == Gesture::None) return;
-    if (!baseline_) {
-        // Where it started wasn't to be had: it starts from its first word.
-        baseline_ = true;
-        lastX_ = x;
-        lastY_ = y;
-        return;
+    if (log) {
+        char line[120];
+        std::snprintf(line, sizeof line, "{\"dm\":\"content\",\"t\":%.6f,\"x\":%.3f,\"y\":%.3f}", FrameClock::Now(), x, y);
+        log(line);
     }
-    const float dx = x - lastX_, dy = y - lastY_;
-    lastX_ = x;
-    lastY_ = y;
-    if (dx == 0 && dy == 0) return;
-    Emit(gesture_ == Gesture::Running ? SwipeInput::Phase::Changed : SwipeInput::Phase::Momentum, dx / scale_, dy / scale_);
+    phases_.ContentMoved(x, y, scale_, FrameClock::Now(), pending_);
+    Deliver();
 }
 
-void TouchpadInput::Emit(SwipeInput::Phase phase, double dx, double dy) {
-    if (input_) input_(SwipeInput{phase, dx, dy, FrameClock::Now()});
+void TouchpadInput::Deliver() {
+    // Taken first: what an input does may make the next report (a recentre's) reach here.
+    std::vector<SwipeInput> events;
+    events.swap(pending_);
+    for (const SwipeInput& event : events) {
+        if (input_) input_(event);
+    }
 }
 
 bool TouchpadInput::ContentTransform(float& x, float& y) const {
@@ -213,8 +214,12 @@ bool TouchpadInput::ContentTransform(float& x, float& y) const {
 }
 
 void TouchpadInput::Recentre() {
-    if (viewport_) viewport_->ZoomToRect(0, 0, kViewport, kViewport, FALSE);
-    baseline_ = false;
+    // The next Update applies it (on manual updates it may wait for one), and the next
+    // gesture counts from the middle whenever it lands.
+    if (viewport_ && SUCCEEDED(viewport_->ZoomToRect(0, 0, kViewport, kViewport, FALSE))) {
+        phases_.Recentred();
+        recentring_ = true;
+    }
 }
 
 }  // namespace kite

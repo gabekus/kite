@@ -99,6 +99,8 @@ public:
     // A touchpad's scroll at `at` (client px): over the selected space's list it scrolls by
     // `distance` points (positive moves it on, down the list) and is the list's (true).
     bool ScrollList(POINT at, float distance);
+    // The selected space's list's scroll, in points.
+    float ListScroll() const { return scrollExact_; }
     // The window's size or DPI changed: `width` is the sidebar's, in points. Draw follows.
     void Layout(float width, UINT dpi);
     // Icons arrived (Favicons::TakeResults): the pages, whose rows wait for them, draw again

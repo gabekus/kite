@@ -306,6 +306,20 @@ TEST(aSwipeBetweenOneThemeFadesNothing) {
     CHECK(!fade.Fading() && !fade.Interactive() && fade.from == a && fade.to == a && fade.Progress(1) == 1);
 }
 
+TEST(aSpaceSelectedUnderTheSwipeSettlesOnItsTheme) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC), c = Solid(0x445566);
+    // Swiping from a towards b, 30% in, when the keyboard selects c: c fades in from a.
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 0.3f);
+    fade.FinishInteractive(c, 2);
+    CHECK(fade.from == a && fade.to == c && fade.Fading() && fade.Progress(2) == 0);
+    CHECK(fade.Progress(3) == 1 && fade.from == c);
+    // Past halfway it comes from b.
+    fade.SetInteractive(c, b, 0.8f);
+    fade.FinishInteractive(a, 4);
+    CHECK(fade.from == b && fade.to == a);
+}
+
 TEST(aSnapEndsASwipesCrossfade) {
     const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
     ThemeCrossfade fade(a);

@@ -89,7 +89,9 @@ public:
     std::wstring Draw(Pixels* readBack = nullptr);
     // The animation frames of the run (Options::frameLog), one JSON object a line: `t` (when it
     // was handled, s from the first), `target` (the composition frame it was drawn for, s from
-    // the first), `offset` (the pages', pt) and `theme` (the crossfade, 0...1). Empty on success.
+    // the first), `offset` (the pages', pt) and `theme` (the crossfade, 0...1); then
+    // DirectManipulation's reports (`dm`: status or content, `t` on the clock's seconds). Empty
+    // on success.
     std::wstring SaveFrameLog(const std::filesystem::path& file) const;
     // The smoke test's checks of the window: the command bar opens and draws, the sidebar and
     // the caption buttons draw something, and the lost-GPU path rebuilds and draws. Empty on
@@ -243,6 +245,8 @@ private:
         double handled, target, offset, theme;
     };
     std::vector<LoggedFrame> frames_;
+    std::vector<std::string> touchpadLog_;  // TouchpadInput::log's records, after the frames
+    std::wstring touchpadError_;            // why there's no touchpad_, when there isn't one
     size_t frameCount_ = 0;  // frames delivered, logged or not (the smoke test checks them)
 
     // What each shortcut's command does, by id (MainMenu.swift's items).

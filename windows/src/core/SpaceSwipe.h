@@ -135,6 +135,8 @@ struct ThemeCrossfade {
     void SetInteractive(const Theme& fromTheme, const Theme& toTheme, float progress);
     // The swipe was let go at `now`: settles on `theme`, either side of the crossfade, with the
     // switch's spring from wherever the fingers left it (at once when there's nothing to fade).
+    // A third theme (a space selected under the swipe) fades in as a switch would, from the
+    // side that was showing more.
     void FinishInteractive(const Theme& theme, double now);
     // The progress for a frame shown at `time`, 0...1; from kThemeDuration on, 1 and at rest on
     // `to`.

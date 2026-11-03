@@ -208,6 +208,15 @@ void ThemeCrossfade::FinishInteractive(const Theme& theme, double now) {
     interactive.reset();
     // Rubber-banded past the last space, or between two spaces with the same theme.
     if (from == to && theme == to) return Snap(theme);
+    if (theme != to && theme != from) {
+        // Another space selected under the swipe: a switch to it, from whichever side was
+        // showing more.
+        if (progress >= 0.5f) from = to;
+        to = theme;
+        startProgress = 0;
+        start = now;
+        return;
+    }
     if (theme == to) {
         startProgress = progress;
     } else {
