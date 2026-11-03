@@ -5,7 +5,9 @@ import UniformTypeIdentifiers
 // Import from Arc, the Mac side of `ArcImport`.
 //
 // Arc shuts down on 2026-12-22. Some time after that, delete this file, the
-// "Import from Arc…" item in MainMenu.swift, and KiteCore/ArcImport.swift.
+// "Import from Arc…" item in MainMenu.swift, KiteCore/ArcImport.swift, ArcArchiveImport.swift,
+// ArcSettingsImport.swift, ArcKeyBindingsImport.swift, ArcHistoryImport.swift,
+// ArcSiteSearchImport.swift, and BrowserState.arcProfileMap.
 
 extension BrowserWindowController {
     @objc func importFromArc(_ sender: Any?) {
@@ -71,6 +73,8 @@ enum ArcImportController {
 
     /// Reads Arc's sidebar from its usual place, or asks for the file if Arc isn't there.
     static func start(store: BrowserStore, window: NSWindow) {
+        // Reading Arc's history takes a moment; a second press meanwhile does nothing.
+        guard !isReading else { return }
         if let test = testMode, test.dataPath == nil {
             return testLog("no KITE_ARC_DATA_PATH, so nothing read")
         }
@@ -109,14 +113,19 @@ enum ArcImportController {
         // Incognito windows keep no history, so there's nowhere to put Arc's.
         let wantsHistory = store.historyRoot != nil
         let historyFiles = ArcImport.Result.withDefault(result.profiles).map { ($0, historyFile(profile: $0)) }
+        isReading = true
         Task {
+            defer { isReading = false }
             // Each profile's History can be large; copying and reading it stays off the main thread.
             let histories = await Task.detached {
                 wantsHistory ? Dictionary(uniqueKeysWithValues: historyFiles.map { ($0.0, ArcHistoryImport.read(from: $0.1)) }) : [:]
             }.value
-            confirm(result, histories: histories, store: store, window: window)
+            // The window may have closed while the files were read.
+            confirm(result, histories: histories, store: store, window: window.isVisible ? window : NSApp.mainWindow ?? window)
         }
     }
+
+    private static var isReading = false
 
     private static func confirm(_ result: ArcImport.Result, histories: [String: [HistoryEntry]], store: BrowserStore, window: NSWindow) {
         let reimported = result.spaces.filter { store.state.spaceIndex($0.id) != nil }.count

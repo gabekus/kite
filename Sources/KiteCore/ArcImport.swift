@@ -11,12 +11,13 @@ import Foundation
 public enum ArcImport {
     public struct Result: Sendable {
         /// Each space's `profile` is still Arc's profile folder ("Profile 1"; nil for Arc's
-        /// Default): `BrowserState.merge` maps it to a Kite profile.
+        /// Default): `BrowserState.mergeArc` maps it to a Kite profile.
         public var spaces: [Space]
         /// Arc's favorites grid for Default and each profile the spaces use, by Arc profile folder.
         public var favoritesByProfile: [String: [BrowserTab]]
         /// Arc profile folders, in the order the spaces use them.
         public var profiles: [String]
+        /// Every tab read, favorites included.
         public var tabCount: Int
         public var folderCount: Int
         public var splitCount: Int
@@ -394,8 +395,9 @@ extension BrowserState {
         for arc in directories {
             if arc == Profile.defaultDirectory {
                 result[arc] = Profile.defaultDirectory
-            } else if let earlier = arcProfileMap[arc], profiles.contains(where: { $0.directory == earlier }) {
-                result[arc] = earlier
+            } else if let earlier = arcProfileMap[arc], let profile = profiles.first(where: { $0.dataStoreID == earlier }) {
+                // By data store, which is never reused: a deleted profile's folder name is.
+                result[arc] = profile.directory
             } else {
                 let name = Self.arcProfileName(arc, names: names)
                 if let match = allProfiles.first(where: { $0.name.compare(name, options: .caseInsensitive) == .orderedSame }) {
@@ -410,7 +412,8 @@ extension BrowserState {
     /// none yet (see `existingProfiles`). `imported` spaces carry Arc's profile folder, as
     /// `ArcImport.parse` leaves them. A space imported before (same ID) is replaced, so
     /// importing again before Arc shuts down picks up changes, but it stays in the profile it's
-    /// in now once an import has placed its Arc profile, wherever the user moved it since.
+    /// in now once an import has placed its Arc profile, wherever the user moved it since. A space
+    /// moved to another profile in Arc after it was imported stays where it is in Kite too.
     @discardableResult
     public mutating func mergeArc(
         _ imported: [Space],
@@ -437,7 +440,7 @@ extension BrowserState {
             if let profile { made.append(profile.directory) }
         }
         for (arc, directory) in map where arc != Profile.defaultDirectory && directory != Profile.defaultDirectory {
-            arcProfileMap[arc] = directory
+            arcProfileMap[arc] = profile(directory).dataStoreID
         }
 
         for arc in arcProfiles {

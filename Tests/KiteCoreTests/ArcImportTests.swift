@@ -291,11 +291,29 @@ import Testing
         #expect(merged.profiles["Profile 3"] != merged.profiles["Profile 4"])
     }
 
+    @Test func aDeletedProfilesFolderIsntReusedForArc() throws {
+        let result = try ArcImport.parse(Self.fixture)
+        var state = BrowserState.makeDefault(seedURL: nil)
+        state.mergeArc(result.spaces, profileNames: ["Profile 3": "Work"])
+        let work = state.profiles[0].directory
+        state.spaces.removeAll { $0.id == result.spaces[1].id }
+        let deleted = state.deleteProfile(work)
+        #expect(deleted)
+        state.forgetRetiredProfiles([work])
+        let shopping = try state.createProfile(named: "Shopping")
+        #expect(shopping.directory == work)
+
+        let again = state.mergeArc(result.spaces, profileNames: ["Profile 3": "Work"])
+        #expect(again.newProfiles.count == 1)
+        #expect(again.profiles["Profile 3"] != shopping.directory)
+        #expect(state.spaces.first { $0.id == result.spaces[1].id }?.profile == again.profiles["Profile 3"])
+    }
+
     @Test func arcProfileMapSurvivesARelaunch() throws {
         var state = BrowserState.makeDefault(seedURL: nil)
         state.mergeArc(try ArcImport.parse(Self.fixture).spaces, profileNames: ["Profile 3": "Work"])
         let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
-        #expect(decoded.arcProfileMap == ["Profile 3": state.profiles[0].directory])
+        #expect(decoded.arcProfileMap == ["Profile 3": state.profiles[0].dataStoreID])
     }
 
     @Test func flagsUntitledSpaces() throws {

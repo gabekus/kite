@@ -84,9 +84,10 @@ public struct BrowserState: Hashable, Codable, Sendable {
     public var retiredProfileDirectories: [String]
     /// Download location and search suggestions, by profile `dataStoreID` (see ProfileSettings.swift).
     public var profileSettings: [String: ProfileSettings]
-    /// Import from Arc: the Kite profile folder each Arc profile folder went to (ArcImport.swift).
+    /// Import from Arc: the `dataStoreID` of the Kite profile each Arc profile folder went to
+    /// (ArcImport.swift).
     /// Delete with it once Arc has shut down.
-    public var arcProfileMap: [String: String]
+    public var arcProfileMap: [String: UUID]
     /// The favorites grid of the current space's profile, shown above the pinned tabs.
     public var favorites: [BrowserTab] {
         get { favoritesByProfile[selectedProfileDirectory] ?? [] }
@@ -198,7 +199,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         profiles = try c.decodeIfPresent([Profile].self, forKey: .profiles) ?? []
         retiredProfileDirectories = try c.decodeIfPresent([String].self, forKey: .retiredProfileDirectories) ?? []
         profileSettings = try c.decodeIfPresent([String: ProfileSettings].self, forKey: .profileSettings) ?? [:]
-        arcProfileMap = try c.decodeIfPresent([String: String].self, forKey: .arcProfiles) ?? [:]
+        arcProfileMap = try c.decodeIfPresent([String: UUID].self, forKey: .arcProfiles) ?? [:]
         // The default profile's favorites keep the key they had before profiles.
         favoritesByProfile = try c.decodeIfPresent([String: [BrowserTab]].self, forKey: .profileFavorites) ?? [:]
         let favorites = try c.decodeIfPresent([BrowserTab].self, forKey: .favorites) ?? []
