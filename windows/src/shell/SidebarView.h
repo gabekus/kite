@@ -155,9 +155,8 @@ private:
     // A point in the sidebar as the selected page sees it, with the strip's offset.
     D2D1_POINT_2F OnPage(D2D1_POINT_2F point) const;
     void RefreshHover();
-    // A point in the sidebar as the space bar sees it, and whether it's over the bar.
-    D2D1_POINT_2F OnBar(D2D1_POINT_2F point) const;
-    bool OverBar(D2D1_POINT_2F point) const;
+    // A point in the sidebar as the space bar sees it, when it's over the bar.
+    std::optional<D2D1_POINT_2F> BarPoint(D2D1_POINT_2F point) const;
     void SetScroll(float scroll);
     void Perform(const SidebarTap& tap);
     void DrawText(ID2D1DeviceContext* context, const std::string& text, IDWriteTextFormat* format, float x, float baseline,
@@ -216,15 +215,7 @@ private:
     bool trackingLeave_ = false;
     std::optional<std::pair<SidebarRow::Kind, std::string>> hover_;  // the hovered row's kind and id
     std::optional<SidebarPress> press_;
-    // A press on a space's cell: the space, where it went down (points), and whether it has
-    // moved far enough to be a drag (SwiftUI's DragGesture(minimumDistance: 4)), which reorders
-    // (W9d) rather than selects.
-    struct BarPress {
-        std::string spaceID;
-        D2D1_POINT_2F start;
-        bool dragged = false;
-    };
-    std::optional<BarPress> barPress_;
+    std::optional<SpaceBarPress> barPress_;  // a press on a space's cell (core's)
     bool activating_ = false;         // the next press brings the window forward
     int clicks_ = 0;
     DWORD lastClickTime_ = 0;

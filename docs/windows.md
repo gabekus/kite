@@ -250,7 +250,15 @@ SF Symbol and picture icons show as a dot until W9b2. A switch's slide relights
 the cells with the pages: each cell's two layers have DirectComposition opacity
 animations on the strip's spring (its light is linear in the strip's offset,
 `HighlightAlongSettle`), so the slide still draws nothing. A click selects the
-space; the pointer over another space's cell shows its rounded backing.
+space; the pointer over another space's cell shows its rounded backing, a small
+visual of its own that moves with the pointer and the scroll, so hovering and
+scrolling draw nothing. The Library and + symbols are drawn from the Mac's
+measured archivebox and plus (Segoe Fluent's glyphs differ in size and shape),
+and the emoji is set so it draws the Mac's 14.5pt, centred on its ink. Cells sit
+on whole pixels at every scale (core snaps them), so they draw where they take
+clicks. Known differences: in the 2pt where two cells overlap only the later
+cell's backing shows (the Mac shows both), and a touchpad's sideways scroll over
+the bar scrolls the strip until W9c sends it to the swipe.
 
 Known differences from the Mac: during the 0.2 s slide only the selected page
 takes clicks and shows hover (the Mac's outgoing page is a live list too), and

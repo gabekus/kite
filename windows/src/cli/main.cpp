@@ -331,6 +331,7 @@ int main(int argc, char** argv) {
             const BarRect& r = layout.cells[i];
             bar.emplace_back(json::Object{{"id", cells[i].spaceID},
                                           {"icon", cells[i].icon},
+                                          {"dot", cells[i].dot},
                                           {"lit", cells[i].lit},
                                           {"selected", cells[i].selected},
                                           {"left", static_cast<double>(r.left)},
@@ -352,16 +353,21 @@ int main(int argc, char** argv) {
             if (error != std::errc() || end != args[i].data() + args[i].size()) return Usage();
         }
         const auto rows = SidebarRows(state, state.SelectedSpaceIndex());
-        // The space bar along the bottom: a space's cell selects it.
-        if (values[1] >= values[2] - space_bar_metrics::kHeight && values[1] < values[2]) {
-            const SpaceBarLayout layout = LayOutSpaceBar(240, state.spaces.size());
-            const auto cell = SpaceCellAt(layout, values[0], values[1] - (values[2] - space_bar_metrics::kHeight));
-            json::Object out{{"target", std::string(cell ? "spaceCell" : "none")}};
-            if (cell) {
-                out.emplace("id", state.spaces[*cell].id);
-                out.emplace("action", std::string("selectSpace"));
-                state.SelectSpace(state.spaces[*cell].id);
-                changed = true;
+        // The space bar along the bottom: a click on a space's cell selects it (pressed and let
+        // go at the point, as the window's).
+        if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
+            const std::vector<SpaceCell> cells = SpaceCells(state);
+            const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
+            const float x = values[0], y = values[1] - SpaceBarTop(values[2]);
+            const auto press = SpaceBarPressAt(layout, cells, x, y);
+            json::Object out{{"target", std::string(press ? "spaceCell" : "none")}};
+            if (press) {
+                out.emplace("id", press->spaceID);
+                if (const auto space = SpaceBarRelease(*press, layout, cells, x, y)) {
+                    out.emplace("action", std::string("selectSpace"));
+                    state.SelectSpace(*space);
+                    changed = true;
+                }
             }
             std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else {

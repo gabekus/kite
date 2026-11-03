@@ -763,8 +763,11 @@ std::wstring BrowserWindowController::SmokeTest() {
     if (std::wstring problem = sidebar_->Draw(&chrome); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
     if (!Inked(chrome)) return L"the sidebar drew nothing";
     // The space bar along its bottom: the end buttons and the spaces' cells.
-    const UINT barRows = static_cast<UINT>(std::round(space_bar_metrics::kHeight * window_.Dpi() / USER_DEFAULT_SCREEN_DPI));
-    if (chrome.height < barRows || !Inked(chrome, chrome.height - barRows)) return L"the space bar drew nothing";
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    const long barTop = std::lround(SpaceBarTop(static_cast<float>(chrome.height) / scale) * scale);
+    if (barTop < 0 || barTop >= static_cast<long>(chrome.height) || !Inked(chrome, static_cast<UINT>(barTop))) {
+        return L"the space bar drew nothing";
+    }
     // And the caption buttons their glyphs.
     Pixels buttons;
     if (std::wstring problem = caption_->Draw(&buttons); !problem.empty()) return L"the caption buttons couldn't draw: " + problem;

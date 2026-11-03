@@ -223,8 +223,8 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         barSlidePending_ = false;
         const std::optional<size_t> left = anchor ? state.SpaceIndex(*anchor) : std::nullopt;
         if (slide_) {
-            bar_->Slide(slide_->segments, slide_->duration, slide_->segments.empty() ? 0 : ValueAt(slide_->segments, slide_->duration, 0),
-                        width_, SpaceSwipe::BuiltPages(selected, left, state.spaces.size()), selected);
+            bar_->Slide(slide_->segments, slide_->duration,
+                        slide_->to + (slide_->segments.empty() ? 0 : ValueAt(slide_->segments, slide_->duration, 0)), slide_->to, width_, SpaceSwipe::BuiltPages(selected, left, state.spaces.size()), selected);
         } else {
             bar_->Land();
         }
@@ -822,11 +822,7 @@ void SidebarView::RefreshHover() {
     // Over the bar: its cell's backing (a press elsewhere holds it, as above).
     std::optional<std::string> barHover;
     if (pointer_) {
-        const D2D1_POINT_2F p = PointOf(*pointer_);
-        if (OverBar(p)) {
-            const D2D1_POINT_2F b = OnBar(p);
-            barHover = bar_->SpaceAt(b.x, b.y);
-        }
+        if (const auto b = BarPoint(PointOf(*pointer_))) barHover = bar_->SpaceAt(b->x, b->y);
     }
     bar_->SetHover(barHover);
     if (bar_->NeedsDraw()) ScheduleDraw();
@@ -835,19 +831,12 @@ void SidebarView::RefreshHover() {
     InvalidateSelectedPage();
 }
 
-D2D1_POINT_2F SidebarView::OnBar(D2D1_POINT_2F p) const {
-    // The bar sits at the window's bottom in whole pixels.
-    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
-    RECT client{};
-    GetClientRect(window_, &client);
-    const float top = (static_cast<float>(client.bottom) - std::round(space_bar_metrics::kHeight * scale)) / scale;
-    return D2D1_POINT_2F{p.x, p.y - top};
-}
-
-bool SidebarView::OverBar(D2D1_POINT_2F p) const {
-    if (p.x < 0 || p.x >= width_) return false;
-    const D2D1_POINT_2F b = OnBar(p);
-    return b.y >= 0 && b.y < space_bar_metrics::kHeight;
+std::optional<D2D1_POINT_2F> SidebarView::BarPoint(D2D1_POINT_2F p) const {
+    // Under the space's page, in the sidebar (core's SpaceBarTop, as the page's bottom).
+    if (p.x < 0 || p.x >= width_) return std::nullopt;
+    const D2D1_POINT_2F b{p.x, p.y - SpaceBarTop(Height())};
+    if (b.y < 0 || b.y >= space_bar_metrics::kHeight) return std::nullopt;
+    return b;
 }
 
 void SidebarView::ForgetActivation() {
@@ -856,6 +845,12 @@ void SidebarView::ForgetActivation() {
 
 void SidebarView::ClearHover() {
     pointer_.reset();
+    // A press it drops lets go of the mouse too.
+    if ((press_ || barPress_) && GetCapture() == window_) {
+        press_.reset();
+        barPress_.reset();
+        ReleaseCapture();
+    }
     press_.reset();
     barPress_.reset();
     activating_ = false;
@@ -921,9 +916,10 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             trackingLeave_ = TrackMouseEvent(&track) != FALSE;
         }
         pointer_ = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-        if (barPress_ && !barPress_->dragged) {
+        if (barPress_) {
+            // In the bar's points, wherever the pointer has gone.
             const D2D1_POINT_2F p = PointOf(*pointer_);
-            barPress_->dragged = std::hypot(p.x - barPress_->start.x, p.y - barPress_->start.y) >= 4;
+            SpaceBarMove(*barPress_, p.x, p.y - SpaceBarTop(Height()));
         }
         RefreshHover();
         return false;
@@ -951,12 +947,9 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         RefreshHover();
         // A space's cell, which takes the click that brings the window forward too (the Mac's
         // acceptsFirstMouse).
-        if (OverBar(p)) {
-            const D2D1_POINT_2F b = OnBar(p);
-            if (std::optional<std::string> space = bar_->SpaceAt(b.x, b.y)) {
-                barPress_ = BarPress{*space, p};
-                SetCapture(window_);
-            }
+        if (const auto b = BarPoint(p)) {
+            barPress_ = SpaceBarPressAt(bar_->Geometry(), bar_->Cells(), b->x, b->y);
+            if (barPress_) SetCapture(window_);
             return true;
         }
         const D2D1_POINT_2F q = OnPage(p);
@@ -966,14 +959,16 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
     }
     case WM_LBUTTONUP: {
         if (barPress_) {
-            const BarPress press = *barPress_;
+            const SpaceBarPress press = *barPress_;
             barPress_.reset();
             if (GetCapture() == window_) ReleaseCapture();
             // Let go inside the cell it pressed, without dragging: that space (mouseUp's
             // bounds.contains).
-            const D2D1_POINT_2F b = OnBar(PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}));
+            const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+            const std::optional<std::string> space =
+                SpaceBarRelease(press, bar_->Geometry(), bar_->Cells(), p.x, p.y - SpaceBarTop(Height()));
             RefreshHover();
-            if (!press.dragged && bar_->InCell(press.spaceID, b.x, b.y) && actions_.selectSpace) actions_.selectSpace(press.spaceID);
+            if (space && actions_.selectSpace) actions_.selectSpace(*space);
             return true;
         }
         if (!press_) return false;
@@ -1000,7 +995,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         // Sideways over the space bar: its strip, when the spaces don't fit (an NSScrollView).
         POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         ScreenToClient(window_, &at);
-        if (!OverBar(PointOf(at))) return false;
+        if (!BarPoint(PointOf(at))) return false;
         UINT chars = 3;
         if (!SystemParametersInfoW(SPI_GETWHEELSCROLLCHARS, 0, &chars, 0)) chars = 3;
         const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
@@ -1017,7 +1012,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         const D2D1_POINT_2F p = PointOf(at);
         const float height = Height();
         // Shift turns a wheel sideways, as across Windows: over the bar, its strip.
-        if ((GET_KEYSTATE_WPARAM(wParam) & MK_SHIFT) && OverBar(p)) {
+        if ((GET_KEYSTATE_WPARAM(wParam) & MK_SHIFT) && BarPoint(p)) {
             UINT lines = 3;
             if (!SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0) || lines == WHEEL_PAGESCROLL) lines = 3;
             const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;

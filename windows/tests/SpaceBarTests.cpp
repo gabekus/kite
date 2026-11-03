@@ -1,6 +1,6 @@
-// The sidebar's bottom bar (core/SpaceBar.h): the Mac's SpaceReorderTests case for case (the
-// drop's move comes with W9d's moveSpace), plus SpaceBarView's layout, the cells, their light
-// along a page settle and the tip.
+// The sidebar's bottom bar (core/SpaceBar.h): the Mac's SpaceReorderTests case for case, but
+// for dropMovesTheSpaceKeepingTheCurrentOne, which needs BrowserState's moveSpace (W9d's), plus
+// SpaceBarView's layout, presses, the cells, their light along a page settle and the tip.
 
 #include <cmath>
 #include <optional>
@@ -89,6 +89,53 @@ TEST(tooManySpacesScrollFromTheRoomsLeadingEdge) {
     CHECK(LayOutSpaceBar(240, 2, 30).scroll == 0);
 }
 
+TEST(onTheScreensPixelsTheCellsSitOnWholePixels) {
+    // 125%: 34pt is 42.5px, so each cell's edges round to the nearest pixel, as they draw.
+    for (size_t count : {2u, 3u, 6u}) {
+        for (float scroll : {0.0f, 7.0f, 500.0f}) {
+            const SpaceBarLayout bar = LayOutSpaceBar(240, count, scroll, 1.25f);
+            for (const BarRect& r : bar.cells) {
+                for (float edge : {r.left, r.right, r.top, r.bottom}) CHECK(std::abs(edge * 1.25f - std::round(edge * 1.25f)) < 1e-3f);
+            }
+            CHECK(std::abs(bar.viewport.left * 1.25f - std::round(bar.viewport.left * 1.25f)) < 1e-3f);
+        }
+    }
+    // Scrolled to the end, the limit is a whole pixel too (67.5px up to 68), so the last cell shows whole.
+    const SpaceBarLayout end = LayOutSpaceBar(240, 6, 500, 1.25f);
+    CHECK(std::abs(end.scroll - 54.4f) < 1e-4f);
+    CHECK(end.cells.back().right <= end.viewport.right);
+    // At 2x (the Mac's Retina) Arc's numbers are whole pixels already.
+    CHECK(LayOutSpaceBar(289, 3, 0, 2).cells[0].left == 92.5f);
+    // The bar starts where the space's page ends.
+    CHECK(SpaceBarTop(800) == 750 && SidebarListBottom(800) == SpaceBarTop(800));
+}
+
+TEST(aPressSelectsWhenLetGoInItsCell) {
+    const SpaceBarLayout bar = LayOutSpaceBar(240, 2);  // cells 85...121 and 119...155
+    std::vector<SpaceCell> cells(2);
+    cells[0].spaceID = "a";
+    cells[1].spaceID = "b";
+    // Outside the cells nothing is pressed.
+    CHECK(!SpaceBarPressAt(bar, cells, 60, 25));
+    auto press = SpaceBarPressAt(bar, cells, 100, 25);
+    CHECK(press && press->spaceID == "a");
+    // A move under 4pt is still a click; let go in the shared 2pt it's still the pressed cell's.
+    SpaceBarMove(*press, 103.9f, 25);
+    CHECK(!press->dragged);
+    CHECK(SpaceBarRelease(*press, bar, cells, 120, 25) == std::optional<std::string>("a"));
+    // Let go outside its cell, nothing.
+    CHECK(!SpaceBarRelease(*press, bar, cells, 130, 25));
+    CHECK(!SpaceBarRelease(*press, bar, cells, 100, 45));
+    // 4pt is a drag (it reorders, from W9d), never a click, even back over the cell.
+    SpaceBarMove(*press, 100, 29);
+    CHECK(press->dragged);
+    SpaceBarMove(*press, 100, 25);
+    CHECK(press->dragged && !SpaceBarRelease(*press, bar, cells, 100, 25));
+    // A space gone by the time it's let go selects nothing.
+    auto gone = SpaceBarPressAt(bar, cells, 140, 25);
+    CHECK(!SpaceBarRelease(*gone, bar, {cells[0]}, 140, 25));
+}
+
 TEST(aClickFindsTheCellOnTop) {
     const SpaceBarLayout bar = LayOutSpaceBar(240, 2);  // cells 85...121 and 119...155
     CHECK(SpaceCellAt(bar, 90, 25) == 0u);
@@ -119,9 +166,11 @@ TEST(theSpaceYoureInIsLit) {
     state.SelectSpace("b");
     const auto cells = SpaceCells(state);
     CHECK(cells.size() == 3);
-    CHECK(cells[0].lit == 0 && !cells[0].selected && cells[0].icon == "🏃" && cells[0].number == 1);
-    CHECK(cells[1].lit == 1 && cells[1].selected && cells[1].icon.empty() && cells[1].number == 2);
-    CHECK(cells[2].lit == 0 && cells[2].spaceID == "c" && cells[2].number == 3);
+    CHECK(cells[0].lit == 0 && !cells[0].selected && cells[0].icon == "🏃" && !cells[0].dot && cells[0].number == 1);
+    CHECK(cells[1].lit == 1 && cells[1].selected && cells[1].icon.empty() && cells[1].dot && cells[1].number == 2);
+    // An SF Symbol or a picture is a dot until W9b2.
+    CHECK(cells[2].lit == 0 && cells[2].spaceID == "c" && cells[2].dot && cells[2].number == 3);
+    CHECK(SpaceIconShowsDot("image:abc.png") && !SpaceIconShowsDot("🏠"));
 }
 
 TEST(aCellsLightFollowsTheSlideLinearly) {
@@ -136,7 +185,7 @@ TEST(aCellsLightFollowsTheSlideLinearly) {
         const double from = (c.selected > c.anchor ? 1 : -1) * w;
         double total = 0;
         for (size_t i = 0; i < c.count; ++i) {
-            const LinearLit lit = HighlightAlongSettle(i, c.selected, built, from, w);
+            const LinearLit lit = HighlightAlongSettle(i, c.selected, built, from, 0, w);
             for (double f : {0.0, 0.1, 0.37, 0.5, 0.81, 1.0}) {
                 const double v = from * f;
                 CHECK(std::abs(lit.At(v) - SpaceSwipe::Highlight(i, c.selected, built, v, w)) < 1e-9);
@@ -146,11 +195,37 @@ TEST(aCellsLightFollowsTheSlideLinearly) {
         // Mid-slide the light is shared out, not lost.
         CHECK(std::abs(total - 1) < 1e-9);
         // At rest only the selected space is lit.
-        CHECK(HighlightAlongSettle(c.selected, c.selected, built, from, w).rest == 1);
+        CHECK(HighlightAlongSettle(c.selected, c.selected, built, from, 0, w).rest == 1);
+    }
+    // A settle that ends off the selected page (W9c's swipe): the light is the strip's at each
+    // point, the segments' value s being the offset less where it ends.
+    const auto built = SpaceSwipe::BuiltPages(1, 0, 3);
+    for (size_t i = 0; i < 3; ++i) {
+        const LinearLit lit = HighlightAlongSettle(i, 1, built, 200, 40, w);
+        for (double v : {200.0, 120.0, 40.0}) CHECK(std::abs(lit.At(v - 40) - SpaceSwipe::Highlight(i, 1, built, v, w)) < 1e-9);
     }
     // No distance: nothing changes.
-    const LinearLit still = HighlightAlongSettle(0, 0, {0, 1}, 0, w);
+    const LinearLit still = HighlightAlongSettle(0, 0, {0, 1}, 0, 0, w);
     CHECK(still.rest == 1 && still.slope == 0);
+}
+
+TEST(aCellsLayersFadeAcrossEachOther) {
+    // An icon: greyed out as it lights up; a dot, one layer, from its faint 23%.
+    CHECK(CellOpacityAt(false, 0) == (CellOpacity{1, 0}));
+    CHECK(CellOpacityAt(false, 1) == (CellOpacity{0, 1}));
+    CHECK(std::abs(CellOpacityAt(false, 0.3).grey - 0.7) < 1e-9 && std::abs(CellOpacityAt(false, 0.3).lit - 0.3) < 1e-9);
+    CHECK(CellOpacityAt(true, 1) == (CellOpacity{0, 1}));
+    CHECK(std::abs(CellOpacityAt(true, 0).lit - 0.23) < 1e-6 && CellOpacityAt(true, 0).grey == 0);
+    // Along a settle each layer is the light's opacity at every point, ending at rest.
+    const LinearLit light = HighlightAlongSettle(0, 1, {0, 1}, 240, 0, 240);  // the space you left
+    for (bool dot : {false, true}) {
+        const CellOpacityAlong along = CellOpacityAlongSettle(dot, light);
+        for (double s : {240.0, 100.0, 7.5, 0.0}) {
+            const CellOpacity at = CellOpacityAt(dot, light.At(s));
+            CHECK(std::abs(along.grey.At(s) - at.grey) < 1e-9 && std::abs(along.lit.At(s) - at.lit) < 1e-9);
+        }
+        CHECK(along.lit.At(0) == CellOpacityAt(dot, 0).lit);
+    }
 }
 
 TEST(segmentsMapToACellsOpacity) {
