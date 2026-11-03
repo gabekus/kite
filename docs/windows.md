@@ -271,10 +271,14 @@ nearest glyph until W9b4 draws them; symbols are centred on their ink where the
 Mac centres the symbol's image (checked only for the briefcase, within 0.25pt);
 an SF Symbol name outside the 58 (which the Mac draws, from automation or a
 hand-edited session) shows the dot in the bar and a blank icon slot in the
-header; a picture shows nothing until its decode arrives, a file over 1 MB or
-2048px or in a format WIC can't read (PDF, SVG; HEIC without its extension) shows
-the placeholder where the Mac draws it (only a file put there by hand can be),
-and its corners are circular where the Mac's are continuous; the MDL2 fallback (Windows without
+header; a picture shows nothing until its decode arrives (the Mac reads it in its
+layout), at launch, after a DPI change (new sizes) and in a jump's slide to a page
+not built yet; a file over 1 MB or 2048px or in a format WIC can't read (PDF, SVG;
+HEIC without its extension) shows the placeholder where the Mac draws it, and an
+embedded colour profile or JPEG orientation isn't applied (only a file put there
+by hand can be any of these); if the worker thread can't start, pictures are
+decoded on the UI thread as a last resort;
+and a picture's corners are circular where the Mac's are continuous; the MDL2 fallback (Windows without
 Segoe Fluent Icons) is checked against the font's map but not yet seen drawn;
 and the tip over a cell comes in W9b3.
 A switch's slide relights

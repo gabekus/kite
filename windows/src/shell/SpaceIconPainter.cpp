@@ -331,16 +331,21 @@ void SpaceIconPainter::Request(const std::string& name, UINT side) {
         Arrived(name, {side}, pixels ? std::move(*pixels) : std::vector<Pixels>{});
         return;
     }
-    {
-        // Into the file's read if it's still waiting, so the bar's size and the header's are one read.
-        std::lock_guard lock(shared_->mutex);
-        auto job = std::find_if(shared_->queue.begin(), shared_->queue.end(), [&](const Job& j) { return j.name == name; });
-        if (job != shared_->queue.end()) {
-            job->sides.push_back(side);
-            return;
-        }
-        shared_->queue.push_back(Job{name, {side}});
+    // Into the file's read if it's still waiting; the worker wakes at SendRequests, after the
+    // sidebar's whole draw, so the bar's size and the header's are one read.
+    std::lock_guard lock(shared_->mutex);
+    auto job = std::find_if(shared_->queue.begin(), shared_->queue.end(), [&](const Job& j) { return j.name == name; });
+    if (job != shared_->queue.end()) {
+        job->sides.push_back(side);
+        return;
     }
+    shared_->queue.push_back(Job{name, {side}});
+    requested_ = true;
+}
+
+void SpaceIconPainter::SendRequests() {
+    if (!requested_) return;
+    requested_ = false;
     shared_->wake.notify_one();
 }
 

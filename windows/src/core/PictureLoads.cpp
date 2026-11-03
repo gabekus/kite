@@ -9,7 +9,7 @@ PictureLoads::Show PictureLoads::Shows(const std::string& name, unsigned side) c
     const auto it = pictures_.find(name);
     if (it == pictures_.end()) return Show::Nothing;
     if (it->second.loaded.contains(side)) return Show::Picture;
-    return it->second.unreadable ? Show::Placeholder : Show::Nothing;
+    return it->second.unreadable || it->second.wasUnreadable ? Show::Placeholder : Show::Nothing;
 }
 
 PictureLoads::Need PictureLoads::Prepare(const std::string& name, unsigned side, double now) {
@@ -22,7 +22,7 @@ PictureLoads::Need PictureLoads::Prepare(const std::string& name, unsigned side,
     // Asked once at a time; an unreadable file again 2 s on, its placeholder showing meanwhile.
     const bool due = !picture.unreadable || now - picture.unreadableAt >= kRetryAfter;
     const bool ask = due && picture.asked.insert(side).second;
-    return {picture.unreadable ? Show::Placeholder : Show::Nothing, ask};
+    return {picture.unreadable || picture.wasUnreadable ? Show::Placeholder : Show::Nothing, ask};
 }
 
 PictureLoads::Answer PictureLoads::Arrived(const std::string& name, const std::vector<unsigned>& sides, bool readable, double now) {
@@ -34,7 +34,7 @@ PictureLoads::Answer PictureLoads::Arrived(const std::string& name, const std::v
     if (!readable) {
         // The placeholder, which changes nothing when it already showed.
         answer.changed = !picture.unreadable;
-        picture.unreadable = true;
+        picture.unreadable = picture.wasUnreadable = true;
         picture.unreadableAt = now;
         return answer;
     }

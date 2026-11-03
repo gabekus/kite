@@ -484,6 +484,11 @@ std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixe
 }
 
 std::wstring SidebarView::Draw(Pixels* readBack) {
+    // The pictures this draw asks for (the pages' headers and the bar's) go to the worker together.
+    struct SendRequests {
+        SpaceIconPainter* icons;
+        ~SendRequests() { if (icons) icons->SendRequests(); }
+    } sendRequests{icons_.get()};
     if (!compositor_) return L"no compositor";
     if (deviceLost_) return L"the GPU device was lost";
     RECT client{};

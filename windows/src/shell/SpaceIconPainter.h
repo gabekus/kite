@@ -63,6 +63,9 @@ public:
     // On `message`: moves the decoded pictures in. The names whose drawing changed (a picture
     // arrived, or turned out unreadable), for the views to draw again.
     std::set<std::string> TakeResults();
+    // Wakes the worker for what this draw's Prepares asked (the sidebar calls it once its draw,
+    // pages and bar, is done).
+    void SendRequests();
     // Draws `look` (a symbol or a picture; anything else draws nothing) centred on `centre`, in
     // `context`'s points at the window's `scale`, for an icon size `size` (the Mac's 12.5 in the
     // bar, 15 in the header): a symbol in `symbol`, filled with `brush`. `dark` is the
@@ -116,6 +119,7 @@ private:
     std::optional<Face> fluent_, mdl2_;
     std::shared_ptr<Shared> shared_;
     bool synchronous_ = false;
+    bool requested_ = false;  // jobs queued since the last SendRequests
     Microsoft::WRL::ComPtr<IUnknown> captureWic_;  // a capture's WIC factory (IWICImagingFactory)
     bool captureCom_ = false;
     PictureLoads loads_;

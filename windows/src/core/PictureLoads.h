@@ -6,7 +6,8 @@
 // A file is read on a worker, once for the sizes asked of it while it waited; each keeps at most
 // two sizes (the bar's and the header's: a DPI change's old ones go). Until its first answer a
 // picture draws nothing. A file that can't be read shows the placeholder, and a draw 2 s on asks
-// again while it still shows; only an answer that changes what shows needs a redraw, so nothing
+// again while it still shows (a size not loaded yet keeps the placeholder until its own
+// answer, so nothing blinks when the file turns up); only an answer that changes what shows needs a redraw, so nothing
 // loops while idle.
 
 #include <map>
@@ -46,6 +47,7 @@ public:
 private:
     struct Picture {
         bool unreadable = false;
+        bool wasUnreadable = false;  // a size not yet loaded keeps the placeholder it showed
         double unreadableAt = 0;
         std::set<unsigned> asked;               // sizes the worker is reading
         std::map<unsigned, unsigned long long> loaded;  // size -> last use

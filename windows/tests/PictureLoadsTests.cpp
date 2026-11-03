@@ -77,3 +77,18 @@ TEST(aPictureKeepsItsTwoLatestSizes) {
     CHECK(answer.evicted == std::vector<unsigned>{36});
     CHECK(loads.Shows("a.png", 19) == Show::Picture && loads.Shows("a.png", 30) == Show::Nothing);
 }
+
+TEST(aPictureThatTurnsUpKeepsThePlaceholderInTheOtherSizeUntilItsRead) {
+    PictureLoads loads;
+    // Missing in both the bar's size and the header's.
+    loads.Prepare("late.png", 30, 0);
+    loads.Prepare("late.png", 36, 0);
+    loads.Arrived("late.png", {30, 36}, false, 0.1);
+    // The header retries first and finds it; the bar's size, not read yet, keeps its placeholder
+    // while it asks (no blank between the placeholder and the picture).
+    loads.Prepare("late.png", 36, 2.2);
+    CHECK(loads.Arrived("late.png", {36}, true, 2.3).changed);
+    CHECK(loads.Prepare("late.png", 30, 2.4) == (Need{Show::Placeholder, true}));
+    CHECK(loads.Arrived("late.png", {30}, true, 2.5).changed);
+    CHECK(loads.Shows("late.png", 30) == Show::Picture && loads.Shows("late.png", 36) == Show::Picture);
+}
