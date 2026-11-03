@@ -53,11 +53,13 @@ public enum TabSearch {
         let q = typed.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let field = shown.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return nil }
-        return state.favorites.first { tab in
-            tab.id != state.selectedTab?.id && [tab.url, tab.pinnedURL].compactMap(host).contains {
-                $0.hasPrefix(q) && $0 != q && $0.hasPrefix(field)
-            }
-        }
+        let selected = state.selectedTab?.id
+        // Of several (mail.google.com and maps.google.com for "ma"), the one used last.
+        return state.favorites.filter { tab in
+            let hosts = [tab.url, tab.pinnedURL].compactMap(host)
+            // A whole host typed opens it, even when the other host only starts with it.
+            return tab.id != selected && !hosts.contains(q) && hosts.contains { $0.hasPrefix(q) && $0.hasPrefix(field) }
+        }.max { $0.lastActiveAt < $1.lastActiveAt }
     }
 
     static func score(_ q: String, _ tab: BrowserTab) -> Int? {

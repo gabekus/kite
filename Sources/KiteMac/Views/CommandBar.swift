@@ -244,7 +244,7 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         // When the leader comes from outside the five tab rows, it makes a sixth.
         let lead = mode == .newTab
             ? CommandBarOrder.leader(typedText, shown: text, in: state,
-                                     matches: typedText == text ? matches : TabSearch.switchTargets(typedText, in: state),
+                                     typedMatches: typedText == text ? matches : TabSearch.switchTargets(typedText, in: state),
                                      looksLikeURL: looksLikeURL)
             : nil
         let leader = lead.map(CommandSuggestion.switchTab)

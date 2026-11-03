@@ -366,7 +366,7 @@ import Testing
     }
 
     func leader(_ query: String, _ state: BrowserState) -> UUID? {
-        CommandBarOrder.leader(query, shown: query, in: state, matches: TabSearch.switchTargets(query, in: state),
+        CommandBarOrder.leader(query, shown: query, in: state, typedMatches: TabSearch.switchTargets(query, in: state),
                                looksLikeURL: URLInput.looksLikeURL(query))?.id
     }
 
@@ -407,7 +407,8 @@ import Testing
     }
 
     @Test func aRedirectedFavoriteLeadsByItsPinnedAddress() {
-        var (state, mail) = gmail()
+        let (base, mail) = gmail()
+        var state = base
         state.update(tab: mail) {
             $0.url = URL(string: "https://accounts.google.com/v3/signin/identifier")
             $0.title = "Gmail"
@@ -418,7 +419,8 @@ import Testing
 
     @Test func theFavoriteLeadsEvenBehindStrongerMatches() {
         // Six tabs whose titles start with "mail" outrank the favorite's host match; it still leads.
-        var (state, mail) = gmail()
+        let (base, mail) = gmail()
+        var state = base
         for i in 0..<6 {
             let id = state.openTab(url: URL(string: "https://example.com/\(i)"))
             state.update(tab: id) { $0.title = "Mailing list \(i)" }
@@ -435,7 +437,7 @@ import Testing
         state.select(tab: state.openTab(url: URL(string: "https://example.com")))
         func lead(_ url: Bool) -> UUID? {
             CommandBarOrder.leader("gi", shown: url ? "github.com" : "gi", in: state,
-                                   matches: TabSearch.switchTargets("gi", in: state), looksLikeURL: url)?.id
+                                   typedMatches: TabSearch.switchTargets("gi", in: state), looksLikeURL: url)?.id
         }
         #expect(lead(true) == nil)
         #expect(lead(false) == hub)
@@ -447,11 +449,42 @@ import Testing
             == ["open", "search"])
     }
 
+    @Test func aNonURLCompletionKeepsTheShortRuleOut() {
+        // A Site Search keyword "wiki" completing "w": the best tab for "w" would disagree with the field.
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let w = state.openTab(url: URL(string: "https://example.com"))
+        state.update(tab: w) { $0.title = "Weather" }
+        state.select(tab: state.openTab(url: URL(string: "https://example.org")))
+        let matches = TabSearch.switchTargets("w", in: state)
+        #expect(CommandBarOrder.leader("w", shown: "w", in: state, typedMatches: matches, looksLikeURL: false)?.id == w)
+        #expect(CommandBarOrder.leader("w", shown: "wiki", in: state, typedMatches: matches, looksLikeURL: false) == nil)
+    }
+
+    @Test func ofTwoFavoritesOnTheTypedAddressTheOneUsedLastLeads() {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let mail = state.openTab(url: URL(string: "https://mail.google.com"))
+        let maps = state.openTab(url: URL(string: "https://maps.google.com"))
+        state.toggleFavorite(tab: mail)
+        state.toggleFavorite(tab: maps)
+        state.select(tab: maps, now: Date(timeIntervalSince1970: 100))
+        state.select(tab: mail, now: Date(timeIntervalSince1970: 200))
+        state.select(tab: state.openTab(url: URL(string: "https://example.com")), now: Date(timeIntervalSince1970: 300))
+        #expect(leader("ma", state) == mail)
+        state.select(tab: maps, now: Date(timeIntervalSince1970: 400))
+        state.select(tab: state.openTab(url: URL(string: "https://example.org")), now: Date(timeIntervalSince1970: 500))
+        #expect(leader("ma", state) == maps)
+        // A whole host gets the Open row even when the favorite's other host only starts with it.
+        state.update(tab: mail) { $0.url = URL(string: "https://mail.google.com.au") }
+        #expect(leader("mail.google.com", state) == nil)
+        // "www." is left off the host, not matched.
+        #expect(leader("www.ma", state) == nil)
+    }
+
     @Test func aCompletionForAnotherSiteKeepsTheFavoriteOut() {
         // "m" completed to "music.apple.com" in the field: the Gmail favorite would disagree with it.
         let (state, mail) = gmail()
         func lead(_ shown: String) -> UUID? {
-            CommandBarOrder.leader("m", shown: shown, in: state, matches: TabSearch.switchTargets("m", in: state),
+            CommandBarOrder.leader("m", shown: shown, in: state, typedMatches: TabSearch.switchTargets("m", in: state),
                                    looksLikeURL: URLInput.looksLikeURL(shown))?.id
         }
         #expect(lead("music.apple.com") == nil)
@@ -466,7 +499,7 @@ import Testing
             #expect(!TabSearch.switchTargets(query, in: state).isEmpty)
             #expect(leader(query, state) == nil)
         }
-        #expect(CommandBarOrder.leader("gm", shown: "gm", in: state, matches: [], looksLikeURL: false) == nil)
+        #expect(CommandBarOrder.leader("gm", shown: "gm", in: state, typedMatches: [], looksLikeURL: false) == nil)
     }
 
     @Test func aStrongCommandStaysOnTop() {

@@ -14,12 +14,14 @@ public enum CommandBarOrder {
     static let shortQueryMinStrength = TabSearch.hostPrefix
 
     /// The tab that goes above everything but strong commands, from what was typed (without the inline completion
-    /// `shown` adds; either may be untrimmed) and its `matches` (best first). It may be outside `matches`.
-    public static func leader(_ typed: String, shown: String, in state: BrowserState, matches: [TabSearch.Match],
+    /// `shown` adds; either may be untrimmed) and `typedMatches`, ranked for `typed`. It may be outside them.
+    public static func leader(_ typed: String, shown: String, in state: BrowserState, typedMatches: [TabSearch.Match],
                               looksLikeURL: Bool) -> BrowserTab? {
         if let favorite = TabSearch.addressFavorite(typed, shown: shown, in: state) { return favorite }
-        guard !looksLikeURL, let best = matches.first, best.strength >= shortQueryMinStrength,
-              typed.trimmingCharacters(in: .whitespacesAndNewlines).count <= shortQueryMaxLength
+        // Not while a completion shows ("w" + "iki"): the row would disagree with the field.
+        let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !looksLikeURL, text.lowercased() == shown.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              let best = typedMatches.first, best.strength >= shortQueryMinStrength, text.count <= shortQueryMaxLength
         else { return nil }
         return best.tab
     }
