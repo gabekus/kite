@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- A manual check for Kite for Windows' Chromium host (W6). The page has no background of
+     its own (it must show white), and its title logs what happens to it:
+       "hidden"/"visible"  document.visibilityState changes (a hidden tab must report hidden)
+       "msg:hi"            the popup reached it through window.opener
+     The button opens a popup (hosted as a tab) that messages its opener and closes itself
+     after 3 s, which must close only the popup's tab, not Kite. -->
+<title>start</title>
+<body style="margin:0">
+<button id="open" style="width:200px;height:80px">open</button>
+<script>
+const log = [];
+function note(text) {
+  log.push(text);
+  document.title = log.join(' ');
+}
+document.addEventListener('visibilitychange', () => note(document.visibilityState));
+window.addEventListener('message', (event) => note('msg:' + event.data));
+document.getElementById('open').onclick = () => {
+  const popup = window.open('');
+  popup.document.write('<title>popup</title><script>opener.postMessage("hi", "*"); setTimeout(() => close(), 3000);<\/script>popup page');
+  popup.document.close();
+};
+</script>
+</body>
