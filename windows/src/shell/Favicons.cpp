@@ -111,8 +111,7 @@ std::optional<std::string> Fetch(HINTERNET session, const std::string& url) {
 #if KITE_SVG_FAVICONS
 // An SVG icon, as NSImage draws one on the Mac: fitted into side×side (its viewBox, else its
 // width and height, else the square itself), centred, with Direct2D's SVG renderer into a WIC
-// bitmap (software, on this thread). Direct2D draws SVG's static subset: no text, scripts or
-// style sheets.
+// bitmap (software, on this thread). Direct2D draws SVG's static subset (no text or scripts).
 std::optional<Pixels> RasterizeSvg(IWICImagingFactory* wic, ID2D1Factory1* d2d, const std::string& bytes, UINT side) {
     if (!d2d) return std::nullopt;
     ComPtr<IWICBitmap> bitmap;
