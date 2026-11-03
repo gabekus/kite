@@ -202,6 +202,14 @@ struct BrowserState {
     void Select(const std::string& tabID, Timestamp now = Now());
     void SelectSpace(const std::string& id);
     void SelectAdjacentSpace(int offset);
+    // Sidebar order with each split counted once, at its first member, standing for the pane it
+    // would focus (the selected one, if it's the selected split): what Ctrl+1…9 and
+    // Ctrl+Alt+Up/Down step through (SplitView.swift's sidebarStops).
+    std::vector<std::string> SidebarStops(size_t space) const;
+    // Ctrl+1…8 pick the nth stop, Ctrl+9 the last (BrowserState.selectTab(number:)).
+    void SelectTabNumber(int number, Timestamp now = Now());
+    // Next or previous stop, wrapping around (selectAdjacentTab(offset:)).
+    void SelectAdjacentTab(int offset, Timestamp now = Now());
     // Opens or closes a pinned folder, at any depth in any space.
     void SetFolderExpanded(const std::string& folderID, bool expanded);
     std::string AddSpace(std::string name, std::string icon, Theme theme);

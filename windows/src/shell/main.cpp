@@ -28,7 +28,10 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <map>
 #include <optional>
@@ -40,6 +43,7 @@
 #include <vector>
 
 #include "core/CommandBar.h"
+#include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
@@ -56,6 +60,7 @@
 #include "shell/Compositor.h"
 #include "shell/Errors.h"
 #include "shell/Favicons.h"
+#include "shell/Keys.h"
 #include "shell/MainWindow.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
@@ -177,6 +182,36 @@ void ComposeOver(kite::Pixels& base, const kite::Pixels& top, POINT origin) {
     }
 }
 
+// The user's shortcut changes (keybindings.json, the Mac's KeyBindingsStore): none when the
+// file isn't there, or can't be read (the defaults then, as the Mac does).
+kite::KeyBindings LoadKeyBindings(const std::filesystem::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return {};
+    const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    if (auto bindings = kite::KeyBindings::FromText(text)) return *bindings;
+    OutputDebugStringW(L"Kite: couldn't read keybindings.json, using the default shortcuts\n");
+    return {};
+}
+
+// Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
+bool CopyText(HWND owner, const std::wstring& text) {
+    if (!OpenClipboard(owner)) return false;
+    bool copied = false;
+    if (EmptyClipboard()) {
+        const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+        if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+            if (void* data = GlobalLock(memory)) {
+                std::memcpy(data, text.c_str(), bytes);
+                GlobalUnlock(memory);
+                copied = SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
+            }
+            if (!copied) GlobalFree(memory);  // the clipboard owns it only once it's set
+        }
+    }
+    CloseClipboard();
+    return copied;
+}
+
 int Fail(bool quiet, const std::wstring& message, int code) {
     OutputDebugStringW((L"Kite: " + message + L"\n").c_str());
     WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + message + L"\n");
@@ -257,6 +292,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     kite::SessionStore session(supportDirectory / L"session.json");
     kite::BrowserState state;
     auto loaded = session.Load();
+    // Kite's shortcuts (core/KeyBindings.h): each command's default, after the user's
+    // keybindings.json, read with the session before the window exists. Read once, as nothing
+    // changes them yet (Settings → Shortcuts comes later).
+    const kite::ShortcutMap shortcuts = kite::ShortcutTable(LoadKeyBindings(supportDirectory / L"keybindings.json"));
     // When the file is still there but unreadable (locked, couldn't be moved aside), run
     // without saving rather than replace the user's tabs with a fresh session.
     const bool maySave = kite::SessionStore::MaySave(loaded);
@@ -504,7 +543,84 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
     };
     sidebar->SetActions(sidebarActions);
-    // Ctrl+T, wherever the keyboard is in Kite's own window (a page's comes through Chromium).
+    // A page's own commands (back, reload, developer tools…), with Chromium (below). False when
+    // there's no page to do it to.
+    std::function<bool(const std::string& command)> pageCommand = [](const std::string&) { return false; };
+    // The selected tab's page shows, and the sidebar with it, after the selection moved.
+    auto selectionMoved = [&] {
+        showPage();
+        stateChanged();
+    };
+    // What each shortcut's command does: the Mac's menu items of the same ids (MainMenu.swift).
+    std::map<std::string, std::function<void()>, std::less<>> commands{
+        {"newTab", [&] { openCommandBar(kite::CommandBarMode::NewTab); }},
+        {"openLocation", [&] { openCommandBar(kite::CommandBarMode::EditCurrent); }},
+        {"archiveTab", [&] { archiveTab(); }},
+        {"reopenClosedTab", [&] { reopenClosedTab(); }},
+        // One window, so closing it quits, as the Mac's last window does with Kite set so.
+        {"closeWindow", [&] { PostMessageW(window.Handle(), WM_CLOSE, 0, 0); }},
+        {"quitKite", [&] { PostMessageW(window.Handle(), WM_CLOSE, 0, 0); }},
+        {"minimize", [&] { ShowWindow(window.Handle(), SW_MINIMIZE); }},
+        // The Mac's copyURL (its "Copied Current URL" toast comes with toasts).
+        {"copyCurrentURL",
+         [&] {
+             const kite::Tab* tab = state.SelectedTab();
+             if (!tab || !tab->url || !CopyText(window.Handle(), Widen(*tab->url))) MessageBeep(MB_OK);
+         }},
+        {"collapsePinnedSection",
+         [&] {
+             kite::TogglePinnedSection(state, state.SelectedSpace().id);
+             stateChanged();
+         }},
+        // The Mac's viewSource: the page's source in a new tab.
+        {"viewSource",
+         [&] {
+             const kite::Tab* tab = state.SelectedTab();
+             if (!tab || !tab->url || tab->url->starts_with("kite:") || tab->url->starts_with("view-source:")) {
+                 MessageBeep(MB_OK);
+                 return;
+             }
+             state.OpenTab("view-source:" + *tab->url);
+             selectionMoved();
+         }},
+        {"nextTab",
+         [&] {
+             state.SelectAdjacentTab(1);
+             selectionMoved();
+         }},
+        {"previousTab",
+         [&] {
+             state.SelectAdjacentTab(-1);
+             selectionMoved();
+         }},
+        // As the Mac: with no page, Back, Forward, Refresh and Stop do nothing; Developer
+        // Tools beeps.
+        {"goBack", [&] { pageCommand("goBack"); }},
+        {"goForward", [&] { pageCommand("goForward"); }},
+        {"reloadPage", [&] { pageCommand("reloadPage"); }},
+        {"forceReloadPage", [&] { pageCommand("forceReloadPage"); }},
+        {"stopLoading", [&] { pageCommand("stopLoading"); }},
+        {"developerTools", [&] { if (!pageCommand("developerTools")) MessageBeep(MB_OK); }},
+    };
+    for (int n = 1; n <= 9; ++n) {
+        commands[n == 9 ? "lastTab" : "tab" + std::to_string(n)] = [&, n] {
+            state.SelectTabNumber(n);
+            selectionMoved();
+        };
+    }
+    // Every command the table can name does something: a test run fails on one that doesn't.
+    for (const kite::ShortcutCommand& command : kite::ShortcutCommands()) {
+        if (!commands.contains(command.id) && (smokeTest || capture)) {
+            return Fail(quiet, L"the shortcut command " + Widen(command.id) + L" does nothing", kWindowFailed);
+        }
+    }
+    auto runCommand = [&](const std::string& command) {
+        if (auto it = commands.find(command); it != commands.end()) it->second();
+    };
+    // A shortcut ran from a key: the character Windows makes of that key isn't typed.
+    bool dropCharacter = false;
+    // The window's own messages, before its default handling: the caption buttons, shortcuts,
+    // the command bar, the sidebar.
     window.filter = [&](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
         // The caption buttons' presses, whatever else is open.
         if (caption->HandleMessage(message, wParam, lParam, result)) return true;
@@ -513,17 +629,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if ((message == WM_KEYDOWN || message == WM_CHAR) && commandBar && !commandBar->IsOpen() && keysForBar()) {
             openCommandBar(kite::CommandBarMode::NewTab);
         }
-        // Ctrl+W and Ctrl+Shift+T, wherever the keyboard is in Kite's own window (the bar's
-        // field included); a page's come through Chromium.
-        if (message == WM_KEYDOWN && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0) {
-            const bool shift = GetKeyState(VK_SHIFT) < 0;
-            if (wParam == 'W' && !shift) {
-                archiveTab();
-                result = 0;
-                return true;
-            }
-            if (wParam == 'T' && shift) {
-                reopenClosedTab();
+        if ((message == WM_CHAR || message == WM_SYSCHAR) && dropCharacter) {
+            dropCharacter = false;
+            result = 0;
+            return true;
+        }
+        // A key that made no character: its key-up ends the wait for one.
+        if (message == WM_KEYUP || message == WM_SYSKEYUP) dropCharacter = false;
+        // Kite's shortcuts, wherever the keyboard is in Kite's own window, the bar's field
+        // included (as the Mac's menus come before its field editor), but for keys the field
+        // edits with (Alt+Left). Alt's come as WM_SYSKEYDOWN. A page's come through Chromium.
+        if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) {
+            dropCharacter = false;
+            const auto pressed = kite::ShortcutOfKey(static_cast<UINT>(wParam), GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_MENU) < 0,
+                                                     GetKeyState(VK_SHIFT) < 0);
+            const kite::ShortcutTarget* target = pressed ? kite::FindShortcut(shortcuts, *pressed) : nullptr;
+            if (target && !(commandBar && commandBar->IsOpen() && kite::EditsText(*pressed))) {
+                // The character TranslateMessage made of it goes too (Alt+K's WM_SYSCHAR would beep).
+                dropCharacter = true;
+                runCommand(target->command->id);  // a held key repeats it, as the Mac's menus do
                 result = 0;
                 return true;
             }
@@ -553,12 +677,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
         if (message == kFaviconsMessage) {
             if (favicons && favicons->TakeResults()) sidebar->Invalidate();
-            return true;
-        }
-        if (message == WM_KEYDOWN && wParam == 'T' && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0 &&
-            GetKeyState(VK_SHIFT) >= 0) {
-            openCommandBar(kite::CommandBarMode::NewTab);
-            result = 0;
             return true;
         }
         return false;
@@ -665,6 +783,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             if (!chromium->Navigate(id, url)) showSelectedTab();
         };
         keysForBar = [&] { return chromium->KeysComeToKite(); };
+        pageCommand = [&](const std::string& command) {
+            using Action = kite::Chromium::PageAction;
+            static const std::map<std::string, Action, std::less<>> actions{
+                {"goBack", Action::Back},     {"goForward", Action::Forward},         {"reloadPage", Action::Reload},
+                {"forceReloadPage", Action::ReloadIgnoringCache},                     {"stopLoading", Action::Stop},
+                {"developerTools", Action::DevTools},
+            };
+            auto it = actions.find(command);
+            return it != actions.end() && chromium->Act(it->second);
+        };
         blockPages = [&](bool blocked) {
             chromium->BlockInput(blocked);
             if (!blocked) chromium->Focus();
@@ -730,8 +858,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         events.pageDiscarded = [&](const std::string& id) {
             std::erase_if(popupOpeners, [&](const auto& entry) { return entry.first == id || entry.second == id; });
         };
-        events.archiveTab = [&] { archiveTab(); };
-        events.reopenClosedTab = [&] { reopenClosedTab(); };
+        events.shortcuts = shortcuts;
+        events.command = runCommand;
         events.newTab = [&] {
             // Not when the bar has already opened for the keys typed after Ctrl+T and been
             // closed again (closing it gives the keys back to the pages).

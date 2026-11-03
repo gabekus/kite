@@ -34,6 +34,7 @@ endif()
 add_library(KiteCoreWin STATIC
   src/core/CommandBar.cpp
   src/core/Json.cpp
+  src/core/KeyBindings.cpp
   src/core/Models.cpp
   src/core/OKLab.cpp
   src/core/SessionStore.cpp
@@ -99,6 +100,7 @@ if(WIN32)
     src/shell/CommandBarView.cpp
     src/shell/Compositor.cpp
     src/shell/Favicons.cpp
+    src/shell/Keys.cpp
     src/shell/MainWindow.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
@@ -158,6 +160,7 @@ add_executable(KiteCoreTests
   tests/main.cpp
   tests/CommandBarTests.cpp
   tests/JsonTests.cpp
+  tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
   tests/SidebarTests.cpp

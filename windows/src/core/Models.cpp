@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cmath>
 #include <chrono>
+#include <set>
 
 #include "core/Url.h"
 #include "core/Uuid.h"
@@ -310,6 +311,49 @@ void BrowserState::SelectAdjacentSpace(int offset) {
     const long count = static_cast<long>(spaces.size());
     long next = ((static_cast<long>(SelectedSpaceIndex()) + offset) % count + count) % count;
     selectedSpaceID = spaces[static_cast<size_t>(next)].id;
+}
+
+std::vector<std::string> BrowserState::SidebarStops(size_t space) const {
+    std::vector<std::string> stops;
+    std::set<std::string> seen;
+    const auto& selected = spaces[space].selectedTabID;
+    for (const Tab* tab : SidebarTabs(space)) {
+        const SplitView* split = SplitContaining(tab->id);
+        if (!split) {
+            stops.push_back(tab->id);
+            continue;
+        }
+        if (!seen.insert(split->id).second) continue;
+        if (selected && std::find(split->tabIDs.begin(), split->tabIDs.end(), *selected) != split->tabIDs.end()) {
+            stops.push_back(*selected);
+            continue;
+        }
+        // The pane it would focus: the most recently active (SplitView.focusTarget).
+        const Tab* target = nullptr;
+        for (const std::string& id : split->tabIDs) {
+            const Tab* member = FindTabByID(id);
+            if (member && (!target || member->lastActiveAt > target->lastActiveAt)) target = member;
+        }
+        if (target) stops.push_back(target->id);
+    }
+    return stops;
+}
+
+void BrowserState::SelectTabNumber(int number, Timestamp now) {
+    const std::vector<std::string> stops = SidebarStops(SelectedSpaceIndex());
+    if (stops.empty() || number < 1) return;
+    const size_t index = number >= 9 ? stops.size() - 1 : static_cast<size_t>(number - 1);
+    if (index < stops.size()) Select(stops[index], now);
+}
+
+void BrowserState::SelectAdjacentTab(int offset, Timestamp now) {
+    const std::vector<std::string> stops = SidebarStops(SelectedSpaceIndex());
+    if (stops.empty()) return;
+    const auto& selected = SelectedSpace().selectedTabID;
+    const auto found = selected ? std::find(stops.begin(), stops.end(), *selected) : stops.end();
+    const long current = found == stops.end() ? 0 : static_cast<long>(found - stops.begin());
+    const long count = static_cast<long>(stops.size());
+    Select(stops[static_cast<size_t>(((current + offset) % count + count) % count)], now);
 }
 
 std::string BrowserState::AddSpace(std::string name, std::string icon, Theme theme) {
