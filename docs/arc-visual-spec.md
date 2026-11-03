@@ -1152,7 +1152,9 @@ user's is copied. Test fixtures are made up.
   Mac (Arc's default), so the element encoding (profile, then a case name such as `sevenDays`, next to
   `thresholds` in arc-strings.txt ~165658) is inferred.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
-  `destination.space`). Kite has no link routing yet, so it isn't imported.
+  `destination.space`). Import from Arc brings them into Air Traffic Control (ArcLinkRoutingImport); a route to an
+  Arc profile is left out. A real file's destination is `{"space": {"_0": {"space": {"_0": id}}}}`, and its default
+  `{"littleArc": {"_0": {"mostRecent": {}}}}` (structure checked 3 Nov 2026).
 
 ## View › Developer: Inspect Elements, JavaScript Console, Network Inspector (Arc 1.171, 1 Nov 2026)
 

@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 // Arc shuts down on 2026-12-22. Some time after that, delete this file, the
 // "Import from Arc…" item in MainMenu.swift, KiteCore/ArcImport.swift, ArcArchiveImport.swift,
 // ArcSettingsImport.swift, ArcKeyBindingsImport.swift, ArcHistoryImport.swift,
-// ArcSiteSearchImport.swift, and BrowserState.arcProfileMap.
+// ArcSiteSearchImport.swift, ArcLinkRoutingImport.swift, and BrowserState.arcProfileMap.
 
 extension BrowserWindowController {
     @objc func importFromArc(_ sender: Any?) {
@@ -33,6 +33,9 @@ enum ArcImportController {
 
     /// Shortcuts the user changed in Arc's Settings → Shortcuts.
     static var keyBindingsFile: URL { arcDirectory.appendingPathComponent("StorableKeyBindings.json") }
+
+    /// Arc's Air Traffic Control routes.
+    static var linkRoutingFile: URL { arcDirectory.appendingPathComponent("StorableLinkRouting.json") }
 
     /// Arc's archived tabs (Archive › View Archive).
     static var archiveFile: URL { arcDirectory.appendingPathComponent("StorableArchiveItems.json") }
@@ -132,6 +135,7 @@ enum ArcImportController {
         let siteSearches = ArcSiteSearchImport.read()
         let keyBindings = (try? Data(contentsOf: keyBindingsFile)).flatMap { try? ArcKeyBindingsImport.parse($0) } ?? []
         let archive = (try? Data(contentsOf: archiveFile)).map(ArcArchiveImport.parse) ?? []
+        let routes = (try? Data(contentsOf: linkRoutingFile)).flatMap(ArcLinkRoutingImport.parse)
         let profileNames = readProfileNames()
         let settings = readArcSettings()
         // What the dialog counts is what imports with the unnamed spaces left out, as they start.
@@ -143,11 +147,15 @@ enum ArcImportController {
             historyCount == 0 ? nil : count(historyCount, "history page"),
             siteSearches.isEmpty ? nil : count(siteSearches.count, "Site Search shortcut"),
             keyBindings.isEmpty ? nil : count(keyBindings.count, "keyboard shortcut change"),
+            routes.map { $0.rules.isEmpty ? nil : count($0.rules.count, "Air Traffic Control route") } ?? nil,
             settings.isEmpty ? nil : count(settings.names.count, "Arc setting") + " (" + settings.names.joined(separator: ", ") + ")",
         ].compactMap { $0 }
         if !extras.isEmpty { lines.append("Also imports \(list(extras)).") }
         if archive.count > BrowserState.archiveLimit {
             lines.append("Kite's archive keeps the latest \(BrowserState.archiveLimit) tabs, so older archived tabs are left out.")
+        }
+        if let skipped = routes?.skipped, skipped > 0 {
+            lines.append("\(count(skipped, "Air Traffic Control route")) to an Arc profile \(skipped == 1 ? "is" : "are") left out: Kite's routes open in a space or Little Kite.")
         }
         if let profiles = profilesLine(named, names: profileNames, state: store.state) { lines.append(profiles) }
         if result.profiles.contains(where: { !named.contains($0) }) {
@@ -177,6 +185,9 @@ enum ArcImportController {
             }
             if !keyBindings.isEmpty {
                 (NSApp.delegate as? AppDelegate)?.keyBindings.merge(keyBindings, menu: NSApp.mainMenu)
+            }
+            if let routes, !routes.isEmpty {
+                (NSApp.delegate as? AppDelegate)?.airTraffic.state.merge(arc: routes)
             }
         }
 

@@ -22,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var littleControllers: [LittleKiteWindowController] = []
     /// Installed web apps (File › Install Page as App…, Window › Web Apps, kite-app:// links).
     private(set) lazy var webApps = WebAppsController(supportDirectory: Self.supportDirectory)
-    private lazy var airTraffic = AirTrafficControlStore(fileURL: Self.supportDirectory.appendingPathComponent("LinkRouting.json"))
+    private(set) lazy var airTraffic = AirTrafficControlStore(fileURL: Self.supportDirectory.appendingPathComponent("LinkRouting.json"))
     /// Routes menu commands to whichever browser window is in front.
     private var menuRouter: MenuRouter!
     private var archiveTimer: Timer?
