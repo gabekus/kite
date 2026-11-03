@@ -238,15 +238,27 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
             return site.url(for: text).map { [.siteSearch(site, text, $0)] } ?? []
         }
         let matches = TabSearch.switchTargets(text, in: state)
-        let tabs = matches.map { CommandSuggestion.switchTab($0.tab) }
+        let looksLikeURL = URLInput.looksLikeURL(text)
+        // The tab above the rest, from what was typed, not a Site Search completion after it ("gi" + "thub.com").
+        let typedText = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        // When the leader comes from outside the five tab rows, it makes a sixth.
+        let lead = mode == .newTab
+            ? CommandBarOrder.leader(typedText, shown: text, in: state,
+                                     typedMatches: typedText == text ? matches : TabSearch.switchTargets(typedText, in: state),
+                                     looksLikeURL: looksLikeURL)
+            : nil
+        let leader = lead.map(CommandSuggestion.switchTab)
+        let tabs = matches.filter { $0.tab.id != lead?.id }.map { CommandSuggestion.switchTab($0.tab) }
         let search = CommandSuggestion.search(text, state.searchEngine.searchURL(for: text))
         // Pages visited before, minus any already shown as a tab and the page you're on (Arc showed neither).
-        let openURLs = Set((matches.map(\.tab) + [state.selectedTab].compactMap { $0 }).compactMap(\.url))
+        let shownTabs = matches.map(\.tab) + [lead, state.selectedTab].compactMap { $0 }
+        let openURLs = Set(shownTabs.compactMap(\.url) + [lead?.pinnedURL].compactMap { $0 })
         let visited = (store.history?.search(text, limit: 6) ?? [])
             .filter { !openURLs.contains($0.url) }
             .prefix(3)
-        if URLInput.looksLikeURL(text), let url = URLInput.resolve(text, engine: state.searchEngine) {
-            return [.open(url)] + tabs + visited.filter { $0.url != url }.map(CommandSuggestion.history) + [search]
+        if looksLikeURL, let url = URLInput.resolve(text, engine: state.searchEngine) {
+            let history = visited.filter { $0.url != url }.map(CommandSuggestion.history)
+            return CommandBarOrder.arrangeURL(leader: leader, open: .open(url), tabs: tabs, history: history, search: search)
         }
         let history = visited.map(CommandSuggestion.history)
         // Menu commands, Arc-style. A strong match ("copy url") goes above the web search.
@@ -260,8 +272,7 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         }
         // Arc's ⌘T order; editing the address keeps tabs under the engine's suggestions (not observed in Arc).
         guard mode == .newTab else { return [search] + engine + tabs + history }
-        return CommandBarOrder.arrange(tabFirst: CommandBarOrder.tabFirst(text, best: matches.first),
-                                       strongCommands: strong, search: search, tabs: tabs,
+        return CommandBarOrder.arrange(leader: leader, strongCommands: strong, search: search, tabs: tabs,
                                        engine: engine, history: history, weakCommands: weak)
     }
 
