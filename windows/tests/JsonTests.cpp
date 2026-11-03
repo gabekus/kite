@@ -1,3 +1,5 @@
+// core/Json: strict RFC 8259 parsing, valid UTF-8 only, and sorted compact output.
+
 #include "Check.h"
 #include "core/Json.h"
 

@@ -84,8 +84,6 @@ json::Value Summary(const BrowserState& state) {
     return json::Value(std::move(root));
 }
 
-}  // namespace
-
 // The arguments as UTF-8. On Windows they come from the UTF-16 command line, so a name like
 // "Café" survives whatever the code page is.
 std::vector<std::string> Arguments(int argc, char** argv) {
@@ -129,11 +127,18 @@ json::Value ThemeSummary(const Theme& theme) {
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
 
+}  // namespace
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     // Arguments come in as UTF-16 (CommandLineToArgvW) and are converted to UTF-8; output is
     // UTF-8 too, which the console shows only once its output code page says so.
-    SetConsoleOutputCP(CP_UTF8);
+    // The console's code page is shared with the shell that started us, so put it back.
+    struct ConsoleCodePage {
+        UINT previous = GetConsoleOutputCP();
+        ConsoleCodePage() { if (previous) SetConsoleOutputCP(CP_UTF8); }
+        ~ConsoleCodePage() { if (previous) SetConsoleOutputCP(previous); }
+    } consoleCodePage;
 #endif
     std::vector<std::string> args = Arguments(argc, argv);
     // --profile DIR anywhere on the line, so "open x --profile DIR" never writes to the real
@@ -163,7 +168,7 @@ int main(int argc, char** argv) {
         return kLoadFailed;
     }
     const bool existed = std::holds_alternative<BrowserState>(loaded);
-    state = existed ? std::get<BrowserState>(loaded) : BrowserState::MakeDefault();
+    state = existed ? std::move(std::get<BrowserState>(loaded)) : BrowserState::MakeDefault();
 
     const std::string& command = args[0];
     const SearchEngine engine = SearchEngineFromRaw(state.searchEngine).value_or(SearchEngine::Google);

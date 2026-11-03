@@ -100,6 +100,16 @@ constexpr UINT_PTR kCaptureTimer = 2;
 
 int Fail(bool quiet, const std::wstring& message, int code) {
     OutputDebugStringW((L"Kite: " + message + L"\n").c_str());
+    // A GUI process has no console, but a launcher that redirects stderr (CI) gets the reason.
+    HANDLE stderrHandle = GetStdHandle(STD_ERROR_HANDLE);
+    if (stderrHandle && stderrHandle != INVALID_HANDLE_VALUE) {
+        std::wstring line = L"Kite: " + message + L"\n";
+        int bytes = WideCharToMultiByte(CP_UTF8, 0, line.c_str(), static_cast<int>(line.size()), nullptr, 0, nullptr, nullptr);
+        std::string utf8(static_cast<size_t>(bytes > 0 ? bytes : 0), '\0');
+        if (bytes > 0) WideCharToMultiByte(CP_UTF8, 0, line.c_str(), static_cast<int>(line.size()), utf8.data(), bytes, nullptr, nullptr);
+        DWORD written = 0;
+        WriteFile(stderrHandle, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+    }
     if (!quiet) MessageBoxW(nullptr, message.c_str(), L"Kite", MB_OK | MB_ICONERROR);
     return code;
 }
@@ -180,8 +190,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // A capture always has a set size (the Mac's default unless asked), even on a small screen.
     if (capture && !size) size = std::make_pair(kite::MainWindow::kDefaultWidth, kite::MainWindow::kDefaultHeight);
     if (size) window.SetClientSize(size->first, size->second);
-    // Quiet runs don't take focus, and don't follow a launcher's "start maximized".
-    window.Show(quiet ? SW_SHOWNOACTIVATE : showCommand);
+    // Quiet runs open behind other windows without focus, and ignore a launcher's "start maximized".
+    if (quiet) window.ShowBehindOtherWindows();
+    else window.Show(showCommand);
     if (capture && !window.HasClientSize(size->first, size->second)) {
         // A capture is compared pixel for pixel with the Mac's, so a window Windows resized
         // (maximized by the launcher, clamped to 32767 px) would compare the wrong thing.
@@ -189,6 +200,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
 
     if (smokeTest) {
+        // The manifest took effect: without it the window would be DPI-unaware and text in the
+        // ANSI code page, which a 100% CI display can't tell apart by size alone.
+        if (!AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window.Handle()), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+            return Fail(quiet, L"the window isn't per-monitor DPI aware (v2): Kite.manifest wasn't embedded", kWindowFailed);
+        }
+        if (GetACP() != CP_UTF8) return Fail(quiet, L"the process code page isn't UTF-8: Kite.manifest wasn't embedded", kWindowFailed);
         SetTimer(window.Handle(), kSmokeTimer, 1000, [](HWND hwnd, UINT, UINT_PTR, DWORD) { PostMessageW(hwnd, WM_CLOSE, 0, 0); });
     }
     if (capture && captureScale) {

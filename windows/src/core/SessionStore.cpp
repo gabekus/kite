@@ -28,14 +28,21 @@ SessionStore::LoadResult SessionStore::Load(Unreadable unreadable) const {
     bool exists = fs::exists(file_, error);
     if (error) return Error{"couldn't check " + PathText(file_) + ": " + error.message(), std::nullopt};
     if (!exists) return Missing{};
-    std::ifstream in(file_, std::ios::binary);
-    if (!in) return Error{"couldn't open " + PathText(file_), std::nullopt};
-    std::stringstream buffer;
-    buffer << in.rdbuf();
-    in.close();
+    // Read straight into one string (startup, on the UI thread: no second copy).
+    std::string text;
+    {
+        // Not a regular file (a directory, say): nothing to read, and nothing to move aside.
+        if (!fs::is_regular_file(file_, error)) return Error{PathText(file_) + " isn't a file", std::nullopt};
+        const auto size = fs::file_size(file_, error);
+        if (error) return Error{"couldn't read " + PathText(file_) + ": " + error.message(), std::nullopt};
+        std::ifstream in(file_, std::ios::binary);
+        if (!in) return Error{"couldn't open " + PathText(file_), std::nullopt};
+        text.resize(static_cast<size_t>(size));
+        if (!in.read(text.data(), static_cast<std::streamsize>(size))) return Error{"couldn't read " + PathText(file_), std::nullopt};
+    }
 
     std::string problem;
-    auto parsed = json::Parse(buffer.str());
+    auto parsed = json::Parse(text);
     if (auto* parseError = std::get_if<json::ParseError>(&parsed)) {
         problem = "invalid JSON at byte " + std::to_string(parseError->offset) + ": " + parseError->message;
     } else {
@@ -75,8 +82,9 @@ std::string SessionStore::Save(const BrowserState& state) const {
     }
     fs::rename(temp, file_, error);
     if (error) {
-        fs::remove(temp, error);
-        return "couldn't replace " + PathText(file_);
+        std::error_code ignored;
+        fs::remove(temp, ignored);
+        return "couldn't replace " + PathText(file_) + ": " + error.message();
     }
     return {};
 }

@@ -2,13 +2,15 @@
 
 The ordered plan Helix works through (docs/helix.md). Status: planned →
 approved → in progress → in review (#PR) → done (#PR). Gabe approves or
-reorders; the agent proposes more as earlier ones land.
+reorders; the agent proposes more as earlier ones land. W0–W3a share one branch
+(windows-shell, #260) because they were bootstrapped together; from W3 each checkpoint
+gets its own `helix/W<n>-…` branch.
 
 | id | checkpoint | ports (Mac) | status |
 |---|---|---|---|
-| W0 | Win32 window, profile path, CI launch | AppDelegate.supportDirectory, BrowserWindowController (window sizes) | in review (#260) |
+| W0 | Win32 window, profile path, CI launch | AppDelegate.supportDirectory, BrowserWindowController (window sizes) | in review (#260) [UI gate not run: nothing to compare until W3 draws; no 200% Windows display yet] |
 | W1 | Model core: tabs, folders, spaces, themes, favorites per profile, session.json shared with the Mac, `kitecore` | KiteCore Models, BrowserState (open, select, spaces), Profiles (favorites), SessionStore, URLInput | in review (#260) |
-| W2 | UI gate plumbing: Windows `--capture`, `--window-size`, `--capture-scale`; Mac `KITE_WINDOW_SIZE`; first `states/` fixture | `kite ui capture` | in review (#260) |
+| W2 | UI gate plumbing: Windows `--capture`, `--window-size`, `--capture-scale`; Mac `KITE_WINDOW_SIZE`; first `states/` fixture | `kite ui capture` | in review (#260) [CI checks the capture's size and pixels at 100%; the 2× run and the Mac side need Gabe's PC and Mac] |
 | W3a | Theme colour math (OKLab, lightness, glow, accent) | Theme.swift | in review (#260) |
 | W3 | DirectComposition root and the theme backdrop (HLSL port of Kite.metal), drawing only on change; `--capture` waits for the first presented frame and can render at a set scale | KiteMac/Metal, Shaders/Kite.metal | planned |
 | W4 | Sidebar skeleton: space title, pinned and unpinned rows from the session, static | Views/SidebarView.swift, ArcMetrics.swift | planned |

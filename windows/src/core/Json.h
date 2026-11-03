@@ -6,6 +6,7 @@
 // JSONEncoder(.sortedKeys). Output is equivalent to the Mac's, not byte-identical: Swift
 // also escapes "/" as "\/".
 
+#include <concepts>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -28,8 +29,10 @@ public:
     Value(std::nullptr_t) {}
     Value(bool b) : data_(b) {}
     Value(double d) : data_(d) {}
-    Value(int i) : data_(static_cast<double>(i)) {}
-    Value(int64_t i) : data_(static_cast<double>(i)) {}
+    // Any integer type, the same on every platform (int64_t is long on Linux, long long on Windows).
+    template <std::integral T>
+        requires(!std::same_as<T, bool>)
+    Value(T i) : data_(static_cast<double>(i)) {}
     Value(const char* s) : data_(std::string(s)) {}
     Value(std::string s) : data_(std::move(s)) {}
     Value(Array a) : data_(std::make_shared<Array>(std::move(a))) {}
@@ -49,6 +52,8 @@ public:
     const std::string* AsString() const;
     const Array* AsArray() const;
     const Object* AsObject() const;
+    // For changing the container: unshares it first (copy-on-write), so read through a
+    // const Value& instead. The pointer is valid until this Value is next copied or assigned.
     Array* AsArray();
     Object* AsObject();
 

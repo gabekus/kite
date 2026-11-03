@@ -3,9 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore: ['docs/**', '**/*.md']
+    paths-ignore: ['docs/**', '**/*.md', 'windows/**', '.github/workflows/ci-windows-native.yml']
   pull_request:
-    paths-ignore: ['docs/**', '**/*.md']
+    paths-ignore: ['docs/**', '**/*.md', 'windows/**', '.github/workflows/ci-windows-native.yml']
   # Lets a run be started by hand (gh workflow run CI --ref main), e.g. to check a runner.
   workflow_dispatch:
 

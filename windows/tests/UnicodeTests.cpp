@@ -1,3 +1,5 @@
+// core/Unicode: UTF-8 decoding, Swift's letter and number classes, grapheme clusters, trimming.
+
 #include "Check.h"
 #include "core/Unicode.h"
 

@@ -10,6 +10,7 @@
 # Needs cmake, Ninja and the MSVC build tools (a "Developer PowerShell" or vcvars64).
 param([switch] $AllowUnpinned)
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'  # Windows PowerShell 5.1's progress bar slows downloads to a crawl
 
 $CefVersion = '156.0.7+g47dbc1d+chromium-156.0.8078.17'
 $CefPlatform = 'windows64'
@@ -56,8 +57,9 @@ if ((Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $CefVersion)) 
     if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
     $unpacked = Join-Path $ThirdParty $Name
     if (Test-Path $unpacked) { Remove-Item -Recurse -Force $unpacked }
-    # Windows 10+ ships bsdtar as tar.exe, which reads .tar.bz2.
-    tar -xjf $Archive -C $ThirdParty
+    # Windows 10+ ships bsdtar as System32\tar.exe, which reads .tar.bz2. Named in full: Git's
+    # GNU tar, if it comes first on PATH, reads "C:\..." as a remote host.
+    & (Join-Path $env:SystemRoot 'System32\tar.exe') -xjf $Archive -C $ThirdParty
     if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
     Move-Item $unpacked $Dest
     Set-Content -Path $Stamp -Value $CefVersion -NoNewline

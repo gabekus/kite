@@ -1,3 +1,5 @@
+// Runs every TEST registered by the suites (tests/Check.h) and exits non-zero if any check failed.
+
 #include <cstdio>
 
 #include "Check.h"

@@ -27,6 +27,9 @@ public:
     bool IsValid() const { return hwnd_ != nullptr; }
     HWND Handle() const { return hwnd_; }
     void Show(int showCommand);
+    // Shows the window behind every other one without activating it, for quiet test runs
+    // (like the Mac's KITE_DIAGNOSTICS launches). PrintWindow still captures it covered.
+    void ShowBehindOtherWindows();
     // Client area in DIPs (96 DPI points), scaled to the window's monitor. Can be larger
     // than the screen, so a capture has the same size on every machine.
     void SetClientSize(int width, int height);

@@ -54,6 +54,11 @@ void MainWindow::Show(int showCommand) {
     UpdateWindow(hwnd_);
 }
 
+void MainWindow::ShowBehindOtherWindows() {
+    SetWindowPos(hwnd_, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    UpdateWindow(hwnd_);
+}
+
 void MainWindow::SetClientSize(int width, int height) {
     // Windows otherwise caps a window at the screen size (WM_GETMINMAXINFO's ptMaxTrackSize).
     allowLargerThanScreen_ = true;
