@@ -67,6 +67,9 @@ private struct HandoffStepCard: View {
     let others: Int
     @State private var copied = false
 
+    private var tabClosed: Bool { automation.stepTabIsClosed(step) }
+    private var canReopen: Bool { automation.canReopenStepTab(step) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -160,6 +163,8 @@ private struct HandoffStepCard: View {
                 Text("Run it in Terminal, then press Done.")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
+            } else if tabClosed {
+                HandoffBlockedNote(text: "This step's tab is closed." + (canReopen ? "" : " Press Skip if you no longer need it."))
             } else if !onFront {
                 Text("This step is in another tab.")
                     .font(.system(size: 11))
@@ -168,6 +173,8 @@ private struct HandoffStepCard: View {
                 HandoffBlockedNote(text: handoff.isBlocked(step)
                     ? Self.disabledText(target: step.targetName, why: why)
                     : "It's turned off for now. It may turn on once you've done the steps before it.")
+            } else if step.blocker == .offPage {
+                HandoffBlockedNote(text: "This tab is no longer on this step's page.")
             } else if step.locator != nil, step.found == false {
                 Text("Kite can't find it on this page yet. Do it by hand, then press Done.")
                     .font(.system(size: 11))
@@ -175,7 +182,15 @@ private struct HandoffStepCard: View {
             }
 
             HStack(spacing: 8) {
-                if !onFront {
+                if tabClosed, canReopen {
+                    Button("Reopen Tab") { automation.reopenStepTab(step.id) }
+                        .controlSize(.small)
+                        .help("Open this step's tab again")
+                } else if onFront, step.blocker == .offPage, step.url != nil {
+                    Button("Take Me Back") { automation.returnToStepPage(step.id) }
+                        .controlSize(.small)
+                        .help("Go back to \(step.url.flatMap { URL(string: $0)?.host } ?? "the step's page")")
+                } else if !onFront {
                     Button("Show Tab") { automation.showTab(of: step.id) }
                         .controlSize(.small)
                 }

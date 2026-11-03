@@ -25,6 +25,8 @@ public enum UserHandoff {
     public static let pollInterval: TimeInterval = 0.5
     /// How many looks, half a second apart, Kite takes at a new step's control before telling Claude it's missing.
     public static let probeAttempts = 3
+    /// How long a step's control must be missing, on a tab at another address, before the card offers Take Me Back.
+    public static let offPageDelay: TimeInterval = 1.5
     /// How long a step stays blocked before a waiting handoff_status returns to tell Claude.
     public static let blockedReportDelay: TimeInterval = 2
     /// The isolated world the ring lives in, and the binding it reports clicks through.
@@ -155,6 +157,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             /// The control is on the page but turned off (disabled or aria-disabled), with the page's own
             /// words about it when it gives some ("Only Super Administrators can invite members").
             case disabled(why: String?)
+            /// The tab is at another address than the step's page, and the control has been missing for a while.
+            case offPage
+            /// The step's tab is closed.
+            case tabClosed
         }
 
         /// "h1.2": the handoff and the step's number.
@@ -166,6 +172,9 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         public var command: String?
         public var tab: UUID?
         public var locator: Locator?
+        /// The step's page: where Kite last found its control (http or https only), to take the user back there when
+        /// they lose it.
+        public var url: String?
         public var state: State = .waiting
         /// What finished it, in words for Claude: "the user clicked the highlighted control".
         public var how: String?
@@ -177,7 +186,7 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         public var blocker: Blocker?
 
         public init(id: String, number: Int, instruction: String, why: String? = nil, command: String? = nil, tab: UUID? = nil,
-                    locator: Locator? = nil) {
+                    locator: Locator? = nil, url: String? = nil) {
             self.id = id
             self.number = number
             self.instruction = instruction
@@ -185,6 +194,7 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             self.command = command
             self.tab = tab
             self.locator = locator
+            self.url = url
         }
 
         public var isWaiting: Bool { state == .waiting }
@@ -208,12 +218,14 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
                     // The page's own words, which it controls: marked as page content, like everything else read off a page.
                     + (why.map { ". The page says: " + UntrustedContent.wrap($0, source: "the step's control") }
                         ?? ". Something it needs (a field, a choice, a permission) is probably missing")
+            case .offPage?: "the tab is no longer on the step's page (\(url ?? "unknown")); Kite offers the user a button to go back"
+            case .tabClosed?: "its tab is closed; Kite offers the user a button to reopen it. Wait, or withdraw the handoff if it's no longer needed"
             case nil: found == false ? "Kite can't find its control on the page right now" : nil
             }
         }
 
         /// `found` and `blocker` are only what the last look saw, so they aren't saved.
-        enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, state, how }
+        enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, url, state, how }
     }
 
     /// "h1", "h2": short enough for Claude to pass back.
@@ -236,8 +248,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
 
     /// A waiting step whose control is turned off while no earlier step of the handoff waits: the user is stuck on
     /// it. (While an earlier one waits, that step may be what turns the control on.)
+    /// Only a turned-off control is: a page left or a tab closed is a click on the card away.
     public func isBlocked(_ step: Step) -> Bool {
-        step.isWaiting && step.blocker != nil && !steps.contains { $0.isWaiting && $0.number < step.number }
+        guard step.isWaiting, case .disabled? = step.blocker else { return false }
+        return !steps.contains { $0.isWaiting && $0.number < step.number }
     }
 
     public var blockedSteps: [Step] { steps.filter(isBlocked) }
@@ -257,7 +271,7 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         return true
     }
 
-    /// Ends every waiting step (the user dismissed the handoff, Claude withdrew it, or the tab closed).
+    /// Ends every waiting step (the user dismissed the handoff, or Claude withdrew it).
     public mutating func finishAll(_ state: Step.State, how: String, where include: (Step) -> Bool = { _ in true }) {
         for index in steps.indices where steps[index].isWaiting && include(steps[index]) {
             steps[index].state = state
@@ -321,6 +335,29 @@ public struct HandoffBlockWatch: Sendable {
         since = since.filter { blocked.contains($0.key) }
         for id in blocked where since[id] == nil { since[id] = now }
         return since.values.contains { now.timeIntervalSince($0) >= delay }
+    }
+}
+
+extension Handoff {
+    /// Whether a tab at `current` is at another address than a step's page (`stepURL`, where its control was last
+    /// found). Kite only calls it a page left once the control has been missing for `UserHandoff.offPageDelay`.
+    public static func isOffPage(stepURL: String?, current: URL?) -> Bool {
+        guard let stepURL, let page = URL(string: stepURL), let current, canReturn(to: page) else { return false }
+        return address(page) != address(current)
+    }
+
+    /// A page Kite may load again for the user: a web page, not a file, data or internal one.
+    public static func canReturn(to url: URL) -> Bool {
+        ["http", "https"].contains(url.scheme?.lowercased() ?? "") && url.host != nil
+    }
+
+    /// An address to compare: the host's case, a default port and a trailing slash don't count.
+    private static func address(_ url: URL) -> String {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url.absoluteString }
+        parts.host = parts.host?.lowercased()
+        if (parts.scheme == "https" && parts.port == 443) || (parts.scheme == "http" && parts.port == 80) { parts.port = nil }
+        if parts.path.hasSuffix("/") { parts.path.removeLast() }
+        return parts.string ?? url.absoluteString
     }
 }
 

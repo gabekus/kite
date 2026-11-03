@@ -219,6 +219,48 @@ import Testing
         #expect(!r8)
     }
 
+    @Test func knowsWhenATabHasLeftTheStepsPage() {
+        let step = "https://dash.cloudflare.com/abc/members/invite"
+        let url = { (s: String) in URL(string: s)! }
+        #expect(Handoff.isOffPage(stepURL: step, current: url("https://www.google.com/")))
+        #expect(Handoff.isOffPage(stepURL: step, current: url("https://dash.cloudflare.com/abc/home")))
+        // The same address, however it's written.
+        #expect(!Handoff.isOffPage(stepURL: step, current: url("https://DASH.cloudflare.com:443/abc/members/invite/")))
+        // A fragment is part of the page: Gmail keeps an open compose there.
+        #expect(Handoff.isOffPage(stepURL: "https://mail.google.com/mail/u/0/#inbox?compose=abc",
+                                  current: url("https://mail.google.com/mail/u/0/#inbox")))
+        // No page to go back to.
+        #expect(!Handoff.isOffPage(stepURL: nil, current: url("https://example.com")))
+        #expect(!Handoff.isOffPage(stepURL: "about:blank", current: url("https://example.com")))
+        #expect(!Handoff.canReturn(to: url("file:///etc/hosts")) && !Handoff.canReturn(to: url("data:text/html,hi")))
+        #expect(Handoff.canReturn(to: url("http://127.0.0.1:8080/x")))
+    }
+
+    @Test func offPageAndClosedTabsDontEndAWait() throws {
+        var handoff = Handoff(id: "h5", reason: "r", steps: [
+            .init(id: "h5.1", number: 1, instruction: "Tick Super Admin", tab: UUID(), locator: .text("Super Admin")),
+            .init(id: "h5.2", number: 2, instruction: "Send", tab: UUID(), locator: .text("Send"),
+                  url: "https://mail.google.com/mail/u/0/#inbox?compose=abc"),
+        ])
+        handoff.steps[1].blocker = .offPage
+        handoff.finish("h5.1", .done, how: "the user pressed Done")
+        // A page left or a tab closed is a click on the card away: Claude's wait goes on.
+        var watch = HandoffBlockWatch()
+        let left = watch.shouldReport(handoff, now: Date(), delay: 0)
+        #expect(!left && handoff.blockedSteps.isEmpty)
+        #expect(handoff.report { _ in nil }.contains("the tab is no longer on the step's page (https://mail.google.com/mail/u/0/#inbox?compose=abc)"))
+        handoff.steps[1].blocker = .tabClosed
+        let closed = watch.shouldReport(handoff, now: Date(), delay: 0)
+        #expect(!closed && handoff.blockedSteps.isEmpty)
+        #expect(handoff.report { _ in nil }.contains("its tab is closed; Kite offers the user a button to reopen it"))
+        // The page is saved with the step; what blocks it isn't.
+        let loaded = try JSONDecoder().decode(Handoff.self, from: JSONEncoder().encode(handoff))
+        #expect(loaded.steps[1].url == "https://mail.google.com/mail/u/0/#inbox?compose=abc" && loaded.steps[1].blocker == nil)
+        // A file saved before steps had pages still loads.
+        let old = #"{"id":"h1","reason":"r","created":0,"steps":[{"id":"h1.1","number":1,"instruction":"x","state":"waiting"}]}"#
+        #expect(try JSONDecoder().decode(Handoff.self, from: Data(old.utf8)).steps[0].url == nil)
+    }
+
     @Test func keepsHandoffsAcrossLaunches() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: folder) }
