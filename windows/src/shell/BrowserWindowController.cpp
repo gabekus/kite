@@ -170,6 +170,11 @@ std::wstring BrowserWindowController::Init() {
     }
 
     window_.onSize = [this] { OnSize(); };
+    // The space tip is a window of its own: it goes when the window moves or is minimized,
+    // rather than stay where the cell was (or come back with the window). Chromium's start adds
+    // its own to these.
+    window_.onMove = [this] { sidebar_->HideTip(); };
+    window_.onMinimize = [this] { sidebar_->HideTip(); };
     // A hover's redraw found the GPU gone: rebuild and draw everything.
     caption_->onDeviceLost = [this] { Draw(); };
 
@@ -599,6 +604,8 @@ std::wstring BrowserWindowController::DrawAt(double time, Pixels* readBack) {
 }
 
 void BrowserWindowController::OnSize() {
+    // The space tip is a window of its own: it goes rather than stay where the cell was.
+    sidebar_->HideTip();
 #ifdef KITE_HAS_CEF
     // The page first, so CEF's thread moves it while Kite draws.
     if (chromium_) chromium_->SetBounds(ContentBounds());
@@ -662,7 +669,7 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
             OutputDebugStringW((L"Kite: the caption buttons couldn't draw: " + problem + L"\n").c_str());
         }
     }
-    if (sidebar_->HandleMessage(message)) {
+    if (sidebar_->HandleMessage(message, wParam)) {
         // Its own redraw found the GPU gone: the window's draw rebuilds everything.
         if (sidebar_->DeviceLost() || caption_->DeviceLost()) Draw();
         return true;
@@ -796,7 +803,7 @@ std::wstring BrowserWindowController::SmokeTest() {
     return {};
 }
 
-std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optional<std::string>& barText) {
+std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip) {
     // The window's own frame, read back as it's presented: at the window's scale.
     std::wstring problem = Draw(&pixels);
     if (problem.empty()) {
@@ -810,6 +817,14 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
         POINT origin{};
         problem = caption_->Draw(&buttons, &origin);
         if (problem.empty()) ComposeOver(pixels, buttons, origin);
+    }
+    if (problem.empty() && tip) {
+        // A space's tip at rest over its cell, as the pointer leaves it there (its window over
+        // the browser window's, clipped to it as the Mac's capture of the window is).
+        Pixels tipPixels;
+        POINT origin{};
+        problem = sidebar_->RenderTip(*tip, tipPixels, origin);
+        if (problem.empty()) ComposeOver(pixels, tipPixels, origin);
     }
     if (problem.empty() && barText) {
         // The bar as Ctrl+T opens it, with the text typed in.
@@ -992,8 +1007,14 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         return started;
     }
     window_.onWake = [this] { chromium_->RunPending(); };
-    window_.onMinimize = [this] { chromium_->Minimized(); };
-    window_.onMove = [this] { chromium_->WindowMoved(); };
+    window_.onMinimize = [this] {
+        sidebar_->HideTip();
+        chromium_->Minimized();
+    };
+    window_.onMove = [this] {
+        sidebar_->HideTip();
+        chromium_->WindowMoved();
+    };
     window_.mayClose = [this] { return chromium_->MayCloseWindow(); };
     window_.onFocus = [this] {
         // The open bar keeps the keyboard in Kite's window.

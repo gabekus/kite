@@ -281,8 +281,7 @@ decoded on the UI thread as a last resort; a file that turns up after a miss sho
 at the icon's next redraw (a switch, or a hover over the page's rows; the bar's
 hover only moves its backing), as the Mac's next reload reads it;
 a picture's corners are circular where the Mac's are continuous; the MDL2 fallback (Windows without
-Segoe Fluent Icons) is checked against the font's map but not yet seen drawn;
-and the tip over a cell comes in W9b3.
+Segoe Fluent Icons) is checked against the font's map but not yet seen drawn.
 A switch's slide relights
 the cells with the pages: each cell's two layers have DirectComposition opacity
 animations on the strip's spring (its light is linear in the strip's offset,
@@ -296,6 +295,23 @@ on whole pixels at every scale (core snaps them), so they draw where they take
 clicks. Known differences: in the 2pt where two cells overlap only the later
 cell's backing shows (the Mac shows both), and a touchpad's sideways scroll over
 the bar scrolls the strip until W9c sends it to the swipe.
+
+The tip over a hovered cell (W9b3) is the Mac's SpaceTip in SpaceTipWindow's place:
+0.4 s after the pointer comes onto a cell, a capsule 28pt tall centred over it, its
+bottom 2pt above the cell's top, with the space's name, its profile's name in a white
+chip, and the keys that select it (the first nine), on the accent darkened to 45% of
+its OKLab lightness with a 1pt white 15% border; it fades in over 0.15 s on Core
+Animation's default curve (the Mac's measured alpha fits it ten times better than the
+named curves) and goes at once when the pointer leaves the cell, a drag starts, or the
+window moves, resizes or is minimized. It's a window of its own (owned by the browser
+window, never activated, transparent to the pointer, drawn by DirectComposition), so a
+wide tip over the first cell can reach past the window's left edge as the Mac's panel
+does. `kitecore sidebar` gives each cell's `tip`, and `--capture FILE --space-tip N`
+draws space N's at rest over the frame. Known differences: the Mac's ⌃n is Alt+n here,
+so the first keycap says "Alt" and is wider than the Mac's 18pt square (4pt either
+side of its label); the chip's face is Fluent's (and MDL2's) Emoji2 glyph for SF's
+face.smiling; and the text is Segoe UI Variable's, so the tip's width differs from the
+Mac's by the fonts' advances.
 
 Known differences from the Mac: during the 0.2 s slide only the selected page
 takes clicks and shows hover (the Mac's outgoing page is a live list too), and

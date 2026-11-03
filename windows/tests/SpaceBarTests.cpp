@@ -2,6 +2,7 @@
 // for dropMovesTheSpaceKeepingTheCurrentOne, which needs BrowserState's moveSpace (W9d's), plus
 // SpaceBarView's layout, presses, the cells, their light along a page settle and the tip.
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -306,4 +307,28 @@ TEST(aTipSitsCentredJustAboveItsCellOnWholePixels) {
     // At 125%, on a pixel: 78 - 91.7 = -13.7pt is -17.125px, so -17px.
     const TipOrigin odd = SpaceTipOrigin(cell, 183.4f, 28, 1.25f);
     CHECK(std::abs(odd.x * 1.25f - std::round(odd.x * 1.25f)) < 1e-4f && std::abs(odd.x * 1.25f + 17) < 1e-4f);
+}
+
+TEST(aTipFadesInOnCoreAnimationsDefaultCurve) {
+    // The Mac's panel alpha (CGWindowListCopyWindowInfo, every 6-10 ms) fits kCAMediaTimingFunctionDefault
+    // over 0.15 s ten times better than easeInEaseOut, easeOut or linear.
+    const double* c = kDefaultTiming;
+    CHECK(TimingCurveAt(c[0], c[1], c[2], c[3], 0) == 0 && TimingCurveAt(c[0], c[1], c[2], c[3], 1) == 1);
+    // Fast start, long settle: past 80% at half the time.
+    CHECK(TimingCurveAt(c[0], c[1], c[2], c[3], 0.5) > 0.8);
+    // linear: y = x.
+    CHECK(std::abs(TimingCurveAt(0, 0, 1, 1, 0.3) - 0.3) < 1e-6);
+    const double duration = space_tip_metrics::kFadeIn;
+    const auto segments = TimingCurveSegments(c[0], c[1], c[2], c[3], duration);
+    CHECK(segments.size() == 8 && segments.front().begin == 0);
+    double worst = 0;
+    for (int i = 0; i <= 300; ++i) {
+        const double t = duration * i / 300;
+        auto it = std::upper_bound(segments.begin(), segments.end(), t, [](double v, const CubicSegment& s) { return v < s.begin; });
+        const CubicSegment& s = *std::prev(it);
+        const double u = t - s.begin;
+        const double v = s.constant + u * (s.linear + u * (s.quadratic + u * s.cubic));
+        worst = std::max(worst, std::abs(v - TimingCurveAt(c[0], c[1], c[2], c[3], t / duration)));
+    }
+    CHECK(worst < 0.002);
 }

@@ -122,6 +122,48 @@ double ValueAt(const std::vector<CubicSegment>& segments, double end, double tim
     return s.constant + u * (s.linear + u * (s.quadratic + u * s.cubic));
 }
 
+namespace {
+// The Bézier's parameter where its x is `x` (x(u) rises from 0 to 1 for control points in 0...1).
+double BezierParameter(double x1, double x2, double x) {
+    const auto at = [&](double u) { return 3 * (1 - u) * (1 - u) * u * x1 + 3 * (1 - u) * u * u * x2 + u * u * u; };
+    double lo = 0, hi = 1;
+    for (int i = 0; i < 60; ++i) {
+        const double mid = (lo + hi) / 2;
+        (at(mid) < x ? lo : hi) = mid;
+    }
+    return (lo + hi) / 2;
+}
+double Bezier(double a, double b, double u) { return 3 * (1 - u) * (1 - u) * u * a + 3 * (1 - u) * u * u * b + u * u * u; }
+double BezierSlope(double a, double b, double u) {
+    return 3 * (1 - u) * (1 - u) * a + 6 * (1 - u) * u * (b - a) + 3 * u * u * (1 - b);
+}
+}  // namespace
+
+double TimingCurveAt(double x1, double y1, double x2, double y2, double progress) {
+    if (progress <= 0) return 0;
+    if (progress >= 1) return 1;
+    return Bezier(y1, y2, BezierParameter(x1, x2, progress));
+}
+
+std::vector<CubicSegment> TimingCurveSegments(double x1, double y1, double x2, double y2, double duration, int count) {
+    if (duration <= 0 || count < 1) return {};
+    // dy/dt along the time: (dy/du) / (dx/du), over the duration.
+    const auto value = [&](double t) { return TimingCurveAt(x1, y1, x2, y2, t / duration); };
+    const auto slope = [&](double t) {
+        const double u = BezierParameter(x1, x2, std::clamp(t / duration, 0.0, 1.0));
+        const double dx = BezierSlope(x1, x2, u);
+        return dx > 1e-9 ? BezierSlope(y1, y2, u) / dx / duration : 0;
+    };
+    std::vector<CubicSegment> segments;
+    for (int i = 0; i < count; ++i) {
+        const double t0 = duration * i / count, t1 = duration * (i + 1) / count, h = t1 - t0;
+        const double p0 = value(t0), p1 = value(t1);
+        const double m0 = slope(t0) * h, m1 = slope(t1) * h;
+        segments.push_back(CubicSegment{t0, p0, m0 / h, (-3 * p0 - 2 * m0 + 3 * p1 - m1) / (h * h), (2 * p0 + m0 - 2 * p1 + m1) / (h * h * h)});
+    }
+    return segments;
+}
+
 double ThemeCrossfadeProgress(double elapsed, double startProgress) {
     if (elapsed >= space_motion::kThemeDuration) return 1;
     const double t = std::max(elapsed, 0.0);

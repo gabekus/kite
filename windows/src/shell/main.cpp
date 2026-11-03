@@ -17,6 +17,9 @@
 //   Kite.exe --capture FILE.png --command-bar TEXT
 //                            the same with the command bar open (Ctrl+T) and TEXT typed in
 //                            it, composed over the window's frame as DirectComposition shows it.
+//   Kite.exe --capture FILE.png --space-tip N
+//                            the same with space N's tip (1-based) over its cell, at rest, as
+//                            the pointer resting on the cell shows it.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -161,7 +164,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     for (size_t i = 0; i < args.size(); ++i) {
         const std::wstring& a = args[i];
         if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
-        if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log") {
+        if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
+            a == L"--space-tip") {
             ++i;
             continue;
         }
@@ -203,6 +207,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const OptionValue commandBarOption = Option(args, L"--command-bar");
     if (commandBarOption.present && !commandBarOption.value) return Fail(quiet, L"--command-bar takes the text typed in it", kUsage);
     if (commandBarOption.present && !captureOption.present) return Fail(quiet, L"--command-bar only goes with --capture", kUsage);
+    const OptionValue tipOption = Option(args, L"--space-tip");
+    std::optional<size_t> tipIndex;
+    if (tipOption.present) {
+        if (!tipOption.value || tipOption.value->empty() || tipOption.value->size() > 3 ||
+            !std::all_of(tipOption.value->begin(), tipOption.value->end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; }) ||
+            std::stoi(*tipOption.value) < 1) {
+            return Fail(quiet, L"--space-tip takes a space's place, from 1", kUsage);
+        }
+        tipIndex = static_cast<size_t>(std::stoi(*tipOption.value) - 1);
+    }
+    if (tipOption.present && !captureOption.present) return Fail(quiet, L"--space-tip only goes with --capture", kUsage);
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
 
@@ -337,7 +352,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         kite::Pixels pixels;
         const std::optional<std::string> barText =
             commandBarOption.present ? std::optional<std::string>(Narrow(*commandBarOption.value)) : std::nullopt;
-        captureError = controller->Capture(pixels, barText);
+        captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
     }
