@@ -1,6 +1,6 @@
 # Kite for Windows: native C++20 on Win32. See docs/windows.md.
 #
-#   cmake -S windows -B windows/build -G "Visual Studio 17 2022" -A x64
+#   cmake -S windows -B windows/build -A x64      (newest Visual Studio)
 #   cmake --build windows/build --config Release
 #   ctest --test-dir windows/build -C Release
 cmake_minimum_required(VERSION 3.24)

@@ -21,7 +21,7 @@ instead of an implementation.
   Kite's chrome is custom-drawn on the Mac anyway.
 - **Engine: CEF 156**, the same Chromium as macOS, through CEF's C++ API.
 - **Shaders: HLSL** ports of `Kite.metal`.
-- **Build: CMake + MSVC** (Visual Studio 2022), static CRT, so `Kite.exe` needs
+- **Build: CMake + MSVC** (Visual Studio 2022 or later), static CRT, so `Kite.exe` needs
   no redistributable. The only third-party piece is CEF.
 - **Reference: Kite for Mac.** Windows matches the Mac app's behaviour, layout
   and motion, measured from the Mac build with `kite ui`. Arc for Windows is
@@ -111,10 +111,10 @@ Windows that means:
 
 ## Building
 
-From a Developer PowerShell for VS 2022:
+With Visual Studio 2022 or later (Desktop development with C++):
 
 ```powershell
-cmake -S windows -B windows/build -G "Visual Studio 17 2022" -A x64
+cmake -S windows -B windows/build -A x64   # newest Visual Studio installed
 cmake --build windows/build --config Release
 ctest --test-dir windows/build -C Release
 $env:KITE_SUPPORT_PATH = (New-Item -ItemType Directory "$env:TEMP\k-$(Get-Random)").FullName
