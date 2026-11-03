@@ -506,6 +506,43 @@ Checks, main (dc7f03c) vs this PR, on fresh profiles (`ui tree`, `ui pointer`, `
 Not verified: pixels (the glyph's placement: SwiftUI's ink is at [271.5,57 7.5×14]), the key opening the password
 manager or adding it (a fresh profile only offers to add it, and I didn't install it).
 
+## Helix M2: the page toolbar and its extension icons
+
+View › Show Toolbar's bar (`PageToolbar`) was a SwiftUI view in an `NSHostingView` with the pinned extensions and the
+extensions button inside it; it's a plain view now: a background layer and divider, `SymbolButton`s (back, forward,
+reload, Site Controls with its ring, Split View), the address (`ToolbarAddressButton`), the install icon, and
+`ToolbarExtensionItems` (pinned icons, the button and its popover). Frames follow the SwiftUI layout, SwiftUI's
+rounding to the pixel grid included. The symbols' origins were measured on screen against the SwiftUI bar
+(`SymbolOrigins`); the link icon is laid out by its alignment rect, as SwiftUI sizes an `Image`.
+
+UI match (2x captures, the toolbar's own region, main 2955795 vs M2, a session with Show Toolbar on and a local page
+with Back enabled):
+
+| Region | max channel delta |
+|---|---|
+| background, divider, text | 0 |
+| back, forward, reload (and its loading xmark) | 31, 13, 31 (9) |
+| link icon, install icon (and hovered) | 29, 19 (19) |
+| extensions button, a pinned extension | 42, 44 |
+| Site Controls | 35 |
+| Split View | 92 (294 px): stretched stroke placement; semibold here is closest to SwiftUI's stretched medium |
+
+Geometry (`ui tree`): every frame matches main's, also with Back hidden and with the full URL shown.
+
+CPU, main process, ms/s (two 30 s runs each, toolbar shown): idle 3.97 / 4.59 → 2.38 / 2.56; reloading the front
+tab every 0.5 s 75.23 / 69.47 → 68.50 / 36.72 (interrupt wakeups 24.5 / 24.6 → 23.3 / 16.4).
+
+Behaviour, with posted events on a background test Kite (`kite ui input`):
+- back, forward, the address (opens the command bar), Site Controls, the extensions button and a pinned extension
+  (each opens its popover or popup) all work;
+- the bar's right-click menu and the pinned icon's ("Unpin | Turn Off | --- | Remove…") read through
+  `KITE_TEST_CONTEXT_MENU`.
+
+Differences from main: the toolbar's controls take the click that brings a background window forward, as the
+sidebar's do (on main, the SwiftUI host only did so for some of them). Site Controls' ring no longer takes the click.
+
+Not verified: a real pointer (the headless rule); the extensions popover's own contents (still SwiftUI, unchanged).
+
 ## Checks of what PR 1–6 left unverified
 
 **Context menus** (KITE_TEST_CONTEXT_MENU, which the sidebar's AppKit menus now go through): a right-click on each
