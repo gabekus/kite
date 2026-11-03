@@ -415,3 +415,16 @@ initial highlights were compared one row apart.
 
 Not verified: ⇧Return (Instant Links), clicking a suggestion, the menu-command rows, and the inline completion's
 selection against main (main's code selects through `NSApp.keyWindow`, which is nil in a background window).
+
+## Where the main thread's time goes now (after PR 8)
+
+A 15 s `sample` of the AppKit build (PR 8) while the front tab reloads every half second: of 11,522 main-thread
+samples, about 90 are the test harness's own `ui input` handling and the reloads themselves, and 27 are SwiftUI
+graph updates (the hosting views that stay in the window while hidden: the page toolbar's `PageToolbar.body`, the
+Library and the Claude bubble). The rest is the run loop waiting. At idle every main-thread sample is the run loop
+waiting. The process's remaining CPU in these scenarios is on Chromium's threads.
+
+So the sidebar and command bar ports took out nearly all of the main thread's UI cost in the scenarios measured
+here. What's left in SwiftUI (popovers, cards, internal pages, Settings, dialogs) exists only while shown, except
+those three hosts; letting them leave the window while hidden (or making them lazily) is the next cheap win
+(~1.8 ms/s during page loads), and porting the rest is about fewer layers more than CPU.
