@@ -6,6 +6,7 @@
 #include <map>
 
 #include "include/cef_client.h"
+#include "include/cef_cookie.h"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_jsdialog_handler.h"
@@ -847,6 +848,63 @@ class KCClient : public CefClient,
 
 - (CefRefPtr<CefRequestContext>)cefContext {
     return _context;
+}
+
+namespace {
+// Counts SetCookie answers; the last one calls back with how many succeeded.
+class CookieBatch : public CefSetCookieCallback {
+public:
+    CookieBatch(NSInteger total, void (^completion)(NSInteger)) : remaining_(total), completion_([completion copy]) {}
+    // CEF dropped callbacks it never ran (it shut down first): answer with what did go in.
+    ~CookieBatch() override {
+        if (remaining_.exchange(0) > 0) Finish();
+    }
+    void OnComplete(bool success) override {
+        if (success) succeeded_++;
+        if (remaining_.fetch_sub(1) == 1) Finish();
+    }
+    void Finish() {
+        void (^completion)(NSInteger) = completion_;
+        NSInteger succeeded = succeeded_;
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(succeeded); });
+    }
+private:
+    std::atomic<NSInteger> remaining_;
+    std::atomic<NSInteger> succeeded_{0};
+    void (^completion_)(NSInteger);
+    IMPLEMENT_REFCOUNTING(CookieBatch);
+};
+
+NSString* CookieString(NSDictionary* cookie, NSString* key) {
+    id value = cookie[key];
+    return [value isKindOfClass:NSString.class] ? value : @"";
+}
+}  // namespace
+
+- (void)setCookies:(NSArray<NSDictionary<NSString*, id>*>*)cookies completion:(void (^)(NSInteger))completion {
+    CefRefPtr<CefCookieManager> manager = _context ? _context->GetCookieManager(nullptr) : nullptr;
+    if (!manager || cookies.count == 0) {
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(0); });
+        return;
+    }
+    CefRefPtr<CookieBatch> batch = new CookieBatch(cookies.count, completion);
+    for (NSDictionary* item in cookies) {
+        NSURL* url = [item[@"url"] isKindOfClass:NSURL.class] ? item[@"url"] : nil;
+        CefCookie cookie;
+        CefString(&cookie.name) = CookieString(item, @"name").UTF8String;
+        CefString(&cookie.value) = CookieString(item, @"value").UTF8String;
+        CefString(&cookie.domain) = CookieString(item, @"domain").UTF8String;
+        CefString(&cookie.path) = CookieString(item, @"path").UTF8String;
+        cookie.secure = [item[@"secure"] boolValue];
+        cookie.httponly = [item[@"httpOnly"] boolValue];
+        int64_t expires = [item[@"expires"] longLongValue];
+        cookie.has_expires = expires != 0;
+        cookie.expires.val = expires;
+        cookie.same_site = static_cast<cef_cookie_same_site_t>([item[@"sameSite"] intValue]);
+        cookie.priority = static_cast<cef_cookie_priority_t>([item[@"priority"] intValue]);
+        // False when it couldn't even be tried (a bad URL): no answer will come, so count it here.
+        if (!url || !manager->SetCookie(url.absoluteString.UTF8String, cookie, batch)) batch->OnComplete(false);
+    }
 }
 
 @end
