@@ -332,8 +332,35 @@ import Testing
         #expect(try ArcImport.parse(Self.fixture).untitledSpaceIDs.isEmpty)
     }
 
+    @Test func picksTheSidebarFileThenItsNewestBackup() {
+        let names = ["StorableArchive.json", "StorableSidebar.2024-11-21-17-40-41-080.json", "StorableSidebar.json",
+                     "StorableSidebar.2026-11-01-21-05-17-932.json", "StorableSidebarX.txt"]
+        #expect(ArcImport.sidebarCandidates(in: names) == [
+            "StorableSidebar.json", "StorableSidebar.2026-11-01-21-05-17-932.json", "StorableSidebar.2024-11-21-17-40-41-080.json",
+        ])
+        // Tried even when the folder couldn't be listed.
+        #expect(ArcImport.sidebarCandidates(in: []) == ["StorableSidebar.json"])
+    }
+
+    @Test func aBackupOnlyWhenTheCurrentSidebarCantBeRead() {
+        #expect(ArcImport.triesBackup(after: ArcImport.Failure.notJSON))
+        #expect(ArcImport.triesBackup(after: ArcImport.Failure.notArcSidebar))
+        #expect(ArcImport.triesBackup(after: CocoaError(.fileReadNoPermission)))
+        // No spaces is what Arc has now; an older backup isn't used instead.
+        #expect(!ArcImport.triesBackup(after: ArcImport.Failure.noSpaces))
+    }
+
+    @Test func readsABackupsDate() throws {
+        let date = try #require(ArcImport.backupDate("StorableSidebar.2026-11-01-21-05-17-932.json"))
+        let parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        #expect([parts.year, parts.month, parts.day, parts.hour, parts.minute] == [2026, 11, 1, 21, 5])
+        #expect(ArcImport.backupDate("StorableSidebar.json") == nil)
+    }
+
     @Test func rejectsOtherFiles() {
         #expect(throws: ArcImport.Failure.notArcSidebar) { try ArcImport.parse(Data("{}".utf8)) }
+        // Cut short, as a file read while it's written would be.
+        #expect(throws: ArcImport.Failure.notJSON) { try ArcImport.parse(Self.fixture.prefix(200)) }
         let empty = try! JSONSerialization.data(withJSONObject: ["sidebar": ["containers": []]])
         #expect(throws: ArcImport.Failure.noSpaces) { try ArcImport.parse(empty) }
     }

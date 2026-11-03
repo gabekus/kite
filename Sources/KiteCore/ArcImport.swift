@@ -52,12 +52,15 @@ public enum ArcImport {
     }
 
     public enum Failure: Error, Equatable {
+        /// Not JSON at all (or cut short).
+        case notJSON
         case notArcSidebar
         case noSpaces
     }
 
     public static func parse(_ data: Data, now: Date = Date()) throws -> Result {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let object = try? JSONSerialization.jsonObject(with: data) else { throw Failure.notJSON }
+        guard let root = object as? [String: Any],
               let sidebar = root["sidebar"] as? [String: Any],
               let containers = sidebar["containers"] as? [Any]
         else { throw Failure.notArcSidebar }
@@ -67,6 +70,33 @@ public enum ArcImport {
         let result = parser.buildSpaces()
         guard !result.spaces.isEmpty else { throw Failure.noSpaces }
         return result
+    }
+
+    /// The sidebar files to try from a listing of Arc's folder: StorableSidebar.json (even when the
+    /// folder couldn't be listed), then Arc's dated backups of it
+    /// (`StorableSidebar.2026-11-01-21-05-17-932.json`), newest first.
+    public static func sidebarCandidates(in fileNames: [String]) -> [String] {
+        let backups = fileNames.filter {
+            $0.hasPrefix("StorableSidebar.") && $0.hasSuffix(".json") && $0 != "StorableSidebar.json"
+        }
+        return ["StorableSidebar.json"] + backups.sorted(by: >)
+    }
+
+    /// Whether a backup should be tried after the current sidebar file failed this way: it
+    /// couldn't be read, or wasn't a whole sidebar (as when it's read while Arc writes it). A
+    /// sidebar with no spaces is what Arc has now, so an older backup isn't used instead.
+    public static func triesBackup(after error: Error) -> Bool {
+        (error as? Failure) != .noSpaces
+    }
+
+    /// When Arc made a dated backup, from its name (`yyyy-MM-dd-HH-mm-ss-SSS`, local time).
+    public static func backupDate(_ fileName: String) -> Date? {
+        guard fileName.hasPrefix("StorableSidebar."), fileName.hasSuffix(".json") else { return nil }
+        let stamp = fileName.dropFirst("StorableSidebar.".count).dropLast(".json".count)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd-HH-mm-ss-SSS"
+        return formatter.date(from: String(stamp))
     }
 
     /// Fills in panes without a stored width; nil (equal widths) if the stored ones don't add up.
