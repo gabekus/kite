@@ -49,6 +49,8 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     private(set) var profile: Profile
     private let host: Host
     private var page: WebPage?
+    /// This window's key for `OAuthResumeTracker`, as a tab's id is in the main window.
+    private let oauthKey = UUID()
     private(set) var url: URL?
     private var pageTitle: String?
     private var canGoBack = false
@@ -267,6 +269,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         case .url(let url):
             guard let url else { return }
             self.url = url
+            if let page { OAuthResumeTracker.page(page, movedTo: url, key: oauthKey) }
             pill.host = LittleKite.displayHost(of: url)
         case let .navigationState(_, canGoBack, _):
             self.canGoBack = canGoBack
@@ -516,6 +519,7 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
             host.archive(url, pageTitle, closeReason)
         }
         page = nil
+        OAuthResumeTracker.forget(oauthKey)
         stopFollowingDownloads()
         didClose?(self)
     }
