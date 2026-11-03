@@ -567,7 +567,7 @@ public:
             return;
         }
         shared_->Post([shared = shared_, command = target.command] {
-            if (shared->events.command) shared->events.command(*command);
+            if (shared->events.command) shared->events.command(command->id);
         });
     }
 
