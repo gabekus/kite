@@ -109,11 +109,25 @@ enum UICapture {
         guard let scWindow = content.windows.first(where: { $0.windowID == CGWindowID(window.windowNumber) }) else {
             throw AutomationError(.notFound, "ScreenCaptureKit doesn't list window \(window.windowNumber) (minimized?).")
         }
-        let filter = SCContentFilter(desktopIndependentWindow: scWindow)
         let configuration = SCStreamConfiguration()
-        let scale = CGFloat(filter.pointPixelScale)
-        configuration.width = Int(filter.contentRect.width * scale)
-        configuration.height = Int(filter.contentRect.height * scale)
+        let filter: SCContentFilter
+        // A sheet or popover is a child window: a desktop-independent filter on it draws the whole window group (the
+        // browser window with the sheet over it) squeezed into the child's size. Capture the child alone instead, as
+        // the only window on its display, cropped to its frame (global and display frames are both top-left points).
+        if window.parent != nil || window.isSheet,
+           let display = content.displays.first(where: { $0.frame.intersects(scWindow.frame) }) {
+            filter = SCContentFilter(display: display, including: [scWindow])
+            let frame = scWindow.frame
+            configuration.sourceRect = CGRect(x: frame.minX - display.frame.minX, y: frame.minY - display.frame.minY,
+                                              width: frame.width, height: frame.height)
+            configuration.width = Int(frame.width * window.backingScaleFactor)
+            configuration.height = Int(frame.height * window.backingScaleFactor)
+        } else {
+            filter = SCContentFilter(desktopIndependentWindow: scWindow)
+            let scale = CGFloat(filter.pointPixelScale)
+            configuration.width = Int(filter.contentRect.width * scale)
+            configuration.height = Int(filter.contentRect.height * scale)
+        }
         configuration.showsCursor = false
         configuration.ignoreShadowsSingleWindow = true
         configuration.captureResolution = .best

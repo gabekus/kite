@@ -125,12 +125,20 @@ enum PageContextMenuItems {
             return entry.enabled ? title : "(\(title))"
         }.joined(separator: " | ")
         FileHandle.standardError.write(Data("KITE_TEST_CONTEXT_MENU: \(line)\n".utf8))
+        guard let pick = testPick() else { return nil }
+        return entries.firstIndex { $0.title == pick && $0.enabled }
+    }
+
+    /// The item title the test asked for: the text of `test-context-menu-pick` in the profile folder,
+    /// else KITE_TEST_CONTEXT_MENU when it isn't 1. Sidebar menus also take "Submenu ▸ Item".
+    static func testPick() -> String? {
+        guard let mode = testMode else { return nil }
         let file = URL(fileURLWithPath: ProcessInfo.processInfo.environment["KITE_SUPPORT_PATH"] ?? "")
             .appendingPathComponent("test-context-menu-pick")
         let pick = (try? String(contentsOf: file, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? (mode == "1" ? nil : mode)
         guard let pick, !pick.isEmpty else { return nil }
-        return entries.firstIndex { $0.title == pick && $0.enabled }
+        return pick
     }
 }
 

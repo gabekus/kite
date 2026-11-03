@@ -649,8 +649,8 @@ final class DetachingContainer: NSView {
 }
 
 /// Shows a sidebar context menu for `event`. Under `KITE_TEST_CONTEXT_MENU` (throwaway profiles only) the menu
-/// is logged instead, submenus as "Title ▸ [a / b]", and the item the test asked for runs: a context menu is
-/// modal and can't be read from the background.
+/// is logged instead, submenus as "Title ▸ [a / b]", and the item the test asked for runs ("Title ▸ b" picks
+/// a submenu's item): a context menu is modal and can't be read from the background.
 @MainActor func showSidebarMenu(_ menu: NSMenu, with event: NSEvent, for view: NSView) {
     guard PageContextMenuItems.testMode != nil else {
         return NSMenu.popUpContextMenu(menu, with: event, for: view)
@@ -666,7 +666,11 @@ final class DetachingContainer: NSView {
         }
         return (item.title, item.isEnabled)
     }
-    guard let index = PageContextMenuItems.logForTest(entries), index < items.count else { return }
-    let item = items[index]
-    if let action = item.action { NSApp.sendAction(action, to: item.target, from: item) }
+    var picked = PageContextMenuItems.logForTest(entries).flatMap { $0 < items.count ? items[$0] : nil }
+    if picked == nil, let pick = PageContextMenuItems.testPick(), let arrow = pick.range(of: " ▸ ") {
+        let parent = pick[..<arrow.lowerBound], child = pick[arrow.upperBound...]
+        picked = items.first { $0.title == parent && $0.isEnabled }?.submenu?.items
+            .first { $0.title == child && $0.isEnabled }
+    }
+    if let item = picked, let action = item.action { NSApp.sendAction(action, to: item.target, from: item) }
 }
