@@ -451,3 +451,23 @@ Geometry (`ui tree`, both builds, a session with Show Toolbar on): the toolbar h
 unchanged.
 
 Not verified: the ⌘J bar opening (its host is attached the same way), and pixels (see above).
+
+## Checks of what PR 1–6 left unverified
+
+**Context menus** (KITE_TEST_CONTEXT_MENU, which the sidebar's AppKit menus now go through): a right-click on each
+logs the same items in the same order as the SwiftUI menus they replaced:
+- Favorite: `Remove from Favorites | Edit Pinned Page ▸ [Edit… / Replace Pinned URL with Current] | Copy Link | --- | Unload Tab`
+- Space header and space icon: `Change Space Icon… | Rename Space… | What's This Space For?… | Edit Theme Color… | Set Profile ▸ [Default / --- / New Profile…] | --- | New Folder | Live Folders ▸ [GitHub] | --- | Delete Space`
+- Pinned tab: `Add to Favorites | Unpin Tab | Edit Pinned Page ▸ […] | Copy Link | Rename… | --- | Unload Tab`
+- Folder: `Delete | --- | Copy All Links | --- | Rename…`
+- Today tab: `Add to Favorites | Pin Tab | Copy Link | Rename… | --- | Close Tab`
+- Split: `Separate All Tabs | Add Tab… | Convert to Vertical Split View | --- | (Tab Options) | <pane> ▸ [Separate from Split View / --- / (Mute) / Copy Link / Copy link as Markdown / --- / Archive Item] … | --- | Archive Item`
+- The Today divider has none, as before.
+
+Picking through the hook: Pin Tab on a Today tab pins it (3 → 4 pinned items); Rename… on a folder opens its field.
+
+**Drag edge cases** (`ui input` drags with `hold`, rows taking the first click for the test only):
+- The split offer: a Today tab held 0.8 s over another tab's middle and dropped makes a split (1 → 2 splits).
+- Spring-loaded folders: a tab held 1.2 s over a collapsed folder opens it and drops in (closed, 1 tab → open, 2).
+
+Still not verified: edge-of-list space switching during a drag, a real two-finger swipe, VoiceOver.
