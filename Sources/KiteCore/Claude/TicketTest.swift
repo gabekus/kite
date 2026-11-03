@@ -188,14 +188,18 @@ public enum TicketTest {
     /// Why a ticket test may not take `action` on `host`, or nil when it may. On Linear it may click into
     /// text fields, follow links and type, and nothing else: any other click or form value can change the
     /// issue (status, assignee, labels all save on click), so the guard fails closed rather than guessing
-    /// from labels. Return, submit, scripts and uploads are refused too: the user posts.
+    /// from labels. Return, Space outside a text field, submit, scripts and uploads are refused too: the
+    /// user posts.
     public static func blocksPosting(_ action: AutomationAction, host: String?) -> String? {
         guard isLinear(host) else { return nil }
         switch action {
         case .click(let element):
             if AutomationPolicy.isTextEntry(element) || element.href != nil { return nil }
-        case .keys(let chords, _):
-            guard chords.contains(where: \.isEnter) else { return nil }
+        case .keys(let chords, let focused):
+            // Return can post from the comment box, and Return or Space on a focused button or option
+            // presses it. With focus unknown, Space counts as a press.
+            let inTextField = focused.map(AutomationPolicy.isTextEntry) ?? false
+            guard chords.contains(where: { $0.isEnter || ($0.key == " " && !inTextField) }) else { return nil }
         case .type(_, _, let submit):
             guard submit else { return nil }
         case .formInput, .javascript, .uploadFiles:

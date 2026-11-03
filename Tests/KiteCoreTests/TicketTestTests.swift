@@ -65,6 +65,7 @@ import Testing
         let link = ElementDescription(tag: "a", label: "Pull request #42", href: "https://github.com/x/y/pull/42")
         let enter = try! KeyChord.parseSequence("Enter")
         let commandEnter = try! KeyChord.parseSequence("cmd+Enter")
+        let space = try! KeyChord.parseSequence("space")
 
         for action: AutomationAction in [
             .click(comment), .click(save), .click(ElementDescription(tag: "button", label: "Submit", inForm: true)),
@@ -73,6 +74,8 @@ import Testing
             .click(ElementDescription(tag: "button", label: "Assign to me")),
             .formInput(ElementDescription(tag: "select", label: "Priority"), value: "Urgent"),
             .keys(enter, focused: editor), .keys(commandEnter, focused: editor),
+            // Space presses a focused button, and with focus unknown Kite assumes it might.
+            .keys(space, focused: comment), .keys(space, focused: nil),
             .type(editor, text: "report", submit: true), .javascript(code: "document.querySelector('button').click()"),
             .uploadFiles(["/tmp/a.png"], into: editor),
         ] {
@@ -81,7 +84,8 @@ import Testing
         // Reading the ticket and drafting the comment stay open.
         for action: AutomationAction in [
             .click(editor), .click(link), .type(editor, text: "Kite ticket test: 2 of 3 passed\nPASS …", submit: false),
-            .keys(try! KeyChord.parseSequence("cmd+a"), focused: editor), .navigate(url("https://linear.app/a/issue/PRO-5")),
+            .keys(try! KeyChord.parseSequence("cmd+a"), focused: editor), .keys(space, focused: editor),
+            .navigate(url("https://linear.app/a/issue/PRO-5")),
         ] {
             #expect(TicketTest.blocksPosting(action, host: "linear.app") == nil)
         }
