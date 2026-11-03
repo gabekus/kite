@@ -1,6 +1,7 @@
 // Paging between spaces (core/SpaceSwipe.h): the Mac's SpaceSwipeTests (SpacesTests.swift) and
 // SpacePagingTests, case for case, plus the theme crossfade's timing.
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -149,4 +150,100 @@ TEST(theThemeCrossfadeSettlesWithinItsDuration) {
         CHECK(p >= last - 1e-4 && p <= 1);
         last = p;
     }
+}
+
+// The crossfade's state (ThemeView.setTheme): what an interruption does.
+
+namespace {
+Theme Solid(unsigned hex) { return Theme::Make({ThemeColor::FromHex(hex)}, 0, 1); }
+}  // namespace
+
+TEST(aCrossfadeComesToRestOnItsTheme) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    CHECK(!fade.Fading() && fade.Progress(5) == 1);
+    CHECK(fade.Set(b, 10));
+    CHECK(fade.from == a && fade.to == b && fade.Fading());
+    CHECK(fade.Progress(10) == 0);
+    CHECK(fade.Progress(10.1) > 0 && fade.Progress(10.1) < 1);
+    CHECK(fade.Fading());
+    // From its duration on it's at rest on the new theme.
+    CHECK(fade.Progress(10 + space_motion::kThemeDuration) == 1);
+    CHECK(!fade.Fading() && fade.from == b && fade.to == b);
+}
+
+TEST(theSameThemeIsNoCrossfade) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    CHECK(!fade.Set(a, 1));
+    CHECK(!fade.Fading());
+    // Asked again for the theme it's going to: the fade carries on from when it began.
+    CHECK(fade.Set(b, 2));
+    CHECK(!fade.Set(b, 2.1));
+    CHECK(fade.start == 2.0);
+}
+
+TEST(anEarlyInterruptionCarriesOnFromTheSideShowingMore) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC), c = Solid(0x445566);
+    // 0.1 s in (under half of 0.3 s): `a` still shows more, so the fade to `c` starts from it.
+    ThemeCrossfade fade(a);
+    fade.Set(b, 0);
+    CHECK(fade.Set(c, 0.1));
+    CHECK(fade.from == a && fade.to == c && fade.start == 0.1);
+    CHECK(fade.Progress(0.1) == 0);
+}
+
+TEST(aLateInterruptionCarriesOnFromTheNewTheme) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC), c = Solid(0x445566);
+    // 0.2 s in (past halfway): `b` shows more.
+    ThemeCrossfade fade(a);
+    fade.Set(b, 0);
+    CHECK(fade.Set(c, 0.2));
+    CHECK(fade.from == b && fade.to == c && fade.start == 0.2);
+}
+
+TEST(goingBackEarlyIsNoCrossfade) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.Set(b, 0);
+    // Back to `a` 0.1 s in: `a` was showing more, so it's simply there.
+    CHECK(!fade.Set(a, 0.1));
+    CHECK(!fade.Fading() && fade.from == a && fade.to == a && fade.Progress(0.1) == 1);
+    // Back after halfway: a real fade from `b`.
+    fade.Set(b, 1);
+    CHECK(fade.Set(a, 1.2));
+    CHECK(fade.from == b && fade.to == a);
+}
+
+TEST(aSnapEndsAFade) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.Set(b, 0);
+    fade.Snap(a);
+    CHECK(!fade.Fading() && fade.from == a && fade.to == a);
+}
+
+// The settle as compositor segments (not in the Mac's suite: the Mac steps it per frame).
+
+TEST(theSettlesSegmentsFollowTheSpring) {
+    for (double from : {240.0, -240.0, 37.5}) {
+        const double end = SettleDuration(from, space_motion::kPageResponse);
+        CHECK(SpaceSwipe::Settle(from, end, space_motion::kPageResponse) == 0);
+        CHECK(SpaceSwipe::Settle(from, end * 0.99, space_motion::kPageResponse) != 0);
+        const auto segments = SettleSegments(from, space_motion::kPageResponse);
+        CHECK(segments.size() == 16);
+        CHECK(segments.front().begin == 0 && segments.front().constant == from);
+        double worst = 0;
+        for (int k = 0; k < 2000; ++k) {
+            const double t = end * k / 2000;
+            const double spring = from * (1 + 2 * 3.14159265358979323846 / 0.1 * t) * std::exp(-2 * 3.14159265358979323846 / 0.1 * t);
+            worst = std::max(worst, std::abs(ValueAt(segments, end, t) - spring));
+        }
+        CHECK(worst < 0.05);
+        CHECK(ValueAt(segments, end, end) == 0);
+    }
+    // Arc's slide from a page away is at rest within 0.2 s; at rest there's nothing to animate.
+    CHECK(SettleDuration(240, space_motion::kPageResponse) < 0.2);
+    CHECK(SettleDuration(0.05, space_motion::kPageResponse) == 0);
+    CHECK(SettleSegments(0, space_motion::kPageResponse).empty());
 }

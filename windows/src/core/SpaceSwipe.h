@@ -9,6 +9,8 @@
 #include <optional>
 #include <vector>
 
+#include "core/Models.h"
+
 namespace kite {
 
 // Arc's space-switch motion (ArcMetrics.Motion).
@@ -80,9 +82,41 @@ private:
     std::optional<double> lastTime_;
 };
 
+// The settle as a compositor animation: how long it takes from `from` points off rest to
+// SpaceSwipe::Settle's rest (under a tenth of a point), and the curve as cubic segments in
+// seconds since it began, each a polynomial in the time since its own `begin` (what
+// IDCompositionAnimation::AddCubic takes), within 0.05 pt of the spring; it then ends at rest
+// at SettleDuration, as Settle drops the last tenth of a point. Empty at rest.
+double SettleDuration(double from, double response);
+struct CubicSegment {
+    double begin, constant, linear, quadratic, cubic;
+};
+std::vector<CubicSegment> SettleSegments(double from, double response, int count = 16);
+double ValueAt(const std::vector<CubicSegment>& segments, double end, double time);
+
 // The theme crossfade's progress `elapsed` seconds into a space switch that started at
 // `startProgress` (0 for a switch, the swipe's progress when one is let go): the step response
 // of the Mac's spring, 1 from kThemeDuration on (ThemeView.draw).
 double ThemeCrossfadeProgress(double elapsed, double startProgress = 0);
+
+// The backdrop's crossfade from one theme to another (the same theme at rest): the Mac's
+// ThemeView.setTheme and draw. Times are seconds on the caller's clock.
+struct ThemeCrossfade {
+    Theme from, to;
+    std::optional<double> start;  // while fading
+
+    ThemeCrossfade() = default;
+    explicit ThemeCrossfade(const Theme& theme) : from(theme), to(theme) {}
+    // Fades to `theme` from `now`. Interrupted before halfway it carries on from the side that
+    // was showing more (to = from), as ThemeView. True when a fade began; false for the theme
+    // it's already going to, or back to the one it came from before halfway (nothing to fade).
+    bool Set(const Theme& theme, double now);
+    // At `theme` at once (nothing on screen to fade).
+    void Snap(const Theme& theme);
+    // The progress for a frame shown at `time`, 0...1; from kThemeDuration on, 1 and at rest on
+    // `to`.
+    float Progress(double time);
+    bool Fading() const { return start.has_value(); }
+};
 
 }  // namespace kite

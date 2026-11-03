@@ -73,7 +73,7 @@ int Usage() {
         "       kitecore [--profile DIR] reopen [TAB_ID]\n"
         "       kitecore [--profile DIR] archive-stale [NOW]\n"
         "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
-        "       kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]\n"
+        "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n",
         stderr);
     return kUsage;

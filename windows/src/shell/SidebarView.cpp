@@ -11,6 +11,7 @@
 #include "core/OKLab.h"
 #include "core/SpaceSwipe.h"
 #include "shell/Errors.h"
+#include "shell/FrameClock.h"
 #include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
@@ -198,6 +199,8 @@ void SidebarView::ReleaseGpu() {
             compositor_->Chrome()->RemoveVisual(visual_.Get());
         }
     }
+    // A slide's animation is the old device's: the rebuilt strip sits where it was going.
+    slide_.reset();
     strip_.Reset();
     pagesClip_.Reset();
     visual_.Reset();
@@ -249,6 +252,9 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
             it->second.visual->SetContent(nullptr);
             strip_->RemoveVisual(it->second.visual.Get());
         }
+        // And its place in its list, as the Mac's list goes with its scroll view: built again,
+        // it's at the top.
+        if (it->first != next.spaceID) scrolls_.erase(it->first);
         it = pages_.erase(it);
     }
     model_ = std::move(next);
@@ -260,16 +266,50 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
 }
 
 void SidebarView::SetPageOffset(float offset) {
-    if (offset == pageOffset_) return;
+    if (offset == pageOffset_ && !slide_) return;
     pageOffset_ = offset;
-    if (strip_) strip_->SetOffsetX(offset * static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI);
-    // The rows move under a still pointer.
-    RefreshHover();
+    slide_.reset();
+    PlaceStrip();
+    // At rest the rows have moved under a still pointer; mid-swipe, as AppKit's, hover waits.
+    if (offset == 0) RefreshHover();
+}
+
+double SidebarView::SlidePages(float from, float to) {
+    const double duration = SettleDuration(from - to, space_motion::kPageResponse);
+    // Where it rests, and where a rebuilt tree (a lost GPU) puts it.
+    pageOffset_ = to;
+    slide_.reset();
+    if (duration > 0 && strip_ && compositor_) {
+        const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+        Slide slide{SettleSegments(from - to, space_motion::kPageResponse), duration, to, FrameClock::Now(), nullptr};
+        HRESULT hr = compositor_->Device()->CreateAnimation(slide.animation.GetAddressOf());
+        for (const CubicSegment& segment : slide.segments) {
+            if (FAILED(hr)) break;
+            hr = slide.animation->AddCubic(segment.begin, static_cast<float>((segment.constant + to) * scale),
+                                           static_cast<float>(segment.linear * scale), static_cast<float>(segment.quadratic * scale),
+                                           static_cast<float>(segment.cubic * scale));
+        }
+        if (SUCCEEDED(hr)) hr = slide.animation->End(duration, to * scale);
+        if (SUCCEEDED(hr)) slide_ = std::move(slide);
+    }
+    PlaceStrip();
+    return slide_ ? duration : 0;
+}
+
+float SidebarView::PageOffset() const {
+    if (!slide_) return pageOffset_;
+    return static_cast<float>(slide_->to + ValueAt(slide_->segments, slide_->duration, FrameClock::Now() - slide_->start));
+}
+
+void SidebarView::PlaceStrip() {
+    if (!strip_) return;
+    // The slide runs on the compositor from the next commit; at rest the strip just sits.
+    if (slide_) strip_->SetOffsetX(slide_->animation.Get());
+    else strip_->SetOffsetX(pageOffset_ * static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI);
 }
 
 void SidebarView::PlacePages() {
     if (!strip_) return;
-    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
     // A sidebar's width apart, in whole pixels, the selected page at rest at the strip's origin.
     const float pitch = static_cast<float>(clipWidth_);
     for (const PageModel& page : model_.pages) {
@@ -277,7 +317,6 @@ void SidebarView::PlacePages() {
         if (found == pages_.end() || !found->second.visual) continue;
         found->second.visual->SetOffsetX((static_cast<float>(page.index) - static_cast<float>(model_.index)) * pitch);
     }
-    strip_->SetOffsetX(pageOffset_ * scale);
 }
 
 void SidebarView::Layout(float width, UINT dpi) {
@@ -287,6 +326,8 @@ void SidebarView::Layout(float width, UINT dpi) {
         dpi_ = dpi;
         dirty_ = true;
         for (auto& [id, page] : pages_) page.dirty = true;
+        // A slide's animation is in the old scale's pixels: it lands.
+        if (slide_) SetPageOffset(pageOffset_);
     }
     // A taller window (or another scale) can leave the list past its end, and the pointer
     // over something else.
@@ -294,8 +335,7 @@ void SidebarView::Layout(float width, UINT dpi) {
     RefreshHover();
 }
 
-void SidebarView::Invalidate() {
-    dirty_ = true;
+void SidebarView::InvalidatePages() {
     for (auto& [id, page] : pages_) page.dirty = true;
     ScheduleDraw();
 }
@@ -409,6 +449,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         clipWidth_ = width;
         pagesClip_->SetClip(D2D_RECT_F{0, 0, static_cast<float>(width), static_cast<float>(largest)});
         PlacePages();
+        PlaceStrip();
     }
 
     // The address field's surface: the sidebar's top, down to the list.
@@ -728,7 +769,7 @@ float SidebarView::Height() const {
 
 D2D1_POINT_2F SidebarView::OnPage(D2D1_POINT_2F p) const {
     // Under the address field the selected page is where the strip has it.
-    if (p.y >= M::kHeaderAreaHeight) p.x -= pageOffset_;
+    if (p.y >= M::kHeaderAreaHeight) p.x -= PageOffset();
     return p;
 }
 

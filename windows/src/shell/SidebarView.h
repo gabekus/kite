@@ -8,8 +8,9 @@
 // It's DirectComposition surfaces in the window's chrome (Compositor::Chrome), over the backdrop
 // and behind the page, drawn with Direct2D and DirectWrite only when what they show changes: the
 // address field's, and one per built space page (the Mac's SidebarPagesView). The pages sit in a
-// strip, each at its space's place a sidebar's width apart, and a space switch's slide moves
-// only the strip (SetPageOffset), so no frame of it draws anything. It shows hover and takes
+// strip, each at its space's place a sidebar's width apart, and a space switch's slide is a
+// DirectComposition animation of the strip's offset (SlidePages), so no frame of it runs Kite's
+// code or draws anything. It shows hover and takes
 // clicks and the wheel (HandleMouse); what a click does goes to Actions. Not yet: the top row,
 // favorites or the space bar.
 
@@ -31,6 +32,7 @@
 
 #include "core/Models.h"
 #include "core/Sidebar.h"
+#include "core/SpaceSwipe.h"
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
 #include "shell/Favicons.h"
@@ -80,10 +82,17 @@ public:
     // Where the strip of pages sits, in points from rest (positive shows the previous space's
     // page coming in from the left). Shown at the compositor's next commit; draws nothing.
     void SetPageOffset(float offset);
+    // The strip settles from `from` to `to` points with Arc's page spring, on the compositor
+    // from the next commit (core's SettleSegments). How long that takes, in seconds; 0 when
+    // it's there at once (no GPU yet, or no distance), then SetPageOffset(to) is done.
+    double SlidePages(float from, float to);
+    // Where the strip is now, mid-slide too (for hit tests, and a slide caught mid-way).
+    float PageOffset() const;
     // The window's size or DPI changed: `width` is the sidebar's, in points. Draw follows.
     void Layout(float width, UINT dpi);
-    // Icons arrived (Favicons::TakeResults): the rows that wait for them draw again.
-    void Invalidate();
+    // Icons arrived (Favicons::TakeResults): the pages, whose rows wait for them, draw again
+    // (the address field has none).
+    void InvalidatePages();
 
     // Draws now if anything changed since the last draw; with `readBack`, always, also
     // copying the sidebar (premultiplied BGRA, at the window's top-left) there for --capture.
@@ -132,6 +141,7 @@ private:
     float PageScroll(const PageModel& page) const;
     std::wstring DrawPageSurface(const PageModel& page, Page& surfaces, Pixels* readBack);
     void PlacePages();
+    void PlaceStrip();
     // What has to draw again; ScheduleDraw draws it on the message loop's next pass.
     void InvalidateSelectedPage();
     void ScheduleDraw();
@@ -179,7 +189,15 @@ private:
     float width_ = 240;
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool dirty_ = true;  // the address field
-    float pageOffset_ = 0;  // the strip's, in points
+    float pageOffset_ = 0;  // the strip's, in points: at rest, or where a slide ends
+    struct Slide {
+        std::vector<CubicSegment> segments;
+        double duration;
+        float to;
+        double start;  // FrameClock seconds
+        Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
+    };
+    std::optional<Slide> slide_;
     bool redrawPosted_ = false;
 
     // Pointer.

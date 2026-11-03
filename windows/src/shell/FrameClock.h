@@ -2,7 +2,13 @@
 // A frame clock for animations, as the Mac's FrameClock (a display link): while it runs, the
 // window gets `message` once per composition frame, at the display's refresh rate, and does
 // nothing between animations. A worker thread waits for each frame (the compositor clock on
-// Windows 11, DwmFlush before it) and posts the message, never more than one at a time.
+// Windows 11, DwmFlush before it) and posts the message, never more than one at a time. While
+// it runs it boosts the compositor clock, so a display with a dynamic refresh rate runs at its
+// highest. The compositor's clock is the system's, not this window's display's: on several
+// displays it follows the fastest.
+//
+// Only for what has to draw again each frame (the theme's crossfade, a shader mix):
+// what a compositor property can do (an offset, an opacity) is an IDCompositionAnimation.
 //
 // Time() is when the frame being made will reach the screen (DirectComposition's estimate),
 // as the Mac's targetTimestamp, in seconds on the QueryPerformanceCounter clock.
@@ -25,6 +31,7 @@ public:
     FrameClock(const FrameClock&) = delete;
     FrameClock& operator=(const FrameClock&) = delete;
 
+    // Start and Stop come from the window's thread.
     void Start();
     void Stop();
     bool Running() const { return running_; }

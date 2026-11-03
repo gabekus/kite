@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <numbers>
 
 namespace kite {
@@ -80,6 +81,47 @@ double SpaceSwipe::Highlight(size_t index, size_t selected, const std::vector<si
     return std::find(built.begin(), built.end(), index) != built.end() ? cover(index) / total : 0;
 }
 
+double SettleDuration(double from, double response) {
+    if (std::abs(from) < 0.1) return 0;  // already at rest, as Settle reads it
+    // |x| falls steadily to rest: the first time it reads 0.
+    double low = 0, high = response;
+    while (SpaceSwipe::Settle(from, high, response) != 0) high *= 2;
+    for (int i = 0; i < 60; ++i) {
+        const double mid = (low + high) / 2;
+        (SpaceSwipe::Settle(from, mid, response) == 0 ? high : low) = mid;
+    }
+    return high;
+}
+
+std::vector<CubicSegment> SettleSegments(double from, double response, int count) {
+    const double end = SettleDuration(from, response);
+    if (end <= 0 || count < 1) return {};
+    // Cubic Hermite pieces of x(t) = from·(1 + ωt)·e^(−ωt), closer together early, where it
+    // bends most.
+    const double omega = 2 * std::numbers::pi / std::max(response, 0.001);
+    const auto x = [&](double t) { return from * (1 + omega * t) * std::exp(-omega * t); };
+    const auto dx = [&](double t) { return -from * omega * omega * t * std::exp(-omega * t); };
+    std::vector<CubicSegment> segments;
+    for (int i = 0; i < count; ++i) {
+        const double t0 = end * std::pow(static_cast<double>(i) / count, 1.5);
+        const double t1 = end * std::pow(static_cast<double>(i + 1) / count, 1.5);
+        const double h = t1 - t0;
+        const double p0 = x(t0), p1 = x(t1);
+        const double m0 = dx(t0) * h, m1 = dx(t1) * h;
+        segments.push_back(CubicSegment{t0, p0, m0 / h, (-3 * p0 - 2 * m0 + 3 * p1 - m1) / (h * h), (2 * p0 + m0 - 2 * p1 + m1) / (h * h * h)});
+    }
+    return segments;
+}
+
+double ValueAt(const std::vector<CubicSegment>& segments, double end, double time) {
+    // From `end` on, at rest, as Settle drops the last tenth of a point.
+    if (segments.empty() || time >= end) return 0;
+    auto it = std::upper_bound(segments.begin(), segments.end(), time, [](double t, const CubicSegment& s) { return t < s.begin; });
+    const CubicSegment& s = it == segments.begin() ? segments.front() : *std::prev(it);
+    const double u = std::max(time - s.begin, 0.0);
+    return s.constant + u * (s.linear + u * (s.quadratic + u * s.cubic));
+}
+
 double ThemeCrossfadeProgress(double elapsed, double startProgress) {
     if (elapsed >= space_motion::kThemeDuration) return 1;
     const double t = std::max(elapsed, 0.0);
@@ -88,6 +130,35 @@ double ThemeCrossfadeProgress(double elapsed, double startProgress) {
     const double omegaD = omega * std::sqrt(1 - zeta * zeta);
     const double spring = 1 - std::exp(-zeta * omega * t) * (std::cos(omegaD * t) + zeta * omega / omegaD * std::sin(omegaD * t));
     return startProgress + (1 - startProgress) * std::min(spring, 1.0);
+}
+
+bool ThemeCrossfade::Set(const Theme& theme, double now) {
+    if (theme == to) return false;
+    if (start && now - *start < space_motion::kThemeDuration / 2) to = from;
+    from = to;
+    to = theme;
+    if (from == to) {
+        start.reset();
+        return false;
+    }
+    start = now;
+    return true;
+}
+
+void ThemeCrossfade::Snap(const Theme& theme) {
+    from = to = theme;
+    start.reset();
+}
+
+float ThemeCrossfade::Progress(double time) {
+    if (!start) return 1;
+    const double elapsed = std::max(time - *start, 0.0);
+    if (elapsed >= space_motion::kThemeDuration) {
+        start.reset();
+        from = to;
+        return 1;
+    }
+    return static_cast<float>(ThemeCrossfadeProgress(elapsed));
 }
 
 }  // namespace kite
