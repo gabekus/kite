@@ -3,6 +3,10 @@
 // tabNumbersCountASplitOnce), and Windows' command table.
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <set>
 
 #include "Check.h"
 #include "core/KeyBindings.h"
@@ -148,36 +152,123 @@ TEST(onlyModifiedShortcutsAreSafeKeyEquivalents) {
     CHECK(KeyShortcut("f5", {}).IsSafeKeyEquivalent());
 }
 
+std::string CommandAt(const ShortcutMap& table, const KeyShortcut& shortcut) {
+    const ShortcutTarget* target = FindShortcut(table, shortcut);
+    return target ? target->command->id : "";
+}
+
 TEST(windowsCommandsUseCtrlForCommand) {
     const auto table = ShortcutTable(KeyBindings{});
-    CHECK(table.at(KeyShortcut("t", {M::Control})) == "newTab");
-    CHECK(table.at(KeyShortcut("t", {M::Control, M::Shift})) == "reopenClosedTab");
-    CHECK(table.at(KeyShortcut("w", {M::Control})) == "archiveTab");
-    CHECK(table.at(KeyShortcut("1", {M::Control})) == "tab1");
-    CHECK(table.at(KeyShortcut("9", {M::Control})) == "lastTab");
-    CHECK(table.at(KeyShortcut("[", {M::Control})) == "goBack");
+    CHECK(CommandAt(table, KeyShortcut("t", {M::Control})) == "newTab");
+    CHECK(CommandAt(table, KeyShortcut("t", {M::Control, M::Shift})) == "reopenClosedTab");
+    CHECK(CommandAt(table, KeyShortcut("w", {M::Control})) == "archiveTab");
+    CHECK(CommandAt(table, KeyShortcut("1", {M::Control})) == "tab1");
+    CHECK(CommandAt(table, KeyShortcut("9", {M::Control})) == "lastTab");
+    CHECK(CommandAt(table, KeyShortcut("[", {M::Control})) == "goBack");
     // Windows' own keys for the same commands.
-    CHECK(table.at(KeyShortcut("f5", {})) == "reloadPage");
-    CHECK(table.at(KeyShortcut("left", {M::Option})) == "goBack");
-    CHECK(table.at(KeyShortcut("f12", {})) == "developerTools");
-    // Every shown shortcut holds Ctrl or Alt, or is a function key, so typing never runs one.
+    CHECK(CommandAt(table, KeyShortcut("f5", {})) == "reloadPage");
+    CHECK(CommandAt(table, KeyShortcut("left", {M::Option})) == "goBack");
+    CHECK(CommandAt(table, KeyShortcut("f12", {})) == "developerTools");
+    // Each with its command's priority.
+    CHECK(table.at(KeyShortcut("w", {M::Control})).priority == KeyShortcutPriority::OverrideWebView);
+    CHECK(table.at(KeyShortcut("p", {M::Control})).priority == KeyShortcutPriority::PromptAfterConsumedByWebView);
+    CHECK(table.at(KeyShortcut("f5", {})).priority == KeyShortcutPriority::Low);
+    // Every shown shortcut holds Ctrl or Alt, or is a function key, so typing never runs one;
+    // and every id is unique.
+    std::set<std::string> ids;
     for (const ShortcutCommand& command : ShortcutCommands()) {
+        CHECK(ids.insert(command.id).second);
         if (command.shortcut) CHECK(command.shortcut->IsSafeKeyEquivalent());
         for (const KeyShortcut& extra : command.more) CHECK(extra.IsSafeKeyEquivalent());
     }
+    // Typing keys are never looked up.
+    CHECK(FindShortcut(table, KeyShortcut("t", {})) == nullptr);
+    CHECK(FindShortcut(table, KeyShortcut("t", {M::Shift})) == nullptr);
 }
 
 TEST(aUsersShortcutWinsOverDefaultsAndExtras) {
     KeyBindings bindings;
-    // Ctrl+R to the address field, F5 to nothing new: Refresh keeps F5 but loses Ctrl+R.
+    // Ctrl+R to the address field: Refresh keeps F5 but loses Ctrl+R.
     bindings.SetShortcut(KeyShortcut("r", {M::Control}), "openLocation");
     // An extra key taken by another command's shortcut goes to that command.
     bindings.SetShortcut(KeyShortcut("f12", {}), "viewSource");
     const auto table = ShortcutTable(bindings);
-    CHECK(table.at(KeyShortcut("r", {M::Control})) == "openLocation");
-    CHECK(table.at(KeyShortcut("f5", {})) == "reloadPage");
-    CHECK(table.at(KeyShortcut("f12", {})) == "viewSource");
+    CHECK(CommandAt(table, KeyShortcut("r", {M::Control})) == "openLocation");
+    CHECK(CommandAt(table, KeyShortcut("f5", {})) == "reloadPage");
+    CHECK(CommandAt(table, KeyShortcut("f12", {})) == "viewSource");
     CHECK(!table.contains(KeyShortcut("u", {M::Control, M::Option})));
+    // View Source was rebound: its extra Ctrl+U goes with its old shortcut.
+    CHECK(!table.contains(KeyShortcut("u", {M::Control})));
+}
+
+TEST(aRemovedShortcutTakesItsExtrasAndAPriorityChangeKeepsThem) {
+    KeyBindings bindings;
+    bindings.SetShortcut(std::nullopt, "reloadPage");
+    bindings.SetPriority(KeyShortcutPriority::OverrideWebView, "developerTools", KeyShortcut("i", {M::Control, M::Option}));
+    const auto table = ShortcutTable(bindings);
+    CHECK(!table.contains(KeyShortcut("r", {M::Control})));
+    CHECK(!table.contains(KeyShortcut("f5", {})));
+    CHECK(CommandAt(table, KeyShortcut("f12", {})) == "developerTools");
+    CHECK(table.at(KeyShortcut("f12", {})).priority == KeyShortcutPriority::OverrideWebView);
+}
+
+TEST(aMacFilesCommandKeyIsCtrl) {
+    CHECK(WindowsShortcut(KeyShortcut("w", {M::Shift, M::Command})) == KeyShortcut("w", {M::Control, M::Shift}));
+    CHECK(!WindowsShortcut(KeyShortcut("w", {M::Control, M::Command})));
+    KeyBindings bindings;
+    // ⇧⌘W (Close Window's on Windows, as Ctrl+Shift+W) to Archive Tab, as on the Mac.
+    bindings.SetShortcut(KeyShortcut("w", {M::Shift, M::Command}), "archiveTab", KeyBindingOverride::Source::Arc);
+    // Shortcuts Windows can't press, or that would take typing keys, keep the default.
+    bindings.SetShortcut(KeyShortcut("r", {M::Control, M::Command}), "reloadPage");
+    bindings.SetShortcut(KeyShortcut("q", {}), "quitKite");
+    const auto table = ShortcutTable(bindings);
+    CHECK(CommandAt(table, KeyShortcut("w", {M::Control, M::Shift})) == "archiveTab");
+    CHECK(!table.contains(KeyShortcut("w", {M::Control})));
+    CHECK(CommandAt(table, KeyShortcut("f4", {M::Control})) == "");  // archiveTab was rebound
+    CHECK(CommandAt(table, KeyShortcut("r", {M::Control})) == "reloadPage");
+    CHECK(CommandAt(table, KeyShortcut("f5", {})) == "reloadPage");
+    CHECK(CommandAt(table, KeyShortcut("q", {M::Control})) == "quitKite");
+}
+
+TEST(theBarKeepsEditingKeys) {
+    CHECK(EditsText(KeyShortcut("left", {M::Option})));
+    CHECK(EditsText(KeyShortcut("delete", {M::Control})));
+    CHECK(!EditsText(KeyShortcut("down", {M::Control, M::Option})));  // Next Tab
+    CHECK(!EditsText(KeyShortcut("w", {M::Control})));
+}
+
+// Tests/Fixtures/keybindings-v1.json, which the Mac's KeyBindingsFixtureTests also loads.
+TEST(readsTheSharedFixture) {
+    std::ifstream in(std::filesystem::path(KITE_FIXTURES_DIR) / "keybindings-v1.json", std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    auto parsed = json::Parse(text);
+    CHECK(std::holds_alternative<json::Value>(parsed));
+    auto read = KeyBindings::FromJson(std::get<json::Value>(parsed));
+    CHECK(read.has_value());
+    const KeyBindings& bindings = *read;
+    std::vector<std::string> actions;
+    for (const auto& o : bindings.UserOverrides()) actions.push_back(o.action);
+    const std::vector<std::string> expected{"archiveTab", "reloadPage", "printPage", "developerTools", "viewSource", "nextSpace"};
+    CHECK(actions == expected);
+    CHECK(bindings.Override("archiveTab")->shortcut == KeyShortcut("w", {M::Shift, M::Command}));
+    CHECK(bindings.Override("archiveTab")->source == KeyBindingOverride::Source::Arc);
+    CHECK(bindings.Priority("reloadPage") == KeyShortcutPriority::OverrideWebView);
+    CHECK(!bindings.Override("printPage")->shortcut);
+    CHECK(bindings.Priority("developerTools") == KeyShortcutPriority::Low);
+    CHECK(bindings.Override("nextSpace")->shortcut == KeyShortcut("s", {M::Shift, M::Command}));
+    CHECK(bindings.Priority("nextSpace") == DefaultPriority("nextSpace"));
+    CHECK(RoundTrip(bindings) == bindings);
+
+    // As Windows runs it: ⌘ is Ctrl; Print has no shortcut; ⌃⌘U keeps View Source's default.
+    const auto table = ShortcutTable(bindings);
+    CHECK(CommandAt(table, KeyShortcut("w", {M::Control, M::Shift})) == "archiveTab");
+    CHECK(CommandAt(table, KeyShortcut("r", {M::Control, M::Option})) == "reloadPage");
+    CHECK(table.at(KeyShortcut("r", {M::Control, M::Option})).priority == KeyShortcutPriority::OverrideWebView);
+    CHECK(!table.contains(KeyShortcut("p", {M::Control})));
+    CHECK(CommandAt(table, KeyShortcut("i", {M::Control, M::Option})) == "developerTools");
+    CHECK(table.at(KeyShortcut("f12", {})).priority == KeyShortcutPriority::Low);
+    CHECK(CommandAt(table, KeyShortcut("u", {M::Control, M::Option})) == "viewSource");
+    CHECK(CommandAt(table, KeyShortcut("u", {M::Control})) == "viewSource");
 }
 
 TEST(tabNumbersAndCycling) {

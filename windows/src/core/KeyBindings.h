@@ -135,17 +135,45 @@ private:
 
 // A command Kite for Windows has, with its default shortcut on Windows: the Mac's menu item
 // (MainMenu.swift) by its id, ⌘ made Ctrl. `more` are extra shortcuts Windows users expect
-// (F5, Alt+Left), which work but aren't the one shown, like the Mac's hidden items.
+// (F5, Alt+Left), which work but aren't the one shown, like the Mac's hidden items; they go
+// when the user rebinds or removes the command's shortcut.
 struct ShortcutCommand {
     std::string id;
     std::string title;
     std::optional<KeyShortcut> shortcut;
     std::vector<KeyShortcut> more;
+    bool repeats = false;  // a held key runs it again (Next and Previous Tab), as the Mac's menus
+    bool overBar = false;  // runs while the command bar is open; the others' keys are the bar's
+
+    ShortcutCommand(std::string id, std::string title, std::optional<KeyShortcut> shortcut, std::vector<KeyShortcut> more = {},
+                    bool repeats = false, bool overBar = false)
+        : id(std::move(id)), title(std::move(title)), shortcut(std::move(shortcut)), more(std::move(more)), repeats(repeats),
+          overBar(overBar) {}
 };
 const std::vector<ShortcutCommand>& ShortcutCommands();
 
-// Which command each shortcut runs, after the user's overrides: the shown shortcuts, then the
-// extra ones that no command's shown shortcut took.
-std::map<KeyShortcut, std::string> ShortcutTable(const KeyBindings& bindings);
+// A shortcut as Windows can press it. A file from the Mac holds ⌘ ("command"), which Windows
+// reads as Ctrl, as its defaults do; none for a shortcut with both ⌃ and ⌘ (no Windows keys).
+std::optional<KeyShortcut> WindowsShortcut(const KeyShortcut& shortcut);
+
+// What a shortcut runs: the command (one of ShortcutCommands(), which live for the program)
+// and who gets the key first when a page wants it too.
+struct ShortcutTarget {
+    const ShortcutCommand* command = nullptr;
+    KeyShortcutPriority priority = KeyShortcutPriority::Low;
+};
+using ShortcutMap = std::map<KeyShortcut, ShortcutTarget>;
+
+// Which command each shortcut runs, after the user's overrides (their ⌘ read as Ctrl): the
+// shown shortcuts, then the extra ones that no command's shown shortcut took.
+ShortcutMap ShortcutTable(const KeyBindings& bindings);
+
+// Whether a text field uses these keys itself (Alt+Left, Ctrl+Backspace…), so they stay the
+// command bar's while it's open, as the Mac doesn't take ⌘← and ⌘→ from a focused field.
+bool EditsText(const KeyShortcut& shortcut);
+
+// The command a pressed key runs, if any. Keys without Ctrl or Alt (other than function keys)
+// type, so they're never looked up.
+const ShortcutTarget* FindShortcut(const ShortcutMap& table, const KeyShortcut& pressed);
 
 }  // namespace kite

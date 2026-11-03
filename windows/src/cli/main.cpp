@@ -27,12 +27,15 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "core/CommandBar.h"
+#include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
@@ -64,6 +67,8 @@ int Usage() {
         "       kitecore [--profile DIR] click X Y [HEIGHT [SCROLL]]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
+        "       kitecore [--profile DIR] tab next|prev|NUMBER\n"
+        "       kitecore [--profile DIR] shortcuts\n"
         "       kitecore [--profile DIR] close TAB_ID\n"
         "       kitecore [--profile DIR] reopen [TAB_ID]\n"
         "       kitecore [--profile DIR] archive-stale [NOW]\n"
@@ -225,6 +230,30 @@ int main(int argc, char** argv) {
     if (command == "state") {
         std::puts(json::Write(Summary(state)).c_str());
         return kOk;
+    } else if (command == "shortcuts" && args.size() == 1) {
+        // What each key runs in Kite for Windows, after the profile's keybindings.json: the
+        // shortcut as Windows shows it, its command and who gets it first in a page.
+        KeyBindings bindings;
+        std::ifstream in(std::get<std::filesystem::path>(resolved) / "keybindings.json", std::ios::binary);
+        if (in) {
+            const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+            auto parsed = json::Parse(text);
+            auto* value = std::get_if<json::Value>(&parsed);
+            auto read = value ? KeyBindings::FromJson(*value) : std::nullopt;
+            if (!read) {
+                std::fputs("kitecore: unreadable keybindings.json (Kite uses the defaults)\n", stderr);
+                return kLoadFailed;
+            }
+            bindings = *read;
+        }
+        json::Array rows;
+        for (const auto& [shortcut, target] : ShortcutTable(bindings)) {
+            rows.push_back(json::Object{{"shortcut", shortcut.DisplayString()},
+                                        {"command", target.command->id},
+                                        {"priority", std::string(RawValue(target.priority))}});
+        }
+        std::puts(json::Write(json::Value(std::move(rows))).c_str());
+        return kOk;
     } else if (command == "theme" && (args.size() == 2 || args.size() == 4)) {
         auto space = state.SpaceIndex(Id(args[1]));
         if (!space) return kNotFound;
@@ -345,6 +374,20 @@ int main(int argc, char** argv) {
         const std::string id = Id(args[1]);
         if (!state.Location(id)) return kNotFound;
         state.Select(id);
+        changed = true;
+    } else if (command == "tab" && args.size() == 2) {
+        // Ctrl+Alt+Down/Up and Ctrl+1–9 in the selected space: prints the tab now selected.
+        if (args[1] == "next" || args[1] == "prev") {
+            state.SelectAdjacentTab(args[1] == "next" ? 1 : -1);
+        } else {
+            int number = 0;
+            auto [end, error] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), number);
+            if (error != std::errc() || end != args[1].data() + args[1].size() || number < 1 || number > 9) return Usage();
+            state.SelectTabNumber(number);
+        }
+        const Tab* tab = state.SelectedTab();
+        if (!tab) return kNotFound;
+        std::puts(tab->id.c_str());
         changed = true;
     } else if (command == "close" && args.size() == 2) {
         // Ctrl+W on a tab: prints whether it was removed (and archived) or only unloaded.

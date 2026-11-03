@@ -181,25 +181,38 @@ smoothly; W10), the sandbox (W6b), and the page in `--capture` (W10).
 Kite's shortcuts (W8) are the Mac's menu commands, by the same ids, with Ctrl in
 place of ⌘ (`windows/src/core/KeyBindings.h`, ported from `KeyBindings.swift`
 and `ShortcutPriorityGate.swift`, with their tests). `keybindings.json` in the
-support folder has the Mac's layout, so a file from the Mac works; there its
-"control" means Ctrl, "option" Alt and "shift" Shift, and "command" (the
-Windows key) never matches. A few commands also take the keys Windows users
-expect, without showing them: Ctrl+F4, F5, Ctrl+F5, Shift+F5, F12,
-Ctrl+Shift+I, Ctrl+U, Alt+Left and Alt+Right.
+support folder has the Mac's layout, and `Tests/Fixtures/keybindings-v1.json`
+is read by both test suites. In it "control" is Ctrl, "option" Alt and "shift"
+Shift, and "command" (⌘) is read as Ctrl too, as the defaults map it, so a
+Mac file's ⌘⇧W is Ctrl+Shift+W. A shortcut Windows can't press (⌃⌘) or one that
+would take typing keys is ignored and the command keeps its default, as the
+Mac ignores an unsafe one. An override with no shortcut removes the command's
+shortcut (a priority-only change keeps it in the file, as the Mac writes it). A
+few commands also take the keys Windows users expect, without showing them:
+Ctrl+F4, F5, Ctrl+F5, Shift+F5, F12, Ctrl+Shift+I, Ctrl+U, Alt+Left and
+Alt+Right; they go when the user rebinds or removes the command's shortcut.
+`kitecore shortcuts` prints the table for a profile.
 
 In Kite's own window a shortcut runs from the window's key messages. In a page
 it goes by the command's priority, as on the Mac: Prefer Kite runs it in
 `OnPreKeyEvent` before the page sees the key; Prefer Websites lets the page
 have it, and runs it in `OnKeyEvent` only when the page didn't use it; Use Both
-does the same, and a second press within 4.6 s runs Kite's before the page. A
-held key runs its command once, except Next and Previous Tab. AltGr (Ctrl+Alt
-on many layouts) types characters, never a shortcut. While the command bar is
-open only Archive Tab (which closes the bar), Restore Last Closed Tab, Close
-Window, Quit and Minimize work over it; the rest are the bar's keys. Ctrl+1 to
-Ctrl+8 select the space's nth tab and Ctrl+9 its last, counting the sidebar's
-rows top to bottom, with a split as one row. Not yet: Settings → Shortcuts (the
-file is read at launch), the "Press Ctrl+D again" prompt for Use Both, and the
-toast after Copy URL.
+does the same, and a second press within 4.6 s runs Kite's before the page.
+Both paths look keys up the same way (`shell/Keys.cpp`): a key without Ctrl or
+Alt (other than F1–F24) is never looked up, and a Ctrl+Alt key that types a
+character on the current layout (AltGr's, which Windows also gives Left
+Ctrl+Left Alt) is typing, not a shortcut. A held key repeats its command, as the
+Mac's menus do. While the command bar is open its shortcuts still run, as the
+Mac's menus come before its field editor, but for the keys the field edits with
+(Alt+Left, Ctrl+Backspace), as the Mac doesn't take ⌘← from a focused field.
+Ctrl+1 to Ctrl+8 select the space's nth tab and Ctrl+9 its last, in the Mac's
+order: favorites, pinned and then today's tabs, top to bottom, including tabs in
+closed folders (the Windows sidebar doesn't draw favorites yet), with a split
+counted once. Developer Tools opens in a window of its own, counted with the
+pages so Chromium's shutdown waits for it. Not yet: Settings → Shortcuts (the
+file is read at launch; the table will be swapped atomically), the "Press
+Ctrl+D again" prompt for Use Both, the toast after Copy URL, and Ctrl+W closing a
+focused Developer Tools window.
 
 ## Refresh rate
 

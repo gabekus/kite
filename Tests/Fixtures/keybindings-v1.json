@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "userOverrides": [
+    {"action": "archiveTab", "source": "arc", "shortcut": {"key": "w", "modifiers": ["shift", "command"]}},
+    {"action": "reloadPage", "source": "user", "shortcut": {"key": "r", "modifiers": ["command", "option"]}, "priority": "overrideWebView"},
+    {"action": "printPage", "source": "user"},
+    {"action": "developerTools", "source": "user", "shortcut": {"key": "i", "modifiers": ["option", "command"]}, "priority": "low"},
+    {"action": "viewSource", "source": "user", "shortcut": {"key": "u", "modifiers": ["control", "command"]}},
+    {"action": "nextSpace", "source": "user", "shortcut": {"key": "S", "modifiers": ["shift", "command"]}, "priority": "aPriorityFromALaterBuild"}
+  ]
+}

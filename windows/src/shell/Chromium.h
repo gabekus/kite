@@ -24,7 +24,6 @@
 
 #include <filesystem>
 #include <functional>
-#include <map>
 #include <memory>
 #include <string>
 
@@ -63,14 +62,13 @@ struct PageEvents {
     // A key (`character` false: a virtual-key code) or a typed UTF-16 unit (`character` true)
     // that reached a page while its keys go to Kite.
     std::function<void(bool character, unsigned code, bool ctrl, bool shift)> keyForwarded;
-    // Kite's shortcuts in a page: which command each key runs (ShortcutTable), and who gets it
-    // first when the page wants it too, by the command's priority (the Mac's
-    // ShortcutPriorityRouter): Prefer Kite runs it before the page sees the key; Prefer
-    // Websites only if the page doesn't use it; Use Both lets the page have it, and a second
-    // press soon after runs Kite's. Read on CEF's thread: fixed once Chromium starts.
-    std::map<KeyShortcut, std::string> shortcuts;
-    KeyBindings keyBindings;
-    // A shortcut's command (other than newTab's Ctrl+T, above), on Kite's thread.
+    // Kite's shortcuts in a page: which command each key runs, and who gets it first when the
+    // page wants it too (ShortcutTable; the Mac's ShortcutPriorityRouter): Prefer Kite runs it
+    // before the page sees the key; Prefer Websites only if the page doesn't use it; Use Both
+    // lets the page have it, and a second press soon after runs Kite's. Read on CEF's thread,
+    // so fixed once Chromium starts (Settings → Shortcuts will swap it atomically).
+    ShortcutMap shortcuts;
+    // A shortcut's command by id (other than New Tab's, above), on Kite's thread.
     std::function<void(const std::string& command)> command;
     // Past six live pages the least recently shown close (the Mac's PagePool). Asked first:
     // true keeps the tab's page (a popup and its opener, PagePool.isLinkedToPopup).

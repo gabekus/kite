@@ -293,47 +293,90 @@ std::string ShortcutPriorityGate::Prompt(const KeyShortcut& shortcut, std::strin
 const std::vector<ShortcutCommand>& ShortcutCommands() {
     // The Mac's MainMenu items Kite for Windows has, in its menus' order, ⌘ made Ctrl.
     static const std::vector<ShortcutCommand> commands = [] {
+        constexpr bool kRepeats = true, kOverBar = true;
         std::vector<ShortcutCommand> c{
-            {"newTab", "New Tab…", Ctrl("t"), {}},
-            {"reopenClosedTab", "Restore Last Closed Tab", CtrlShift("t"), {}},
-            {"openLocation", "Open Location…", std::nullopt, {}},
-            {"archiveTab", "Archive Tab", Ctrl("w"), {Ctrl("f4")}},
-            {"closeWindow", "Close Window", CtrlShift("w"), {}},
-            {"quitKite", "Quit Kite", Ctrl("q"), {}},
-            {"printPage", "Print", Ctrl("p"), {}},
-            {"copyCurrentURL", "Copy URL", CtrlShift("c"), {}},
-            {"collapsePinnedSection", "Collapse Pinned Tabs", std::nullopt, {}},
-            {"stopLoading", "Stop Loading", Ctrl("."), {}},
+            {"newTab", "New Tab…", Ctrl("t")},
+            {"reopenClosedTab", "Restore Last Closed Tab", CtrlShift("t"), {}, false, kOverBar},
+            {"openLocation", "Open Location…", std::nullopt},
+            {"archiveTab", "Archive Tab", Ctrl("w"), {Ctrl("f4")}, false, kOverBar},  // closes the bar first
+            {"closeWindow", "Close Window", CtrlShift("w"), {}, false, kOverBar},
+            {"quitKite", "Quit Kite", Ctrl("q"), {}, false, kOverBar},
+            {"printPage", "Print", Ctrl("p")},
+            {"copyCurrentURL", "Copy URL", CtrlShift("c")},
+            {"collapsePinnedSection", "Collapse Pinned Tabs", std::nullopt},
+            {"stopLoading", "Stop Loading", Ctrl(".")},
             {"reloadPage", "Refresh the Page", Ctrl("r"), {Bare("f5")}},
             {"forceReloadPage", "Force Refresh the Page", CtrlShift("r"), {Ctrl("f5"), KeyShortcut("f5", {Modifier::Shift})}},
             {"viewSource", "View Source", CtrlAlt("u"), {Ctrl("u")}},
             {"developerTools", "Developer Tools", CtrlAlt("i"), {Bare("f12"), CtrlShift("i")}},
-            {"nextTab", "Next Tab", CtrlAlt("down"), {}},
-            {"previousTab", "Previous Tab", CtrlAlt("up"), {}},
+            {"nextTab", "Next Tab", CtrlAlt("down"), {}, kRepeats},
+            {"previousTab", "Previous Tab", CtrlAlt("up"), {}, kRepeats},
         };
         for (int n = 1; n <= 9; ++n) {
             const std::string digit(1, static_cast<char>('0' + n));
-            c.push_back({n == 9 ? "lastTab" : "tab" + digit, n == 9 ? "Last Tab" : "Tab " + digit, Ctrl(digit), {}});
+            c.emplace_back(n == 9 ? "lastTab" : "tab" + digit, n == 9 ? "Last Tab" : "Tab " + digit, Ctrl(digit));
         }
-        c.push_back({"goBack", "Go Back", Ctrl("["), {Alt("left")}});
-        c.push_back({"goForward", "Go Forward", Ctrl("]"), {Alt("right")}});
-        c.push_back({"minimize", "Minimize Window", Ctrl("m"), {}});
+        c.emplace_back("goBack", "Go Back", Ctrl("["), std::vector<KeyShortcut>{Alt("left")});
+        c.emplace_back("goForward", "Go Forward", Ctrl("]"), std::vector<KeyShortcut>{Alt("right")});
+        c.emplace_back("minimize", "Minimize Window", Ctrl("m"), std::vector<KeyShortcut>{}, false, kOverBar);
         return c;
     }();
     return commands;
 }
 
-std::map<KeyShortcut, std::string> ShortcutTable(const KeyBindings& bindings) {
+std::optional<KeyShortcut> WindowsShortcut(const KeyShortcut& shortcut) {
+    if (!shortcut.Has(Modifier::Command)) return shortcut;
+    if (shortcut.Has(Modifier::Control)) return std::nullopt;
+    std::vector<Modifier> modifiers;
+    for (Modifier m : shortcut.modifiers) modifiers.push_back(m == Modifier::Command ? Modifier::Control : m);
+    return KeyShortcut(shortcut.key, std::move(modifiers));
+}
+
+ShortcutMap ShortcutTable(const KeyBindings& bindings) {
+    // The user's overrides as Windows presses them, so a Mac file's ⌘⇧W takes Ctrl+Shift+W
+    // from Close Window as it took ⌘⇧W on the Mac.
+    // One Windows can't press (⌃⌘) or that would take typing keys is ignored, and the command
+    // keeps its default, as the Mac's KeyBindingsStore.apply ignores an unsafe one.
     std::map<std::string, std::optional<KeyShortcut>> defaults;
-    for (const ShortcutCommand& command : ShortcutCommands()) defaults[command.id] = command.shortcut;
-    std::map<KeyShortcut, std::string> table;
-    for (const auto& [action, shortcut] : bindings.Resolve(defaults)) {
-        if (shortcut) table[*shortcut] = action;
+    std::map<std::string_view, const ShortcutCommand*> byID;
+    for (const ShortcutCommand& command : ShortcutCommands()) {
+        defaults[command.id] = command.shortcut;
+        byID[command.id] = &command;
+    }
+    std::vector<KeyBindingOverride> overrides;
+    for (KeyBindingOverride o : bindings.UserOverrides()) {
+        if (o.shortcut) {
+            o.shortcut = WindowsShortcut(*o.shortcut);
+            if (!o.shortcut || !o.shortcut->IsSafeKeyEquivalent()) {
+                auto fallback = defaults.find(o.action);
+                o.shortcut = fallback == defaults.end() ? std::nullopt : fallback->second;
+            }
+        }
+        overrides.push_back(std::move(o));
+    }
+    const KeyBindings windows(std::move(overrides));
+    ShortcutMap table;
+    for (const auto& [action, shortcut] : windows.Resolve(defaults)) {
+        if (shortcut) table[*shortcut] = ShortcutTarget{byID.at(action), windows.Priority(action)};
     }
     for (const ShortcutCommand& command : ShortcutCommands()) {
-        for (const KeyShortcut& extra : command.more) table.try_emplace(extra, command.id);
+        // A command the user rebound or unbound keeps only what they chose.
+        const KeyBindingOverride* o = windows.Override(command.id);
+        if (o && o->shortcut != command.shortcut) continue;
+        for (const KeyShortcut& extra : command.more) table.try_emplace(extra, ShortcutTarget{&command, windows.Priority(command.id)});
     }
     return table;
+}
+
+bool EditsText(const KeyShortcut& shortcut) {
+    static const std::set<std::string, std::less<>> kEditingKeys{"left", "right", "up", "down", "delete"};
+    return kEditingKeys.contains(shortcut.key) && !(shortcut.Has(Modifier::Control) && shortcut.Has(Modifier::Option));
+}
+
+const ShortcutTarget* FindShortcut(const ShortcutMap& table, const KeyShortcut& pressed) {
+    if (!pressed.IsSafeKeyEquivalent()) return nullptr;
+    auto it = table.find(pressed);
+    return it == table.end() ? nullptr : &it->second;
 }
 
 }  // namespace kite
