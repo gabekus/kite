@@ -330,3 +330,32 @@ a tile reorders the tray (order read from the saved session); dragging a Today t
 Not verified: tile hover against main (main's tiles, in the big hosting view, take no `ui pointer` hover in a
 background window), the preview card opening, the context menu, favorite splits' tiles pixel-wise, and the empty
 state's dismiss button.
+
+## PR 6: space bar
+
+`SpaceBarView` (AppKit): the Library button (its download badge still SwiftUI, drawing nothing unless files
+download), the space icons centred between the end buttons on Arc's 34pt pitch, each crossfading from grey to
+colour with its share of the sidebar while the pages slide, the hover backing and Arc's tip, drag-to-reorder with
+the open slot and the landing slide, tab drops onto an icon, the space menu and the + menu.
+
+| Scenario (median of 3) | CPU ms/s main before #262 → PR 6 | Wakeups/s |
+|---|---|---|
+| **Switching spaces every 0.5 s** | **218.24 → 161.21** | 111.4 → 96.25 |
+| Idle | 2.65 → 1.96 | 4.40 → 4.07 |
+| After hover + scroll | 2.40 → 1.93 | 4.32 → 4.13 |
+| Claude's rings | 126.85 → 13.71 | 145.6 → 27.3 |
+
+A first cut relaid out the bar and reset every dot's fill on each frame of a switch (120 wakeups/s); now a frame
+only changes the icons' opacities (96).
+
+Pixels (captured back to back with main before #262, the bar's region): dark max 75, light max 93, mean ≤ 0.19:
+the colour emoji at 12.5pt (AppKit and SwiftUI rasterise small colour emoji differently; positions identical) and
+the greyed icon within 22 once its 45% fade moved inside the icon view (the cell's crossfade had overwritten it).
+Whole sidebar max 142: list favicons' hard edges (the test server's red favicon resampled from 32px; visually
+identical; high-quality redrawing made it worse).
+
+Behaviour (AppKit build): clicking an icon switches spaces; dragging Personal past Work reorders them; dropping a
+Today tab on Work's icon moves it there (rows taking the first click for the test only).
+
+Not verified: the hover backing and tip against main (main's cells take no `ui pointer` hover in a background
+window), the + menu and space menu (modal), overflowing strips (scrolling), and the download badge.

@@ -29,6 +29,7 @@ final class SidebarColumnView: NSView {
     let chrome: NSHostingView<SidebarView>
     let header: SidebarHeaderView
     let favorites: FavoritesTrayView
+    let spaceBar: SpaceBarView
     let pages: SidebarPagesView
     private let overlay: SidebarOverlayHost
     private let clip = CALayer()
@@ -44,6 +45,7 @@ final class SidebarColumnView: NSView {
         header = SidebarHeaderView(store: store, actions: sidebar.actions, hover: sidebar.hover,
                                    supportsDarkPages: sidebar.supportsDarkPages, accessory: sidebar.fieldAccessory)
         favorites = FavoritesTrayView(store: store, actions: sidebar.actions, drag: drag, metrics: sidebar.chromeMetrics)
+        spaceBar = SpaceBarView(store: store, actions: sidebar.actions, swipe: swipe, drag: drag, library: sidebar.library)
         header.showExtensions = sidebar.showExtensions
         header.showSiteControls = sidebar.showSiteControls
         header.installApp = sidebar.installApp
@@ -57,6 +59,7 @@ final class SidebarColumnView: NSView {
         addSubview(chrome)
         addSubview(header)
         addSubview(favorites)
+        addSubview(spaceBar)
         addSubview(pages)
         addSubview(overlay)
         header.onHeightChange = { [weak self] in self?.needsLayout = true }
@@ -102,6 +105,8 @@ final class SidebarColumnView: NSView {
         overlay.frame = bounds
         header.frame = CGRect(x: 0, y: 0, width: bounds.width, height: header.height)
         favorites.frame = CGRect(x: 0, y: header.height, width: bounds.width, height: favorites.metrics.favoritesHeight)
+        spaceBar.frame = CGRect(x: 0, y: bounds.height - ArcMetrics.Sidebar.bottomBarHeight, width: bounds.width,
+                                height: ArcMetrics.Sidebar.bottomBarHeight)
         // The pages span the whole sidebar, not just its padded column.
         pages.frame = CGRect(x: 0, y: pagesFrame.minY, width: bounds.width, height: max(pagesFrame.height, 0))
         guard let layer else { return }
