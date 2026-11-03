@@ -80,7 +80,11 @@ final class SidebarHeaderView: NSView {
             guard let self else { return }
             store.showCommandBar(self.store.state.selectedTab == nil ? .newTab : .editCurrent)
         }
-        field.toggleDark = { store.mutate { $0.toggleDarkPage(for: store.state.selectedTab?.url) } }
+        field.toggleDark = {
+            // Read before mutating: reading the store's state inside its own mutation is a Swift exclusivity crash.
+            let url = store.state.selectedTab?.url
+            store.mutate { $0.toggleDarkPage(for: url) }
+        }
         field.showSiteControls = { [weak self] view in self?.showSiteControls?(view) }
         field.installApp = { [weak self] view in self?.installApp?(view) }
         // Settings → Advanced → Toolbar can hide each field button.
