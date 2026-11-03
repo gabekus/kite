@@ -598,6 +598,8 @@ enum SymbolOrigins {
 /// container keeps the host's place: its constraints, z-order and appearance.
 final class DetachingContainer: NSView {
     let host: NSView
+    /// Clicks that land on the container itself (not on the host's controls) go through to the views below.
+    var passesClicks = false
 
     init(host: NSView) {
         self.host = host
@@ -625,6 +627,11 @@ final class DetachingContainer: NSView {
     override func layout() {
         super.layout()
         host.frame = bounds
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return passesClicks && hit === self ? nil : hit
     }
 
     override var acceptsFirstResponder: Bool { false }
