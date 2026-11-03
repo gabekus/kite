@@ -82,7 +82,7 @@ public struct ExtensionManifest: Equatable, Sendable {
         return icons.isEmpty ? nil : icons
     }
 
-    private static func strippingBOM(_ data: Data) -> Data {
+    static func strippingBOM(_ data: Data) -> Data {
         data.starts(with: [0xEF, 0xBB, 0xBF]) ? data.dropFirst(3) : data
     }
 }

@@ -7,8 +7,9 @@ import UniformTypeIdentifiers
 // Arc shuts down on 2026-12-22. Some time after that, delete this file, the
 // "Import from Arc…" item in MainMenu.swift, KiteCore/ArcImport.swift, ArcArchiveImport.swift,
 // ArcSettingsImport.swift, ArcKeyBindingsImport.swift, ArcHistoryImport.swift,
-// ArcSiteSearchImport.swift, ArcLinkRoutingImport.swift, and BrowserState.arcProfileMap, and make
-// AppDelegate.airTraffic private again.
+// ArcSiteSearchImport.swift, ArcLinkRoutingImport.swift, ArcExtensionsImport.swift,
+// ArcExtensionsInstaller.swift with its item in ExtensionsMenuBar.swift, and BrowserState.arcProfileMap,
+// and make AppDelegate.airTraffic private again.
 
 extension BrowserWindowController {
     @objc func importFromArc(_ sender: Any?) {
@@ -263,6 +264,12 @@ enum ArcImportController {
             lines.append("Links from other apps that no route catches open in \(space.name), as in Arc.")
         }
         if let profiles = profilesLine(named, names: profileNames, state: store.state) { lines.append(profiles) }
+        #if canImport(CEFBridge)
+        let extensionCount = Set(ArcImport.Result.withDefault(named).flatMap { ArcExtensionsInstaller.read(profile: $0, in: folder).map(\.id) }).count
+        if extensionCount > 0 {
+            lines.append("Your Arc profiles have \(count(extensionCount, "extension")). After importing, add them to each Kite profile with Extensions › Add Extensions from Arc… (Chrome asks you to confirm each).")
+        }
+        #endif
         if result.profiles.contains(where: { !named.contains($0) }) {
             lines.append("A profile only unnamed spaces use comes over, with its favorites and history, only if you include them.")
         }

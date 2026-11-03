@@ -72,6 +72,13 @@ final class ExtensionsMenuBar: NSObject, NSMenuDelegate {
         let manage = NSMenuItem(title: "Manage Extensions…", action: #selector(manageExtensions(_:)), keyEquivalent: "")
         manage.target = self
         menu.addItem(manage)
+        // Temporary: remove with ArcExtensionsInstaller.swift after Arc shuts down (2026-12-22).
+        if let state = Self.frontController()?.store.state, !ArcExtensionsInstaller.missing(for: model.engine, state: state).isEmpty {
+            let arc = NSMenuItem(title: "Add Extensions from Arc…", action: #selector(addFromArc(_:)), keyEquivalent: "")
+            arc.target = self
+            arc.isEnabled = !ArcExtensionsInstaller.isAdding(in: model.engine)
+            menu.addItem(arc)
+        }
     }
 
     // MARK: Actions
@@ -87,6 +94,12 @@ final class ExtensionsMenuBar: NSObject, NSMenuDelegate {
         NSApp.sendAction(#selector(AppDelegate.openURLFromExtensionsMenu(_:)), to: nil, from: url as NSURL)
     }
 
+    @objc private func addFromArc(_ sender: Any?) {
+        guard let controller = Self.frontController() else { return }
+        let engine = model.engine
+        ArcExtensionsInstaller.add(ArcExtensionsInstaller.missing(for: engine, state: controller.store.state), to: engine, window: controller.window)
+    }
+
     @objc private func manageExtensions(_ sender: Any?) {
         guard let (view, rect) = Self.anchor() else { return }
         managePopover?.close()
@@ -97,12 +110,17 @@ final class ExtensionsMenuBar: NSObject, NSMenuDelegate {
         managePopover = popover
     }
 
+    private static func frontController() -> BrowserWindowController? {
+        NSApp.keyWindow?.windowController as? BrowserWindowController
+            ?? NSApp.mainWindow?.windowController as? BrowserWindowController
+            // Kite in the background has no key or main window.
+            ?? NSApp.orderedWindows.lazy.compactMap { $0.windowController as? BrowserWindowController }.first
+    }
+
     /// The top-right corner of the front browser window's page, where the toolbar's
     /// extensions button would be.
     private static func anchor() -> (NSView, NSRect)? {
-        let controller = NSApp.keyWindow?.windowController as? BrowserWindowController
-            ?? NSApp.mainWindow?.windowController as? BrowserWindowController
-        guard let view = controller?.contentFrame else { return nil }
+        guard let view = frontController()?.contentFrame else { return nil }
         let bounds = view.bounds
         let y = view.isFlipped ? bounds.minY + 4 : bounds.maxY - 5
         return (view, NSRect(x: bounds.maxX - 56, y: y, width: 1, height: 1))
