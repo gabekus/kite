@@ -1,5 +1,6 @@
 #if canImport(CEFBridge)
 import AppKit
+import Combine
 import KiteCore
 import SwiftUI
 
@@ -213,47 +214,76 @@ private struct ExtensionIcon: View {
 
 /// The password manager's key in the sidebar's address field (1Password or Bitwarden,
 /// chosen in Settings): part of Kite, always shown while it's installed and on. Sized like
-/// Arc's buttons at the field's right end (30pt).
-struct PasswordManagerFieldButton: View {
-    @ObservedObject var model: ExtensionsModel
-    @State private var anchor: NSView?
-    @State private var hovering = false
-
+/// Arc's buttons at the field's right end (30pt). Without the password manager in this profile
+/// (each profile has its own extensions), the key adds it. No size while there's neither.
+@MainActor
+final class PasswordManagerFieldButton: NSView {
     /// Set by the password manager integration to open it its own way, given the popup
     /// its manifest names; returns false to fall back to ExtensionPopover.
     static var open: ((NSView, URL?) -> Bool)?
 
-    var body: some View {
-        if let manager = model.passwordManager {
-            key(manager.name) { open(manager) }
+    private let button = SymbolButton(symbol: "key.fill", pointSize: 11, weight: .semibold)
+    private let selection: ExtensionsSelection
+    private var selectionChange: AnyCancellable?
+    private var modelChange: AnyCancellable?
+    private var isShown = false
+
+    init(selection: ExtensionsSelection) {
+        self.selection = selection
+        super.init(frame: .zero)
+        button.hoverWash = (0.1, 6)
+        // SwiftUI's `Color.primary.opacity(0.1)`: the label colour (alpha 216/255) at a tenth.
+        button.hoverWashFill = { dark in (dark ? NSColor.white : NSColor.black).withAlphaComponent(216.0 / 255 / 10) }
+        button.opacity = 0.6
+        button.hoverOpacity = 0.9
+        button.action = { [weak self] in self?.press() }
+        addSubview(button)
+        selectionChange = selection.$model.sink { [weak self] model in
+            self?.modelChange = model.objectWillChange.sink { [weak self] in
+                // objectWillChange: read the model once the change is in.
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.update() } }
+            }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.update() } }
+        }
+        update()
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+    override var intrinsicContentSize: NSSize { isShown ? NSSize(width: 30, height: 30) : .zero }
+
+    override func layout() {
+        super.layout()
+        button.frame = bounds
+    }
+
+    private func update() {
+        let model = selection.model
+        let label: String? = if let manager = model.passwordManager {
+            manager.name
         } else if PasswordManagerIntegration.canInstall(in: model.engine) {
-            // Not in this profile yet (each profile has its own extensions): the key adds it.
-            let name = PasswordManagerIntegration.current.name
-            key("Add \(name) to this profile") { PasswordManagerIntegration.install(in: model.engine) }
+            "Add \(PasswordManagerIntegration.current.name) to this profile"
+        } else {
+            nil
         }
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
+        guard (label != nil) != isShown else { return }
+        isShown = label != nil
+        invalidateIntrinsicContentSize()
+        superview?.needsLayout = true
     }
 
-    private func key(_ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: "key.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .frame(width: 30, height: 30)
-                .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(hovering ? 0.1 : 0)))
-                .background(AnchorView(view: $anchor))
-                .contentShape(Rectangle())
+    private func press() {
+        let model = selection.model
+        guard let manager = model.passwordManager else {
+            if PasswordManagerIntegration.canInstall(in: model.engine) { PasswordManagerIntegration.install(in: model.engine) }
+            return
         }
-        .buttonStyle(.plain)
-        .opacity(hovering ? 0.9 : 0.6)
-        .onHover { hovering = $0 }
-        .help(label)
-        .accessibilityLabel(label)
-    }
-
-    private func open(_ manager: InstalledExtension) {
-        guard let anchor else { return }
-        if Self.open?(anchor, manager.popupURL) == true { return }
+        if Self.open?(button, manager.popupURL) == true { return }
         if let popup = manager.popupURL {
-            ExtensionPopover.show(popup, engine: model.engine, relativeTo: anchor.bounds, of: anchor)
+            ExtensionPopover.show(popup, engine: model.engine, relativeTo: button.bounds, of: button)
         }
     }
 }

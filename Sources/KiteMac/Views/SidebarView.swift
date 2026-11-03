@@ -75,7 +75,7 @@ struct SidebarConfiguration {
     var showExtensions: ((NSView) -> Void)?
     /// Always shown at the address field's right end (the password manager's key); hides itself when
     /// there's nothing to show.
-    var fieldAccessory: AnyView?
+    var fieldAccessory: NSView?
     /// Opens Site Controls from the address field's hover button.
     var showSiteControls: ((NSView) -> Void)?
     /// Chrome's install icon, shown while the tab's page has an installable manifest; nil in incognito.

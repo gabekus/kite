@@ -323,7 +323,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             extensionsSelection = extensions
             toolbar.extensions = extensions
             sidebar.showExtensions = { view in ExtensionsMenu.present(model: extensions.model, from: view) }
-            sidebar.fieldAccessory = AnyView(ExtensionsSelectionView(selection: extensions) { PasswordManagerFieldButton(model: $0) })
+            sidebar.fieldAccessory = PasswordManagerFieldButton(selection: extensions)
         }
         #endif
         sidebarHost = SidebarColumnView(configuration: sidebar)

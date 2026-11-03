@@ -138,6 +138,8 @@ final class SymbolButton: NSView {
     var hoverOpacity: Double? { didSet { applyOpacity() } }
     /// A wash behind the symbol while hovered (the address field's buttons), with its corner radius.
     var hoverWash: (strength: Double, cornerRadius: CGFloat)? { didSet { applyHover() } }
+    /// The wash's colour by dark appearance, in place of the chrome fill `hoverWash.strength` gives.
+    var hoverWashFill: ((Bool) -> NSColor)? { didSet { applyHover() } }
     var tint: NSColor? { didSet { imageView.contentTintColor = tint ?? .labelColor } }
     var isEnabled = true { didSet { applyOpacity() } }
     var disabledOpacity: Double = 0.25
@@ -199,7 +201,7 @@ final class SymbolButton: NSView {
     private func applyHover() {
         if let hoverWash {
             wash.cornerRadius = hoverWash.cornerRadius
-            wash.fill = chromeFill(hoverWash.strength)
+            wash.fill = hoverWashFill ?? chromeFill(hoverWash.strength)
             wash.isHidden = !isHovered
         } else {
             wash.isHidden = true
