@@ -42,14 +42,16 @@ final class SpaceIconImageView: NSView {
         image.isHidden = true
         image.layer?.filters = nil
         label.layer?.filters = nil
-        alphaValue = 1
+        // Greyed icons fade to 45% on the inside, so whoever shows the view can fade it as a whole too.
+        label.alphaValue = 1
+        image.alphaValue = 1
         if icon.hasPrefix(Space.imagePrefix) {
             image.isHidden = false
             image.contentTintColor = nil
             image.layer?.cornerCurve = .continuous
             image.layer?.masksToBounds = true
             if greyed { image.layer?.filters = [Self.greyscale()].compactMap { $0 } }
-            alphaValue = greyed ? 0.45 : 1
+            image.alphaValue = greyed ? 0.45 : 1
         } else if icon.hasPrefix(Space.symbolPrefix) {
             image.isHidden = false
             image.layer?.masksToBounds = false
@@ -60,7 +62,7 @@ final class SpaceIconImageView: NSView {
             label.isHidden = false
             label.text = icon
             if greyed { label.layer?.filters = [Self.greyscale()].compactMap { $0 } }
-            alphaValue = greyed ? 0.45 : 1
+            label.alphaValue = greyed ? 0.45 : 1
         }
         needsLayout = true
     }
@@ -120,7 +122,9 @@ final class CenteredTextView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
         let size = string.size()
-        string.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
+        // Centred, the origin on the pixel grid as SwiftUI places it.
+        func grid(_ v: CGFloat) -> CGFloat { (v * 2).rounded() / 2 }
+        string.draw(at: NSPoint(x: grid((bounds.width - size.width) / 2), y: grid((bounds.height - size.height) / 2)))
     }
 }
 

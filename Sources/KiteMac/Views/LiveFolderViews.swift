@@ -1,30 +1,6 @@
 import KiteCore
 import SwiftUI
 
-/// The space menu's Live Folders submenu (Arc's "Menu item to manage which live folders are active
-/// in this space"): one item per source, checked while the space has that folder.
-struct LiveFoldersSpaceMenu: View {
-    let store: BrowserStore
-    let space: Space
-
-    var body: some View {
-        // The index is looked up on every read: the menu outlives a Delete Space, and SwiftUI reads
-        // the toggles once more after the space has gone (an index taken here crashed on 2 Nov 2026).
-        if let controller = LiveFoldersController.shared, store.state.spaceIndex(space.id) != nil {
-            Menu("Live Folders") {
-                ForEach(LiveFolder.Source.allCases, id: \.self) { source in
-                    Toggle(source.displayName, isOn: Binding(
-                        get: {
-                            guard let index = store.state.spaceIndex(space.id) else { return false }
-                            return store.state.liveFolder(source, inSpace: index) != nil
-                        },
-                        set: { _ in controller.toggle(source, inSpace: space.id) }))
-                }
-            }
-        }
-    }
-}
-
 /// A live folder's right-click menu, with the items Arc's binary lists (order unverified): Refresh, the
 /// last fetch, the filters, Repositories, and Delete Live Folder.
 struct LiveFolderMenu: View {

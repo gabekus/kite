@@ -86,23 +86,3 @@ extension BrowserWindowController {
     }
 }
 
-/// The space menu's Set Profile submenu: every profile, the space's own ticked, then New Profile….
-struct SetProfileMenu: View {
-    let store: BrowserStore
-    let actions: SidebarActions
-    let space: Space
-
-    var body: some View {
-        Menu("Set Profile") {
-            let current = store.state.spaceIndex(space.id).map(store.state.profileDirectory(ofSpace:))
-            ForEach(store.state.allProfiles) { profile in
-                Toggle(profile.name, isOn: Binding(
-                    get: { profile.directory == current },
-                    set: { _ in actions.setProfile(space.id, profile.directory) }
-                ))
-            }
-            Divider()
-            Button("New Profile…") { actions.newProfile(space.id) }
-        }
-    }
-}

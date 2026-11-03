@@ -26,13 +26,10 @@ private extension NSAppearance {
     var isDark: Bool { bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
 }
 
-/// Arc's Library button at the leading end of the sidebar's bottom bar (`HomeBadging.HomeButton`,
-/// tooltip "open Library"): clicking it opens the Library, which covers the sidebar until it's
-/// exited. While files download, Arc's `DownloadProgressBadge` sits on it; when the last one finishes the
-/// badge plays its completion (a checkmark, a dip and a fade) before it goes.
-struct LibrarySidebarButton: View {
-    let library: LibraryModel
-    let size: CGFloat
+/// The download badge on the sidebar's Library button (`LibraryButtonView`): while files download, Arc's
+/// `DownloadProgressBadge` sits on the button; when the last one finishes the badge plays its completion (a
+/// checkmark, a dip and a fade) before it goes. It draws nothing otherwise.
+struct LibraryBadge: View {
     private var downloads: DownloadsModel { .shared }
     /// The downloads ended with one complete: the badge stays at 100% for its completion.
     @State private var finishing = false
@@ -43,22 +40,16 @@ struct LibrarySidebarButton: View {
     var body: some View {
         let list = downloads.list
         let showsBadge = !list.active.isEmpty || finishing
-        Button { library.toggle() } label: {
-            ZStack {
-                LibraryIcon()
-                if showsBadge {
-                    DownloadProgressBadge(progress: list.active.isEmpty ? 1 : list.activeFraction)
-                        .id(batch)
-                        .transition(.scale.combined(with: .opacity))
-                }
+        ZStack {
+            if showsBadge {
+                DownloadProgressBadge(progress: list.active.isEmpty ? 1 : list.activeFraction)
+                    .id(batch)
+                    .transition(.scale.combined(with: .opacity))
             }
-            .animation(.easeOut(duration: 0.2), value: showsBadge)
-            .frame(width: size, height: size)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help("Library")
-        .accessibilityLabel("Library")
+        .animation(.easeOut(duration: 0.2), value: showsBadge)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
         .accessibilityValue(list.active.isEmpty ? "" : "Downloading")
         .onChange(of: list.active.map(\.id)) { old, new in
             finishTask?.cancel()
