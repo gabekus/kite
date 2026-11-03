@@ -137,6 +137,38 @@ import Testing
         #expect(UserHandoff.describe("change") == "the user changed the highlighted control")
     }
 
+    @Test func reportsBlockedSteps() throws {
+        var handoff = Handoff(id: "h2", reason: "Only you can invite", steps: [
+            .init(id: "h2.1", number: 1, instruction: "Invite members", tab: UUID(), locator: .text("Invite members")),
+            .init(id: "h2.2", number: 2, instruction: "Click Save", tab: UUID(), locator: .text("Save")),
+        ])
+        // The ring's report: a disabled control and the page's reason.
+        let state = try #require(UserHandoff.RingState(json: #"{"found":true,"done":null,"disabled":true,"why":"Only Super Administrators"}"#))
+        #expect(state.blocker == .disabled(why: "Only Super Administrators"))
+        #expect(UserHandoff.RingState(json: #"{"found":false,"disabled":true}"#)?.blocker == nil)
+        #expect(UserHandoff.RingState(json: #"{"found":true,"disabled":false}"#)?.blocker == nil)
+        handoff.steps[0].found = true
+        handoff.steps[0].blocker = state.blocker
+        handoff.steps[1].found = false
+        let report = handoff.report { _ in nil }
+        #expect(report.contains("1. [waiting] Invite members — BLOCKED: its control is on the page but turned off"))
+        // The reason is the page's words, so it reaches Claude marked as page content.
+        #expect(report.contains(UntrustedContent.wrap("Only Super Administrators", source: "the step's control")))
+        #expect(report.contains("2. [waiting] Click Save — Kite can't find its control on the page right now"))
+        #expect(report.contains("Fix what blocks it"))
+        // Without a reason, the usual suspects.
+        handoff.steps[0].blocker = .disabled(why: nil)
+        #expect(handoff.report { _ in nil }.contains("is probably missing"))
+        // What blocks a step is only what the last look saw: it isn't saved.
+        let data = try JSONEncoder().encode(handoff)
+        let loaded = try JSONDecoder().decode(Handoff.self, from: data)
+        #expect(loaded.steps[0].blocker == nil && loaded.steps[0].found == nil)
+        // A probe asks the page script only to look.
+        let probe = UserHandoff.RingConfig(step: handoff.steps[0], scroll: false, probe: true)
+        #expect(UserHandoff.ringScript(probe).contains(#""probe":true"#))
+        #expect(handoff.steps[0].targetName == "Invite members")
+    }
+
     @Test func keepsHandoffsAcrossLaunches() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: folder) }

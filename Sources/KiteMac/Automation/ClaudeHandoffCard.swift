@@ -164,6 +164,8 @@ private struct HandoffStepCard: View {
                 Text("This step is in another tab.")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
+            } else if case .disabled(let why)? = step.blocker {
+                HandoffBlockedNote(text: Self.disabledText(target: step.targetName, why: why))
             } else if step.locator != nil, step.found == false {
                 Text("Kite can't find it on this page yet. Do it by hand, then press Done.")
                     .font(.system(size: 11))
@@ -204,6 +206,32 @@ private struct HandoffStepCard: View {
         .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Claude needs you: \(step.instruction)")
+    }
+
+    /// "“Invite members” is greyed out, so it can't be clicked yet. The page says: …"
+    static func disabledText(target: String?, why: String?) -> String {
+        let control = target.map { "“\($0)”" } ?? "The control"
+        return "\(control) is greyed out on the page, so it can't be clicked yet. "
+            + (why.map { "The page says: \($0)" } ?? "Something it needs is probably missing, such as a field above it.")
+    }
+}
+
+/// What's in the way of a step, in the card.
+private struct HandoffBlockedNote: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.orange)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
     }
 }
 

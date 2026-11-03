@@ -23,6 +23,10 @@ public enum UserHandoff {
     public static let maxWait: Double = 600
     /// How often Kite looks at the page in front while a step waits on it.
     public static let pollInterval: TimeInterval = 0.5
+    /// How many looks, half a second apart, Kite takes at a new step's control before telling Claude it's missing.
+    public static let probeAttempts = 5
+    /// How long a step stays blocked before a waiting handoff_status returns to tell Claude.
+    public static let blockedReportDelay: TimeInterval = 2
     /// The isolated world the ring lives in, and the binding it reports clicks through.
     public static let worldName = "kite-handoff"
     public static let bindingName = "kiteHandoffEvent"
@@ -146,6 +150,13 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             case marker(String, label: String?, path: String? = nil)
         }
 
+        /// Why the user can't do the step on the page right now, from the last look.
+        public enum Blocker: Hashable, Sendable {
+            /// The control is on the page but turned off (disabled, aria-disabled or inert), with the page's own
+            /// words about it when it gives some ("Only Super Administrators can invite members").
+            case disabled(why: String?)
+        }
+
         /// "h1.2": the handoff and the step's number.
         public let id: String
         /// From 1, in the order Claude gave.
@@ -160,6 +171,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         public var how: String?
         /// Whether the ring found the control on the page the last time Kite looked.
         public var found: Bool?
+        /// Why the step can't be done right now, from the last look; nil when nothing is in the way. Only the step a
+        /// tab shows is looked at, so a step waiting behind another on its tab (whose control the first one turns on)
+        /// isn't called blocked.
+        public var blocker: Blocker?
 
         public init(id: String, number: Int, instruction: String, why: String? = nil, command: String? = nil, tab: UUID? = nil,
                     locator: Locator? = nil) {
@@ -174,7 +189,28 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
 
         public var isWaiting: Bool { state == .waiting }
 
-        /// `found` is only what the last look saw, so it isn't saved.
+        /// The words on the step's control, for "“Invite members” can't be clicked yet".
+        public var targetName: String? {
+            switch locator {
+            case .text(let text)?: text
+            case .marker(_, let label?, _)?: label
+            default: nil
+            }
+        }
+
+        /// What's in the way, in words for Claude.
+        public var blockerNote: String? {
+            switch blocker {
+            case .disabled(let why)?:
+                "BLOCKED: its control is on the page but turned off (disabled), so the user can't click it"
+                    // The page's own words, which it controls: marked as page content, like everything else read off a page.
+                    + (why.map { ". The page says: " + UntrustedContent.wrap($0, source: "the step's control") }
+                        ?? ". Something it needs (a field, a choice, a permission) is probably missing")
+            case nil: found == false ? "Kite can't find its control on the page right now" : nil
+            }
+        }
+
+        /// `found` and `blocker` are only what the last look saw, so they aren't saved.
         enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, state, how }
     }
 
@@ -229,6 +265,7 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         for step in steps {
             var line = "\(step.number). [\(step.state.rawValue)] \(step.instruction)"
             if let how = step.how { line += " (\(how))" }
+            if step.isWaiting, let note = step.blockerNote { line += " — \(note)" }
             if let tab = step.tab {
                 if let place = place(tab) {
                     line += " · tab \(tab.uuidString) at \(place.url ?? "an unknown URL") (“\(place.title)”)"
@@ -242,6 +279,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             lines.append(skipped == 0
                 ? "The user did every step. Read the pages to check they took, then carry on."
                 : "Skipped steps weren't done: don't do them yourself. Say what's left and why, then carry on with what you can.")
+        } else if steps.contains(where: { $0.isWaiting && $0.blocker != nil }) {
+            lines.append("The user can't do a blocked step as it is. Fix what blocks it (fill in what the page needs first, or "
+                + "hand that over too), or withdraw the handoff with handoff_status cancel and say why. Then call handoff_status "
+                + "with id \"\(id)\" and wait.")
         } else if waitedOut {
             lines.append("The steps stay in Kite for the user. Call handoff_status with id \"\(id)\" and wait to keep waiting, "
                 + "or carry on with work that doesn't need them.")
@@ -323,12 +364,15 @@ extension UserHandoff {
         public var path: String?
         /// Scroll the control into view the first time it's found.
         public var scroll: Bool
+        /// Only look: report whether the control is there and can be used, without drawing the ring.
+        public var probe: Bool
 
-        public init(step: Handoff.Step, scroll: Bool) {
+        public init(step: Handoff.Step, scroll: Bool, probe: Bool = false) {
             self.step = step.id
             number = step.number
             label = step.instruction
             self.scroll = scroll
+            self.probe = probe
             switch step.locator {
             case .selector(let selector)?: self.selector = selector
             case .text(let text)?: self.text = text
@@ -347,11 +391,19 @@ extension UserHandoff {
         public var found: Bool
         /// How the user finished the step, if they did since the last look ("click", "change").
         public var done: String?
+        /// The control is there but turned off, and the page's words about why when it gives some.
+        public var disabled: Bool?
+        public var why: String?
 
-        public init(found: Bool, done: String? = nil) {
+        public init(found: Bool, done: String? = nil, disabled: Bool? = nil, why: String? = nil) {
             self.found = found
             self.done = done
+            self.disabled = disabled
+            self.why = why
         }
+
+        /// What blocks the step, as far as this look saw.
+        public var blocker: Handoff.Step.Blocker? { found && disabled == true ? .disabled(why: why) : nil }
 
         public init?(json: String) {
             guard let state = try? JSONDecoder().decode(RingState.self, from: Data(json.utf8)) else { return nil }

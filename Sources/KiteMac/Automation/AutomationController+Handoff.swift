@@ -27,6 +27,7 @@ extension AutomationController {
         // The tab in front may be one of them: show its step at once rather than on the next look.
         startHandoffPoller()
         if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+        await probeHandoff(id)
         return try await handoffReport(id, wait: request.wait)
     }
 
@@ -44,10 +45,18 @@ extension AutomationController {
         return try await handoffReport(handoff.id, wait: cancel ? 0 : wait)
     }
 
-    /// Waits up to `wait` seconds for the user to end every step, then reports.
+    /// Waits up to `wait` seconds for the user to end every step, then reports. A step that becomes blocked while
+    /// Claude waits (and stays blocked for `UserHandoff.blockedReportDelay`) ends the wait early, so Claude can fix
+    /// what's in the way instead of waiting on a user who can't go on.
     private func handoffReport(_ id: String, wait: Double) async throws -> ToolOutput {
         let deadline = Date().addingTimeInterval(wait)
-        while Date() < deadline, handoffs.first(where: { $0.id == id })?.isFinished == false {
+        let blockedBefore = Set(handoffs.first { $0.id == id }?.steps.filter { $0.blocker != nil }.map(\.id) ?? [])
+        var blockedSince: [String: Date] = [:]
+        while Date() < deadline, let handoff = handoffs.first(where: { $0.id == id }), !handoff.isFinished {
+            let blocked = handoff.waiting.filter { $0.blocker != nil && !blockedBefore.contains($0.id) }.map(\.id)
+            blockedSince = blockedSince.filter { blocked.contains($0.key) }
+            for step in blocked where blockedSince[step] == nil { blockedSince[step] = Date() }
+            if blockedSince.values.contains(where: { -$0.timeIntervalSinceNow >= UserHandoff.blockedReportDelay }) { break }
             try await Task.sleep(for: .milliseconds(250))
         }
         guard let handoff = handoffs.first(where: { $0.id == id }) else { throw AutomationError(.notFound, "Handoff \(id) is gone.") }
@@ -73,11 +82,42 @@ extension AutomationController {
         }
     }
 
+    /// A first look at each step's control right away, so Claude hears at once when it pointed at something that
+    /// isn't there or can't be clicked. Only the step each tab shows is looked at (the ones behind it may wait on
+    /// it). A control the page is still drawing gets a few more looks.
+    private func probeHandoff(_ id: String) async {
+        guard let host else { return }
+        for attempt in 0..<UserHandoff.probeAttempts {
+            guard let handoff = handoffs.first(where: { $0.id == id }) else { return }
+            var missing = false
+            for step in handoff.steps where step.locator != nil && (attempt == 0 || step.found != true) {
+                guard let tab = step.tab, handoff.current(on: tab)?.id == step.id, let page = host.livePages[tab],
+                      let actions = page.automation as? PageActions else { continue }
+                let script = UserHandoff.ringScript(.init(step: step, scroll: false, probe: true))
+                guard let json = try? await actions.runIsolated(script, world: UserHandoff.worldName, binding: UserHandoff.bindingName),
+                      let state = UserHandoff.RingState(json: json) else { continue }
+                setLook(step.id, state)
+                if !state.found { missing = true }
+            }
+            guard missing, attempt < UserHandoff.probeAttempts - 1 else { return }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+    }
+
+    /// What the last look at a step's control saw.
+    private func setLook(_ stepID: String, _ state: UserHandoff.RingState) {
+        update(handoffID(of: stepID)) { h in
+            guard let i = h.steps.firstIndex(where: { $0.id == stepID }), h.steps[i].isWaiting else { return }
+            if h.steps[i].found != state.found { h.steps[i].found = state.found }
+            if h.steps[i].blocker != state.blocker { h.steps[i].blocker = state.blocker }
+        }
+    }
+
     private func update(_ id: String, _ change: (inout Handoff) -> Void) {
         guard let index = handoffs.firstIndex(where: { $0.id == id }) else { return }
         let before = handoffs[index]
         change(&handoffs[index])
-        // Only what the user or Claude did is saved; the ring finding its control or not isn't.
+        // Only what the user or Claude did is saved; what the ring found isn't.
         if handoffs[index].steps.map(\.state) != before.steps.map(\.state) { saveHandoffs() }
         if handoffs[index].isFinished, let focused = focusedHandoffStep, focused.hasPrefix(id + ".") { focusedHandoffStep = nil }
     }
@@ -219,10 +259,8 @@ extension AutomationController {
                 let handoff = handoffID(of: step.id)
                 if let done = state.done {
                     update(handoff) { $0.finish(step.id, .done, how: UserHandoff.describe(done)) }
-                } else if waitingStep(on: id)?.found != state.found {
-                    update(handoff) { h in
-                        if let i = h.steps.firstIndex(where: { $0.id == step.id }) { h.steps[i].found = state.found }
-                    }
+                } else {
+                    setLook(step.id, state)
                 }
             } else {
                 _ = try? await actions.runIsolated(UserHandoff.clearScript, world: UserHandoff.worldName, binding: UserHandoff.bindingName)

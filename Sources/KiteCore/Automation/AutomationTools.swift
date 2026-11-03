@@ -226,7 +226,10 @@ extension AutomationCommand.Tool {
                 "tab": ["type": "string", "description": "Tab id for steps that don't name one."],
                 "steps": [
                     "type": "array", "minItems": 1, "maxItems": .number(Double(UserHandoff.maxSteps)),
-                    "description": "In order. Steps on one tab are shown one after another.",
+                    "description": .string("In order. Steps on one tab are shown one after another. One control per step: something "
+                        + "that takes several clicks (Update Nameservers, then Continue, then Approve) is several steps, each with "
+                        + "its control, so Kite can ring each one. Check the control can be clicked now: a disabled one is "
+                        + "reported back to you as blocked, so hand over what turns it on first (a field to fill in, a box to tick)."),
                     "items": [
                         "type": "object",
                         "properties": [
