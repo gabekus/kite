@@ -103,6 +103,8 @@ final class SpaceBarView: SidebarFlippedView {
         plus.isHidden = creating
         libraryButton.isEnabled = !creating
         let ids = state.spaces.map(\.id)
+        let reshaped = ids != order || creating != wasCreating
+        wasCreating = creating
         for id in cells.keys where !ids.contains(id) {
             cells[id]?.removeFromSuperview()
             cells[id] = nil
@@ -126,8 +128,11 @@ final class SpaceBarView: SidebarFlippedView {
                       profileName: actions.showsProfiles ? state.profile(space.profile).name : nil,
                       dragging: reorder != nil)
         }
-        needsLayout = true
+        // A swipe's frame only relights the icons; the bar lays out again only when its spaces change.
+        if reshaped { needsLayout = true }
     }
+
+    private var wasCreating = false
 
     // MARK: Layout
 
@@ -305,6 +310,7 @@ final class SpaceCellView: SidebarFlippedView {
     private var pressStart: CGPoint?
     private var dragged = false
     private var tipWork: DispatchWorkItem?
+    private var dotLit: Double = -1
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -340,11 +346,12 @@ final class SpaceCellView: SidebarFlippedView {
             icon.show(icon: space.icon, theme: space.theme)
             greyIcon.alphaValue = CGFloat(1 - lit)
             icon.alphaValue = CGFloat(lit)
-        } else {
+        } else if lit != dotLit {
+            dotLit = lit
             let opacity = M.spaceDotOpacity + (1 - M.spaceDotOpacity) * lit
             dot.fill = { _ in NSColor.labelColor.withAlphaComponent(opacity) }
         }
-        setDragging(dragging)
+        if dragging != self.dragging { setDragging(dragging) }
     }
 
     /// The ghost shows what the dragged cell shows, with its backing.
