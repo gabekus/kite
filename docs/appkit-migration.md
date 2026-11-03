@@ -558,6 +558,38 @@ Differences from main:
 
 Not verified: a real pointer (the headless rule); the extensions popover's own contents (still SwiftUI, unchanged).
 
+## Helix Mc: `kite ui capture` without Screen Recording
+
+`ui capture` takes `source`: `screen` (ScreenCaptureKit), `window-server` (`CGWindowListCreateImage` of Kite's own
+window), `in-process`, or `auto` (the default). On macOS 15 the window server gives an app its own window only with
+Screen Recording too: launched through LaunchServices as `dev.gabek.Kite.dev` with no grant (`open -g`), it returned
+nothing. So the in-process render is what works without the permission: the window's material view, the Metal theme
+rendered again off screen (`ThemeView.snapshot`), the views with those two hidden, then each visible page from
+Chromium's own frame (`Page.captureScreenshot` through the page's DevTools bridge, no port), clipped to its card and
+to the window's continuous 10pt corners. `auto` uses ScreenCaptureKit only when `CGPreflightScreenCaptureAccess()`
+says it's granted (so it never puts a prompt up), and the output names the path that ran.
+
+In-process against ScreenCaptureKit, the same window state, 2x (max / mean channel delta):
+
+| State | sidebar | card | page |
+|---|---|---|---|
+| sidebar.json (dark) | 67 / 2.53 | 44 / 0.09 | 8 / 0.00 |
+| two-spaces.json (light pink theme) | 67 / 3.44 | 67 / 0.12 | 1 / 0.00 |
+| a rich dark session | 69 / 2.58 | 44 / 0.09 | 0 / 0.00 |
+| a rich light session | 243 / 4.72 | 243 / 0.19 | 0 / 0.00 |
+| favorites | 104 / 2.54 | 44 / 0.09 | 0 / 0.00 |
+| toolbar shown | 69 / 2.62 | 81 / 0.09 | 0 / 0.00 |
+| command bar open | 69 / 2.56 | 232 / 1.16 | 232 / 1.19 |
+
+(The rich light run predates the corner mask; its max is the window's corners, as two-spaces' was before it.)
+The old view render it replaces: sidebar 65 / 11.56, page 210 / 4.40 (no theme, no page).
+
+What's left:
+- Materials. The window's behind-window material blurs the desktop, which no in-process render can see: the sidebar's
+  background reads 2–3 levels off (#282828 against #2B2B28). The command bar's panel blurs the page under it, drawn
+  unblurred here (its 232). The output lists every material's frame so a diff can mark them material-only.
+- Glyph edges: the space bar's emoji and the favorites tray's dashed border (max 58–67, a few hundred pixels).
+
 ## Checks of what PR 1–6 left unverified
 
 **Context menus** (KITE_TEST_CONTEXT_MENU, which the sidebar's AppKit menus now go through): a right-click on each
