@@ -134,11 +134,60 @@ std::vector<CubicSegment> MapSegments(const std::vector<CubicSegment>& segments,
     return mapped;
 }
 
-SpaceTip SpaceTipOf(const Space& space, size_t number) {
+SpaceTip SpaceTipOf(const Space& space, size_t number, std::optional<std::string> profile) {
     const ThemeColor accent = Accent(space.theme);
     Lab lab = oklab::FromSRGB(accent);
     lab.L *= 0.45f;
-    return {space.name, number <= 9 ? std::optional<size_t>(number) : std::nullopt, oklab::ToSRGB(lab), accent};
+    SpaceTip tip{space.name, std::move(profile), std::nullopt, {}, oklab::ToSRGB(lab), accent};
+    if (number <= 9) {
+        tip.number = number;
+        tip.keys = {"Alt", std::to_string(number)};
+    }
+    return tip;
+}
+
+SpaceTip SpaceTipOf(const BrowserState& state, size_t index) {
+    return SpaceTipOf(state.spaces[index], index + 1, state.ProfileName(state.ProfileDirectory(index)));
+}
+
+SpaceTipLayout LayOutSpaceTip(const SpaceTip& tip, const SpaceTipWidths& widths) {
+    namespace T = space_tip_metrics;
+    // SwiftUI's HStack(spacing: 8) inside .padding(.horizontal, 10), each part centred on the
+    // 28pt line.
+    SpaceTipLayout layout;
+    float x = T::kPadding;
+    layout.nameX = x;
+    x += widths.name;
+    if (tip.profile) {
+        x += T::kSpacing;
+        const float width = T::kChipPadding + widths.chipSymbol + T::kChipSpacing + widths.chipText + T::kChipPadding;
+        const float top = (T::kHeight - T::kChipHeight) / 2;
+        layout.chip = BarRect{x, top, x + width, top + T::kChipHeight};
+        layout.chipSymbolX = x + T::kChipPadding;
+        layout.chipTextX = layout.chipSymbolX + widths.chipSymbol + T::kChipSpacing;
+        x += width;
+    }
+    if (!tip.keys.empty()) {
+        x += T::kSpacing;
+        const float top = (T::kHeight - T::kKeySize) / 2;
+        for (size_t i = 0; i < tip.keys.size(); ++i) {
+            if (i) x += T::kKeySpacing;
+            const float label = i < widths.keys.size() ? widths.keys[i] : 0;
+            const float width = std::max(T::kKeySize, label + 2 * T::kKeyLabelPadding);
+            layout.keys.push_back(BarRect{x, top, x + width, top + T::kKeySize});
+            x += width;
+        }
+    }
+    layout.width = x + T::kPadding;
+    return layout;
+}
+
+TipOrigin SpaceTipOrigin(const BarRect& cell, float width, float height, float scale) {
+    const float centre = (cell.left + cell.right) / 2;
+    const float s = scale > 0 ? scale : 1;
+    // panel.setFrame(x: (cell.midX - width / 2).rounded(), y: cell.maxY + gap): its bottom 2pt
+    // above the cell's top, in AppKit's flipped y.
+    return {std::round((centre - width / 2) * s) / s, std::round((cell.top - space_bar_metrics::kTipGap - height) * s) / s};
 }
 
 }  // namespace kite

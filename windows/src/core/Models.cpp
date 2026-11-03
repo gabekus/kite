@@ -154,6 +154,17 @@ BrowserState BrowserState::MakeDefault(std::optional<std::string> seedURL) {
     return state;
 }
 
+std::string BrowserState::ProfileName(const std::string& directory) const {
+    if (auto profiles = extra.find("profiles"); profiles != extra.end() && profiles->second.AsArray()) {
+        for (const auto& profile : *profiles->second.AsArray()) {
+            const json::Value* folder = profile.Find("directory");
+            const json::Value* name = profile.Find("name");
+            if (folder && folder->AsString() && *folder->AsString() == directory && name && name->AsString()) return *name->AsString();
+        }
+    }
+    return "Default";
+}
+
 std::string BrowserState::ProfileDirectory(size_t space) const {
     // Profiles.swift: profile(spaces[i].profile).directory, where an unknown profile is the default.
     auto it = spaces[space].extra.find("profile");

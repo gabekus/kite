@@ -239,6 +239,17 @@ if(NOT cells EQUAL 2 OR NOT left0 EQUAL 85 OR NOT left1 EQUAL 119 OR NOT top0 EQ
    OR NOT accent1 STREQUAL "#D74B86" OR NOT headerShows STREQUAL "emoji")
   message(FATAL_ERROR "the space bar gave ${bar}")
 endif()
+# Work's tip: its name, the default profile's chip, Alt+2, on its accent darkened in OKLab.
+string(JSON tipName GET "${bar}" spaceBar cells 1 tip name)
+string(JSON tipProfile GET "${bar}" spaceBar cells 1 tip profile)
+string(JSON tipKey0 GET "${bar}" spaceBar cells 1 tip keys 0)
+string(JSON tipKey1 GET "${bar}" spaceBar cells 1 tip keys 1)
+string(JSON tipFill GET "${bar}" spaceBar cells 1 tip fill)
+string(JSON tipAccent GET "${bar}" spaceBar cells 1 tip accent)
+if(NOT tipName STREQUAL "Work" OR NOT tipProfile STREQUAL "Default" OR NOT tipKey0 STREQUAL "Alt" OR NOT tipKey1 STREQUAL "2"
+   OR NOT tipFill STREQUAL "#620028" OR NOT tipAccent STREQUAL "#D74B86")
+  message(FATAL_ERROR "Work's tip gave ${bar}")
+endif()
 # Work's page header shows its briefcase too, in the same accent.
 sidebar_kitecore(work sidebar "${workID}")
 string(JSON workShows GET "${work}" rows 0 shows)
