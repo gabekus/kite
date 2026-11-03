@@ -184,7 +184,9 @@ void SpaceTipView::Paint(ID2D1DeviceContext* context, const SpaceTip& tip, const
         UINT32 lines = 0;
         text->GetLineMetrics(&line, 1, &lines);
         brush_->SetColor(color);
-        context->DrawTextLayout(D2D1::Point2F(x, top + height / 2 + cap / 2 - line.baseline), text, brush_.Get());
+        // Emoji in a name in colour, as SwiftUI's Text and the sidebar's header draw them.
+        context->DrawTextLayout(D2D1::Point2F(x, top + height / 2 + cap / 2 - line.baseline), text, brush_.Get(),
+                                D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
     };
     const float radius = layout.height / 2;
     // Capsule().fill(tipFill)

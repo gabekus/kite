@@ -313,8 +313,11 @@ side of its label); the chip's face is drawn as the Mac's 2x capture inks SF's
 face.smiling (a disc with the eyes and smile cut out; Segoe has no filled face); the
 text is Segoe UI Variable's, the name bold where the Mac's is semibold (SF's semibold
 inks as heavy) with each text's capitals centred, so the tip's width differs from the
-Mac's by the fonts' advances. A window restored under a still pointer shows its cell's
-tip 0.4 s later, as the Mac's tracking area enters again.
+Mac's by the fonts' advances; the tip hides when the window moves or resizes, where the
+Mac's child panel moves with it; the keycaps' corners are circular where the Mac's are
+continuous; and its x is on whole pixels where the Mac's is on whole points (up to
+0.5pt at 2x). A window restored under a still pointer shows its cell's tip 0.4 s
+later, as the Mac's tracking area enters again.
 
 Known differences from the Mac: during the 0.2 s slide only the selected page
 takes clicks and shows hover (the Mac's outgoing page is a live list too), and

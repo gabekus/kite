@@ -362,7 +362,15 @@ int main(int argc, char** argv) {
             const SpaceTip tip = SpaceTipOf(state, i);
             json::Array keys;
             for (const std::string& key : tip.keys) keys.emplace_back(key);
-            json::Object t{{"name", tip.name}, {"keys", json::Value(std::move(keys))}, {"fill", Hex(tip.fill)}, {"accent", Hex(tip.accent)}};
+            // Its top and height in bar points (2pt above the cell); its width and x depend on
+            // the fonts, so the app measures those.
+            const TipOrigin at = SpaceTipOrigin(r, 0, space_tip_metrics::kHeight, 0);
+            json::Object t{{"name", tip.name},
+                           {"keys", json::Value(std::move(keys))},
+                           {"fill", Hex(tip.fill)},
+                           {"accent", Hex(tip.accent)},
+                           {"top", static_cast<double>(at.y)},
+                           {"height", static_cast<double>(space_tip_metrics::kHeight)}};
             if (tip.profile) t.emplace("profile", *tip.profile);
             cell.emplace("tip", std::move(t));
             bar.emplace_back(std::move(cell));

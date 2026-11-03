@@ -18,8 +18,8 @@
 //                            the same with the command bar open (Ctrl+T) and TEXT typed in
 //                            it, composed over the window's frame as DirectComposition shows it.
 //   Kite.exe --capture FILE.png --space-tip N
-//                            the same with space N's tip (1-based) over its cell, at rest, as
-//                            the pointer resting on the cell shows it.
+//                            the same with space N's tip (1-based) over its cell, at rest (the
+//                            cell's hover backing isn't drawn: no pointer is on it).
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it

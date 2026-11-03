@@ -439,7 +439,8 @@ std::optional<BarRect> SidebarView::CellInWindow(const std::string& spaceID) con
 void SidebarView::ShowTip() {
     // guard self.hovering, !self.dragging, self.window != nil: still over the cell, not dragging
     // it, and the window on screen.
-    if (!tipHover_ || !compositor_ || (barPress_ && barPress_->dragged) || !IsWindowVisible(window_) || IsIconic(window_)) return;
+    const bool dragging = barPress_ && barPress_->dragged && bar_->Cells().size() > 1;
+    if (!tipHover_ || !compositor_ || dragging || !IsWindowVisible(window_) || IsIconic(window_)) return;
     const auto tip = tips_.find(*tipHover_);
     const std::optional<BarRect> cell = CellInWindow(*tipHover_);
     if (!cell || tip == tips_.end()) return;
@@ -1027,8 +1028,9 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             // In the bar's points, wherever the pointer has gone.
             const D2D1_POINT_2F p = PointOf(*pointer_);
             SpaceBarMove(*barPress_, p.x, p.y - SpaceBarTop(Height()));
-            // A drag takes the tip away (cellDragged).
-            if (barPress_->dragged) HideTip();
+            // A drag takes the tip away (cellDragged's setDragging), but not with one space,
+            // which can't be dragged (it returns first).
+            if (barPress_->dragged && bar_->Cells().size() > 1) HideTip();
         }
         RefreshHover();
         return false;

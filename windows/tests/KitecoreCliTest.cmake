@@ -246,8 +246,11 @@ string(JSON tipKey0 GET "${bar}" spaceBar cells 1 tip keys 0)
 string(JSON tipKey1 GET "${bar}" spaceBar cells 1 tip keys 1)
 string(JSON tipFill GET "${bar}" spaceBar cells 1 tip fill)
 string(JSON tipAccent GET "${bar}" spaceBar cells 1 tip accent)
+string(JSON tipTop GET "${bar}" spaceBar cells 1 tip top)
+string(JSON tipHeight GET "${bar}" spaceBar cells 1 tip height)
+# 28pt tall, its bottom 2pt above the cell's top (8pt into the bar): from -22.
 if(NOT tipName STREQUAL "Work" OR NOT tipProfile STREQUAL "Default" OR NOT tipKey0 STREQUAL "Alt" OR NOT tipKey1 STREQUAL "2"
-   OR NOT tipFill STREQUAL "#620028" OR NOT tipAccent STREQUAL "#D74B86")
+   OR NOT tipFill STREQUAL "#620028" OR NOT tipAccent STREQUAL "#D74B86" OR NOT tipTop EQUAL -22 OR NOT tipHeight EQUAL 28)
   message(FATAL_ERROR "Work's tip gave ${bar}")
 endif()
 # Work's page header shows its briefcase too, in the same accent.
