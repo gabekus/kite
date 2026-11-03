@@ -163,11 +163,14 @@ public:
     }
 
     bool DoClose(CefRefPtr<CefBrowser>) override {
-        // False: CEF then sends WM_CLOSE to the main window, which closes once every browser
-        // is through here (Chromium::MayCloseWindow). W5's single-tab close will return true
-        // and destroy just this tab's window instead, as the Mac's KCBrowser does.
+        // The main window closes once every browser is through here (MayCloseWindow), so
+        // ask it again. Returning false is documented to send that WM_CLOSE itself, but on
+        // Gabe's PC (CEF 156, a parent window on another thread) none arrived, so Kite
+        // doesn't rely on it; a second WM_CLOSE is harmless. W5's single-tab close will
+        // destroy just this tab's window instead, as the Mac's KCBrowser does.
         shared_->Post([shared = shared_, id = tabID_] {
             if (auto it = shared->pages.find(id); it != shared->pages.end()) it->second.closeReady = true;
+            if (shared->closing) PostMessageW(shared->window, WM_CLOSE, 0, 0);
         });
         return false;
     }
