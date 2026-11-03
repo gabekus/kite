@@ -5,11 +5,15 @@
 //                            the session and exits 0 (CI). Errors go to the exit code,
 //                            never a dialog.
 //   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]
-//                            opens the window at W×H points (client area), saves it as
-//                            a PNG half a second after showing it and exits: the Helix UI
-//                            gate (docs/helix.md). --capture-scale fails the capture unless
-//                            the window's monitor is at N× (2 to line up with a Retina Mac).
+//                            opens the window at W×H points (client area), waits for its
+//                            first frame on screen, saves the window's layers as a PNG and
+//                            exits: the Helix UI gate (docs/helix.md). The layers are drawn
+//                            offscreen at N× (default: the monitor's scale), so a 2× capture
+//                            lines up with a Retina Mac on any monitor, over the solid
+//                            material fallback rather than whatever is behind the window.
 //                            Pair with KITE_SUPPORT_PATH and a session from windows/helix/states.
+//   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
+//                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 
 #include <windows.h>
 
@@ -23,10 +27,15 @@
 #include <string_view>
 #include <variant>
 
+#include "core/OKLab.h"
 #include "core/SessionStore.h"
 #include "core/SupportDirectory.h"
+#include "core/ThemeBackdrop.h"
+#include "shell/BackdropTest.h"
 #include "shell/Capture.h"
+#include "shell/Compositor.h"
 #include "shell/MainWindow.h"
+#include "shell/Renderer.h"
 
 namespace {
 
@@ -96,7 +105,6 @@ std::optional<std::pair<int, int>> ParseSize(std::wstring_view text) {
 }
 
 constexpr UINT_PTR kSmokeTimer = 1;
-constexpr UINT_PTR kCaptureTimer = 2;
 
 int Fail(bool quiet, const std::wstring& message, int code) {
     OutputDebugStringW((L"Kite: " + message + L"\n").c_str());
@@ -114,9 +122,6 @@ int Fail(bool quiet, const std::wstring& message, int code) {
     return code;
 }
 
-// What --capture saves and why it failed, read back after the message loop.
-std::filesystem::path gCapturePath;
-std::wstring gCaptureError;
 
 }  // namespace
 
@@ -126,9 +131,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // normal launch on the real profile.
     for (size_t i = 0; i < args.size(); ++i) {
         const std::wstring& a = args[i];
-        if (a == L"--smoke-test") continue;
+        if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
         if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale") { ++i; continue; }
         if (a.starts_with(L"-")) return Fail(true, L"unknown option " + a, kUsage);
+    }
+    if (HasFlag(args, L"--backdrop-test")) {
+        // Touches no profile, so it needs no KITE_SUPPORT_PATH.
+        std::wstring report;
+        std::wstring failures = kite::RunBackdropTest(report);
+        OutputDebugStringW(report.c_str());
+        if (!failures.empty()) return Fail(true, L"the GPU backdrop doesn't match the reference:\n" + failures + L"\n" + report, kCaptureFailed);
+        HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (out && out != INVALID_HANDLE_VALUE) {
+            std::string utf8(report.begin(), report.end());  // the report is ASCII
+            DWORD written = 0;
+            WriteFile(out, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+        }
+        return kOk;
     }
     const bool smokeTest = HasFlag(args, L"--smoke-test");
     const OptionValue captureOption = Option(args, L"--capture");
@@ -211,6 +230,37 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return Fail(quiet, L"the window didn't get the size --capture needs", kCaptureFailed);
     }
 
+    // The backdrop: the selected space's theme over the system's acrylic, or over a solid
+    // colour where there's none. Drawn now and then only when the size changes; W9 adds the
+    // space-switch crossfade.
+    std::wstring gpuError;
+    auto renderer = kite::Renderer::Create(gpuError);
+    if (!renderer) return Fail(quiet, L"Kite couldn't start Direct3D: " + gpuError, kWindowFailed);
+    auto compositor = kite::Compositor::Create(window.Handle(), *renderer, gpuError);
+    if (!compositor) return Fail(quiet, L"Kite couldn't start DirectComposition: " + gpuError, kWindowFailed);
+    const kite::Theme theme = state.SelectedSpace().theme;
+    const bool dark = !kite::PrefersDarkForeground(theme);
+    window.SetDarkAppearance(dark);
+    const bool systemBackdrop = window.UseSystemBackdrop();
+    const kite::Rgba base = systemBackdrop ? kite::Rgba{} : kite::MaterialFallback(dark);
+    auto draw = [&](UINT width, UINT height) {
+        std::wstring problem = compositor->Draw(width, height,
+                                                kite::MakeThemeUniforms(theme, static_cast<float>(width), static_cast<float>(height)), base);
+        if (!problem.empty()) OutputDebugStringW((L"Kite: drawing failed: " + problem + L"\n").c_str());
+        return problem;
+    };
+    window.onSize = [&](UINT width, UINT height) { draw(width, height); };
+    // On an early return the compositor goes before the window: stop drawing first.
+    struct StopDrawing {
+        kite::MainWindow& window;
+        ~StopDrawing() { window.onSize = nullptr; }
+    } stopDrawing{window};
+    RECT client{};
+    GetClientRect(window.Handle(), &client);
+    if (std::wstring problem = draw(static_cast<UINT>(client.right), static_cast<UINT>(client.bottom)); !problem.empty() && quiet) {
+        return Fail(quiet, L"drawing the first frame failed: " + problem, kWindowFailed);
+    }
+
     if (smokeTest) {
         // The manifest took effect: without it the window would be DPI-unaware and text in the
         // ANSI code page, which a 100% CI display can't tell apart by size alone.
@@ -220,24 +270,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (GetACP() != CP_UTF8) return Fail(quiet, L"the process code page isn't UTF-8: Kite.manifest wasn't embedded", kWindowFailed);
         SetTimer(window.Handle(), kSmokeTimer, 1000, [](HWND hwnd, UINT, UINT_PTR, DWORD) { PostMessageW(hwnd, WM_CLOSE, 0, 0); });
     }
-    if (capture && captureScale) {
-        // Captures are compared pixel for pixel, so the scale has to match the reference's.
-        UINT dpi = GetDpiForWindow(window.Handle());
-        if (dpi != static_cast<UINT>(captureScale) * USER_DEFAULT_SCREEN_DPI) {
-            return Fail(quiet, L"the window is at " + std::to_wstring(dpi * 100 / USER_DEFAULT_SCREEN_DPI) + L"% scale; --capture-scale " +
-                                   std::to_wstring(captureScale) + L" needs " + std::to_wstring(captureScale * 100) + L"%",
-                        kCaptureFailed);
-        }
-    }
+    std::wstring captureError;
     if (capture) {
-        // A fixed half second for now; from W3 the capture waits for the compositor's first
-        // presented frame instead (windows/helix/checkpoints.md).
-        gCapturePath = *capture;
-        SetTimer(window.Handle(), kCaptureTimer, 500, [](HWND hwnd, UINT, UINT_PTR id, DWORD) {
-            KillTimer(hwnd, id);
-            gCaptureError = kite::CaptureClientToPng(hwnd, gCapturePath);
-            PostMessageW(hwnd, WM_CLOSE, 0, 0);
-        });
+        // Wait until the first frame is on screen, then draw the same layers offscreen at the
+        // capture's scale: the window's own pixels at N×, independent of the monitor.
+        compositor->WaitForFrame();
+        const UINT scaledWidth = captureScale ? static_cast<UINT>(size->first * captureScale) : static_cast<UINT>(client.right);
+        const UINT scaledHeight = captureScale ? static_cast<UINT>(size->second * captureScale) : static_cast<UINT>(client.bottom);
+        auto pixels = renderer->RenderTheme(
+            scaledWidth, scaledHeight,
+            kite::MakeThemeUniforms(theme, static_cast<float>(scaledWidth), static_cast<float>(scaledHeight)),
+            kite::MaterialFallback(dark), captureError);
+        if (pixels) captureError = kite::SavePng(*pixels, *capture);
+        PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
     }
 
     MSG message;
@@ -245,7 +290,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
-    if (capture && !gCaptureError.empty()) return Fail(quiet, L"Capture failed: " + gCaptureError, kCaptureFailed);
+    if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (!maySave) {
         return Fail(quiet, L"Kite couldn't read your session (" + loadError + L"), so it left the file as it was and didn't save this run's tabs.",
                     kSaveFailed);

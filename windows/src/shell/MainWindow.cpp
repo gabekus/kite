@@ -4,7 +4,6 @@
 
 #include <dwmapi.h>
 
-#include "shell/SystemAppearance.h"
 
 namespace kite {
 namespace {
@@ -14,6 +13,9 @@ constexpr wchar_t kClassName[] = L"KiteBrowserWindow";
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 constexpr DWORD DWMWA_USE_IMMERSIVE_DARK_MODE = 20;  // Windows 10 20H1+
 #endif
+// Windows 11 22H2+ (dwmapi.h in newer SDKs has these; MinGW's doesn't).
+constexpr DWORD kSystemBackdropType = 38;    // DWMWA_SYSTEMBACKDROP_TYPE
+constexpr int kBackdropTransientWindow = 3;  // DWMSBT_TRANSIENTWINDOW: acrylic
 
 int Scale(int value, UINT dpi) { return MulDiv(value, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI); }
 
@@ -26,9 +28,7 @@ bool MainWindow::RegisterWindowClass(HINSTANCE instance) {
     wc.lpfnWndProc = &MainWindow::WindowProc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    // Placeholder fill so the client area (and --capture) is deterministic until the
-    // composition tree draws the theme backdrop (checkpoint W3).
-    wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+    wc.hbrBackground = nullptr;  // DirectComposition draws everything
     wc.lpszClassName = kClassName;
     return RegisterClassExW(&wc) != 0;
 }
@@ -38,7 +38,7 @@ MainWindow::MainWindow(HINSTANCE instance) {
     UINT systemDpi = GetDpiForSystem();
     RECT rect{0, 0, Scale(kDefaultWidth, systemDpi), Scale(kDefaultHeight, systemDpi)};
     AdjustWindowRectExForDpi(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0, systemDpi);
-    CreateWindowExW(0, kClassName, L"Kite", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+    CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, kClassName, L"Kite", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                     rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, instance, this);
     // Windows sends no WM_DPICHANGED at creation, so a window that lands on a monitor with
     // another scale than the system's is resized for that monitor here.
@@ -79,9 +79,17 @@ void MainWindow::ResizeClient(int width, int height) {
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-void MainWindow::ApplySystemAppearance() {
-    BOOL dark = AppsUseDarkTheme() ? TRUE : FALSE;
-    DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+void MainWindow::SetDarkAppearance(bool dark) {
+    BOOL value = dark ? TRUE : FALSE;
+    DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE, &value, sizeof(value));
+}
+
+bool MainWindow::UseSystemBackdrop() {
+    int type = kBackdropTransientWindow;
+    if (FAILED(DwmSetWindowAttribute(hwnd_, kSystemBackdropType, &type, sizeof(type)))) return false;
+    // The backdrop shows through the client area only where the frame extends into it.
+    MARGINS everywhere{-1, -1, -1, -1};
+    return SUCCEEDED(DwmExtendFrameIntoClientArea(hwnd_, &everywhere));
 }
 
 LRESULT CALLBACK MainWindow::WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -90,7 +98,6 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND hwnd, UINT message, WPARAM wParam, 
         window->hwnd_ = hwnd;
         window->dpi_ = GetDpiForWindow(hwnd);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(window));
-        window->ApplySystemAppearance();
     }
     auto* window = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     if (!window) return DefWindowProcW(hwnd, message, wParam, lParam);
@@ -119,10 +126,17 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         if (allowLargerThanScreen_) info->ptMaxTrackSize = {32767, 32767};
         return 0;
     }
-    case WM_SETTINGCHANGE:
-        // Light/dark changes arrive as "ImmersiveColorSet"; skip the many other broadcasts.
-        if (lParam && lstrcmpW(reinterpret_cast<const wchar_t*>(lParam), L"ImmersiveColorSet") == 0) ApplySystemAppearance();
-        break;
+    case WM_SIZE:
+        if (wParam != SIZE_MINIMIZED && onSize) onSize(LOWORD(lParam), HIWORD(lParam));
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;  // nothing to erase: there's no redirection bitmap
+    case WM_PAINT: {
+        PAINTSTRUCT paint;
+        BeginPaint(hwnd_, &paint);  // validates; the composition tree is already on screen
+        EndPaint(hwnd_, &paint);
+        return 0;
+    }
     case WM_ENDSESSION:
         if (wParam && onClose) onClose();
         return 0;

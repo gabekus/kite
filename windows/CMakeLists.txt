@@ -34,6 +34,7 @@ add_library(KiteCoreWin STATIC
   src/core/OKLab.cpp
   src/core/SessionStore.cpp
   src/core/SupportDirectory.cpp
+  src/core/ThemeBackdrop.cpp
   src/core/Unicode.cpp
   src/core/URLInput.cpp
   src/core/Url.cpp
@@ -46,13 +47,56 @@ add_executable(kitecore src/cli/main.cpp)
 target_link_libraries(kitecore PRIVATE KiteCoreWin)
 
 if(WIN32)
+  # HLSL shaders (src/shell/shaders). MSVC builds compile them with the Windows SDK's fxc
+  # at build time and embed the bytecode, so Kite.exe never compiles a shader at startup.
+  # Where there's no fxc (the MinGW cross-compile check) the source is embedded instead and
+  # compiled with D3DCompile at startup (KITE_RUNTIME_SHADERS).
+  set(KITE_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
+  file(MAKE_DIRECTORY "${KITE_SHADER_DIR}")
+  set(KITE_FXC_HINTS)
+  set(KITE_PROGRAM_FILES_X86 "ProgramFiles(x86)")
+  if(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION)
+    list(APPEND KITE_FXC_HINTS "$ENV{${KITE_PROGRAM_FILES_X86}}/Windows Kits/10/bin/${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/x64")
+  endif()
+  find_program(KITE_FXC fxc HINTS ${KITE_FXC_HINTS} "$ENV{WindowsSdkVerBinPath}/x64")
+  set(KITE_THEME_HLSL "${CMAKE_CURRENT_SOURCE_DIR}/src/shell/shaders/Theme.hlsl")
+  if(KITE_FXC)
+    set(KITE_SHADER_HEADERS "${KITE_SHADER_DIR}/FullscreenVertex.h" "${KITE_SHADER_DIR}/ThemePixel.h")
+    add_custom_command(OUTPUT "${KITE_SHADER_DIR}/FullscreenVertex.h"
+      COMMAND "${KITE_FXC}" /nologo /T vs_4_0 /E FullscreenVertex /O3 /Vn kFullscreenVertexShader
+              /Fh "${KITE_SHADER_DIR}/FullscreenVertex.h" "${KITE_THEME_HLSL}"
+      DEPENDS "${KITE_THEME_HLSL}" VERBATIM)
+    add_custom_command(OUTPUT "${KITE_SHADER_DIR}/ThemePixel.h"
+      COMMAND "${KITE_FXC}" /nologo /T ps_4_0 /E ThemePixel /O3 /Vn kThemePixelShader
+              /Fh "${KITE_SHADER_DIR}/ThemePixel.h" "${KITE_THEME_HLSL}"
+      DEPENDS "${KITE_THEME_HLSL}" VERBATIM)
+  else()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KITE_THEME_HLSL}")
+    file(READ "${KITE_THEME_HLSL}" KITE_THEME_SOURCE)
+    file(WRITE "${KITE_SHADER_DIR}/ThemeHlsl.inc"
+         "// Generated from src/shell/shaders/Theme.hlsl by CMake. Don't edit.\n"
+         "constexpr char kThemeHlsl[] = R\"hlsl(${KITE_THEME_SOURCE})hlsl\";\n")
+    set(KITE_SHADER_HEADERS "${KITE_SHADER_DIR}/ThemeHlsl.inc")
+  endif()
+
   add_executable(Kite WIN32
     src/shell/main.cpp
+    src/shell/BackdropTest.cpp
     src/shell/Capture.cpp
+    src/shell/Compositor.cpp
     src/shell/MainWindow.cpp
-    src/shell/SystemAppearance.cpp
+    src/shell/Renderer.cpp
+    ${KITE_SHADER_HEADERS}
   )
-  target_link_libraries(Kite PRIVATE KiteCoreWin user32 gdi32 dwmapi advapi32 shell32 ole32 windowscodecs)
+  target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
+  target_link_libraries(Kite PRIVATE KiteCoreWin user32 gdi32 dwmapi shell32 ole32 windowscodecs d3d11 dxgi dcomp)
+  if(KITE_FXC)
+    message(STATUS "Shaders: precompiled with ${KITE_FXC}")
+  else()
+    message(STATUS "Shaders: no fxc, compiled at startup (KITE_RUNTIME_SHADERS)")
+    target_compile_definitions(Kite PRIVATE KITE_RUNTIME_SHADERS)
+    target_link_libraries(Kite PRIVATE d3dcompiler)
+  endif()
   target_link_libraries(kitecore PRIVATE shell32)
   # Both get Kite.manifest: per-monitor DPI v2, the UTF-8 code page, long paths.
   if(MSVC)
@@ -71,6 +115,7 @@ add_executable(KiteCoreTests
   tests/JsonTests.cpp
   tests/ModelTests.cpp
   tests/SupportDirectoryTests.cpp
+  tests/ThemeBackdropTests.cpp
   tests/ThemeTests.cpp
   tests/UnicodeTests.cpp
   tests/URLInputTests.cpp
