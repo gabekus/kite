@@ -18,9 +18,9 @@ struct OneShotFlagsTests {
         let (defaults, suite) = scratchDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let flags = OneShotFlags(defaults: defaults, environment: [:])
-        #expect(!flags.bool("asked"))
-        flags.set(true, "asked")
-        #expect(flags.bool("asked"))
+        #expect(!flags.bool(forKey: "asked"))
+        flags.set(true, forKey: "asked")
+        #expect(flags.bool(forKey: "asked"))
         #expect(defaults.bool(forKey: "asked"))
     }
 
@@ -32,13 +32,13 @@ struct OneShotFlagsTests {
         let folder = scratchFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
         let flags = OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": folder.path])
-        #expect(!flags.bool("asked"))
-        flags.set(true, "dismissed")
-        #expect(flags.bool("dismissed"))
+        #expect(!flags.bool(forKey: "asked"))
+        flags.set(true, forKey: "dismissed")
+        #expect(flags.bool(forKey: "dismissed"))
         #expect(!defaults.bool(forKey: "dismissed"))
         #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent(OneShotFlags.fileName).path))
-        flags.set(false, "dismissed")
-        #expect(!flags.bool("dismissed"))
+        flags.set(false, forKey: "dismissed")
+        #expect(!flags.bool(forKey: "dismissed"))
     }
 
     @Test func eachTestProfileStartsFresh() {
@@ -46,8 +46,8 @@ struct OneShotFlagsTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let first = scratchFolder(), second = scratchFolder()
         defer { [first, second].forEach { try? FileManager.default.removeItem(at: $0) } }
-        OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": first.path]).set(true, "asked")
-        #expect(OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": first.path]).bool("asked"))
-        #expect(!OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": second.path]).bool("asked"))
+        OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": first.path]).set(true, forKey: "asked")
+        #expect(OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": first.path]).bool(forKey: "asked"))
+        #expect(!OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": second.path]).bool(forKey: "asked"))
     }
 }

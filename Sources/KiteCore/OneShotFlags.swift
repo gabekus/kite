@@ -4,7 +4,8 @@ import Foundation
 /// favorites tray's empty state). A real profile keeps them in UserDefaults. A test profile (`KITE_SUPPORT_PATH`)
 /// keeps them in a file in its folder, so each test profile starts fresh: UserDefaults follow the bundle, which every
 /// test build shares.
-public struct OneShotFlags {
+// UserDefaults is thread-safe, and the file URL never changes.
+public struct OneShotFlags: @unchecked Sendable {
     public static let fileName = "One-Shot Flags.plist"
 
     private let defaults: UserDefaults
@@ -16,14 +17,15 @@ public struct OneShotFlags {
         file = environment["KITE_SUPPORT_PATH"].map { URL(fileURLWithPath: $0, isDirectory: true).appendingPathComponent(Self.fileName) }
     }
 
-    public static var standard: OneShotFlags { OneShotFlags() }
+    /// Kite's, for this process (the environment doesn't change while it runs).
+    public static let standard = OneShotFlags()
 
-    public func bool(_ key: String) -> Bool {
+    public func bool(forKey key: String) -> Bool {
         guard let file else { return defaults.bool(forKey: key) }
         return read(file)[key] ?? false
     }
 
-    public func set(_ value: Bool, _ key: String) {
+    public func set(_ value: Bool, forKey key: String) {
         guard let file else { return defaults.set(value, forKey: key) }
         var flags = read(file)
         flags[key] = value
