@@ -306,7 +306,8 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
             {"archiveTab", "Archive Tab", Ctrl("w"), {Ctrl("f4")}},  // closes the bar first
             {"closeWindow", "Close Window", CtrlShift("w"), {}},
             {"quitKite", "Quit Kite", Ctrl("q"), {}},
-            {"printPage", "Print", Ctrl("p")},
+            // Print (⌘P) waits for printing that survives a cancelled dialog: after Windows 11's
+            // print dialog is dismissed, CEF 156 never prints again and Chromium's shutdown hangs.
             {"copyCurrentURL", "Copy URL", CtrlShift("c")},
             {"collapsePinnedSection", "Collapse Pinned Tabs", std::nullopt},
             {"stopLoading", "Stop Loading", Ctrl(".")},

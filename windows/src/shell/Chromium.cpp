@@ -923,7 +923,6 @@ bool Chromium::Act(PageAction action) {
             break;
         case PageAction::ReloadIgnoringCache: browser->ReloadIgnoreCache(); break;
         case PageAction::Stop: browser->StopLoad(); break;
-        case PageAction::Print: host->Print(); break;
         case PageAction::DevTools: {
             // The page is closing (Kite quit after asking): no window that would hold it up.
             if (shared->closing) break;

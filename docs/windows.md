@@ -214,8 +214,10 @@ counted once. Developer Tools opens in a window of its own (Chrome style: CEF
 makes no Alloy-style DevTools), counted with the pages so Chromium's shutdown
 waits for it. Not yet: Settings → Shortcuts (the
 file is read at launch; the table will be swapped atomically), the "Press
-Ctrl+D again" prompt for Use Both, the toast after Copy URL, and Ctrl+W closing a
-focused Developer Tools window.
+Ctrl+D again" prompt for Use Both, the toast after Copy URL, Ctrl+W closing a
+focused Developer Tools window, and Print (Ctrl+P): with CEF 156 on Windows 11,
+once the print dialog is cancelled CEF never prints again and Chromium's
+shutdown hangs, so Print waits until that's fixed.
 
 ## Refresh rate
 

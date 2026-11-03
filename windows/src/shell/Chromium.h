@@ -121,8 +121,8 @@ public:
     // one with the tab's address).
     bool Navigate(const std::string& tabID, const std::string& url);
     // What the menu's page commands do to the shown page (the Mac's goBack, reload,
-    // showDevTools, printPage…). False when no page is shown yet.
-    enum class PageAction { Back, Forward, Reload, ReloadIgnoringCache, Stop, DevTools, Print };
+    // showDevTools…). False when no page is shown yet.
+    enum class PageAction { Back, Forward, Reload, ReloadIgnoringCache, Stop, DevTools };
     bool Act(PageAction action);
     // Ctrl+T was pressed in a page and the keyboard moved to Kite's window, but Kite hasn't
     // answered yet (PageEvents::newTab is on its way): keys arriving now are for the bar.

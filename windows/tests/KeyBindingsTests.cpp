@@ -171,7 +171,7 @@ TEST(windowsCommandsUseCtrlForCommand) {
     CHECK(CommandAt(table, KeyShortcut("f12", {})) == "developerTools");
     // Each with its command's priority.
     CHECK(table.at(KeyShortcut("w", {M::Control})).priority == KeyShortcutPriority::OverrideWebView);
-    CHECK(table.at(KeyShortcut("p", {M::Control})).priority == KeyShortcutPriority::PromptAfterConsumedByWebView);
+    CHECK(table.at(KeyShortcut("i", {M::Control, M::Option})).priority == KeyShortcutPriority::PromptAfterConsumedByWebView);
     CHECK(table.at(KeyShortcut("f5", {})).priority == KeyShortcutPriority::Low);
     // Every shown shortcut holds Ctrl or Alt, or is a function key, so typing never runs one;
     // and every id is unique.

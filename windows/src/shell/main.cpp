@@ -593,14 +593,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
              state.SelectAdjacentTab(-1);
              selectionMoved();
          }},
-        // As the Mac: with no page, Back, Forward, Refresh and Stop do nothing; Print and
-        // Developer Tools beep.
+        // As the Mac: with no page, Back, Forward, Refresh and Stop do nothing; Developer
+        // Tools beeps.
         {"goBack", [&] { pageCommand("goBack"); }},
         {"goForward", [&] { pageCommand("goForward"); }},
         {"reloadPage", [&] { pageCommand("reloadPage"); }},
         {"forceReloadPage", [&] { pageCommand("forceReloadPage"); }},
         {"stopLoading", [&] { pageCommand("stopLoading"); }},
-        {"printPage", [&] { if (!pageCommand("printPage")) MessageBeep(MB_OK); }},
         {"developerTools", [&] { if (!pageCommand("developerTools")) MessageBeep(MB_OK); }},
     };
     for (int n = 1; n <= 9; ++n) {
@@ -789,7 +788,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             static const std::map<std::string, Action, std::less<>> actions{
                 {"goBack", Action::Back},     {"goForward", Action::Forward},         {"reloadPage", Action::Reload},
                 {"forceReloadPage", Action::ReloadIgnoringCache},                     {"stopLoading", Action::Stop},
-                {"developerTools", Action::DevTools},                                 {"printPage", Action::Print},
+                {"developerTools", Action::DevTools},
             };
             auto it = actions.find(command);
             return it != actions.end() && chromium->Act(it->second);
