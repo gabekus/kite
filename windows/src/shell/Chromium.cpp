@@ -610,6 +610,7 @@ bool Chromium::Shutdown() {
     }
     if (!allClosed) OutputDebugStringW(L"Kite: browsers still open after 10 s; shutting Chromium down anyway\n");
     shared_->pages.clear();
+    shared_->retiring.clear();  // browsers Kite closed that never came back (a forced close)
     shared_->contexts.clear();
     {
         std::lock_guard lock(shared_->mutex);
