@@ -95,8 +95,17 @@ identifiers), and `kite probe Arc capture --window N -o arc.png` captures one wi
 in the background. Use an Arc incognito window, and close it when done. These
 need Accessibility and Screen Recording permission for the app running `kite`.
 
+Observe Arc headlessly, always (Gabe's standing rule, 3 Nov 2026): never take
+over his screen, focus or input to watch Arc. Open an incognito window through
+an AX menu press and park it off screen, send keys only to Arc's process
+(`CGEvent.postToPid`), read results from its accessibility tree, and if Arc
+takes focus (opening the command bar does), hand it straight back to the app
+that was in front. Favorites only exist in regular windows: compare their
+titles in-process and print positions and labels, never titles.
+
 Fall back to screen recording or computer control only for what these can't
-see (Arc's cursors and hover, system UI outside Kite), and say why in the PR.
+see (Arc's cursors and hover, system UI outside Kite), only with Gabe's OK at
+the time, and say why in the PR.
 
 ## CI
 

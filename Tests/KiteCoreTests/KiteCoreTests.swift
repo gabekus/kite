@@ -323,6 +323,87 @@ import Testing
         #expect(TabSearch.rank("doc", in: state).first?.tab.id == docs)
         #expect(TabSearch.rank("zzz", in: state).isEmpty)
     }
+
+    @Test func findsAFavoriteByItsPageTitle() {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let mail = state.openTab(url: URL(string: "https://mail.google.com/mail/u/0/#inbox"))
+        state.update(tab: mail) { $0.title = "Inbox (3) - someone@example.com - Gmail" }
+        state.toggleFavorite(tab: mail)
+        #expect(TabSearch.rank("gmail", in: state).map(\.tab.id) == [mail])
+        #expect(TabSearch.rank("inbox", in: state).map(\.tab.id) == [mail])
+    }
+
+    @Test func switchTargetsLeaveOutTheTabYoureOnAndStillGiveFive() {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let ids = (0..<7).map { i in
+            let id = state.openTab(url: URL(string: "https://example.com/\(i)"))
+            state.update(tab: id) { $0.title = "Notes \(i)" }
+            return id
+        }
+        state.select(tab: ids[6])
+        let targets = TabSearch.switchTargets("notes", in: state).map(\.tab.id)
+        #expect(targets.count == 5)
+        #expect(!targets.contains(ids[6]))
+        #expect(TabSearch.switchTargets("zzz", in: state).isEmpty)
+    }
+}
+
+/// Arc 1.171, 3 Nov 2026: a favorite with nothing learned for it.
+@Suite struct CommandBarOrderTests {
+    func order(tabFirst: Bool, tabs: [String], commands: [String] = []) -> [String] {
+        CommandBarOrder.arrange(tabFirst: tabFirst, strongCommands: commands, search: "search", tabs: tabs,
+                                engine: ["e1", "e2"], history: ["h"], weakCommands: ["weak"])
+    }
+
+    func gmail(title: String = "Inbox (3) - someone@example.com - Gmail") -> (BrowserState, UUID) {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let mail = state.openTab(url: URL(string: "https://mail.google.com/mail/u/0/#inbox"))
+        state.update(tab: mail) { $0.title = title }
+        state.toggleFavorite(tab: mail)
+        let other = state.openTab(url: URL(string: "https://example.com"))
+        state.select(tab: other)
+        return (state, mail)
+    }
+
+    @Test func aTabMatchSitsUnderTheTypedSearchAboveSuggestions() {
+        // Arc showed this for 4, 5, 6, 8 and 11 letters of the favorite's name: search row, then "Switch to Tab".
+        let (state, mail) = gmail()
+        for query in ["inbo", "inbox", "inbox ", "inbox (3", "inbox (3) -"] {
+            #expect(TabSearch.switchTargets(query, in: state).first?.tab.id == mail)
+            #expect(!CommandBarOrder.tabFirst(query, best: TabSearch.switchTargets(query, in: state).first))
+        }
+        #expect(order(tabFirst: false, tabs: ["fav", "tab"]) == ["search", "fav", "tab", "e1", "e2", "h", "weak"])
+    }
+
+    @Test func aShortQueryPutsAStrongTabMatchFirst() {
+        // Arc showed this for 1, 2 and 3 letters: "Switch to Tab" first and selected, the typed search under it.
+        let (state, _) = gmail()
+        for query in ["i", "in", "inb", " in ", "gm", "mai"] {
+            #expect(CommandBarOrder.tabFirst(query, best: TabSearch.switchTargets(query, in: state).first))
+        }
+        #expect(order(tabFirst: true, tabs: ["fav", "tab"]) == ["fav", "search", "tab", "e1", "e2", "h", "weak"])
+    }
+
+    @Test func aWeakShortMatchStaysUnderTheSearch() {
+        // "ai" and "box" are only inside the title, "oog" only inside the address: Return still searches.
+        let (state, _) = gmail()
+        for query in ["ai", "box", "oog"] {
+            let best = TabSearch.switchTargets(query, in: state).first
+            #expect(best != nil)
+            #expect(!CommandBarOrder.tabFirst(query, best: best))
+        }
+        #expect(!CommandBarOrder.tabFirst("gm", best: nil))
+    }
+
+    @Test func aStrongCommandStaysOnTop() {
+        #expect(order(tabFirst: true, tabs: ["fav"], commands: ["Copy URL"])
+            == ["Copy URL", "fav", "search", "e1", "e2", "h", "weak"])
+    }
+
+    @Test func noTabMatchKeepsTheSearchOrder() {
+        #expect(order(tabFirst: true, tabs: []) == ["search", "e1", "e2", "h", "weak"])
+        #expect(order(tabFirst: false, tabs: []) == ["search", "e1", "e2", "h", "weak"])
+    }
 }
 
 @Suite struct LiveTabPolicyTests {
