@@ -12,15 +12,27 @@ namespace {
 // CEF's thread, whose own layout can lag behind a switch).
 HKL CurrentLayout() { return GetKeyboardLayout(GetWindowThreadProcessId(GetForegroundWindow(), nullptr)); }
 
-// Whether Ctrl+Alt (with Shift or not) and this key type something on the layout: a character
-// or a dead key. Asked without changing the keyboard's dead-key state (flag 0x4).
-bool TypesWithCtrlAlt(UINT vk, bool shift, HKL layout) {
+// What the key types on the layout, with Ctrl+Alt held or not (and Shift as held): a character,
+// none, or a dead key (-1). Asked without changing the keyboard's dead-key state (flag 0x4).
+int Typed(UINT vk, bool ctrlAlt, bool shift, HKL layout, wchar_t& typed) {
     BYTE state[256]{};
-    state[VK_CONTROL] = state[VK_LCONTROL] = state[VK_MENU] = state[VK_LMENU] = 0x80;
+    if (ctrlAlt) state[VK_CONTROL] = state[VK_LCONTROL] = state[VK_MENU] = state[VK_LMENU] = 0x80;
     if (shift) state[VK_SHIFT] = state[VK_LSHIFT] = 0x80;
-    wchar_t typed[8]{};
-    const int count = ToUnicodeEx(vk, MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, layout), state, typed, 8, 0x4, layout);
-    return count < 0 || (count > 0 && typed[0] >= 0x20);  // control characters aren't typing
+    wchar_t buffer[8]{};
+    const int count = ToUnicodeEx(vk, MapVirtualKeyExW(vk, MAPVK_VK_TO_VSC, layout), state, buffer, 8, 0x4, layout);
+    typed = buffer[0];
+    return count;
+}
+
+// Whether Ctrl+Alt and this key type a character of their own on the layout (AltGr's: German
+// Ctrl+Alt+Q is @), or a dead key. A layout without AltGr gives the key's own character, or a
+// control character, for Ctrl+Alt: that's a shortcut.
+bool TypesWithCtrlAlt(UINT vk, bool shift, HKL layout) {
+    wchar_t withCtrlAlt = 0, plain = 0;
+    const int count = Typed(vk, true, shift, layout, withCtrlAlt);
+    if (count < 0) return true;
+    if (count == 0 || withCtrlAlt < 0x20) return false;
+    return Typed(vk, false, shift, layout, plain) <= 0 || plain != withCtrlAlt;
 }
 
 }  // namespace

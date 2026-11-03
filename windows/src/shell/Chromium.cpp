@@ -933,10 +933,10 @@ bool Chromium::Act(PageAction action) {
                 break;
             }
             // In a window of its own, as Chrome's undocked tools (the Mac docks none either),
-            // counted with Kite's pages so Chromium's shutdown waits for it too.
+            // counted with Kite's pages so Chromium's shutdown waits for it too. Chrome style
+            // (the default): CEF 156 makes no Alloy-style DevTools.
             CefWindowInfo info;
             info.SetAsPopup(nullptr, "Developer Tools");
-            info.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
             shared->Count(+1, 0);
             host->ShowDevTools(info, new DevToolsClient(shared), CefBrowserSettings(), CefPoint());
             break;

@@ -191,7 +191,8 @@ shortcut (a priority-only change keeps it in the file, as the Mac writes it). A
 few commands also take the keys Windows users expect, without showing them:
 Ctrl+F4, F5, Ctrl+F5, Shift+F5, F12, Ctrl+Shift+I, Ctrl+U, Alt+Left and
 Alt+Right; like the Mac's hidden alternates (⌘← for Back), they stay when the
-command is rebound, unless another command's shortcut takes them.
+command is rebound or its shortcut removed, unless another command's shortcut
+takes them.
 `kitecore shortcuts` prints the table for a profile.
 
 In Kite's own window a shortcut runs from the window's key messages. In a page
@@ -209,8 +210,9 @@ Mac's menus come before its field editor, but for the keys the field edits with
 Ctrl+1 to Ctrl+8 select the space's nth tab and Ctrl+9 its last, in the Mac's
 order: favorites, pinned and then today's tabs, top to bottom, including tabs in
 closed folders (the Windows sidebar doesn't draw favorites yet), with a split
-counted once. Developer Tools opens in a window of its own, counted with the
-pages so Chromium's shutdown waits for it. Not yet: Settings → Shortcuts (the
+counted once. Developer Tools opens in a window of its own (Chrome style: CEF
+makes no Alloy-style DevTools), counted with the pages so Chromium's shutdown
+waits for it. Not yet: Settings → Shortcuts (the
 file is read at launch; the table will be swapped atomically), the "Press
 Ctrl+D again" prompt for Use Both, the toast after Copy URL, and Ctrl+W closing a
 focused Developer Tools window.

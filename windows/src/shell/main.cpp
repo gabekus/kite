@@ -635,6 +635,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             result = 0;
             return true;
         }
+        // A key that made no character: its key-up ends the wait for one.
+        if (message == WM_KEYUP || message == WM_SYSKEYUP) dropCharacter = false;
         // Kite's shortcuts, wherever the keyboard is in Kite's own window, the bar's field
         // included (as the Mac's menus come before its field editor), but for keys the field
         // edits with (Alt+Left). Alt's come as WM_SYSKEYDOWN. A page's come through Chromium.
