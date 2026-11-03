@@ -6,10 +6,12 @@ on:
     branches: [main]
     paths:
       - 'windows/**'
+      - 'Tests/Fixtures/**'
       - '.github/workflows/ci-windows-native.yml'
   pull_request:
     paths:
       - 'windows/**'
+      - 'Tests/Fixtures/**'
       - '.github/workflows/ci-windows-native.yml'
 
 concurrency:
@@ -39,6 +41,11 @@ jobs:
           $env:KITE_SUPPORT_PATH = $profileDir
           $run = Start-Process -FilePath $exe -ArgumentList '--smoke-test' -Wait -PassThru
           if ($run.ExitCode -ne 0) { throw "Kite.exe exited with $($run.ExitCode)" }
+          $session = Join-Path $profileDir 'session.json'
+          if (-not (Test-Path $session)) { throw 'Kite.exe wrote no session.json' }
+          # The headless core reads what the app wrote (and the Mac's format).
+          & windows/build/Release/kitecore.exe --profile $profileDir state
+          if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
           # A KITE_SUPPORT_PATH that isn't a directory must be refused (exit 2), never fallen back from.
           $file = Join-Path $profileDir 'not-a-dir'
           Set-Content -Path $file -Value x

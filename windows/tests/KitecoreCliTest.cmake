@@ -1,0 +1,41 @@
+# Drives kitecore against a fresh profile: ctest runs it with -DKITECORE=<path> -DWORK=<dir>.
+file(REMOVE_RECURSE "${WORK}")
+file(MAKE_DIRECTORY "${WORK}")
+
+function(kitecore out)
+  execute_process(COMMAND "${KITECORE}" --profile "${WORK}" ${ARGN}
+                  RESULT_VARIABLE code OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT code EQUAL 0)
+    message(FATAL_ERROR "kitecore ${ARGN} exited ${code}: ${stderr}")
+  endif()
+  set(${out} "${stdout}" PARENT_SCOPE)
+endfunction()
+
+kitecore(url resolve apple.com)
+if(NOT url STREQUAL "https://apple.com")
+  message(FATAL_ERROR "resolve gave '${url}'")
+endif()
+
+kitecore(id open news.ycombinator.com/item?id=1)
+kitecore(state state)
+string(JSON selected GET "${state}" selectedTab id)
+if(NOT selected STREQUAL id)
+  message(FATAL_ERROR "opened tab ${id} isn't selected: ${state}")
+endif()
+string(JSON first GET "${state}" spaces 0 tabs 0 url)
+if(NOT first STREQUAL "https://news.ycombinator.com/item?id=1")
+  message(FATAL_ERROR "new tab isn't on top: ${state}")
+endif()
+
+kitecore(ignored space next)
+kitecore(state state)
+string(JSON work GET "${state}" spaces 1 id)
+string(JSON current GET "${state}" selectedSpaceID)
+if(NOT current STREQUAL work)
+  message(FATAL_ERROR "space next didn't select Work: ${state}")
+endif()
+
+if(NOT EXISTS "${WORK}/session.json")
+  message(FATAL_ERROR "no session.json written")
+endif()
+file(REMOVE_RECURSE "${WORK}")

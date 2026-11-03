@@ -19,9 +19,15 @@ else()
 endif()
 add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 
-# Platform-free logic (the Windows counterpart of KiteCore), unit-tested headless.
+# The model (the Windows counterpart of KiteCore): no UI, unit-tested headless.
 add_library(KiteCoreWin STATIC
+  src/core/Json.cpp
+  src/core/Models.cpp
+  src/core/SessionStore.cpp
   src/core/SupportDirectory.cpp
+  src/core/URLInput.cpp
+  src/core/Url.cpp
+  src/core/Uuid.cpp
 )
 target_include_directories(KiteCoreWin PUBLIC src)
 
@@ -39,7 +45,25 @@ if(MINGW)
   target_link_options(Kite PRIVATE -municode)
 endif()
 
+# Headless model CLI (the behaviour gate in docs/helix.md).
+add_executable(kitecore src/cli/main.cpp)
+target_link_libraries(kitecore PRIVATE KiteCoreWin)
+if(MSVC)
+  target_sources(kitecore PRIVATE src/shell/Kite.manifest)  # UTF-8 argv
+endif()
+
 enable_testing()
-add_executable(KiteCoreTests tests/main.cpp tests/SupportDirectoryTests.cpp)
+add_executable(KiteCoreTests
+  tests/main.cpp
+  tests/JsonTests.cpp
+  tests/ModelTests.cpp
+  tests/SupportDirectoryTests.cpp
+  tests/URLInputTests.cpp
+)
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
+# The session fixture shared with the Mac test suite.
+target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
+add_test(NAME kitecore-cli
+  COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KitecoreCliTest.cmake)
