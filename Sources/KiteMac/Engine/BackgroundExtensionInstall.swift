@@ -18,21 +18,29 @@ final class BackgroundExtensionInstall {
     private let onFinish: () -> Void
     private var started = false
     private var dialogClosedAt: Date?
+    private var dialogOpen = false
+    private var loadedAt: Date?
     private var finished = false
     private var poll: Timer?
     private var dialogObserver: NSObjectProtocol?
+    private var openObserver: NSObjectProtocol?
 
     /// Gives up (and relabels the button) if nothing happened in this long.
     private static let timeout: TimeInterval = 120
+    /// The store script tries to click Add for 10 s after load.
+    private static let noAddButtonDelay: TimeInterval = 15
 
-    init(extensionID: String, storeURL: URL, engine: WebEngine, source: WebPage?, onFinish: @escaping () -> Void) {
+    /// `window` holds the hidden store page (the main window when nil). Chrome's dialog still
+    /// opens over the front Kite window (KCExtensionWindows.mm).
+    init(extensionID: String, storeURL: URL, engine: WebEngine, source: WebPage?, window: NSWindow? = nil,
+         onFinish: @escaping () -> Void) {
         self.extensionID = extensionID
         self.source = source
         self.onFinish = onFinish
         profile = engine.profileDirectory
         page = engine.makePage(url: storeURL, restoring: nil)
         // In the window but hidden: Chrome needs a window to parent its dialog to.
-        if let content = NSApp.mainWindow?.contentView {
+        if let content = (window ?? NSApp.mainWindow)?.contentView {
             page.view.frame = NSRect(x: 0, y: 0, width: 1, height: 1)
             page.view.isHidden = true
             content.addSubview(page.view, positioned: .below, relativeTo: nil)
@@ -40,18 +48,31 @@ final class BackgroundExtensionInstall {
         page.onEvent = { [weak self] event in
             guard let self, case let .navigationState(isLoading, _, _) = event, !isLoading, !self.started else { return }
             self.started = true
+            self.loadedAt = Date()
             self.page.evaluateJavaScript(WebStoreScript.startAddScript) { _ in }
         }
         #if canImport(CEFBridge)
         dialogObserver = NotificationCenter.default.addObserver(
             forName: .KCExtensionInstallDialogDidClose, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.dialogClosedAt = Date() }
+            MainActor.assumeIsolated {
+                self?.dialogClosedAt = Date()
+                self?.dialogOpen = false
+            }
+        }
+        openObserver = NotificationCenter.default.addObserver(
+            forName: .KCExtensionInstallDialogDidOpen, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.dialogOpen = true }
         }
         #endif
-        let deadline = Date().addingTimeInterval(Self.timeout)
+        var deadline = Date().addingTimeInterval(Self.timeout)
         poll = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.check(deadline: deadline) }
+            MainActor.assumeIsolated {
+                // Reading the dialog takes as long as it takes.
+                if self?.dialogOpen == true { deadline = deadline.addingTimeInterval(0.5) }
+                self?.check(deadline: deadline)
+            }
         }
         relabel("Adding\u{2026}", disabled: true)
     }
@@ -61,6 +82,15 @@ final class BackgroundExtensionInstall {
     private func check(deadline: Date) {
         if Self.installedIDs(profile: profile).contains(extensionID) { return finish(installed: true) }
         if Date() > deadline { return finish(installed: false) }
+        // No dialog well after the store page loaded: the store has no Add button for it (a
+        // Manifest V2 extension, or one taken off the store).
+        if !dialogOpen, dialogClosedAt == nil, let loadedAt, Date().timeIntervalSince(loadedAt) > Self.noAddButtonDelay {
+            page.evaluateJavaScript(WebStoreScript.offersAddScript) { [weak self] result in
+                // Only a definite "no button"; a script error says nothing.
+                guard let self, (result as? Bool) == false, !self.dialogOpen else { return }
+                self.finish(installed: false)
+            }
+        }
         guard let closed = dialogClosedAt, Date().timeIntervalSince(closed) > 1.5 else { return }
         page.evaluateJavaScript(WebStoreScript.offersAddScript) { [weak self] result in
             guard let self, (result as? Bool) == true, !Self.installedIDs(profile: self.profile).contains(self.extensionID) else { return }
@@ -73,6 +103,7 @@ final class BackgroundExtensionInstall {
         finished = true
         poll?.invalidate()
         if let dialogObserver { NotificationCenter.default.removeObserver(dialogObserver) }
+        if let openObserver { NotificationCenter.default.removeObserver(openObserver) }
         relabel(installed ? "Added" : "Add to Kite", disabled: installed)
         page.onEvent = nil
         page.close()
