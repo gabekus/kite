@@ -29,7 +29,8 @@ import Testing
     @Test func readsArcRoutes() throws {
         let result = try #require(ArcLinkRoutingImport.parse(Self.fixture))
         #expect(result.rules.count == 3)
-        #expect(result.skipped == 1)
+        #expect(result.profileRoutes == 1)
+        #expect(result.unreadable == 0)
         let first = result.rules[0]
         #expect(first.id == UUID(uuidString: Self.rule))
         #expect(first.destination == .space(UUID(uuidString: Self.space)!))
@@ -37,11 +38,14 @@ import Testing
         #expect(first.components.map(\.pattern) == ["spotify", "figma.com"])
         #expect(result.rules[1].destination == .littleKite)
         #expect(result.rules[2].destination == .mostRecentSpace)
-        #expect(result.defaultDestination == .littleKite)
+        // A Little Arc default is the Little Kite setting, not a stored default.
+        #expect(result.defaultOpensInLittleKite == true)
+        #expect(result.defaultSpace == nil)
 
         // Routed as in Arc once the space is imported.
         var state = AirTrafficControl.State()
         state.merge(arc: result)
+        #expect(state.defaultDestination == nil)
         let url = URL(string: "https://open.spotify.com/track/1")!
         #expect(state.destination(for: url, spaceIDs: [UUID(uuidString: Self.space)!], opensExternalLinksInLittleKite: false)
             == .space(UUID(uuidString: Self.space)!))
@@ -64,9 +68,51 @@ import Testing
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "rules": []])
         let result = try #require(ArcLinkRoutingImport.parse(data))
         #expect(result.isEmpty)
-        var state = AirTrafficControl.State(defaultDestination: .mostRecentSpace)
+        var state = AirTrafficControl.State(defaultDestination: .space(UUID()))
+        let before = state
         state.merge(arc: result)
-        #expect(state.defaultDestination == .mostRecentSpace)
+        #expect(state == before)
         #expect(ArcLinkRoutingImport.parse(Data("[]".utf8)) == nil)
+    }
+
+    @Test func aSpaceDefaultIsKeptAndMostRecentIsTheSetting() throws {
+        let space = UUID()
+        let data = try JSONSerialization.data(withJSONObject: [
+            "defaultDestination": ["space": ["_0": ["space": ["_0": space.uuidString]]]],
+        ])
+        let result = try #require(ArcLinkRoutingImport.parse(data))
+        #expect(result.defaultSpace == space)
+        var state = AirTrafficControl.State()
+        state.merge(arc: result)
+        #expect(state.defaultDestination == .space(space))
+        // Only kept while that space is in Kite.
+        #expect(result.keeping(spaces: []).defaultSpace == nil)
+
+        let mostRecent = try JSONSerialization.data(withJSONObject: ["rules": [], "defaultDestination": ["mostRecent": [:]]])
+        #expect(ArcLinkRoutingImport.parse(mostRecent)?.defaultOpensInLittleKite == false)
+    }
+
+    @Test func leavesOutWhatKiteCantReadOrOpen() throws {
+        let space = UUID()
+        let data = try JSONSerialization.data(withJSONObject: ["rules": [
+            // Bare style names read too.
+            ["id": UUID().uuidString, "sourceComponents": [["componentType": ["urlMatch": ["_0": "matches", "_1": "a.com"]]]],
+             "destination": ["space": ["_0": ["space": ["_0": space.uuidString]]]]],
+            // No ID: a second import couldn't replace it.
+            ["sourceComponents": [Self.component("contains", "b")], "destination": ["mostRecent": [:]]],
+            // A style Kite doesn't know.
+            ["id": UUID().uuidString, "sourceComponents": [Self.component("regex", "c")], "destination": ["mostRecent": [:]]],
+            // A destination Kite doesn't know.
+            ["id": UUID().uuidString, "sourceComponents": [Self.component("contains", "d")], "destination": ["window": [:]]],
+            // To a space that isn't imported.
+            ["id": UUID().uuidString, "sourceComponents": [Self.component("contains", "e")],
+             "destination": ["space": ["_0": ["space": ["_0": UUID().uuidString]]]]],
+        ]])
+        let result = try #require(ArcLinkRoutingImport.parse(data))
+        #expect(result.unreadable == 3)
+        #expect(result.rules.count == 2)
+        #expect(result.rules[0].components.first?.style == .matches)
+        let kept = result.keeping(spaces: [space])
+        #expect(kept.rules.map(\.destination) == [.space(space)])
     }
 }

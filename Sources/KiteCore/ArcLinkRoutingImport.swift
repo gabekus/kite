@@ -12,30 +12,55 @@ import Foundation
 public enum ArcLinkRoutingImport {
     public struct Result: Equatable, Sendable {
         public var rules: [AirTrafficControl.Rule]
-        public var defaultDestination: AirTrafficControl.Destination?
-        /// Routes left out: ones to an Arc profile, which Kite's routes can't open in, or that
-        /// Kite couldn't read.
-        public var skipped: Int
+        /// Arc's default when it's a space. Kite keeps a Little Kite or most-recent-space default
+        /// as Open Links from Other Apps in Little Kite instead (`defaultOpensInLittleKite`).
+        public var defaultSpace: UUID?
+        /// Arc's default as that setting: true for Little Arc, false for the most recent space.
+        public var defaultOpensInLittleKite: Bool?
+        /// Routes to an Arc profile, which Kite's routes can't open in.
+        public var profileRoutes: Int
+        /// Routes Kite couldn't read.
+        public var unreadable: Int
 
-        public var isEmpty: Bool { rules.isEmpty && defaultDestination == nil }
+        public var isEmpty: Bool { rules.isEmpty && defaultSpace == nil }
+
+        /// Leaves out routes to spaces Kite doesn't have, which would never open anything.
+        public func keeping(spaces ids: Set<UUID>) -> Result {
+            var result = self
+            result.rules.removeAll { if case .space(let id) = $0.destination { !ids.contains(id) } else { false } }
+            if let space = defaultSpace, !ids.contains(space) { result.defaultSpace = nil }
+            return result
+        }
     }
 
     public static func parse(_ data: Data) -> Result? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let list = root["rules"] as? [Any]
-        else { return nil }
-        var rules: [AirTrafficControl.Rule] = []
-        var skipped = 0
-        for case let raw as [String: Any] in list {
-            let components = (raw["sourceComponents"] as? [Any] ?? []).compactMap(component)
-            guard !components.isEmpty, let destination = destination(raw["destination"]) else {
-                skipped += 1
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        var result = Result(rules: [], profileRoutes: 0, unreadable: 0)
+        for raw in root["rules"] as? [Any] ?? [] {
+            let object = raw as? [String: Any] ?? [:]
+            if (object["destination"] as? [String: Any])?["profile"] != nil {
+                result.profileRoutes += 1
                 continue
             }
-            let id = (raw["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
-            rules.append(AirTrafficControl.Rule(id: id, components: components, destination: destination))
+            let rawComponents = object["sourceComponents"] as? [Any] ?? []
+            let components = rawComponents.compactMap(component)
+            // The ID is what a second import replaces by, so a route without one is left out.
+            guard let id = (object["id"] as? String).flatMap(UUID.init(uuidString:)),
+                  !components.isEmpty, components.count == rawComponents.count,
+                  let destination = destination(object["destination"])
+            else {
+                result.unreadable += 1
+                continue
+            }
+            result.rules.append(AirTrafficControl.Rule(id: id, components: components, destination: destination))
         }
-        return Result(rules: rules, defaultDestination: destination(root["defaultDestination"]), skipped: skipped)
+        switch destination(root["defaultDestination"]) {
+        case .space(let id): result.defaultSpace = id
+        case .littleKite: result.defaultOpensInLittleKite = true
+        case .mostRecentSpace: result.defaultOpensInLittleKite = false
+        case nil: break
+        }
+        return result
     }
 
     private static func component(_ raw: Any) -> AirTrafficControl.Component? {
@@ -43,14 +68,12 @@ public enum ArcLinkRoutingImport {
               let match = (object["componentType"] as? [String: Any])?["urlMatch"] as? [String: Any],
               let pattern = match["_1"] as? String
         else { return nil }
-        // Either a bare case name or Swift's enum encoding, {"contains": {}}.
+        // Either a bare case name or Swift's enum encoding, {"contains": {}}. A style Kite doesn't
+        // know could match far more than Arc did, so its component isn't read.
         let styleName = (match["_0"] as? String) ?? (match["_0"] as? [String: Any])?.keys.first
+        guard let style = styleName.flatMap(AirTrafficControl.MatchStyle.init(rawValue:)) else { return nil }
         let id = (object["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
-        return AirTrafficControl.Component(
-            id: id,
-            style: styleName.flatMap(AirTrafficControl.MatchStyle.init(rawValue:)) ?? .contains,
-            pattern: pattern
-        )
+        return AirTrafficControl.Component(id: id, style: style, pattern: pattern)
     }
 
     /// Little Arc opens in Little Kite, whichever space Arc would have put it in after.
@@ -58,28 +81,15 @@ public enum ArcLinkRoutingImport {
         guard let object = raw as? [String: Any] else { return nil }
         if object["littleArc"] != nil { return .littleKite }
         if object["mostRecent"] != nil { return .mostRecentSpace }
-        if let space = object["space"] {
-            // Imported spaces keep Arc's IDs, so the route finds its space in Kite.
-            return firstUUID(in: space).map(AirTrafficControl.Destination.space)
-        }
-        return nil
-    }
-
-    private static func firstUUID(in value: Any) -> UUID? {
-        if let string = value as? String { return UUID(uuidString: string) }
-        if let object = value as? [String: Any] {
-            for key in object.keys.sorted() { if let id = firstUUID(in: object[key]!) { return id } }
-        }
-        if let list = value as? [Any] {
-            for item in list { if let id = firstUUID(in: item) { return id } }
-        }
-        return nil
+        // Imported spaces keep Arc's IDs, so the route finds its space in Kite.
+        let space = ((object["space"] as? [String: Any])?["_0"] as? [String: Any])?["space"] as? [String: Any]
+        return (space?["_0"] as? String).flatMap(UUID.init(uuidString:)).map(AirTrafficControl.Destination.space)
     }
 }
 
 extension AirTrafficControl.State {
     /// Adds Arc's routes after Kite's own, replacing a route imported before (same ID), and takes
-    /// Arc's default. Returns how many routes were new.
+    /// Arc's default when it's a space. Returns how many routes were new.
     @discardableResult
     public mutating func merge(arc imported: ArcLinkRoutingImport.Result) -> Int {
         var added = 0
@@ -91,7 +101,7 @@ extension AirTrafficControl.State {
                 added += 1
             }
         }
-        if let destination = imported.defaultDestination { defaultDestination = destination }
+        if let space = imported.defaultSpace { defaultDestination = .space(space) }
         return added
     }
 }

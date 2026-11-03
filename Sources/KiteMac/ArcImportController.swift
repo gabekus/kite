@@ -7,7 +7,8 @@ import UniformTypeIdentifiers
 // Arc shuts down on 2026-12-22. Some time after that, delete this file, the
 // "Import from Arc…" item in MainMenu.swift, KiteCore/ArcImport.swift, ArcArchiveImport.swift,
 // ArcSettingsImport.swift, ArcKeyBindingsImport.swift, ArcHistoryImport.swift,
-// ArcSiteSearchImport.swift, ArcLinkRoutingImport.swift, and BrowserState.arcProfileMap.
+// ArcSiteSearchImport.swift, ArcLinkRoutingImport.swift, and BrowserState.arcProfileMap, and make
+// AppDelegate.airTraffic private again.
 
 extension BrowserWindowController {
     @objc func importFromArc(_ sender: Any?) {
@@ -147,15 +148,24 @@ enum ArcImportController {
             historyCount == 0 ? nil : count(historyCount, "history page"),
             siteSearches.isEmpty ? nil : count(siteSearches.count, "Site Search shortcut"),
             keyBindings.isEmpty ? nil : count(keyBindings.count, "keyboard shortcut change"),
-            routes.map { $0.rules.isEmpty ? nil : count($0.rules.count, "Air Traffic Control route") } ?? nil,
+            routes.flatMap { $0.rules.isEmpty ? nil : count($0.rules.count, "Air Traffic Control route") },
             settings.isEmpty ? nil : count(settings.names.count, "Arc setting") + " (" + settings.names.joined(separator: ", ") + ")",
         ].compactMap { $0 }
         if !extras.isEmpty { lines.append("Also imports \(list(extras)).") }
         if archive.count > BrowserState.archiveLimit {
             lines.append("Kite's archive keeps the latest \(BrowserState.archiveLimit) tabs, so older archived tabs are left out.")
         }
-        if let skipped = routes?.skipped, skipped > 0 {
-            lines.append("\(count(skipped, "Air Traffic Control route")) to an Arc profile \(skipped == 1 ? "is" : "are") left out: Kite's routes open in a space or Little Kite.")
+        if let n = routes?.profileRoutes, n > 0 {
+            lines.append("\(count(n, "Air Traffic Control route")) to an Arc profile \(n == 1 ? "is" : "are") left out: Kite's routes open in a space or Little Kite.")
+        }
+        if let n = routes?.unreadable, n > 0 {
+            lines.append("Kite couldn't read \(count(n, "Air Traffic Control route")), so \(n == 1 ? "it's" : "they're") left out.")
+        }
+        if let routes, routes.rules.contains(where: { if case .space(let id) = $0.destination { !result.spaces.contains { $0.id == id } } else { false } }) {
+            lines.append("Routes to a space that isn't imported are left out.")
+        }
+        if let id = routes?.defaultSpace, let space = result.spaces.first(where: { $0.id == id }) {
+            lines.append("Links from other apps that no route catches open in \(space.name), as in Arc.")
         }
         if let profiles = profilesLine(named, names: profileNames, state: store.state) { lines.append(profiles) }
         if result.profiles.contains(where: { !named.contains($0) }) {
@@ -165,6 +175,9 @@ enum ArcImportController {
         lines.append(reimported > 0
             ? "\(count(reimported, "space")) imported before will be replaced with Arc's current version, including changes you made to them in Kite."
             : "Importing again later replaces these spaces with Arc's current version, including changes you make to them in Kite.")
+        if let routes, !routes.rules.isEmpty {
+            lines.append("Importing again also replaces the Air Traffic Control routes that came from Arc.")
+        }
 
         /// Imports, leaving out unnamed spaces unless `includeUntitled`.
         func perform(includeUntitled: Bool) {
@@ -176,7 +189,8 @@ enum ArcImportController {
                 $0.mergeArchive(imported: archive)
                 $0.apply(settings)
             }
-            if let little = settings.opensExternalLinksInLittleKite, testMode == nil {
+            // Arc's own setting, else its Air Traffic Control default (Kite keeps that default as the setting).
+            if let little = settings.opensExternalLinksInLittleKite ?? routes?.defaultOpensInLittleKite, testMode == nil {
                 UserDefaults.standard.set(little, forKey: LittleKite.opensExternalLinksKey)
             }
             // Each Arc profile's history goes to the Kite profile it went to.
@@ -186,14 +200,18 @@ enum ArcImportController {
             if !keyBindings.isEmpty {
                 (NSApp.delegate as? AppDelegate)?.keyBindings.merge(keyBindings, menu: NSApp.mainMenu)
             }
-            if let routes, !routes.isEmpty {
+            if let routes = routes?.keeping(spaces: Set(store.state.spaces.map(\.id))), !routes.isEmpty {
                 (NSApp.delegate as? AppDelegate)?.airTraffic.state.merge(arc: routes)
             }
         }
 
         if let test = testMode {
             testLog(lines.joined(separator: " | "))
-            if test.imports { perform(includeUntitled: false) }
+            guard test.imports else { return }
+            perform(includeUntitled: false)
+            if let routing = (NSApp.delegate as? AppDelegate)?.airTraffic.state {
+                testLog("imported; Air Traffic Control has \(count(routing.rules.count, "route")), default \(routing.defaultDestination.map { "\($0)" } ?? "the Little Kite setting")")
+            }
             return
         }
 

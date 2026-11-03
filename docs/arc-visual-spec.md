@@ -1154,7 +1154,11 @@ user's is copied. Test fixtures are made up.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
   `destination.space`). Import from Arc brings them into Air Traffic Control (ArcLinkRoutingImport); a route to an
   Arc profile is left out. A real file's destination is `{"space": {"_0": {"space": {"_0": id}}}}`, and its default
-  `{"littleArc": {"_0": {"mostRecent": {}}}}` (structure checked 3 Nov 2026).
+  `{"littleArc": {"_0": {"mostRecent": {}}}}` (structure checked 3 Nov 2026). The routed ID is a space's sidebar `id`
+  (found among an older StorableSidebar backup's space IDs), so routes find their imported space; a route to a space
+  that isn't imported is left out. Kite keeps a Little Arc or most-recent default as Open Links from Other Apps in
+  Little Kite, taking Arc's `openExternalLinksInLittleBrowserEnabled` first and the file's default when that's unset
+  (which one Arc itself obeys wasn't found; on the Mac checked they agreed).
 
 ## View › Developer: Inspect Elements, JavaScript Console, Network Inspector (Arc 1.171, 1 Nov 2026)
 
