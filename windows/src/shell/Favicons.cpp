@@ -262,6 +262,9 @@ void Work(const std::shared_ptr<Favicons::Shared>& shared) {
     }
     if (session.value) {
         WinHttpSetTimeouts(session.value, kTimeoutMs, kTimeoutMs, kTimeoutMs, kTimeoutMs);
+        // Redirects count against the fetch's time like the rest (a /favicon.ico often moves).
+        DWORD redirects = 3;
+        WinHttpSetOption(session.value, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS, &redirects, sizeof(redirects));
         DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;
         WinHttpSetOption(session.value, WINHTTP_OPTION_DECOMPRESSION, &decompress, sizeof(decompress));
     }
@@ -328,7 +331,7 @@ const Pixels* Favicons::Get(const std::string& url, UINT side) {
     Entry& entry = found->second;
     entry.used = ++clock_;
     if (auto sized = entry.sized.find(side); sized != entry.sized.end()) return &sized->second;
-    if (entry.failed || entry.fetching || entry.decoding.contains(side)) return nullptr;
+    if (entry.failed || entry.fetching || entry.decoding.contains(side) || entry.failedSides.contains(side)) return nullptr;
     Job job{url, side, entry.bytes};
     if (entry.bytes) {
         entry.decoding.insert(side);
@@ -364,12 +367,15 @@ bool Favicons::TakeResults() {
         if (result.pixels) {
             entry.sized.insert_or_assign(result.side, std::move(*result.pixels));
             arrived = true;
-        } else {
+        } else if (result.fetched || entry.sized.empty()) {
             // Not fetched or not an image: it stays the globe, and isn't asked for again this
             // run (the Mac's `missing`).
             entry.failed = true;
             entry.bytes.reset();
             entry.sized.clear();
+        } else {
+            // Only this size didn't decode: the others stay, and it isn't tried again.
+            entry.failedSides.insert(result.side);
         }
     }
     if (!done.empty()) Evict({});
@@ -388,6 +394,11 @@ void Favicons::Evict(const std::string& keep) {
         }
         if (oldest == entries_.end()) break;
         total -= Cost(oldest->first, oldest->second.bytes, oldest->second.sized);
+        if (oldest->second.fetching || !oldest->second.decoding.empty()) {
+            // Its queued work isn't wanted any more (a page that keeps changing its icon).
+            std::lock_guard lock(shared_->mutex);
+            std::erase_if(shared_->queue, [&](const Job& job) { return job.url == oldest->first; });
+        }
         entries_.erase(oldest);
     }
 }

@@ -409,9 +409,11 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
     if (row.favicon.url && favicons_) {
         const UINT px = static_cast<UINT>(std::lround(side * static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI));
         const auto key = std::make_pair(*row.favicon.url, px);
+        // Asked every draw, so an icon on screen stays recently used in the cache.
+        const Pixels* pixels = favicons_->Get(*row.favicon.url, px);
         auto found = faviconBitmaps_.find(key);
         if (found == faviconBitmaps_.end()) {
-            if (const Pixels* pixels = favicons_->Get(*row.favicon.url, px)) {
+            if (pixels) {
                 D2D1_BITMAP_PROPERTIES1 props{};
                 props.pixelFormat = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
                 props.dpiX = props.dpiY = static_cast<float>(dpi_);

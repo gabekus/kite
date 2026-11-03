@@ -52,6 +52,7 @@ private:
         bool failed = false;  // not fetched, or not an image: asked for no more this run
         std::map<UINT, Pixels> sized;
         std::set<UINT> decoding;
+        std::set<UINT> failedSides;
         uint64_t used = 0;
     };
     void Evict(const std::string& keep);
