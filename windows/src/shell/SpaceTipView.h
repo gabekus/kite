@@ -41,11 +41,8 @@ public:
     // Shows `tip` for space `spaceID` over `cell` (window points, the owner's client area) at the
     // owner's `dpi`, fading in. Empty on success.
     std::wstring Show(const std::string& spaceID, const SpaceTip& tip, const BarRect& cell, UINT dpi);
-    // Hides it at once (SpaceTipWindow.hide orders the panel out without a fade); with an id,
-    // only if it's that space's.
+    // Hides it at once (SpaceTipWindow.hide orders the panel out without a fade).
     void Hide();
-    void Hide(const std::string& spaceID);
-    const std::optional<std::string>& Showing() const { return showing_; }
 
     // For --capture: `tip` over `cell` drawn at `dpi` as the window would show it at rest, without
     // a window, and its top-left in the owner's client px.

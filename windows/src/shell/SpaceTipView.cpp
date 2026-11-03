@@ -85,17 +85,31 @@ std::unique_ptr<SpaceTipView> SpaceTipView::Create(HWND owner, IDWriteFactory* d
         return nullptr;
     }
     // Never activated, never in the taskbar or Alt+Tab, and transparent to the mouse
-    // (ignoresMouseEvents: WindowProc). DirectComposition draws all of it.
-    view->window_ = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kClassName, L"", WS_POPUP, 0, 0, 1, 1,
-                                    owner, nullptr, instance, nullptr);
+    // (ignoresMouseEvents): WS_EX_TRANSPARENT on a layered window passes it to whatever's
+    // under it, another app's window or the page's included. DirectComposition draws all of it.
+    view->window_ =
+        CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT, kClassName, L"",
+                        WS_POPUP, 0, 0, 1, 1, owner, nullptr, instance, view.get());
     if (!view->window_) {
         error = L"creating the space tip's window failed";
         return nullptr;
     }
+    SetLayeredWindowAttributes(view->window_, 0, 255, LWA_ALPHA);
     return view;
 }
 
 LRESULT CALLBACK SpaceTipView::WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_NCCREATE) {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams));
+    }
+    // Windows destroys an owned window with its owner (the browser window's WM_CLOSE): the view
+    // forgets it, so it never destroys or shows a handle that's gone.
+    if (message == WM_NCDESTROY) {
+        if (auto* view = reinterpret_cast<SpaceTipView*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA))) {
+            view->window_ = nullptr;
+            view->showing_.reset();
+        }
+    }
     // The pointer goes through to the window under it (the browser window, on this thread), so
     // the cell's hover and the sidebar's rows never see the tip; a click never activates it.
     if (message == WM_NCHITTEST) return HTTRANSPARENT;
@@ -254,6 +268,7 @@ std::wstring SpaceTipView::DrawInto(IDCompositionVirtualSurface* surface, UINT w
 
 std::wstring SpaceTipView::Show(const std::string& spaceID, const SpaceTip& tip, const BarRect& cell, UINT dpi) {
     if (!compositor_) return L"no compositor";
+    if (!window_) return L"the space tip's window is gone";
     const float scale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
     const Measured measured = Measure(tip);
     const UINT width = static_cast<UINT>(std::ceil(measured.layout.width * scale));
@@ -282,9 +297,11 @@ std::wstring SpaceTipView::Show(const std::string& spaceID, const SpaceTip& tip,
     }
     // Faded in from 0 over 0.15 s on the compositor: NSAnimationContext's alphaValue, on Core
     // Animation's default curve (the Mac's measured fade).
+    static const std::vector<CubicSegment> kFade =
+        TimingCurveSegments(kDefaultTiming[0], kDefaultTiming[1], kDefaultTiming[2], kDefaultTiming[3], T::kFadeIn);
     ComPtr<IDCompositionAnimation> fade;
     if (SUCCEEDED(hr = compositor_->Device()->CreateAnimation(fade.GetAddressOf()))) {
-        for (const CubicSegment& s : TimingCurveSegments(kDefaultTiming[0], kDefaultTiming[1], kDefaultTiming[2], kDefaultTiming[3], T::kFadeIn)) {
+        for (const CubicSegment& s : kFade) {
             if (FAILED(hr = fade->AddCubic(s.begin, static_cast<float>(s.constant), static_cast<float>(s.linear), static_cast<float>(s.quadratic),
                                            static_cast<float>(s.cubic)))) {
                 break;
@@ -298,8 +315,10 @@ std::wstring SpaceTipView::Show(const std::string& spaceID, const SpaceTip& tip,
     POINT topLeft{static_cast<LONG>(std::lround(origin.x * scale)), static_cast<LONG>(std::lround(origin.y * scale))};
     ClientToScreen(owner_, &topLeft);
     if (FAILED(hr = compositor_->Commit())) return fail(L"showing the space tip");
-    SetWindowPos(window_, HWND_TOP, topLeft.x, topLeft.y, static_cast<int>(width), static_cast<int>(height),
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
+    // Its place in the z-order kept: just over its owner (addChildWindow ordered above), never
+    // over another app's window that covers Kite's.
+    SetWindowPos(window_, nullptr, topLeft.x, topLeft.y, static_cast<int>(width), static_cast<int>(height),
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOZORDER | SWP_NOOWNERZORDER);
     showing_ = spaceID;
     return {};
 }
@@ -308,10 +327,9 @@ void SpaceTipView::Hide() {
     if (!showing_) return;
     showing_.reset();
     ShowWindow(window_, SW_HIDE);
-}
-
-void SpaceTipView::Hide(const std::string& spaceID) {
-    if (showing_ == spaceID) Hide();
+    // Clear, so a show that reaches the screen before its commit can't flash the last tip. Not
+    // committed here (a hide can come mid-pass): the next commit, the hover's own, carries it.
+    if (fade_) fade_->SetOpacity(0.0f);
 }
 
 std::wstring SpaceTipView::Render(const SpaceTip& tip, const BarRect& cell, UINT dpi, Pixels& out, POINT& origin) {
