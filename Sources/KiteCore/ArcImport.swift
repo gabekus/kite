@@ -10,9 +10,13 @@ import Foundation
 /// kinds are skipped and reported rather than failing the whole import.
 public enum ArcImport {
     public struct Result: Sendable {
+        /// Each space's `profile` is still Arc's profile folder ("Profile 1"; nil for Arc's
+        /// Default): `BrowserState.merge` maps it to a Kite profile.
         public var spaces: [Space]
-        /// Arc's favorites grid, from every profile the imported spaces used.
-        public var favorites: [BrowserTab]
+        /// Arc's favorites grid for each profile the spaces use, by Arc profile folder.
+        public var favoritesByProfile: [String: [BrowserTab]]
+        /// Arc profile folders, in the order the spaces use them.
+        public var profiles: [String]
         public var tabCount: Int
         public var folderCount: Int
         public var splitCount: Int
@@ -21,6 +25,9 @@ public enum ArcImport {
         public var untitledSpaceIDs: Set<UUID>
         /// Things that didn't carry over exactly, in plain words for the user.
         public var notes: [String]
+
+        /// Every profile's favorites, in profile order.
+        public var favorites: [BrowserTab] { profiles.flatMap { favoritesByProfile[$0] ?? [] } }
     }
 
     public enum Failure: Error, Equatable {
@@ -56,7 +63,7 @@ public enum ArcImport {
         let now: Date
         var spaceObjects: [[String: Any]] = []
         var items: [String: [String: Any]] = [:]
-        /// Arc profile ("default" or its directory name) → favorites container item ID.
+        /// Arc profile folder ("Default", "Profile 1"…) → favorites container item ID.
         var favoritesContainers: [String: String] = [:]
 
         var usedIDs: Set<UUID> = []
@@ -101,33 +108,32 @@ public enum ArcImport {
                 if let space = buildSpace(object, index: spaces.count) { spaces.append(space) }
             }
 
-            // Favorites: per profile in Arc, one shared grid in Kite.
-            var favorites: [BrowserTab] = []
+            // Favorites: a grid per profile, in Arc and in Kite.
+            var favorites: [String: [BrowserTab]] = [:]
             for profile in profiles {
                 guard let containerID = favoritesContainers[profile] else { continue }
                 // A split in the favorites grid can't stay one: favorites belong to no space.
                 spaceSplits = []
                 let tabs = children(of: containerID).flatMap { flatTabs($0) }
                 spaceSplits = []
-                for tab in tabs
-                where !favorites.contains(where: { $0.url == tab.url }) {
-                    favorites.append(tab)
+                var grid: [BrowserTab] = []
+                for tab in tabs where !grid.contains(where: { $0.url == tab.url }) {
+                    grid.append(tab)
                 }
+                if !grid.isEmpty { favorites[profile] = grid }
             }
 
             var notes: [String] = []
             if verticalSplits > 0 {
                 notes.append("\(verticalSplits) split view\(verticalSplits == 1 ? " is" : "s are") stacked top to bottom in Arc. Kite shows \(verticalSplits == 1 ? "it" : "them") side by side until it has that layout.")
             }
-            if profiles.count > 1 {
-                notes.append("Your spaces used \(profiles.count) Arc profiles. Kite has one profile for now, so you'll sign in to sites again.")
-            }
             if !skippedKinds.isEmpty {
                 notes.append("Skipped unsupported sidebar items: \(skippedKinds.sorted().joined(separator: ", ")).")
             }
             return Result(
                 spaces: spaces,
-                favorites: favorites,
+                favoritesByProfile: favorites,
+                profiles: profiles,
                 tabCount: tabCount,
                 folderCount: folderCount,
                 splitCount: splitCount,
@@ -142,11 +148,11 @@ public enum ArcImport {
             let pinned = containers["pinned"].map { children(of: $0).flatMap { pinnedItems($0) } } ?? []
             let unpinned = containers["unpinned"].map { children(of: $0).flatMap { flatTabs($0) } } ?? []
 
-            let profile = profileKey(object["profile"]) ?? "default"
-            if !profiles.contains(profile) { profiles.append(profile) }
+            let profile = profileKey(object["profile"]) ?? Profile.defaultDirectory
 
             let name = (object["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             if name == nil && pinned.isEmpty && unpinned.isEmpty { return nil }
+            if !profiles.contains(profile) { profiles.append(profile) }
 
             splitCount += spaceSplits.count
             verticalSplits += spaceSplits.filter { $0.orientation == .vertical }.count
@@ -154,7 +160,7 @@ public enum ArcImport {
             let customInfo = object["customInfo"] as? [String: Any]
             let id = uniqueID(object["id"])
             if name == nil { untitled.insert(id) }
-            return Space(
+            var space = Space(
                 id: id,
                 name: name ?? "Arc Space",
                 icon: icon(customInfo?["iconType"]) ?? Self.fallbackIcons[index % Self.fallbackIcons.count],
@@ -164,6 +170,8 @@ public enum ArcImport {
                 selectedTabID: unpinned.first?.id,
                 splits: spaceSplits
             )
+            space.profile = profile == Profile.defaultDirectory ? nil : profile
+            return space
         }
 
         private static let fallbackIcons = ["🌀", "🌿", "🎨", "📚", "🎧", "🧪"]
@@ -276,7 +284,8 @@ public enum ArcImport {
 
         private func profileKey(_ raw: Any?) -> String? {
             guard let profile = raw as? [String: Any] else { return nil }
-            if profile["default"] != nil { return "default" }
+            // Arc's Default profile lives in User Data/Default, as Kite's does.
+            if profile["default"] != nil { return Profile.defaultDirectory }
             let custom = (profile["custom"] as? [String: Any])?["_0"] as? [String: Any]
             return custom?["directoryBasename"] as? String
         }
@@ -338,15 +347,79 @@ public enum ArcImport {
 }
 
 extension BrowserState {
-    /// Adds imported spaces and favorites. A space imported before (same ID) is
-    /// replaced, so importing again before Arc shuts down picks up changes.
+    /// What an import did. `profiles` maps each Arc profile folder the imported spaces use to
+    /// the Kite profile folder that now holds them, so the shell can bring each one's history.
+    public struct ArcMerge: Equatable, Sendable {
+        public var added: Int
+        public var updated: Int
+        public var profiles: [String: String]
+        /// Kite profiles the import made, in order.
+        public var newProfiles: [String]
+    }
+
+    /// The Kite profile each Arc profile folder in `directories` goes to, for those that
+    /// already have one: Arc's Default is Kite's; otherwise a profile an imported space already
+    /// sits in (so a rename in Kite sticks), then one with the same name. The rest get a new
+    /// profile. `names` is Arc's folder → profile name, from Arc's `Local State`.
+    public func existingProfiles(forArc directories: [String], spaces imported: [Space], names: [String: String]) -> [String: String] {
+        var result: [String: String] = [:]
+        for arc in directories {
+            if arc == Profile.defaultDirectory {
+                result[arc] = Profile.defaultDirectory
+                continue
+            }
+            let placed = imported
+                .filter { $0.profile == arc }
+                .compactMap { space in spaceIndex(space.id).flatMap { spaces[$0].profile } }
+                .first { directory in profiles.contains { $0.directory == directory } }
+            if let placed {
+                result[arc] = placed
+            } else if let name = names[arc]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      let match = allProfiles.first(where: { $0.name.compare(name, options: .caseInsensitive) == .orderedSame }) {
+                result[arc] = match.directory
+            }
+        }
+        return result
+    }
+
+    /// Adds imported spaces and each profile's favorites, making a Kite profile for each Arc
+    /// profile that has none yet (see `existingProfiles`). A space imported before (same ID) is
+    /// replaced, so importing again before Arc shuts down picks up changes. `imported` spaces
+    /// carry Arc's profile folder, as `ArcImport.parse` leaves them.
     @discardableResult
-    public mutating func merge(imported: [Space], favorites newFavorites: [BrowserTab] = []) -> (added: Int, updated: Int) {
+    public mutating func merge(
+        imported: [Space],
+        favoritesByProfile newFavorites: [String: [BrowserTab]] = [:],
+        profileNames names: [String: String] = [:]
+    ) -> ArcMerge {
         defer { syncPinnedURLs() }
-        let existing = Set(favorites.compactMap(\.url))
-        favorites += newFavorites.filter { $0.url.map { !existing.contains($0) } ?? false }
-        var added = 0, updated = 0
+        var arcProfiles: [String] = []
         for space in imported {
+            let arc = space.profile ?? Profile.defaultDirectory
+            if !arcProfiles.contains(arc) { arcProfiles.append(arc) }
+        }
+        var map = existingProfiles(forArc: arcProfiles, spaces: imported, names: names)
+        var made: [String] = []
+        for arc in arcProfiles where map[arc] == nil {
+            let name = names[arc].flatMap { validateProfileName($0) == nil ? $0 : nil } ?? arc
+            // The name can only be taken by a profile `existingProfiles` passed over; say where it's from.
+            let profile = (try? createProfile(named: name)) ?? (try? createProfile(named: "\(name) (Arc)"))
+            map[arc] = profile?.directory ?? Profile.defaultDirectory
+            if let profile { made.append(profile.directory) }
+        }
+
+        for (arc, tabs) in newFavorites {
+            guard let directory = map[arc] else { continue }
+            var grid = favoritesByProfile[directory] ?? []
+            let existing = Set(grid.compactMap(\.url))
+            grid += tabs.filter { $0.url.map { !existing.contains($0) } ?? false }
+            favoritesByProfile[directory] = grid.isEmpty ? nil : grid
+        }
+
+        var added = 0, updated = 0
+        for var space in imported {
+            let directory = map[space.profile ?? Profile.defaultDirectory] ?? Profile.defaultDirectory
+            space.profile = directory == Profile.defaultDirectory ? nil : directory
             if let index = spaceIndex(space.id) {
                 spaces[index] = space
                 updated += 1
@@ -356,6 +429,6 @@ extension BrowserState {
             }
         }
         if let first = imported.first { selectedSpaceID = first.id }
-        return (added, updated)
+        return ArcMerge(added: added, updated: updated, profiles: map, newProfiles: made)
     }
 }

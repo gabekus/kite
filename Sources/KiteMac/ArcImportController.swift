@@ -35,8 +35,20 @@ enum ArcImportController {
     /// Arc's archived tabs (Archive › View Archive).
     static var archiveFile: URL { arcDirectory.appendingPathComponent("StorableArchiveItems.json") }
 
-    /// The default Arc profile's browsing history.
-    static var historyFile: URL { arcDirectory.appendingPathComponent("User Data/Default/History") }
+    /// An Arc profile's browsing history; `profile` is its folder ("Default", "Profile 1"…).
+    static func historyFile(profile: String) -> URL {
+        arcDirectory.appendingPathComponent("User Data", isDirectory: true)
+            .appendingPathComponent(profile, isDirectory: true)
+            .appendingPathComponent("History")
+    }
+
+    /// Arc's profile names by folder, from Chromium's `Local State`, where Arc's
+    /// setProfileUserVisibleName(for:name:) keeps them.
+    static func readProfileNames() -> [String: String] {
+        let file = arcDirectory.appendingPathComponent("User Data/Local State")
+        guard let data = try? Data(contentsOf: file) else { return [:] }
+        return Dictionary(ImportProfiles.chromium(localState: data).map { ($0.directory, $0.name) }) { first, _ in first }
+    }
 
     private static let arcDefaultsDomain = "company.thebrowser.Browser"
 
@@ -95,12 +107,19 @@ enum ArcImportController {
         let keyBindings = (try? Data(contentsOf: keyBindingsFile)).flatMap { try? ArcKeyBindingsImport.parse($0) } ?? []
         let archive = (try? Data(contentsOf: archiveFile)).map(ArcArchiveImport.parse) ?? []
         // Incognito windows keep no history, so there's nowhere to put Arc's.
-        let history = store.history == nil ? [] : ArcHistoryImport.read(from: historyFile)
+        var histories: [String: [HistoryEntry]] = [:]
+        if store.historyRoot != nil {
+            for profile in result.profiles {
+                histories[profile] = ArcHistoryImport.read(from: historyFile(profile: profile))
+            }
+        }
+        let historyCount = histories.values.reduce(0) { $0 + $1.count }
+        let profileNames = readProfileNames()
         let settings = readArcSettings()
         var lines = [summary(result)]
         let extras = [
             archive.isEmpty ? nil : count(archive.count, "archived tab"),
-            history.isEmpty ? nil : count(history.count, "history page"),
+            historyCount == 0 ? nil : count(historyCount, "history page"),
             siteSearches.isEmpty ? nil : count(siteSearches.count, "Site Search shortcut"),
             keyBindings.isEmpty ? nil : count(keyBindings.count, "keyboard shortcut change"),
             settings.isEmpty ? nil : count(settings.names.count, "Arc setting") + " (" + settings.names.joined(separator: ", ") + ")",
@@ -109,10 +128,39 @@ enum ArcImportController {
         if archive.count > BrowserState.archiveLimit {
             lines.append("Kite's archive keeps the latest \(BrowserState.archiveLimit) tabs, so older archived tabs are left out.")
         }
+        if let profiles = profilesLine(result, names: profileNames, state: store.state) { lines.append(profiles) }
         lines += result.notes
         lines.append(reimported > 0
             ? "\(count(reimported, "space")) imported before will be replaced with Arc's current version, including changes you made to them in Kite."
             : "Importing again later replaces these spaces with Arc's current version, including changes you make to them in Kite.")
+
+        /// Imports, leaving out unnamed spaces unless `includeUntitled`.
+        func perform(includeUntitled: Bool) {
+            let spaces = result.spaces.filter { includeUntitled || !result.untitledSpaceIDs.contains($0.id) }
+            var merged: BrowserState.ArcMerge?
+            store.mutateWithoutUndo {
+                merged = $0.merge(imported: spaces, favoritesByProfile: result.favoritesByProfile, profileNames: profileNames)
+                $0.mergeSiteSearches(siteSearches)
+                $0.mergeArchive(imported: archive)
+                $0.apply(settings)
+            }
+            if let little = settings.opensExternalLinksInLittleKite {
+                UserDefaults.standard.set(little, forKey: LittleKite.opensExternalLinksKey)
+            }
+            // Each Arc profile's history goes to the Kite profile its spaces went to.
+            for (arc, kite) in merged?.profiles ?? [:] {
+                if let entries = histories[arc], !entries.isEmpty { store.historyRoot?.forProfile(kite).merge(entries) }
+            }
+            if !keyBindings.isEmpty {
+                (NSApp.delegate as? AppDelegate)?.keyBindings.merge(keyBindings, menu: NSApp.mainMenu)
+            }
+        }
+
+        if let mode = BrowserImportController.testMode {
+            FileHandle.standardError.write(Data("KITE_TEST_IMPORT: Arc: \(lines.joined(separator: " | "))\n".utf8))
+            if mode != "show" { perform(includeUntitled: false) }
+            return
+        }
 
         let alert = NSAlert()
         alert.messageText = "Import from Arc"
@@ -138,24 +186,22 @@ enum ArcImportController {
 
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else { return }
-            MainActor.assumeIsolated {
-                let skipUntitled = untitledBox?.state != .on
-                let spaces = result.spaces.filter { !(skipUntitled && result.untitledSpaceIDs.contains($0.id)) }
-                store.mutateWithoutUndo {
-                    $0.merge(imported: spaces, favorites: result.favorites)
-                    $0.mergeSiteSearches(siteSearches)
-                    $0.mergeArchive(imported: archive)
-                    $0.apply(settings)
-                }
-                if let little = settings.opensExternalLinksInLittleKite {
-                    UserDefaults.standard.set(little, forKey: LittleKite.opensExternalLinksKey)
-                }
-                if !history.isEmpty { store.history?.merge(history) }
-                if !keyBindings.isEmpty {
-                    (NSApp.delegate as? AppDelegate)?.keyBindings.merge(keyBindings, menu: NSApp.mainMenu)
-                }
-            }
+            MainActor.assumeIsolated { perform(includeUntitled: untitledBox?.state == .on) }
         }
+    }
+
+    /// Which Arc profiles get a new Kite profile, or nil when every space stays in the default one.
+    /// Counts all spaces, the unnamed ones too, since the checkbox comes after.
+    private static func profilesLine(_ result: ArcImport.Result, names: [String: String], state: BrowserState) -> String? {
+        guard result.profiles.contains(where: { $0 != Profile.defaultDirectory }) else { return nil }
+        let existing = state.existingProfiles(forArc: result.profiles, spaces: result.spaces, names: names)
+        let new = result.profiles.filter { existing[$0] == nil }.map { names[$0] ?? $0 }
+        var line = "Your spaces use \(count(result.profiles.count, "Arc profile"))."
+        if !new.isEmpty { line += " Kite makes \(new.count == 1 ? "a profile" : "profiles") for \(list(new.map { "“\($0)”" }))." }
+        if new.count < result.profiles.count {
+            line += new.isEmpty ? " They go into Kite profiles you already have." : " The others go into Kite profiles you already have."
+        }
+        return line + " Sign-ins don't carry over, so you'll sign in to sites again."
     }
 
     private static func summary(_ result: ArcImport.Result) -> String {
