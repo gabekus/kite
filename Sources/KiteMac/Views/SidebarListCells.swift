@@ -24,7 +24,9 @@ class SidebarRowCell: NSView {
         case "folder": FolderRowCell()
         case "split": SplitRowCell()
         case "newTab": NewTabRowCell()
-        default: HostedRowCell()
+        case "header": SpaceHeaderRowCell()
+        case "divider": TodayDividerRowCell()
+        default: InstantLinksRowCell()
         }
     }
 
@@ -759,11 +761,8 @@ final class FolderRowCell: SidebarRowCell {
         stop.opacity = 1
         stop.toolTip = "Stop Claude"
         addSubview(stop)
-        // An un-framed symbol: its frame is the symbol image's own size, the glyph placed in it as SwiftUI does.
-        if let glyph = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 9, weight: .bold)) {
-            chevron.image = place(glyph, in: glyph.size, placement: .center)
-        }
+        // An un-framed symbol: its frame is the symbol image's own size, the glyph where the image puts it.
+        chevron.image = rawSymbol("chevron.right", pointSize: 9, weight: .bold)
         chevron.imageScaling = .scaleNone
         chevron.contentTintColor = .labelColor
         chevron.wantsLayer = true
@@ -1199,48 +1198,4 @@ final class NewTabRowCell: SidebarRowCell {
         list?.store.showCommandBar(.newTab)
         return true
     }
-}
-
-// MARK: - Rows still drawn by SwiftUI
-
-/// The space's header, the Today divider and Instant Links' row, which take no drags of their own: still
-/// SwiftUI, hosted in the row.
-final class HostedRowCell: SidebarRowCell {
-    private var host: NSHostingView<AnyView>?
-
-    override func update() {
-        guard let model, let list else { return }
-        let view: AnyView
-        let store = list.store, actions = list.actions
-        switch model {
-        case .header(let h):
-            view = AnyView(SpaceHeaderRow(store: store, actions: actions, spaceID: h.spaceID).foregroundStyle(.primary))
-        case .divider(let d):
-            guard let space = store.state.spaces.first(where: { $0.id == d.spaceID }) else { return }
-            view = AnyView(TodayDividerRow(store: store, actions: actions, space: space).foregroundStyle(.primary))
-        case .instantLinks(let pending):
-            view = AnyView(InstantLinksRow(row: pending) { actions.dismissInstantLinks(pending.id) }
-                .padding(.vertical, (M.rowPitch - M.pillHeight) / 2)
-                .foregroundStyle(.primary))
-        default:
-            return
-        }
-        if let host {
-            host.rootView = view
-        } else {
-            let host = NSHostingView(rootView: view)
-            host.sizingOptions = []
-            addSubview(host)
-            self.host = host
-        }
-        super.update()
-    }
-
-    override func layout() {
-        super.layout()
-        host?.frame = bounds
-    }
-
-    // The hosted view handles its own presses and hover.
-    override func updateTrackingAreas() {}
 }

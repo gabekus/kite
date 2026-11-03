@@ -137,6 +137,14 @@ final class SidebarSpaceList: NSView {
     private func observeExtras() {
         let request = store.revealRequest
         let selected = store.state.selectedSpaceID
+        // The space menu's Change Space Icon… opens the picker from this space's header.
+        if store.iconPickerRequest == spaceID {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.store.iconPickerRequest == self.spaceID else { return }
+                self.store.iconPickerShown()
+                (self.table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? SpaceHeaderRowCell)?.openPicker(after: 0.15)
+            }
+        }
         if selected == spaceID { noteSelectedSpace() }
         if let request, request != revealHandled, selected == spaceID {
             revealHandled = request
@@ -158,7 +166,9 @@ final class SidebarSpaceList: NSView {
         guard let index = state.spaceIndex(spaceID) else { return [] }
         let space = state.spaces[index]
         let selectedID = space.selectedTabID
-        var rows: [SidebarRowModel] = [.header(.init(spaceID: space.id))]
+        var rows: [SidebarRowModel] = [.header(.init(
+            spaceID: space.id, name: space.name, icon: space.icon, theme: space.theme, hasPinned: !space.pinnedItems.isEmpty,
+            pinnedCollapsed: state.isPinnedSectionCollapsed(space.id), isRenaming: store.renamingSpaceID == space.id))]
 
         // View → Collapse Pinned Tabs leaves only the selected pinned tab.
         let shownPinned = state.shownPinnedItems(in: space)
@@ -167,7 +177,9 @@ final class SidebarSpaceList: NSView {
         // Arc's Tidy and Clear buttons sit on this divider (UnpinnedSectionDividerCellView).
         let canTidy = TidyTabs.isEnabled() && state.canTidyTabs(inSpace: space.id)
         if !space.pinnedItems.isEmpty || canTidy || !space.tabs.isEmpty {
-            rows.append(.divider(.init(spaceID: space.id)))
+            rows.append(.divider(.init(
+                spaceID: space.id, showsLine: !space.pinnedItems.isEmpty, canTidy: canTidy, canClear: !space.tabs.isEmpty,
+                clearAction: state.todayClearAction(inSpace: space.id), isTidying: store.tidyingSpaceIDs.contains(space.id))))
         }
         rows.append(.newTab(spaceID: space.id))
         // Where Instant Links' results will open (Arc's SidebarInstantLinks item).
@@ -445,8 +457,24 @@ final class SidebarSpaceList: NSView {
 
 /// What one row shows. Equatable, so only rows whose model changed are touched.
 enum SidebarRowModel: Equatable {
-    struct Header: Equatable { var spaceID: UUID }
-    struct Divider: Equatable { var spaceID: UUID }
+    struct Header: Equatable {
+        var spaceID: UUID
+        var name: String
+        var icon: String
+        var theme: Theme
+        var hasPinned: Bool
+        var pinnedCollapsed: Bool
+        var isRenaming: Bool
+    }
+
+    struct Divider: Equatable {
+        var spaceID: UUID
+        var showsLine: Bool
+        var canTidy: Bool
+        var canClear: Bool
+        var clearAction: TodayClearAction
+        var isTidying: Bool
+    }
 
     struct Tab: Equatable {
         var tab: BrowserTab

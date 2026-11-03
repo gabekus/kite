@@ -32,6 +32,7 @@ CLI ui tree '{"root":"0.5"}' > "$OUT/tree.txt"
 for spot in ${HOVERS:-"tab:160,400" "selected:160,650" "newtab:160,240" "header:160,175"}; do
   name=${spot%%:*}; xy=${spot#*:}
   CLI ui pointer "{\"points\":[[700,400],[$xy]]}" >/dev/null
+  sleep 0.5   # hover fades (0.1–0.15 s) finish
   CLI ui capture '{"region":[0,0,330,820]}' -o "$OUT/hover-$name.png" >/dev/null
 done
 CLI ui pointer '{"from":[2,150],"to":[328,150],"steps":82}' > "$OUT/pointer-x.txt"
