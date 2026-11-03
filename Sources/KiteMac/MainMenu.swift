@@ -468,6 +468,8 @@ enum MainMenu {
         ])
 
         submenu("Help", [
+            // Arc: Getting Started, then Essential Keyboard Shortcuts.
+            item("Getting Started", #selector(AppDelegate.showGettingStarted(_:)), toTarget: false, id: "gettingStarted"),
             item("Essential Keyboard Shortcuts", #selector(BrowserWindowController.showKeyboardShortcuts(_:)), id: "essentialKeyboardShortcuts"),
             .separator(),
             submenuItem("Troubleshooting", [

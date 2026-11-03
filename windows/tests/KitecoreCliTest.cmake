@@ -220,8 +220,8 @@ if(NOT target STREQUAL "pinnedChevron" OR NOT collapsed)
   message(FATAL_ERROR "click on the chevron gave ${hit}, then ${bar}")
 endif()
 # The space bar: Personal and Work centred between the end buttons (cells at 85 and 119, 8pt
-# into the 50pt bar), Personal lit, its emoji drawn and Work's SF Symbol a dot (until W9b2). A
-# click on Work's cell, in the bar at the window's bottom, selects it.
+# into the 50pt bar), Personal lit, its emoji drawn and Work's SF Symbol (briefcase) as Segoe
+# Fluent's E821, in its theme's accent. A click on Work's cell, in the bar at the window's bottom, selects it.
 string(JSON cells LENGTH "${bar}" spaceBar cells)
 string(JSON left0 GET "${bar}" spaceBar cells 0 left)
 string(JSON left1 GET "${bar}" spaceBar cells 1 left)
@@ -229,12 +229,54 @@ string(JSON top0 GET "${bar}" spaceBar cells 0 top)
 string(JSON lit0 GET "${bar}" spaceBar cells 0 lit)
 string(JSON lit1 GET "${bar}" spaceBar cells 1 lit)
 string(JSON workID GET "${bar}" spaceBar cells 1 id)
-string(JSON dot0 GET "${bar}" spaceBar cells 0 dot)
-string(JSON dot1 GET "${bar}" spaceBar cells 1 dot)
-if(NOT cells EQUAL 2 OR NOT left0 EQUAL 85 OR NOT left1 EQUAL 119 OR NOT top0 EQUAL 8 OR NOT lit0 EQUAL 1 OR NOT lit1 EQUAL 0 OR dot0
-   OR NOT dot1)
+string(JSON shows0 GET "${bar}" spaceBar cells 0 shows)
+string(JSON shows1 GET "${bar}" spaceBar cells 1 shows)
+string(JSON glyph1 GET "${bar}" spaceBar cells 1 glyph fluent)
+string(JSON accent1 GET "${bar}" spaceBar cells 1 accent)
+string(JSON headerShows GET "${bar}" rows 0 shows)
+if(NOT cells EQUAL 2 OR NOT left0 EQUAL 85 OR NOT left1 EQUAL 119 OR NOT top0 EQUAL 8 OR NOT lit0 EQUAL 1 OR NOT lit1 EQUAL 0
+   OR NOT shows0 STREQUAL "emoji" OR NOT shows1 STREQUAL "symbol" OR NOT glyph1 STREQUAL "E821"
+   OR NOT accent1 STREQUAL "#D74B86" OR NOT headerShows STREQUAL "emoji")
   message(FATAL_ERROR "the space bar gave ${bar}")
 endif()
+# Work's page header shows its briefcase too, in the same accent.
+sidebar_kitecore(work sidebar "${workID}")
+string(JSON workShows GET "${work}" rows 0 shows)
+string(JSON workGlyph GET "${work}" rows 0 glyph fluent)
+string(JSON workAccent GET "${work}" rows 0 accent)
+if(NOT workShows STREQUAL "symbol" OR NOT workGlyph STREQUAL "E821" OR NOT workAccent STREQUAL "#D74B86")
+  message(FATAL_ERROR "Work's header gave ${work}")
+endif()
+# Work's icon as a picture (a valid name and an invalid one), as a symbol Windows has no
+# stand-in for, and as none: a picture in the bar and the header; the dot in the bar with a blank
+# slot in the header; the dot with no slot.
+file(READ "${CMAKE_CURRENT_LIST_DIR}/../helix/states/sidebar.json" sidebarState)
+foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "")
+  set(other "${WORK}-icon")
+  file(REMOVE_RECURSE "${other}")
+  file(MAKE_DIRECTORY "${other}")
+  string(REPLACE "symbol:briefcase" "${icon}" changed "${sidebarState}")
+  file(WRITE "${other}/session.json" "${changed}")
+  execute_process(COMMAND "${KITECORE}" --profile "${other}" sidebar "${workID}" RESULT_VARIABLE code OUTPUT_VARIABLE out
+                  OUTPUT_STRIP_TRAILING_WHITESPACE)
+  string(JSON cellShows GET "${out}" spaceBar cells 1 shows)
+  string(JSON headShows GET "${out}" rows 0 shows)
+  # An invalid picture name is still a picture (its placeholder); no icon has no header slot.
+  if(icon MATCHES "^image:")
+    set(wantCell "picture")
+    set(wantHead "picture")
+  elseif(icon STREQUAL "")
+    set(wantCell "dot")
+    set(wantHead "none")
+  else()
+    set(wantCell "dot")
+    set(wantHead "blank")
+  endif()
+  if(NOT code EQUAL 0 OR NOT cellShows STREQUAL wantCell OR NOT headShows STREQUAL wantHead)
+    message(FATAL_ERROR "Work's icon ${icon} gave ${out}")
+  endif()
+  file(REMOVE_RECURSE "${other}")
+endforeach()
 sidebar_kitecore(hit click 140 795)
 string(JSON target GET "${hit}" target)
 string(JSON action GET "${hit}" action)

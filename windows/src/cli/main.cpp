@@ -181,6 +181,24 @@ json::Value ThemeSummary(const Theme& theme, int width, int height) {
                                     {"backdrop", json::Value(std::move(backdrop))}});
 }
 
+// What an icon shows: "dot", "emoji", "symbol" (with its Segoe Fluent and MDL2 glyphs as hex)
+// or "picture". A header draws no dot: it has no icon slot for an icon-less space ("none"), and a
+// blank one for a symbol with no stand-in ("blank").
+enum class LookIn { Bar, Header };
+void AddLook(json::Object& o, const SpaceIconLook& look, LookIn in = LookIn::Bar, bool headerSlot = false) {
+    static constexpr const char* kShows[] = {"dot", "emoji", "symbol", "picture"};
+    const char* shows = kShows[static_cast<int>(look.kind)];
+    if (in == LookIn::Header && look.kind == SpaceIconLook::Kind::Dot) shows = headerSlot ? "blank" : "none";
+    o.emplace("shows", std::string(shows));
+    if (look.glyph) {
+        char fluent[8], mdl2[8];
+        std::snprintf(fluent, sizeof fluent, "%04X", static_cast<unsigned>(look.glyph->fluent));
+        std::snprintf(mdl2, sizeof mdl2, "%04X", static_cast<unsigned>(look.glyph->mdl2));
+        o.emplace("glyph", json::Object{{"fluent", std::string(fluent)}, {"mdl2", std::string(mdl2)}, {"standIn", look.glyph->standIn}});
+    }
+    if (look.kind == SpaceIconLook::Kind::Symbol) o.emplace("accent", Hex(look.accent));
+}
+
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
 
@@ -304,6 +322,7 @@ int main(int argc, char** argv) {
             case SidebarRow::Kind::Header:
                 o.emplace("title", row.title);
                 o.emplace("icon", row.icon);
+                AddLook(o, row.look, LookIn::Header, !row.icon.empty());
                 o.emplace("pinnedCollapsed", row.pinnedCollapsed);
                 break;
             case SidebarRow::Kind::Tab:
@@ -330,15 +349,16 @@ int main(int argc, char** argv) {
         json::Array bar;
         for (size_t i = 0; i < cells.size(); ++i) {
             const BarRect& r = layout.cells[i];
-            bar.emplace_back(json::Object{{"id", cells[i].spaceID},
-                                          {"icon", cells[i].icon},
-                                          {"dot", cells[i].dot},
-                                          {"lit", cells[i].lit},
-                                          {"selected", cells[i].selected},
-                                          {"left", static_cast<double>(r.left)},
-                                          {"top", static_cast<double>(r.top)},
-                                          {"width", static_cast<double>(r.Width())},
-                                          {"height", static_cast<double>(r.Height())}});
+            json::Object cell{{"id", cells[i].spaceID},
+                              {"icon", cells[i].icon},
+                              {"lit", cells[i].lit},
+                              {"selected", cells[i].selected},
+                              {"left", static_cast<double>(r.left)},
+                              {"top", static_cast<double>(r.top)},
+                              {"width", static_cast<double>(r.Width())},
+                              {"height", static_cast<double>(r.Height())}};
+            AddLook(cell, cells[i].look);
+            bar.emplace_back(std::move(cell));
         }
         json::Object out{{"address", AddressFieldText(state)},
                          {"rows", json::Value(std::move(rows))},

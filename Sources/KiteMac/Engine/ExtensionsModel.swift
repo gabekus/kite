@@ -179,7 +179,7 @@ final class ExtensionsModel: ObservableObject {
 #endif
 
 #if canImport(CEFBridge)
-import SwiftUI
+import Combine
 
 /// The extensions a window shows: its current space's profile's, which change as you move
 /// between spaces with different profiles.
@@ -196,13 +196,5 @@ final class ExtensionsSelection: ObservableObject {
         self.model = model
         model.refresh()
     }
-}
-
-/// `content` for the selection's current model.
-struct ExtensionsSelectionView<Content: View>: View {
-    @ObservedObject var selection: ExtensionsSelection
-    @ViewBuilder let content: (ExtensionsModel) -> Content
-
-    var body: some View { content(selection.model) }
 }
 #endif

@@ -22,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var littleControllers: [LittleKiteWindowController] = []
     /// Installed web apps (File › Install Page as App…, Window › Web Apps, kite-app:// links).
     private(set) lazy var webApps = WebAppsController(supportDirectory: Self.supportDirectory)
-    private lazy var airTraffic = AirTrafficControlStore(fileURL: Self.supportDirectory.appendingPathComponent("LinkRouting.json"))
+    private(set) lazy var airTraffic = AirTrafficControlStore(fileURL: Self.supportDirectory.appendingPathComponent("LinkRouting.json"))
     /// Routes menu commands to whichever browser window is in front.
     private var menuRouter: MenuRouter!
     private var archiveTimer: Timer?
@@ -61,10 +61,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .appendingPathComponent("Kite", isDirectory: true)
     }
 
+    static var sessionURL: URL { supportDirectory.appendingPathComponent("session.json") }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Release builds check for updates (8-hourly, installing on quit); others do nothing.
         SoftwareUpdater.shared.start()
-        store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
+        // Before the store writes session.json, which tells a new profile from an existing install.
+        let showsOnboarding = OnboardingWindow.shouldShowAtLaunch()
+        store = BrowserStore(session: SessionStore(fileURL: Self.sessionURL))
         store.archiveStaleTabs()
         applyPageAppearance()
         // Deleted profiles whose folders are gone (ProfileFolders) free their names.
@@ -217,6 +221,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onPress: { [weak self] in self?.openLittleKiteWindow(url: nil) }
         )
         keyBindings.didApply = { [weak self] in self?.littleKiteHotkey?.update() }
+        if showsOnboarding { showGettingStarted(nil) }
+    }
+
+    /// Help › Getting Started, and onboarding on a new profile's first launch.
+    @objc func showGettingStarted(_ sender: Any?) {
+        OnboardingWindow.show { [weak self] in
+            guard let self else { return nil }
+            if let open = browserControllers.first(where: { !$0.isIncognito && $0.window?.isVisible == true }) { return open }
+            return windows.openNewWindow()
+        }
     }
 
     /// Links from other apps and opened HTML files, each in a new tab.

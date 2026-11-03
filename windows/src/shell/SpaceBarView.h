@@ -6,9 +6,9 @@
 //
 // It's DirectComposition visuals in the sidebar's chrome: the bar's surface (the end buttons,
 // drawn only for a new width, scale or appearance), then, clipped to the strip's viewport, the
-// hovered cell's backing (its own small visual that moves) and each cell's icon twice, greyed and
-// in colour, or its dot, each in its own small surface with an opacity. A space switch's slide
-// relights the cells as the pages slide (SpaceSwipe::Highlight), as DirectComposition animations
+// hovered cell's backing (its own small visual that moves) and each cell's icon (an emoji, or a
+// symbol or a picture as SpaceIconPainter draws them) twice, greyed and in colour, or its dot,
+// each in its own small surface with an opacity. A space switch's slide relights the cells as the pages slide (SpaceSwipe::Highlight), as DirectComposition animations
 // of those opacities on the same spring as the strip's, so no frame of it draws; hovering and
 // scrolling move visuals and draw nothing. What a cell shows and what a press does are core's
 // (core/SpaceBar.h). Not yet: the Library and the + menu (the buttons draw, and take no clicks),
@@ -21,20 +21,25 @@
 #include <dwrite.h>
 #include <wrl/client.h>
 
+#include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "core/SpaceBar.h"
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
+#include "shell/SpaceIconPainter.h"
 
 namespace kite {
 
 class SpaceBarView {
 public:
-    static std::unique_ptr<SpaceBarView> Create(IDWriteFactory* dwrite, std::wstring& error);
+    // `painter` (SidebarView's, which outlives the bar) draws its symbols and pictures; the
+    // sidebar releases its device objects.
+    static std::unique_ptr<SpaceBarView> Create(IDWriteFactory* dwrite, SpaceIconPainter* painter, std::wstring& error);
     ~SpaceBarView();
     SpaceBarView(const SpaceBarView&) = delete;
     SpaceBarView& operator=(const SpaceBarView&) = delete;
@@ -52,6 +57,8 @@ public:
     // SettleSegments), with the pages `built` around `selected`, `pageWidth` apart.
     void Slide(const std::vector<CubicSegment>& segments, double duration, double from, double to, double pageWidth,
                const std::vector<size_t>& built, size_t selected);
+    // The pictures `names` arrived (or turned out unreadable): the cells showing them draw again.
+    void InvalidatePictures(const std::set<std::string>& names);
     // At rest: each cell as it is (the slide's end, or a slide cut short), from the next draw.
     void Land();
     // Scrolls the strip by `by` points (positive shows later spaces) when the spaces don't fit.
@@ -100,11 +107,12 @@ private:
                            bool& fresh);
     std::wstring DrawBacking(bool readBack);
     void DrawBar(ID2D1DeviceContext* context);
-    // The emoji centred on its ink in the cell, into `context`.
-    void DrawEmoji(ID2D1DeviceContext* context, const SpaceCell& cell);
+    // The cell's icon in the middle of the cell, into `context`: an emoji centred on its ink, a
+    // symbol or a picture as SpaceIconPainter draws it (`greyed`: a symbol's grey tint).
+    void DrawIcon(ID2D1DeviceContext* context, const SpaceCell& cell, bool greyed);
     void DrawDot(ID2D1DeviceContext* context);
-    // The emoji recorded for the greyed layer, before that layer's draw begins.
-    Microsoft::WRL::ComPtr<ID2D1CommandList> RecordEmoji(const SpaceCell& cell, HRESULT& hr);
+    // The emoji or picture recorded for the greyed layer, before that layer's draw begins.
+    Microsoft::WRL::ComPtr<ID2D1CommandList> RecordIcon(const SpaceCell& cell, HRESULT& hr);
     void PlaceCells();
     void ShowBacking();
     // The opacities each layer shows at rest, or along the slide.
@@ -117,9 +125,10 @@ private:
 
     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> emojiFormat_;
+    SpaceIconPainter* painter_ = nullptr;
 
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
-    Microsoft::WRL::ComPtr<ID2D1Effect> saturation_;  // greys an emoji (the Mac's CIColorControls)
+    Microsoft::WRL::ComPtr<ID2D1Effect> saturation_;  // greys an emoji or a picture (the Mac's CIColorControls)
     // The Library button's archive box (lid, box, slot) and the + button, centred on 0,0.
     Microsoft::WRL::ComPtr<ID2D1PathGeometry> box_;
     Microsoft::WRL::ComPtr<ID2D1StrokeStyle> roundCaps_, flatCaps_;

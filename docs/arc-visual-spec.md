@@ -191,6 +191,12 @@ Kite also learns ⌘T picks, which Arc doesn't do this way (one pick left Arc's 
 for a text leads the next time you type it, or the start of it (2+ characters), until you pick something else for
 it. Picks are saved in the session and Delete browsing data › History forgets them.
 
+Site Search completion accepted with → (Arc 1.171 incognito, 3 Nov 2026, AX): "you" showed "youtube.com" with
+"tube.com" selected; → then "/" gave "youtube.com/"; typing "x" without → gave "youx". Kite matches: anything typed
+after the completion instead of over it accepts it (`CommandBar.autocomplete(to:)`), so → does, and so do ⌥→, ^E
+and a click past the end (those three not observed in Arc; after a click the rows follow on the next key). End scrolls and leaves it selected; ⌘→ is Kite's hidden
+Go Forward shortcut, so it doesn't reach the field (checked with `kite ui`).
+
 ## Arc vs Kite
 
 Kite was built from this branch, run on WebKit with a fresh `KITE_SUPPORT_PATH` (`mktemp -d`) and a session seeded
@@ -388,7 +394,7 @@ the springs and eases in Arc's binary (see the vocabulary table above).
   options after any state change that adds, removes or moves rows. SwiftUI makes a new row's view after the table has
   animated, so the new row gets its own 0.12s opacity animation on the group's curve.
 
-## Extensions in the toolbar → `ExtensionsToolbarItems`, `ExtensionsMenu`
+## Extensions in the toolbar → `ToolbarExtensionItems`, `ExtensionsMenu`
 
 Measured on Arc 1.169 with the masked probe (roles and frames only) on a window with the content toolbar showing
 (sidebar hidden), Oct 2026. Window points; the toolbar row is y 10–42.
@@ -1165,7 +1171,13 @@ user's is copied. Test fixtures are made up.
   Mac (Arc's default), so the element encoding (profile, then a case name such as `sevenDays`, next to
   `thresholds` in arc-strings.txt ~165658) is inferred.
 - `StorableLinkRouting.json` holds Air Traffic Control rules (`rules[].sourceComponents[].componentType.urlMatch`,
-  `destination.space`). Kite has no link routing yet, so it isn't imported.
+  `destination.space`). Import from Arc brings them into Air Traffic Control (ArcLinkRoutingImport); a route to an
+  Arc profile is left out. A real file's destination is `{"space": {"_0": {"space": {"_0": id}}}}`, and its default
+  `{"littleArc": {"_0": {"mostRecent": {}}}}` (structure checked 3 Nov 2026). The routed ID is a space's sidebar `id`
+  (found among an older StorableSidebar backup's space IDs), so routes find their imported space; a route to a space
+  that isn't imported is left out. Kite keeps a Little Arc or most-recent default as Open Links from Other Apps in
+  Little Kite, taking Arc's `openExternalLinksInLittleBrowserEnabled` first and the file's default when that's unset
+  (which one Arc itself obeys wasn't found; on the Mac checked they agreed).
 
 ## View › Developer: Inspect Elements, JavaScript Console, Network Inspector (Arc 1.171, 1 Nov 2026)
 
@@ -2874,7 +2886,7 @@ through `DialogsClient` (`SharedWindowFeature/WindowData+Dialogs.swift`, `ARCCli
   (command id `toggleToolbarFullURLs`, Arc's action name), not an Arc menu item. The right-click menu is built
   now (g105, next section).
 
-## Toolbar right-click menu → `ToolbarMenu` (KiteCore), `PageToolbarHost`, `BrowserWindowController+ToolbarMenu` (Arc 1.171 disassembly and strings, 1 Nov 2026, g105)
+## Toolbar right-click menu → `ToolbarMenu` (KiteCore), `PageToolbar`, `BrowserWindowController+ToolbarMenu` (Arc 1.171 disassembly and strings, 1 Nov 2026, g105)
 
 All from `~/rea-arc/decomp/arc.s` (Arc 1.171) and `~/rea-arc/arc-strings.txt`; nothing in Arc was opened or
 pressed, so none of it was seen on screen.
@@ -3721,3 +3733,31 @@ accessibility frames and pixel colours only (no screenshot of the mail was looke
 - Click (Kite): a row opens the message in the favorite. **[unverified]** what Arc does on click.
 - **[unverified]** Calendar and recents cards: none of Gabe's favorites has them, so their rows follow the email
   row's type and padding. Light-appearance colours are unmeasured (Gabe's spaces are dark).
+
+## Onboarding and Help › Getting Started → `Onboarding`, `ClaudeSetupPrompt` (KiteCore), `OnboardingWindow` (Arc 1.171 binary, strings and bundles, 3 Nov 2026)
+
+Observed (binary and bundles only):
+- Arc's first-launch flow runs in a window of its own (`_closeOnboardingWindow`, `_finishOnboarding`,
+  `finishedOnboarding`), after account sign-in (AuthFeature). Its bundle, `ARC_AuthFeature.bundle`, holds a
+  2880×1800 grainy blue backdrop (`static-bg.png`), `WindowBackground` #3139FB, white `Title`, 61% white
+  `AuthSecondaryText` in dark, a `BackButton` colour, intro music and a demo video.
+- Its steps, from the step strings' comments (string-table order, not necessarily flow order): import ("Description for import step"), Safari import,
+  bookmarks, theme, favorites, ad blocker, default browser, Arc Max, and a last step titled "Welcome to Arc, %@".
+  Each is a title of a few words, a sentence or two, and one primary button.
+- After it, `WelcomeToArcFeature` (Arc101RootView) shows "Here are the basics" cards with videos (new tab,
+  pinning, spaces, split view) in the main window. Help › Getting Started (`gettingStarted`) reopens it; that
+  item is disabled in an incognito window.
+
+Not observed live: Arc's onboarding needs an Arc account and a fresh Arc profile, and Getting Started does nothing
+in incognito, so neither could be watched headlessly. Kite's window size (720×560), type sizes, spacing and the
+0.2 s step fade are Kite's own, not measured.
+
+Kite: a 720×560 window with a transparent title bar over a navy-to-blue grainy backdrop in Kite's icon colours,
+three steps (Welcome; Set Kite up with Claude with Copy Prompt for Claude; You're all set, with Import from Arc…
+when Arc's StorableSidebar.json exists), page dots and Back. It shows on a profile's first launch only
+(no session.json, history.json or windows.json yet, recorded in onboarding.json until finished), never on an existing install, and on a
+`KITE_SUPPORT_PATH` test profile only with `KITE_ONBOARDING=1`. Import from Arc… closes onboarding first, then
+runs the importer on the browser window, and File › Import from Arc… closes onboarding before it starts, so the two never show at once.
+
+Deliberate differences from Arc: Kite's Help › Getting Started reopens onboarding (Arc's reopens its "basics"
+cards, which Kite doesn't have), and it stays enabled in incognito windows.
