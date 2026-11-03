@@ -70,12 +70,15 @@ if(WIN32)
       COMMAND "${KITE_FXC}" /nologo /T ps_4_0 /E ThemePixel /O3 /Vn kThemePixelShader
               /Fh "${KITE_SHADER_DIR}/ThemePixel.h" "${KITE_THEME_HLSL}"
       DEPENDS "${KITE_THEME_HLSL}" VERBATIM)
+  elseif(MSVC)
+    # Shipping builds embed bytecode; never fall back to compiling at startup silently.
+    message(FATAL_ERROR "fxc not found: install the Windows SDK, or configure from a Visual Studio developer prompt")
   else()
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${KITE_THEME_HLSL}")
     file(READ "${KITE_THEME_HLSL}" KITE_THEME_SOURCE)
-    file(WRITE "${KITE_SHADER_DIR}/ThemeHlsl.inc"
-         "// Generated from src/shell/shaders/Theme.hlsl by CMake. Don't edit.\n"
-         "constexpr char kThemeHlsl[] = R\"hlsl(${KITE_THEME_SOURCE})hlsl\";\n")
+    # Written only when it changes, so a reconfigure doesn't rebuild Renderer.cpp.
+    file(CONFIGURE OUTPUT "${KITE_SHADER_DIR}/ThemeHlsl.inc"
+         CONTENT "// Generated from src/shell/shaders/Theme.hlsl by CMake. Don't edit.\nconstexpr char kThemeHlsl[] = R\"hlsl(@KITE_THEME_SOURCE@)hlsl\";\n" @ONLY)
     set(KITE_SHADER_HEADERS "${KITE_SHADER_DIR}/ThemeHlsl.inc")
   endif()
 
@@ -89,7 +92,7 @@ if(WIN32)
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
-  target_link_libraries(Kite PRIVATE KiteCoreWin user32 gdi32 dwmapi shell32 ole32 windowscodecs d3d11 dxgi dcomp)
+  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp)
   if(KITE_FXC)
     message(STATUS "Shaders: precompiled with ${KITE_FXC}")
   else()

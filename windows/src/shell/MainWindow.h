@@ -28,8 +28,12 @@ public:
     HWND Handle() const { return hwnd_; }
     void Show(int showCommand);
     // Shows the window behind every other one without activating it, for quiet test runs
-    // (like the Mac's KITE_DIAGNOSTICS launches). PrintWindow still captures it covered.
+    // (like the Mac's KITE_DIAGNOSTICS launches).
     void ShowBehindOtherWindows();
+    // Lays the window out at `scale`× (96 × scale DPI) whatever its monitor's scale, for
+    // captures that must compare with the Mac's 2× ones on any display. Monitor changes then
+    // keep this scale. Call before SetClientSize.
+    void UseFixedScale(int scale);
     // Client area in DIPs (96 DPI points), scaled to the window's monitor. Can be larger
     // than the screen, so a capture has the same size on every machine.
     void SetClientSize(int width, int height);
@@ -59,6 +63,7 @@ private:
     HWND hwnd_ = nullptr;
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool allowLargerThanScreen_ = false;
+    bool fixedScale_ = false;
 };
 
 }  // namespace kite

@@ -1,7 +1,7 @@
 #pragma once
 // Saves pixels as a PNG: Kite for Windows' side of the Helix UI gate (docs/helix.md), the
-// counterpart of `kite ui capture` on the Mac. The pixels come from Renderer::Render, which
-// draws the window's layers offscreen at any scale, so a 2× capture works on any monitor.
+// counterpart of `kite ui capture` on the Mac. The pixels are the window's own presented frame
+// (Compositor::Draw's read-back), laid out at --capture-scale× on any monitor.
 
 #include <windows.h>
 

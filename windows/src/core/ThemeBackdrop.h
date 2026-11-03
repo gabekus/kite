@@ -1,7 +1,7 @@
 #pragma once
 // The space's gradient backdrop: the uniforms the HLSL shader takes (shell/shaders/Theme.hlsl)
 // and a CPU reference of the same per-pixel maths. Both port `kite_theme_fragment` in the
-// Mac's Shaders/Kite.metal line for line; the GPU's output is checked against Shade() in CI
+// Mac's Shaders/Kite.metal line for line; the GPU's output is checked against ShadeThemePixel() in CI
 // (Kite.exe --backdrop-test), so the reference is the spec the shader has to meet.
 
 #include <cstddef>

@@ -3,6 +3,9 @@
 #include "shell/Renderer.h"
 
 #include <cstring>
+
+#include <d3d11_4.h>
+#include <dxgi.h>
 #include <iterator>
 
 #include "shell/Errors.h"
@@ -49,6 +52,13 @@ std::unique_ptr<Renderer> Renderer::Create(std::wstring& error) {
     return renderer;
 }
 
+Renderer::~Renderer() {
+    if (!deviceRemoved_) return;
+    ComPtr<ID3D11Device4> device4;
+    if (SUCCEEDED(device_.As(&device4))) device4->UnregisterDeviceRemoved(deviceRemovedCookie_);
+    CloseHandle(deviceRemoved_);
+}
+
 bool Renderer::Init(std::wstring& error) {
     // BGRA for DirectComposition and Direct2D; feature level 10 is enough for these shaders.
     const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1,
@@ -66,6 +76,24 @@ bool Renderer::Init(std::wstring& error) {
     if (FAILED(hr)) {
         error = HResultMessage(L"D3D11CreateDevice", hr);
         return false;
+    }
+    // Vendor 0x1414 is Microsoft: WARP, or the Basic Render Driver (WARP behind a "hardware"
+    // adapter) on machines without a GPU driver.
+    ComPtr<IDXGIDevice> dxgiDevice;
+    ComPtr<IDXGIAdapter> adapter;
+    DXGI_ADAPTER_DESC adapterDesc{};
+    if (SUCCEEDED(device_.As(&dxgiDevice)) && SUCCEEDED(dxgiDevice->GetAdapter(adapter.GetAddressOf())) &&
+        SUCCEEDED(adapter->GetDesc(&adapterDesc))) {
+        adapterName_ = adapterDesc.Description;
+        if (adapterDesc.VendorId == 0x1414) software_ = true;
+    }
+    ComPtr<ID3D11Device4> device4;
+    if (SUCCEEDED(device_.As(&device4))) {
+        deviceRemoved_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        if (deviceRemoved_ && FAILED(device4->RegisterDeviceRemovedEvent(deviceRemoved_, &deviceRemovedCookie_))) {
+            CloseHandle(deviceRemoved_);
+            deviceRemoved_ = nullptr;
+        }
     }
 
 #ifdef KITE_RUNTIME_SHADERS
@@ -139,17 +167,24 @@ void Renderer::DrawTheme(ID3D11RenderTargetView* target, UINT width, UINT height
     context_->OMSetRenderTargets(1, &none, nullptr);
 }
 
-std::optional<Pixels> Renderer::RenderTheme(UINT width, UINT height, const ThemeUniforms& uniforms, const Rgba& base,
-                                            std::wstring& error) {
+std::optional<std::vector<float>> Renderer::RenderTheme(UINT width, UINT height, const ThemeUniforms& uniforms, const Rgba& base,
+                                                        std::wstring& error) {
+    // 32-bit float, so the comparison sees the shader's own values: the ±0.5/255 dither and
+    // small grain or falloff errors would vanish in 8 bits.
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
     desc.Height = height;
     desc.MipLevels = 1;
     desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;  // the swap chain's format: values are sRGB-encoded already
+    desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
     desc.SampleDesc.Count = 1;
     desc.Usage = D3D11_USAGE_DEFAULT;
     desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+    UINT support = 0;
+    if (FAILED(device_->CheckFormatSupport(desc.Format, &support)) || !(support & D3D11_FORMAT_SUPPORT_BLENDABLE)) {
+        error = L"this device can't blend into 32-bit float targets";
+        return std::nullopt;
+    }
     ComPtr<ID3D11Texture2D> texture;
     HRESULT hr = device_->CreateTexture2D(&desc, nullptr, texture.GetAddressOf());
     if (FAILED(hr)) {
@@ -162,28 +197,51 @@ std::optional<Pixels> Renderer::RenderTheme(UINT width, UINT height, const Theme
         return std::nullopt;
     }
     DrawTheme(view.Get(), width, height, uniforms, base);
+    std::vector<float> rgba(static_cast<size_t>(width) * height * 4);
+    if (!ReadRows(texture.Get(), static_cast<UINT>(sizeof(float) * 4), reinterpret_cast<uint8_t*>(rgba.data()), error)) return std::nullopt;
+    return rgba;
+}
 
+std::optional<Pixels> Renderer::ReadBack(ID3D11Texture2D* texture, std::wstring& error) {
+    D3D11_TEXTURE2D_DESC desc{};
+    texture->GetDesc(&desc);
+    if (desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+        error = L"ReadBack takes BGRA8 textures";
+        return std::nullopt;
+    }
+    Pixels pixels{desc.Width, desc.Height, std::vector<uint8_t>(static_cast<size_t>(desc.Width) * desc.Height * 4)};
+    if (!ReadRows(texture, 4, pixels.bgra.data(), error)) return std::nullopt;
+    return pixels;
+}
+
+bool Renderer::ReadRows(ID3D11Texture2D* texture, UINT bytesPerPixel, uint8_t* out, std::wstring& error) {
+    D3D11_TEXTURE2D_DESC desc{};
+    texture->GetDesc(&desc);
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.SampleDesc = {1, 0};
     desc.Usage = D3D11_USAGE_STAGING;
     desc.BindFlags = 0;
     desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    desc.MiscFlags = 0;
     ComPtr<ID3D11Texture2D> staging;
-    if (FAILED(hr = device_->CreateTexture2D(&desc, nullptr, staging.GetAddressOf()))) {
+    HRESULT hr = device_->CreateTexture2D(&desc, nullptr, staging.GetAddressOf());
+    if (FAILED(hr)) {
         error = HResultMessage(L"CreateTexture2D (staging)", hr);
-        return std::nullopt;
+        return false;
     }
-    context_->CopyResource(staging.Get(), texture.Get());
+    context_->CopyResource(staging.Get(), texture);
     D3D11_MAPPED_SUBRESOURCE mapped{};
     if (FAILED(hr = context_->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
         error = HResultMessage(L"Map", hr);
-        return std::nullopt;
+        return false;
     }
-    Pixels pixels{width, height, std::vector<uint8_t>(static_cast<size_t>(width) * height * 4)};
-    for (UINT y = 0; y < height; ++y) {
-        std::memcpy(pixels.bgra.data() + static_cast<size_t>(y) * width * 4,
-                    static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch, width * 4);
+    const size_t rowBytes = static_cast<size_t>(desc.Width) * bytesPerPixel;
+    for (UINT y = 0; y < desc.Height; ++y) {
+        std::memcpy(out + y * rowBytes, static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch, rowBytes);
     }
     context_->Unmap(staging.Get(), 0);
-    return pixels;
+    return true;
 }
 
 }  // namespace kite

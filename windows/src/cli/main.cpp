@@ -12,7 +12,8 @@
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
 // isn't running on: both write session.json. `theme` prints the space's theme maths
-// (lightness, foreground, glow, accent) as sRGB hex.
+// (lightness, foreground, glow, accent) and its window backdrop (material and corner pixels
+// at 1280×820) as sRGB hex.
 
 #include <algorithm>
 #include <cmath>
@@ -24,6 +25,7 @@
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
 #include "core/SupportDirectory.h"
+#include "core/ThemeBackdrop.h"
 #include "core/URLInput.h"
 #include "core/Unicode.h"
 #include "core/Uuid.h"
@@ -114,7 +116,22 @@ std::string Hex(const ThemeColor& c) {
     return buffer;
 }
 
+std::string Hex(const Rgba& c) { return Hex(ThemeColor{c.r, c.g, c.b}); }
+
 json::Value ThemeSummary(const Theme& theme) {
+    // The window's backdrop at the Mac's default size (in pixels at 1×): the theme over the
+    // solid material colour, as Kite.exe --capture draws it.
+    const Rgba material = MaterialFallback(!PrefersDarkForeground(theme));
+    const float w = 1280, h = 820;
+    const ThemeUniforms uniforms = MakeThemeUniforms(theme, w, h);
+    auto at = [&](float x, float y) { return json::Value(Hex(Over(ShadeThemePixel(uniforms, x + 0.5f, y + 0.5f), material))); };
+    json::Object backdrop{{"size", json::Value(json::Array{json::Value(w), json::Value(h)})},
+                          {"material", json::Value(Hex(material))},
+                          {"topLeft", at(0, 0)},
+                          {"topRight", at(w - 1, 0)},
+                          {"bottomLeft", at(0, h - 1)},
+                          {"bottomRight", at(w - 1, h - 1)},
+                          {"centre", at(w / 2, h / 2)}};
     json::Array colors;
     for (const auto& c : theme.colors) colors.push_back(json::Value(Hex(c)));
     auto [glowA, glowB] = GlowColors(theme);
@@ -122,7 +139,8 @@ json::Value ThemeSummary(const Theme& theme) {
                                     {"lightness", json::Value(static_cast<double>(Lightness(theme)))},
                                     {"prefersDarkForeground", json::Value(PrefersDarkForeground(theme))},
                                     {"glow", json::Value(json::Array{json::Value(Hex(glowA)), json::Value(Hex(glowB))})},
-                                    {"accent", json::Value(Hex(Accent(theme)))}});
+                                    {"accent", json::Value(Hex(Accent(theme)))},
+                                    {"backdrop", json::Value(std::move(backdrop))}});
 }
 
 // Ids typed in either case, like UUID(uuidString:).

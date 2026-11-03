@@ -21,6 +21,7 @@
 
 #include <charconv>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -141,12 +142,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
     if (HasFlag(args, L"--backdrop-test")) {
         // Touches no profile, so it needs no KITE_SUPPORT_PATH.
-        std::wstring report;
-        std::wstring failures = kite::RunBackdropTest(report);
+        std::wstring report, problem;
+        const kite::BackdropTestOutcome outcome = kite::RunBackdropTest(report, problem);
         OutputDebugStringW(report.c_str());
-        if (!failures.empty()) return Fail(true, L"the GPU backdrop doesn't match the reference:\n" + failures + L"\n" + report, kCaptureFailed);
         WriteUtf8(STD_OUTPUT_HANDLE, report);
-        return kOk;
+        switch (outcome) {
+        case kite::BackdropTestOutcome::Matches: return kOk;
+        case kite::BackdropTestOutcome::Differs: return Fail(true, L"the GPU backdrop doesn't match the reference:\n" + problem, kCaptureFailed);
+        case kite::BackdropTestOutcome::CouldNotRun: return Fail(true, L"the GPU couldn't draw the backdrop: " + problem, kWindowFailed);
+        }
+        return kWindowFailed;
     }
     const bool smokeTest = HasFlag(args, L"--smoke-test");
     const OptionValue captureOption = Option(args, L"--capture");
@@ -166,6 +171,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     std::optional<std::pair<int, int>> size;
     if (sizeOption.present && !(sizeOption.value && (size = ParseSize(*sizeOption.value)))) {
         return Fail(quiet, L"--window-size takes W,H in points", kUsage);
+    }
+    // A capture is one texture, and D3D11's are at most 16384 px a side.
+    if (captureScale && size && std::max(size->first, size->second) * captureScale > 16384) {
+        return Fail(quiet, L"--window-size × --capture-scale must be at most 16384 px a side", kUsage);
     }
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
@@ -208,6 +217,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     std::wstring loadError;
     if (auto* error = std::get_if<kite::SessionStore::Error>(&loaded); error && !maySave) loadError = Widen(error->message);
 
+    // The GPU first: everything below is set up before the window shows, so it never
+    // appears empty or with the wrong title bar.
+    std::wstring gpuError;
+    std::unique_ptr<kite::Renderer> renderer = kite::Renderer::Create(gpuError);
+    if (!renderer) return Fail(quiet, L"Kite couldn't start Direct3D: " + gpuError, kWindowFailed);
+
     if (!kite::MainWindow::RegisterWindowClass(instance)) {
         return Fail(quiet, L"RegisterClassExW failed", kWindowFailed);
     }
@@ -217,9 +232,56 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     window.onClose = [&] {
         if (maySave) saveError = session.Save(state);
     };
+    if (captureScale) window.UseFixedScale(captureScale);
     // A capture always has a set size (the Mac's default unless asked), even on a small screen.
     if (capture && !size) size = std::make_pair(kite::MainWindow::kDefaultWidth, kite::MainWindow::kDefaultHeight);
     if (size) window.SetClientSize(size->first, size->second);
+
+    // The backdrop: the selected space's theme over the system's acrylic, or over a solid
+    // colour where there's none. A capture always uses the solid colour, so it doesn't depend
+    // on what's behind the window. Drawn now and then only when something changes; W9 adds
+    // the space-switch crossfade.
+    const kite::Theme theme = state.SelectedSpace().theme;
+    const bool dark = !kite::PrefersDarkForeground(theme);
+    window.SetDarkAppearance(dark);
+    const bool systemBackdrop = !capture && window.UseSystemBackdrop();
+    const kite::Rgba base = systemBackdrop ? kite::Rgba{} : kite::MaterialFallback(dark);
+    std::unique_ptr<kite::Compositor> compositor = kite::Compositor::Create(window.Handle(), *renderer, gpuError);
+    if (!compositor) return Fail(quiet, L"Kite couldn't start DirectComposition: " + gpuError, kWindowFailed);
+    // After the GPU is reset or removed, both are rebuilt on whatever adapter is there now.
+    auto rebuild = [&]() -> std::wstring {
+        std::wstring problem;
+        compositor.reset();  // first: a window holds one composition target at a time
+        renderer = kite::Renderer::Create(problem);
+        if (renderer) compositor = kite::Compositor::Create(window.Handle(), *renderer, problem);
+        return problem;
+    };
+    auto draw = [&](kite::Pixels* readBack = nullptr) -> std::wstring {
+        RECT client{};
+        GetClientRect(window.Handle(), &client);
+        const UINT width = static_cast<UINT>(client.right), height = static_cast<UINT>(client.bottom);
+        std::wstring problem;
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            if (!compositor || compositor->DeviceLost()) {
+                if (problem = rebuild(); !problem.empty()) break;
+            }
+            problem = compositor->Draw(width, height, kite::MakeThemeUniforms(theme, static_cast<float>(width), static_cast<float>(height)),
+                                       base, readBack);
+            if (!compositor->DeviceLost()) break;
+        }
+        if (!problem.empty()) OutputDebugStringW((L"Kite: drawing failed: " + problem + L"\n").c_str());
+        return problem;
+    };
+    window.onSize = [&](UINT, UINT) { draw(); };
+    // On an early return the compositor goes before the window: stop drawing first.
+    struct StopDrawing {
+        kite::MainWindow& window;
+        ~StopDrawing() { window.onSize = nullptr; }
+    } stopDrawing{window};
+    if (std::wstring problem = draw(); !problem.empty() && quiet) {
+        return Fail(quiet, L"drawing the first frame failed: " + problem, kWindowFailed);
+    }
+
     // Quiet runs open behind other windows without focus, and ignore a launcher's "start maximized".
     if (quiet) window.ShowBehindOtherWindows();
     else window.Show(showCommand);
@@ -227,37 +289,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         // A capture is compared pixel for pixel with the Mac's, so a window Windows resized
         // (maximized by the launcher, clamped to 32767 px) would compare the wrong thing.
         return Fail(quiet, L"the window didn't get the size --capture needs", kCaptureFailed);
-    }
-
-    // The backdrop: the selected space's theme over the system's acrylic, or over a solid
-    // colour where there's none. Drawn now and then only when the size changes; W9 adds the
-    // space-switch crossfade.
-    std::wstring gpuError;
-    auto renderer = kite::Renderer::Create(gpuError);
-    if (!renderer) return Fail(quiet, L"Kite couldn't start Direct3D: " + gpuError, kWindowFailed);
-    auto compositor = kite::Compositor::Create(window.Handle(), *renderer, gpuError);
-    if (!compositor) return Fail(quiet, L"Kite couldn't start DirectComposition: " + gpuError, kWindowFailed);
-    const kite::Theme theme = state.SelectedSpace().theme;
-    const bool dark = !kite::PrefersDarkForeground(theme);
-    window.SetDarkAppearance(dark);
-    const bool systemBackdrop = window.UseSystemBackdrop();
-    const kite::Rgba base = systemBackdrop ? kite::Rgba{} : kite::MaterialFallback(dark);
-    auto draw = [&](UINT width, UINT height) {
-        std::wstring problem = compositor->Draw(width, height,
-                                                kite::MakeThemeUniforms(theme, static_cast<float>(width), static_cast<float>(height)), base);
-        if (!problem.empty()) OutputDebugStringW((L"Kite: drawing failed: " + problem + L"\n").c_str());
-        return problem;
-    };
-    window.onSize = [&](UINT width, UINT height) { draw(width, height); };
-    // On an early return the compositor goes before the window: stop drawing first.
-    struct StopDrawing {
-        kite::MainWindow& window;
-        ~StopDrawing() { window.onSize = nullptr; }
-    } stopDrawing{window};
-    RECT client{};
-    GetClientRect(window.Handle(), &client);
-    if (std::wstring problem = draw(static_cast<UINT>(client.right), static_cast<UINT>(client.bottom)); !problem.empty() && quiet) {
-        return Fail(quiet, L"drawing the first frame failed: " + problem, kWindowFailed);
     }
 
     if (smokeTest) {
@@ -271,23 +302,35 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
     std::wstring captureError;
     if (capture) {
-        // Wait until the first frame is on screen, then draw the same layers offscreen at the
-        // capture's scale: the window's own pixels at N×, independent of the monitor.
-        compositor->WaitForFrame();
-        const UINT scaledWidth = captureScale ? static_cast<UINT>(size->first * captureScale) : static_cast<UINT>(client.right);
-        const UINT scaledHeight = captureScale ? static_cast<UINT>(size->second * captureScale) : static_cast<UINT>(client.bottom);
-        auto pixels = renderer->RenderTheme(
-            scaledWidth, scaledHeight,
-            kite::MakeThemeUniforms(theme, static_cast<float>(scaledWidth), static_cast<float>(scaledHeight)),
-            kite::MaterialFallback(dark), captureError);
-        if (pixels) captureError = kite::SavePng(*pixels, *capture);
+        // The window's own frame, read back as it's presented: at --capture-scale× when given
+        // (the window is laid out at that scale on any monitor), else at the monitor's.
+        kite::Pixels pixels;
+        captureError = draw(&pixels);
+        if (captureError.empty() && pixels.bgra.empty()) captureError = L"no frame was drawn";
+        if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
     }
 
-    MSG message;
-    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
+    // Messages, and the GPU's device-removed signal so a lost device is rebuilt even while
+    // nothing is drawing (the composition would otherwise stay blank until the next resize).
+    for (bool running = true; running;) {
+        HANDLE removed = renderer ? renderer->DeviceRemovedEvent() : nullptr;
+        const DWORD woke = MsgWaitForMultipleObjectsEx(removed ? 1 : 0, removed ? &removed : nullptr, INFINITE, QS_ALLINPUT,
+                                                       MWMO_INPUTAVAILABLE);
+        if (removed && woke == WAIT_OBJECT_0) {
+            compositor.reset();  // forces draw() to rebuild
+            draw();
+            continue;
+        }
+        MSG message;
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            if (message.message == WM_QUIT) {
+                running = false;
+                break;
+            }
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
     }
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (!maySave) {

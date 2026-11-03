@@ -3,6 +3,7 @@
 #include "shell/Compositor.h"
 
 #include <algorithm>
+#include <cstring>
 
 #include "shell/Errors.h"
 
@@ -10,12 +11,22 @@ using Microsoft::WRL::ComPtr;
 
 namespace kite {
 
+namespace {
+
+// docs/windows.md, Refresh rate: flip-discard with a frame-latency waitable object and a
+// latency of one, so a live resize draws for the frame that's about to show, not three behind.
+constexpr UINT kSwapChainFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+
+bool IsDeviceLost(HRESULT hr) { return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET; }
+
+}  // namespace
+
 std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, std::wstring& error) {
     std::unique_ptr<Compositor> compositor(new Compositor(renderer));
     RECT client{};
     GetClientRect(hwnd, &client);
-    compositor->width_ = static_cast<UINT>(std::max<LONG>(client.right - client.left, 1));
-    compositor->height_ = static_cast<UINT>(std::max<LONG>(client.bottom - client.top, 1));
+    compositor->width_ = static_cast<UINT>(std::clamp<LONG>(client.right - client.left, 1, D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION));
+    compositor->height_ = static_cast<UINT>(std::clamp<LONG>(client.bottom - client.top, 1, D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION));
 
     ComPtr<IDXGIDevice> dxgiDevice;
     HRESULT hr = renderer.Device()->QueryInterface(IID_PPV_ARGS(dxgiDevice.GetAddressOf()));
@@ -29,7 +40,7 @@ std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, st
     }
 
     // Flip model with premultiplied alpha, so the window's backdrop material shows through
-    // the theme's tint where it isn't opaque.
+    // the theme's tint where it isn't opaque. Composition swap chains always stretch.
     DXGI_SWAP_CHAIN_DESC1 desc{};
     desc.Width = compositor->width_;
     desc.Height = compositor->height_;
@@ -38,18 +49,27 @@ std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, st
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     desc.BufferCount = 2;
     desc.Scaling = DXGI_SCALING_STRETCH;
-    desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+    desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
-    if (FAILED(hr = factory->CreateSwapChainForComposition(renderer.Device(), &desc, nullptr, compositor->swapChain_.GetAddressOf()))) {
+    desc.Flags = kSwapChainFlags;
+    ComPtr<IDXGISwapChain1> swapChain;
+    if (FAILED(hr = factory->CreateSwapChainForComposition(renderer.Device(), &desc, nullptr, swapChain.GetAddressOf()))) {
         error = HResultMessage(L"CreateSwapChainForComposition", hr);
         return nullptr;
     }
+    if (FAILED(hr = swapChain.As(&compositor->swapChain_)) || FAILED(hr = compositor->swapChain_->SetMaximumFrameLatency(1))) {
+        error = HResultMessage(L"setting the swap chain's frame latency", hr);
+        return nullptr;
+    }
+    compositor->frameLatency_ = compositor->swapChain_->GetFrameLatencyWaitableObject();
 
     if (FAILED(hr = DCompositionCreateDevice(dxgiDevice.Get(), IID_PPV_ARGS(compositor->device_.GetAddressOf())))) {
         error = HResultMessage(L"DCompositionCreateDevice", hr);
         return nullptr;
     }
-    if (FAILED(hr = compositor->device_->CreateTargetForHwnd(hwnd, TRUE, compositor->target_.GetAddressOf())) ||
+    // topmost FALSE: the tree sits behind the window's child windows, where the page (a CEF
+    // child window, W6) goes.
+    if (FAILED(hr = compositor->device_->CreateTargetForHwnd(hwnd, FALSE, compositor->target_.GetAddressOf())) ||
         FAILED(hr = compositor->device_->CreateVisual(compositor->root_.GetAddressOf())) ||
         FAILED(hr = compositor->root_->SetContent(compositor->swapChain_.Get())) ||
         FAILED(hr = compositor->target_->SetRoot(compositor->root_.Get())) ||
@@ -60,32 +80,54 @@ std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, st
     return compositor;
 }
 
-std::wstring Compositor::Draw(UINT width, UINT height, const ThemeUniforms& uniforms, const Rgba& base) {
-    width = std::max(width, 1u);
-    height = std::max(height, 1u);
+Compositor::~Compositor() {
+    if (frameLatency_) CloseHandle(frameLatency_);
+}
+
+std::wstring Compositor::Draw(UINT width, UINT height, const ThemeUniforms& uniforms, const Rgba& base, Pixels* readBack) {
+    if (deviceLost_) return L"the GPU device was lost";
+    // D3D11's largest texture; a bigger window (8192 points at 300%) is stretched to fit.
+    width = std::clamp(width, 1u, static_cast<UINT>(D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION));
+    height = std::clamp(height, 1u, static_cast<UINT>(D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION));
+    const bool unchanged = presented_ && width == width_ && height == height_ &&
+                           std::memcmp(&uniforms, &lastUniforms_, sizeof(uniforms)) == 0 &&
+                           std::memcmp(&base, &lastBase_, sizeof(base)) == 0;
+    if (unchanged && !readBack) return {};
+
+    auto fail = [this](const wchar_t* what, HRESULT hr) {
+        deviceLost_ = IsDeviceLost(hr);
+        return HResultMessage(what, hr);
+    };
     HRESULT hr = S_OK;
     if (width != width_ || height != height_) {
-        if (FAILED(hr = swapChain_->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0))) {
-            return HResultMessage(L"ResizeBuffers", hr);
+        if (FAILED(hr = swapChain_->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, kSwapChainFlags))) {
+            return fail(L"ResizeBuffers", hr);
         }
         width_ = width;
         height_ = height;
     }
+    // Wait for the frame queue to have room, so this frame is the next one shown. Bounded, so
+    // a stalled compositor can't hang the UI thread.
+    if (frameLatency_) WaitForSingleObjectEx(frameLatency_, 1000, TRUE);
+
     ComPtr<ID3D11Texture2D> buffer;
-    if (FAILED(hr = swapChain_->GetBuffer(0, IID_PPV_ARGS(buffer.GetAddressOf())))) return HResultMessage(L"GetBuffer", hr);
+    if (FAILED(hr = swapChain_->GetBuffer(0, IID_PPV_ARGS(buffer.GetAddressOf())))) return fail(L"GetBuffer", hr);
     ComPtr<ID3D11RenderTargetView> view;
     if (FAILED(hr = renderer_.Device()->CreateRenderTargetView(buffer.Get(), nullptr, view.GetAddressOf()))) {
-        return HResultMessage(L"CreateRenderTargetView", hr);
+        return fail(L"CreateRenderTargetView", hr);
     }
     renderer_.DrawTheme(view.Get(), width, height, uniforms, base);
+    std::wstring readBackError;
+    if (readBack) {
+        // The frame exactly as it's handed to DirectComposition.
+        if (auto pixels = renderer_.ReadBack(buffer.Get(), readBackError)) *readBack = std::move(*pixels);
+    }
     // Sync interval 1: one frame per vblank at the display's own rate, no cap of ours.
-    if (FAILED(hr = swapChain_->Present(1, 0))) return HResultMessage(L"Present", hr);
-    return {};
-}
-
-void Compositor::WaitForFrame() {
-    device_->Commit();
-    device_->WaitForCommitCompletion();
+    if (FAILED(hr = swapChain_->Present(1, 0))) return fail(L"Present", hr);
+    presented_ = true;
+    lastUniforms_ = uniforms;
+    lastBase_ = base;
+    return readBackError;
 }
 
 }  // namespace kite

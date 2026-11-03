@@ -22,15 +22,21 @@ struct Case {
     UINT width, height;
 };
 
-int Quantize(float v) { return static_cast<int>(std::lround(std::clamp(v, 0.f, 1.f) * 255.f)); }
+// The GPU and CPU agree to about 1e-5 (float maths in another order, hardware exp and pow).
+// A channel off by more than kTolerance is an outlier: smaller than the ±0.5/255 dither, so
+// dropping the dither or misplacing the grain fails. A few outliers are where the grain
+// hash's fract() lands on the other side of 1 on one side; a missed row or column of the
+// smallest case (1/640 of it) is more than kMaxOutlierShare.
+constexpr double kTolerance = 1e-3;
+constexpr double kMaxOutlierShare = 0.0005;
+constexpr double kMaxMeanDifference = 1e-4;
 
 }  // namespace
 
-std::wstring RunBackdropTest(std::wstring& report) {
-    std::wstring error;
-    auto renderer = Renderer::Create(error);
-    if (!renderer) return error;
-    report += renderer->IsSoftware() ? L"device: WARP (software)\n" : L"device: hardware\n";
+BackdropTestOutcome RunBackdropTest(std::wstring& report, std::wstring& problem) {
+    auto renderer = Renderer::Create(problem);
+    if (!renderer) return BackdropTestOutcome::CouldNotRun;
+    report += L"device: " + renderer->AdapterName() + (renderer->IsSoftware() ? L" (software)\n" : L" (GPU)\n");
 
     std::vector<Case> cases;
     const auto& presets = Theme::Presets();
@@ -42,40 +48,48 @@ std::wstring RunBackdropTest(std::wstring& report) {
                              MakeThemeUniforms(presets[i], static_cast<float>(w), static_cast<float>(h)), MaterialFallback(dark), w, h});
         }
     }
-    cases.push_back({L"crossfade 1 -> 6 at 0.4", MakeThemeUniforms(presets[1], presets[6], 0.4f, 800, 500), MaterialFallback(true), 800, 500});
+    // A crossfade between themes that differ in everything the shader mixes: colour count,
+    // grain and tint, both ways.
+    const Theme one = Theme::Make({ThemeColor::FromHex(0x2E6BE6)}, 0, 0.3f);
+    const Theme four = Theme::Make({ThemeColor::FromHex(0xFF9A6C), ThemeColor::FromHex(0xF0629B), ThemeColor::FromHex(0x8A5CF5),
+                                    ThemeColor::FromHex(0x5FD3E6)},
+                                   0.6f, 0.9f);
+    cases.push_back({L"crossfade 1 colour -> 4 at 0.4", MakeThemeUniforms(one, four, 0.4f, 800, 500), MaterialFallback(true), 800, 500});
+    cases.push_back({L"crossfade 4 colours -> 1 at 0.7", MakeThemeUniforms(four, one, 0.7f, 800, 500), MaterialFallback(false), 800, 500});
+    cases.push_back({L"odd size 333x217", MakeThemeUniforms(presets[3], 333, 217), MaterialFallback(true), 333, 217});
     cases.push_back({L"transparent base (Windows 11 backdrop)", MakeThemeUniforms(presets[2], 640, 420), Rgba{}, 640, 420});
 
-    std::wstring failures;
     for (const Case& c : cases) {
+        std::wstring error;
         auto pixels = renderer->RenderTheme(c.width, c.height, c.uniforms, c.base, error);
-        if (!pixels) return c.name + L": " + error;
+        if (!pixels) {
+            problem = c.name + L": " + error;
+            return BackdropTestOutcome::CouldNotRun;
+        }
         size_t outliers = 0;
-        int worst = 0;
-        double total = 0;
+        double worst = 0, total = 0;
         for (UINT y = 0; y < c.height; ++y) {
             for (UINT x = 0; x < c.width; ++x) {
                 const Rgba expected = Over(ShadeThemePixel(c.uniforms, x + 0.5f, y + 0.5f), c.base);
-                const uint8_t* p = pixels->bgra.data() + (static_cast<size_t>(y) * c.width + x) * 4;
-                const int diffs[4] = {std::abs(p[2] - Quantize(expected.r)), std::abs(p[1] - Quantize(expected.g)),
-                                      std::abs(p[0] - Quantize(expected.b)), std::abs(p[3] - Quantize(expected.a))};
-                const int diff = *std::max_element(std::begin(diffs), std::end(diffs));
+                const float* p = pixels->data() + (static_cast<size_t>(y) * c.width + x) * 4;
+                const double diffs[4] = {std::fabs(p[0] - expected.r), std::fabs(p[1] - expected.g), std::fabs(p[2] - expected.b),
+                                         std::fabs(p[3] - expected.a)};
+                const double diff = *std::max_element(std::begin(diffs), std::end(diffs));
                 worst = std::max(worst, diff);
                 total += diffs[0] + diffs[1] + diffs[2] + diffs[3];
-                // Two levels covers float differences between GPU and CPU; more means the grain or
-                // dither hash landed on the other side of a fract() boundary, which is rare.
-                if (diff > 2) ++outliers;
+                if (!(diff <= kTolerance)) ++outliers;  // NaN counts
             }
         }
         const double count = static_cast<double>(c.width) * c.height;
         const double outlierShare = outliers / count;
         const double mean = total / (count * 4);
         wchar_t line[256];
-        std::swprintf(line, std::size(line), L"%ls: %ux%u, mean |diff| %.3f, worst %d, %.3f%% over 2 levels\n", c.name.c_str(),
-                      c.width, c.height, mean, worst, outlierShare * 100);
+        std::swprintf(line, std::size(line), L"%ls: %ux%u, mean |diff| %.2e, worst %.2e, %.4f%% over %.0e\n", c.name.c_str(), c.width,
+                      c.height, mean, worst, outlierShare * 100, kTolerance);
         report += line;
-        if (outlierShare > 0.005 || mean > 0.6) failures += line;
+        if (outlierShare > kMaxOutlierShare || !(mean <= kMaxMeanDifference)) problem += line;
     }
-    return failures;
+    return problem.empty() ? BackdropTestOutcome::Matches : BackdropTestOutcome::Differs;
 }
 
 }  // namespace kite

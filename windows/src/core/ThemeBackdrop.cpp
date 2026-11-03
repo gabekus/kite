@@ -72,10 +72,22 @@ F3 ThemeLab(const float (&lab)[4][4], uint32_t count, F2 uv, float aspect) {
 
 float Mix(float a, float b, float t) { return a + (b - a) * t; }
 
+// The colours drawn: at most four, and never none (the Mac's Theme.init traps on an empty
+// palette; `colors` is a public vector here, so an empty one draws the default colour).
+const std::vector<ThemeColor>& DrawnColors(const Theme& theme) {
+    static const std::vector<ThemeColor> fallback = Theme{}.colors;
+    return theme.colors.empty() ? fallback : theme.colors;
+}
+
+uint32_t DrawnCount(const Theme& theme) {
+    return static_cast<uint32_t>(std::min(DrawnColors(theme).size(), Theme::kMaxColors));
+}
+
 void SetPalette(float (&out)[4][4], const Theme& theme) {
     // palette(_:) in ThemeView.swift: four slots, the last colour repeated.
+    const std::vector<ThemeColor>& colors = DrawnColors(theme);
     for (size_t i = 0; i < 4; ++i) {
-        const ThemeColor& c = theme.colors[std::min(i, theme.colors.size() - 1)];
+        const ThemeColor& c = colors[std::min<size_t>(i, DrawnCount(theme) - 1)];
         const Lab lab = oklab::FromSRGB(c);
         out[i][0] = lab.L;
         out[i][1] = lab.a;
@@ -95,8 +107,8 @@ ThemeUniforms MakeThemeUniforms(const Theme& from, const Theme& to, float progre
     u.fromGrain = from.grain;
     u.toGrain = to.grain;
     u.progress = std::clamp(progress, 0.f, 1.f);
-    u.fromCount = static_cast<uint32_t>(from.colors.size());
-    u.toCount = static_cast<uint32_t>(to.colors.size());
+    u.fromCount = DrawnCount(from);
+    u.toCount = DrawnCount(to);
     u.fromTint = from.tint;
     u.toTint = to.tint;
     return u;

@@ -94,3 +94,23 @@ TEST(overAnOpaqueBaseIsOpaque) {
     Rgba out = Over(top, base);
     CHECK(out.a == 1 && Near(out.r, 0.3125f, 1e-6f) && Near(out.g, 0.0625f, 1e-6f));
 }
+
+TEST(uniformsNeverDrawAnEmptyOrOversizedPalette) {
+    // Theme::Make never makes these, but `colors` is public: no out-of-range read, no black.
+    Theme empty;
+    empty.colors.clear();
+    ThemeUniforms u = MakeThemeUniforms(empty, 100, 100);
+    CHECK(u.fromCount == 1);
+    Lab fallback = oklab::FromSRGB(Theme{}.colors[0]);
+    CHECK(u.fromLab[0][0] == fallback.L && u.fromLab[3][0] == fallback.L);
+    Theme many;
+    many.colors = std::vector<ThemeColor>(6, ThemeColor::FromHex(0x336699));
+    CHECK(MakeThemeUniforms(many, 100, 100).fromCount == 4);
+}
+
+TEST(materialFallbackIsWindowsSolidBackdropColours) {
+    // Windows 11's own fallback for its backdrops: #202020 dark, #F3F3F3 light, opaque.
+    Rgba dark = MaterialFallback(true), light = MaterialFallback(false);
+    CHECK(std::lround(dark.r * 255) == 0x20 && dark.r == dark.g && dark.g == dark.b && dark.a == 1);
+    CHECK(std::lround(light.r * 255) == 0xF3 && light.r == light.g && light.g == light.b && light.a == 1);
+}

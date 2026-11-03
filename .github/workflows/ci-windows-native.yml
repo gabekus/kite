@@ -117,7 +117,8 @@ jobs:
           Copy-Item windows/helix/states/two-spaces.json (Join-Path $profileDir 'session.json')
           $env:KITE_SUPPORT_PATH = $profileDir
           # Captures at 1x and 2x (drawn offscreen, so 2x works on the runner's 100% display).
-          # The selected Work space has two colours over the dark fallback: opaque everywhere,
+          # The selected Work space has two colours over the light fallback (its orange wants dark
+          # text, as on the Mac): opaque everywhere,
           # warm at the top left and pinker at the bottom right.
           Add-Type -AssemblyName System.Drawing
           foreach ($scale in 1, 2) {

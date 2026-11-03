@@ -46,11 +46,12 @@ for as long as it needs to. An agent can't override a gate.
      with `kite ui capture`. The sidebar width comes from the dev bundle's
      defaults, so reset it first: `defaults delete dev.gabek.Kite.dev SidebarWidth`.
    - Windows (any monitor): `Kite.exe --capture out.png --window-size W,H
-     --capture-scale 2` with `KITE_SUPPORT_PATH` set the same way. Kite draws
-     the window's layers offscreen at 2× after its first frame is on screen,
-     so the pixels line up with the Mac's. The layers sit on the solid
-     material fallback, while the Mac capture shows its blurred material, so
-     the backdrop's tint is compared, not what's behind the window.
+     --capture-scale 2` with `KITE_SUPPORT_PATH` set the same way. Kite lays
+     the window out at 2× whatever the monitor's scale (a 200% display isn't
+     needed) and saves the frame the window presents, so the pixels line up
+     with the Mac's. A capture draws over the solid material fallback, while
+     the Mac capture shows its blurred material, so the backdrop's tint is
+     compared, not what's behind the window.
    A visual reviewer (a fresh subagent that sees only the two images and the
    checkpoint's description) lists every difference with a severity
    (blocker, major, minor) and a location. Anything fixable in code is a

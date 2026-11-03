@@ -73,7 +73,17 @@ the rest of the window, so nothing (glow, Peek, command bar) could overlap the p
   OKLab blend, grain, rounded-rect SDF glow). `windows/src/shell/shaders/`
   holds the ports; fxc compiles them when Kite builds, so nothing compiles
   at startup. `core/ThemeBackdrop` is a CPU reference of the Metal shader,
-  and `Kite.exe --backdrop-test` checks the GPU's pixels against it in CI.
+  and `Kite.exe --backdrop-test` checks the GPU's float output against it in
+  CI (`kitecore theme` prints the same reference's corner pixels).
+- **Lost GPU:** a driver update, TDR or hybrid-GPU switch removes the D3D11
+  device. Kite listens for it (`RegisterDeviceRemovedEvent`) and also checks
+  every `Present`/`ResizeBuffers`, then rebuilds the renderer and composition
+  tree on whatever adapter is there and redraws.
+- **Captures** (`--capture`, the Helix UI gate) read back the frame the
+  window presents, laid out at `--capture-scale`× on any monitor. Today that's
+  the one backdrop swap chain; when the sidebar and page become sibling
+  visuals (W4, W6), the capture has to read the composed window instead
+  (Windows.Graphics.Capture), not re-render the layers.
 - **Material:** the Mac's `.sidebar` material, blended behind the window, is
   Windows 11's acrylic system backdrop (`DWMSBT_TRANSIENTWINDOW`) under a
   window with no redirection bitmap. Where there's none (Windows 10, Server)

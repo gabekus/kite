@@ -24,7 +24,6 @@ int Scale(int value, UINT dpi) { return MulDiv(value, static_cast<int>(dpi), USE
 bool MainWindow::RegisterWindowClass(HINSTANCE instance) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = &MainWindow::WindowProc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
@@ -57,6 +56,11 @@ void MainWindow::Show(int showCommand) {
 void MainWindow::ShowBehindOtherWindows() {
     SetWindowPos(hwnd_, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     UpdateWindow(hwnd_);
+}
+
+void MainWindow::UseFixedScale(int scale) {
+    fixedScale_ = true;
+    dpi_ = static_cast<UINT>(USER_DEFAULT_SCREEN_DPI * scale);
 }
 
 void MainWindow::SetClientSize(int width, int height) {
@@ -107,6 +111,7 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND hwnd, UINT message, WPARAM wParam, 
 LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_DPICHANGED: {
+        if (fixedScale_) return 0;
         // Take the rect Windows suggests so the window keeps its physical size on the new monitor.
         dpi_ = HIWORD(wParam);
         const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
