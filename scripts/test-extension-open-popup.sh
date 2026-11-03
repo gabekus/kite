@@ -47,8 +47,26 @@ ask() {
     grep -E '^\{' | head -1
 }
 opened_at() {
-  "$CLI" js "JSON.stringify({ at: (await chrome.storage.local.get('popupOpenedAt')).popupOpenedAt ?? 0 })" --tab "$TAB" 2>/dev/null |
+  "$CLI" js "JSON.stringify(await chrome.storage.local.get(['popupOpenedAt', 'popupPage']))" --tab "$TAB" 2>/dev/null |
     grep -E '^\{' | head -1
+}
+# Asks the worker to open its popup (`message`), and checks the popup page that then loads.
+run_case() {
+  local message=$1 page=$2 label=$3 before after reply
+  before=$(opened_at)
+  reply=$(ask "$message")
+  after="$before"
+  for _ in $(seq 20); do
+    after=$(opened_at)
+    [[ "$after" != "$before" ]] && break
+    sleep 0.25
+  done
+  if [[ "$reply" == *'"ok":true'* && "$after" != "$before" && "$after" == *"\"/$page\""* ]]; then
+    echo "PASS $label"
+  else
+    echo "FAIL $label: replied ${reply:-nothing}; popup page loads ${before:-?} -> ${after:-?}"
+    failures=$((failures + 1))
+  fi
 }
 
 failures=0
@@ -66,18 +84,7 @@ if [[ "$replaced" != *'"replaced":true'* ]]; then
   exit 1
 fi
 
-before=$(opened_at)
-reply=$(ask kite)
-after="$before"
-for _ in $(seq 20); do
-  after=$(opened_at)
-  [[ "$after" != "$before" ]] && break
-  sleep 0.25
-done
-if [[ "$reply" == *'"ok":true'* && "$after" != "$before" ]]; then
-  echo "PASS openPopup: it resolved and the popup page loaded"
-else
-  echo "FAIL openPopup: replied ${reply:-nothing}; popup page loads ${before:-?} -> ${after:-?}"
-  failures=$((failures + 1))
-fi
+run_case kite popup.html "openPopup: it resolved and the popup page loaded"
+# Last: the tab's own popup stays set for the rest of the run.
+run_case tab tab-popup.html "tab popup: it opened the popup set for the active tab"
 exit $((failures > 0))

@@ -220,10 +220,12 @@ enum ExtensionTabsScript {
           if (!w) throw new Error('No current window');
           return describeWindow(w, info.populate);
         }),
-        // The popup as it is now (action.setPopup can change it); Kite checks it's this extension's.
-        openPopup: async () => {
-          await ask('openPopup', { url: await chrome.action.getPopup({}) });
-        },
+        // The active tab's popup as it is now (action.setPopup can change it, for one tab or all);
+        // Kite checks it's this extension's.
+        openPopup: withState(async () => {
+          const tab = activeEntry();
+          await ask('openPopup', { url: await chrome.action.getPopup(tab ? { tabId: tab.id } : {}) });
+        }),
       };
 
       // Chromium never fires tab events for Kite's tabs, so the worker fires them from
