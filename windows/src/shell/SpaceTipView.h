@@ -60,11 +60,13 @@ private:
     // The tip's text measured and laid out (points).
     struct Measured {
         SpaceTipLayout layout;
-        Microsoft::WRL::ComPtr<IDWriteTextLayout> name, chipSymbol, chipText;
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> name, chipText;
         std::vector<Microsoft::WRL::ComPtr<IDWriteTextLayout>> keys;
     };
     Measured Measure(const SpaceTip& tip) const;
     void Paint(ID2D1DeviceContext* context, const SpaceTip& tip, const Measured& measured);
+    // The profile chip's face (face.smiling), centred on `centre`.
+    void DrawFace(ID2D1DeviceContext* context, D2D1_POINT_2F centre, const SpaceTip& tip);
     // Draws `tip` into `surface`, `width` × `height` px (and into `readBack`).
     std::wstring DrawInto(IDCompositionVirtualSurface* surface, UINT width, UINT height, UINT dpi, const SpaceTip& tip,
                           const Measured& measured, Pixels* readBack, HRESULT& hr);
@@ -73,13 +75,16 @@ private:
     HWND owner_ = nullptr;
     HWND window_ = nullptr;
     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
-    Microsoft::WRL::ComPtr<IDWriteTextFormat> nameFormat_, chipFormat_, chipSymbolFormat_, keyFormat_;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> nameFormat_, chipFormat_, keyFormat_;
+    float nameCap_ = 0, chipCap_ = 0, keyCap_ = 0;  // each format's cap height, in points
     Compositor* compositor_ = nullptr;
     Microsoft::WRL::ComPtr<IDCompositionTarget> target_;
     Microsoft::WRL::ComPtr<IDCompositionVisual> visual_;
     Microsoft::WRL::ComPtr<IDCompositionEffectGroup> fade_;
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
+    Microsoft::WRL::ComPtr<ID2D1PathGeometry> smile_;  // the face's smile, about its centre (the device's factory)
+    Microsoft::WRL::ComPtr<ID2D1StrokeStyle> roundCaps_;
     std::optional<std::string> showing_;
     bool deviceLost_ = false;
 };

@@ -15,8 +15,6 @@ namespace {
 namespace T = space_tip_metrics;
 
 constexpr wchar_t kClassName[] = L"KiteSpaceTip";
-// face.smiling, the profile chip's face: Fluent's and MDL2's Emoji2 (the PC's cmap check).
-constexpr wchar_t kFace[] = L"";
 
 D2D1_COLOR_F White(float alpha) { return D2D1_COLOR_F{1, 1, 1, alpha}; }
 D2D1_COLOR_F Opaque(const ThemeColor& c) { return D2D1_COLOR_F{c.r, c.g, c.b, 1}; }
@@ -47,7 +45,6 @@ std::unique_ptr<SpaceTipView> SpaceTipView::Create(HWND owner, IDWriteFactory* d
         return fonts && SUCCEEDED(fonts->FindFamilyName(family, &index, &exists)) && exists;
     };
     const wchar_t* text = installed(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
-    const wchar_t* icons = installed(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets";
     auto format = [&](const wchar_t* family, DWRITE_FONT_WEIGHT weight, float size, ComPtr<IDWriteTextFormat>& out) {
         HRESULT made = dwrite->CreateTextFormat(family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"",
                                                 out.GetAddressOf());
@@ -55,13 +52,33 @@ std::unique_ptr<SpaceTipView> SpaceTipView::Create(HWND owner, IDWriteFactory* d
         return made;
     };
     HRESULT hr = S_OK;
-    if (FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, T::kNameFontSize, view->nameFormat_)) ||
+    // The name bold: SF's semibold inks as heavy as Segoe's bold (the UI gate's stems); the
+    // chip's and the keys' already match.
+    if (FAILED(hr = format(text, DWRITE_FONT_WEIGHT_BOLD, T::kNameFontSize, view->nameFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, T::kChipFontSize, view->chipFormat_)) ||
-        FAILED(hr = format(icons, DWRITE_FONT_WEIGHT_SEMI_BOLD, T::kChipSymbolSize, view->chipSymbolFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_BOLD, T::kKeyFontSize, view->keyFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
     }
+    // Each format's cap height, so a line's capitals (and digits) sit in the middle of what holds
+    // them, as SF's do in SwiftUI's centred line boxes.
+    auto capHeight = [&](IDWriteTextFormat* f, DWRITE_FONT_WEIGHT weight) -> float {
+        ComPtr<IDWriteFontFamily> family;
+        ComPtr<IDWriteFont> font;
+        UINT32 index = 0;
+        BOOL exists = FALSE;
+        DWRITE_FONT_METRICS metrics{};
+        if (!fonts || FAILED(fonts->FindFamilyName(text, &index, &exists)) || !exists ||
+            FAILED(fonts->GetFontFamily(index, family.GetAddressOf())) ||
+            FAILED(family->GetFirstMatchingFont(weight, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, font.GetAddressOf()))) {
+            return f->GetFontSize() * 0.7f;
+        }
+        font->GetMetrics(&metrics);
+        return f->GetFontSize() * metrics.capHeight / std::max<float>(metrics.designUnitsPerEm, 1);
+    };
+    view->nameCap_ = capHeight(view->nameFormat_.Get(), DWRITE_FONT_WEIGHT_BOLD);
+    view->chipCap_ = capHeight(view->chipFormat_.Get(), DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    view->keyCap_ = capHeight(view->keyFormat_.Get(), DWRITE_FONT_WEIGHT_BOLD);
     const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(owner, GWLP_HINSTANCE));
     if (!RegisterOnce(instance, &SpaceTipView::WindowProc)) {
         error = L"registering the space tip's window class failed";
@@ -101,6 +118,8 @@ void SpaceTipView::UseCompositor(Compositor* compositor) {
     fade_.Reset();
     surface_.Reset();
     brush_.Reset();
+    smile_.Reset();
+    roundCaps_.Reset();
     compositor_ = compositor;
     deviceLost_ = false;
 }
@@ -131,10 +150,7 @@ SpaceTipView::Measured SpaceTipView::Measure(const SpaceTip& tip) const {
     };
     SpaceTipWidths widths;
     widths.name = measure(Widen(tip.name), nameFormat_.Get(), m.name);
-    if (tip.profile) {
-        widths.chipSymbol = measure(kFace, chipSymbolFormat_.Get(), m.chipSymbol);
-        widths.chipText = measure(Widen(*tip.profile), chipFormat_.Get(), m.chipText);
-    }
+    if (tip.profile) widths.chipText = measure(Widen(*tip.profile), chipFormat_.Get(), m.chipText);
     for (const std::string& key : tip.keys) {
         m.keys.emplace_back();
         widths.keys.push_back(measure(Widen(key), keyFormat_.Get(), m.keys.back()));
@@ -146,27 +162,28 @@ SpaceTipView::Measured SpaceTipView::Measure(const SpaceTip& tip) const {
 void SpaceTipView::Paint(ID2D1DeviceContext* context, const SpaceTip& tip, const Measured& m) {
     const SpaceTipLayout& layout = m.layout;
     context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-    // Each text's line box centred on its 28pt line (or its chip or keycap), as SwiftUI centres
-    // an HStack's views.
-    auto centred = [&](IDWriteTextLayout* text, float x, float top, float height, D2D1_COLOR_F color) {
+    // Each text's capitals centred on its 28pt line (or its chip or keycap), where SF's sit in
+    // SwiftUI's centred line boxes (the UI gate).
+    auto centred = [&](IDWriteTextLayout* text, float cap, float x, float top, float height, D2D1_COLOR_F color) {
         if (!text) return;
-        DWRITE_TEXT_METRICS metrics{};
-        text->GetMetrics(&metrics);
+        DWRITE_LINE_METRICS line{};
+        UINT32 lines = 0;
+        text->GetLineMetrics(&line, 1, &lines);
         brush_->SetColor(color);
-        context->DrawTextLayout(D2D1::Point2F(x, top + (height - metrics.height) / 2), text, brush_.Get());
+        context->DrawTextLayout(D2D1::Point2F(x, top + height / 2 + cap / 2 - line.baseline), text, brush_.Get());
     };
     const float radius = layout.height / 2;
     // Capsule().fill(tipFill)
     brush_->SetColor(Opaque(tip.fill));
     context->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(0, 0, layout.width, layout.height), radius, radius), brush_.Get());
-    centred(m.name.Get(), layout.nameX, 0, layout.height, White(1));
+    centred(m.name.Get(), nameCap_, layout.nameX, 0, layout.height, White(1));
     if (layout.chip) {
         const BarRect& chip = *layout.chip;
         const float r = chip.Height() / 2;
         brush_->SetColor(White(T::kChipOpacity));
         context->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(chip.left, chip.top, chip.right, chip.bottom), r, r), brush_.Get());
-        centred(m.chipSymbol.Get(), layout.chipSymbolX, chip.top, chip.Height(), Opaque(tip.accent));
-        centred(m.chipText.Get(), layout.chipTextX, chip.top, chip.Height(), Opaque(tip.accent));
+        DrawFace(context, D2D1::Point2F(layout.chipSymbolX + T::kChipFaceWidth / 2, (chip.top + chip.bottom) / 2), tip);
+        centred(m.chipText.Get(), chipCap_, layout.chipTextX, chip.top, chip.Height(), Opaque(tip.accent));
     }
     for (size_t i = 0; i < layout.keys.size() && i < m.keys.size(); ++i) {
         const BarRect& key = layout.keys[i];
@@ -175,7 +192,7 @@ void SpaceTipView::Paint(ID2D1DeviceContext* context, const SpaceTip& tip, const
             D2D1::RoundedRect(D2D1::RectF(key.left, key.top, key.right, key.bottom), T::kKeyRadius, T::kKeyRadius), brush_.Get());
         DWRITE_TEXT_METRICS metrics{};
         m.keys[i]->GetMetrics(&metrics);
-        centred(m.keys[i].Get(), key.left + (key.Width() - metrics.width) / 2, key.top, key.Height(), Opaque(tip.accent));
+        centred(m.keys[i].Get(), keyCap_, key.left + (key.Width() - metrics.width) / 2, key.top, key.Height(), Opaque(tip.accent));
     }
     // .overlay(Capsule().strokeBorder(.white.opacity(0.15), lineWidth: 1)): inside the edge.
     const float inset = T::kBorderWidth / 2;
@@ -183,6 +200,47 @@ void SpaceTipView::Paint(ID2D1DeviceContext* context, const SpaceTip& tip, const
     context->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(inset, inset, layout.width - inset, layout.height - inset), radius - inset,
                                                     radius - inset),
                                   brush_.Get(), T::kBorderWidth);
+}
+
+void SpaceTipView::DrawFace(ID2D1DeviceContext* context, D2D1_POINT_2F centre, const SpaceTip& tip) {
+    // face.smiling as the Mac draws it: a disc in the accent, the eyes and the smile in the
+    // chip's colour over the tip's fill (what shows through a hole there).
+    const float k = T::kChipOpacity;
+    const D2D1_COLOR_F hole{k + (1 - k) * tip.fill.r, k + (1 - k) * tip.fill.g, k + (1 - k) * tip.fill.b, 1};
+    const float r = T::kChipFaceDiameter / 2;
+    brush_->SetColor(Opaque(tip.accent));
+    context->FillEllipse(D2D1::Ellipse(centre, r, r), brush_.Get());
+    brush_->SetColor(hole);
+    for (float side : {-1.0f, 1.0f}) {
+        context->FillEllipse(D2D1::Ellipse(D2D1::Point2F(centre.x + side * T::kChipFaceEyeX, centre.y + T::kChipFaceEyeY), T::kChipFaceEyeWidth / 2,
+                                           T::kChipFaceEyeHeight / 2),
+                             brush_.Get());
+    }
+    if (!smile_) {
+        // A quadratic whose lowest point is kChipFaceSmileDepth below the centre: its control
+        // point lies twice as far below the ends as the curve's middle does.
+        ComPtr<ID2D1Factory> factory;
+        context->GetFactory(factory.GetAddressOf());
+        ComPtr<ID2D1PathGeometry> path;
+        ComPtr<ID2D1GeometrySink> sink;
+        if (SUCCEEDED(factory->CreatePathGeometry(path.GetAddressOf())) && SUCCEEDED(path->Open(sink.GetAddressOf()))) {
+            const float control = T::kChipFaceSmileY + 2 * (T::kChipFaceSmileDepth - T::kChipFaceSmileY);
+            sink->BeginFigure(D2D1::Point2F(-T::kChipFaceSmileX, T::kChipFaceSmileY), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(D2D1::Point2F(0, control), D2D1::Point2F(T::kChipFaceSmileX, T::kChipFaceSmileY)));
+            sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            if (SUCCEEDED(sink->Close())) smile_ = path;
+        }
+        D2D1_STROKE_STYLE_PROPERTIES round{};
+        round.startCap = round.endCap = D2D1_CAP_STYLE_ROUND;
+        factory->CreateStrokeStyle(round, nullptr, 0, roundCaps_.ReleaseAndGetAddressOf());
+    }
+    if (smile_) {
+        D2D1_MATRIX_3X2_F transform;
+        context->GetTransform(&transform);
+        context->SetTransform(D2D1::Matrix3x2F::Translation(centre.x, centre.y) * transform);
+        context->DrawGeometry(smile_.Get(), brush_.Get(), T::kChipFaceSmileWidth, roundCaps_.Get());
+        context->SetTransform(transform);
+    }
 }
 
 std::wstring SpaceTipView::DrawInto(IDCompositionVirtualSurface* surface, UINT width, UINT height, UINT dpi, const SpaceTip& tip,

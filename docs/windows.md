@@ -309,9 +309,12 @@ wide tip over the first cell can reach past the window's left edge as the Mac's 
 does. `kitecore sidebar` gives each cell's `tip`, and `--capture FILE --space-tip N`
 draws space N's at rest over the frame. Known differences: the Mac's ⌃n is Alt+n here,
 so the first keycap says "Alt" and is wider than the Mac's 18pt square (4pt either
-side of its label); the chip's face is Fluent's (and MDL2's) Emoji2 glyph for SF's
-face.smiling; and the text is Segoe UI Variable's, so the tip's width differs from the
-Mac's by the fonts' advances.
+side of its label); the chip's face is drawn as the Mac's 2x capture inks SF's
+face.smiling (a disc with the eyes and smile cut out; Segoe has no filled face); the
+text is Segoe UI Variable's, the name bold where the Mac's is semibold (SF's semibold
+inks as heavy) with each text's capitals centred, so the tip's width differs from the
+Mac's by the fonts' advances. A window restored under a still pointer shows its cell's
+tip 0.4 s later, as the Mac's tracking area enters again.
 
 Known differences from the Mac: during the 0.2 s slide only the selected page
 takes clicks and shows hover (the Mac's outgoing page is a live list too), and
