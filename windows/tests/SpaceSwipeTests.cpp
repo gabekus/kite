@@ -320,6 +320,17 @@ TEST(aSpaceSelectedUnderTheSwipeSettlesOnItsTheme) {
     CHECK(fade.from == b && fade.to == a);
 }
 
+TEST(aSwipeLetGoAlreadyThereFadesNothing) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 1.0f);
+    fade.FinishInteractive(b, 1);
+    CHECK(!fade.Fading() && fade.from == b && fade.to == b);
+    fade.SetInteractive(b, a, 0.0f);
+    fade.FinishInteractive(b, 2);
+    CHECK(!fade.Fading() && fade.from == b && fade.to == b);
+}
+
 TEST(aSnapEndsASwipesCrossfade) {
     const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
     ThemeCrossfade fade(a);

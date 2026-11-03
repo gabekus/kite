@@ -54,14 +54,18 @@ FrameClock::~FrameClock() {
     thread_.join();
 }
 
-void FrameClock::Start() {
+void FrameClock::Start(bool boost) {
+    bool wasRunning = false;
     {
         std::lock_guard lock(mutex_);
-        if (running_) return;
+        wasRunning = running_;
         running_ = true;
     }
-    Boost(true);
-    wake_.notify_one();
+    if (boost && !boosted_) {
+        Boost(true);
+        boosted_ = true;
+    }
+    if (!wasRunning) wake_.notify_one();
 }
 
 void FrameClock::Stop() {
@@ -70,7 +74,10 @@ void FrameClock::Stop() {
         if (!running_) return;
         running_ = false;
     }
-    Boost(false);
+    if (boosted_) {
+        Boost(false);
+        boosted_ = false;
+    }
 }
 
 double FrameClock::Now() {

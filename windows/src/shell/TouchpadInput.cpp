@@ -22,6 +22,9 @@ constexpr LONG kContentMargin = 1 << 20;
 // How long a taken contact keeps the frames coming before DirectManipulation says it's running
 // (a tap or a resting finger never does): a few frames, for its manual updates to start it.
 constexpr double kFirstWord = 0.25;
+// And at most this long while it's held without moving (should Windows keep reporting a lifted
+// contact as down), so a resting finger never keeps the clock going for good.
+constexpr double kLongestRest = 10;
 
 }  // namespace
 
@@ -142,24 +145,42 @@ bool TouchpadInput::HitTest(WPARAM wParam, LPARAM lParam, const std::function<bo
     contact_ = at;
     pointer_ = pointer;
     contactTaken_ = true;
-    pollUntil_ = FrameClock::Now() + kFirstWord;
+    const double now = FrameClock::Now();
+    pollUntil_ = now + kFirstWord;
+    restUntil_ = now + kLongestRest;
+    if (log) {
+        char line[120];
+        std::snprintf(line, sizeof line, "{\"dm\":\"contact\",\"t\":%.6f,\"pointer\":%u,\"x\":%ld,\"y\":%ld}", now, pointer, at.x, at.y);
+        log(line);
+    }
     return true;
 }
 
 bool TouchpadInput::Active() const {
     if (phases_.Moving() || recentring_ || FrameClock::Now() < pollUntil_) return true;
     // Fingers resting before they move: DirectManipulation's updates must keep coming until it
-    // says it's running, however long that takes.
+    // says it's running (up to kLongestRest).
     POINTER_INFO info{};
-    return contactTaken_ && GetPointerInfo(pointer_, &info) && (info.pointerFlags & POINTER_FLAG_INCONTACT);
+    return contactTaken_ && FrameClock::Now() < restUntil_ && GetPointerInfo(pointer_, &info) &&
+           (info.pointerFlags & POINTER_FLAG_INCONTACT);
 }
 
 void TouchpadInput::Update() {
+    const size_t before = reports_;
     if (updates_) updates_->Update(nullptr);
     recentring_ = false;
+    // A contact that lifted without ever moving: no more polling for it.
+    POINTER_INFO info{};
+    if (contactTaken_ && !(GetPointerInfo(pointer_, &info) && (info.pointerFlags & POINTER_FLAG_INCONTACT))) contactTaken_ = false;
+    if (log && reports_ == before) {
+        char line[96];
+        std::snprintf(line, sizeof line, "{\"dm\":\"poll\",\"t\":%.6f,\"held\":%d}", FrameClock::Now(), contactTaken_ ? 1 : 0);
+        log(line);
+    }
 }
 
 void TouchpadInput::StatusChanged(int current, int previous) {
+    ++reports_;
     float x = 0, y = 0;
     ContentTransform(x, y);
     if (log) {
@@ -179,6 +200,7 @@ void TouchpadInput::StatusChanged(int current, int previous) {
 }
 
 void TouchpadInput::ContentMoved(float x, float y) {
+    ++reports_;
     if (log) {
         char line[120];
         std::snprintf(line, sizeof line, "{\"dm\":\"content\",\"t\":%.6f,\"x\":%.3f,\"y\":%.3f}", FrameClock::Now(), x, y);
@@ -195,6 +217,9 @@ void TouchpadInput::Deliver() {
     for (const SwipeInput& event : events) {
         if (input_) input_(event);
     }
+    // Its storage back for the next report's, unless a report came meanwhile.
+    events.clear();
+    if (pending_.empty()) pending_.swap(events);
 }
 
 bool TouchpadInput::ContentTransform(float& x, float& y) const {

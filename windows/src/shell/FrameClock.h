@@ -8,9 +8,9 @@
 // displays it follows the fastest.
 //
 // Only for what has to draw again each frame (the theme's crossfade, a shader mix), and for
-// stepping DirectManipulation's manual updates while a touchpad gesture or its momentum runs
-// (shell/TouchpadInput.h): what a compositor property can do (an offset, an opacity) is an
-// IDCompositionAnimation.
+// stepping DirectManipulation's manual updates while fingers rest on a touchpad over the
+// sidebar (unboosted) or its gesture or momentum runs (shell/TouchpadInput.h): what a
+// compositor property can do (an offset, an opacity) is an IDCompositionAnimation.
 //
 // Time() is when the frame being made will reach the screen (DirectComposition's estimate),
 // as the Mac's targetTimestamp, in seconds on the QueryPerformanceCounter clock.
@@ -33,8 +33,9 @@ public:
     FrameClock(const FrameClock&) = delete;
     FrameClock& operator=(const FrameClock&) = delete;
 
-    // Start and Stop come from the window's thread.
-    void Start();
+    // Start and Stop come from the window's thread. Unboosted, it leaves the display's refresh
+    // rate alone (frames only to poll, drawing nothing); a boosted Start while it runs boosts it.
+    void Start(bool boost = true);
     void Stop();
     bool Running() const { return running_; }
     // The window took the message: the next frame may post another.
@@ -53,6 +54,7 @@ private:
     std::mutex mutex_;
     std::condition_variable wake_;
     bool running_ = false;  // under mutex_ for the thread; read on the UI thread only
+    bool boosted_ = false;  // the UI thread's
     bool quit_ = false;
     std::atomic<bool> posted_{false};
     std::thread thread_;

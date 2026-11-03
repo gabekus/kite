@@ -769,7 +769,8 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         });
         if (taken) {
             swipeContact_ = touchpad_->Contact();
-            clock_->Start();
+            // Frames to poll DirectManipulation with; the display's rate goes up once it moves.
+            clock_->Start(false);
             result = 0;
             return true;
         }

@@ -84,6 +84,8 @@ private:
     bool contactTaken_ = false;
     // Frames for at least this long after a contact is taken (s), held or not.
     double pollUntil_ = 0;
+    double restUntil_ = 0;  // and while held, until this
+    size_t reports_ = 0;    // status and content reports heard, for the log's polls
     bool recentring_ = false;  // the viewport was sent back over the middle: one Update applies it
 };
 

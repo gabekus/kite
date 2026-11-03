@@ -224,6 +224,8 @@ void ThemeCrossfade::FinishInteractive(const Theme& theme, double now) {
         std::swap(from, to);
         startProgress = 1 - progress;
     }
+    // Already all the way there (a whole page's drag, or none back): nothing to fade.
+    if (startProgress >= 1) return Snap(theme);
     start = now;
 }
 

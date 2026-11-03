@@ -40,9 +40,9 @@ their own PR, never as a side effect of a checkpoint.
   shader, as the Mac's ThemeView): it runs on the frame clock
   (`shell/FrameClock.h`), at the display's rate, only while it changes, and
   the clock stops when it ends. The same clock steps DirectManipulation's
-  manual updates while a touchpad gesture or its momentum runs (and for a
-  quarter second after a contact is taken, until DirectManipulation says it's
-  moving), drawing only the frames the gesture changed. An offset, a scale or an opacity is always an
+  manual updates while fingers rest on a touchpad over the sidebar (unboosted,
+  for at most 10 s) and while its gesture or momentum runs, drawing only the
+  frames the gesture changed. An offset, a scale or an opacity is always an
   `IDCompositionAnimation`.
 - Render at the display's refresh rate with no 60fps caps (docs/windows.md,
   Refresh rate).
