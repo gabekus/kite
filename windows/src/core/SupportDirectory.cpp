@@ -27,9 +27,13 @@ std::optional<std::filesystem::path> EnvironmentPath(const char* name) {
     // Read once at startup, before any thread could change the environment. _wdupenv_s
     // would avoid C4996, but MinGW's msvcrt doesn't export it.
 #ifdef _MSC_VER
-#pragma warning(suppress : 4996)
+#pragma warning(push)
+#pragma warning(disable : 4996)
 #endif
     const wchar_t* value = _wgetenv(wide.c_str());
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 #else
     const char* value = std::getenv(name);
 #endif
