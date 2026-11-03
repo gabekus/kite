@@ -311,7 +311,7 @@ draws space N's at rest over the frame. Known differences: the Mac's ⌃n is Alt
 so the first keycap says "Alt" and is wider than the Mac's 18pt square (4pt either
 side of its label); the chip's face is drawn as the Mac's 2x capture inks SF's
 face.smiling (a disc with the eyes and smile cut out; Segoe has no filled face); the
-text is Segoe UI Variable's, the name bold where the Mac's is semibold (SF's semibold
+text is Segoe UI Variable's, the name and the chip bold where the Mac's are semibold (SF's semibold
 inks as heavy) with each text's capitals centred, so the tip's width differs from the
 Mac's by the fonts' advances; the tip hides when the window moves or resizes, where the
 Mac's child panel moves with it; the keycaps' corners are circular where the Mac's are

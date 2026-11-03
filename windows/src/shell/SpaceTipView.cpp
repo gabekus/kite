@@ -52,10 +52,10 @@ std::unique_ptr<SpaceTipView> SpaceTipView::Create(HWND owner, IDWriteFactory* d
         return made;
     };
     HRESULT hr = S_OK;
-    // The name bold: SF's semibold inks as heavy as Segoe's bold (the UI gate's stems); the
-    // chip's and the keys' already match.
+    // Bold: SF's semibold (the name's and the chip's) inks as heavy as Segoe's bold (the UI
+    // gate's stems), as the keys' bold does.
     if (FAILED(hr = format(text, DWRITE_FONT_WEIGHT_BOLD, T::kNameFontSize, view->nameFormat_)) ||
-        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, T::kChipFontSize, view->chipFormat_)) ||
+        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_BOLD, T::kChipFontSize, view->chipFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_BOLD, T::kKeyFontSize, view->keyFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
@@ -77,7 +77,7 @@ std::unique_ptr<SpaceTipView> SpaceTipView::Create(HWND owner, IDWriteFactory* d
         return f->GetFontSize() * metrics.capHeight / std::max<float>(metrics.designUnitsPerEm, 1);
     };
     view->nameCap_ = capHeight(view->nameFormat_.Get(), DWRITE_FONT_WEIGHT_BOLD);
-    view->chipCap_ = capHeight(view->chipFormat_.Get(), DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    view->chipCap_ = capHeight(view->chipFormat_.Get(), DWRITE_FONT_WEIGHT_BOLD);
     view->keyCap_ = capHeight(view->keyFormat_.Get(), DWRITE_FONT_WEIGHT_BOLD);
     const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(owner, GWLP_HINSTANCE));
     if (!RegisterOnce(instance, &SpaceTipView::WindowProc)) {
@@ -198,7 +198,7 @@ void SpaceTipView::Paint(ID2D1DeviceContext* context, const SpaceTip& tip, const
         const float r = chip.Height() / 2;
         brush_->SetColor(White(T::kChipOpacity));
         context->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(chip.left, chip.top, chip.right, chip.bottom), r, r), brush_.Get());
-        DrawFace(context, D2D1::Point2F(layout.chipSymbolX + T::kChipFaceWidth / 2, (chip.top + chip.bottom) / 2), tip);
+        DrawFace(context, D2D1::Point2F(layout.chipSymbolX + T::kChipFaceWidth / 2, (chip.top + chip.bottom) / 2 + T::kChipFaceDrop), tip);
         centred(m.chipText.Get(), chipCap_, layout.chipTextX, chip.top, chip.Height(), Opaque(tip.accent));
     }
     for (size_t i = 0; i < layout.keys.size() && i < m.keys.size(); ++i) {

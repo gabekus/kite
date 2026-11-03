@@ -175,11 +175,12 @@ constexpr float kNameFontSize = 13;       // white; SF's semibold inks as heavy 
 constexpr float kChipHeight = 21;
 constexpr float kChipPadding = 7;
 constexpr float kChipSpacing = 4;  // the face to the profile's name
-constexpr float kChipFontSize = 13;      // semibold, in the accent
+constexpr float kChipFontSize = 13;      // semibold (Segoe's bold), in the accent
 // face.smiling at 11pt semibold, as the Mac's 2x capture inks it: a disc 11.25pt across in its
 // 13.5pt image, with the eyes and the smile cut out of it (in points from the disc's centre).
 constexpr float kChipFaceWidth = 13.5f;
 constexpr float kChipFaceDiameter = 11.25f;
+constexpr float kChipFaceDrop = 0.5f;  // its centre below the chip's (SF's symbol baseline)
 constexpr float kChipFaceEyeX = 1.5f, kChipFaceEyeY = -1.1f;       // each eye's centre (x either side)
 constexpr float kChipFaceEyeWidth = 1.0f, kChipFaceEyeHeight = 1.3f;
 constexpr float kChipFaceSmileX = 1.9f, kChipFaceSmileY = 1.35f;   // the smile's ends
