@@ -595,6 +595,37 @@ What's left:
   unblurred here (the command bar's mean of 1.0). The output lists every material's frame so a diff can mark them material-only.
 - Glyph edges: the space bar's emoji and the favorites tray's dashed border (max 58–67, a few hundred pixels).
 
+## Helix Mv: headless checks of what was unverified
+
+All of these ran on bundled test builds in the background (posted events, window capture, accessibility reads),
+never touching the screen, the real pointer or another app.
+
+1. **Two-finger space swipe: works.** `kite ui input` phased trackpad scrolls (began, 20 changed, ended; through the
+   window's scroll interceptor, as a real swipe) over the sidebar of the two-spaces state: a 300pt swipe went
+   Work → Personal and back, and a swipe past the first or last space stayed (the rubber band). A 40pt swipe doesn't
+   land, as a short real swipe doesn't.
+2. **Mini Player: works, and a bug found.** With `--autoplay-policy=no-user-gesture-required`, a local page playing a
+   looping tone, then another tab selected: the Mini Player shows (AXGroup "Mini Player" [8,690 224×66], "Tone",
+   "Pause"), and a posted click on Pause paused the page's audio (`paused` true) and turned the button to "Play".
+   **Bug:** a tab opened straight onto a page that starts playing never reports its media: no speaker button, no Mini
+   Player. The media scripts are added with `Page.addScriptToEvaluateOnNewDocument`, asynchronously, while the
+   tab's first document is already loading; the same page loaded again in the tab reports normally. Planned as M1e.
+3. **The 1Password key: checked in M1** (#289): a posted click logs the action it would take ("would add 1Password"),
+   and its frame and label match main (AXButton "Add 1Password to this profile" [260,49 30×30]). Opening Gabe's real
+   1Password can only be confirmed on his real profile.
+4. **Accessibility audit, sidebar and command bar against the SwiftUI views before #262** (`kite probe <pid> tree
+   --text`, the sidebar.json state; the command bar open with "ex" typed). Every label the SwiftUI sidebar had is
+   still there, some better: the space bar's buttons are named ("Personal", "Work" for "🏠"), Add is "New…", folders
+   and New Tab are table cells with their buttons. The command bar's suggestion rows are now labelled buttons ("ex",
+   "Docs", "Wiki", …) where SwiftUI exposed their text only as children. To check: the address field's hover-revealed
+   buttons (Dark page, Site Control Center) and the divider's Tidy and Clear are listed while hidden; their group is
+   `accessibilityHidden`, which VoiceOver honours, but the tree walk doesn't show whether it skips them.
+5. **Edge-of-list space switching during a drag: works,** with one test-only change: the tab row doesn't accept first
+   mouse, so AppKit drops a posted press in a background window; a scratch build with `acceptsFirstMouse` true on
+   `TabRowCell` (never committed, the bundle deleted) dragged Work's pinned tab to the list's left edge and held it:
+   the space switched to Personal within 0.5 s (Arc's 0.35 s dwell), and on release the tab landed there (Personal 2
+   → 3 pinned).
+
 ## Checks of what PR 1–6 left unverified
 
 **Context menus** (KITE_TEST_CONTEXT_MENU, which the sidebar's AppKit menus now go through): a right-click on each
