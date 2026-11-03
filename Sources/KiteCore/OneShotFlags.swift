@@ -7,6 +7,8 @@ import Foundation
 // UserDefaults is thread-safe, and the file URL never changes.
 public struct OneShotFlags: @unchecked Sendable {
     public static let fileName = "One-Shot Flags.plist"
+    /// Posted after `set`, on a real profile and a test one alike, with the key as `userInfo["key"]`.
+    public static let didChange = Notification.Name("KiteOneShotFlagsDidChange")
 
     private let defaults: UserDefaults
     /// The flags file, on a test profile.
@@ -26,6 +28,7 @@ public struct OneShotFlags: @unchecked Sendable {
     }
 
     public func set(_ value: Bool, forKey key: String) {
+        defer { NotificationCenter.default.post(name: Self.didChange, object: nil, userInfo: ["key": key]) }
         guard let file else { return defaults.set(value, forKey: key) }
         var flags = read(file)
         flags[key] = value

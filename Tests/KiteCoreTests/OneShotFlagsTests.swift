@@ -50,4 +50,19 @@ struct OneShotFlagsTests {
         #expect(OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": first.path]).bool(forKey: "asked"))
         #expect(!OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": second.path]).bool(forKey: "asked"))
     }
+
+    @Test func settingPostsDidChangeWithTheKey() {
+        let (defaults, suite) = scratchDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var keys: [String] = []
+        let token = NotificationCenter.default.addObserver(forName: OneShotFlags.didChange, object: nil, queue: nil) { note in
+            if let key = note.userInfo?["key"] as? String { keys.append(key) }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        let folder = scratchFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        OneShotFlags(defaults: defaults, environment: [:]).set(true, forKey: "real")
+        OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": folder.path]).set(true, forKey: "test")
+        #expect(keys.contains("real") && keys.contains("test"))
+    }
 }
