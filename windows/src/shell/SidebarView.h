@@ -11,8 +11,8 @@
 // strip, each at its space's place a sidebar's width apart, and a space switch's slide is a
 // DirectComposition animation of the strip's offset (SlidePages), so no frame of it runs Kite's
 // code or draws anything. It shows hover and takes
-// clicks and the wheel (HandleMouse); what a click does goes to Actions. Not yet: the top row,
-// favorites or the space bar.
+// clicks and the wheel (HandleMouse); what a click does goes to Actions. Under the pages, the
+// space bar (shell/SpaceBarView). Not yet: the top row or favorites.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -36,6 +36,7 @@
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
 #include "shell/Favicons.h"
+#include "shell/SpaceBarView.h"
 
 namespace kite {
 
@@ -56,6 +57,7 @@ public:
         std::function<void()> newTab;       // the New Tab row
         std::function<void()> editAddress;  // the address field
         std::function<void(const std::string& tabID)> closeTab;  // a tab's close button
+        std::function<void(const std::string& spaceID)> selectSpace;  // a space's cell in the bar
     };
     void SetActions(Actions actions) { actions_ = std::move(actions); }
 
@@ -98,7 +100,7 @@ public:
     // copying the sidebar (premultiplied BGRA, at the window's top-left) there for --capture.
     // The caller commits the compositor. Empty on success.
     std::wstring Draw(Pixels* readBack = nullptr);
-    bool DeviceLost() const { return deviceLost_; }
+    bool DeviceLost() const { return deviceLost_ || (bar_ && bar_->DeviceLost()); }
 
     // The window's messages: its posted redraw. True when it handled `message`; if the GPU was
     // lost meanwhile, DeviceLost says so and the window rebuilds.
@@ -153,6 +155,9 @@ private:
     // A point in the sidebar as the selected page sees it, with the strip's offset.
     D2D1_POINT_2F OnPage(D2D1_POINT_2F point) const;
     void RefreshHover();
+    // A point in the sidebar as the space bar sees it, and whether it's over the bar.
+    D2D1_POINT_2F OnBar(D2D1_POINT_2F point) const;
+    bool OverBar(D2D1_POINT_2F point) const;
     void SetScroll(float scroll);
     void Perform(const SidebarTap& tap);
     void DrawText(ID2D1DeviceContext* context, const std::string& text, IDWriteTextFormat* format, float x, float baseline,
@@ -198,7 +203,9 @@ private:
         Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
     };
     std::optional<Slide> slide_;
+    bool barSlidePending_ = false;  // the bar relights with the slide once it has the new cells
     bool redrawPosted_ = false;
+    std::unique_ptr<SpaceBarView> bar_;
 
     // Pointer.
     Actions actions_;
@@ -209,6 +216,15 @@ private:
     bool trackingLeave_ = false;
     std::optional<std::pair<SidebarRow::Kind, std::string>> hover_;  // the hovered row's kind and id
     std::optional<SidebarPress> press_;
+    // A press on a space's cell: the space, where it went down (points), and whether it has
+    // moved far enough to be a drag (SwiftUI's DragGesture(minimumDistance: 4)), which reorders
+    // (W9d) rather than selects.
+    struct BarPress {
+        std::string spaceID;
+        D2D1_POINT_2F start;
+        bool dragged = false;
+    };
+    std::optional<BarPress> barPress_;
     bool activating_ = false;         // the next press brings the window forward
     int clicks_ = 0;
     DWORD lastClickTime_ = 0;

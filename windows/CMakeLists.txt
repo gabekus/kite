@@ -108,6 +108,7 @@ if(WIN32)
     src/shell/MainWindow.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
+    src/shell/SpaceBarView.cpp
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")

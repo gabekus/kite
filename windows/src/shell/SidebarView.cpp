@@ -145,6 +145,8 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
         ComPtr<IDWriteInlineObject> ellipsis;
         if (SUCCEEDED(view->dwrite_->CreateEllipsisTrimmingSign(f, ellipsis.GetAddressOf()))) f->SetTrimming(&trimming, ellipsis.Get());
     }
+    view->bar_ = SpaceBarView::Create(view->dwrite_.Get(), error);
+    if (!view->bar_) return nullptr;
     // Emoji and symbols sit in the middle of their box.
     for (IDWriteTextFormat* f : {view->emojiFormat_.Get(), view->iconFormat_.Get()}) {
         f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -157,6 +159,7 @@ SidebarView::~SidebarView() { ReleaseGpu(); }
 
 void SidebarView::UseCompositor(Compositor* compositor) {
     ReleaseGpu();
+    bar_->UseCompositor(compositor, compositor ? compositor->Chrome() : nullptr);
     compositor_ = compositor;
     deviceLost_ = false;
     dirty_ = true;
@@ -214,6 +217,19 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
     Model next;
     const size_t selected = state.SelectedSpaceIndex();
     next.dark = !PrefersDarkForeground(state.SelectedSpace().theme);
+    // The space bar's cells, and their light along a slide that has just begun.
+    bar_->Update(SpaceCells(state), next.dark);
+    if (barSlidePending_) {
+        barSlidePending_ = false;
+        const std::optional<size_t> left = anchor ? state.SpaceIndex(*anchor) : std::nullopt;
+        if (slide_) {
+            bar_->Slide(slide_->segments, slide_->duration, slide_->segments.empty() ? 0 : ValueAt(slide_->segments, slide_->duration, 0),
+                        width_, SpaceSwipe::BuiltPages(selected, left, state.spaces.size()), selected);
+        } else {
+            bar_->Land();
+        }
+    }
+    if (bar_->NeedsDraw()) ScheduleDraw();
     next.address = AddressFieldText(state);
     next.spaceID = state.SelectedSpace().id;
     next.index = selected;
@@ -269,6 +285,9 @@ void SidebarView::SetPageOffset(float offset) {
     if (offset == pageOffset_ && !slide_) return;
     pageOffset_ = offset;
     slide_.reset();
+    barSlidePending_ = false;
+    bar_->Land();
+    if (bar_->NeedsDraw()) ScheduleDraw();
     PlaceStrip();
     // At rest the rows have moved under a still pointer; mid-swipe, as AppKit's, hover waits.
     if (offset == 0) RefreshHover();
@@ -293,6 +312,8 @@ double SidebarView::SlidePages(float from, float to) {
         if (SUCCEEDED(hr)) slide_ = std::move(slide);
     }
     PlaceStrip();
+    // The bar's cells relight with it, once Update has given it the new selection.
+    barSlidePending_ = true;
     return slide_ ? duration : 0;
 }
 
@@ -326,6 +347,7 @@ void SidebarView::Layout(float width, UINT dpi) {
         dpi_ = dpi;
         dirty_ = true;
         for (auto& [id, page] : pages_) page.dirty = true;
+        bar_->Layout(width, dpi);
         // A slide's animation is in the old scale's pixels: it lands.
         if (slide_) SetPageOffset(pageOffset_);
     }
@@ -350,7 +372,7 @@ void SidebarView::ScheduleDraw() {
 }
 
 bool SidebarView::NeedsDraw() const {
-    return dirty_ || std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
+    return dirty_ || bar_->NeedsDraw() || std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
 }
 
 bool SidebarView::HandleMessage(UINT message) {
@@ -496,13 +518,19 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         return std::none_of(pages_.begin(), pages_.end(), [&](const auto& page) { return page.second.icons.contains(entry.first); });
     });
 
+    // The space bar under them.
+    Pixels bar;
+    if (error = bar_->Draw(static_cast<UINT>(client.bottom), readBack ? &bar : nullptr); !error.empty()) return error;
+
     if (readBack) {
-        // As the screen shows it at rest: the selected page over the address field.
+        // As the screen shows it at rest: the selected page over the address field, and the bar
+        // at the window's bottom.
         readBack->width = width;
-        readBack->height = std::max(header.height, selectedPage.height);
+        readBack->height = std::max({header.height, selectedPage.height, static_cast<UINT>(client.bottom)});
         readBack->bgra.assign(static_cast<size_t>(readBack->width) * readBack->height * 4, 0);
         ComposeOver(*readBack, header, POINT{0, 0});
         ComposeOver(*readBack, selectedPage, POINT{0, 0});
+        ComposeOver(*readBack, bar, POINT{0, client.bottom - static_cast<LONG>(bar.height)});
     }
     return {};
 }
@@ -782,7 +810,7 @@ SidebarHit SidebarView::HitAt(D2D1_POINT_2F p) const {
 void SidebarView::RefreshHover() {
     // A press keeps the hover where it began until it's let go, as the Mac's tracking areas
     // (no .enabledDuringMouseDrag) send no enter or exit during a drag.
-    if (press_) return;
+    if (press_ || barPress_) return;
     const SidebarHit hit = pointer_ ? HitAt(PointOf(*pointer_)) : SidebarHit{};
     // What draws hovered is a row (the header's chevron and a tab's close button are part of
     // theirs); the address field has no hover of its own yet (its buttons come with the
@@ -791,9 +819,35 @@ void SidebarView::RefreshHover() {
     if (hit.target != SidebarHit::Target::None && hit.target != SidebarHit::Target::AddressField && hit.row < model_.rows.size()) {
         hover.emplace(model_.rows[hit.row].kind, model_.rows[hit.row].id);
     }
+    // Over the bar: its cell's backing (a press elsewhere holds it, as above).
+    std::optional<std::string> barHover;
+    if (pointer_) {
+        const D2D1_POINT_2F p = PointOf(*pointer_);
+        if (OverBar(p)) {
+            const D2D1_POINT_2F b = OnBar(p);
+            barHover = bar_->SpaceAt(b.x, b.y);
+        }
+    }
+    bar_->SetHover(barHover);
+    if (bar_->NeedsDraw()) ScheduleDraw();
     if (hover == hover_) return;
     hover_ = std::move(hover);
     InvalidateSelectedPage();
+}
+
+D2D1_POINT_2F SidebarView::OnBar(D2D1_POINT_2F p) const {
+    // The bar sits at the window's bottom in whole pixels.
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    RECT client{};
+    GetClientRect(window_, &client);
+    const float top = (static_cast<float>(client.bottom) - std::round(space_bar_metrics::kHeight * scale)) / scale;
+    return D2D1_POINT_2F{p.x, p.y - top};
+}
+
+bool SidebarView::OverBar(D2D1_POINT_2F p) const {
+    if (p.x < 0 || p.x >= width_) return false;
+    const D2D1_POINT_2F b = OnBar(p);
+    return b.y >= 0 && b.y < space_bar_metrics::kHeight;
 }
 
 void SidebarView::ForgetActivation() {
@@ -803,6 +857,7 @@ void SidebarView::ForgetActivation() {
 void SidebarView::ClearHover() {
     pointer_.reset();
     press_.reset();
+    barPress_.reset();
     activating_ = false;
     RefreshHover();
 }
@@ -866,6 +921,10 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             trackingLeave_ = TrackMouseEvent(&track) != FALSE;
         }
         pointer_ = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (barPress_ && !barPress_->dragged) {
+            const D2D1_POINT_2F p = PointOf(*pointer_);
+            barPress_->dragged = std::hypot(p.x - barPress_->start.x, p.y - barPress_->start.y) >= 4;
+        }
         RefreshHover();
         return false;
     }
@@ -890,12 +949,33 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         lastClickAt_ = at;
         pointer_ = at;
         RefreshHover();
+        // A space's cell, which takes the click that brings the window forward too (the Mac's
+        // acceptsFirstMouse).
+        if (OverBar(p)) {
+            const D2D1_POINT_2F b = OnBar(p);
+            if (std::optional<std::string> space = bar_->SpaceAt(b.x, b.y)) {
+                barPress_ = BarPress{*space, p};
+                SetCapture(window_);
+            }
+            return true;
+        }
         const D2D1_POINT_2F q = OnPage(p);
         press_ = SidebarPressAt(model_.rows, width_, Height(), scroll_, q.x, q.y, clicks_, activating);
         if (press_) SetCapture(window_);
         return true;
     }
     case WM_LBUTTONUP: {
+        if (barPress_) {
+            const BarPress press = *barPress_;
+            barPress_.reset();
+            if (GetCapture() == window_) ReleaseCapture();
+            // Let go inside the cell it pressed, without dragging: that space (mouseUp's
+            // bounds.contains).
+            const D2D1_POINT_2F b = OnBar(PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}));
+            RefreshHover();
+            if (!press.dragged && bar_->InCell(press.spaceID, b.x, b.y) && actions_.selectSpace) actions_.selectSpace(press.spaceID);
+            return true;
+        }
         if (!press_) return false;
         const SidebarPress press = *press_;
         press_.reset();
@@ -910,16 +990,44 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         return true;
     }
     case WM_CAPTURECHANGED:
-        if (press_) {
+        if (press_ || barPress_) {
             press_.reset();
+            barPress_.reset();
             RefreshHover();
         }
         return false;
+    case WM_MOUSEHWHEEL: {
+        // Sideways over the space bar: its strip, when the spaces don't fit (an NSScrollView).
+        POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ScreenToClient(window_, &at);
+        if (!OverBar(PointOf(at))) return false;
+        UINT chars = 3;
+        if (!SystemParametersInfoW(SPI_GETWHEELSCROLLCHARS, 0, &chars, 0)) chars = 3;
+        const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
+        if (bar_->Scroll(notches * static_cast<float>(chars) * kWheelLine)) {
+            pointer_ = at;
+            RefreshHover();
+            ScheduleDraw();
+        }
+        return true;
+    }
     case WM_MOUSEWHEEL: {
         POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};  // screen coordinates
         ScreenToClient(window_, &at);
         const D2D1_POINT_2F p = PointOf(at);
         const float height = Height();
+        // Shift turns a wheel sideways, as across Windows: over the bar, its strip.
+        if ((GET_KEYSTATE_WPARAM(wParam) & MK_SHIFT) && OverBar(p)) {
+            UINT lines = 3;
+            if (!SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0) || lines == WHEEL_PAGESCROLL) lines = 3;
+            const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
+            if (bar_->Scroll(-notches * static_cast<float>(lines) * kWheelLine)) {
+                pointer_ = at;
+                RefreshHover();
+                ScheduleDraw();
+            }
+            return true;
+        }
         // The list's scroll view: inside its padding, between the header and the space bar.
         if (p.x < M::kPadding || p.x >= width_ - M::kPadding || p.y < M::kHeaderAreaHeight || p.y >= SidebarListBottom(height)) {
             return false;

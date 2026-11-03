@@ -18,9 +18,10 @@ struct Pixels {
     std::vector<uint8_t> bgra;
 };
 
-// Composes premultiplied `top` over `base` with its top-left at `origin` (px), clipped to
-// `base`, as DirectComposition puts one visual over another.
-void ComposeOver(Pixels& base, const Pixels& top, POINT origin);
+// Composes premultiplied `top` over `base` with its top-left at `origin` (px), faded by
+// `opacity` and clipped to `base` (and to `clip`, in base's px, when given), as DirectComposition
+// puts one visual over another.
+void ComposeOver(Pixels& base, const Pixels& top, POINT origin, float opacity = 1, const RECT* clip = nullptr);
 
 // Empty on success, otherwise what failed. Encodes with WIC (first-party).
 std::wstring SavePng(const Pixels& pixels, const std::filesystem::path& file);
