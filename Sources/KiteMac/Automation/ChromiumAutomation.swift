@@ -393,6 +393,9 @@ struct ChromiumAutomation: PageActions {
     /// and the next call makes a new one. Keyed by frame, not by browser object: a slept tab's new browser can
     /// reuse the old one's address, and an old context id can name a different context in it (even the page's).
     private static var isolatedWorlds: [String: Int] = [:]
+    /// Worlds being made: a second call for the same frame waits for it rather than making a second world (which
+    /// would hold a second copy of whatever the first one drew).
+    private static var makingWorlds: [String: Task<Int, Error>] = [:]
 
     /// Runs code in an isolated world of the top frame: it shares the page's DOM but none of its scripts, so the
     /// page can't read or change what runs there. `binding` is callable from that world only (its calls arrive as
@@ -403,23 +406,32 @@ struct ChromiumAutomation: PageActions {
             throw AutomationError(.failed, "The page has no frame yet.")
         }
         let key = "\(frame):\(world)"
+        var stale: Int?
         for attempt in 0..<2 {
             let context: Int
-            if attempt == 0, let cached = Self.isolatedWorlds[key] {
+            if let cached = Self.isolatedWorlds[key], cached != stale {
                 context = cached
+            } else if let making = Self.makingWorlds[key] {
+                context = try await making.value
             } else {
-                try await call("Runtime.addBinding", ["name": binding, "executionContextName": world])
-                let made = try await call("Page.createIsolatedWorld", ["frameId": frame, "worldName": world])
-                guard let id = made["executionContextId"] as? Int else { throw AutomationError(.failed, "Chromium made no world.") }
-                Self.isolatedWorlds[key] = id
-                context = id
+                let making = Task { () async throws -> Int in
+                    try await self.call("Runtime.addBinding", ["name": binding, "executionContextName": world])
+                    let made = try await self.call("Page.createIsolatedWorld", ["frameId": frame, "worldName": world])
+                    guard let id = made["executionContextId"] as? Int else { throw AutomationError(.failed, "Chromium made no world.") }
+                    return id
+                }
+                Self.makingWorlds[key] = making
+                defer { Self.makingWorlds[key] = nil }
+                context = try await making.value
+                Self.isolatedWorlds[key] = context
             }
             let result: [String: Any]
             do {
                 result = try await call("Runtime.evaluate", ["expression": code, "contextId": context, "returnByValue": true], timeout: 5)
             } catch let error as AutomationError where attempt == 0 && error.code == .failed {
                 // "Cannot find context with specified id": the page navigated since.
-                Self.isolatedWorlds[key] = nil
+                if Self.isolatedWorlds[key] == context { Self.isolatedWorlds[key] = nil }
+                stale = context
                 continue
             }
             if let exception = result["exceptionDetails"] as? [String: Any] {
