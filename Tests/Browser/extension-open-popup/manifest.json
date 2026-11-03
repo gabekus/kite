@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Kite openPopup test",
+  "version": "1.0",
+  "action": { "default_popup": "popup.html" },
+  "background": { "service_worker": "worker.js" },
+  "permissions": ["storage"],
+  "web_accessible_resources": [{ "resources": ["trigger.html"], "matches": ["http://127.0.0.1/*"] }]
+}

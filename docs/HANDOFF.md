@@ -180,6 +180,9 @@ swaps the shown page, theme, command bar and sidebar. Page events flow from the 
   `CefBrowserProcessHandler::GetDefaultClient()`'s client, and their windows are `BrowserNativeWidgetWindow`.
   Kite routes them into background tabs (`KCDefaultClient.mm`) and never orders those windows in (`KCExtensionWindows.mm`).
   A hidden Chrome-style "anchor" browser would make `tabs.create` work, but its window couldn't be hidden reliably.
+- **`chrome.action.openPopup` fails with "Could not find an active browser window."** for the same reason, so 1Password's
+  "Unlock 1Password" did nothing. `ExtensionTabsScript` replaces it, and Kite shows the popup in its own popover
+  (`scripts/test-extension-open-popup.sh`).
 - **Chrome's install dialog can't be hidden or replaced** without patching CEF: its NSWindow title is empty (the "Add …?" text is
   only its accessibility title), Chrome fades it in itself (alpha steps 0.29 → 1, bypassing `-setAlphaValue:`), and
   "Add extension" stays disabled while the dialog isn't really visible (its anti-clickjacking delay). So Kite attaches Chrome's

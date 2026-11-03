@@ -41,6 +41,13 @@ extension BrowserWindowController: ExtensionTabsHost {
     func activateTabForExtension(_ id: UUID) {
         store.mutate { $0.select(tab: id) }
     }
+
+    /// Over the top right of the page, where ⇧⌘X opens the password manager.
+    var extensionPopupAnchor: (rect: NSRect, view: NSView) {
+        let bounds = contentFrame.bounds
+        let rect = NSRect(x: bounds.maxX - 40, y: contentFrame.isFlipped ? bounds.minY : bounds.maxY - 1, width: 1, height: 1)
+        return (rect, contentFrame)
+    }
 }
 #endif
 
@@ -73,9 +80,8 @@ extension BrowserWindowController {
             NSLog("Kite: diagnostics: would open %@", PasswordManagerIntegration.current.name)
             return true
         }
-        let bounds = contentFrame.bounds
-        let anchor = NSRect(x: bounds.maxX - 40, y: contentFrame.isFlipped ? bounds.minY : bounds.maxY - 1, width: 1, height: 1)
-        return PasswordManagerIntegration.showPopup(engine: pool.currentEngine, relativeTo: anchor, of: contentFrame)
+        let anchor = extensionPopupAnchor
+        return PasswordManagerIntegration.showPopup(engine: pool.currentEngine, relativeTo: anchor.rect, of: anchor.view)
     }
 
     /// For Claude's sign_in: whether the password manager can fill in this window.
