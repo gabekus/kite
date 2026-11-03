@@ -107,6 +107,6 @@ clone, which covers its worktrees: `git config core.hooksPath .githooks`.
 CI (`.github/workflows/ci.yml` for macOS, `ci-windows.yml`) restores the `.build` cache saved by the
 latest main run, and `scripts/ci-restore-mtimes.sh` makes that build
 incremental, so a PR recompiles only what it changed. Docs-only changes skip
-the macOS job, and Windows runs only when KiteCore, KiteWindows, Tests or Package.swift
+the macOS job, and Windows runs only when KiteCore, Tests or Package.swift
 change. The macOS runner label comes from the `MACOS_RUNNER` repo variable
 (default `macos-15`), and Windows from `WINDOWS_RUNNER`; fork PRs always use GitHub's runners.

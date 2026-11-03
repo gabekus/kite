@@ -1,6 +1,6 @@
 name: CI (Windows)
 
-# KiteCore, its tests and the Windows shell build on Windows, so this runs only when they change.
+# Only KiteCore and its tests build on Windows, so this runs only when they change.
 # A path filter on the trigger (not a separate "changes" job) means no extra job
 # hop before the build starts.
 on:
@@ -8,7 +8,6 @@ on:
     branches: [main]
     paths:
       - 'Sources/KiteCore/**'
-      - 'Sources/KiteWindows/**'
       - 'Tests/**'
       - 'Package.swift'
       - 'Package.resolved'
@@ -17,7 +16,6 @@ on:
   pull_request:
     paths:
       - 'Sources/KiteCore/**'
-      - 'Sources/KiteWindows/**'
       - 'Tests/**'
       - 'Package.swift'
       - 'Package.resolved'
@@ -29,7 +27,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Keeps KiteCore portable and builds the Windows shell.
+  # Keeps KiteCore portable for the Windows shell. Only KiteCore and its tests
+  # build on Windows, so the job runs only when those change.
   windows:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'windows-latest' || vars.WINDOWS_RUNNER || 'windows-latest' }}
     timeout-minutes: 30
@@ -56,24 +55,6 @@ jobs:
       - name: Test KiteCore
         shell: pwsh
         run: swift test
-      - name: Build the Windows shell
-        shell: pwsh
-        run: swift build --product Kite
-      - name: Smoke-test the Windows shell
-        shell: pwsh
-        run: |
-          $profile = Join-Path $env:RUNNER_TEMP "kite-smoke-$([guid]::NewGuid())"
-          New-Item -ItemType Directory -Path $profile | Out-Null
-          $env:KITE_SUPPORT_PATH = $profile
-          $bin = swift build --product Kite --show-bin-path
-          & "$bin\Kite.exe" --smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "Kite.exe exited with $LASTEXITCODE" }
-          if (-not (Test-Path (Join-Path $profile 'session.json'))) { throw 'no session.json written' }
-          # A KITE_SUPPORT_PATH that isn't a directory must be refused, not fallen back from.
-          $env:KITE_SUPPORT_PATH = Join-Path $profile 'session.json'
-          & "$bin\Kite.exe" --smoke-test
-          if ($LASTEXITCODE -eq 0) { throw 'Kite.exe accepted a file as KITE_SUPPORT_PATH' }
-          $global:LASTEXITCODE = 0
       - name: Save build cache (main only, so every PR starts from main's build)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: git rev-parse HEAD > .build/ci-built-sha

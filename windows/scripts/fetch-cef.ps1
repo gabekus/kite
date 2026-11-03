@@ -1,10 +1,10 @@
 # Downloads the pinned CEF (Chromium Embedded Framework) build for Windows x64 into
-# ThirdParty\cef and builds its static C++ wrapper (libcef_dll_wrapper.lib).
+# windows\ThirdParty\cef and builds its static C++ wrapper (libcef_dll_wrapper.lib).
 # The Windows twin of scripts/fetch-cef.sh: same CEF version, so both shells run
 # the same Chromium. The minimal distribution is a large download (a few hundred MB
 # unpacked); run it only when you mean to.
 #
-#   pwsh scripts/fetch-cef.ps1
+#   pwsh windows/scripts/fetch-cef.ps1
 #
 # Needs cmake, Ninja and the MSVC build tools (a "Developer PowerShell" or vcvars64).
 $ErrorActionPreference = 'Stop'
@@ -14,7 +14,7 @@ $CefPlatform = 'windows64'
 # Pin the SHA-1 after the first verified download (the CDN's .sha1 is checked either way).
 $CefSha1 = ''
 
-$Root = Resolve-Path (Join-Path $PSScriptRoot '..')
+$Root = Resolve-Path (Join-Path $PSScriptRoot '..')  # windows/
 $ThirdParty = Join-Path $Root 'ThirdParty'
 $Dest = Join-Path $ThirdParty 'cef'
 $Name = "cef_binary_${CefVersion}_${CefPlatform}_minimal"
