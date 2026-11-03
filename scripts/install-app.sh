@@ -92,8 +92,12 @@ stage_for_quit() {
     nohup bash -c "
         $(declare -f kite_running swap)
         DEST='$DEST' DEST_DIR='$DEST_DIR' STAGED='$STAGED'
-        until swap; do sleep 1; done
-        rm -f '$WAITER'
+        # Ends by itself once \$WAITER no longer names it: a later install swapped directly or staged anew.
+        # Killing it from outside could stop it halfway through a swap, between deleting Kite.app and
+        # moving the new one in.
+        mine() { read -r p < '$WAITER' 2>/dev/null && [[ \"\$p\" == \"\$\$\" ]]; }
+        until swap; do sleep 1; mine || exit 0; done
+        mine && rm -f '$WAITER'
     " >/dev/null 2>&1 &
     echo "$!" > "$WAITER"
     disown
@@ -101,7 +105,9 @@ stage_for_quit() {
 
 # Just this install's process: test builds elsewhere share the bundle id.
 pid="$(pgrep -f "^$DEST/Contents/MacOS/Kite( |\$)" | head -1 || true)"
+# This install swaps directly: an earlier install's waiter has nothing left to do and ends at its next look.
 if [[ -z "$pid" ]] && swap; then
+    rm -f "$WAITER"
     echo "Installed $DEST ($version)"
     exit 0
 fi
@@ -124,5 +130,6 @@ if kill -0 "$pid" 2>/dev/null || ! swap; then
     echo "error: Kite didn't quit (or was opened again); $version is staged and goes in when it quits" >&2
     exit 1
 fi
+rm -f "$WAITER"
 echo "Installed $DEST ($version)"
 open "$DEST"
