@@ -106,18 +106,22 @@ std::optional<std::pair<int, int>> ParseSize(std::wstring_view text) {
 
 constexpr UINT_PTR kSmokeTimer = 1;
 
+// Writes `text` as UTF-8 to a standard handle, if the launcher gave us one (a GUI process
+// has no console, but a launcher that redirects stdout or stderr, like CI, gets the text).
+void WriteUtf8(DWORD which, const std::wstring& text) {
+    HANDLE handle = GetStdHandle(which);
+    if (!handle || handle == INVALID_HANDLE_VALUE || text.empty()) return;
+    const int bytes = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) return;
+    std::string utf8(static_cast<size_t>(bytes), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), utf8.data(), bytes, nullptr, nullptr);
+    DWORD written = 0;
+    WriteFile(handle, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+}
+
 int Fail(bool quiet, const std::wstring& message, int code) {
     OutputDebugStringW((L"Kite: " + message + L"\n").c_str());
-    // A GUI process has no console, but a launcher that redirects stderr (CI) gets the reason.
-    HANDLE stderrHandle = GetStdHandle(STD_ERROR_HANDLE);
-    if (stderrHandle && stderrHandle != INVALID_HANDLE_VALUE) {
-        std::wstring line = L"Kite: " + message + L"\n";
-        int bytes = WideCharToMultiByte(CP_UTF8, 0, line.c_str(), static_cast<int>(line.size()), nullptr, 0, nullptr, nullptr);
-        std::string utf8(static_cast<size_t>(bytes > 0 ? bytes : 0), '\0');
-        if (bytes > 0) WideCharToMultiByte(CP_UTF8, 0, line.c_str(), static_cast<int>(line.size()), utf8.data(), bytes, nullptr, nullptr);
-        DWORD written = 0;
-        WriteFile(stderrHandle, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
-    }
+    WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + message + L"\n");
     if (!quiet) MessageBoxW(nullptr, message.c_str(), L"Kite", MB_OK | MB_ICONERROR);
     return code;
 }
@@ -141,12 +145,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         std::wstring failures = kite::RunBackdropTest(report);
         OutputDebugStringW(report.c_str());
         if (!failures.empty()) return Fail(true, L"the GPU backdrop doesn't match the reference:\n" + failures + L"\n" + report, kCaptureFailed);
-        HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
-        if (out && out != INVALID_HANDLE_VALUE) {
-            std::string utf8(report.begin(), report.end());  // the report is ASCII
-            DWORD written = 0;
-            WriteFile(out, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
-        }
+        WriteUtf8(STD_OUTPUT_HANDLE, report);
         return kOk;
     }
     const bool smokeTest = HasFlag(args, L"--smoke-test");
