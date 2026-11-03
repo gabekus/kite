@@ -2,8 +2,8 @@
 import Foundation
 import PackageDescription
 
-// KiteCore is plain Foundation so it builds on macOS and Windows alike.
-// Platform shells (KiteMac today, KiteWindows later) sit on top of it.
+// KiteCore is plain Foundation; KiteMac sits on top of it. Kite for Windows is
+// native C++ in windows/ and shares KiteCore's tests and session format, not its code.
 var targets: [Target] = [
     .target(name: "KiteCore"),
     .testTarget(name: "KiteCoreTests", dependencies: ["KiteCore"]),

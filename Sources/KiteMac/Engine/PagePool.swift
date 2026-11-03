@@ -22,6 +22,9 @@ final class PagePool {
     private var savedState: [UUID: Any] = [:]
     private var visibleIDs: Set<UUID> = []
     private var memoryPressure: DispatchSourceMemoryPressure?
+    /// Each open popup's tab and the tab that opened it (window.open, or a link with
+    /// rel=opener). Shared by every window, since a tab's page can move between them.
+    private static var popupOpeners: [UUID: UUID] = [:]
     /// Installs started from Google's "Add to Kite" buttons, by extension id.
     private var extensionInstalls: [String: BackgroundExtensionInstall] = [:]
 
@@ -230,12 +233,25 @@ final class PagePool {
 
     /// A new selected tab showing `page`, which already exists (a popup, or a Peek's page expanded). `url` is
     /// what it shows already: WebKit doesn't report a page's URL again until it changes.
-    func openTab(with page: WebPage, url: URL? = nil) {
+    /// `opener` is the tab whose page opened it, for a popup.
+    func openTab(with page: WebPage, url: URL? = nil, opener: UUID? = nil) {
         // Register before the tab exists so selecting it reuses this page.
         let newID = UUID()
         register(page, id: newID)
         pageProfiles[newID] = currentEngine.profileDirectory
+        if let opener { Self.popupOpeners[newID] = opener }
         store.mutateWithoutUndo { $0.openTab(id: newID, url: url) }
+    }
+
+    /// A popup and its opener talk through `window.opener` and `postMessage` (Sign in with Apple
+    /// and Google, OAuth), so neither page may hibernate while both are open: hibernating closes
+    /// the page, which cuts the link for good, and the opener comes back without the dialog that
+    /// was waiting for the popup. The popup takes the screen from its opener, so the opener is
+    /// exactly the page memory pressure or the live-tab limit would pick.
+    private func isLinkedToPopup(_ id: UUID) -> Bool {
+        Self.popupOpeners.contains { popup, opener in
+            (popup == id || opener == id) && store.state.tab(popup) != nil && store.state.tab(opener) != nil
+        }
     }
 
     /// Registers `page` (a Peek's) for a tab the caller is about to add with `id`.
@@ -246,6 +262,8 @@ final class PagePool {
 
     func discard(_ id: UUID, keepHistory: Bool) {
         guard let page = pages.removeValue(forKey: id) else { return }
+        // A closed page can't be anyone's opener or popup again.
+        Self.popupOpeners = Self.popupOpeners.filter { $0.key != id && $0.value != id }
         pageProfiles[id] = nil
         savedState[id] = keepHistory ? page.hibernationState() : nil
         lastShown[id] = nil
@@ -309,7 +327,7 @@ final class PagePool {
         case let .openInNewTab(url, foreground):
             store.mutateWithoutUndo { $0.openTab(url: url, select: foreground) }
         case .popup(let page):
-            openTab(with: page)
+            openTab(with: page, opener: id)
         case .openInLinkPeek(let url):
             // Out of the engine's navigation callback before making another page.
             DispatchQueue.main.async { [weak self] in
@@ -327,7 +345,14 @@ final class PagePool {
                 if let onOpenLittleKite { onOpenLittleKite(id, url) } else { store.mutateWithoutUndo { $0.openLinkInSplit(url: url, from: id) } }
             }
         case .closeRequested:
-            store.mutateWithoutUndo { $0.close(tab: id) }
+            // A popup that closes itself (window.close() after signing in) hands the screen back
+            // to the tab that opened it, as Chrome returns to the opener's window.
+            let opener = Self.popupOpeners.removeValue(forKey: id)
+            let wasSelected = store.state.selectedTab?.id == id
+            store.mutateWithoutUndo { state in
+                state.close(tab: id)
+                if wasSelected, let opener, state.tab(opener) != nil { state.select(tab: opener) }
+            }
         case let .openLink(url, target):
             // Chromium opens Open Link in New Tab in the background.
             if target == .newTab { store.mutateWithoutUndo { $0.openTab(url: url, select: false) } } else { onOpenLink?(id, url, target) }
@@ -376,9 +401,9 @@ final class PagePool {
 
     /// Hibernates tabs unless they're playing media or using the camera or mic.
     private func hibernate(_ ids: [UUID]) {
-        for id in ids {
+        for id in ids where !isLinkedToPopup(id) {
             pages[id]?.checkBusy { [weak self] busy in
-                guard let self, !busy, !self.visibleIDs.contains(id) else { return }
+                guard let self, !busy, !self.visibleIDs.contains(id), !self.isLinkedToPopup(id) else { return }
                 self.discard(id, keepHistory: true)
             }
         }

@@ -1,32 +1,72 @@
 # Kite for Windows
 
-Goal: the same browser on Windows, as fast as we can make it, sharing as much as
-possible with macOS.
+Goal: the same browser on Windows, as fast as we can make it, with as few layers
+between Kite and Windows as possible.
 
-## What carries over unchanged
+## Decision (Gabe, 2026-11-03)
 
-- **KiteCore** (Swift, Foundation only): spaces, tabs, command-bar search, URL
-  parsing, the hibernation policy, theme math, the session file. CI builds and
-  tests it on Windows, so it stays portable.
-- **The engine:** CEF's Chromium on Windows is the same version and API as on
-  macOS. The Objective-C++ bridge becomes a plain C++ bridge with the same shape
-  (one `KCBrowser` per tab, the same delegate events, DevTools/CDP calls), and
-  Swift on Windows calls it through Swift's C++ interop.
+**Native C++20 on Win32.** No cross-platform UI framework and no language bridge.
+The model is Shopify's [back to native](https://shopify.engineering/back-to-native):
+each platform is written natively, and the two share specs, tests and a data format
+instead of an implementation.
 
-## Shell
+- **Language: C++.** It's Windows' first-party systems language and CEF's own
+  API, so Kite calls Chromium directly with no bridge. Swift on Windows (to reuse
+  KiteCore) was the first idea, but it adds a toolchain and runtime Microsoft
+  doesn't ship and a C++ interop layer in front of CEF. C# adds the .NET runtime.
+  Rust isn't first-party on Windows either and would need its own CEF bindings.
+- **UI: Win32 + DirectComposition + Direct2D/DirectWrite**, drawn by Kite itself.
+  These are the APIs WinUI, Edge and Chrome sit on. Leaving WinUI out avoids the
+  Windows App SDK runtime, XAML startup cost and XAML airspace problems, and
+  Kite's chrome is custom-drawn on the Mac anyway.
+- **Engine: CEF 156**, the same Chromium as macOS, through CEF's C++ API.
+- **Shaders: HLSL** ports of `Kite.metal`.
+- **Build: CMake + MSVC** (Visual Studio 2022 or later), static CRT, so `Kite.exe` needs
+  no redistributable. The only third-party piece is CEF.
+- **Reference: Kite for Mac.** Windows matches the Mac app's behaviour, layout
+  and motion, measured from the Mac build with `kite ui`. Arc for Windows is
+  never the reference.
 
-Swift 6 on Windows plus [swift-winrt](https://github.com/thebrowsercompany/swift-winrt)
-for the WinUI 3 and Win32 APIs. That's The Browser Company's own toolchain from
-Arc for Windows.
+### Sharing with the Mac without sharing code
+
+- **KiteCore's tests are the spec.** Each piece of KiteCore that Windows needs
+  (BrowserState, URL input, command-bar search, the hibernation policy, theme
+  math, Arc import) is ported to C++ under `windows/src/core` with its Swift tests
+  ported alongside, case for case.
+- **The session file is the contract.** `session.json` keeps the Mac's schema,
+  checked by shared JSON fixtures that both test suites load.
+- **Headless first.** `windows/src/core` has no UI and its tests run in
+  milliseconds, so most of the port can be checked without launching the app.
+
+How the port is run, gate by gate: [helix.md](helix.md). The rules reviewers
+enforce: [windows-architecture.md](windows-architecture.md). The plan:
+[windows/helix/checkpoints.md](../windows/helix/checkpoints.md).
+
+## Layout
+
+```
+windows/
+  CMakeLists.txt
+  src/core/     the model (KiteCore's counterpart): JSON, BrowserState, session, URL input
+  src/shell/    Kite.exe: wWinMain, the Win32 window, composition, input
+  src/cli/      kitecore: the model, headless
+  tests/        unit tests (no test framework dependency)
+  helix/        checkpoints.md and states/ (sessions for the UI gate)
+  resources/    Kite.manifest (DPI, UTF-8 code page, long paths) and its MinGW .rc
+  scripts/      fetch-cef.ps1, gen-unicode-tables.py
+  cmake/        mingw-w64.cmake (cross-compile check off Windows)
+```
+
+## Rendering
 
 The hard part is **airspace**. A Chromium child HWND always draws on top of
-XAML, so nothing (glow, Peek, command bar) could overlap the page. To avoid it:
+the rest of the window, so nothing (glow, Peek, command bar) could overlap the page. To avoid it:
 
 - **Render Chromium off-screen with shared textures.** CEF's
   `shared_texture_enabled` hands us each frame as a D3D11 texture with no CPU
   copy (supported on Windows). We composite it ourselves, so the page is just
   another layer.
-- **Compose everything with DirectComposition / Windows.UI.Composition:**
+- **Compose everything with DirectComposition:**
   theme backdrop, sidebar, page texture, glow, command bar. It's the same
   layering as the macOS window, all on the GPU.
 - **Port the shaders to HLSL** (`Kite.metal` is about 150 lines of pure math:
@@ -62,13 +102,42 @@ Windows that means:
   next vblank of a high-refresh or variable-refresh (G-Sync/FreeSync) display
   without tearing. Present with sync interval 1; never block a 500Hz display on
   a 60Hz timer.
-- **Windows.UI.Composition animations** already run at the compositor's rate.
+- **DirectComposition animations** run at the compositor's rate.
 - The windowed CEF fallback (child HWND) renders at the monitor's rate on its own.
 
+## Plan
 
+The checkpoint list in windows/helix/checkpoints.md is the detailed plan. In short:
 
-1. CI: KiteCore builds and tests on `windows-latest` (done; see `.github/workflows/ci.yml`).
-2. Spike: Swift + CEF off-screen + D3D11 shared texture in a bare window,
-   measuring frame time and input latency.
-3. Port the bridge to C++ and the shaders to HLSL.
-4. WinUI shell: sidebar, command bar, spaces.
+1. Win32 shell that CI builds with MSVC, tests and launches (in review, #260:
+   `windows/`, `.github/workflows/ci-windows-native.yml`).
+2. The model core and session file with their tests and a shared fixture (in
+   review, #260).
+3. CEF: `windows/scripts/fetch-cef.ps1` (written, not run yet), one browser per
+   tab, windowed first so pages load, then the off-screen spike: D3D11 shared
+   texture, frame time, input latency.
+4. DirectComposition tree and the chrome (sidebar, command bar, spaces), matched
+   to measurements of Kite for Mac. HLSL shaders with a golden-image test.
+5. Packaging: signing, installer, updates.
+
+## Building
+
+With Visual Studio 2022 or later (Desktop development with C++):
+
+```powershell
+cmake -S windows -B windows/build -A x64   # newest Visual Studio installed
+cmake --build windows/build --config Release
+ctest --test-dir windows/build -C Release
+$env:KITE_SUPPORT_PATH = (New-Item -ItemType Directory "$env:TEMP\k-$(Get-Random)").FullName
+windows\build\Release\Kite.exe
+```
+
+Without `KITE_SUPPORT_PATH` the profile is `%LOCALAPPDATA%\Kite`. A
+`KITE_SUPPORT_PATH` that isn't an existing directory is refused.
+
+Off Windows, the model and its tests build natively, and MinGW cross-compiles the app:
+
+```bash
+cmake -S windows -B /tmp/kite-core && cmake --build /tmp/kite-core -j && ctest --test-dir /tmp/kite-core
+cmake -S windows -B /tmp/kite-mingw -DCMAKE_TOOLCHAIN_FILE="$PWD/windows/cmake/mingw-w64.cmake" && cmake --build /tmp/kite-mingw -j
+```
