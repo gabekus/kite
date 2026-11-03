@@ -177,9 +177,12 @@ the search); short word or host prefixes of a favorite; an open tab's address pa
 search); the address-edit mode (same order as before, but the tab
 you're on is now left out of tabs and history there too); a URL-looking query on the tab you're on (left out);
 panes of the current split (offered); weak short matches such as "ai" inside a title (kept under the search).
-A Site Search shortcut's inline completion turns "gi" into "github.com", so a favorite on a site with a shortcut
-gets the URL row first, not its tab (Arc completed "gmail" to "gmail.com" the same way; not checked against a
-favorite on such a site). History is left out by exact URL, so the current page under another fragment still shows.
+A Site Search shortcut's inline completion ("gi" + "thub.com") makes the query URL-like: the Open row leads unless
+a favorite's host starts with what was typed, as Arc did while completing a favorite's host inline (not checked with
+a shortcut). The three-letter rule doesn't apply to URL-like queries. Also not observed, Kite's choice: a favorite
+whose address is being typed leads even over stronger title matches ("ma" with a "Maps" tab open) and from one
+letter; "www." and schemes aren't matched against the host ("www.goo" gets no leader). History is left out by exact
+URL, so the current page under another fragment still shows.
 
 ## Arc vs Kite
 

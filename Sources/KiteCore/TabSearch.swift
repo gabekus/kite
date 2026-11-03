@@ -9,7 +9,7 @@ public enum TabSearch {
         /// The match itself (one of the strengths below), without the current space's lift.
         public var strength: Int
         public var isFavorite = false
-        /// What's typed starts the tab's host and isn't all of it, so the address is being typed.
+        /// A favorite whose host starts with what's typed but isn't all of it: its address is being typed.
         public var completesHost = false
     }
 
@@ -30,8 +30,7 @@ public enum TabSearch {
             for tab in space.allTabs {
                 guard let strength = score(q, tab) else { continue }
                 let score = space.id == state.selectedSpaceID ? strength + 5 : strength
-                matches.append(Match(tab: tab, spaceID: space.id, score: score, strength: strength,
-                                     completesHost: completesHost(q, tab)))
+                matches.append(Match(tab: tab, spaceID: space.id, score: score, strength: strength))
             }
         }
         matches.sort { a, b in
@@ -43,7 +42,7 @@ public enum TabSearch {
     /// The command bar's "Switch to Tab" rows: the best matches, leaving out the tab you're on (Arc does, in ⌘T).
     public static func switchTargets(_ query: String, in state: BrowserState, limit: Int = 5) -> [Match] {
         let selected = state.selectedTab?.id
-        return Array(rank(query, in: state, limit: limit + 1).filter { $0.tab.id != selected }.prefix(limit))
+        return Array(rank(query, in: state, limit: limit == .max ? limit : limit + 1).filter { $0.tab.id != selected }.prefix(limit))
     }
 
     static func host(_ tab: BrowserTab) -> String {

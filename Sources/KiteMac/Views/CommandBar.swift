@@ -238,19 +238,26 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
             return site.url(for: text).map { [.siteSearch(site, text, $0)] } ?? []
         }
         let matches = TabSearch.switchTargets(text, in: state)
-        // The tab above the search, decided on what was typed, not a Site Search completion after it ("yo" + "utube.com").
-        let typedMatches = typed == text ? matches : TabSearch.switchTargets(typed, in: state)
-        let leadTab = mode == .newTab ? CommandBarOrder.leader(typed, matches: typedMatches).map { typedMatches[$0].tab } : nil
-        let leader = leadTab.map(CommandSuggestion.switchTab)
-        let tabs = matches.filter { $0.tab.id != leadTab?.id }.map { CommandSuggestion.switchTab($0.tab) }
+        let looksLikeURL = URLInput.looksLikeURL(text)
+        // The tab above the rest, from what was typed, not a Site Search completion after it ("gi" + "thub.com").
+        let typedText = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Every match, so a favorite whose address is being typed isn't pushed out by five better title matches.
+        let lead = mode == .newTab
+            ? CommandBarOrder.leader(typedText, matches: TabSearch.switchTargets(typedText, in: state, limit: .max),
+                                     looksLikeURL: looksLikeURL)?.tab
+            : nil
+        let leader = lead.map(CommandSuggestion.switchTab)
+        let tabs = matches.filter { $0.tab.id != lead?.id }.map { CommandSuggestion.switchTab($0.tab) }
         let search = CommandSuggestion.search(text, state.searchEngine.searchURL(for: text))
         // Pages visited before, minus any already shown as a tab and the page you're on (Arc showed neither).
-        let openURLs = Set((matches.map(\.tab) + [state.selectedTab].compactMap { $0 }).compactMap(\.url))
+        let shown = matches.map(\.tab) + [lead, state.selectedTab].compactMap { $0 }
+        let openURLs = Set(shown.compactMap(\.url))
         let visited = (store.history?.search(text, limit: 6) ?? [])
             .filter { !openURLs.contains($0.url) }
             .prefix(3)
-        if URLInput.looksLikeURL(text), let url = URLInput.resolve(text, engine: state.searchEngine) {
-            return [leader].compactMap { $0 } + [.open(url)] + tabs + visited.filter { $0.url != url }.map(CommandSuggestion.history) + [search]
+        if looksLikeURL, let url = URLInput.resolve(text, engine: state.searchEngine) {
+            let history = visited.filter { $0.url != url }.map(CommandSuggestion.history)
+            return CommandBarOrder.arrangeURL(leader: leader, open: .open(url), tabs: tabs, history: history, search: search)
         }
         let history = visited.map(CommandSuggestion.history)
         // Menu commands, Arc-style. A strong match ("copy url") goes above the web search.

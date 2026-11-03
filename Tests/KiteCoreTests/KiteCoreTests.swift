@@ -365,9 +365,8 @@ import Testing
         return (state, mail)
     }
 
-    func leader(_ query: String, _ state: BrowserState) -> UUID? {
-        let matches = TabSearch.switchTargets(query, in: state)
-        return CommandBarOrder.leader(query, matches: matches).map { matches[$0].tab.id }
+    func leader(_ query: String, _ state: BrowserState, url: Bool = false) -> UUID? {
+        CommandBarOrder.leader(query, matches: TabSearch.switchTargets(query, in: state, limit: .max), looksLikeURL: url)?.tab.id
     }
 
     @Test func aTabMatchSitsUnderTheTypedSearchAboveSuggestions() {
@@ -392,13 +391,40 @@ import Testing
     @Test func typingAFavoritesAddressPutsItFirstAtAnyLength() {
         // Arc showed this for 2 to 10 letters of an 11-letter host; the whole host opened it as a URL instead.
         let (state, mail) = gmail()
-        for query in ["ma", "mail", "mail.", "mail.goo", "mail.google.co"] {
-            #expect(leader(query, state) == mail)
+        for query in ["mail", "mail.", "mail.goo", "mail.google.co"] {
+            #expect(leader(query, state, url: query.contains(".")) == mail)
         }
-        #expect(leader("mail.google.com", state) == nil)
+        #expect(leader("mail.google.com", state, url: true) == nil)
         // Only favorites: an open tab's address past three letters stays under the search (not observed in Arc).
         let (tabs, _) = gmail(favorite: false)
-        #expect(leader("mail.goo", tabs) == nil)
+        #expect(leader("mail.goo", tabs, url: true) == nil)
+    }
+
+    @Test func theFavoriteLeadsEvenBehindStrongerMatches() {
+        // Six tabs whose titles start with "mail" outrank the favorite's host match; it still leads.
+        var (state, mail) = gmail()
+        for i in 0..<6 {
+            let id = state.openTab(url: URL(string: "https://example.com/\(i)"))
+            state.update(tab: id) { $0.title = "Mailing list \(i)" }
+        }
+        #expect(TabSearch.switchTargets("mail", in: state).allSatisfy { $0.tab.id != mail })
+        #expect(leader("mail", state) == mail)
+    }
+
+    @Test func aURLLookingQueryLeadsOnlyWithAFavoritesAddress() {
+        // A Site Search completion ("gi" + "thub.com") is URL-like: only a favorite on that host goes above Open.
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let hub = state.openTab(url: URL(string: "https://github.com/gabekus"))
+        state.update(tab: hub) { $0.title = "gabekus" }
+        state.select(tab: state.openTab(url: URL(string: "https://example.com")))
+        #expect(leader("gi", state, url: true) == nil)
+        #expect(leader("gi", state) == hub)
+        state.toggleFavorite(tab: hub)
+        #expect(leader("gi", state, url: true) == hub)
+        #expect(CommandBarOrder.arrangeURL(leader: "fav", open: "open", tabs: ["tab"], history: ["h"], search: "search")
+            == ["fav", "open", "tab", "h", "search"])
+        #expect(CommandBarOrder.arrangeURL(leader: nil, open: "open", tabs: [], history: [], search: "search")
+            == ["open", "search"])
     }
 
     @Test func aWeakShortMatchStaysUnderTheSearch() {
@@ -408,7 +434,7 @@ import Testing
             #expect(!TabSearch.switchTargets(query, in: state).isEmpty)
             #expect(leader(query, state) == nil)
         }
-        #expect(CommandBarOrder.leader("gm", matches: []) == nil)
+        #expect(CommandBarOrder.leader("gm", matches: [], looksLikeURL: false) == nil)
     }
 
     @Test func aStrongCommandStaysOnTop() {
