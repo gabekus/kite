@@ -505,34 +505,58 @@ private struct SecurityLabel: View {
 private struct FooterMenu: View {
     let model: SiteControlsModel
 
-    var body: some View {
-        Menu {
-            Button("Clear Cache") { model.dismiss(); model.actions.clearCache() }
-            Button("Clear Cookies") { model.dismiss(); model.actions.clearCookies() }
-            if SiteControls.includesBoostsInMenu(siteBoostCount: model.boosts?.count ?? 0,
-                                                 boostsAvailable: model.boosts != nil) {
-                Button(SiteControls.manageBoostsMenuTitle) { model.dismiss(); model.actions.manageBoosts() }
-                Button(SiteControls.newBoostMenuTitle) { model.dismiss(); model.actions.newBoost() }
-            }
-            if model.extensions != nil {
-                Button(SiteControls.manageExtensionsMenuTitle) { model.dismiss(); model.actions.manageExtensions() }
-                Button(SiteControls.addExtensionMenuTitle) { model.dismiss(); model.actions.addExtension() }
-            }
-            Button(SiteControls.allSiteSettingsTitle) { model.dismiss(); model.actions.openSiteSettings() }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: SiteControlsView.Metrics.menuSize, height: SiteControlsView.Metrics.menuSize)
-                .contentShape(Rectangle())
+    /// The menu's items, in order.
+    private var items: [(title: String, run: () -> Void)] {
+        let actions = model.actions
+        var items: [(title: String, run: () -> Void)] = [("Clear Cache", actions.clearCache), ("Clear Cookies", actions.clearCookies)]
+        if SiteControls.includesBoostsInMenu(siteBoostCount: model.boosts?.count ?? 0, boostsAvailable: model.boosts != nil) {
+            items += [(SiteControls.manageBoostsMenuTitle, actions.manageBoosts), (SiteControls.newBoostMenuTitle, actions.newBoost)]
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .frame(width: SiteControlsView.Metrics.menuSize, height: SiteControlsView.Metrics.menuSize)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05)))
-        .help("More")
-        .accessibilityLabel("More")
+        if model.extensions != nil {
+            items += [(SiteControls.manageExtensionsMenuTitle, actions.manageExtensions),
+                      (SiteControls.addExtensionMenuTitle, actions.addExtension)]
+        }
+        items.append((SiteControls.allSiteSettingsTitle, actions.openSiteSettings))
+        return items
+    }
+
+    var body: some View {
+        menu
+            .fixedSize()
+            .frame(width: SiteControlsView.Metrics.menuSize, height: SiteControlsView.Metrics.menuSize)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05)))
+            .help("More")
+            .accessibilityLabel("More")
+    }
+
+    @ViewBuilder private var menu: some View {
+        if PageContextMenuItems.testMode != nil {
+            // KITE_TEST_CONTEXT_MENU: a menu is modal and can't be read from the background, so a click logs the
+            // items (and runs the one the test picked) instead of opening it.
+            Button {
+                let items = items
+                guard let index = PageContextMenuItems.logForTest(items.map { ($0.title, true) }) else { return }
+                model.dismiss()
+                items[index].run()
+            } label: { label }
+            .buttonStyle(.plain)
+        } else {
+            Menu {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    Button(item.title) { model.dismiss(); item.run() }
+                }
+            } label: { label }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+        }
+    }
+
+    private var label: some View {
+        Image(systemName: "ellipsis")
+            .font(.system(size: 13, weight: .semibold))
+            .frame(width: SiteControlsView.Metrics.menuSize, height: SiteControlsView.Metrics.menuSize)
+            .contentShape(Rectangle())
     }
 }
 
