@@ -59,7 +59,7 @@ final class FavoritesTrayView: SidebarFlippedView {
         self.drag = drag
         self.metrics = metrics
         super.init(frame: .zero)
-        empty.onDismiss = { UserDefaults.standard.set(true, forKey: "favoritesEmptyStateDismissed") }
+        empty.onDismiss = { OneShotFlags.standard.set(true, "favoritesEmptyStateDismissed") }
         addSubview(empty)
         defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
                                                                   queue: .main) { [weak self] _ in
@@ -103,7 +103,7 @@ final class FavoritesTrayView: SidebarFlippedView {
         let state = store.state
         let favorites = state.favorites
         let dragging = drag.isDragging
-        let dismissed = UserDefaults.standard.bool(forKey: "favoritesEmptyStateDismissed")
+        let dismissed = OneShotFlags.standard.bool("favoritesEmptyStateDismissed")
         let creating = store.spaceCreation.map { $0.spaceID == state.selectedSpaceID } ?? false
         let shown = !creating && (!favorites.isEmpty || dragging || !dismissed)
         var slots = SidebarGroup.group(favorites.map(\.id), splits: state.favoriteSplits).map { group -> Slot in
