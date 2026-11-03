@@ -48,7 +48,8 @@ enforce: [windows-architecture.md](windows-architecture.md). The plan:
 windows/
   CMakeLists.txt
   src/core/     the model (KiteCore's counterpart): JSON, BrowserState, session, URL input
-  src/shell/    Kite.exe: wWinMain, the Win32 window, composition, input
+  src/shell/    Kite.exe: main.cpp (the command line, the session), BrowserWindowController
+                (the window and what's in it: views, Chromium, shortcuts), composition, input
   src/cli/      kitecore: the model, headless
   tests/        unit tests (no test framework dependency)
   helix/        checkpoints.md and states/ (sessions for the UI gate)

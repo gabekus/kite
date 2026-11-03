@@ -10,6 +10,7 @@
 
 #include "core/OKLab.h"
 #include "shell/Errors.h"
+#include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -96,14 +97,6 @@ constexpr wchar_t kSearch = 0xE721;
 // at the box's size over it, and one the Mac sets at a point size at that size over it (an
 // SF Symbol is about as big as its point size).
 constexpr float kGlyphInk = 0.9f;
-
-std::wstring Widen(const std::string& utf8) {
-    if (utf8.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    std::wstring out(static_cast<size_t>(std::max(size, 0)), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), out.data(), size);
-    return out;
-}
 
 D2D1_RECT_F Rect(float left, float top, float right, float bottom) { return D2D1_RECT_F{left, top, right, bottom}; }
 

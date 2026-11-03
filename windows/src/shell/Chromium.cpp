@@ -37,7 +37,7 @@ constexpr cef_color_t kPageBackdrop = 0xFF323232;
 
 // How long closing the window waits for the browsers before it goes ahead anyway.
 constexpr UINT kCloseDeadlineMs = 5'000;
-constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; main.cpp's timers are small numbers
+constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; BrowserWindowController's timers are small numbers
 
 CefRect ToCefRect(const RECT& r) { return CefRect(r.left, r.top, r.right - r.left, r.bottom - r.top); }
 

@@ -95,6 +95,7 @@ if(WIN32)
   add_executable(Kite WIN32
     src/shell/main.cpp
     src/shell/BackdropTest.cpp
+    src/shell/BrowserWindowController.cpp
     src/shell/CaptionButtonsView.cpp
     src/shell/Capture.cpp
     src/shell/CommandBarView.cpp
