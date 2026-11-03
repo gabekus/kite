@@ -17,9 +17,11 @@ namespace {
 // latency of one, so a live resize draws for the frame that's about to show, not three behind.
 constexpr UINT kSwapChainFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 
-bool IsDeviceLost(HRESULT hr) { return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET; }
-
 }  // namespace
+
+bool IsDeviceLost(HRESULT hr) {
+    return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET || hr == static_cast<HRESULT>(D2DERR_RECREATE_TARGET);
+}
 
 std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, std::wstring& error) {
     std::unique_ptr<Compositor> compositor(new Compositor(renderer));
@@ -81,7 +83,79 @@ std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, st
         error = HResultMessage(L"building the composition tree", hr);
         return nullptr;
     }
+    // One Direct2D device for the chrome's surfaces, on the same GPU device.
+    if (FAILED(hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1), nullptr,
+                                      reinterpret_cast<void**>(c.d2dFactory_.GetAddressOf()))) ||
+        FAILED(hr = c.d2dFactory_->CreateDevice(dxgiDevice.Get(), c.d2dDevice_.GetAddressOf())) ||
+        FAILED(hr = c.d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, c.d2dContext_.GetAddressOf()))) {
+        error = HResultMessage(L"creating the chrome's Direct2D device", hr);
+        return nullptr;
+    }
+    // Grayscale, as the Mac draws text on its translucent chrome (ClearType needs an opaque
+    // background).
+    c.d2dContext_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     return compositor;
+}
+
+std::wstring Compositor::DrawSurface(IDCompositionVirtualSurface* surface, UINT width, UINT height, UINT dpi, const Content& content,
+                                     Pixels* readBack, HRESULT& hr) {
+    const float scale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
+    const D2D1_BITMAP_PROPERTIES1 targetProps =
+        D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), static_cast<float>(dpi),
+                                static_cast<float>(dpi));
+    ID2D1DeviceContext* context = d2dContext_.Get();
+    // Into `target` (a DirectComposition surface's update, or the capture's texture) at
+    // `offset` px.
+    auto render = [&](IDXGISurface* target, POINT offset) -> HRESULT {
+        Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;
+        HRESULT made = context->CreateBitmapFromDxgiSurface(target, &targetProps, bitmap.GetAddressOf());
+        if (FAILED(made)) return made;
+        context->SetTarget(bitmap.Get());
+        context->SetDpi(static_cast<float>(dpi), static_cast<float>(dpi));
+        context->BeginDraw();
+        context->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x) / scale, static_cast<float>(offset.y) / scale));
+        // A surface's update can sit in a shared atlas: draw only inside it.
+        context->PushAxisAlignedClip(D2D1_RECT_F{0, 0, static_cast<float>(width) / scale, static_cast<float>(height) / scale},
+                                     D2D1_ANTIALIAS_MODE_ALIASED);
+        context->Clear(D2D1_COLOR_F{0, 0, 0, 0});
+        content(context);
+        context->PopAxisAlignedClip();
+        made = context->EndDraw();
+        context->SetTarget(nullptr);
+        return made;
+    };
+    Microsoft::WRL::ComPtr<IDXGISurface> update;
+    POINT offset{};
+    if (FAILED(hr = surface->BeginDraw(nullptr, IID_PPV_ARGS(update.GetAddressOf()), &offset))) {
+        return HResultMessage(L"starting to draw a surface", hr);
+    }
+    hr = render(update.Get(), offset);
+    const HRESULT ended = surface->EndDraw();
+    if (FAILED(hr)) return HResultMessage(L"drawing a surface", hr);
+    if (FAILED(hr = ended)) return HResultMessage(L"finishing a surface", hr);
+    if (!readBack) return {};
+
+    // The same drawing into a texture of its own, read back as DirectComposition shows it.
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = width;
+    desc.Height = height;
+    desc.MipLevels = desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
+    Microsoft::WRL::ComPtr<IDXGISurface> target;
+    if (FAILED(hr = renderer_.Device()->CreateTexture2D(&desc, nullptr, texture.GetAddressOf())) || FAILED(hr = texture.As(&target)) ||
+        FAILED(hr = render(target.Get(), POINT{}))) {
+        return HResultMessage(L"drawing a surface for the capture", hr);
+    }
+    std::wstring error;
+    auto pixels = renderer_.ReadBack(texture.Get(), error);
+    if (!pixels) return error;
+    *readBack = std::move(*pixels);
+    return {};
 }
 
 Compositor::~Compositor() {

@@ -2,7 +2,8 @@
 
 #include "shell/CaptionButtonsView.h"
 
-#include <d3d11.h>
+#include "shell/MainWindow.h"
+
 
 #include <algorithm>
 #include <cmath>
@@ -17,11 +18,9 @@ namespace {
 
 namespace T = title_bar;
 
-// Segoe Fluent Icons' (and Segoe MDL2 Assets') Chrome glyphs.
-constexpr wchar_t kMinimizeGlyph = 0xE921;
-constexpr wchar_t kMaximizeGlyph = 0xE922;
-constexpr wchar_t kRestoreGlyph = 0xE923;
-constexpr wchar_t kCloseGlyph = 0xE8BB;
+// Segoe Fluent Icons' (and Segoe MDL2 Assets') Chrome glyphs, in glyphs_'s order.
+constexpr wchar_t kGlyphs[4] = {0xE921, 0xE922, 0xE923, 0xE8BB};  // minimize, maximize, restore, close
+enum Glyph { kMinimize, kMaximize, kRestore, kClose };
 
 // WinUI's caption button colours (TitleBar's CaptionButton resources): the glyph in
 // TextFillColorPrimary, dimmed to TextFillColorDisabled while the window is inactive and to
@@ -37,47 +36,32 @@ constexpr D2D1_COLOR_F kCloseFill{0xC4 / 255.0f, 0x2B / 255.0f, 0x1C / 255.0f, 1
 constexpr float kClosePressedFill = 0.9f;
 constexpr float kClosePressedGlyph = 0.7f;
 
-bool IsDeviceLost(HRESULT hr) {
-    return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET || hr == static_cast<HRESULT>(D2DERR_RECREATE_TARGET);
-}
-
-std::optional<CaptionButton> ButtonOfHit(WPARAM hit) {
-    switch (hit) {
-    case HTMINBUTTON: return CaptionButton::Minimize;
-    case HTMAXBUTTON: return CaptionButton::Maximize;
-    case HTCLOSE: return CaptionButton::Close;
-    default: return std::nullopt;
-    }
-}
-
 }  // namespace
 
 std::unique_ptr<CaptionButtonsView> CaptionButtonsView::Create(HWND window, std::wstring& error) {
     std::unique_ptr<CaptionButtonsView> view(new CaptionButtonsView(window));
-    HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, __uuidof(ID2D1Factory1), nullptr,
-                                   reinterpret_cast<void**>(view->d2dFactory_.GetAddressOf()));
+    ComPtr<IDWriteFactory> dwrite;
+    HRESULT hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(dwrite.GetAddressOf()));
     if (FAILED(hr)) {
-        error = HResultMessage(L"D2D1CreateFactory", hr);
-        return nullptr;
-    }
-    if (FAILED(hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
-                                        reinterpret_cast<IUnknown**>(view->dwrite_.GetAddressOf())))) {
         error = HResultMessage(L"DWriteCreateFactory", hr);
         return nullptr;
     }
     // Segoe Fluent Icons on Windows 11, Segoe MDL2 Assets (the same code points) on Windows 10.
     ComPtr<IDWriteFontCollection> fonts;
-    view->dwrite_->GetSystemFontCollection(fonts.GetAddressOf());
+    dwrite->GetSystemFontCollection(fonts.GetAddressOf());
     UINT32 index = 0;
     BOOL fluent = FALSE;
     if (fonts) fonts->FindFamilyName(L"Segoe Fluent Icons", &index, &fluent);
-    hr = view->dwrite_->CreateTextFormat(fluent ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_REGULAR,
-                                         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, T::kGlyphSize, L"",
-                                         view->glyphFormat_.GetAddressOf());
-    if (SUCCEEDED(hr)) hr = view->glyphFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    if (SUCCEEDED(hr)) hr = view->glyphFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    ComPtr<IDWriteTextFormat> format;
+    hr = dwrite->CreateTextFormat(fluent ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets", nullptr, DWRITE_FONT_WEIGHT_REGULAR,
+                                  DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, T::kGlyphSize, L"", format.GetAddressOf());
+    if (SUCCEEDED(hr)) hr = format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    if (SUCCEEDED(hr)) hr = format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    for (int g = 0; g < 4 && SUCCEEDED(hr); ++g) {
+        hr = dwrite->CreateTextLayout(&kGlyphs[g], 1, format.Get(), T::kButtonWidth, T::kButtonHeight, view->glyphs_[g].GetAddressOf());
+    }
     if (FAILED(hr)) {
-        error = HResultMessage(L"CreateTextFormat", hr);
+        error = HResultMessage(L"laying out the caption glyphs", hr);
         return nullptr;
     }
     view->active_ = GetActiveWindow() == window;
@@ -95,25 +79,19 @@ void CaptionButtonsView::UseCompositor(Compositor* compositor) {
 }
 
 bool CaptionButtonsView::CreateGpu(std::wstring& error) {
-    ComPtr<IDXGIDevice> dxgi;
-    HRESULT hr = compositor_->GetRenderer().Device()->QueryInterface(IID_PPV_ARGS(dxgi.GetAddressOf()));
-    if (SUCCEEDED(hr)) hr = d2dFactory_->CreateDevice(dxgi.Get(), d2dDevice_.ReleaseAndGetAddressOf());
-    if (SUCCEEDED(hr)) hr = d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, context_.ReleaseAndGetAddressOf());
-    if (SUCCEEDED(hr)) hr = context_->CreateSolidColorBrush(D2D1_COLOR_F{0, 0, 0, 1}, brush_.ReleaseAndGetAddressOf());
+    HRESULT hr = compositor_->D2D()->CreateSolidColorBrush(D2D1_COLOR_F{0, 0, 0, 1}, brush_.ReleaseAndGetAddressOf());
     if (SUCCEEDED(hr)) hr = compositor_->Device()->CreateVisual(visual_.ReleaseAndGetAddressOf());
     if (SUCCEEDED(hr)) hr = compositor_->Chrome()->AddVisual(visual_.Get(), TRUE, nullptr);
     if (FAILED(hr)) {
         deviceLost_ = IsDeviceLost(hr);
-        error = HResultMessage(L"creating the caption buttons' Direct2D device", hr);
+        error = HResultMessage(L"creating the caption buttons' visual", hr);
         ReleaseGpu();
         return false;
     }
-    context_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     return true;
 }
 
 void CaptionButtonsView::ReleaseGpu() {
-    if (context_) context_->SetTarget(nullptr);
     if (visual_ && compositor_) {
         visual_->SetContent(nullptr);
         compositor_->Chrome()->RemoveVisual(visual_.Get());
@@ -123,8 +101,6 @@ void CaptionButtonsView::ReleaseGpu() {
     surfaceWidth_ = surfaceHeight_ = 0;
     offsetX_ = -1;
     brush_.Reset();
-    context_.Reset();
-    d2dDevice_.Reset();
 }
 
 void CaptionButtonsView::Layout(UINT dpi) {
@@ -138,36 +114,37 @@ void CaptionButtonsView::SetDark(bool dark) {
     if (dark == dark_) return;
     dark_ = dark;
     dirty_ = true;
-    Refresh();
 }
 
 void CaptionButtonsView::Refresh() {
     if (!dirty_ || !compositor_) return;
     if (std::wstring problem = Draw(); !problem.empty()) {
         OutputDebugStringW((L"Kite: the caption buttons couldn't draw: " + problem + L"\n").c_str());
+        if (deviceLost_ && onDeviceLost) onDeviceLost();
     } else {
         compositor_->Commit();
     }
 }
 
+void CaptionButtonsView::SetHover(std::optional<CaptionButton> hovered) {
+    if (hovered == hovered_) return;
+    hovered_ = hovered;
+    dirty_ = true;
+}
+
 bool CaptionButtonsView::HandleMessage(UINT message, WPARAM wParam, LPARAM, LRESULT& result) {
-    auto setHover = [&](std::optional<CaptionButton> hovered) {
-        if (hovered == hovered_) return;
-        hovered_ = hovered;
-        dirty_ = true;
-    };
     switch (message) {
     case WM_NCMOUSEMOVE:
-        if (!trackingLeave_) {
+        {
+            // Every move: another TrackMouseEvent (the sidebar's) can replace this one.
             TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE | TME_NONCLIENT, window_, 0};
-            trackingLeave_ = TrackMouseEvent(&track) != FALSE;
+            TrackMouseEvent(&track);
         }
-        setHover(ButtonOfHit(wParam));
+        SetHover(CaptionButtonOfHit(wParam));
         Refresh();
         return false;  // DefWindowProc too: Windows 11's Snap Layouts follow the pointer
     case WM_NCMOUSELEAVE:
-        trackingLeave_ = false;
-        setHover(std::nullopt);
+        SetHover(std::nullopt);
         if (pressed_) {
             pressed_.reset();
             dirty_ = true;
@@ -176,13 +153,13 @@ bool CaptionButtonsView::HandleMessage(UINT message, WPARAM wParam, LPARAM, LRES
         return false;
     case WM_MOUSEMOVE:
         // Into the client area: off the buttons (WM_NCMOUSELEAVE can come after it).
-        setHover(std::nullopt);
+        SetHover(std::nullopt);
         Refresh();
         return false;
     case WM_NCLBUTTONDOWN:
     case WM_NCLBUTTONDBLCLK: {
         // Kite's own buttons: DefWindowProc would run its modal loop over the classic ones.
-        const auto button = ButtonOfHit(wParam);
+        const auto button = CaptionButtonOfHit(wParam);
         if (!button) return false;
         pressed_ = button;
         hovered_ = button;
@@ -192,7 +169,7 @@ bool CaptionButtonsView::HandleMessage(UINT message, WPARAM wParam, LPARAM, LRES
         return true;
     }
     case WM_NCLBUTTONUP: {
-        const auto button = ButtonOfHit(wParam);
+        const auto button = CaptionButtonOfHit(wParam);
         const auto pressed = pressed_;
         if (pressed_) {
             pressed_.reset();
@@ -224,39 +201,41 @@ bool CaptionButtonsView::HandleMessage(UINT message, WPARAM wParam, LPARAM, LRES
     }
 }
 
-void CaptionButtonsView::DrawContent(ID2D1DeviceContext* context) {
+void CaptionButtonsView::DrawContent(ID2D1DeviceContext* context, UINT width) {
     const Tone& tone = dark_ ? kDark : kLight;
     const float ink = dark_ ? 1.0f : 0.0f;
-    const struct {
-        CaptionButton button;
-        wchar_t glyph;
-    } buttons[] = {{CaptionButton::Minimize, kMinimizeGlyph},
-                   {CaptionButton::Maximize, maximized_ ? kRestoreGlyph : kMaximizeGlyph},
-                   {CaptionButton::Close, kCloseGlyph}};
+    const CaptionButton buttons[] = {CaptionButton::Minimize, CaptionButton::Maximize, CaptionButton::Close};
+    const Glyph glyphs[] = {kMinimize, maximized_ ? kRestore : kMaximize, kClose};
+    // Each button's edges on whole pixels, counted from the right edge (as Windows 11's own are
+    // at 125% and 175%, where 46 points isn't a whole number of pixels).
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    auto edge = [&](int fromRight) {
+        return (static_cast<float>(width) - std::round(static_cast<float>(fromRight) * T::kButtonWidth * scale)) / scale;
+    };
     for (size_t i = 0; i < 3; ++i) {
-        const auto& [button, glyph] = buttons[i];
-        const float left = static_cast<float>(i) * T::kButtonWidth;
-        const D2D1_RECT_F box{left, 0, left + T::kButtonWidth, T::kButtonHeight};
+        const CaptionButton button = buttons[i];
+        const float left = edge(3 - static_cast<int>(i)), right = edge(2 - static_cast<int>(i));
+        const D2D1_RECT_F box{left, 0, right, T::kButtonHeight};
+        // Pressed shows only while the pointer is still on the pressed button; hover shows on
+        // none other while one is pressed.
         const bool hovered = hovered_ == button && (!pressed_ || pressed_ == button);
         const bool pressed = pressed_ == button && hovered_ == button;
         D2D1_COLOR_F glyphColor{ink, ink, ink, active_ ? tone.primary : tone.disabled};
-        if (button == CaptionButton::Close && (hovered || pressed)) {
+        if (button == CaptionButton::Close && hovered) {
             D2D1_COLOR_F fill = kCloseFill;
             if (pressed) fill.a = kClosePressedFill;
             brush_->SetColor(fill);
             context->FillRectangle(box, brush_.Get());
             glyphColor = D2D1_COLOR_F{1, 1, 1, pressed ? kClosePressedGlyph : 1.0f};
-        } else if (hovered || pressed) {
+        } else if (hovered) {
             brush_->SetColor(D2D1_COLOR_F{ink, ink, ink, pressed ? tone.press : tone.hover});
             context->FillRectangle(box, brush_.Get());
             if (pressed) glyphColor.a = tone.secondary;
         }
-        ComPtr<IDWriteTextLayout> layout;
-        if (FAILED(dwrite_->CreateTextLayout(&glyph, 1, glyphFormat_.Get(), T::kButtonWidth, T::kButtonHeight, layout.GetAddressOf()))) {
-            continue;
-        }
+        // The glyph centred in its button, its layout box on a whole pixel.
+        const float glyphLeft = std::round(((left + right) / 2 - T::kButtonWidth / 2) * scale) / scale;
         brush_->SetColor(glyphColor);
-        context->DrawTextLayout(D2D1::Point2F(left, 0), layout.Get(), brush_.Get());
+        context->DrawTextLayout(D2D1::Point2F(glyphLeft, 0), glyphs_[glyphs[i]].Get(), brush_.Get());
     }
 }
 
@@ -274,10 +253,9 @@ std::wstring CaptionButtonsView::Draw(Pixels* readBack, POINT* origin) {
     if (width != surfaceWidth_ || height != surfaceHeight_) dirty_ = true;
     if (!dirty_ && !readBack && offsetX == offsetX_) return {};
     std::wstring error;
-    if (!context_ && !CreateGpu(error)) return error;
+    if (!visual_ && !CreateGpu(error)) return error;
     auto fail = [this](const wchar_t* what, HRESULT hr) {
         deviceLost_ = IsDeviceLost(hr);
-        if (context_) context_->SetTarget(nullptr);
         return HResultMessage(what, hr);
     };
     HRESULT hr = S_OK;
@@ -298,63 +276,14 @@ std::wstring CaptionButtonsView::Draw(Pixels* readBack, POINT* origin) {
     surfaceWidth_ = width;
     surfaceHeight_ = height;
     if (!dirty_ && !readBack) return {};
-
-    const float dpi = static_cast<float>(dpi_);
-    const D2D1_BITMAP_PROPERTIES1 targetProps =
-        D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-                                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi, dpi);
-    auto render = [&](IDXGISurface* surface, POINT offset) -> HRESULT {
-        ComPtr<ID2D1Bitmap1> target;
-        HRESULT made = context_->CreateBitmapFromDxgiSurface(surface, &targetProps, target.GetAddressOf());
-        if (FAILED(made)) return made;
-        context_->SetTarget(target.Get());
-        context_->SetDpi(dpi, dpi);
-        context_->BeginDraw();
-        context_->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x) / scale, static_cast<float>(offset.y) / scale));
-        // A surface's update can sit in a shared atlas: draw only inside it.
-        context_->PushAxisAlignedClip(D2D1_RECT_F{0, 0, static_cast<float>(width) / scale, static_cast<float>(height) / scale},
-                                      D2D1_ANTIALIAS_MODE_ALIASED);
-        context_->Clear(D2D1_COLOR_F{0, 0, 0, 0});
-        // Right-aligned: a surface rounded up to whole pixels puts its spare fraction on the left.
-        context_->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x) / scale + static_cast<float>(width) / scale - T::kButtonsWidth,
-                                                             static_cast<float>(offset.y) / scale));
-        DrawContent(context_.Get());
-        context_->PopAxisAlignedClip();
-        made = context_->EndDraw();
-        context_->SetTarget(nullptr);
-        return made;
-    };
-    ComPtr<IDXGISurface> update;
-    POINT offset{};
-    if (FAILED(hr = surface_->BeginDraw(nullptr, IID_PPV_ARGS(update.GetAddressOf()), &offset))) {
-        return fail(L"starting to draw the caption buttons", hr);
+    error = compositor_->DrawSurface(
+        surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawContent(context, width); }, readBack, hr);
+    if (!error.empty()) {
+        deviceLost_ = IsDeviceLost(hr);
+        return L"the caption buttons: " + error;
     }
-    hr = render(update.Get(), offset);
-    const HRESULT ended = surface_->EndDraw();
-    if (FAILED(hr)) return fail(L"drawing the caption buttons", hr);
-    if (FAILED(ended)) return fail(L"finishing the caption buttons' surface", ended);
     dirty_ = false;
-
-    if (readBack) {
-        D3D11_TEXTURE2D_DESC desc{};
-        desc.Width = width;
-        desc.Height = height;
-        desc.MipLevels = desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        desc.SampleDesc.Count = 1;
-        desc.Usage = D3D11_USAGE_DEFAULT;
-        desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-        ComPtr<ID3D11Texture2D> texture;
-        ComPtr<IDXGISurface> surface;
-        if (FAILED(hr = compositor_->GetRenderer().Device()->CreateTexture2D(&desc, nullptr, texture.GetAddressOf())) ||
-            FAILED(hr = texture.As(&surface)) || FAILED(hr = render(surface.Get(), POINT{}))) {
-            return fail(L"drawing the caption buttons for the capture", hr);
-        }
-        auto pixels = compositor_->GetRenderer().ReadBack(texture.Get(), error);
-        if (!pixels) return error;
-        *readBack = std::move(*pixels);
-        if (origin) *origin = POINT{offsetX, 0};
-    }
+    if (readBack && origin) *origin = POINT{offsetX, 0};
     return {};
 }
 

@@ -336,19 +336,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     caption->UseCompositor(compositor.get());
     caption->Layout(window.Dpi());
     caption->SetDark(dark);
-    window.hitTest = [&](POINT at) -> LRESULT {
+    window.hitTest = [&](float x, float y) {
         RECT client{};
         GetClientRect(window.Handle(), &client);
-        const float scale = static_cast<float>(window.Dpi()) / USER_DEFAULT_SCREEN_DPI;
-        switch (kite::TitleBarAreaAt(static_cast<float>(client.right) / scale, static_cast<float>(kSidebarWidth),
-                                     static_cast<float>(at.x) / scale, static_cast<float>(at.y) / scale)) {
-        case kite::TitleBarArea::Drag: return HTCAPTION;
-        case kite::TitleBarArea::Minimize: return HTMINBUTTON;
-        case kite::TitleBarArea::Maximize: return HTMAXBUTTON;
-        case kite::TitleBarArea::Close: return HTCLOSE;
-        case kite::TitleBarArea::Client: break;
-        }
-        return HTCLIENT;
+        const float width = static_cast<float>(client.right) * USER_DEFAULT_SCREEN_DPI / static_cast<float>(window.Dpi());
+        return kite::TitleBarAreaAt(width, static_cast<float>(kSidebarWidth), x, y);
     };
 
     // The command bar (Ctrl+T), over everything in the window. What it does with a row, and
@@ -467,6 +459,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         draw();
         if (commandBar) commandBar->Layout();
     };
+    // A hover's redraw found the GPU gone: rebuild and draw everything.
+    caption->onDeviceLost = [&] { draw(); };
     // The sidebar's clicks (the Mac's row taps and the header's buttons). With Chromium, a
     // selected tab's page shows too (below).
     kite::SidebarView::Actions sidebarActions;
@@ -539,9 +533,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             return true;
         }
         if (sidebar->HandleMouse(message, wParam, lParam)) return true;
+        // The caption buttons' appearance changes with the sidebar's, at its commit.
+        if (message == kite::SidebarView::kRedrawMessage) {
+            if (std::wstring problem = caption->Draw(); !problem.empty()) {
+                OutputDebugStringW((L"Kite: the caption buttons couldn't draw: " + problem + L"\n").c_str());
+            }
+        }
         if (sidebar->HandleMessage(message)) {
             // Its own redraw found the GPU gone: the window's draw rebuilds everything.
-            if (sidebar->DeviceLost()) draw();
+            if (sidebar->DeviceLost() || caption->DeviceLost()) draw();
             return true;
         }
         if (message == WM_TIMER && wParam == kArchiveTimer) {

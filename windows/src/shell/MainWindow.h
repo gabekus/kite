@@ -7,9 +7,18 @@
 
 #include <windows.h>
 
+#include <array>
 #include <functional>
+#include <optional>
+
+#include "core/TitleBar.h"
 
 namespace kite {
+
+// The title bar's areas as WM_NCHITTEST codes (Windows 11 shows Snap Layouts over HTMAXBUTTON),
+// and back.
+LRESULT HitTestCodeOf(TitleBarArea area);
+std::optional<CaptionButton> CaptionButtonOfHit(WPARAM hit);
 
 class MainWindow {
 public:
@@ -73,10 +82,9 @@ public:
     std::function<void()> onMove;
     // The client area changed size (also after a DPI change); GetClientRect has the new one.
     std::function<void()> onSize;
-    // What a client point (px) is, below the top resize border: HTCLIENT, HTCAPTION (drags the
-    // window) or HTMINBUTTON, HTMAXBUTTON or HTCLOSE (Windows 11 shows Snap Layouts over
-    // HTMAXBUTTON). Unset, all of it is HTCLIENT.
-    std::function<LRESULT(POINT client)> hitTest;
+    // What a client point is, in points (at Dpi()), below the top resize border. Unset, all of
+    // it is Client.
+    std::function<TitleBarArea(float x, float y)> hitTest;
     // Sees every message first (the command bar takes the keyboard and mouse while it's
     // open); true when it handled the message, with `result`.
     std::function<bool(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result)> filter;
@@ -91,11 +99,17 @@ private:
     // The resize border's thickness, in the monitor's px (a maximized window hangs this far off
     // the screen on every side).
     int ResizeBorder() const;
+    // Which edges of the monitor `window` (a window rect) is on have an auto-hiding taskbar
+    // (ABE_LEFT, TOP, RIGHT, BOTTOM), asked of Explorer once per monitor and again after a
+    // settings change.
+    std::array<bool, 4> AutoHideTaskbars(const RECT& window);
 
     HWND hwnd_ = nullptr;
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool allowLargerThanScreen_ = false;
     bool fixedScale_ = false;
+    HMONITOR autoHideMonitor_ = nullptr;
+    std::array<bool, 4> autoHide_{};
 };
 
 }  // namespace kite

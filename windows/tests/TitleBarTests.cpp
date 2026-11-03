@@ -38,3 +38,22 @@ TEST(theBandAboveTheCardAndTheSidebarsTopRowMoveTheWindow) {
     CHECK(TitleBarAreaAt(1280, 240, 120, 400) == TitleBarArea::Client);
     CHECK(TitleBarAreaAt(1280, 240, -1, 5) == TitleBarArea::Client);
 }
+
+TEST(theSidebarsEdgeSplitsItsTopRowFromTheBand) {
+    // Between the band's bottom and the address field: the sidebar's top row drags, the card
+    // beside it is the card's.
+    CHECK(TitleBarAreaAt(1280, 240, 239.9f, 40) == TitleBarArea::Drag);
+    CHECK(TitleBarAreaAt(1280, 240, 240, 40) == TitleBarArea::Client);
+    CHECK(TitleBarAreaAt(1280, 240, 240, 25) == TitleBarArea::Drag);
+}
+
+TEST(aFractionalWidthKeepsTheButtonsFlushRight) {
+    // 1281 px at 150%: 854 points.
+    const float width = 1281.0f / 1.5f;
+    CHECK(TitleBarAreaAt(width, 240, width - 0.01f, 5) == TitleBarArea::Close);
+    CHECK(TitleBarAreaAt(width, 240, width - title_bar::kButtonsWidth, 5) == TitleBarArea::Minimize);
+    CHECK(TitleBarAreaAt(width, 240, width - title_bar::kButtonsWidth - 0.01f, 5) == TitleBarArea::Drag);
+    CHECK(CaptionButtonOf(TitleBarArea::Minimize) == CaptionButton::Minimize);
+    CHECK(CaptionButtonOf(TitleBarArea::Close) == CaptionButton::Close);
+    CHECK(!CaptionButtonOf(TitleBarArea::Client));
+}

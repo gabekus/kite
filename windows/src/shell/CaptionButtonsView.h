@@ -7,8 +7,9 @@
 // non-client messages (HandleMessage).
 //
 // One small DirectComposition surface in the window's chrome (Compositor::Chrome), over the
-// backdrop, drawn with Direct2D when the hover, press, maximized state, window activation or
-// appearance changes.
+// backdrop, drawn with the compositor's Direct2D context: at once when the hover, press or
+// window activation changes, and with the window's next pass when its size, maximized state
+// or appearance does.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -17,6 +18,7 @@
 #include <dwrite.h>
 #include <wrl/client.h>
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,7 +40,8 @@ public:
     void UseCompositor(Compositor* compositor);
     // The window's size, DPI or maximized state changed. Draw follows.
     void Layout(UINT dpi);
-    // Light glyphs (a dark theme) or dark ones, as the sidebar's text.
+    // Light glyphs (a dark theme) or dark ones, as the sidebar's text. Drawn with the next
+    // Draw (the sidebar's, so both change at one commit).
     void SetDark(bool dark);
 
     // The window's non-client mouse messages over the buttons (hover, press, release, which
@@ -51,25 +54,26 @@ public:
     // for --capture. The caller commits the compositor. Empty on success.
     std::wstring Draw(Pixels* readBack = nullptr, POINT* origin = nullptr);
     bool DeviceLost() const { return deviceLost_; }
+    // Its own draw (a hover, a press) found the GPU gone: the window rebuilds and draws.
+    std::function<void()> onDeviceLost;
 
 private:
     explicit CaptionButtonsView(HWND window) : window_(window) {}
 
     bool CreateGpu(std::wstring& error);
     void ReleaseGpu();
-    void DrawContent(ID2D1DeviceContext* context);
+    void SetHover(std::optional<CaptionButton> hovered);
+    // The buttons in a surface `width` px wide, flush right.
+    void DrawContent(ID2D1DeviceContext* context, UINT width);
     // Draws now and commits, after the pointer or the window's activation changed.
     void Refresh();
 
     HWND window_;
     Compositor* compositor_ = nullptr;
 
-    Microsoft::WRL::ComPtr<ID2D1Factory1> d2dFactory_;
-    Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
-    Microsoft::WRL::ComPtr<IDWriteTextFormat> glyphFormat_;
+    // Each glyph laid out once in its button's box: minimize, maximize, restore, close.
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> glyphs_[4];
 
-    Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
-    Microsoft::WRL::ComPtr<ID2D1DeviceContext> context_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
     Microsoft::WRL::ComPtr<IDCompositionVisual> visual_;
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
@@ -83,7 +87,6 @@ private:
     bool active_ = true;
     bool maximized_ = false;
     std::optional<CaptionButton> hovered_, pressed_;
-    bool trackingLeave_ = false;
 };
 
 }  // namespace kite

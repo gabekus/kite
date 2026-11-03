@@ -22,15 +22,29 @@ int Scale(int value, UINT dpi) { return MulDiv(value, static_cast<int>(dpi), USE
 
 constexpr DWORD kStyle = WS_OVERLAPPEDWINDOW;
 
-// Whether an auto-hiding taskbar sits on `edge` (ABE_LEFT…) of `monitor`: a maximized window
-// then leaves a pixel there so the pointer can still bring the taskbar up.
-bool AutoHideTaskbarOn(UINT edge, const RECT& monitor) {
-    APPBARDATA data{};
-    data.cbSize = sizeof(data);
-    data.uEdge = edge;
-    data.rc = monitor;
-    return SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &data) != 0;
+}  // namespace
+
+LRESULT HitTestCodeOf(TitleBarArea area) {
+    switch (area) {
+    case TitleBarArea::Drag: return HTCAPTION;
+    case TitleBarArea::Minimize: return HTMINBUTTON;
+    case TitleBarArea::Maximize: return HTMAXBUTTON;
+    case TitleBarArea::Close: return HTCLOSE;
+    case TitleBarArea::Client: break;
+    }
+    return HTCLIENT;
 }
+
+std::optional<CaptionButton> CaptionButtonOfHit(WPARAM hit) {
+    switch (hit) {
+    case HTMINBUTTON: return CaptionButton::Minimize;
+    case HTMAXBUTTON: return CaptionButton::Maximize;
+    case HTCLOSE: return CaptionButton::Close;
+    default: return std::nullopt;
+    }
+}
+
+namespace {
 
 }  // namespace
 
@@ -105,6 +119,27 @@ RECT MainWindow::FrameAround(int width, int height) const {
     return rect;
 }
 
+std::array<bool, 4> MainWindow::AutoHideTaskbars(const RECT& window) {
+    // SHAppBarMessage is a message to Explorer: asked once per monitor, not every resize.
+    HMONITOR monitor = MonitorFromRect(&window, MONITOR_DEFAULTTONEAREST);
+    if (monitor == autoHideMonitor_) return autoHide_;
+    autoHideMonitor_ = monitor;
+    autoHide_ = {};
+    APPBARDATA state{};
+    state.cbSize = sizeof(state);
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (!(SHAppBarMessage(ABM_GETSTATE, &state) & ABS_AUTOHIDE) || !GetMonitorInfoW(monitor, &info)) return autoHide_;
+    for (UINT edge : {ABE_LEFT, ABE_TOP, ABE_RIGHT, ABE_BOTTOM}) {
+        APPBARDATA data{};
+        data.cbSize = sizeof(data);
+        data.uEdge = edge;
+        data.rc = info.rcMonitor;
+        autoHide_[edge] = SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &data) != 0;
+    }
+    return autoHide_;
+}
+
 int MainWindow::ResizeBorder() const {
     const UINT dpi = GetDpiForWindow(hwnd_);
     return GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
@@ -142,31 +177,32 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     }
     switch (message) {
     case WM_NCCALCSIZE: {
-        if (!wParam) break;
         // Windows' frame on the left, right and bottom (its resize borders, invisible on
         // Windows 10 and 11), but none at the top: the client area starts at the window's top
-        // edge, and its top resize border is hit-tested in it (WM_NCHITTEST).
-        auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
-        const LONG top = params->rgrc[0].top;
+        // edge, and its top resize border is hit-tested in it (WM_NCHITTEST). The rect is the
+        // first of NCCALCSIZE_PARAMS's, or the only one when wParam is FALSE.
+        RECT& client = *reinterpret_cast<RECT*>(lParam);
+        const RECT proposed = client;  // the window's rect (where it's being maximized to)
+        const LONG top = client.top;
         if (const LRESULT result = DefWindowProcW(hwnd_, message, wParam, lParam); result != 0) return result;
-        params->rgrc[0].top = top;
+        client.top = top;
         if (IsZoomed(hwnd_)) {
             // A maximized window hangs off the screen by its resize border; the client area
             // starts on the screen.
-            params->rgrc[0].top += ResizeBorder();
+            client.top += ResizeBorder();
             // And it leaves a pixel for an auto-hiding taskbar to come up from.
-            MONITORINFO monitor{};
-            monitor.cbSize = sizeof(monitor);
-            if (GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &monitor)) {
-                RECT& client = params->rgrc[0];
-                if (AutoHideTaskbarOn(ABE_TOP, monitor.rcMonitor)) client.top += 1;
-                if (AutoHideTaskbarOn(ABE_BOTTOM, monitor.rcMonitor)) client.bottom -= 1;
-                if (AutoHideTaskbarOn(ABE_LEFT, monitor.rcMonitor)) client.left += 1;
-                if (AutoHideTaskbarOn(ABE_RIGHT, monitor.rcMonitor)) client.right -= 1;
-            }
+            const auto autoHide = AutoHideTaskbars(proposed);
+            if (autoHide[ABE_TOP]) client.top += 1;
+            if (autoHide[ABE_BOTTOM]) client.bottom -= 1;
+            if (autoHide[ABE_LEFT]) client.left += 1;
+            if (autoHide[ABE_RIGHT]) client.right -= 1;
         }
         return 0;
     }
+    case WM_SETTINGCHANGE:
+        // The taskbar's auto-hide may have changed (it changes the work area).
+        autoHideMonitor_ = nullptr;
+        break;
     case WM_NCHITTEST: {
         // The left, right and bottom borders are still Windows' frame.
         const LRESULT frame = DefWindowProcW(hwnd_, message, wParam, lParam);
@@ -183,7 +219,26 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
             if (at.x >= client.right - border) return HTTOPRIGHT;
             return HTTOP;
         }
-        return hitTest ? hitTest(at) : HTCLIENT;
+        if (!hitTest) return HTCLIENT;
+        const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+        return HitTestCodeOf(hitTest(static_cast<float>(at.x) / scale, static_cast<float>(at.y) / scale));
+    }
+    case WM_GETDPISCALEDSIZE: {
+        // The window's size at the new DPI (wParam): its client area scaled, plus the frame
+        // without a caption, which Windows' own linear guess doesn't know about.
+        if (fixedScale_) return FALSE;
+        const UINT dpi = static_cast<UINT>(wParam);
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        RECT rect{0, 0, MulDiv(client.right, static_cast<int>(dpi), static_cast<int>(dpi_)),
+                  MulDiv(client.bottom, static_cast<int>(dpi), static_cast<int>(dpi_))};
+        AdjustWindowRectExForDpi(&rect, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
+                                 static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), dpi);
+        rect.top = 0;
+        auto* size = reinterpret_cast<SIZE*>(lParam);
+        size->cx = rect.right - rect.left;
+        size->cy = rect.bottom - rect.top;
+        return TRUE;
     }
     case WM_DPICHANGED: {
         if (fixedScale_) return 0;

@@ -62,8 +62,8 @@ windows/
 The hard part is **airspace**. A Chromium child HWND draws on top of the
 window's own composition tree, so the glow and Peek couldn't overlap the page.
 The window's composition tree is one DirectComposition device with two
-targets: the backdrop with the chrome over it (the sidebar, one surface drawn
-with Direct2D), behind the page; and the overlay, topmost TRUE, over the page.
+targets: the backdrop with the chrome over it (the sidebar and the caption
+buttons, surfaces drawn with one Direct2D device context), behind the page; and the overlay, topmost TRUE, over the page.
 Until W10, the command bar lives in the overlay, which shows over child windows,
 though it can't blur the page under it. While the bar is open the page windows are
 disabled, so clicks reach Kite's window. Ctrl+T pressed in a page reaches Kite
@@ -96,8 +96,8 @@ is mid-draw. Keys that arrive before the bar opens open it
   tree on whatever adapter is there and redraws.
 - **Captures** (`--capture`, the Helix UI gate) read back the frame the
   window presents, laid out at `--capture-scale`× on any monitor. That's the
-  backdrop swap chain, with the sidebar's surface and the command bar's buffer
-  (`--command-bar`) drawn again into textures and put over it on the CPU, as
+  backdrop swap chain, with the sidebar's and caption buttons' surfaces and the
+  command bar's buffer (`--command-bar`) drawn again into textures and put over it on the CPU, as
   DirectComposition puts them. The caret is left out: it's its own visual.
   The page isn't in it: a child window isn't part of the tree until W10 makes
   pages textures.
@@ -117,12 +117,14 @@ is mid-draw. Keys that arrive before the bar opens open it
   Windows 11's minimize, maximize and close buttons itself at the top-right
   (`shell/CaptionButtonsView`, 46 × 32, Segoe Fluent Icons' Chrome glyphs,
   WinUI's caption colours) and reports them as `HTMINBUTTON`, `HTMAXBUTTON`
-  and `HTCLOSE`, so Snap Layouts appear over maximize. The band above the
+  and `HTCLOSE`, so Snap Layouts appear over maximize (checked on Gabe's PC with a
+  real pointer). The band above the
   content card and the sidebar's top row (down to the address field) drag
   the window (`core/TitleBar`). The card starts under the buttons, 32pt
   down, since a Chromium child window over the buttons would take their
   clicks. A maximized window keeps its client area on the screen and leaves
-  a pixel for an auto-hiding taskbar.
+  a pixel for an auto-hiding taskbar (asked of Explorer once per monitor, and
+  again after a settings change, not on every resize).
 - **Input:** the off-screen path forwards mouse, keyboard and IME events to
   CEF (`SendMouseClickEvent`, `SendKeyEvent`, ...). This is the most work and
   the main risk, so prototype it first.
