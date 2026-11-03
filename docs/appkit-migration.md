@@ -576,12 +576,11 @@ In-process against ScreenCaptureKit, the same window state, 2x (max / mean chann
 | sidebar.json (dark) | 67 / 2.53 | 44 / 0.09 | 8 / 0.00 |
 | two-spaces.json (light pink theme) | 67 / 3.44 | 67 / 0.12 | 1 / 0.00 |
 | a rich dark session | 69 / 2.58 | 44 / 0.09 | 0 / 0.00 |
-| a rich light session | 243 / 4.72 | 243 / 0.19 | 0 / 0.00 |
+| a rich light session | 86 / 4.68 | 89 / 0.18 | 0 / 0.00 |
 | favorites | 104 / 2.54 | 44 / 0.09 | 0 / 0.00 |
 | toolbar shown | 69 / 2.62 | 81 / 0.09 | 0 / 0.00 |
 | command bar open | 69 / 2.56 | 232 / 1.16 | 232 / 1.19 |
 
-(The rich light run predates the corner mask; its max is the window's corners, as two-spaces' was before it.)
 The old view render it replaces: sidebar 65 / 11.56, page 210 / 4.40 (no theme, no page).
 
 What's left:
