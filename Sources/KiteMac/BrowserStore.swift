@@ -236,6 +236,7 @@ final class BrowserStore {
         undoManager.setActionName(name)
     }
 
+    /// `body` mustn't read `state` or call `mutate`: Swift traps on the overlapping access. Read what it needs first.
     @discardableResult
     func mutate<R>(_ body: (inout BrowserState) -> R) -> R {
         let before = state
