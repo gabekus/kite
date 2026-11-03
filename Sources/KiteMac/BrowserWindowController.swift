@@ -51,7 +51,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var isSidebarDocked: Bool { sidebarVisible && !peeking }
     /// Window › Open Library… (⇧⌘L): covers the sidebar and the card while open.
     let library = LibraryModel()
-    private var libraryHost: NSHostingView<LibraryView>!
+    private var libraryHost: LibraryHostingView!
     /// The Library's place; its SwiftUI view is in the window only while it's open.
     private var libraryContainer: DetachingContainer!
     /// Claude's chat bubble over the page; AppDelegate connects it to Claude Tasks.
@@ -346,7 +346,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         claudeBubbleContainer = DetachingContainer(host: claudeBubbleHost)
         claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
         claudeBubble.postToProject = { [weak self] page, message in self?.postToClaudeProject(page, message: message) }
-        libraryHost = NSHostingView(rootView: makeLibraryView())
+        libraryHost = LibraryHostingView(rootView: makeLibraryView())
+        libraryHost.onEscape = { [weak self] in self?.library.close() }
         libraryHost.sizingOptions = []
         libraryContainer = DetachingContainer(host: libraryHost)
         library.onOpenChange = { [weak self] open in self?.libraryOpened(open) }
@@ -928,6 +929,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         } else {
             shownPage?.focus()
         }
+    }
+
+    /// The Library's host. Escape closes the Library: Arc's `LibraryCloseSource` has an `escape`
+    /// case beside `keyboardShortcut`, `iconTap` and `swipe`.
+    final class LibraryHostingView: NSHostingView<LibraryView> {
+        var onEscape: (() -> Void)?
+        override func cancelOperation(_ sender: Any?) { onEscape?() }
     }
 
     /// ⌘J: Claude's chat bubble.
