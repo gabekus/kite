@@ -27,8 +27,9 @@ extension AutomationController {
         // The tab in front may be one of them: show its step at once rather than on the next look.
         startHandoffPoller()
         if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
-        await probeHandoff(id)
-        return try await handoffReport(id, wait: request.wait)
+        await lookAtSteps(id, attempts: UserHandoff.probeAttempts)
+        // A step Claude handed over blocked is news now, not after the wait.
+        return try await handoffReport(id, wait: request.wait, reportBlockedAfter: 0)
     }
 
     func handoffStatus(_ id: String?, wait: Double, cancel: Bool, connection: Int) async throws -> ToolOutput {
@@ -41,25 +42,25 @@ extension AutomationController {
         if cancel {
             update(handoff.id) { $0.finishAll(.skipped, how: "Claude withdrew it") }
             pollHandoffsSoon()
+        } else {
+            // A fresh look first, so a step Claude just unblocked (or the page did) isn't reported from an old one.
+            await lookAtSteps(handoff.id, attempts: 1)
         }
-        return try await handoffReport(handoff.id, wait: cancel ? 0 : wait)
+        return try await handoffReport(handoff.id, wait: cancel ? 0 : wait, reportBlockedAfter: UserHandoff.blockedReportDelay)
     }
 
-    /// Waits up to `wait` seconds for the user to end every step, then reports. A step that becomes blocked while
-    /// Claude waits (and stays blocked for `UserHandoff.blockedReportDelay`) ends the wait early, so Claude can fix
-    /// what's in the way instead of waiting on a user who can't go on.
-    private func handoffReport(_ id: String, wait: Double) async throws -> ToolOutput {
+    /// Waits up to `wait` seconds for the user to end every step, then reports. A step that has been blocked for
+    /// `reportBlockedAfter` ends the wait early (once per step), so Claude can fix what's in the way instead of
+    /// waiting on a user who can't go on.
+    private func handoffReport(_ id: String, wait: Double, reportBlockedAfter delay: TimeInterval) async throws -> ToolOutput {
         let deadline = Date().addingTimeInterval(wait)
-        let blockedBefore = Set(handoffs.first { $0.id == id }?.steps.filter { $0.blocker != nil }.map(\.id) ?? [])
-        var blockedSince: [String: Date] = [:]
-        while Date() < deadline, let handoff = handoffs.first(where: { $0.id == id }), !handoff.isFinished {
-            let blocked = handoff.waiting.filter { $0.blocker != nil && !blockedBefore.contains($0.id) }.map(\.id)
-            blockedSince = blockedSince.filter { blocked.contains($0.key) }
-            for step in blocked where blockedSince[step] == nil { blockedSince[step] = Date() }
-            if blockedSince.values.contains(where: { -$0.timeIntervalSinceNow >= UserHandoff.blockedReportDelay }) { break }
+        var watch = HandoffBlockWatch(reported: reportedBlockedSteps)
+        while Date() < deadline, let handoff = handoffs.first(where: { $0.id == id }), !handoff.isFinished,
+              !watch.shouldReport(handoff, delay: delay) {
             try await Task.sleep(for: .milliseconds(250))
         }
         guard let handoff = handoffs.first(where: { $0.id == id }) else { throw AutomationError(.notFound, "Handoff \(id) is gone.") }
+        reportedBlockedSteps.formUnion(handoff.blockedSteps.map(\.id))
         let text = handoff.report(waitedOut: wait > 0 && !handoff.isFinished) { [store] tab in
             store.state.tab(tab).map { (url: $0.url?.absoluteString, title: $0.displayTitle) }
         }
@@ -82,26 +83,33 @@ extension AutomationController {
         }
     }
 
-    /// A first look at each step's control right away, so Claude hears at once when it pointed at something that
-    /// isn't there or can't be clicked. Only the step each tab shows is looked at (the ones behind it may wait on
-    /// it). A control the page is still drawing gets a few more looks.
-    private func probeHandoff(_ id: String) async {
+    /// A look at the controls of a handoff's steps now, so Claude hears what's in the way from what the pages show
+    /// now: right after handing them over (`attempts` looks half a second apart while a page is still drawing a
+    /// control) and before each handoff_status. Pages on screen get the poller's own look; a live page in the
+    /// background gets a look that draws nothing. Only the step a tab shows is looked at.
+    private func lookAtSteps(_ id: String, attempts: Int) async {
         guard let host else { return }
-        for attempt in 0..<UserHandoff.probeAttempts {
+        for attempt in 0..<attempts {
+            await pollHandoffs()
             guard let handoff = handoffs.first(where: { $0.id == id }) else { return }
             var missing = false
-            for step in handoff.steps where step.locator != nil && (attempt == 0 || step.found != true) {
-                guard let tab = step.tab, handoff.current(on: tab)?.id == step.id, let page = host.livePages[tab],
-                      let actions = page.automation as? PageActions else { continue }
-                let script = UserHandoff.ringScript(.init(step: step, scroll: false, probe: true))
-                guard let json = try? await actions.runIsolated(script, world: UserHandoff.worldName, binding: UserHandoff.bindingName),
-                      let state = UserHandoff.RingState(json: json) else { continue }
-                setLook(step.id, state)
-                if !state.found { missing = true }
+            for step in handoff.waiting where step.locator != nil {
+                guard let tab = step.tab, waitingStep(on: tab)?.id == step.id, let page = host.livePages[tab] else { continue }
+                if !isOnScreen(page), let actions = page.automation as? PageActions {
+                    let script = UserHandoff.ringScript(.init(step: step, scroll: false, probe: true))
+                    guard let json = try? await actions.runIsolated(script, world: UserHandoff.worldName, binding: UserHandoff.bindingName),
+                          let state = UserHandoff.RingState(json: json) else { continue }
+                    setLook(step.id, state)
+                }
+                if handoffs.first(where: { $0.id == id })?.steps.first(where: { $0.id == step.id })?.found == false { missing = true }
             }
-            guard missing, attempt < UserHandoff.probeAttempts - 1 else { return }
+            guard missing, attempt < attempts - 1 else { return }
             try? await Task.sleep(for: .milliseconds(500))
         }
+    }
+
+    private func isOnScreen(_ page: WebPage) -> Bool {
+        page.view.window != nil && !page.view.isHiddenOrHasHiddenAncestor
     }
 
     /// What the last look at a step's control saw.
@@ -152,8 +160,10 @@ extension AutomationController {
     }
 
     /// The first step waiting on a tab, for its sidebar row.
+    /// The step a tab shows: the newest handoff's first waiting one there (Claude's latest word for that page, such as
+    /// the step that turns on an older step's control).
     func waitingStep(on tab: UUID) -> Handoff.Step? {
-        for handoff in handoffs { if let step = handoff.current(on: tab) { return step } }
+        for handoff in handoffs.reversed() { if let step = handoff.current(on: tab) { return step } }
         return nil
     }
 
@@ -226,7 +236,8 @@ extension AutomationController {
     }
 
     private func pollHandoffs() async {
-        // One look at a time: two at once would race to make the page's world and draw two rings.
+        // One look at a time: two at once would both move the ring and race to report the same click.
+        // (runIsolated keeps the page's world single.)
         guard !handoffPolling else { handoffPollAgain = true; return }
         handoffPolling = true
         defer { handoffPolling = false }
@@ -243,8 +254,16 @@ extension AutomationController {
         for handoff in handoffs where !handoff.isFinished && !live.isEmpty {
             update(handoff.id) { $0.finishAll(.skipped, how: "the user closed the tab") { $0.tab.map { !live.contains($0) } ?? false } }
         }
+        // What a page that isn't live any more showed is old news: forget it until Kite can look again.
+        for handoff in handoffs where !handoff.isFinished {
+            for step in handoff.waiting where step.tab.map({ host.livePages[$0] == nil }) == true && (step.found != nil || step.blocker != nil) {
+                update(handoff.id) { h in
+                    if let i = h.steps.firstIndex(where: { $0.id == step.id }) { h.steps[i].found = nil; h.steps[i].blocker = nil }
+                }
+            }
+        }
         for (id, page) in host.livePages {
-            let onScreen = page.view.window != nil && !page.view.isHiddenOrHasHiddenAncestor
+            let onScreen = isOnScreen(page)
             let step = waitingStep(on: id)
             // A page off screen keeps its ring for when it's back; one whose steps ended loses it.
             guard (step != nil && onScreen) || (step == nil && ringShown[id] != nil),

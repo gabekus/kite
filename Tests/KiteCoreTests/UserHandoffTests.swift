@@ -155,7 +155,7 @@ import Testing
         // The reason is the page's words, so it reaches Claude marked as page content.
         #expect(report.contains(UntrustedContent.wrap("Only Super Administrators", source: "the step's control")))
         #expect(report.contains("2. [waiting] Click Save — Kite can't find its control on the page right now"))
-        #expect(report.contains("Fix what blocks it"))
+        #expect(report.contains("Fix what blocks it yourself"))
         // Without a reason, the usual suspects.
         handoff.steps[0].blocker = .disabled(why: nil)
         #expect(handoff.report { _ in nil }.contains("is probably missing"))
@@ -167,6 +167,56 @@ import Testing
         let probe = UserHandoff.RingConfig(step: handoff.steps[0], scroll: false, probe: true)
         #expect(UserHandoff.ringScript(probe).contains(#""probe":true"#))
         #expect(handoff.steps[0].targetName == "Invite members")
+    }
+
+    @Test func blockedOnlyWithNothingBeforeIt() throws {
+        let tab = UUID(), other = UUID()
+        var handoff = Handoff(id: "h3", reason: "r", steps: [
+            .init(id: "h3.1", number: 1, instruction: "Grant yourself Super Admin", tab: other, locator: .text("Super Admin")),
+            .init(id: "h3.2", number: 2, instruction: "Invite members", tab: tab, locator: .text("Invite members")),
+        ])
+        handoff.steps[1].found = true
+        handoff.steps[1].blocker = .disabled(why: nil)
+        // Step 1 (on another tab) may be what turns step 2's control on: not blocked yet.
+        #expect(!handoff.isBlocked(handoff.steps[1]) && handoff.blockedSteps.isEmpty)
+        let early = handoff.report { _ in nil }
+        #expect(early.contains("turned off for now, probably until the steps before it are done"))
+        #expect(!early.contains("BLOCKED") && !early.contains("Fix what blocks it"))
+        handoff.finish("h3.1", .done, how: "the user pressed Done")
+        #expect(handoff.blockedSteps.map(\.id) == ["h3.2"])
+        #expect(handoff.report { _ in nil }.contains("BLOCKED"))
+    }
+
+    @Test func blockedStepsEndAWaitOncePerStep() throws {
+        var handoff = Handoff(id: "h4", reason: "r", steps: [
+            .init(id: "h4.1", number: 1, instruction: "Invite members", tab: UUID(), locator: .text("Invite members")),
+        ])
+        let start = Date(timeIntervalSince1970: 1_000)
+        var watch = HandoffBlockWatch()
+        let r1 = watch.shouldReport(handoff, now: start, delay: 2)
+        #expect(!r1)
+        handoff.steps[0].blocker = .disabled(why: nil)
+        let r2 = watch.shouldReport(handoff, now: start.addingTimeInterval(1), delay: 2)
+        #expect(!r2)
+        // A redraw that briefly shows no blocker starts the clock again.
+        handoff.steps[0].blocker = nil
+        let r3 = watch.shouldReport(handoff, now: start.addingTimeInterval(2), delay: 2)
+        #expect(!r3)
+        handoff.steps[0].blocker = .disabled(why: nil)
+        let r4 = watch.shouldReport(handoff, now: start.addingTimeInterval(3), delay: 2)
+        #expect(!r4)
+        let r5 = watch.shouldReport(handoff, now: start.addingTimeInterval(5), delay: 2)
+        #expect(r5)
+        // Handed over blocked: at once.
+        var fresh = HandoffBlockWatch()
+        let r6 = fresh.shouldReport(handoff, now: start, delay: 0)
+        #expect(r6)
+        // Already told: a later wait isn't cut short by the same step.
+        var told = HandoffBlockWatch(reported: ["h4.1"])
+        let r7 = told.shouldReport(handoff, now: start, delay: 0)
+        #expect(!r7)
+        let r8 = told.shouldReport(handoff, now: start.addingTimeInterval(60), delay: 2)
+        #expect(!r8)
     }
 
     @Test func keepsHandoffsAcrossLaunches() throws {

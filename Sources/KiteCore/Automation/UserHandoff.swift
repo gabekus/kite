@@ -24,7 +24,7 @@ public enum UserHandoff {
     /// How often Kite looks at the page in front while a step waits on it.
     public static let pollInterval: TimeInterval = 0.5
     /// How many looks, half a second apart, Kite takes at a new step's control before telling Claude it's missing.
-    public static let probeAttempts = 5
+    public static let probeAttempts = 3
     /// How long a step stays blocked before a waiting handoff_status returns to tell Claude.
     public static let blockedReportDelay: TimeInterval = 2
     /// The isolated world the ring lives in, and the binding it reports clicks through.
@@ -152,7 +152,7 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
 
         /// Why the user can't do the step on the page right now, from the last look.
         public enum Blocker: Hashable, Sendable {
-            /// The control is on the page but turned off (disabled, aria-disabled or inert), with the page's own
+            /// The control is on the page but turned off (disabled or aria-disabled), with the page's own
             /// words about it when it gives some ("Only Super Administrators can invite members").
             case disabled(why: String?)
         }
@@ -198,9 +198,11 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             }
         }
 
-        /// What's in the way, in words for Claude.
-        public var blockerNote: String? {
+        /// What's in the way, in words for Claude. `blocked` is false while an earlier step of the handoff waits: that
+        /// step may be what turns the control on.
+        public func blockerNote(blocked: Bool) -> String? {
             switch blocker {
+            case .disabled? where !blocked: "its control is turned off for now, probably until the steps before it are done"
             case .disabled(let why)?:
                 "BLOCKED: its control is on the page but turned off (disabled), so the user can't click it"
                     // The page's own words, which it controls: marked as page content, like everything else read off a page.
@@ -231,6 +233,14 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
     }
 
     public var waiting: [Step] { steps.filter(\.isWaiting) }
+
+    /// A waiting step whose control is turned off while no earlier step of the handoff waits: the user is stuck on
+    /// it. (While an earlier one waits, that step may be what turns the control on.)
+    public func isBlocked(_ step: Step) -> Bool {
+        step.isWaiting && step.blocker != nil && !steps.contains { $0.isWaiting && $0.number < step.number }
+    }
+
+    public var blockedSteps: [Step] { steps.filter(isBlocked) }
     public var isFinished: Bool { !steps.contains(where: \.isWaiting) }
 
     /// The step a tab shows: its first waiting one, so "Approve, then Save" on one tab goes in order.
@@ -265,7 +275,7 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         for step in steps {
             var line = "\(step.number). [\(step.state.rawValue)] \(step.instruction)"
             if let how = step.how { line += " (\(how))" }
-            if step.isWaiting, let note = step.blockerNote { line += " — \(note)" }
+            if step.isWaiting, let note = step.blockerNote(blocked: isBlocked(step)) { line += " — \(note)" }
             if let tab = step.tab {
                 if let place = place(tab) {
                     line += " · tab \(tab.uuidString) at \(place.url ?? "an unknown URL") (“\(place.title)”)"
@@ -279,10 +289,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             lines.append(skipped == 0
                 ? "The user did every step. Read the pages to check they took, then carry on."
                 : "Skipped steps weren't done: don't do them yourself. Say what's left and why, then carry on with what you can.")
-        } else if steps.contains(where: { $0.isWaiting && $0.blocker != nil }) {
-            lines.append("The user can't do a blocked step as it is. Fix what blocks it (fill in what the page needs first, or "
-                + "hand that over too), or withdraw the handoff with handoff_status cancel and say why. Then call handoff_status "
-                + "with id \"\(id)\" and wait.")
+        } else if !blockedSteps.isEmpty {
+            lines.append("The user can't do a blocked step as it is. Fix what blocks it yourself if you may, or withdraw this "
+                + "handoff (handoff_status cancel) and hand over the steps again in order, with what turns the control on "
+                + "first. Then call handoff_status with id \"\(id)\" and wait.")
         } else if waitedOut {
             lines.append("The steps stay in Kite for the user. Call handoff_status with id \"\(id)\" and wait to keep waiting, "
                 + "or carry on with work that doesn't need them.")
@@ -291,6 +301,26 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
                 + "\(Int(UserHandoff.maxWait)) seconds) to hear when they're done.")
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// When a waiting handoff_status (or handoff) ends early to tell Claude a step is blocked: once a step has stayed
+/// blocked for `delay`, and only once per step, so a control the page redraws can't end every wait.
+public struct HandoffBlockWatch: Sendable {
+    /// Steps Claude has already been told are blocked.
+    public var reported: Set<String>
+    private var since: [String: Date] = [:]
+
+    public init(reported: Set<String> = []) {
+        self.reported = reported
+    }
+
+    /// One look at the handoff: true when a step not yet reported has been blocked for `delay`.
+    public mutating func shouldReport(_ handoff: Handoff, now: Date = Date(), delay: TimeInterval) -> Bool {
+        let blocked = Set(handoff.blockedSteps.map(\.id)).subtracting(reported)
+        since = since.filter { blocked.contains($0.key) }
+        for id in blocked where since[id] == nil { since[id] = now }
+        return since.values.contains { now.timeIntervalSince($0) >= delay }
     }
 }
 
@@ -523,10 +553,11 @@ extension UserHandoff {
             // Block children's words run together in text nodes ("Continue" "with Google"): compare without spaces.
             return text !== null && norm(text).replace(/ /g, '').includes(want.replace(/ /g, ''));
           };
-          // Why a control can't be used, or null when it can: disabled, aria-disabled or inert, with the page's own
+          // Why a control can't be used, or null when it can: disabled or aria-disabled, with the page's own
           // words about it when it gives some (a title, a description, a tooltip attribute).
           const blocked = (el) => {
-            const off = el.disabled === true || el.matches(':disabled') || !!el.closest('[aria-disabled="true"],[inert]');
+            // Not inert: that's usually a dialog in front of the page, not a control that's off.
+            const off = el.disabled === true || el.matches(':disabled') || !!el.closest('[aria-disabled="true"]');
             if (!off) return null;
             const own = words(el), said = [];
             const desc = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
