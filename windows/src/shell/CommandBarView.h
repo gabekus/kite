@@ -18,7 +18,7 @@
 
 #include <d2d1_1.h>
 #include <dcomp.h>
-#include <dwrite.h>
+#include <dwrite_3.h>
 #include <dxgi1_3.h>
 #include <wrl/client.h>
 
@@ -70,7 +70,11 @@ public:
     // Opens the bar, or switches an open bar's mode keeping what's typed (Ctrl+T while it's
     // open, as the Mac's showCommandBar). `text` fills a newly opened bar, all selected, as
     // an NSTextField selects its text when it takes focus: the tab's address for EditCurrent.
+    // It draws on the next pass of the message loop (as every change does, at most once a
+    // frame), or now with Draw.
     void Show(CommandBarMode mode, const std::string& text, const Look& look);
+    // Types `text` into the field, as the keyboard would (for --capture and the smoke test).
+    void Type(std::string_view text);
     // Closes it (Escape, a click outside, Ctrl+W), handing the focus back.
     void Hide();
     bool IsOpen() const { return open_; }
@@ -78,7 +82,9 @@ public:
     // The window was resized or moved to another DPI: the bar follows.
     void Layout();
     // The browser state changed while the bar is open (a title or address came in): the rows
-    // are made again from it, keeping the highlighted one where it still exists.
+    // are made again from it. Unchanged rows draw nothing; changed ones keep the highlight on
+    // the same row (the same tab, or URL) when it's still there, so Enter never takes a row
+    // that moved under it. (The Mac keeps the index.)
     void Refresh();
 
     // The main window's messages, first: keys, characters, the mouse, the cursor, IME and the
@@ -88,11 +94,13 @@ public:
     void ForwardKey(UINT virtualKey, bool ctrl, bool shift);
     void ForwardCharacter(wchar_t character);
 
-    // Draws the bar now. With `readBack`, also copies its frame (premultiplied BGRA) there and
-    // its top-left, in client pixels, into `origin` (for --capture). Empty on success.
+    // Draws the bar now, without the caret (its own visual). With `readBack`, also copies its
+    // frame (premultiplied BGRA) there and its top-left, in client pixels, into `origin` (for
+    // --capture). Empty on success.
     std::wstring Draw(Pixels* readBack = nullptr, POINT* origin = nullptr);
-    // The GPU was reset or removed: the window rebuilds its renderer and calls UseRenderer.
-    bool DeviceLost() const { return deviceLost_; }
+
+    // Posted to the window for the next draw (Invalidate).
+    static constexpr UINT kRedrawMessage = WM_APP + 2;
 
 private:
     CommandBarView(HWND window, Callbacks callbacks) : window_(window), callbacks_(std::move(callbacks)) {}
@@ -114,6 +122,11 @@ private:
     void ReleaseGpu();
     bool EnsureBuffer(std::wstring& error);
     bool EnsureShadow(float height, std::wstring& error);
+    void ReleaseBuffers();
+    // Something changed: one draw on the next pass of the message loop.
+    void Invalidate();
+    // Places, shows or hides the caret's visual (the blink), without drawing the panel.
+    void UpdateCaret();
     void ComputeGeometry();
     float PanelHeight() const;
     void SetRows(std::vector<CommandSuggestion> rows);
@@ -179,12 +192,26 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> context_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
-    Microsoft::WRL::ComPtr<IDXGISwapChain1> swapChain_;
+    Microsoft::WRL::ComPtr<IDXGISwapChain2> swapChain_;
+    HANDLE frameLatency_ = nullptr;
     Microsoft::WRL::ComPtr<ID2D1Bitmap1> backBuffer_;
-    Microsoft::WRL::ComPtr<ID2D1Bitmap1> shadow_;  // the panel's shadow, outside the panel
-    float shadowHeight_ = -1, shadowWidth_ = -1;
+    // The shadow, a Gaussian of the panel's rectangle: separable, so it's a row of its
+    // horizontal falloff (per width and DPI) times a column of its vertical one (per height),
+    // kept outside the panel by a mask.
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1> shadowRow_, shadowColumn_;
+    Microsoft::WRL::ComPtr<ID2D1BitmapBrush1> shadowColumnBrush_;
+    Microsoft::WRL::ComPtr<ID2D1PathGeometry> outsidePanel_;
+    float shadowWidth_ = -1, shadowHeight_ = -1;
     UINT shadowDpi_ = 0;
+    // The caret: a small surface in its own visual over the panel, so a blink is a Commit,
+    // not a redraw.
+    Microsoft::WRL::ComPtr<IDCompositionVisual> caretVisual_;
+    Microsoft::WRL::ComPtr<IDCompositionSurface> caretSurface_;
+    UINT caretWidth_ = 0, caretHeight_ = 0;
+    D2D1_COLOR_F caretColor_{};
+    bool caretAdded_ = false;
     bool deviceLost_ = false;
+    bool redrawPosted_ = false;
 
     // State.
     bool open_ = false;
@@ -201,12 +228,15 @@ private:
     std::vector<RowText> rowText_;
     int highlighted_ = 0;
     bool caretOn_ = true;
+    ULONGLONG blinkSince_ = 0;  // Windows stops the blink after a while (SPI_GETCARETTIMEOUT)
     bool focused_ = true;
+    bool composing_ = false;  // an IME composition is open
     bool selecting_ = false;  // dragging a selection in the field
     // What the left button went down on: a row's index, outside the panel, or nothing.
     static constexpr int kPressedNothing = -1;
     static constexpr int kPressedOutside = -2;
     int pressed_ = kPressedNothing;
+    int hoveredRow_ = -1;  // the row under the pointer, -1 for none
 };
 
 }  // namespace kite

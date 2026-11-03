@@ -403,12 +403,21 @@ public:
         const bool keyDown = event.type == KEYEVENT_RAWKEYDOWN || event.type == KEYEVENT_KEYDOWN;
         if (keyDown && event.windows_key_code == 'T' && modifiers == EVENTFLAG_CONTROL_DOWN) {
             shared_->keysToKite = true;
+            // The keyboard goes to Kite's window now, from this thread (the input queues are
+            // attached), so the keys typed next wait in Kite's queue as real keys and
+            // characters. Kite takes its posted wake before them, so the bar is open by then.
+            // Until Kite answers (BlockInput), the page doesn't take the keyboard back.
+            shared_->inputBlocked = true;
+            SetFocus(shared_->window);
             shared_->Post([shared = shared_] {
                 if (shared->events.newTab) shared->events.newTab();
             });
             return true;
         }
         if (!shared_->keysToKite) return false;
+        // Keys this page had already taken before the focus moved. Chromium drops the
+        // characters of a key whose keydown was handled here, so only the keys themselves
+        // (arrows, Backspace, Enter, Escape) reliably arrive this way.
         if (keyDown || event.type == KEYEVENT_CHAR) {
             const bool character = event.type == KEYEVENT_CHAR;
             const unsigned code = character ? static_cast<unsigned>(event.character) : static_cast<unsigned>(event.windows_key_code);

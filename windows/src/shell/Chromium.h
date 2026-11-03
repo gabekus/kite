@@ -50,10 +50,10 @@ struct PageEvents {
     std::function<void(const std::string& tabID)> pageClosed;
     // Another launch of Kite found this one running (one Kite per profile, as Chromium allows).
     std::function<void()> relaunched;
-    // Ctrl+T in a page: Kite's shortcut, which the page never sees. Until Kite opens the bar
-    // and calls BlockInput, the keys typed into the page after it come to Kite instead
-    // (keyForwarded, in order), so what's typed straight after Ctrl+T lands in the bar, as the
-    // Mac holds keys until its field has focus. Kite answers with BlockInput, true or false.
+    // Ctrl+T in a page: Kite's shortcut, which the page never sees. The keyboard moves to
+    // Kite's window at once, so what's typed straight after Ctrl+T lands in the bar, as the
+    // Mac holds keys until its field has focus; keys the page had already taken come to Kite
+    // too (keyForwarded, in order). Kite answers with BlockInput, true or false.
     std::function<void()> newTab;
     // A key (`character` false: a virtual-key code) or a typed UTF-16 unit (`character` true)
     // that reached a page while its keys go to Kite.
@@ -88,7 +88,9 @@ public:
     // While something of Kite's is over the pages (the command bar), they take no input:
     // their windows are disabled, so clicks go to Kite's window; they don't take the focus
     // back (on a navigation, say); and keys that still reach one come to Kite (keyForwarded).
-    // Unblocked, the keys go to the pages again.
+    // Unblocked, the keys go to the pages again. The windows are disabled on CEF's thread, so
+    // a click in the moment before that runs (CEF's thread busy with a heavy page) still
+    // reaches the page; keys don't, since they follow the focus.
     void BlockInput(bool blocked);
     // Loads `url` in the tab's page (the command bar's Enter on the current tab); a page
     // still being made loads it once it exists. False when the tab has no page (Show makes

@@ -154,8 +154,9 @@ void Renderer::Flush() {
 
 void Renderer::DrawTheme(ID3D11RenderTargetView* target, UINT width, UINT height, const ThemeUniforms& uniforms,
                          const Rgba& base) {
-    // Direct2D (the command bar) draws with this device too and leaves its own pipeline state
-    // behind (rasterizer, samplers, shaders): start from the defaults.
+    // Direct2D (the command bar) draws with this device too. On D3D11.1 it keeps its pipeline
+    // in its own context state, so nothing should leak; this starts from the defaults anyway,
+    // which costs nothing next to a full-window draw.
     context_->ClearState();
     const float clear[4] = {base.r, base.g, base.b, base.a};
     context_->ClearRenderTargetView(target, clear);

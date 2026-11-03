@@ -396,8 +396,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // Ctrl+T, wherever the keyboard is in Kite's own window (a page's comes through Chromium).
     window.filter = [&](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
         if (commandBar && commandBar->HandleMessage(message, wParam, lParam, result)) return true;
-        const bool ctrlOnly = GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0 && GetKeyState(VK_SHIFT) >= 0;
-        if (message == WM_KEYDOWN && wParam == 'T' && ctrlOnly) {
+        if (message == WM_KEYDOWN && wParam == 'T' && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0 &&
+            GetKeyState(VK_SHIFT) >= 0) {
             openCommandBar(kite::CommandBarMode::NewTab);
             result = 0;
             return true;
@@ -409,6 +409,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         kite::MainWindow& window;
         ~StopDrawing() {
             window.onSize = nullptr;
+            window.onFocus = nullptr;
             window.filter = nullptr;
         }
     } stopDrawing{window};
@@ -487,6 +488,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (!capture) {
         showPage = showSelectedTab;
         loadInTab = [&](const std::string& id, const std::string& url) {
+            // kite:// pages are drawn by the window, never loaded (the Mac's InternalPage).
+            if (url.starts_with("kite:")) return;
             // A page that closed itself is made again, now with somewhere to go.
             closedPages.erase(id);
             if (!chromium->Navigate(id, url)) showSelectedTab();
@@ -612,7 +615,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (smokeTest) {
         // The command bar opens over the window, draws with text in it, and closes.
         if (!commandBar) return Fail(quiet, L"Kite couldn't make the command bar", kWindowFailed);
-        commandBar->Show(kite::CommandBarMode::NewTab, "kite smoke", barLook());
+        commandBar->Show(kite::CommandBarMode::NewTab, "", barLook());
+        commandBar->Type("kite smoke");
         if (std::wstring problem = commandBar->Draw(); !problem.empty()) {
             return Fail(quiet, L"the command bar couldn't draw: " + problem, kWindowFailed);
         }
@@ -638,7 +642,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         captureError = draw(&pixels);
         if (captureError.empty() && commandBarOption.present) {
             // The bar as Ctrl+T opens it, with the text typed in.
-            commandBar->Show(kite::CommandBarMode::NewTab, Narrow(*commandBarOption.value), barLook());
+            commandBar->Show(kite::CommandBarMode::NewTab, "", barLook());
+            commandBar->Type(Narrow(*commandBarOption.value));
             kite::Pixels bar;
             POINT origin{};
             captureError = commandBar->Draw(&bar, &origin);
