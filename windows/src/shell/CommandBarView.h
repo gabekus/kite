@@ -3,8 +3,8 @@
 // drawn to ArcMetrics.CommandBar. Its rows come from core (CommandBarSuggestions); this is
 // the panel, its text field, the rows and the keyboard and mouse.
 //
-// It draws into its own DirectComposition target on the main window with topmost TRUE, so
-// it shows over the page's child window, which the window's other target sits behind. It
+// It draws into the window's overlay (Compositor::Overlay), a DirectComposition target with
+// topmost TRUE, so it shows over the page's child window, which the backdrop sits behind. It
 // has no window of its own: while it's open the main window keeps the keyboard focus, and
 // Chromium disables the page windows (Chromium::BlockInput), so clicks anywhere in the
 // window reach the main window too (Windows hit-testing skips disabled child windows). A
@@ -31,6 +31,7 @@
 #include "core/CommandBar.h"
 #include "core/Models.h"
 #include "shell/Capture.h"
+#include "shell/Compositor.h"
 #include "shell/Renderer.h"
 
 namespace kite {
@@ -63,9 +64,10 @@ public:
     CommandBarView(const CommandBarView&) = delete;
     CommandBarView& operator=(const CommandBarView&) = delete;
 
-    // The renderer it draws with; null drops every GPU object (before the renderer is
-    // rebuilt after a lost device). An open bar draws again on the new one.
-    void UseRenderer(Renderer* renderer);
+    // The window's compositor, whose overlay it draws in and whose device it draws with; null
+    // drops every GPU object (before the compositor is rebuilt after a lost device). An open
+    // bar draws again on the new one.
+    void UseCompositor(Compositor* compositor);
 
     // Opens the bar, or switches an open bar's mode keeping what's typed (Ctrl+T while it's
     // open, as the Mac's showCommandBar). `text` fills a newly opened bar, all selected, as
@@ -174,7 +176,8 @@ private:
 
     HWND window_;
     Callbacks callbacks_;
-    Renderer* renderer_ = nullptr;
+    Compositor* compositor_ = nullptr;
+    Renderer* renderer_ = nullptr;  // the compositor's
 
     // Device-independent.
     Microsoft::WRL::ComPtr<ID2D1Factory1> d2dFactory_;
@@ -186,9 +189,8 @@ private:
     std::wstring textFamily_;
 
     // GPU.
-    Microsoft::WRL::ComPtr<IDCompositionDevice> composition_;
-    Microsoft::WRL::ComPtr<IDCompositionTarget> target_;
-    Microsoft::WRL::ComPtr<IDCompositionVisual> visual_;
+    Microsoft::WRL::ComPtr<IDCompositionDevice> composition_;  // the compositor's
+    Microsoft::WRL::ComPtr<IDCompositionVisual> visual_;        // in the compositor's overlay
     Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> context_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;

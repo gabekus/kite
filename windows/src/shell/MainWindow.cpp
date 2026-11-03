@@ -120,8 +120,14 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         // Take the rect Windows suggests so the window keeps its physical size on the new monitor.
         dpi_ = HIWORD(wParam);
         const RECT* suggested = reinterpret_cast<const RECT*>(lParam);
+        RECT before{}, after{};
+        GetClientRect(hwnd_, &before);
         SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
                      suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+        // A window whose size in pixels stays the same (a maximized one, when the monitor's
+        // scale changes) gets no WM_SIZE: lay it out at the new scale here.
+        GetClientRect(hwnd_, &after);
+        if (after.right == before.right && after.bottom == before.bottom && !IsIconic(hwnd_) && onSize) onSize();
         return 0;
     }
     case WM_GETMINMAXINFO: {

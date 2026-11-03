@@ -385,6 +385,12 @@ public:
         });
     }
 
+    void OnFaviconURLChange(CefRefPtr<CefBrowser>, const std::vector<CefString>& urls) override {
+        shared_->Post([shared = shared_, id = tabID_, url = urls.empty() ? std::string() : urls.front().ToString()] {
+            if (shared->events.faviconChanged) shared->events.faviconChanged(id, url);
+        });
+    }
+
     // CefFocusHandler
 
     // While Kite's command bar is open, a page never takes the keyboard back (Chromium

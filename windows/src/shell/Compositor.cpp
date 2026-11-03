@@ -68,13 +68,16 @@ std::unique_ptr<Compositor> Compositor::Create(HWND hwnd, Renderer& renderer, st
         error = HResultMessage(L"DCompositionCreateDevice", hr);
         return nullptr;
     }
-    // topmost FALSE: the tree sits behind the window's child windows, where the page (a CEF
-    // child window, W6) goes.
-    if (FAILED(hr = compositor->device_->CreateTargetForHwnd(hwnd, FALSE, compositor->target_.GetAddressOf())) ||
-        FAILED(hr = compositor->device_->CreateVisual(compositor->root_.GetAddressOf())) ||
-        FAILED(hr = compositor->root_->SetContent(compositor->swapChain_.Get())) ||
-        FAILED(hr = compositor->target_->SetRoot(compositor->root_.Get())) ||
-        FAILED(hr = compositor->device_->Commit())) {
+    // topmost FALSE: this tree sits behind the window's child windows, where the page (a CEF
+    // child window, W6) goes; the overlay's, topmost TRUE, over them.
+    Compositor& c = *compositor;
+    if (FAILED(hr = c.device_->CreateTargetForHwnd(hwnd, FALSE, c.target_.GetAddressOf())) ||
+        FAILED(hr = c.device_->CreateTargetForHwnd(hwnd, TRUE, c.overlayTarget_.GetAddressOf())) ||
+        FAILED(hr = c.device_->CreateVisual(c.root_.GetAddressOf())) || FAILED(hr = c.device_->CreateVisual(c.backdrop_.GetAddressOf())) ||
+        FAILED(hr = c.device_->CreateVisual(c.chrome_.GetAddressOf())) || FAILED(hr = c.device_->CreateVisual(c.overlay_.GetAddressOf())) ||
+        FAILED(hr = c.backdrop_->SetContent(c.swapChain_.Get())) || FAILED(hr = c.root_->AddVisual(c.backdrop_.Get(), FALSE, nullptr)) ||
+        FAILED(hr = c.root_->AddVisual(c.chrome_.Get(), TRUE, c.backdrop_.Get())) || FAILED(hr = c.target_->SetRoot(c.root_.Get())) ||
+        FAILED(hr = c.overlayTarget_->SetRoot(c.overlay_.Get())) || FAILED(hr = c.device_->Commit())) {
         error = HResultMessage(L"building the composition tree", hr);
         return nullptr;
     }

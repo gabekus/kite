@@ -38,6 +38,8 @@ int RunChromiumSubprocess(HINSTANCE instance);
 struct PageEvents {
     std::function<void(const std::string& tabID, const std::string& url)> addressChanged;
     std::function<void(const std::string& tabID, const std::string& title)> titleChanged;
+    // The page's favicon: the first it lists, or empty for none (the Mac's faviconDidChange).
+    std::function<void(const std::string& tabID, const std::string& url)> faviconChanged;
     std::function<void(const std::string& tabID, bool loading)> loadingChanged;
     // A page opened a popup or a target=_blank link: Kite hosts it in a new tab with this id,
     // keeping window.opener (sign-in popups need it), as the Mac does. `url` may be empty

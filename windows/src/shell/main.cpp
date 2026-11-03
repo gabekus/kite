@@ -52,8 +52,10 @@
 #include "shell/CommandBarView.h"
 #include "shell/Compositor.h"
 #include "shell/Errors.h"
+#include "shell/Favicons.h"
 #include "shell/MainWindow.h"
 #include "shell/Renderer.h"
+#include "shell/SidebarView.h"
 
 namespace {
 
@@ -123,6 +125,8 @@ std::optional<std::pair<int, int>> ParseSize(std::wstring_view text) {
 }
 
 constexpr UINT_PTR kSmokeTimer = 1;
+// Posted by the favicon worker when icons arrive (Favicons.h).
+constexpr UINT kFaviconsMessage = WM_APP + 4;
 
 // The content card, in points: right of the sidebar, inset on the other three sides
 // (BrowserWindowController's Layout.defaultSidebarWidth and ArcMetrics.Content.inset).
@@ -304,8 +308,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     std::unique_ptr<kite::Compositor> compositor = kite::Compositor::Create(window.Handle(), *renderer, gpuError);
     if (!compositor) return Fail(quiet, L"Kite couldn't start DirectComposition: " + gpuError, kWindowFailed);
 
+    // The sidebar, over the backdrop: what the session lists, with favicons fetched off the UI
+    // thread (none in a capture, which mustn't depend on the network).
+    std::unique_ptr<kite::Favicons> favicons = capture ? nullptr : kite::Favicons::Create(window.Handle(), kFaviconsMessage);
+    std::unique_ptr<kite::SidebarView> sidebar = kite::SidebarView::Create(window.Handle(), favicons.get(), gpuError);
+    if (!sidebar) return Fail(quiet, L"Kite couldn't make the sidebar: " + gpuError, kWindowFailed);
+    sidebar->UseCompositor(compositor.get());
+    sidebar->Layout(static_cast<float>(kSidebarWidth), window.Dpi());
+    sidebar->Update(state);
+
     // The command bar (Ctrl+T), over everything in the window. What it does with a row, and
     // how a page shows, depend on Chromium, so they're filled in with it below.
+    std::unique_ptr<kite::CommandBarView> commandBar;
+    // The session changed under the window: the sidebar and an open bar show it.
+    auto stateChanged = [&] {
+        sidebar->Update(state);
+        if (commandBar) commandBar->Refresh();
+    };
     std::function<void(const std::string& tabID, const std::string& url)> loadInTab = [](const std::string&, const std::string&) {};
     std::function<void()> showPage = [] {};
     std::function<void(bool blocked)> blockPages = [](bool) {};
@@ -337,13 +356,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             }
             break;
         }
+        stateChanged();
     };
     barCallbacks.opened = [&] { blockPages(true); };
     barCallbacks.closed = [&] { blockPages(false); };
     barCallbacks.dpi = [&] { return window.Dpi(); };
-    std::unique_ptr<kite::CommandBarView> commandBar = kite::CommandBarView::Create(window.Handle(), std::move(barCallbacks), gpuError);
+    commandBar = kite::CommandBarView::Create(window.Handle(), std::move(barCallbacks), gpuError);
     if (commandBar) {
-        commandBar->UseRenderer(renderer.get());
+        commandBar->UseCompositor(compositor.get());
     } else {
         if (commandBarOption.present) return Fail(quiet, L"Kite couldn't make the command bar: " + gpuError, kWindowFailed);
         OutputDebugStringW((L"Kite: no command bar: " + gpuError + L"\n").c_str());
@@ -360,18 +380,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (!tab) mode = kite::CommandBarMode::NewTab;
         commandBar->Show(mode, mode == kite::CommandBarMode::EditCurrent ? tab->url.value_or("") : "", barLook());
     };
-    [[maybe_unused]] auto refreshBar = [&] {
-        if (commandBar) commandBar->Refresh();
+    // The views let go of the compositor's device first, then the compositor goes (so the
+    // next draw rebuilds it).
+    auto dropCompositor = [&] {
+        sidebar->UseCompositor(nullptr);
+        if (commandBar) commandBar->UseCompositor(nullptr);
+        compositor.reset();
     };
-
     // After the GPU is reset or removed, both are rebuilt on whatever adapter is there now.
     auto rebuild = [&]() -> std::wstring {
         std::wstring problem;
-        if (commandBar) commandBar->UseRenderer(nullptr);
-        compositor.reset();  // first: a window holds one composition target at a time
+        dropCompositor();  // first: a window holds one composition target at a time
         renderer = kite::Renderer::Create(problem);
         if (renderer) compositor = kite::Compositor::Create(window.Handle(), *renderer, problem);
-        if (renderer && commandBar) commandBar->UseRenderer(renderer.get());
+        if (compositor) {
+            sidebar->UseCompositor(compositor.get());
+            if (commandBar) commandBar->UseCompositor(compositor.get());
+        }
         return problem;
     };
     auto draw = [&](kite::Pixels* readBack = nullptr) -> std::wstring {
@@ -380,17 +405,21 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         const UINT width = static_cast<UINT>(client.right), height = static_cast<UINT>(client.bottom);
         std::wstring problem;
         for (int attempt = 0; attempt < 2; ++attempt) {
-            if (!compositor || compositor->DeviceLost()) {
+            if (!compositor || compositor->DeviceLost() || sidebar->DeviceLost()) {
                 if (problem = rebuild(); !problem.empty()) break;
             }
             problem = compositor->Draw(width, height, kite::MakeThemeUniforms(theme, static_cast<float>(width), static_cast<float>(height)),
                                        base, readBack);
-            if (!compositor->DeviceLost()) break;
+            // The sidebar with it, shown together at the commit.
+            if (problem.empty()) problem = sidebar->Draw();
+            if (problem.empty()) compositor->Commit();
+            if (!compositor->DeviceLost() && !sidebar->DeviceLost()) break;
         }
         if (!problem.empty()) OutputDebugStringW((L"Kite: drawing failed: " + problem + L"\n").c_str());
         return problem;
     };
     window.onSize = [&] {
+        sidebar->Layout(static_cast<float>(kSidebarWidth), window.Dpi());
         draw();
         if (commandBar) commandBar->Layout();
     };
@@ -402,6 +431,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             openCommandBar(kite::CommandBarMode::NewTab);
         }
         if (commandBar && commandBar->HandleMessage(message, wParam, lParam, result)) return true;
+        if (sidebar->HandleMessage(message)) {
+            // Its own redraw found the GPU gone: the window's draw rebuilds everything.
+            if (sidebar->DeviceLost()) draw();
+            return true;
+        }
+        if (message == kFaviconsMessage) {
+            if (favicons && favicons->TakeResults()) sidebar->Invalidate();
+            return true;
+        }
         if (message == WM_KEYDOWN && wParam == 'T' && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0 &&
             GetKeyState(VK_SHIFT) >= 0) {
             openCommandBar(kite::CommandBarMode::NewTab);
@@ -453,8 +491,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
 
 #ifdef KITE_HAS_CEF
-    // The selected tab's page on the content card. A capture leaves Chromium out: it saves
-    // the backdrop alone until W4 captures the composed window.
+    // The selected tab's page on the content card. A capture leaves Chromium out: a child
+    // window isn't in the composition tree it reads back (until W10 makes pages textures).
     bool pageLoaded = false, pageLoading = false;
     ULONGLONG closeAskedAt = 0;  // when the smoke test asked the window to close
     bool firstPageMade = false;
@@ -512,12 +550,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         kite::PageEvents events;
         events.addressChanged = [&, tabNamed](const std::string& id, const std::string& url) {
             if (kite::Tab* tab = tabNamed(id); tab && !url.empty()) tab->url = url;
-            refreshBar();
+            stateChanged();
         };
         events.titleChanged = [&, tabNamed](const std::string& id, const std::string& title) {
             // An empty title keeps the last one, as the Mac's BrowserStore does.
             if (kite::Tab* tab = tabNamed(id); tab && !title.empty()) tab->title = title;
-            refreshBar();
+            stateChanged();
+        };
+        events.faviconChanged = [&, tabNamed](const std::string& id, const std::string& url) {
+            kite::Tab* tab = tabNamed(id);
+            const std::optional<std::string> icon = url.empty() ? std::nullopt : std::optional<std::string>(url);
+            if (!tab || tab->faviconURL == icon) return;
+            tab->faviconURL = icon;
+            stateChanged();
         };
         events.loadingChanged = [&](const std::string&, bool loading) {
             // A smoke test closes once the first page has loaded (or shown its error page).
@@ -536,13 +581,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             state.OpenTab(url.empty() ? std::nullopt : std::optional<std::string>(url), std::nullopt, true, kite::Now(), id);
             popupOpeners[id] = openerID;
             showSelectedTab();
-            refreshBar();
+            stateChanged();
         };
         events.openInNewTab = [&](const std::string&, const std::string& url, bool foreground) {
             // In the current space, as the Mac's openTab(url:select:).
             state.OpenTab(url, std::nullopt, foreground);
             if (foreground) showSelectedTab();
-            refreshBar();
+            stateChanged();
         };
         events.pageClosed = [&](const std::string& id) {
             closedPages.insert(id);
@@ -566,6 +611,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             if (next.empty()) return;
             state.Select(next);
             showSelectedTab();
+            stateChanged();
         };
         events.newTab = [&] {
             // Not when the bar has already opened for the keys typed after Ctrl+T and been
@@ -603,6 +649,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         window.onSize = [&] {
             // The page first, so CEF's thread moves it while Kite draws.
             chromium->SetBounds(contentBounds());
+            sidebar->Layout(static_cast<float>(kSidebarWidth), window.Dpi());
             draw();
             if (commandBar) commandBar->Layout();
             chromium->WindowMoved();
@@ -632,9 +679,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             return Fail(quiet, L"the command bar couldn't draw: " + problem, kWindowFailed);
         }
         commandBar->Hide();
+        // The sidebar draws what the session lists (something, not a blank surface).
+        kite::Pixels chrome;
+        if (std::wstring problem = sidebar->Draw(&chrome); !problem.empty()) {
+            return Fail(quiet, L"the sidebar couldn't draw: " + problem, kWindowFailed);
+        }
+        bool inked = false;
+        for (size_t i = 3; i < chrome.bgra.size() && !inked; i += 4) inked = chrome.bgra[i] != 0;
+        if (!inked) return Fail(quiet, L"the sidebar drew nothing", kWindowFailed);
         // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt
         // and draw again (a real device removal can't be caused from a test).
-        compositor.reset();
+        dropCompositor();
         if (std::wstring problem = draw(); !problem.empty()) {
             return Fail(quiet, L"Kite couldn't rebuild its renderer: " + problem, kWindowFailed);
         }
@@ -651,6 +706,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         // (the window is laid out at that scale on any monitor), else at the monitor's.
         kite::Pixels pixels;
         captureError = draw(&pixels);
+        if (captureError.empty()) {
+            // The sidebar's surface over the backdrop, at the window's top-left.
+            kite::Pixels chrome;
+            captureError = sidebar->Draw(&chrome);
+            if (captureError.empty()) ComposeOver(pixels, chrome, POINT{0, 0});
+        }
         if (captureError.empty() && commandBarOption.present) {
             // The bar as Ctrl+T opens it, with the text typed in.
             commandBar->Show(kite::CommandBarMode::NewTab, "", barLook());
@@ -693,7 +754,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
                 const HRESULT reason = renderer->Device()->GetDeviceRemovedReason();
                 OutputDebugStringW(kite::HResultMessage(L"Kite: the GPU device was removed", reason).append(L"\n").c_str());
             }
-            compositor.reset();  // forces draw() to rebuild
+            dropCompositor();  // forces draw() to rebuild
             draw();
             continue;
         }

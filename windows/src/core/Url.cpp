@@ -3,6 +3,7 @@
 #include "core/Url.h"
 
 #include <cctype>
+#include <cstdint>
 
 namespace kite::url {
 
@@ -69,6 +70,78 @@ bool HasValidAuthority(std::string_view url) {
         if (value > 65535) return false;
     }
     return true;
+}
+
+namespace {
+
+int HexDigit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+std::string PercentDecoded(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        int high = 0, low = 0;
+        if (text[i] == '%' && i + 2 < text.size() && (high = HexDigit(text[i + 1])) >= 0 &&
+            (low = HexDigit(text[i + 2])) >= 0) {
+            out.push_back(static_cast<char>(high * 16 + low));
+            i += 2;
+        } else {
+            out.push_back(text[i]);
+        }
+    }
+    return out;
+}
+
+std::optional<std::string> Base64Decoded(std::string_view text) {
+    std::string out;
+    out.reserve(text.size() / 4 * 3);
+    uint32_t bits = 0;
+    int count = 0;
+    for (char c : text) {
+        int value = -1;
+        if (c >= 'A' && c <= 'Z') value = c - 'A';
+        else if (c >= 'a' && c <= 'z') value = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') value = c - '0' + 52;
+        else if (c == '+' || c == '-') value = 62;
+        else if (c == '/' || c == '_') value = 63;
+        else if (c == '=' || c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        else return std::nullopt;
+        bits = (bits << 6) | static_cast<uint32_t>(value);
+        if (++count == 4) {
+            out.push_back(static_cast<char>((bits >> 16) & 0xFF));
+            out.push_back(static_cast<char>((bits >> 8) & 0xFF));
+            out.push_back(static_cast<char>(bits & 0xFF));
+            bits = 0;
+            count = 0;
+        }
+    }
+    if (count == 3) {
+        out.push_back(static_cast<char>((bits >> 10) & 0xFF));
+        out.push_back(static_cast<char>((bits >> 2) & 0xFF));
+    } else if (count == 2) {
+        out.push_back(static_cast<char>((bits >> 4) & 0xFF));
+    } else if (count == 1) {
+        return std::nullopt;
+    }
+    return out;
+}
+
+}  // namespace
+
+std::optional<std::string> DataBytes(std::string_view url) {
+    if (Scheme(url) != "data") return std::nullopt;
+    const size_t comma = url.find(',');
+    if (comma == std::string_view::npos) return std::nullopt;
+    std::string meta(url.substr(5, comma - 5));
+    for (char& c : meta) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string payload = PercentDecoded(url.substr(comma + 1));
+    if (meta.ends_with(";base64")) return Base64Decoded(payload);
+    return payload;
 }
 
 }  // namespace kite::url
