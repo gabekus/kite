@@ -185,33 +185,30 @@ public enum TicketTest {
         return host == "linear.app" || host.hasSuffix(".linear.app")
     }
 
-    /// Why a ticket test may not take `action` on `host`, or nil when it may. On Linear it may type into
-    /// fields and click into them, but not click buttons that commit (Comment, Save, Submit…, or anything
-    /// AutomationPolicy would ask about), press Return, submit, run scripts or upload: the user posts.
+    /// Why a ticket test may not take `action` on `host`, or nil when it may. On Linear it may click into
+    /// text fields, follow links and type, and nothing else: any other click or form value can change the
+    /// issue (status, assignee, labels all save on click), so the guard fails closed rather than guessing
+    /// from labels. Return, submit, scripts and uploads are refused too: the user posts.
     public static func blocksPosting(_ action: AutomationAction, host: String?) -> String? {
         guard isLinear(host) else { return nil }
         switch action {
         case .click(let element):
-            if AutomationPolicy.isTextEntry(element) { return nil }
-            let words = Set(AutomationPolicy.normalizedWords([element.label, element.name, element.id]
-                .compactMap { $0 }.joined(separator: " ")))
-            guard AutomationPolicy.evaluate(action, host: host) != .allow || !words.isDisjoint(with: postingWords) else { return nil }
+            if AutomationPolicy.isTextEntry(element) || element.href != nil { return nil }
         case .keys(let chords, _):
             guard chords.contains(where: \.isEnter) else { return nil }
         case .type(_, _, let submit):
             guard submit else { return nil }
-        case .javascript, .uploadFiles:
+        case .formInput, .javascript, .uploadFiles:
             break
-        case .navigate, .formInput, .answerDialog:
+        case .navigate, .answerDialog:
             return nil
         }
         return postingRefusal
     }
 
-    static let postingWords: Set<String> = ["comment", "save", "send", "post", "submit", "reply", "update", "create", "done"]
-
     public static let postingRefusal = """
-        A ticket test never posts or changes anything on Linear, so Kite refused this. Type the report into the \
-        comment box without submitting, then call handoff with a step on the Comment button so the user posts it.
+        A ticket test never posts or changes anything on Linear, so Kite refused this. On Linear it can only \
+        click into text fields, follow links and type. Type the report into the comment box without \
+        submitting, then call handoff with a step on the Comment button so the user posts it.
         """
 }

@@ -577,6 +577,15 @@ final class AutomationController {
 
     // MARK: Confirmation
 
+    /// A pointer action Kite can't describe: a coordinate click with nothing hit-testable under it, or a
+    /// drag. A ticket test refuses it on Linear, since the guard can't tell what it would press.
+    func authorizeUndescribed(tab: BrowserTab) throws {
+        if let task = Self.agentTask, isTicketTest?(task) == true,
+           TicketTest.isLinear(store.state.tab(tab.id)?.url?.host()) {
+            throw AutomationError(.denied, TicketTest.postingRefusal)
+        }
+    }
+
     func authorize(_ action: AutomationAction, tab: BrowserTab) async throws {
         // A ticket test drafts its report on Linear; only the user posts it.
         if let task = Self.agentTask, isTicketTest?(task) == true,

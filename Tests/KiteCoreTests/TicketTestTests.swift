@@ -68,6 +68,10 @@ import Testing
 
         for action: AutomationAction in [
             .click(comment), .click(save), .click(ElementDescription(tag: "button", label: "Submit", inForm: true)),
+            // Status, assignee and label pickers save on click, with no posting word in sight.
+            .click(ElementDescription(tag: "div", role: "option", label: "In Progress")),
+            .click(ElementDescription(tag: "button", label: "Assign to me")),
+            .formInput(ElementDescription(tag: "select", label: "Priority"), value: "Urgent"),
             .keys(enter, focused: editor), .keys(commandEnter, focused: editor),
             .type(editor, text: "report", submit: true), .javascript(code: "document.querySelector('button').click()"),
             .uploadFiles(["/tmp/a.png"], into: editor),

@@ -410,10 +410,11 @@ identifier names everything: Spool's session, the git branch, and the Claude fol
   screenshot as evidence, and the task's reply is the report: a table per criterion in the ⌘J bar.
 - **Posting back is the user's click.** Claude types the drafted report into the issue's comment box, then calls
   `handoff` with one step on the Comment button ("Review and post"), so the ring sits on it and the user posts.
-  Kite enforces it: during a ticket test, on linear.app, it refuses clicks on buttons that commit (Comment, Save,
-  Submit, and anything `AutomationPolicy` would ask about), Return, `type` with submit, page scripts and uploads
-  (`TicketTest.blocksPosting`). Clicking into fields, reading and typing stay open. The app under test keeps Kite's
-  usual rules and confirmations.
+  Kite enforces it: during a ticket test, on linear.app, it allows only clicks into text fields and on links,
+  reading and typing (`TicketTest.blocksPosting`). Every other click is refused, since status, assignee and label
+  pickers save on click, and so are `form_input`, Return, `type` with submit, page scripts, uploads, drags, and
+  coordinate clicks with nothing Kite can identify under them (`authorizeUndescribed`). The app under test keeps
+  Kite's usual rules and confirmations.
 - **What changes for the task.** Its turns get `TicketTest.systemPrompt` after the usual Claude Tasks prompt, Jev
   doesn't size it (it's never a quick lookup), and **Close Tabs** closes only the tabs it opened, not the shared
   Claude › PRO-1234 folder.
