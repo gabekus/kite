@@ -89,11 +89,9 @@ extension BrowserWindowController: AutomationHost {
         guard let root = window?.contentView else { return }
         // A strip across the window, rather than a view sized to the banner: the banner's size changes
         // with Claude's state, and an intrinsically sized host stayed 0×0, so its buttons never got clicks.
-        let frame = BannerFrame()
-        let host = BannerHostingView(pill: frame, rootView: ClaudeBannerStrip(
+        let host = BannerHostingView(rootView: ClaudeBannerStrip(
             banner: ClaudeControlBanner(automation: automation, store: store),
-            placement: claudeBannerPlacement,
-            frame: frame
+            placement: claudeBannerPlacement
         ))
         host.sizingOptions = []
         host.safeAreaRegions = []
@@ -238,18 +236,15 @@ final class ClaudeBannerPlacement {
 private struct ClaudeBannerStrip: View {
     let banner: ClaudeControlBanner
     let placement: ClaudeBannerPlacement
-    let frame: BannerFrame
     @State private var stripWidth: CGFloat = 0
     @State private var bannerWidth: CGFloat = 0
 
     var body: some View {
         banner
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { bannerWidth = $0 }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(BannerFrame.space)) } action: { frame.rect = $0 }
             .padding(.leading, leading)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { stripWidth = $0 }
-            .coordinateSpace(.named(BannerFrame.space))
     }
 
     private var leading: CGFloat {
@@ -258,37 +253,10 @@ private struct ClaudeBannerStrip: View {
     }
 }
 
-/// Where the sign-in pill sits in its strip, in the strip's flipped coordinates.
-final class BannerFrame {
-    static let space = "bannerStrip"
-    var rect: CGRect = .zero
-}
-
-/// Lets clicks through to the page everywhere except on the banner. SwiftUI draws the pill's buttons itself, so
-/// they hit-test to the hosting view: a hit on the host counts when it's inside the pill (as `HandoffHostingView`).
+/// Lets clicks through to the page everywhere except on the banner's controls.
 final class BannerHostingView<Content: View>: NSHostingView<Content> {
-    private let pill: BannerFrame?
-
-    init(pill: BannerFrame?, rootView: Content) {
-        self.pill = pill
-        super.init(rootView: rootView)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    @MainActor @preconcurrency required init(rootView: Content) {
-        pill = nil
-        super.init(rootView: rootView)
-    }
-
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
-        guard hit === self else { return hit }
-        guard let pill, let superview else { return nil }
-        let local = convert(point, from: superview)
-        // The strip's SwiftUI coordinates are flipped.
-        let flipped = isFlipped ? local : CGPoint(x: local.x, y: bounds.height - local.y)
-        return pill.rect.contains(flipped) ? self : nil
+        return hit === self ? nil : hit
     }
 }
