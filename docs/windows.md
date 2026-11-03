@@ -176,6 +176,31 @@ screen and not minimized. `--smoke-test` loads
 closes every browser in time. Not yet: the card's 6pt corners (a child window can't be clipped
 smoothly; W10), the sandbox (W6b), and the page in `--capture` (W10).
 
+## Shortcuts
+
+Kite's shortcuts (W8) are the Mac's menu commands, by the same ids, with Ctrl in
+place of ⌘ (`windows/src/core/KeyBindings.h`, ported from `KeyBindings.swift`
+and `ShortcutPriorityGate.swift`, with their tests). `keybindings.json` in the
+support folder has the Mac's layout, so a file from the Mac works; there its
+"control" means Ctrl, "option" Alt and "shift" Shift, and "command" (the
+Windows key) never matches. A few commands also take the keys Windows users
+expect, without showing them: Ctrl+F4, F5, Ctrl+F5, Shift+F5, F12,
+Ctrl+Shift+I, Ctrl+U, Alt+Left and Alt+Right.
+
+In Kite's own window a shortcut runs from the window's key messages. In a page
+it goes by the command's priority, as on the Mac: Prefer Kite runs it in
+`OnPreKeyEvent` before the page sees the key; Prefer Websites lets the page
+have it, and runs it in `OnKeyEvent` only when the page didn't use it; Use Both
+does the same, and a second press within 4.6 s runs Kite's before the page. A
+held key runs its command once, except Next and Previous Tab. AltGr (Ctrl+Alt
+on many layouts) types characters, never a shortcut. While the command bar is
+open only Archive Tab (which closes the bar), Restore Last Closed Tab, Close
+Window, Quit and Minimize work over it; the rest are the bar's keys. Ctrl+1 to
+Ctrl+8 select the space's nth tab and Ctrl+9 its last, counting the sidebar's
+rows top to bottom, with a split as one row. Not yet: Settings → Shortcuts (the
+file is read at launch), the "Press Ctrl+D again" prompt for Use Both, and the
+toast after Copy URL.
+
 ## Refresh rate
 
 Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to

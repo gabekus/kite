@@ -24,6 +24,7 @@
 #include "core/Json.h"
 #include "core/LiveTabPolicy.h"
 #include "core/Uuid.h"
+#include "shell/Keys.h"
 #include "shell/MainWindow.h"
 
 namespace kite {
@@ -80,6 +81,8 @@ struct Chromium::Shared {
     std::atomic<bool> inputBlocked{false};
     // Keys that reach a page go to Kite: from Ctrl+T in a page until Kite unblocks input.
     std::atomic<bool> keysToKite{false};
+    // Use Both's "second press" bookkeeping, on CEF's UI thread only (OnPreKeyEvent, OnKeyEvent).
+    ShortcutPriorityGate gate;
 
     // Both threads, under the mutex.
     std::mutex mutex;
@@ -522,15 +525,39 @@ public:
 
     // CefKeyboardHandler
 
-    // Kite's own shortcut, Ctrl+T, before the page sees it. The keys after it come to Kite
-    // until it unblocks input (Chromium.h, PageEvents::newTab).
-    bool OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event, CefEventHandle, bool*) override {
+    // The shortcut a key is, if it's one of Kite's commands' (PageEvents::shortcuts). AltGr
+    // (Ctrl+Alt on many layouts) types characters: never a shortcut.
+    const std::string* CommandOf(const CefKeyEvent& event) const {
+        const bool keyDown = event.type == KEYEVENT_RAWKEYDOWN || event.type == KEYEVENT_KEYDOWN;
+        if (!keyDown || (event.modifiers & EVENTFLAG_ALTGR_DOWN)) return nullptr;
+        auto shortcut = ShortcutOfKey(static_cast<UINT>(event.windows_key_code), (event.modifiers & EVENTFLAG_CONTROL_DOWN) != 0,
+                                      (event.modifiers & EVENTFLAG_ALT_DOWN) != 0, (event.modifiers & EVENTFLAG_SHIFT_DOWN) != 0);
+        if (!shortcut || !shortcut->IsSafeKeyEquivalent()) return nullptr;
+        auto it = shared_->events.shortcuts.find(*shortcut);
+        return it == shared_->events.shortcuts.end() ? nullptr : &it->second;
+    }
+
+    // A held key runs its command once, but for Next and Previous Tab, which step on (as
+    // Kite's own window does with them).
+    void RunCommand(const std::string& command, const CefKeyEvent& event) {
+        if ((event.modifiers & EVENTFLAG_IS_REPEAT) && command != "nextTab" && command != "previousTab") return;
+        shared_->Post([shared = shared_, command] {
+            if (shared->events.command) shared->events.command(command);
+        });
+    }
+
+    // Kite's shortcuts, before the page sees the key, by priority (PageEvents::shortcuts).
+    // New Tab (Ctrl+T) also moves the keyboard: the keys after it come to Kite until it
+    // unblocks input (Chromium.h, PageEvents::newTab).
+    bool OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event, CefEventHandle, bool* isKeyboardShortcut) override {
         const uint32_t modifiers = event.modifiers & (EVENTFLAG_SHIFT_DOWN | EVENTFLAG_CONTROL_DOWN | EVENTFLAG_ALT_DOWN);
         // AltGr is Ctrl+Alt: never a Ctrl shortcut.
         const bool ctrl = (modifiers & EVENTFLAG_CONTROL_DOWN) && !(modifiers & EVENTFLAG_ALT_DOWN);
         const bool shift = (modifiers & EVENTFLAG_SHIFT_DOWN) != 0;
         const bool keyDown = event.type == KEYEVENT_RAWKEYDOWN || event.type == KEYEVENT_KEYDOWN;
-        if (keyDown && event.windows_key_code == 'T' && modifiers == EVENTFLAG_CONTROL_DOWN) {
+        const std::string* command = CommandOf(event);
+        const KeyShortcutPriority priority = command ? shared_->events.keyBindings.Priority(*command) : KeyShortcutPriority::Low;
+        if (command && *command == "newTab" && priority == KeyShortcutPriority::OverrideWebView) {
             shared_->keysToKite = true;
             // The keyboard goes to Kite's window now, from this thread (the input queues are
             // attached), so the keys typed next wait in Kite's queue as real keys and
@@ -544,16 +571,26 @@ public:
             SetFocus(shared_->window);
             return true;
         }
-        // Ctrl+W (Archive Tab) and Ctrl+Shift+T (Restore Last Closed Tab): Kite's, as ⌘W and
-        // ⇧⌘T are the Mac's menu shortcuts, which a page never sees.
-        if (keyDown && !shared_->keysToKite && ctrl &&
-            ((event.windows_key_code == 'W' && !shift) || (event.windows_key_code == 'T' && shift))) {
-            const bool reopen = event.windows_key_code == 'T';
-            shared_->Post([shared = shared_, reopen] {
-                if (reopen && shared->events.reopenClosedTab) shared->events.reopenClosedTab();
-                if (!reopen && shared->events.archiveTab) shared->events.archiveTab();
-            });
-            return true;
+        if (command && !shared_->keysToKite) {
+            switch (priority) {
+            case KeyShortcutPriority::OverrideWebView:
+                RunCommand(*command, event);
+                return true;
+            case KeyShortcutPriority::PromptAfterConsumedByWebView: {
+                // The second press soon after one the page kept runs Kite's command.
+                const double now = static_cast<double>(GetTickCount64()) / 1000;
+                if (shared_->gate.Press(*command, 0, now, (event.modifiers & EVENTFLAG_IS_REPEAT) != 0)) {
+                    RunCommand(*command, event);
+                    return true;
+                }
+                break;
+            }
+            case KeyShortcutPriority::Low:
+                break;
+            }
+            // The page first; OnKeyEvent runs the command if it doesn't use the key.
+            if (isKeyboardShortcut) *isKeyboardShortcut = true;
+            return false;
         }
         if (!shared_->keysToKite) return false;
         // Keys this page had already taken before the focus moved. Chromium drops the
@@ -566,6 +603,15 @@ public:
                 if (shared->events.keyForwarded) shared->events.keyForwarded(character, code, ctrl, shift);
             });
         }
+        return true;
+    }
+
+    // A key the page didn't use: a Prefer Websites or Use Both shortcut's command runs now.
+    bool OnKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event, CefEventHandle) override {
+        const std::string* command = CommandOf(event);
+        if (!command || shared_->keysToKite) return false;
+        shared_->gate.CommandRan(*command);
+        RunCommand(*command, event);
         return true;
     }
 
@@ -847,6 +893,30 @@ bool Chromium::Navigate(const std::string& tabID, const std::string& url) {
     if (it == shared_->pages.end() || shared_->closing) return false;
     if (it->second.browser) it->second.browser->GetMainFrame()->LoadURL(url);
     else it->second.pendingURL = url;
+    return true;
+}
+
+bool Chromium::Act(PageAction action) {
+    auto it = shared_->pages.find(shared_->shown);
+    if (it == shared_->pages.end() || !it->second.browser || shared_->closing) return false;
+    RunOnCefUIThread([browser = it->second.browser, action] {
+        CefRefPtr<CefBrowserHost> host = browser->GetHost();
+        switch (action) {
+        case PageAction::Back: browser->GoBack(); break;
+        case PageAction::Forward: browser->GoForward(); break;
+        case PageAction::Reload: browser->Reload(); break;
+        case PageAction::ReloadIgnoringCache: browser->ReloadIgnoreCache(); break;
+        case PageAction::Stop: browser->StopLoad(); break;
+        case PageAction::Print: host->Print(); break;
+        case PageAction::DevTools: {
+            // In a window of its own, as Chrome's undocked tools (the Mac docks none either).
+            CefWindowInfo info;
+            info.SetAsPopup(nullptr, "Developer Tools");
+            host->ShowDevTools(info, nullptr, CefBrowserSettings(), CefPoint());
+            break;
+        }
+        }
+    });
     return true;
 }
 

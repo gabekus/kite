@@ -24,8 +24,11 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
+
+#include "core/KeyBindings.h"
 
 namespace kite {
 
@@ -60,9 +63,15 @@ struct PageEvents {
     // A key (`character` false: a virtual-key code) or a typed UTF-16 unit (`character` true)
     // that reached a page while its keys go to Kite.
     std::function<void(bool character, unsigned code, bool ctrl, bool shift)> keyForwarded;
-    // Ctrl+W and Ctrl+Shift+T in a page: Kite's Archive Tab and Restore Last Closed Tab.
-    std::function<void()> archiveTab;
-    std::function<void()> reopenClosedTab;
+    // Kite's shortcuts in a page: which command each key runs (ShortcutTable), and who gets it
+    // first when the page wants it too, by the command's priority (the Mac's
+    // ShortcutPriorityRouter): Prefer Kite runs it before the page sees the key; Prefer
+    // Websites only if the page doesn't use it; Use Both lets the page have it, and a second
+    // press soon after runs Kite's. Read on CEF's thread: fixed once Chromium starts.
+    std::map<KeyShortcut, std::string> shortcuts;
+    KeyBindings keyBindings;
+    // A shortcut's command (other than newTab's Ctrl+T, above), on Kite's thread.
+    std::function<void(const std::string& command)> command;
     // Past six live pages the least recently shown close (the Mac's PagePool). Asked first:
     // true keeps the tab's page (a popup and its opener, PagePool.isLinkedToPopup).
     std::function<bool(const std::string& tabID)> keepAlive;
@@ -113,6 +122,10 @@ public:
     // still being made loads it once it exists. False when the tab has no page (Show makes
     // one with the tab's address).
     bool Navigate(const std::string& tabID, const std::string& url);
+    // What the menu's page commands do to the shown page (the Mac's goBack, reload,
+    // showDevTools, printPage…). False when no page is shown yet.
+    enum class PageAction { Back, Forward, Reload, ReloadIgnoringCache, Stop, DevTools, Print };
+    bool Act(PageAction action);
     // Ctrl+T was pressed in a page and the keyboard moved to Kite's window, but Kite hasn't
     // answered yet (PageEvents::newTab is on its way): keys arriving now are for the bar.
     bool KeysComeToKite() const;
