@@ -13,7 +13,10 @@ import Testing
     @Test func recognizesAuthorizeRequests() {
         #expect(OAuthResume.isAuthorizeRequest(request))
         #expect(OAuthResume.isAuthorizeRequest(url("https://claude.com/cai/oauth/authorize?\(query)")))
-        #expect(OAuthResume.isAuthorizeRequest(url("https://idp.example/authorize/?client_id=a&redirect_uri=b&state=c")))
+        #expect(OAuthResume.isAuthorizeRequest(url("https://claude.ai/authorize/?client_id=a&redirect_uri=b&state=c")))
+        // Only Claude's hosts: other sites' OAuth is never remembered.
+        #expect(!OAuthResume.isAuthorizeRequest(url("https://idp.example/authorize/?client_id=a&redirect_uri=b&state=c")))
+        #expect(!OAuthResume.isAuthorizeRequest(url("https://carbonarc.okta.com/oauth2/v1/authorize?client_id=a&redirect_uri=b&state=c")))
         #expect(!OAuthResume.isAuthorizeRequest(url("https://claude.ai/oauth/authorize")))
         #expect(!OAuthResume.isAuthorizeRequest(url("https://claude.ai/oauth/authorize?client_id=a&state=c")))
         #expect(!OAuthResume.isAuthorizeRequest(url("https://claude.ai/oauth/authorize?code_challenge=")))
@@ -103,9 +106,17 @@ import Testing
 
     @Test func aClientIdentityRequestIsResumedWhenItsStateGoesMissing() {
         var resume = OAuthResume()
-        let plain = url("https://idp.example/oauth/authorize?client_id=a&redirect_uri=https%3A%2F%2Fapp.example%2Fcb&state=s")
+        let plain = url("https://claude.ai/oauth/authorize?client_id=a&redirect_uri=https%3A%2F%2Fapp.example%2Fcb&state=s")
         _ = resume.observe(plain, tab: tab, now: start)
-        _ = resume.observe(url("https://idp.example/signin"), tab: tab, now: start + 1)
-        #expect(resume.observe(url("https://idp.example/oauth/authorize?client_id=a&redirect_uri=x"), tab: tab, now: start + 2) == plain)
+        _ = resume.observe(url("https://claude.ai/signin"), tab: tab, now: start + 1)
+        #expect(resume.observe(url("https://claude.ai/oauth/authorize?client_id=a&redirect_uri=x"), tab: tab, now: start + 2) == plain)
+    }
+
+    @Test func anotherSitesOAuthIsNeverReplayed() {
+        var resume = OAuthResume()
+        let okta = url("https://carbonarc.okta.com/oauth2/v1/authorize?client_id=a&redirect_uri=https%3A%2F%2Fapp.example%2Fcb&state=s")
+        #expect(resume.observe(okta, tab: tab, now: start) == nil)
+        #expect(resume.observe(url("https://carbonarc.okta.com/oauth2/v1/login"), tab: tab, now: start + 1) == nil)
+        #expect(resume.observe(url("https://carbonarc.okta.com/oauth2/v1/authorize?client_id=a"), tab: tab, now: start + 2) == nil)
     }
 }

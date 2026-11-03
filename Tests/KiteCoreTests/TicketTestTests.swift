@@ -30,6 +30,15 @@ import Testing
         #expect(LinearTicket(key: "PRO-9").resolvedURL(openTabs: [url("https://example.com")]) == nil)
     }
 
+    @Test func aTicketWithAWorkspaceIsntTakenForTheSameKeyElsewhere() {
+        let ours = LinearTicket(url: url("https://linear.app/carbonarc/issue/PRO-1234/a"))!
+        #expect(ours.isShown(by: url("https://linear.app/carbonarc/issue/PRO-1234/other-slug")))
+        #expect(!ours.isShown(by: url("https://linear.app/acme/issue/PRO-1234/a")))
+        #expect(!ours.isShown(by: url("https://linear.app/carbonarc/issue/PRO-1235/a")))
+        // A bare key matches the issue in any workspace.
+        #expect(LinearTicket(key: "PRO-1234").isShown(by: url("https://linear.app/acme/issue/PRO-1234/a")))
+    }
+
     @Test func parsesTheCLIRequest() throws {
         let request = try TicketTest.Request(arguments: ["ticket": "PRO-5", "target": "https://staging.example.com/app"])
         #expect(request.ticket.key == "PRO-5" && request.target?.host() == "staging.example.com")

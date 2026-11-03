@@ -42,12 +42,19 @@ public struct LinearTicket: Hashable, Sendable {
         url.flatMap { $0.path().split(separator: "/").first.map(String.init) }
     }
 
+    /// `url` is this issue's page: the same key, and the same workspace when this ticket names one, so
+    /// PRO-1234 in another workspace's open tab isn't taken for it.
+    public func isShown(by url: URL?) -> Bool {
+        guard let shown = LinearTicket(url: url), shown.key == key else { return false }
+        return organization.map { $0.lowercased() == shown.organization?.lowercased() } ?? true
+    }
+
     /// The issue's page for a ticket known only by key: the open tab that shows it, else the same key in
     /// the workspace of any open Linear tab. nil when no Linear tab is open.
     public func resolvedURL(openTabs: [URL]) -> URL? {
         if let url { return url }
         let issues = openTabs.compactMap { LinearTicket(url: $0) }
-        if let open = issues.first(where: { $0.key == key }) { return open.url }
+        if let open = issues.first(where: { isShown(by: $0.url) }) { return open.url }
         let workspace = issues.lazy.compactMap(\.organization).first
             ?? openTabs.lazy.filter { $0.host()?.lowercased() == "linear.app" }
                 .compactMap { $0.path().split(separator: "/").first.map(String.init) }.first

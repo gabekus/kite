@@ -12,6 +12,11 @@ import Foundation
 /// origin and path without them, within 10 minutes and after a sign-in page, load the remembered request
 /// once. Anything else is left alone.
 ///
+/// Only on Claude's own hosts (`resumableHosts`): the lost parameters are claude.ai's bug, and other
+/// sites' OAuth flows, an IdP's `/oauth2/…` pages included, must never be replayed. A request read from a
+/// login page's `returnTo` sends the user only where claude.ai's own login would have sent them, to its
+/// authorize page, which still asks them to approve; it opens nothing a plain link couldn't.
+///
 /// The decisions live here so they can be tested; KiteMac's `OAuthResumeTracker` feeds it the URLs
 /// each page reports, on both engines.
 public struct OAuthResume: Sendable {
@@ -80,9 +85,17 @@ public struct OAuthResume: Sendable {
 
     // MARK: Recognizing the pages
 
-    /// An OAuth authorize URL that still has its request.
+    /// The hosts whose authorize requests Kite remembers, with their subdomains.
+    static let resumableHosts = ["claude.ai", "claude.com"]
+
+    static func isResumableHost(_ url: URL) -> Bool {
+        guard let host = url.host()?.lowercased() else { return false }
+        return resumableHosts.contains { host == $0 || host.hasSuffix("." + $0) }
+    }
+
+    /// A Claude OAuth authorize URL that still has its request.
     public static func isAuthorizeRequest(_ url: URL) -> Bool {
-        guard let path = normalizedPath(url), path.hasSuffix("/authorize") else { return false }
+        guard isResumableHost(url), let path = normalizedPath(url), path.hasSuffix("/authorize") else { return false }
         let items = query(url)
         if items["code_challenge"] != nil { return true }
         return ["client_id", "redirect_uri", "state"].allSatisfy { items[$0] != nil }

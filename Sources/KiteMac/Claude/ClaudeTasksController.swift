@@ -169,7 +169,7 @@ final class ClaudeTasksController {
     func testTicket(_ request: TicketTest.Request) -> UUID? {
         let state = store.state
         let tabs = state.spaces.flatMap(\.allTabs) + state.favorites
-        let ticketTab = tabs.first { LinearTicket(url: $0.url)?.key == request.ticket.key }
+        let ticketTab = tabs.first { request.ticket.isShown(by: $0.url) }
         let issueURL = request.ticket.resolvedURL(openTabs: tabs.compactMap(\.url))
         var task = ClaudeTask(goal: TicketTest.goal(request))
         task.ticket = request.ticket.key
@@ -180,12 +180,14 @@ final class ClaudeTasksController {
         let context = ticketTab.map {
             ClaudeInvocation.TabContext(id: $0.id, title: $0.displayTitle, url: $0.url?.absoluteString ?? "")
         }
-        begin(task, prompt: TicketTest.prompt(request, ticketTab: context, issueURL: issueURL))
+        guard begin(task, prompt: TicketTest.prompt(request, ticketTab: context, issueURL: issueURL)) else { return nil }
         return task.id
     }
 
-    /// Turns on Claude's control if needed, lists the task and runs its first turn.
-    private func begin(_ task: ClaudeTask, prompt: String) {
+    /// Turns on Claude's control if needed, lists the task and runs its first turn. False when the task
+    /// failed before its first turn.
+    @discardableResult
+    private func begin(_ task: ClaudeTask, prompt: String) -> Bool {
         var task = task
         if !automation.isEnabled {
             // Starting a task is the user asking Claude to use the browser.
@@ -197,10 +199,12 @@ final class ClaudeTasksController {
         tasks.insert(task, at: 0)
         selectedID = task.id
         guard automation.isEnabled else {
-            return fail(task.id, "Kite couldn't turn on Claude's connection, so the task can't use the browser.")
+            fail(task.id, "Kite couldn't turn on Claude's connection, so the task can't use the browser.")
+            return false
         }
         requestNotificationPermission()
         launch(task.id, prompt: prompt, resume: nil)
+        return true
     }
 
     // MARK: Claude desktop app
