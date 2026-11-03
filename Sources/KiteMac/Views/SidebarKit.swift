@@ -427,8 +427,20 @@ enum SymbolPlacement {
 }
 
 /// A template image `box` big with the symbol drawn in it as SwiftUI would place it.
+@MainActor private var symbolImages: [String: NSImage] = [:]
+
 @MainActor func symbolImage(_ name: String, pointSize: CGFloat = 0, weight: NSFont.Weight = .regular, box: NSSize,
                  placement: SymbolPlacement) -> NSImage? {
+    // Drawn once per symbol, size and box: rows and buttons ask again whenever they're reconfigured.
+    let key = "\(name)|\(pointSize)|\(weight.rawValue)|\(box.width)x\(box.height)|\(placement)"
+    if let cached = symbolImages[key] { return cached }
+    let image = makeSymbolImage(name, pointSize: pointSize, weight: weight, box: box, placement: placement)
+    if let image { symbolImages[key] = image }
+    return image
+}
+
+@MainActor private func makeSymbolImage(_ name: String, pointSize: CGFloat, weight: NSFont.Weight, box: NSSize,
+                                        placement: SymbolPlacement) -> NSImage? {
     guard var symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return nil }
     if pointSize > 0, let configured = symbol.withSymbolConfiguration(.init(pointSize: pointSize, weight: weight)) {
         symbol = configured

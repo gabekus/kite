@@ -292,16 +292,23 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         }
     }
 
+    /// Reuses the rows there are, reconfiguring only those whose suggestion changed (typing changes a few).
     private func rebuildRows() {
-        rows.forEach { $0.removeFromSuperview() }
         let accent = store.state.selectedSpace.theme.accent
         let engine = store.state.searchEngine
-        rows = items.enumerated().map { index, item in
-            let row = SuggestionRowView(suggestion: item, engine: engine, accent: accent)
+        while rows.count > items.count { rows.removeLast().removeFromSuperview() }
+        for (index, item) in items.enumerated() {
+            let row: SuggestionRowView
+            if index < rows.count {
+                row = rows[index]
+            } else {
+                row = SuggestionRowView()
+                addSubview(row)
+                rows.append(row)
+            }
+            row.configure(suggestion: item, engine: engine, accent: accent)
             row.onHover = { [weak self] in self?.highlighted = index }
             row.onClick = { [weak self] in self?.onCommit(item) }
-            addSubview(row)
-            return row
         }
         if highlighted >= items.count { highlighted = 0 }
         applyHighlight()
@@ -661,9 +668,9 @@ final class KeycapView: SidebarFlippedView {
 /// dimmer, what Return will do, and the arrow box; on the space's accent colour while highlighted.
 @MainActor
 final class SuggestionRowView: SidebarFlippedView {
-    let suggestion: CommandSuggestion
-    private let engine: SearchEngine
-    private let accent: NSColor
+    private(set) var suggestion: CommandSuggestion = .instantLinks("")
+    private var engine: SearchEngine?
+    private var accent: NSColor = .controlAccentColor
     var onHover: () -> Void = {}
     var onClick: () -> Void = {}
     var highlighted = false { didSet { if highlighted != oldValue { apply() } } }
@@ -678,11 +685,8 @@ final class SuggestionRowView: SidebarFlippedView {
     private let arrow = SidebarImageView()
     private var tracking: NSTrackingArea?
 
-    init(suggestion: CommandSuggestion, engine: SearchEngine, accent: ThemeColor) {
-        self.suggestion = suggestion
-        self.engine = engine
-        self.accent = NSColor(srgbRed: CGFloat(accent.r), green: CGFloat(accent.g), blue: CGFloat(accent.b), alpha: 1)
-        super.init(frame: .zero)
+    override init(frame: NSRect) {
+        super.init(frame: frame)
         fill.cornerRadius = C.rowCornerRadius
         addSubview(fill)
         iconTile.cornerRadius = 6
@@ -701,19 +705,30 @@ final class SuggestionRowView: SidebarFlippedView {
         arrow.image = symbolImage("arrow.right", pointSize: 13, weight: .semibold, box: NSSize(width: C.actionBoxSize, height: C.actionBoxSize),
                                   placement: .center)
         addSubview(arrow)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+    }
+
+    func configure(suggestion: CommandSuggestion, engine: SearchEngine, accent: ThemeColor) {
+        let accentColor = NSColor(srgbRed: CGFloat(accent.r), green: CGFloat(accent.g), blue: CGFloat(accent.b), alpha: 1)
+        guard suggestion != self.suggestion || engine != self.engine || accentColor != self.accent else { return }
+        self.suggestion = suggestion
+        self.engine = engine
+        self.accent = accentColor
         switch suggestion {
         case .switchTab(let tab):
+            favicon.isHidden = false
             favicon.show(tab: tab)
             symbol.isHidden = true
         case .history(let entry):
+            favicon.isHidden = false
             favicon.show(page: entry.url, icon: nil)
             symbol.isHidden = true
         default:
             favicon.isHidden = true
+            symbol.isHidden = false
             symbol.image = symbolImage(symbolName, box: NSSize(width: C.rowIconSize, height: C.rowIconSize), placement: .fit)
         }
-        setAccessibilityElement(true)
-        setAccessibilityRole(.button)
         setAccessibilityLabel(titleText)
         apply()
     }
@@ -743,7 +758,7 @@ final class SuggestionRowView: SidebarFlippedView {
     private var detail: String? {
         switch suggestion {
         case .open: "Open"
-        case .search: "Search \(engine.displayName)"
+        case .search: "Search \(engine?.displayName ?? "")"
         case .siteSearch(let site, _, _): "Search \(site.name)"
         case .switchTab: "Switch to Tab"
         case .history, .instantLinks: nil
