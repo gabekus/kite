@@ -8,6 +8,9 @@ public enum TabSearch {
         public var score: Int
         /// The match itself (one of the strengths below), without the current space's lift.
         public var strength: Int
+        public var isFavorite = false
+        /// What's typed starts the tab's host and isn't all of it, so the address is being typed.
+        public var completesHost = false
     }
 
     /// Match strengths, strongest first.
@@ -19,13 +22,16 @@ public enum TabSearch {
 
         var matches: [Match] = []
         for tab in state.favorites {
-            if let score = score(q, tab) { matches.append(Match(tab: tab, spaceID: state.selectedSpaceID, score: score + 5, strength: score)) }
+            guard let score = score(q, tab) else { continue }
+            matches.append(Match(tab: tab, spaceID: state.selectedSpaceID, score: score + 5, strength: score,
+                                 isFavorite: true, completesHost: completesHost(q, tab)))
         }
         for space in state.spaces {
             for tab in space.allTabs {
                 guard let strength = score(q, tab) else { continue }
                 let score = space.id == state.selectedSpaceID ? strength + 5 : strength
-                matches.append(Match(tab: tab, spaceID: space.id, score: score, strength: strength))
+                matches.append(Match(tab: tab, spaceID: space.id, score: score, strength: strength,
+                                     completesHost: completesHost(q, tab)))
             }
         }
         matches.sort { a, b in
@@ -40,10 +46,19 @@ public enum TabSearch {
         return Array(rank(query, in: state, limit: limit + 1).filter { $0.tab.id != selected }.prefix(limit))
     }
 
+    static func host(_ tab: BrowserTab) -> String {
+        (tab.url?.host() ?? "").lowercased().replacingOccurrences(of: "www.", with: "")
+    }
+
+    static func completesHost(_ q: String, _ tab: BrowserTab) -> Bool {
+        let host = host(tab)
+        return host.hasPrefix(q) && host != q
+    }
+
     static func score(_ q: String, _ tab: BrowserTab) -> Int? {
         // A renamed tab is found by its name as well as its page's title.
         let title = [tab.customTitle, tab.title].compactMap { $0 }.joined(separator: " ").lowercased()
-        let host = (tab.url?.host() ?? "").lowercased().replacingOccurrences(of: "www.", with: "")
+        let host = host(tab)
         let url = tab.url?.absoluteString.lowercased() ?? ""
 
         if title.hasPrefix(q) { return titlePrefix }

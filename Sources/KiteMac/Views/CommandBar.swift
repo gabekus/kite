@@ -238,7 +238,11 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
             return site.url(for: text).map { [.siteSearch(site, text, $0)] } ?? []
         }
         let matches = TabSearch.switchTargets(text, in: state)
-        let tabs = matches.map { CommandSuggestion.switchTab($0.tab) }
+        // The tab above the search, decided on what was typed, not a Site Search completion after it ("yo" + "utube.com").
+        let typedMatches = typed == text ? matches : TabSearch.switchTargets(typed, in: state)
+        let leadTab = mode == .newTab ? CommandBarOrder.leader(typed, matches: typedMatches).map { typedMatches[$0].tab } : nil
+        let leader = leadTab.map(CommandSuggestion.switchTab)
+        let tabs = matches.filter { $0.tab.id != leadTab?.id }.map { CommandSuggestion.switchTab($0.tab) }
         let search = CommandSuggestion.search(text, state.searchEngine.searchURL(for: text))
         // Pages visited before, minus any already shown as a tab and the page you're on (Arc showed neither).
         let openURLs = Set((matches.map(\.tab) + [state.selectedTab].compactMap { $0 }).compactMap(\.url))
@@ -246,7 +250,7 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
             .filter { !openURLs.contains($0.url) }
             .prefix(3)
         if URLInput.looksLikeURL(text), let url = URLInput.resolve(text, engine: state.searchEngine) {
-            return [.open(url)] + tabs + visited.filter { $0.url != url }.map(CommandSuggestion.history) + [search]
+            return [leader].compactMap { $0 } + [.open(url)] + tabs + visited.filter { $0.url != url }.map(CommandSuggestion.history) + [search]
         }
         let history = visited.map(CommandSuggestion.history)
         // Menu commands, Arc-style. A strong match ("copy url") goes above the web search.
@@ -260,8 +264,7 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         }
         // Arc's ⌘T order; editing the address keeps tabs under the engine's suggestions (not observed in Arc).
         guard mode == .newTab else { return [search] + engine + tabs + history }
-        return CommandBarOrder.arrange(tabFirst: CommandBarOrder.tabFirst(text, best: matches.first),
-                                       strongCommands: strong, search: search, tabs: tabs,
+        return CommandBarOrder.arrange(leader: leader, strongCommands: strong, search: search, tabs: tabs,
                                        engine: engine, history: history, weakCommands: weak)
     }
 
