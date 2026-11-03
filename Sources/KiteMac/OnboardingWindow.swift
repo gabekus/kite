@@ -66,7 +66,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     private let browser: () -> BrowserWindowController?
     /// Bumped by every `go`, so a fade that finishes after another `go` doesn't swap in its old step.
     private var generation = 0
-    private var sheetObserver: NSObjectProtocol?
+    private var menuObserver: NSObjectProtocol?
     private let content = NSView()
     private let backButton = OnboardingTextButton(title: "‹ Back")
     private let dots = NSStackView()
@@ -90,12 +90,12 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         window.identifier = NSUserInterfaceItemIdentifier("onboardingWindow")
         window.delegate = self
         window.center()
-        // A sheet starting on a browser window (File › Import from Arc…, say) closes onboarding, so
-        // onboarding never sits over the importer.
-        sheetObserver = NotificationCenter.default.addObserver(forName: NSWindow.willBeginSheetNotification, object: nil,
-                                                               queue: .main) { [weak self] note in
+        // File › Import from Arc… (or its shortcut) closes onboarding before the importer starts, so
+        // onboarding never sits over the importer. Other sheets (Ask Before Claude Acts) leave it be.
+        menuObserver = NotificationCenter.default.addObserver(forName: NSMenu.willSendActionNotification, object: nil,
+                                                              queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
-                guard (note.object as? NSWindow)?.windowController is BrowserWindowController else { return }
+                guard (note.userInfo?["MenuItem"] as? NSMenuItem)?.identifier?.rawValue == "importFromArc" else { return }
                 self?.window.close()
             }
         }
@@ -253,11 +253,11 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         return view
     }
 
-    /// The step's main button, which Return presses.
     /// Kite's icon; a dev build has no bundle icon, so it reads the repo's.
     private static let icon: NSImage = (Bundle.main.bundleURL.pathExtension == "app" ? NSApp.applicationIconImage : nil)
         ?? resource("AppIcon", "icns").flatMap(NSImage.init(contentsOf:)) ?? NSImage()
 
+    /// The step's main button, which Return presses.
     private func primary(_ title: String, _ action: Selector, id: String) -> OnboardingButton {
         let button = OnboardingButton(title: title, primary: true)
         button.target = self
@@ -390,7 +390,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        if let sheetObserver { NotificationCenter.default.removeObserver(sheetObserver) }
+        if let menuObserver { NotificationCenter.default.removeObserver(menuObserver) }
         copiedReset?.cancel()
         Onboarding.save(.init(completed: true), to: Self.stateURL)
         Self.shown = nil
