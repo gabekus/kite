@@ -54,6 +54,8 @@ public:
 
     // The window's mouse messages (client coordinates; the wheel's in screen ones): hover, presses
     // and releases over the sidebar, and the wheel over its list. True when it took `message`.
+    // As on the Mac, the click that brings the window forward doesn't tap a row (rows don't
+    // accept first mouse); it does press the address field and the chevron.
     bool HandleMouse(UINT message, WPARAM wParam, LPARAM lParam);
     // Forgets the pointer and any press (the command bar opened over the window).
     void ClearHover();
@@ -88,6 +90,7 @@ private:
         bool dark = true;
         std::string address;
         std::vector<SidebarRow> rows;
+        std::string spaceID;
         bool operator==(const Model&) const = default;
     };
 
@@ -99,8 +102,8 @@ private:
     float Height() const;  // the window's, in points
     SidebarHit HitAt(D2D1_POINT_2F point) const;
     void RefreshHover();
-    void ScrollTo(float scroll);
-    void Tap(const SidebarRow& row);
+    void SetScroll(float scroll);
+    void Perform(const SidebarTap& tap);
     void DrawText(ID2D1DeviceContext* context, const std::string& text, IDWriteTextFormat* format, float x, float baseline,
                   float maxWidth, D2D1_COLOR_F color);
     void DrawGlyph(ID2D1DeviceContext* context, wchar_t glyph, float size, D2D1_RECT_F box, D2D1_COLOR_F color);
@@ -141,12 +144,14 @@ private:
 
     // Pointer.
     Actions actions_;
-    float scroll_ = 0;                // points the list is scrolled down
+    float scroll_ = 0;                // points the list is drawn scrolled down (whole pixels)
+    float scrollExact_ = 0;           // and where the wheel has taken it
+    std::map<std::string, float> scrolls_;  // other spaces' places in their lists
     std::optional<POINT> pointer_;    // client px, while it's over the window
     bool trackingLeave_ = false;
-    SidebarHit hover_;
-    SidebarHit pressed_;
-    int pressedClicks_ = 0;
+    std::optional<size_t> hoverRow_;
+    std::optional<SidebarPress> press_;
+    bool activating_ = false;         // the next press brings the window forward
     int clicks_ = 0;
     DWORD lastClickTime_ = 0;
     POINT lastClickAt_{};

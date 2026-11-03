@@ -277,9 +277,13 @@ TEST(svgFaviconsAreRecognised) {
 TEST(foldersOpenAndCloseAtAnyDepth) {
     Fixture f = CollapseState();
     Space& space = f.state.spaces[0];
-    Folder inner = MakeFolder("Inner", {PinnedItem{MakeTab("https://deep.example", "Deep")}});
+    Tab deep = MakeTab("https://deep.example", "Deep");
+    Folder inner = MakeFolder("Inner", {PinnedItem{deep}});
     Folder outer = MakeFolder("Outer", {PinnedItem{inner}});
     space.pinnedItems.push_back(PinnedItem{outer});
+    // A tab two folders down is a row like any other: clicking it selects it.
+    f.state.Select(deep.id);
+    CHECK(f.state.SelectedTab() && f.state.SelectedTab()->id == deep.id);
     f.state.SetFolderExpanded(inner.id, false);
     const Folder& o = std::get<Folder>(f.state.spaces[0].pinnedItems.back().value);
     CHECK(o.isExpanded && !std::get<Folder>(o.items[0].value).isExpanded);
@@ -305,6 +309,11 @@ TEST(theListScrollsOnlyAsFarAsItsLastRow) {
     CHECK(SidebarMaxScroll(rows, 400) == 1);
     CHECK(SidebarMaxScroll(rows, 300) == 101);
     CHECK(SidebarMaxScroll({}, 300) == 0);
+    // On a display's pixel grid the limit rounds down to a whole pixel: 100.7pt is 100pt at 1x
+    // and 100.5pt at 2x; scale 0 leaves it as it is.
+    CHECK(SidebarMaxScroll(rows, 300.3f, 1) == 100);
+    CHECK(SidebarMaxScroll(rows, 300.3f, 2) == 100.5f);
+    CHECK(SidebarMaxScroll(rows, 300.3f, 0) == SidebarMaxScroll(rows, 300.3f));
 }
 
 // The Mac's hitTest/acceptsPress: pills take presses, the header all of it, its chevron its
@@ -363,4 +372,75 @@ TEST(aReleaseCountsInsideItsRowsBounds) {
     CHECK(!SidebarRowAt(rows, 240, 800, 0, 232, 130));
     CHECK(!SidebarRowAt(rows, 240, 800, 0, 100, 81));
     CHECK(!SidebarRowAt(rows, 240, 300, 0, 100, 250));  // under the list
+}
+
+// A press is held by the item it pressed; letting go acts as the Mac's mouseUp does.
+TEST(aPressTapsWhatItPressedWhenItLetsGoOverIt) {
+    using T = SidebarHit::Target;
+    using A = SidebarTap::Action;
+    Fixture f = CollapseState();
+    const std::string spaceID = f.state.spaces[0].id;
+    auto rows = SidebarRows(f.state, 0);  // header, A, F, B, divider, New Tab, C
+    auto press = [&](float x, float y, int clicks = 1, bool activating = false) {
+        return SidebarPressAt(rows, 240, 800, 0, x, y, clicks, activating);
+    };
+    auto release = [&](const SidebarPress& p, float x, float y) { return SidebarRelease(p, rows, 240, 800, 0, x, y); };
+
+    // C's row is 310 to 351: a release anywhere in it taps, even outside the pill.
+    const auto c = press(100, 330);
+    CHECK(c == (SidebarPress{T::Row, K::Tab, f.c, 1}));
+    CHECK(release(*c, 100, 330) == (SidebarTap{A::SelectTab, f.c, false}));
+    CHECK(release(*c, 20, 350.5f) == (SidebarTap{A::SelectTab, f.c, false}));
+    // Dragged off its row, or out of the list, it taps nothing.
+    CHECK(release(*c, 100, 352) == SidebarTap{});
+    CHECK(release(*c, 100, 300) == SidebarTap{});
+    CHECK(release(*c, 5, 330) == SidebarTap{});
+    // The second press of a double-click doesn't select (it renames, later).
+    const auto c2 = press(100, 330, 2);
+    CHECK(c2 && c2->clicks == 2);
+    CHECK(release(*c2, 100, 330) == SidebarTap{});
+
+    // The folder opens and closes; New Tab opens a tab; the header's body does nothing yet.
+    CHECK(release(*press(100, 182), 100, 182) == (SidebarTap{A::SetFolderExpanded, f.folder, false}));
+    CHECK(release(*press(100, 289), 100, 289) == (SidebarTap{A::NewTab, {}, false}));
+    const auto header = press(40, 100);
+    CHECK(header == (SidebarPress{T::Row, K::Header, spaceID, 1}));
+    CHECK(release(*header, 40, 100) == SidebarTap{});
+    CHECK(!press(100, 256));  // the divider
+
+    // The chevron and the field act only when let go over themselves.
+    const auto chevron = press(218, 95);
+    CHECK(chevron == (SidebarPress{T::PinnedChevron, K::Header, spaceID, 1}));
+    CHECK(release(*chevron, 210, 110) == (SidebarTap{A::TogglePinnedSection, spaceID, false}));
+    CHECK(release(*chevron, 100, 95) == SidebarTap{});
+    const auto field = press(100, 60);
+    CHECK(field == (SidebarPress{T::AddressField, K::Tab, {}, 1}));
+    CHECK(release(*field, 200, 80) == (SidebarTap{A::EditAddress, {}, false}));
+    CHECK(release(*field, 100, 100) == SidebarTap{});
+
+    // A click that activates the window presses only what accepts first mouse.
+    CHECK(!press(100, 330, 1, true));
+    CHECK(!press(40, 100, 1, true));
+    CHECK(press(100, 60, 1, true) == field);
+    CHECK(press(218, 95, 1, true) == chevron);
+}
+
+// Rows can move while a press is held (a tab opens or closes): the press stays its item's.
+TEST(aPressFollowsItsItemWhenRowsMove) {
+    using A = SidebarTap::Action;
+    Fixture f = CollapseState();
+    auto rows = SidebarRows(f.state, 0);
+    const auto c = SidebarPressAt(rows, 240, 800, 0, 100, 330, 1);
+    CHECK(c && c->id == f.c);
+    // A tab opens above C: C moves down a row, and what's now under the press isn't C.
+    Tab d = MakeTab("https://d.example", "D");
+    f.state.spaces[0].tabs.insert(f.state.spaces[0].tabs.begin(), d);
+    rows = SidebarRows(f.state, 0);
+    CHECK(SidebarRelease(*c, rows, 240, 800, 0, 100, 330) == SidebarTap{});
+    CHECK(SidebarRelease(*c, rows, 240, 800, 0, 100, 370) == (SidebarTap{A::SelectTab, f.c, false}));
+    // C goes: the press taps nothing.
+    f.state.spaces[0].tabs.pop_back();
+    rows = SidebarRows(f.state, 0);
+    CHECK(SidebarRelease(*c, rows, 240, 800, 0, 100, 330) == SidebarTap{});
+    CHECK(SidebarRelease(*c, rows, 240, 800, 0, 100, 370) == SidebarTap{});
 }

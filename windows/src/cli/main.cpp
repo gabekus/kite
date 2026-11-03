@@ -282,30 +282,27 @@ int main(int argc, char** argv) {
         std::puts(json::Write(json::Value(std::move(out))).c_str());
         return kOk;
     } else if (command == "click" && args.size() >= 3 && args.size() <= 5) {
-        // A click in the selected space's sidebar (240pt wide, HEIGHT tall, scrolled SCROLL):
-        // prints what it lands on and does what the window does with it.
+        // A click (press and release) in the selected space's sidebar, 240pt wide, HEIGHT tall,
+        // scrolled SCROLL: prints what it pressed and what the window does, and does it.
         float values[4] = {0, 0, 820, 0};
         for (size_t i = 1; i < args.size(); ++i) {
             auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), values[i - 1]);
             if (error != std::errc() || end != args[i].data() + args[i].size()) return Usage();
         }
         const auto rows = SidebarRows(state, state.SelectedSpaceIndex());
-        const SidebarHit hit = SidebarHitTest(rows, 240, values[2], values[3], values[0], values[1]);
+        const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1);
         static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron"};
-        json::Object out{{"target", std::string(kTargets[static_cast<int>(hit.target)])}};
-        if (hit.target == SidebarHit::Target::Row || hit.target == SidebarHit::Target::PinnedChevron) {
-            const SidebarRow& row = rows[hit.row];
-            out.emplace("row", static_cast<double>(hit.row));
-            out.emplace("id", row.id);
-            if (hit.target == SidebarHit::Target::PinnedChevron) {
-                TogglePinnedSection(state, row.id);
-                changed = true;
-            } else if (row.kind == SidebarRow::Kind::Tab) {
-                state.Select(row.id);
-                changed = true;
-            } else if (row.kind == SidebarRow::Kind::Folder) {
-                state.SetFolderExpanded(row.id, !row.expanded);
-                changed = true;
+        static constexpr const char* kActions[] = {"none", "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded", "newTab"};
+        json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
+        if (press) {
+            if (!press->id.empty()) out.emplace("id", press->id);
+            const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1]);
+            out.emplace("action", std::string(kActions[static_cast<int>(tap.action)]));
+            switch (tap.action) {
+            case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;
+            case SidebarTap::Action::SetFolderExpanded: state.SetFolderExpanded(tap.id, tap.expanded); changed = true; break;
+            case SidebarTap::Action::TogglePinnedSection: TogglePinnedSection(state, tap.id); changed = true; break;
+            default: break;  // the command bar's, in the window
             }
         }
         std::puts(json::Write(json::Value(std::move(out))).c_str());

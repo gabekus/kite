@@ -215,20 +215,32 @@ void SidebarView::Update(const BrowserState& state) {
     next.dark = !PrefersDarkForeground(state.SelectedSpace().theme);
     next.address = AddressFieldText(state);
     next.rows = SidebarRows(state, state.SelectedSpaceIndex());
+    next.spaceID = state.SelectedSpace().id;
     if (next == model_) return;
+    // Each space keeps its own place in its list, as each of the Mac's has its scroll view.
+    if (next.spaceID != model_.spaceID) {
+        if (!model_.spaceID.empty()) scrolls_[model_.spaceID] = scrollExact_;
+        auto kept = scrolls_.find(next.spaceID);
+        scrollExact_ = kept == scrolls_.end() ? 0 : kept->second;
+    }
     model_ = std::move(next);
     Invalidate();
     // Rows moved under a still pointer: it now hovers whatever is there.
-    ScrollTo(scroll_);
+    SetScroll(scrollExact_);
     RefreshHover();
 }
 
 void SidebarView::Layout(float width, UINT dpi) {
     // The height comes with the window's: Draw draws again only when it changes what's shown.
-    if (width == width_ && dpi == dpi_) return;
-    width_ = width;
-    dpi_ = dpi;
-    dirty_ = true;
+    if (width != width_ || dpi != dpi_) {
+        width_ = width;
+        dpi_ = dpi;
+        dirty_ = true;
+    }
+    // A taller window (or another scale) can leave the list past its end, and the pointer
+    // over something else.
+    SetScroll(scrollExact_);
+    RefreshHover();
 }
 
 void SidebarView::Invalidate() {
@@ -259,8 +271,6 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     // The surface runs down to the last row, or to where the list is cut off above the space
     // bar, whichever is higher: a window resize that moves neither draws nothing.
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
-    // A window made taller (or rows taken away) can leave the list scrolled past its end.
-    scroll_ = std::clamp(scroll_, 0.0f, SidebarMaxScroll(model_.rows, static_cast<float>(client.bottom) / scale));
     const float contentBottom = M::kHeaderAreaHeight + SidebarContentHeight(model_.rows) - scroll_;
     const float listBottom = SidebarListBottom(static_cast<float>(client.bottom) / scale);
     const float bottom = std::max(M::kHeaderAreaHeight, std::min(contentBottom, listBottom));
@@ -585,7 +595,7 @@ void SidebarView::DrawContent(ID2D1DeviceContext* context) {
         const float top = listTop + row.top - scroll_;
         if (top >= listBottom) break;
         if (top + row.height <= listTop) continue;
-        const bool hovered = (hover_.target == SidebarHit::Target::Row || hover_.target == SidebarHit::Target::PinnedChevron) && hover_.row == i;
+        const bool hovered = hoverRow_ == i;
         DrawRow(context, row, top, hovered);
     }
     context->PopAxisAlignedClip();
@@ -610,53 +620,73 @@ SidebarHit SidebarView::HitAt(D2D1_POINT_2F p) const {
 }
 
 void SidebarView::RefreshHover() {
-    SidebarHit hit = pointer_ ? HitAt(PointOf(*pointer_)) : SidebarHit{};
-    // The address field has no hover of its own yet (its buttons come with the toolbar).
-    if (hit.target == SidebarHit::Target::AddressField) hit = {};
-    if (hit == hover_) return;
-    hover_ = hit;
+    // A press keeps the hover where it began until it's let go, as the Mac's tracking areas
+    // (no .enabledDuringMouseDrag) send no enter or exit during a drag.
+    if (press_) return;
+    const SidebarHit hit = pointer_ ? HitAt(PointOf(*pointer_)) : SidebarHit{};
+    // What draws hovered is a row (the header's chevron is part of its row); the address field
+    // has no hover of its own yet (its buttons come with the toolbar).
+    std::optional<size_t> row;
+    if (hit.target == SidebarHit::Target::Row || hit.target == SidebarHit::Target::PinnedChevron) row = hit.row;
+    if (row == hoverRow_) return;
+    hoverRow_ = row;
     Invalidate();
 }
 
 void SidebarView::ClearHover() {
     pointer_.reset();
-    pressed_ = {};
+    press_.reset();
     RefreshHover();
 }
 
-void SidebarView::ScrollTo(float scroll) {
-    // Whole pixels, so the rows keep their crisp edges.
+void SidebarView::SetScroll(float scroll) {
+    // The wheel's position is kept as it comes (a touchpad's small steps add up); the list
+    // draws and takes the pointer at it rounded to whole pixels, so rows keep crisp edges.
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
-    const float clamped = std::clamp(scroll, 0.0f, SidebarMaxScroll(model_.rows, Height()));
-    const float snapped = std::round(clamped * scale) / scale;
+    const float limit = SidebarMaxScroll(model_.rows, Height(), scale);
+    scrollExact_ = std::clamp(scroll, 0.0f, limit);
+    const float snapped = std::min(std::round(scrollExact_ * scale) / scale, limit);
     if (snapped == scroll_) return;
     scroll_ = snapped;
     Invalidate();
     RefreshHover();
 }
 
-void SidebarView::Tap(const SidebarRow& row) {
-    // The Mac's tapped(at:): a tab selects, a folder opens or closes, New Tab opens the bar.
-    // (A click on the space's name renames it, which comes with renaming.)
-    switch (row.kind) {
-    case SidebarRow::Kind::Tab:
-        if (actions_.selectTab) actions_.selectTab(row.id);
+void SidebarView::Perform(const SidebarTap& tap) {
+    using Action = SidebarTap::Action;
+    switch (tap.action) {
+    case Action::SelectTab:
+        if (actions_.selectTab) actions_.selectTab(tap.id);
         break;
-    case SidebarRow::Kind::Folder:
-        if (actions_.setFolderExpanded) actions_.setFolderExpanded(row.id, !row.expanded);
+    case Action::SetFolderExpanded:
+        if (actions_.setFolderExpanded) actions_.setFolderExpanded(tap.id, tap.expanded);
         break;
-    case SidebarRow::Kind::NewTab:
+    case Action::TogglePinnedSection:
+        if (actions_.togglePinnedSection) actions_.togglePinnedSection(tap.id);
+        break;
+    case Action::NewTab:
         if (actions_.newTab) actions_.newTab();
         break;
-    case SidebarRow::Kind::Header:
-    case SidebarRow::Kind::Divider:
+    case Action::EditAddress:
+        if (actions_.editAddress) actions_.editAddress();
+        break;
+    case Action::None:
         break;
     }
 }
 
 bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
-    using Target = SidebarHit::Target;
     switch (message) {
+    case WM_MOUSEACTIVATE: {
+        // A click that brings the window forward: rows take no part in it (below). Only one in
+        // the sidebar counts; a click on the page activates through its own window.
+        POINT at{};
+        GetCursorPos(&at);
+        ScreenToClient(window_, &at);
+        const D2D1_POINT_2F p = PointOf(at);
+        activating_ = LOWORD(lParam) == HTCLIENT && p.x >= 0 && p.x < width_;
+        return false;  // DefWindowProc activates
+    }
     case WM_MOUSEMOVE: {
         if (!trackingLeave_) {
             TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, window_, 0};
@@ -672,6 +702,8 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         RefreshHover();
         return false;
     case WM_LBUTTONDOWN: {
+        const bool activating = activating_;
+        activating_ = false;
         const POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         const D2D1_POINT_2F p = PointOf(at);
         if (p.x < 0 || p.x >= width_) return false;
@@ -683,57 +715,46 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         clicks_ = again ? clicks_ + 1 : 1;
         lastClickTime_ = time;
         lastClickAt_ = at;
-        pressed_ = HitAt(p);
-        pressedClicks_ = clicks_;
-        if (pressed_.target != Target::None) SetCapture(window_);
+        pointer_ = at;
+        RefreshHover();
+        press_ = SidebarPressAt(model_.rows, width_, Height(), scroll_, p.x, p.y, clicks_, activating);
+        if (press_) SetCapture(window_);
         return true;
     }
     case WM_LBUTTONUP: {
-        const SidebarHit pressed = pressed_;
-        pressed_ = {};
-        if (pressed.target == Target::None) return false;
+        if (!press_) return false;
+        const SidebarPress press = *press_;
+        press_.reset();
         if (GetCapture() == window_) ReleaseCapture();
         const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
-        // As the Mac's mouseUp: on release, over what was pressed.
-        switch (pressed.target) {
-        case Target::AddressField:
-            if (HitAt(p).target == Target::AddressField && actions_.editAddress) actions_.editAddress();
-            break;
-        case Target::PinnedChevron:
-            if (HitAt(p) == pressed && pressed.row < model_.rows.size() && actions_.togglePinnedSection) {
-                actions_.togglePinnedSection(model_.rows[pressed.row].id);
-            }
-            break;
-        case Target::Row: {
-            // A second click of a double-click doesn't tap again (it renames, which comes later).
-            if (pressedClicks_ > 1 || pressed.row >= model_.rows.size()) break;
-            if (p.x < 0 || p.x >= width_) break;
-            if (SidebarRowAt(model_.rows, width_, Height(), scroll_, p.x, p.y) != pressed.row) break;
-            const SidebarRow row = model_.rows[pressed.row];  // the action rebuilds the rows
-            Tap(row);
-            break;
-        }
-        case Target::None:
-            break;
-        }
+        // As the Mac's mouseUp: on release, over what was pressed, wherever its row is now.
+        const SidebarTap tap = p.x < 0 || p.x >= width_ ? SidebarTap{} : SidebarRelease(press, model_.rows, width_, Height(), scroll_, p.x, p.y);
+        RefreshHover();
+        Perform(tap);  // a copy: the action rebuilds the rows
         return true;
     }
     case WM_CAPTURECHANGED:
-        pressed_ = {};
+        if (press_) {
+            press_.reset();
+            RefreshHover();
+        }
         return false;
     case WM_MOUSEWHEEL: {
         POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};  // screen coordinates
         ScreenToClient(window_, &at);
         const D2D1_POINT_2F p = PointOf(at);
         const float height = Height();
-        if (p.x < 0 || p.x >= width_ || p.y < M::kHeaderAreaHeight || p.y >= SidebarListBottom(height)) return false;
+        // The list's scroll view: inside its padding, between the header and the space bar.
+        if (p.x < M::kPadding || p.x >= width_ - M::kPadding || p.y < M::kHeaderAreaHeight || p.y >= SidebarListBottom(height)) {
+            return false;
+        }
         UINT lines = 3;
         if (!SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0)) lines = 3;
         const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA;
         const float distance = lines == WHEEL_PAGESCROLL ? notches * (SidebarListBottom(height) - M::kHeaderAreaHeight)
                                                          : notches * static_cast<float>(lines) * kWheelLine;
         pointer_ = at;
-        ScrollTo(scroll_ - distance);
+        SetScroll(scrollExact_ - distance);
         return true;
     }
     default:
