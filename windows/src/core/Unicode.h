@@ -40,7 +40,11 @@ std::string_view Trim(std::string_view utf8);
 std::string Lowercased(std::string_view utf8);
 
 // Lowercased, then decomposed: the code points text is compared by when Swift compares the
-// lowercased() strings' Characters (Character == is canonical equivalence).
+// lowercased() strings' Characters (Character == is canonical equivalence). Callers split
+// the folded text into Characters, so the decomposition applies to the whole text, not to
+// each Character as Swift's does. The two differ only for contrived text, such as a
+// precomposed Tibetan vowel inside a Devanagari conjunct, or marks out of canonical order
+// right after a control character.
 std::u32string Folded(std::string_view utf8);
 
 }  // namespace kite::unicode

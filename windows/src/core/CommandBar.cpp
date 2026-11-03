@@ -183,7 +183,7 @@ std::optional<int> ScoreTab(const Query& q, const Tab& tab) {
     const Field title(titleText);
     if (title.HasPrefix(q)) return 100;
     if (title.WordHasPrefix(q)) return 80;
-    const std::string address = tab.url.value_or("");
+    const std::string_view address = tab.url ? std::string_view(*tab.url) : std::string_view();
     {
         const std::string host = ReplaceAll(unicode::Lowercased(url::Host(address).value_or("")), "www.", "");
         if (Field(host).HasPrefix(q)) return 70;
