@@ -22,14 +22,15 @@ struct Case {
     UINT width, height;
 };
 
-// The GPU and CPU agree to about 1e-5 (float maths in another order, hardware exp and pow).
-// A channel off by more than kTolerance is an outlier: smaller than the ±0.5/255 dither, so
-// dropping the dither or misplacing the grain fails. A few outliers are where the grain
-// hash's fract() lands on the other side of 1 on one side; a missed row or column of the
-// smallest case (1/640 of it) is more than kMaxOutlierShare.
-constexpr double kTolerance = 1e-3;
+// The GPU and CPU agree to about 1e-6 (CI's software adapter: mean 3e-8, worst 1.4e-6), from
+// float maths in another order and hardware exp and pow. A channel off by more than
+// kTolerance is an outlier: far below the ±0.5/255 dither, so dropping the dither or
+// misplacing the grain fails. A few outliers can be where the grain hash's fract() lands on
+// the other side of 1 on a GPU; a missed row or column of the smallest case (1/640 of it) is
+// more than kMaxOutlierShare.
+constexpr double kTolerance = 1e-4;
 constexpr double kMaxOutlierShare = 0.0005;
-constexpr double kMaxMeanDifference = 1e-4;
+constexpr double kMaxMeanDifference = 1e-5;
 
 }  // namespace
 

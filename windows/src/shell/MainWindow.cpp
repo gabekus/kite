@@ -76,9 +76,11 @@ bool MainWindow::HasClientSize(int width, int height) const {
 }
 
 void MainWindow::ResizeClient(int width, int height) {
+    // The client area at the layout scale; the frame at the monitor's (they differ under
+    // UseFixedScale).
     RECT rect{0, 0, Scale(width, dpi_), Scale(height, dpi_)};
     AdjustWindowRectExForDpi(&rect, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
-                             static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), dpi_);
+                             static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), GetDpiForWindow(hwnd_));
     SetWindowPos(hwnd_, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
@@ -125,7 +127,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         // .fullSizeContentView); Windows wants the outer size, so add the frame.
         RECT frame{0, 0, Scale(kMinimumWidth, dpi_), Scale(kMinimumHeight, dpi_)};
         AdjustWindowRectExForDpi(&frame, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
-                                 static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), dpi_);
+                                 static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), GetDpiForWindow(hwnd_));
         info->ptMinTrackSize.x = frame.right - frame.left;
         info->ptMinTrackSize.y = frame.bottom - frame.top;
         if (allowLargerThanScreen_) info->ptMaxTrackSize = {32767, 32767};
