@@ -302,3 +302,31 @@ Behaviour (both builds): a click on the field opens the command bar; the toggle 
 Not verified: the field buttons' own hover state against main (SwiftUI's buttons in the big hosting view
 don't take `ui pointer` hover in a background window; the AppKit ones show the wash as specified: 0.1 white,
 6pt corners, opacity 0.9), the developer reload and More menus (modal), the compact layout under 212pt.
+
+## PR 5: favorites tray
+
+`FavoritesTrayView` (AppKit): tiles 47pt high, 8pt apart, at most four a row and balanced, favorite splits as one
+tile, the selected tile's white fill, favicon-colour tint and 2pt ring, the hover preview card, the context menu,
+drags out of the tray (the tile stays, invisible) and into it (the open slot), and the empty state. The SwiftUI
+column keeps a placeholder of the tray's height (`SidebarChromeMetrics`).
+
+| Scenario (median) | CPU ms/s main before #262 → PR 5 | Wakeups/s |
+|---|---|---|
+| Idle (5 runs: 1.94, 4.92, 5.03, 1.99, 1.85) | 2.65 → 1.99 | 4.40 → 4.23 |
+| After hover + scroll | 2.40 → 2.12 | 4.32 → 4.17 |
+| Reloading the front tab every 0.5 s | 120.10 → 70.91 | 65.55 → 41.25 |
+| Claude's rings | 126.85 → 15.17 | 145.6 → 29.1 |
+
+Pixels (captured back to back with main before #262, the tray's region; five favorites with a coloured favicon,
+one selected, dark and light): max 76 dark / 55 light, mean ≤ 0.23. Matching needed the ring as its own view
+(AppKit re-orders a view's sublayers to follow its subviews, which had put a hand-added ring layer under the
+fills: ring 247,211,208 instead of SwiftUI's 243,185,180) and continuous corners (a 2pt border with continuous
+corners covers the band SwiftUI's 2pt stroke on the shape inset by 1 does). Empty state: title identical, dashed
+outline max 8, subtitle max 65 (glyph rendering; positions identical).
+
+Behaviour (AppKit build, tiles taking the first click for the test only): a click selects the favorite; dragging
+a tile reorders the tray (order read from the saved session); dragging a Today tab onto the tray adds it.
+
+Not verified: tile hover against main (main's tiles, in the big hosting view, take no `ui pointer` hover in a
+background window), the preview card opening, the context menu, favorite splits' tiles pixel-wise, and the empty
+state's dismiss button.
