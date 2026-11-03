@@ -171,7 +171,9 @@ What works with Kite in the background (checked on a test build behind other win
   takes ⌃⌥⌘ key equivalents first, so click the sidebar before sending a test shortcut for the item.
   Import from Arc… takes `KITE_TEST_IMPORT` too, and reads nothing without `KITE_ARC_DATA_PATH` pointing at a
   hand-made Arc folder: it writes its dialog's text to stderr as `KITE_TEST_IMPORT: Arc: line | line`, and with
-  `KITE_TEST_IMPORT=Arc` it then imports, leaving out the unnamed spaces.
+  `KITE_TEST_IMPORT=Arc` it then imports, leaving out the unnamed spaces. Extensions › Add Extensions from Arc…
+  (Chromium builds) writes `KITE_TEST_IMPORT: Arc extensions for <profile folder>: name | name` instead of
+  asking or installing; a test build without `KITE_ARC_DATA_PATH` offers none.
 - Instant Links (⇧⏎ in the command bar) without Google or Claude: on a `KITE_SUPPORT_PATH` profile,
   `KITE_TEST_INSTANT_LINKS_SEARCH_URL='http://127.0.0.1:PORT/results?q=%s'` makes the hidden reader load that page
   instead of Google (it takes the first `#search a` that holds an `h3`), and `KITE_CLAUDE_BIN` names a stub that
