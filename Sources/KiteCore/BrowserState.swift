@@ -97,6 +97,8 @@ public struct BrowserState: Hashable, Codable, Sendable {
     }
     public var selectedSpaceID: UUID
     public var recentlyClosed: [ClosedTab]
+    /// ⌘T picks, latest first (`recordCommandBarPick`).
+    public var commandBarPicks: [CommandBarPick]
     public var archived: [ClosedTab]
     public var searchEngine: SearchEngine
     public var darkPages: DarkPagesMode
@@ -151,6 +153,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         self.profileSettings = [:]
         self.selectedSpaceID = selectedSpaceID.flatMap { id in spaces.first { $0.id == id }?.id } ?? spaces[0].id
         self.recentlyClosed = []
+        self.commandBarPicks = []
         self.archived = []
         self.searchEngine = searchEngine
         self.darkPages = .matchSystem
@@ -182,6 +185,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         case developerModeEnabledForHosts, devModeReloadState, allowsJavaScriptFromAppleEvents
         case liveFoldersTurnedOff, hasSeenLiveFolderIntro, pageAppearance
         case profiles, profileFavorites, retiredProfileDirectories, favoriteSplits, profileSettings
+        case commandBarPicks
     }
 
     public init(from decoder: Decoder) throws {
@@ -200,6 +204,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         if !favorites.isEmpty { favoritesByProfile[Profile.defaultDirectory] = favorites }
         favoriteSplitsByProfile = try c.decodeIfPresent([String: [SplitView]].self, forKey: .favoriteSplits) ?? [:]
         recentlyClosed = try c.decodeIfPresent([ClosedTab].self, forKey: .recentlyClosed) ?? []
+        commandBarPicks = (try? c.decodeIfPresent([CommandBarPick].self, forKey: .commandBarPicks)) ?? []
         archived = try c.decodeIfPresent([ClosedTab].self, forKey: .archived) ?? []
         darkPages = try c.decodeIfPresent(DarkPagesMode.self, forKey: .darkPages) ?? .matchSystem
         darkPageHosts = try c.decodeIfPresent(Set<String>.self, forKey: .darkPageHosts) ?? []
@@ -254,6 +259,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         if !profileSettings.isEmpty { try c.encode(profileSettings, forKey: .profileSettings) }
         let favoriteSplits = favoriteSplitsByProfile.filter { !$0.value.isEmpty }
         if !favoriteSplits.isEmpty { try c.encode(favoriteSplits, forKey: .favoriteSplits) }
+        if !commandBarPicks.isEmpty { try c.encode(commandBarPicks, forKey: .commandBarPicks) }
     }
 
     // MARK: Dark pages

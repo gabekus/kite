@@ -854,7 +854,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let controls = ProfileDataControls(
                 page: { [weak self] in self?.pool.loadedPage(id) },
                 engine: pool.engine(forTab: id),
-                history: store.historyRoot?.forProfile(store.state.profileDirectory(ofTab: id)))
+                history: store.historyRoot?.forProfile(store.state.profileDirectory(ofTab: id)),
+                forgetPicks: { [weak self] since in self?.store.mutateWithoutUndo { $0.forgetCommandBarPicks(since: since) } })
             return NSHostingView(rootView: SettingsPageView(
                 page: SettingsPage(url) ?? .privacy, controls: controls,
                 navigate: { [weak self] page, toast in self?.showSettingsPage(page, in: id, toast: toast) },
