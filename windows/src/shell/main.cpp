@@ -363,11 +363,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (url.starts_with("kite:")) url.clear();
         chromium->Show(tab->id, state.SelectedProfileDirectory(), url, contentBounds());
     };
-    // The first page is made once the window is on screen and not minimized. Made before
-    // the window showed, it could come up hidden for good (an empty card until the first
-    // click, 1 launch in 7 on Gabe's PC); made while minimized, it would lay out at 1×1.
+    // The first page is made once the window is on screen and not minimized. Made while the
+    // window was still hidden, it came up hidden for good (an empty card until the first
+    // click), and the first ShowWindow sends WM_SIZE before the window is visible; made
+    // while minimized, it would lay out at 1×1.
     auto showFirstPage = [&] {
-        if (firstPageMade || !chromium || IsIconic(window.Handle())) return;
+        if (firstPageMade || !chromium || !IsWindowVisible(window.Handle()) || IsIconic(window.Handle())) return;
         firstPageMade = true;
         showSelectedTab();
     };
