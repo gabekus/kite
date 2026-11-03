@@ -634,14 +634,14 @@ void CommandBarView::TextChanged() {
     highlighted_ = 0;
     SetRows(callbacks_.suggestions ? callbacks_.suggestions(Narrow(text_), mode_) : std::vector<CommandSuggestion>{});
     KeepCaretVisible();
+    Invalidate();  // first, so the caret waits for the text's draw
     RestartCaretBlink();
-    Invalidate();
 }
 
 void CommandBarView::SelectionChanged() {
     KeepCaretVisible();
+    Invalidate();  // first, so the caret waits for the text's draw
     RestartCaretBlink();
-    Invalidate();
 }
 
 void CommandBarView::Insert(std::wstring_view text) {
@@ -1079,8 +1079,8 @@ bool CommandBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, L
     case WM_SETFOCUS:
         focused_ = true;
         CreateCaret(window_, nullptr, 1, 1);
-        RestartCaretBlink();
         Invalidate();  // the selection's colour
+        RestartCaretBlink();
         return false;
     case WM_KILLFOCUS:
         focused_ = false;

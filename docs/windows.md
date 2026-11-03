@@ -62,14 +62,14 @@ windows/
 The hard part is **airspace**. A Chromium child HWND draws on top of the
 window's own composition tree, so the glow and Peek couldn't overlap the page.
 Until W10, the command bar gets around it with a second DirectComposition
-target on the window with topmost TRUE, which shows over child windows. While
-the bar is open the page windows are disabled, so clicks reach Kite's window.
-Ctrl+T pressed in a page reaches Kite on CEF's UI thread (`OnPreKeyEvent`),
-which calls `SetFocus` on Kite's window so the keys typed next come to the bar.
-That call waits for Kite's thread, at most one frame-latency wait (about a
-second) when it's mid-draw; keys that arrive before the bar opens open it
-(`Chromium::KeysComeToKite`). That target can't blur the page under it, though.
-The way out:
+target on the window with topmost TRUE, which shows over child windows, though
+it can't blur the page under it. While the bar is open the page windows are
+disabled, so clicks reach Kite's window. Ctrl+T pressed in a page reaches Kite
+on CEF's UI thread (`OnPreKeyEvent`), which calls `SetFocus` on Kite's window
+so the keys typed next come to the bar. That call waits for Kite's thread:
+usually less than a frame, and at most one frame-latency wait (1 s) when Kite
+is mid-draw. Keys that arrive before the bar opens open it
+(`Chromium::KeysComeToKite`). The way out of the airspace problem:
 
 - **Render Chromium off-screen with shared textures.** CEF's
   `shared_texture_enabled` hands us each frame as a D3D11 texture with no CPU

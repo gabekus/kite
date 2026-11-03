@@ -567,7 +567,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             state.Select(next);
             showSelectedTab();
         };
-        events.newTab = [&] { openCommandBar(kite::CommandBarMode::NewTab); };
+        events.newTab = [&] {
+            // Not when the bar has already opened for the keys typed after Ctrl+T and been
+            // closed again (closing it gives the keys back to the pages).
+            if (chromium->KeysComeToKite()) openCommandBar(kite::CommandBarMode::NewTab);
+        };
         events.keyForwarded = [&](bool character, unsigned code, bool ctrl, bool shift) {
             if (!commandBar) return;
             if (character) commandBar->ForwardCharacter(static_cast<wchar_t>(code));
