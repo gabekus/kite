@@ -237,8 +237,9 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         if let site {
             return site.url(for: text).map { [.siteSearch(site, text, $0)] } ?? []
         }
+        // Arc leaves out the tab you're on, in ⌘T too.
         let tabs = TabSearch.rank(text, in: state, limit: 5)
-            .filter { mode == .newTab || $0.tab.id != state.selectedTab?.id }
+            .filter { $0.tab.id != state.selectedTab?.id }
             .map { CommandSuggestion.switchTab($0.tab) }
         let search = CommandSuggestion.search(text, state.searchEngine.searchURL(for: text))
         // Pages visited before, minus any already open as a tab.
@@ -259,7 +260,8 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         let engine = SearchSuggestions.lingering(engineSuggestions.items, for: text).map {
             CommandSuggestion.search($0, state.searchEngine.searchURL(for: $0))
         }
-        return strong + [search] + engine + tabs + history + weak
+        return CommandBarOrder.arrange(query: text, commands: strong, search: search, tabs: tabs,
+                                       engine: engine, history: history, weakCommands: weak)
     }
 
     /// Profile settings › "Include search engine suggestions", for the current space's profile.

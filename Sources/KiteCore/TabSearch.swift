@@ -43,3 +43,22 @@ public enum TabSearch {
         return nil
     }
 }
+
+/// Where the command bar's results go for a typed query (not a URL), as Arc 1.171 orders them (observed in
+/// an incognito and a regular window, 3 Nov 2026). Arc ranks with a model it trains on what you pick; this is
+/// the order it showed for tabs and favorites it hadn't learned yet: a matching tab sits right under the typed
+/// search, above the search engine's suggestions, and for a query of up to three characters the best tab
+/// match comes first, so Return switches to it.
+public enum CommandBarOrder {
+    public static let tabFirstMaxLength = 3
+
+    public static func arrange<T>(
+        query: String, commands: [T], search: T, tabs: [T], engine: [T], history: [T], weakCommands: [T]
+    ) -> [T] {
+        let short = query.trimmingCharacters(in: .whitespacesAndNewlines).count <= tabFirstMaxLength
+        if short, let first = tabs.first {
+            return [first] + commands + [search] + tabs.dropFirst() + engine + history + weakCommands
+        }
+        return commands + [search] + tabs + engine + history + weakCommands
+    }
+}

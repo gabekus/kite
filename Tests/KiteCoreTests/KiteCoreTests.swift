@@ -323,6 +323,41 @@ import Testing
         #expect(TabSearch.rank("doc", in: state).first?.tab.id == docs)
         #expect(TabSearch.rank("zzz", in: state).isEmpty)
     }
+
+    @Test func findsAFavoriteByItsPageTitle() {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let mail = state.openTab(url: URL(string: "https://mail.google.com/mail/u/0/#inbox"))
+        state.update(tab: mail) { $0.title = "Inbox (3) - someone@example.com - Gmail" }
+        state.toggleFavorite(tab: mail)
+        #expect(TabSearch.rank("gmail", in: state).map(\.tab.id) == [mail])
+        #expect(TabSearch.rank("inbox", in: state).map(\.tab.id) == [mail])
+    }
+}
+
+/// Arc 1.171, 3 Nov 2026: a favorite with nothing learned for it.
+@Suite struct CommandBarOrderTests {
+    func order(_ query: String, tabs: [String]) -> [String] {
+        CommandBarOrder.arrange(query: query, commands: ["cmd"], search: "search", tabs: tabs,
+                                engine: ["e1", "e2"], history: ["h"], weakCommands: ["weak"])
+    }
+
+    @Test func aTabMatchSitsUnderTheTypedSearchAboveSuggestions() {
+        // Typed 4, 5, 6, 8 and 11 letters of the favorite's name: search row, then "Switch to Tab".
+        #expect(order("gmai", tabs: ["fav", "tab"]) == ["cmd", "search", "fav", "tab", "e1", "e2", "h", "weak"])
+        #expect(order("gmail inbox", tabs: ["fav"]) == ["cmd", "search", "fav", "e1", "e2", "h", "weak"])
+    }
+
+    @Test func aShortQueryPutsTheBestTabFirst() {
+        // Typed 1, 2 and 3 letters: "Switch to Tab" first and selected, the typed search under it.
+        for query in ["g", "gm", "gma", " gm "] {
+            #expect(order(query, tabs: ["fav", "tab"]) == ["fav", "cmd", "search", "tab", "e1", "e2", "h", "weak"])
+        }
+    }
+
+    @Test func noTabMatchKeepsTheSearchOrder() {
+        #expect(order("gm", tabs: []) == ["cmd", "search", "e1", "e2", "h", "weak"])
+        #expect(order("gmail", tabs: []) == ["cmd", "search", "e1", "e2", "h", "weak"])
+    }
 }
 
 @Suite struct LiveTabPolicyTests {
