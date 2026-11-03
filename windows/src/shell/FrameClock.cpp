@@ -77,18 +77,21 @@ double FrameClock::NextFrameTime(IDCompositionDevice* device) {
 
 void FrameClock::Run() {
     const WaitForCompositorClock compositorClock = CompositorClock();
+    double lastFrame = 0;
     std::unique_lock lock(mutex_);
     for (;;) {
         wake_.wait(lock, [this] { return quit_ || running_; });
         if (quit_) return;
         lock.unlock();
-        // One frame: the compositor's clock, or DWM's next composition. Either can return at
-        // once (no display, a locked session): then a frame is ~16 ms.
-        const double before = Now();
+        // One frame: the compositor's clock, or DWM's next composition. A 500 Hz display's
+        // frames come every 2 ms, so only frames closer than any display's (0.25 ms, 4 kHz)
+        // mean the wait returned without one (no display, a locked session): then a frame is
+        // Sleep's ~16 ms.
         if (!compositorClock || compositorClock(0, nullptr, 100) != WAIT_OBJECT_0) {
             if (FAILED(DwmFlush())) Sleep(16);
         }
-        if (Now() - before < 0.002) Sleep(4);
+        if (Now() - lastFrame < 0.00025) Sleep(16);
+        lastFrame = Now();
         if (!posted_.exchange(true)) {
             if (!PostMessageW(window_, message_, 0, 0)) posted_ = false;
         }
