@@ -64,6 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Release builds check for updates (8-hourly, installing on quit); others do nothing.
         SoftwareUpdater.shared.start()
+        // Before the store writes session.json, which tells a new profile from an existing install.
+        let showsOnboarding = OnboardingWindow.shouldShowAtLaunch()
         store = BrowserStore(session: SessionStore(fileURL: Self.supportDirectory.appendingPathComponent("session.json")))
         store.archiveStaleTabs()
         applyPageAppearance()
@@ -217,6 +219,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onPress: { [weak self] in self?.openLittleKiteWindow(url: nil) }
         )
         keyBindings.didApply = { [weak self] in self?.littleKiteHotkey?.update() }
+        if showsOnboarding { showGettingStarted(nil) }
+    }
+
+    /// Help › Getting Started, and onboarding on a new profile's first launch.
+    @objc func showGettingStarted(_ sender: Any?) {
+        OnboardingWindow.show { [weak self] in
+            guard let controller = self?.windowController, let window = controller.window else { return }
+            if !UIDiagnostics.enabledByEnvironment { window.makeKeyAndOrderFront(nil) }
+            controller.importFromArc(nil)
+        }
     }
 
     /// Links from other apps and opened HTML files, each in a new tab.
