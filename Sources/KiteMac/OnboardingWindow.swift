@@ -340,7 +340,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     private static var arcDataExists: Bool {
         let environment = ProcessInfo.processInfo.environment
         if environment["KITE_SUPPORT_PATH"] != nil, environment["KITE_ARC_DATA_PATH"] == nil { return false }
-        return FileManager.default.fileExists(atPath: ArcImportController.sidebarFile.path)
+        return FileManager.default.fileExists(atPath: ArcImportController.arcDirectory.appendingPathComponent("StorableSidebar.json").path)
     }
 
     // MARK: Actions
