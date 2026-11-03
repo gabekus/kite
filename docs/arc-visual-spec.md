@@ -183,7 +183,8 @@ a shortcut). The three-letter rule doesn't apply to URL-like queries. Also not o
 whose address is being typed leads even over stronger title matches ("ma" with a "Maps" tab open) and from one
 letter; a favorite also leads by its pinned page's host (a Gmail favorite sent to accounts.google.com to sign in still
 leads for "mail"); with a Site Search completion for another site in the field ("m" + "usic.apple.com") no favorite
-leads, so the row matches the field; "www." and schemes aren't matched against the host ("www.goo" gets no leader). History is left out by exact
+leads, so the row matches the field; a whole host typed only rules out that favorite ("x.co" still leads to an x.com favorite);
+"www." and schemes aren't matched against the host ("www.goo" gets no leader). History is left out by exact
 URL, so the current page under another fragment still shows.
 
 ## Arc vs Kite

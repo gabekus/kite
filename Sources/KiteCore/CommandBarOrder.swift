@@ -14,7 +14,8 @@ public enum CommandBarOrder {
     static let shortQueryMinStrength = TabSearch.hostPrefix
 
     /// The tab that goes above everything but strong commands, from what was typed (without the inline completion
-    /// `shown` adds; either may be untrimmed) and `typedMatches`, ranked for `typed`. It may be outside them.
+    /// `shown` adds; either may be untrimmed) and `typedMatches`, ranked for `typed`; `looksLikeURL` is about
+    /// `shown`. It may be outside `typedMatches`.
     public static func leader(_ typed: String, shown: String, in state: BrowserState, typedMatches: [TabSearch.Match],
                               looksLikeURL: Bool) -> BrowserTab? {
         if let favorite = TabSearch.addressFavorite(typed, shown: shown, in: state) { return favorite }

@@ -42,7 +42,8 @@ public enum TabSearch {
     }
 
     static func host(_ url: URL?) -> String? {
-        url?.host()?.lowercased().replacingOccurrences(of: "www.", with: "")
+        guard let host = url?.host()?.lowercased() else { return nil }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
     /// The favorite (not the tab you're on) whose address is being typed: its page's or pinned page's host (it may
