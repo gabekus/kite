@@ -63,6 +63,8 @@ version="$(git rev-parse --short HEAD)"
 # on an unlinked executable, and macOS then can't resolve its path, so Kite turns away every
 # Accessibility client (window managers like Hammerspoon and Raycast stop moving its windows)
 # until it's relaunched. That happened when Kite was quit and reopened within the waiter's 1s poll.
+# A Kite reopened that fast (or after a restart of the Mac, which ends the waiter) finds the staged
+# build at launch and finishes the swap itself (Sources/KiteMac/StagedUpdate.swift).
 kite_running() { pgrep -f "^$DEST/Contents/MacOS/Kite( |\$)" >/dev/null; }
 swap() {
     local claimed="$DEST_DIR/.Kite.app.swapping.$$"
