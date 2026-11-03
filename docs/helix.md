@@ -18,7 +18,9 @@ Mac tests that cover it. Arc for Windows is never a reference.
 
 `windows/helix/checkpoints.md` is the ordered list. Each checkpoint has an id,
 a one-line description Gabe can judge at a glance, the Mac sources it ports,
-and its status (`planned`, `approved`, `in progress`, `done`). Gabe approves
+and its status: `planned`, `approved`, `in progress`, `in review (#PR)` (every
+gate but Gabe's has passed and the PR is open), `done (#PR)` (merged). A
+status can carry a note in brackets, such as what it's waiting on. Gabe approves
 the order, or the agent proposes the next few, and he trims or reorders them.
 The first checkpoint of a screen is its skeleton. Later ones add to it.
 
@@ -34,13 +36,19 @@ for as long as it needs to. An agent can't override a gate.
    visible in the app is also reachable headless through `kitecore`, so a
    behaviour can be checked in milliseconds without a window. `ctest` must pass.
    Swift `KiteCore` tests that touch a shared format (`Tests/Fixtures`) must
-   pass too.
+   pass too. The model builds anywhere, so this gate also runs off Windows:
+   `cmake -S windows -B /tmp/kite-core && cmake --build /tmp/kite-core && ctest --test-dir /tmp/kite-core`.
 2. **UI match** (skipped for logic-only checkpoints). Kite for Mac and Kite for
    Windows are loaded with the same `session.json` from `windows/helix/states/`,
-   at the same window size in points (Windows at 200% scale so pixels line up
-   with a Retina Mac), and captured:
-   - Mac: `kite ui capture` on a `KITE_DIAGNOSTICS=1` test build.
-   - Windows: `Kite.exe --capture out.png --window-size W,H`.
+   at the same window size in points, and captured at the same scale (2×):
+   - Mac (a Retina display, so 2×): a `KITE_DIAGNOSTICS=1` test build with
+     `KITE_SUPPORT_PATH=<fresh profile>` and `KITE_WINDOW_SIZE=W,H`, captured
+     with `kite ui capture`. The sidebar width comes from the dev bundle's
+     defaults, so reset it first: `defaults delete dev.gabek.Kite.dev SidebarWidth`.
+   - Windows (a monitor at 200% scale): `Kite.exe --capture out.png
+     --window-size W,H --capture-scale 2` with `KITE_SUPPORT_PATH` set the same
+     way. `--capture-scale` fails the run if the monitor isn't at 200%, so the
+     pixels line up with the Mac's.
    A visual reviewer (a fresh subagent that sees only the two images and the
    checkpoint's description) lists every difference with a severity
    (blocker, major, minor) and a location. Anything fixable in code is a
@@ -67,6 +75,13 @@ less of it.
 
 In Claude Code, in this repo: `/helix` (the skill in `.claude/skills/helix`)
 runs the next approved checkpoint through the gates. `/helix plan SCREEN`
-proposes checkpoints for a screen. Building and capturing need a Windows
-machine. The Mac capture needs Gabe's Mac, so the UI gate is the one that
-spans both machines.
+proposes checkpoints for a screen.
+
+Where each gate runs:
+
+| gate | where |
+|---|---|
+| behaviour | anywhere (the model and its tests are standard C++); the full app compiles off Windows with MinGW (`windows/cmake/mingw-w64.cmake`) and for real on Windows CI with MSVC |
+| UI match | Gabe's Mac for the reference, a Windows machine at 200% for Kite for Windows |
+| adversarial review | anywhere |
+| Gabe | the PR |

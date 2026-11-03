@@ -1,3 +1,5 @@
+// See Json.h.
+
 #include "core/Json.h"
 
 #include <charconv>
@@ -68,11 +70,29 @@ namespace {
 
 constexpr int kMaxDepth = 512;
 
+// Length of the well-formed UTF-8 sequence starting `s` (non-ASCII lead byte), or 0. Rejects
+// overlong forms, surrogates (ED A0..BF) and code points above U+10FFFF.
+size_t ValidUtf8Length(std::string_view s) {
+    auto at = [&](size_t i) { return i < s.size() ? static_cast<unsigned char>(s[i]) : 0u; };
+    unsigned c = at(0);
+    auto cont = [&](size_t i, unsigned lo = 0x80, unsigned hi = 0xBF) { unsigned b = at(i); return b >= lo && b <= hi; };
+    if (c >= 0xC2 && c <= 0xDF) return cont(1) ? 2 : 0;
+    if (c == 0xE0) return cont(1, 0xA0) && cont(2) ? 3 : 0;
+    if (c == 0xED) return cont(1, 0x80, 0x9F) && cont(2) ? 3 : 0;
+    if (c >= 0xE1 && c <= 0xEF) return cont(1) && cont(2) ? 3 : 0;
+    if (c == 0xF0) return cont(1, 0x90) && cont(2) && cont(3) ? 4 : 0;
+    if (c >= 0xF1 && c <= 0xF3) return cont(1) && cont(2) && cont(3) ? 4 : 0;
+    if (c == 0xF4) return cont(1, 0x80, 0x8F) && cont(2) && cont(3) ? 4 : 0;
+    return 0;
+}
+
 class Parser {
 public:
     explicit Parser(std::string_view text) : text_(text) {}
 
     std::variant<Value, ParseError> Run() {
+        // Foundation accepts a UTF-8 byte order mark (PowerShell 5 and old Notepad write one).
+        if (text_.substr(0, 3) == "\xEF\xBB\xBF") pos_ = 3;
         SkipWhitespace();
         Value value;
         if (!ParseValue(value, 0)) return error_;
@@ -188,6 +208,14 @@ private:
                 return true;
             }
             if (c < 0x20) return Fail("control character in string"), false;
+            if (c >= 0x80) {
+                // Foundation rejects invalid UTF-8, so we do too rather than re-save it.
+                size_t length = ValidUtf8Length(text_.substr(pos_));
+                if (length == 0) return Fail("invalid UTF-8"), false;
+                out.append(text_.substr(pos_, length));
+                pos_ += length;
+                continue;
+            }
             if (c != '\\') {
                 out += static_cast<char>(c);
                 ++pos_;
@@ -286,7 +314,19 @@ private:
 void WriteString(std::string& out, const std::string& s) {
     static const char kHex[] = "0123456789abcdef";
     out += '"';
-    for (unsigned char c : s) {
+    for (size_t i = 0; i < s.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        if (c >= 0x80) {
+            // Never write a file the Mac can't read: invalid bytes become U+FFFD.
+            size_t length = ValidUtf8Length(std::string_view(s).substr(i));
+            if (length == 0) {
+                out += "\xEF\xBF\xBD";
+            } else {
+                out.append(s, i, length);
+                i += length - 1;
+            }
+            continue;
+        }
         switch (c) {
         case '"': out += "\\\""; break;
         case '\\': out += "\\\\"; break;

@@ -52,7 +52,8 @@ windows/
   src/cli/      kitecore: the model, headless
   tests/        unit tests (no test framework dependency)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
-  scripts/      fetch-cef.ps1
+  scripts/      fetch-cef.ps1, gen-unicode-tables.py
+  cmake/        mingw-w64.cmake (cross-compile check off Windows)
 ```
 
 ## Rendering
@@ -131,3 +132,10 @@ windows\build\Release\Kite.exe
 
 Without `KITE_SUPPORT_PATH` the profile is `%LOCALAPPDATA%\Kite`. A
 `KITE_SUPPORT_PATH` that isn't an existing directory is refused.
+
+Off Windows, the model and its tests build natively, and MinGW cross-compiles the app:
+
+```bash
+cmake -S windows -B /tmp/kite-core && cmake --build /tmp/kite-core -j && ctest --test-dir /tmp/kite-core
+cmake -S windows -B /tmp/kite-mingw -DCMAKE_TOOLCHAIN_FILE="$PWD/windows/cmake/mingw-w64.cmake" && cmake --build /tmp/kite-mingw -j
+```

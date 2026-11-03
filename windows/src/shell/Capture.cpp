@@ -1,3 +1,5 @@
+// See Capture.h.
+
 #include "shell/Capture.h"
 
 #include <wincodec.h>

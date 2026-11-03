@@ -10,11 +10,12 @@ namespace kite {
 
 class MainWindow {
 public:
-    // Window size at 96 DPI before a saved frame exists, scaled to the monitor.
+    // In points (DIPs), scaled to the monitor. The Mac's BrowserWindowController: a
+    // 1280×820 content rect and a 640×420 minimum.
     static constexpr int kDefaultWidth = 1280;
-    static constexpr int kDefaultHeight = 800;
-    static constexpr int kMinimumWidth = 500;
-    static constexpr int kMinimumHeight = 400;
+    static constexpr int kDefaultHeight = 820;
+    static constexpr int kMinimumWidth = 640;
+    static constexpr int kMinimumHeight = 420;
 
     static bool RegisterWindowClass(HINSTANCE instance);
 
@@ -30,13 +31,15 @@ public:
     // than the screen, so a capture has the same size on every machine.
     void SetClientSize(int width, int height);
 
-    // Runs before the window is destroyed, e.g. to save the session.
+    // Runs before the window is destroyed (WM_CLOSE), and at logoff or shutdown
+    // (WM_ENDSESSION), e.g. to save the session.
     std::function<void()> onClose;
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT Handle(UINT message, WPARAM wParam, LPARAM lParam);
     void ApplySystemAppearance();
+    void ResizeClient(int width, int height);
 
     HWND hwnd_ = nullptr;
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;

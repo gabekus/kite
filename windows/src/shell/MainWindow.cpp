@@ -1,3 +1,5 @@
+// Kite's Win32 browser window; see MainWindow.h.
+
 #include "shell/MainWindow.h"
 
 #include <dwmapi.h>
@@ -24,15 +26,23 @@ bool MainWindow::RegisterWindowClass(HINSTANCE instance) {
     wc.lpfnWndProc = &MainWindow::WindowProc;
     wc.hInstance = instance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    // Placeholder fill so the client area (and --capture) is deterministic until the
+    // composition tree draws the theme backdrop (checkpoint W3).
+    wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     wc.lpszClassName = kClassName;
     return RegisterClassExW(&wc) != 0;
 }
 
 MainWindow::MainWindow(HINSTANCE instance) {
+    // The default size is the client area, like the Mac's content rect; add the frame to it.
     UINT systemDpi = GetDpiForSystem();
+    RECT rect{0, 0, Scale(kDefaultWidth, systemDpi), Scale(kDefaultHeight, systemDpi)};
+    AdjustWindowRectExForDpi(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0, systemDpi);
     CreateWindowExW(0, kClassName, L"Kite", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                    Scale(kDefaultWidth, systemDpi), Scale(kDefaultHeight, systemDpi), nullptr, nullptr,
-                    instance, this);
+                    rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, instance, this);
+    // Windows sends no WM_DPICHANGED at creation, so a window that lands on a monitor with
+    // another scale than the system's is resized for that monitor here.
+    if (hwnd_ && dpi_ != systemDpi) ResizeClient(kDefaultWidth, kDefaultHeight);
 }
 
 MainWindow::~MainWindow() {
@@ -47,6 +57,10 @@ void MainWindow::Show(int showCommand) {
 void MainWindow::SetClientSize(int width, int height) {
     // Windows otherwise caps a window at the screen size (WM_GETMINMAXINFO's ptMaxTrackSize).
     allowLargerThanScreen_ = true;
+    ResizeClient(width, height);
+}
+
+void MainWindow::ResizeClient(int width, int height) {
     RECT rect{0, 0, Scale(width, dpi_), Scale(height, dpi_)};
     AdjustWindowRectExForDpi(&rect, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
                              static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), dpi_);
@@ -92,6 +106,9 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_SETTINGCHANGE:
         ApplySystemAppearance();
         break;
+    case WM_ENDSESSION:
+        if (wParam && onClose) onClose();
+        return 0;
     case WM_CLOSE:
         if (onClose) onClose();
         DestroyWindow(hwnd_);

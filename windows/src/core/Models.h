@@ -5,10 +5,11 @@
 // JSON (Swift Codable) shape, and keeps members it doesn't model yet in `extra`, so a
 // session that goes Mac → Windows → Mac loses nothing.
 //
-// Ported so far: tabs, folders, spaces, themes, favorites (default profile), selection,
+// Ported so far: tabs, folders, spaces, themes, favorites per profile, selection,
 // opening and selecting tabs, spaces. Not yet: closing/archiving, splits, profiles,
 // live folders, Tidy Tabs. Those arrive as Helix checkpoints (docs/helix.md).
 
+#include <map>
 #include <optional>
 #include <string>
 #include <variant>
@@ -113,12 +114,21 @@ struct TabLocation {
 struct BrowserState {
     std::vector<Space> spaces;  // never empty
     std::string selectedSpaceID;
-    std::vector<Tab> favorites;  // the default profile's grid
+    static constexpr const char* kDefaultProfile = "Default";  // Profile.defaultDirectory
+    // Favorites grids by Chromium profile folder; an empty grid has no entry, as on the Mac.
+    std::map<std::string, std::vector<Tab>> favoritesByProfile;
     std::string searchEngine = "google";
     json::Object extra;  // everything else the Mac stores
 
     // Personal (with one tab when seedURL is set) and Work, like BrowserState.makeDefault().
     static BrowserState MakeDefault(std::optional<std::string> seedURL = std::string("https://www.wikipedia.org"));
+
+    // The profile folder a space uses: its `profile` when that profile still exists, else Default.
+    std::string ProfileDirectory(size_t space) const;
+    std::string SelectedProfileDirectory() const { return ProfileDirectory(SelectedSpaceIndex()); }
+    // The favorites grid of the current space's profile, shown above the pinned tabs.
+    const std::vector<Tab>& Favorites() const;
+    void SetFavorites(std::vector<Tab> tabs);
 
     size_t SelectedSpaceIndex() const;
     const Space& SelectedSpace() const { return spaces[SelectedSpaceIndex()]; }

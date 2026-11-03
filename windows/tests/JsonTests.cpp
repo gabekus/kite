@@ -60,3 +60,13 @@ TEST(copiesAreIndependent) {
     CHECK(a.Find("y") == nullptr);
     CHECK(b.Find("y") != nullptr);
 }
+
+TEST(acceptsAByteOrderMarkLikeFoundation) { CHECK(P("\xEF\xBB\xBF{\"a\":1}").Find("a") != nullptr); }
+
+TEST(rejectsInvalidUtf8AndWritesOnlyValidUtf8) {
+    CHECK(Fails("\"caf\xE9\""));            // Latin-1 byte
+    CHECK(Fails("\"\xED\xA0\x80\""));        // encoded surrogate
+    CHECK(Fails("\"\xC0\xAF\""));            // overlong
+    CHECK(*P("\"caf\xC3\xA9 \xF0\x9F\x8F\xA0\"").AsString() == "caf\xC3\xA9 \xF0\x9F\x8F\xA0");
+    CHECK(Write(Value(std::string("caf\xE9"))) == "\"caf\xEF\xBF\xBD\"");
+}

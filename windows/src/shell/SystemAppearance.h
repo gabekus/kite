@@ -1,4 +1,5 @@
 #pragma once
+// Reads Windows' app light/dark setting, which the title bar follows.
 
 namespace kite {
 

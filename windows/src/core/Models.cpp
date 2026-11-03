@@ -1,3 +1,5 @@
+// Port of KiteCore Models.swift and BrowserState.swift; see Models.h.
+
 #include "core/Models.h"
 
 #include <algorithm>
@@ -109,6 +111,31 @@ BrowserState BrowserState::MakeDefault(std::optional<std::string> seedURL) {
     return state;
 }
 
+std::string BrowserState::ProfileDirectory(size_t space) const {
+    // Profiles.swift: profile(spaces[i].profile).directory, where an unknown profile is the default.
+    auto it = spaces[space].extra.find("profile");
+    if (it == spaces[space].extra.end() || !it->second.AsString()) return kDefaultProfile;
+    const std::string& wanted = *it->second.AsString();
+    if (auto profiles = extra.find("profiles"); profiles != extra.end() && profiles->second.AsArray()) {
+        for (const auto& profile : *profiles->second.AsArray()) {
+            const json::Value* directory = profile.Find("directory");
+            if (directory && directory->AsString() && *directory->AsString() == wanted) return wanted;
+        }
+    }
+    return kDefaultProfile;
+}
+
+const std::vector<Tab>& BrowserState::Favorites() const {
+    static const std::vector<Tab> kNone;
+    auto it = favoritesByProfile.find(SelectedProfileDirectory());
+    return it == favoritesByProfile.end() ? kNone : it->second;
+}
+
+void BrowserState::SetFavorites(std::vector<Tab> tabs) {
+    if (tabs.empty()) favoritesByProfile.erase(SelectedProfileDirectory());
+    else favoritesByProfile[SelectedProfileDirectory()] = std::move(tabs);
+}
+
 size_t BrowserState::SelectedSpaceIndex() const { return SpaceIndex(selectedSpaceID).value_or(0); }
 
 const Tab* BrowserState::SelectedTab() const {
@@ -120,7 +147,7 @@ const Tab* BrowserState::SelectedTab() const {
 }
 
 std::vector<Tab> BrowserState::SidebarTabs(size_t space) const {
-    auto out = favorites;
+    auto out = Favorites();
     auto rest = spaces[space].AllTabs();
     out.insert(out.end(), rest.begin(), rest.end());
     return out;
@@ -134,6 +161,7 @@ std::optional<size_t> BrowserState::SpaceIndex(const std::string& id) const {
 }
 
 std::optional<TabLocation> BrowserState::Location(const std::string& id) const {
+    const auto& favorites = Favorites();
     for (size_t i = 0; i < favorites.size(); ++i) {
         if (favorites[i].id == id) return TabLocation{std::nullopt, TabSection::Favorite, i};
     }
@@ -157,7 +185,7 @@ const Tab* BrowserState::FindTabByID(const std::string& id) const {
 
 Tab* BrowserState::MutableTab(const TabLocation& location) {
     switch (location.section) {
-    case TabSection::Favorite: return &favorites[location.index];
+    case TabSection::Favorite: return &favoritesByProfile[SelectedProfileDirectory()][location.index];
     case TabSection::Unpinned: return &spaces[*location.space].tabs[location.index];
     case TabSection::Pinned: {
         auto pinned = spaces[*location.space].Pinned();
@@ -236,6 +264,17 @@ std::optional<std::string> OptionalString(const Value& object, std::string_view 
     return std::nullopt;
 }
 
+// A UUID member, uppercased. Missing → nullopt; present but not a UUID → `invalid` is set,
+// since Swift's decoder fails the whole session on a malformed UUID.
+std::optional<std::string> UuidMember(const Value& object, std::string_view key, bool& invalid) {
+    const Value* v = object.Find(key);
+    if (!v || v->IsNull()) return std::nullopt;
+    auto* text = v->AsString();
+    auto normalized = text ? NormalizeUuid(*text) : std::nullopt;
+    if (!normalized) invalid = true;
+    return normalized;
+}
+
 void Put(Object& o, const char* key, Value v) { o.insert_or_assign(key, std::move(v)); }
 
 void PutIf(Object& o, const char* key, const std::optional<std::string>& v) {
@@ -271,10 +310,11 @@ Value EncodeArray(const std::vector<T>& items) {
 }
 
 std::optional<Folder> DecodeFolder(const Value& v) {
-    auto* id = String(v, "id");
+    bool invalid = false;
+    auto id = UuidMember(v, "id", invalid);
     auto* name = String(v, "name");
     const Value* expanded = v.Find("isExpanded");
-    if (!id || !name || !expanded || !expanded->AsBool()) return std::nullopt;
+    if (!id || invalid || !name || !expanded || !expanded->AsBool()) return std::nullopt;
     auto items = DecodeArray<PinnedItem>(v.Find("items"), DecodePinnedItem);
     if (!items) return std::nullopt;
     Folder folder;
@@ -305,10 +345,11 @@ Value Encode(const Tab& tab) {
 
 std::optional<Tab> DecodeTab(const Value& v) {
     if (!v.IsObject()) return std::nullopt;
-    auto* id = String(v, "id");
+    bool invalid = false;
+    auto id = UuidMember(v, "id", invalid);
     auto* title = String(v, "title");
     const Value* lastActive = v.Find("lastActiveAt");
-    if (!id || !title || !lastActive || !lastActive->AsNumber()) return std::nullopt;
+    if (!id || invalid || !title || !lastActive || !lastActive->AsNumber()) return std::nullopt;
     Tab tab;
     tab.id = *id;
     tab.url = OptionalString(v, "url");
@@ -392,30 +433,32 @@ Value Encode(const Space& space) {
 
 std::optional<Space> DecodeSpace(const Value& v) {
     if (!v.IsObject()) return std::nullopt;
-    auto* id = String(v, "id");
+    bool invalid = false;
+    auto id = UuidMember(v, "id", invalid);
+    auto selectedTab = UuidMember(v, "selectedTabID", invalid);
     auto* name = String(v, "name");
     auto* icon = String(v, "icon");
     const Value* themeValue = v.Find("theme");
     auto theme = themeValue ? DecodeTheme(*themeValue) : std::nullopt;
     auto tabs = DecodeArray<Tab>(v.Find("tabs"), DecodeTab);
-    if (!id || !name || !icon || !theme || !tabs) return std::nullopt;
+    if (!id || invalid || !name || !icon || !theme || !tabs) return std::nullopt;
     Space space;
     space.id = *id;
     space.name = *name;
     space.icon = *icon;
     space.theme = std::move(*theme);
     space.tabs = std::move(*tabs);
-    if (const Value* items = v.Find("pinnedItems")) {
+    if (const Value* items = v.Find("pinnedItems"); items && !items->IsNull()) {
         auto decoded = DecodeArray<PinnedItem>(items, DecodePinnedItem);
         if (!decoded) return std::nullopt;
         space.pinnedItems = std::move(*decoded);
-    } else if (const Value* legacy = v.Find("pinned")) {
+    } else if (const Value* legacy = v.Find("pinned"); legacy && !legacy->IsNull()) {
         // Sessions from before folders stored a flat `pinned` array of tabs.
         auto decoded = DecodeArray<Tab>(legacy, DecodeTab);
         if (!decoded) return std::nullopt;
         for (auto& tab : *decoded) space.pinnedItems.push_back(PinnedItem{std::move(tab)});
     }
-    space.selectedTabID = OptionalString(v, "selectedTabID");
+    space.selectedTabID = selectedTab;
     space.extra = Extra(v, {"id", "name", "icon", "theme", "pinnedItems", "pinned", "tabs", "selectedTabID"});
     return space;
 }
@@ -424,7 +467,16 @@ Value Encode(const BrowserState& state) {
     Object o = state.extra;
     Put(o, "spaces", EncodeArray(state.spaces));
     Put(o, "selectedSpaceID", state.selectedSpaceID);
-    Put(o, "favorites", EncodeArray(state.favorites));
+    // The default profile's grid keeps the key it had before profiles; the others go under
+    // profileFavorites, written only when there are any (BrowserState.encode).
+    auto def = state.favoritesByProfile.find(BrowserState::kDefaultProfile);
+    Put(o, "favorites", def == state.favoritesByProfile.end() ? Value(Array{}) : EncodeArray(def->second));
+    Object others;
+    for (const auto& [directory, tabs] : state.favoritesByProfile) {
+        if (directory != BrowserState::kDefaultProfile && !tabs.empty()) others.emplace(directory, EncodeArray(tabs));
+    }
+    if (others.empty()) o.erase("profileFavorites");
+    else Put(o, "profileFavorites", Value(std::move(others)));
     Put(o, "searchEngine", state.searchEngine);
     return Value(std::move(o));
 }
@@ -435,15 +487,25 @@ std::optional<BrowserState> DecodeBrowserState(const Value& v) {
     if (!spaces || spaces->empty()) return std::nullopt;
     BrowserState state;
     state.spaces = std::move(*spaces);
-    auto selected = OptionalString(v, "selectedSpaceID");
+    bool invalid = false;
+    auto selected = UuidMember(v, "selectedSpaceID", invalid);
+    if (invalid) return std::nullopt;
     state.selectedSpaceID = selected && state.SpaceIndex(*selected) ? *selected : state.spaces[0].id;
-    if (const Value* favorites = v.Find("favorites")) {
+    if (const Value* byProfile = v.Find("profileFavorites"); byProfile && !byProfile->IsNull()) {
+        if (!byProfile->AsObject()) return std::nullopt;
+        for (const auto& [directory, tabs] : *byProfile->AsObject()) {
+            auto decoded = DecodeArray<Tab>(&tabs, DecodeTab);
+            if (!decoded) return std::nullopt;
+            if (!decoded->empty()) state.favoritesByProfile[directory] = std::move(*decoded);
+        }
+    }
+    if (const Value* favorites = v.Find("favorites"); favorites && !favorites->IsNull()) {
         auto decoded = DecodeArray<Tab>(favorites, DecodeTab);
         if (!decoded) return std::nullopt;
-        state.favorites = std::move(*decoded);
+        if (!decoded->empty()) state.favoritesByProfile[BrowserState::kDefaultProfile] = std::move(*decoded);
     }
     if (auto engine = OptionalString(v, "searchEngine")) state.searchEngine = *engine;
-    state.extra = Extra(v, {"spaces", "selectedSpaceID", "favorites", "searchEngine"});
+    state.extra = Extra(v, {"spaces", "selectedSpaceID", "favorites", "profileFavorites", "searchEngine"});
     return state;
 }
 

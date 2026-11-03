@@ -10,7 +10,7 @@
 namespace kite {
 
 struct SupportDirectoryError {
-    std::wstring message;
+    std::string message;  // UTF-8
 };
 
 // `overridePath` is KITE_SUPPORT_PATH and `localAppData` is %LOCALAPPDATA%, either absent.
@@ -18,10 +18,10 @@ struct SupportDirectoryError {
 // on macOS a bad path once made Chromium fall back to the user's own profile and change it.
 // Without one, the profile is %LOCALAPPDATA%\Kite (where Chrome keeps its User Data too).
 std::variant<std::filesystem::path, SupportDirectoryError> ResolveSupportDirectory(
-    const std::optional<std::wstring>& overridePath,
-    const std::optional<std::wstring>& localAppData);
+    const std::optional<std::filesystem::path>& overridePath,
+    const std::optional<std::filesystem::path>& localAppData);
 
-// Reads an environment variable; empty counts as unset.
-std::optional<std::wstring> EnvironmentVariable(const wchar_t* name);
+// An environment variable as a path (UTF-16 on Windows, so any user name works); empty counts as unset.
+std::optional<std::filesystem::path> EnvironmentPath(const char* name);
 
 }  // namespace kite

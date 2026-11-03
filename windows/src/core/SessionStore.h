@@ -22,9 +22,17 @@ public:
     struct Missing {};
     struct Error {
         std::string message;
+        // Where the unreadable file went. nullopt means it's still in place (it couldn't be
+        // read or moved), so saving would overwrite it: see MaySave.
         std::optional<std::filesystem::path> quarantinedTo;
     };
-    std::variant<BrowserState, Missing, Error> Load() const;
+    using LoadResult = std::variant<BrowserState, Missing, Error>;
+    LoadResult Load() const;
+
+    // Whether saving after this load can't destroy the user's session: false when the file is
+    // still there but couldn't be read (locked by antivirus or sync, a failed move aside).
+    // Run without saving then, rather than replace their tabs with a fresh session.
+    static bool MaySave(const LoadResult& result);
 
     // Empty on success, otherwise what went wrong.
     std::string Save(const BrowserState& state) const;

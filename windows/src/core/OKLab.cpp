@@ -1,3 +1,5 @@
+// Port of Theme.swift's OKLab and Theme helpers; see OKLab.h.
+
 #include "core/OKLab.h"
 
 #include <algorithm>

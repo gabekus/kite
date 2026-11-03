@@ -1,34 +1,35 @@
+// Profile directory resolution; see SupportDirectory.h. Ports AppDelegate.supportDirectory.
+
 #include "core/SupportDirectory.h"
 
-#include <windows.h>
+#include <cstdlib>
 
 namespace kite {
 
 std::variant<std::filesystem::path, SupportDirectoryError> ResolveSupportDirectory(
-    const std::optional<std::wstring>& overridePath,
-    const std::optional<std::wstring>& localAppData) {
+    const std::optional<std::filesystem::path>& overridePath,
+    const std::optional<std::filesystem::path>& localAppData) {
     if (overridePath && !overridePath->empty()) {
         std::error_code error;
-        std::filesystem::path path(*overridePath);
-        if (!std::filesystem::is_directory(path, error)) {
-            return SupportDirectoryError{L"KITE_SUPPORT_PATH is not an existing directory: " + *overridePath};
+        if (!std::filesystem::is_directory(*overridePath, error)) {
+            auto text = overridePath->u8string();
+            return SupportDirectoryError{"KITE_SUPPORT_PATH is not an existing directory: " + std::string(text.begin(), text.end())};
         }
-        return path;
+        return *overridePath;
     }
-    if (!localAppData || localAppData->empty()) {
-        return SupportDirectoryError{L"LOCALAPPDATA isn't set"};
-    }
-    return std::filesystem::path(*localAppData) / L"Kite";
+    if (!localAppData || localAppData->empty()) return SupportDirectoryError{"LOCALAPPDATA isn't set"};
+    return *localAppData / "Kite";
 }
 
-std::optional<std::wstring> EnvironmentVariable(const wchar_t* name) {
-    DWORD size = GetEnvironmentVariableW(name, nullptr, 0);
-    if (size <= 1) return std::nullopt;
-    std::wstring value(size, L'\0');
-    DWORD written = GetEnvironmentVariableW(name, value.data(), size);
-    if (written == 0 || written >= size) return std::nullopt;
-    value.resize(written);
-    return value;
+std::optional<std::filesystem::path> EnvironmentPath(const char* name) {
+#ifdef _WIN32
+    std::wstring wide(name, name + std::char_traits<char>::length(name));  // names are ASCII
+    const wchar_t* value = _wgetenv(wide.c_str());
+#else
+    const char* value = std::getenv(name);
+#endif
+    if (!value || !*value) return std::nullopt;
+    return std::filesystem::path(value);
 }
 
 }  // namespace kite

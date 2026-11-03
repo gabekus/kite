@@ -48,15 +48,19 @@ if ((Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $CefVersion)) 
     Remove-Item $Archive
 }
 
-# libcef_dll_wrapper: CEF's C++ API on top of its C ABI. Static CRT (/MT) to match CEF's default.
-$wrapper = Join-Path $Dest 'build\libcef_dll_wrapper\libcef_dll_wrapper.lib'
-if (-not (Test-Path $wrapper)) {
-    cmake -S $Dest -B (Join-Path $Dest 'build') -G Ninja `
-        -DCMAKE_BUILD_TYPE=Release `
+# libcef_dll_wrapper: CEF's C++ API on top of its C ABI. Built for Release (/MT) and Debug
+# (/MTd), so either configuration of Kite links against a wrapper with the same CRT
+# (otherwise LNK2038). They land in build-release and build-debug; Kite picks by $<CONFIG>.
+foreach ($config in 'Release', 'Debug') {
+    $buildDir = Join-Path $Dest ("build-" + $config.ToLower())
+    $wrapper = Join-Path $buildDir 'libcef_dll_wrapper\libcef_dll_wrapper.lib'
+    if (Test-Path $wrapper) { continue }
+    cmake -S $Dest -B $buildDir -G Ninja `
+        -DCMAKE_BUILD_TYPE=$config `
         -DPROJECT_ARCH=x86_64 `
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-    if ($LASTEXITCODE -ne 0) { throw 'cmake configure failed' }
-    cmake --build (Join-Path $Dest 'build') --target libcef_dll_wrapper
-    if ($LASTEXITCODE -ne 0) { throw 'cmake build failed' }
+    if ($LASTEXITCODE -ne 0) { throw "cmake configure ($config) failed" }
+    cmake --build $buildDir --target libcef_dll_wrapper
+    if ($LASTEXITCODE -ne 0) { throw "cmake build ($config) failed" }
 }
 Write-Host "CEF ready at $Dest"

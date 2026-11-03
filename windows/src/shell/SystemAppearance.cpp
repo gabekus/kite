@@ -1,3 +1,5 @@
+// See SystemAppearance.h.
+
 #include "shell/SystemAppearance.h"
 
 #include <windows.h>

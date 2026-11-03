@@ -1,5 +1,9 @@
+// See Uuid.h.
+
 #include "core/Uuid.h"
 
+#include <cctype>
+#include <cstdint>
 #include <random>
 
 namespace kite {
@@ -35,6 +39,13 @@ bool IsUuid(const std::string& text) {
         }
     }
     return true;
+}
+
+std::optional<std::string> NormalizeUuid(const std::string& text) {
+    if (!IsUuid(text)) return std::nullopt;
+    std::string out = text;
+    for (char& c : out) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return out;
 }
 
 }  // namespace kite

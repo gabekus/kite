@@ -1,6 +1,7 @@
 name: CI (Windows app)
 
-# Kite for Windows (native C++, windows/). Runs only when it changes.
+# Kite for Windows (native C++, windows/). Runs only when it or the session fixture it
+# shares with the Mac changes.
 on:
   push:
     branches: [main]
@@ -33,38 +34,63 @@ jobs:
         run: cmake --build windows/build --config Release --parallel
       - name: Unit tests
         run: ctest --test-dir windows/build -C Release --output-on-failure
-      - name: Smoke-test Kite.exe
+      - name: Launch checks
         run: |
-          $exe = Resolve-Path windows/build/Release/Kite.exe
+          # Runs Kite.exe and returns its exit code, killing it after a minute so a run that
+          # never quits fails the step instead of hanging the job.
+          function Run-Kite([string[]] $arguments) {
+            $process = Start-Process -FilePath (Resolve-Path windows/build/Release/Kite.exe) -ArgumentList $arguments -PassThru
+            $null = $process.Handle  # keep the handle, or ExitCode reads empty after WaitForExit(timeout)
+            if (-not $process.WaitForExit(60000)) {
+              $process.Kill()
+              throw "Kite.exe $arguments didn't exit within 60 s"
+            }
+            return $process.ExitCode
+          }
           $profileDir = Join-Path $env:RUNNER_TEMP "kite-smoke-$([guid]::NewGuid())"
           New-Item -ItemType Directory -Path $profileDir | Out-Null
           $env:KITE_SUPPORT_PATH = $profileDir
-          $run = Start-Process -FilePath $exe -ArgumentList '--smoke-test' -Wait -PassThru
-          if ($run.ExitCode -ne 0) { throw "Kite.exe exited with $($run.ExitCode)" }
-          $session = Join-Path $profileDir 'session.json'
-          if (-not (Test-Path $session)) { throw 'Kite.exe wrote no session.json' }
-          # The headless core reads what the app wrote (and the Mac's format).
+
+          $code = Run-Kite @('--smoke-test')
+          if ($code -ne 0) { throw "--smoke-test exited with $code" }
+          if (-not (Test-Path (Join-Path $profileDir 'session.json'))) { throw 'Kite.exe wrote no session.json' }
+          # The headless model reads what the app wrote.
           & windows/build/Release/kitecore.exe --profile $profileDir state
           if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
-          # A KITE_SUPPORT_PATH that isn't a directory must be refused (exit 2), never fallen back from.
+
+          # A flag without its value is a usage error (exit 1), never a normal launch.
+          $code = Run-Kite @('--capture')
+          if ($code -ne 1) { throw "--capture without a path: expected exit 1, got $code" }
+
+          # A KITE_SUPPORT_PATH that isn't a directory is refused (exit 2), never fallen back from.
           $file = Join-Path $profileDir 'not-a-dir'
           Set-Content -Path $file -Value x
           $env:KITE_SUPPORT_PATH = $file
-          $run = Start-Process -FilePath $exe -ArgumentList '--smoke-test' -Wait -PassThru
-          if ($run.ExitCode -ne 2) { throw "expected exit 2 for a file KITE_SUPPORT_PATH, got $($run.ExitCode)" }
-          Write-Host "smoke test ok ($((Get-Item $exe).Length) bytes)"
+          $code = Run-Kite @('--smoke-test')
+          if ($code -ne 2) { throw "a file as KITE_SUPPORT_PATH: expected exit 2, got $code" }
+          $global:LASTEXITCODE = 0
       - name: Capture (Helix UI gate plumbing)
         run: |
-          $exe = Resolve-Path windows/build/Release/Kite.exe
           $profileDir = Join-Path $env:RUNNER_TEMP "kite-capture-$([guid]::NewGuid())"
           New-Item -ItemType Directory -Path $profileDir | Out-Null
           Copy-Item windows/helix/states/two-spaces.json (Join-Path $profileDir 'session.json')
           $env:KITE_SUPPORT_PATH = $profileDir
           $png = Join-Path $env:RUNNER_TEMP 'kite-capture.png'
-          $run = Start-Process -FilePath $exe -ArgumentList '--capture', $png, '--window-size', '1280,800' -Wait -PassThru
-          if ($run.ExitCode -ne 0) { throw "Kite.exe --capture exited with $($run.ExitCode)" }
+          $process = Start-Process -FilePath (Resolve-Path windows/build/Release/Kite.exe) `
+            -ArgumentList '--capture', $png, '--window-size', '1280,820' -PassThru
+          $null = $process.Handle
+          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Kite.exe --capture hung' }
+          if ($process.ExitCode -ne 0) { throw "Kite.exe --capture exited with $($process.ExitCode)" }
           $bytes = [System.IO.File]::ReadAllBytes($png)
           $width = [System.BitConverter]::ToUInt32(@($bytes[19], $bytes[18], $bytes[17], $bytes[16]), 0)
           $height = [System.BitConverter]::ToUInt32(@($bytes[23], $bytes[22], $bytes[21], $bytes[20]), 0)
           Write-Host "capture: ${width}x${height} px"
-          if ($width -lt 1280 -or $height -lt 800) { throw "capture is ${width}x${height}, expected at least 1280x800" }
+          # The runner's display is at 100%, so points are pixels.
+          if ($width -ne 1280 -or $height -ne 820) { throw "capture is ${width}x${height}, expected 1280x820" }
+      - name: Upload the capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kite-windows-capture
+          path: ${{ runner.temp }}/kite-capture.png
+          if-no-files-found: ignore

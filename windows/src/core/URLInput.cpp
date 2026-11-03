@@ -1,3 +1,5 @@
+// Port of KiteCore URLInput.swift; see URLInput.h.
+
 #include "core/URLInput.h"
 
 #include <algorithm>
@@ -5,6 +7,7 @@
 #include <cctype>
 #include <vector>
 
+#include "core/Unicode.h"
 #include "core/Url.h"
 
 namespace kite {
@@ -35,15 +38,11 @@ bool IsURLCharacter(unsigned char c) {
     return kAllowed.find(static_cast<char>(c)) != std::string_view::npos;
 }
 
-std::string_view Trim(std::string_view s) {
-    auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; };
-    while (!s.empty() && isSpace(s.front())) s.remove_prefix(1);
-    while (!s.empty() && isSpace(s.back())) s.remove_suffix(1);
-    return s;
-}
-
 bool HasWhitespace(std::string_view s) {
-    return std::any_of(s.begin(), s.end(), [](char c) { return std::isspace(static_cast<unsigned char>(c)); });
+    for (char32_t c : unicode::Decode(s)) {
+        if (unicode::IsWhitespace(c)) return true;
+    }
+    return false;
 }
 
 std::string Lower(std::string_view s) {
@@ -64,14 +63,20 @@ std::optional<std::string> ExplicitURL(std::string_view text) {
     return encoded;
 }
 
+// Swift: four dot-separated parts that each parse as UInt8 ("010" and "+1" do).
 bool IsIPv4(std::string_view host) {
     int octets = 0;
     size_t start = 0;
     while (true) {
         size_t end = host.find('.', start);
         std::string_view part = host.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start);
-        if (part.empty() || part.size() > 3 || !std::all_of(part.begin(), part.end(), [](char c) { return c >= '0' && c <= '9'; })) return false;
-        if (std::stoi(std::string(part)) > 255) return false;
+        if (!part.empty() && part.front() == '+') part.remove_prefix(1);
+        if (part.empty() || !std::all_of(part.begin(), part.end(), [](char c) { return c >= '0' && c <= '9'; })) return false;
+        unsigned value = 0;
+        for (char c : part) {
+            value = value * 10 + static_cast<unsigned>(c - '0');
+            if (value > 255) return false;
+        }
         ++octets;
         if (end == std::string_view::npos) break;
         start = end + 1;
@@ -79,25 +84,33 @@ bool IsIPv4(std::string_view host) {
     return octets == 4;
 }
 
+// A host of two or more labels made of letters, numbers and hyphens, ending in a top-level
+// domain of two or more letters (or an xn-- punycode one). Works on characters, as Swift
+// does: a combining mark belongs to the character before it, so "é" written e + U+0301 is
+// one letter.
 bool IsDomain(std::string_view host) {
-    std::vector<std::string_view> labels;
-    size_t start = 0;
-    while (true) {
-        size_t end = host.find('.', start);
-        labels.push_back(host.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start));
-        if (end == std::string_view::npos) break;
-        start = end + 1;
+    std::vector<std::vector<char32_t>> labels(1);
+    for (char32_t c : unicode::Decode(host)) {
+        if (c == '.') labels.emplace_back();
+        else labels.back().push_back(c);
     }
     if (labels.size() < 2) return false;
-    for (auto label : labels) {
-        if (label.empty()) return false;
-        for (unsigned char c : label) {
-            if (!(std::isalnum(c) || c == '-' || c >= 0x80)) return false;  // non-ASCII letters count, like Swift's isLetter
+    for (const auto& label : labels) {
+        if (label.empty() || unicode::IsMark(label.front())) return false;
+        for (char32_t c : label) {
+            if (!(unicode::IsLetter(c) || unicode::IsNumber(c) || unicode::IsMark(c) || c == '-')) return false;
         }
     }
-    std::string_view tld = labels.back();
-    bool letters = tld.size() >= 2 && std::all_of(tld.begin(), tld.end(), [](unsigned char c) { return std::isalpha(c) || c >= 0x80; });
-    return letters || tld.substr(0, 4) == "xn--";
+    const auto& tld = labels.back();
+    size_t characters = 0;
+    bool letters = true;
+    for (char32_t c : tld) {
+        if (unicode::IsMark(c)) continue;
+        ++characters;
+        if (!unicode::IsLetter(c)) letters = false;
+    }
+    bool punycode = tld.size() >= 4 && tld[0] == 'x' && tld[1] == 'n' && tld[2] == '-' && tld[3] == '-';
+    return (letters && characters >= 2) || punycode;
 }
 
 std::optional<std::string> HostLikeURL(std::string_view text) {
@@ -114,7 +127,7 @@ std::optional<std::string> HostLikeURL(std::string_view text) {
         }
     }
     std::string scheme;
-    if (host == "localhost" || (host.size() > 10 && host.ends_with(".localhost")) || IsIPv4(host)) {
+    if (host == "localhost" || host.ends_with(".localhost") || IsIPv4(host)) {
         scheme = "http";
     } else if (IsDomain(host)) {
         scheme = "https";
@@ -148,14 +161,14 @@ std::string SearchURL(SearchEngine engine, std::string_view query) {
 namespace url_input {
 
 std::optional<std::string> Resolve(std::string_view input, SearchEngine engine) {
-    std::string_view text = Trim(input);
+    std::string_view text = unicode::Trim(input);
     if (text.empty()) return std::nullopt;
     if (auto url = AsURL(text)) return url;
     return SearchURL(engine, text);
 }
 
 std::optional<std::string> AsURL(std::string_view input) {
-    std::string_view text = Trim(input);
+    std::string_view text = unicode::Trim(input);
     if (auto url = ExplicitURL(text)) return url;
     return HostLikeURL(text);
 }

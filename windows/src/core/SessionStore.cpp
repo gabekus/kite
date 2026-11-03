@@ -1,3 +1,5 @@
+// Port of KiteCore SessionStore.swift; see SessionStore.h.
+
 #include "core/SessionStore.h"
 
 #include <chrono>
@@ -16,9 +18,16 @@ std::string PathText(const fs::path& path) {
 }
 }  // namespace
 
-std::variant<BrowserState, SessionStore::Missing, SessionStore::Error> SessionStore::Load() const {
+bool SessionStore::MaySave(const LoadResult& result) {
+    if (auto* error = std::get_if<Error>(&result)) return error->quarantinedTo.has_value();
+    return true;
+}
+
+SessionStore::LoadResult SessionStore::Load() const {
     std::error_code error;
-    if (!fs::exists(file_, error)) return Missing{};
+    bool exists = fs::exists(file_, error);
+    if (error) return Error{"couldn't check " + PathText(file_) + ": " + error.message(), std::nullopt};
+    if (!exists) return Missing{};
     std::ifstream in(file_, std::ios::binary);
     if (!in) return Error{"couldn't open " + PathText(file_), std::nullopt};
     std::stringstream buffer;

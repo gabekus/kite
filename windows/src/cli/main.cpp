@@ -19,6 +19,12 @@
 #include "core/SessionStore.h"
 #include "core/SupportDirectory.h"
 #include "core/URLInput.h"
+#include "core/Uuid.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 using namespace kite;
 
@@ -64,7 +70,7 @@ json::Value Summary(const BrowserState& state) {
         spaces.push_back(json::Value(std::move(o)));
     }
     json::Array favorites;
-    for (const auto& tab : state.favorites) favorites.push_back(TabSummary(tab));
+    for (const auto& tab : state.Favorites()) favorites.push_back(TabSummary(tab));
     json::Object root{{"selectedSpaceID", state.selectedSpaceID}, {"searchEngine", state.searchEngine},
                       {"favorites", json::Value(std::move(favorites))}, {"spaces", json::Value(std::move(spaces))}};
     if (const Tab* tab = state.SelectedTab()) root.emplace("selectedTab", TabSummary(*tab));
@@ -73,22 +79,47 @@ json::Value Summary(const BrowserState& state) {
 
 }  // namespace
 
+// The arguments as UTF-8. On Windows they come from the UTF-16 command line, so a name like
+// "Café" survives whatever the code page is.
+std::vector<std::string> Arguments(int argc, char** argv) {
+#ifdef _WIN32
+    (void)argc;
+    (void)argv;
+    std::vector<std::string> out;
+    int count = 0;
+    LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(), &count);
+    for (int i = 1; wide && i < count; ++i) {
+        int size = WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, nullptr, 0, nullptr, nullptr);
+        std::string arg(static_cast<size_t>(size > 0 ? size - 1 : 0), '\0');
+        if (size > 1) WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, arg.data(), size, nullptr, nullptr);
+        out.push_back(std::move(arg));
+    }
+    if (wide) LocalFree(wide);
+    return out;
+#else
+    return std::vector<std::string>(argv + 1, argv + argc);
+#endif
+}
+
+// Ids typed in either case, like UUID(uuidString:).
+std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
+
 int main(int argc, char** argv) {
-    std::vector<std::string> args(argv + 1, argv + argc);
-    std::optional<std::wstring> profile;
+    std::vector<std::string> args = Arguments(argc, argv);
+    // argv is UTF-8: the manifest sets the UTF-8 code page on Windows.
+    std::optional<std::filesystem::path> profile;
     if (args.size() >= 2 && args[0] == "--profile") {
-        profile = std::filesystem::path(std::u8string(args[1].begin(), args[1].end())).wstring();
+        profile = std::filesystem::path(std::u8string(args[1].begin(), args[1].end()));
         args.erase(args.begin(), args.begin() + 2);
     }
     if (args.empty()) return Usage();
 
-    auto resolved = ResolveSupportDirectory(profile ? profile : EnvironmentVariable(L"KITE_SUPPORT_PATH"),
-                                            EnvironmentVariable(L"LOCALAPPDATA"));
+    auto resolved = ResolveSupportDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"), EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<SupportDirectoryError>(&resolved)) {
-        std::fwprintf(stderr, L"kitecore: %ls\n", error->message.c_str());
+        std::fprintf(stderr, "kitecore: %s\n", error->message.c_str());
         return kBadProfile;
     }
-    SessionStore store(std::get<std::filesystem::path>(resolved) / L"session.json");
+    SessionStore store(std::get<std::filesystem::path>(resolved) / "session.json");
 
     BrowserState state;
     auto loaded = store.Load();
@@ -116,7 +147,7 @@ int main(int argc, char** argv) {
         bool background = false;
         std::vector<std::string> words;
         for (size_t i = 1; i < args.size(); ++i) {
-            if (args[i] == "--space" && i + 1 < args.size()) space = args[++i];
+            if (args[i] == "--space" && i + 1 < args.size()) space = Id(args[++i]);
             else if (args[i] == "--background") background = true;
             else words.push_back(args[i]);
         }
@@ -126,16 +157,18 @@ int main(int argc, char** argv) {
         std::puts(state.OpenTab(*url, space, !background).c_str());
         changed = true;
     } else if (command == "select" && args.size() == 2) {
-        if (!state.Location(args[1])) return kNotFound;
-        state.Select(args[1]);
+        const std::string id = Id(args[1]);
+        if (!state.Location(id)) return kNotFound;
+        state.Select(id);
         changed = true;
     } else if (command == "space" && args.size() >= 2) {
         const std::string& action = args[1];
         if (action == "next") state.SelectAdjacentSpace(1);
         else if (action == "prev") state.SelectAdjacentSpace(-1);
         else if (action == "select" && args.size() == 3) {
-            if (!state.SpaceIndex(args[2])) return kNotFound;
-            state.SelectSpace(args[2]);
+            const std::string id = Id(args[2]);
+            if (!state.SpaceIndex(id)) return kNotFound;
+            state.SelectSpace(id);
         } else if (action == "add" && args.size() >= 3) {
             const auto& presets = Theme::Presets();
             std::puts(state.AddSpace(args[2], args.size() >= 4 ? args[3] : "", presets[state.spaces.size() % presets.size()]).c_str());
