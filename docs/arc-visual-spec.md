@@ -152,6 +152,28 @@ importer doesn't keep yet.
 | Bottom | 9.5pt after the last row | |
 | Open and close | No animation | A 60fps screen recording of ⌘T in an incognito window: the panel is complete in the first frame it appears and gone in the next frame after Esc. Kite also shows and hides it with no transition |
 
+### Command bar order → `CommandBarOrder`, `TabSearch.switchTargets`
+
+Arc 1.171, 3 Nov 2026, read from Arc's accessibility tree (`commandBarSuggestions` rows, `SELECTED` marks the
+default) in windows opened through AX menu presses and parked off screen, typing posted to Arc's process only.
+Arc ranks with a model trained on device on what you pick (`LocalCommandBarRanking`, `rankCommandBar(input:
+candidates:)` in the binary), so these are its orders for items it hadn't learned; they aren't fixed rules.
+
+| Query | Arc | Kite |
+|---|---|---|
+| 1, 2, 3 letters starting a favorite's title (regular window) | Favorite's "Switch to Tab" row first and selected; Return switched the window to it | Same, when the query starts the tab's title, a word or its host (strength ≥ 70) |
+| 4, 5, 6, 8, 11 letters of the same favorite | Typed search first, the favorite second, then suggestions | Same |
+| Incognito open tabs: "127" (their host's start) | A tab first | Same |
+| Incognito: "inbox" (5 letters, a title's start) | The tab first | Search first, tab second (**mismatch**: Arc's learned order) |
+| Incognito: "notes" (a title's word) | Search, then the tab | Same |
+| Incognito: "kite", "calendar", "gmail" | Tab 3rd or 4th, under history and autocomplete rows | Tab right under the search (**mismatch**) |
+| The tab you're on ("mailer" typed on the Mailer tab) | Not offered in ⌘T, as a tab or as history | Left out before the 5-tab limit, and from history |
+
+Not observed in Arc: a menu command and a tab matching together (Kite keeps strong commands on top), the
+address-edit mode (Kite keeps its old order), a URL-looking query on the tab you're on (Kite leaves it out
+there too), panes of the current split (Kite offers them), and weak short
+matches such as "ai" inside mail.google.com (Kite keeps them under the search).
+
 ## Arc vs Kite
 
 Kite was built from this branch, run on WebKit with a fresh `KITE_SUPPORT_PATH` (`mktemp -d`) and a session seeded

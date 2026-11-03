@@ -240,8 +240,8 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         let matches = TabSearch.switchTargets(text, in: state)
         let tabs = matches.map { CommandSuggestion.switchTab($0.tab) }
         let search = CommandSuggestion.search(text, state.searchEngine.searchURL(for: text))
-        // Pages visited before, minus any already shown as a tab.
-        let openURLs = Set(matches.compactMap(\.tab.url))
+        // Pages visited before, minus any already shown as a tab and the page you're on (Arc showed neither).
+        let openURLs = Set((matches.map(\.tab) + [state.selectedTab].compactMap { $0 }).compactMap(\.url))
         let visited = (store.history?.search(text, limit: 6) ?? [])
             .filter { !openURLs.contains($0.url) }
             .prefix(3)

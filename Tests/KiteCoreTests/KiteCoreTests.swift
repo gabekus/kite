@@ -368,7 +368,7 @@ import Testing
     @Test func aTabMatchSitsUnderTheTypedSearchAboveSuggestions() {
         // Arc showed this for 4, 5, 6, 8 and 11 letters of the favorite's name: search row, then "Switch to Tab".
         let (state, mail) = gmail()
-        for query in ["inbo", "inbox", "inbox (", "inbox (3"] {
+        for query in ["inbo", "inbox", "inbox ", "inbox (3", "inbox (3) -"] {
             #expect(TabSearch.switchTargets(query, in: state).first?.tab.id == mail)
             #expect(!CommandBarOrder.tabFirst(query, best: TabSearch.switchTargets(query, in: state).first))
         }
@@ -385,7 +385,7 @@ import Testing
     }
 
     @Test func aWeakShortMatchStaysUnderTheSearch() {
-        // "ai" is only inside the address (mail.google.com), "box" only inside the title: Return still searches.
+        // "ai" and "box" are only inside the title, "oog" only inside the address: Return still searches.
         let (state, _) = gmail()
         for query in ["ai", "box", "oog"] {
             let best = TabSearch.switchTargets(query, in: state).first

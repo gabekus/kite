@@ -6,10 +6,11 @@ public enum TabSearch {
         public var tab: BrowserTab
         public var spaceID: UUID
         public var score: Int
-        /// The match itself, without the current space's lift: 100 title prefix, 80 word prefix, 70 host prefix,
-        /// 60 inside the title, 40 inside the address.
+        /// The match itself (one of the strengths below), without the current space's lift.
         public var strength: Int
     }
+
+    public static let titlePrefix = 100, wordPrefix = 80, hostPrefix = 70, inTitle = 60, inAddress = 40
 
     public static func rank(_ query: String, in state: BrowserState, limit: Int = 6) -> [Match] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -44,12 +45,11 @@ public enum TabSearch {
         let host = (tab.url?.host() ?? "").lowercased().replacingOccurrences(of: "www.", with: "")
         let url = tab.url?.absoluteString.lowercased() ?? ""
 
-        if title.hasPrefix(q) { return 100 }
-        if title.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(q) }) { return 80 }
-        if host.hasPrefix(q) { return 70 }
-        if title.contains(q) { return 60 }
-        if url.contains(q) { return 40 }
+        if title.hasPrefix(q) { return titlePrefix }
+        if title.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(q) }) { return wordPrefix }
+        if host.hasPrefix(q) { return hostPrefix }
+        if title.contains(q) { return inTitle }
+        if url.contains(q) { return inAddress }
         return nil
     }
 }
-
