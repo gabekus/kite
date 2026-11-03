@@ -1,9 +1,10 @@
 // Kite for Windows. See docs/windows.md.
 //
 //   Kite.exe                 normal launch
-//   Kite.exe --smoke-test    opens the window, runs the message loop for a second, saves
-//                            the session and exits 0 (CI). Errors go to the exit code,
-//                            never a dialog.
+//   Kite.exe --smoke-test    opens the window, runs the message loop for a second (with
+//                            Chromium: until the selected tab's page has loaded, at most
+//                            30 s), saves the session and exits 0 (CI). Errors go to the
+//                            exit code, never a dialog.
 //   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]
 //                            opens the window at W×H points (client area), saves the frame
 //                            it presents as a PNG and exits: the Helix UI gate
@@ -37,6 +38,9 @@
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
 #include "shell/BackdropTest.h"
+#ifdef KITE_HAS_CEF
+#include "shell/Chromium.h"
+#endif
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
 #include "shell/Errors.h"
@@ -112,6 +116,11 @@ std::optional<std::pair<int, int>> ParseSize(std::wstring_view text) {
 
 constexpr UINT_PTR kSmokeTimer = 1;
 
+// The content card, in points: right of the sidebar, inset on the other three sides
+// (BrowserWindowController's Layout.defaultSidebarWidth and ArcMetrics.Content.inset).
+constexpr int kSidebarWidth = 240;
+constexpr int kContentInset = 10;
+
 // Writes `text` as UTF-8 to a standard handle, if the launcher gave us one (a GUI process
 // has no console, but a launcher that redirects stdout or stderr, like CI, gets the text).
 void WriteUtf8(DWORD which, const std::wstring& text) {
@@ -135,6 +144,10 @@ int Fail(bool quiet, const std::wstring& message, int code) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+#ifdef KITE_HAS_CEF
+    // Chromium starts Kite.exe again for its renderer, GPU and utility processes.
+    if (const int code = kite::RunChromiumSubprocess(instance); code >= 0) return code;
+#endif
     const std::vector<std::wstring> args = Arguments();
     // An unknown flag (a typo like --smoketest or --capture-scale=2) is an error, never a
     // normal launch on the real profile.
@@ -227,6 +240,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (!kite::MainWindow::RegisterWindowClass(instance)) {
         return Fail(quiet, L"RegisterClassExW failed", kWindowFailed);
     }
+#ifdef KITE_HAS_CEF
+    // Declared before the window so it goes after it: closing the window destroys the
+    // browsers' windows, which Chromium's shutdown waits for.
+    std::unique_ptr<kite::Chromium> chromium;
+#endif
     kite::MainWindow window(instance);
     if (!window.IsValid()) return Fail(quiet, L"CreateWindowExW failed", kWindowFailed);
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
@@ -298,6 +316,66 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return Fail(quiet, L"Kite couldn't draw its window: " + problem, kWindowFailed);
     }
 
+#ifdef KITE_HAS_CEF
+    // The selected tab's page on the content card. A capture leaves Chromium out: it saves
+    // the backdrop alone until W4 captures the composed window.
+    bool pageLoaded = false, pageLoading = false;
+    auto contentBounds = [&] {
+        RECT client{};
+        GetClientRect(window.Handle(), &client);
+        const int dpi = static_cast<int>(window.Dpi());
+        auto px = [dpi](int points) { return MulDiv(points, dpi, USER_DEFAULT_SCREEN_DPI); };
+        RECT card{px(kSidebarWidth), px(kContentInset), client.right - px(kContentInset), client.bottom - px(kContentInset)};
+        card.right = std::max(card.right, card.left + 1);
+        card.bottom = std::max(card.bottom, card.top + 1);
+        return card;
+    };
+    auto showSelectedTab = [&] {
+        const kite::Tab* tab = state.SelectedTab();
+        if (!tab) return;  // the Mac's empty state arrives with the command bar (W7)
+        const std::string url = tab->url ? *tab->url : tab->pinnedURL.value_or("");
+        chromium->Show(tab->id, state.SelectedProfileDirectory(), url, contentBounds());
+    };
+    if (!capture) {
+        auto tabNamed = [&](const std::string& id) -> kite::Tab* {
+            auto location = state.Location(id);
+            return location ? state.TabAt(*location) : nullptr;
+        };
+        kite::PageEvents events;
+        events.addressChanged = [&, tabNamed](const std::string& id, const std::string& url) {
+            if (kite::Tab* tab = tabNamed(id)) tab->url = url;
+        };
+        events.titleChanged = [&, tabNamed](const std::string& id, const std::string& title) {
+            if (kite::Tab* tab = tabNamed(id)) tab->title = title;
+        };
+        events.loadingChanged = [&](const std::string&, bool loading) {
+            // A smoke test closes once the first page has loaded (or shown its error page).
+            if (loading) pageLoading = true;
+            else if (pageLoading && !pageLoaded) {
+                pageLoaded = true;
+                if (smokeTest) PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
+            }
+        };
+        events.popupOpened = [&](const std::string& openerID, const std::string& id, const std::string& url) {
+            std::optional<std::string> spaceID;
+            if (auto location = state.Location(openerID); location && location->space) spaceID = state.spaces[*location->space].id;
+            state.OpenTab(url, spaceID, true, kite::Now(), id);
+            showSelectedTab();
+        };
+        std::wstring chromiumError;
+        chromium = kite::Chromium::Start(instance, window.Handle(), supportDirectory / L"Chromium", std::move(events), chromiumError);
+        if (!chromium) return Fail(quiet, L"Kite couldn't start Chromium: " + chromiumError, kWindowFailed);
+        window.onWake = [&] { chromium->RunPending(); };
+        window.mayClose = [&] { return chromium->MayCloseWindow(); };
+        window.onFocus = [&] { chromium->Focus(); };
+        window.onSize = [&] {
+            draw();
+            chromium->SetBounds(contentBounds());
+        };
+        showSelectedTab();
+    }
+#endif
+
     // Quiet runs open behind other windows without focus, and ignore a launcher's "start maximized".
     if (quiet) window.ShowBehindOtherWindows();
     else window.Show(showCommand);
@@ -320,7 +398,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (std::wstring problem = draw(); !problem.empty()) {
             return Fail(quiet, L"Kite couldn't rebuild its renderer: " + problem, kWindowFailed);
         }
-        SetTimer(window.Handle(), kSmokeTimer, 1000, [](HWND hwnd, UINT, UINT_PTR, DWORD) { PostMessageW(hwnd, WM_CLOSE, 0, 0); });
+        // With Chromium it waits for the first page instead, for at most 30 s.
+        UINT smokeMs = 1000;
+#ifdef KITE_HAS_CEF
+        if (chromium) smokeMs = 30'000;
+#endif
+        SetTimer(window.Handle(), kSmokeTimer, smokeMs, [](HWND hwnd, UINT, UINT_PTR, DWORD) { PostMessageW(hwnd, WM_CLOSE, 0, 0); });
     }
     std::wstring captureError;
     if (capture) {
@@ -376,6 +459,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
     }
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
+#ifdef KITE_HAS_CEF
+    if (smokeTest && chromium && !pageLoaded) return Fail(quiet, L"the first page didn't finish loading within 30 s", kWindowFailed);
+#endif
     if (!maySave) {
         return Fail(quiet, L"Kite couldn't read your session (" + loadError + L"), so it left the file as it was and didn't save this run's tabs.",
                     kSaveFailed);

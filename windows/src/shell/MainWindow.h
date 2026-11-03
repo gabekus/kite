@@ -17,6 +17,9 @@ public:
     static constexpr int kMinimumWidth = 640;
     static constexpr int kMinimumHeight = 420;
 
+    // Posted to the window to run work another thread handed over (onWake).
+    static constexpr UINT kWakeMessage = WM_APP + 1;
+
     static bool RegisterWindowClass(HINSTANCE instance);
 
     explicit MainWindow(HINSTANCE instance);
@@ -38,6 +41,8 @@ public:
     // scale, after UseFixedScale). Can be larger
     // than the screen, so a capture has the same size on every machine.
     void SetClientSize(int width, int height);
+    // The DPI the window is laid out at (its monitor's, or the fixed scale's).
+    UINT Dpi() const { return dpi_; }
     // Whether the client area is exactly width × height points at the window's scale.
     bool HasClientSize(int width, int height) const;
 
@@ -49,9 +54,16 @@ public:
     // before 22H2, Server): the caller then draws an opaque base colour.
     bool UseSystemBackdrop();
 
+    // Asked on WM_CLOSE; false keeps the window open for now (Chromium closes its browsers
+    // first, and WM_CLOSE comes again once they're ready).
+    std::function<bool()> mayClose;
     // Runs before the window is destroyed (WM_CLOSE), and at logoff or shutdown
     // (WM_ENDSESSION), e.g. to save the session.
     std::function<void()> onClose;
+    // kWakeMessage arrived.
+    std::function<void()> onWake;
+    // The window got keyboard focus (activated, or restored from minimized).
+    std::function<void()> onFocus;
     // The client area changed size (also after a DPI change); GetClientRect has the new one.
     std::function<void()> onSize;
 
