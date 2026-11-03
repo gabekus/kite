@@ -28,6 +28,13 @@ if [[ -n "${HOVER:-}" ]]; then
   "$CLI" ui pointer '{"from":[220,420],"to":[600,420],"steps":10}' >/dev/null 2>&1 || true
 fi
 sleep "$SETTLE"
+# SWITCH=1: switch spaces back and forth (⌃2, ⌃1) every half second while sampling.
+if [[ -n "${SWITCH:-}" ]]; then
+  ( end=$((SECONDS + SECS)); while (( SECONDS < end )); do
+      "$CLI" ui input '{"keys":"ctrl+2"}' >/dev/null 2>&1; sleep 0.5
+      "$CLI" ui input '{"keys":"ctrl+1"}' >/dev/null 2>&1; sleep 0.5
+    done ) &
+fi
 RUSAGE="$(dirname "$0")/../../build/perf/rusage"
 [[ -x "$RUSAGE" ]] || cc -O2 -o "$RUSAGE" "$(dirname "$0")/rusage.c"
 echo "$LABEL $("$RUSAGE" $PID "$SECS")"
