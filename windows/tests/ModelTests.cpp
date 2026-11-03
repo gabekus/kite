@@ -194,6 +194,11 @@ TEST(spacesCycle) {
     CHECK(state.SelectedSpaceIndex() == 2);
     state.SelectSpace("not a space");
     CHECK(state.SelectedSpaceIndex() == 2);
+    // selectSpace(at:): by position, and nothing past the last (Space 9 with three spaces).
+    state.SelectSpaceAt(0);
+    CHECK(state.SelectedSpaceIndex() == 0);
+    state.SelectSpaceAt(8);
+    CHECK(state.SelectedSpaceIndex() == 0);
 }
 
 TEST(sidebarTabsAreFavoritesPinnedThenUnpinned) {

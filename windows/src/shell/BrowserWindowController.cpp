@@ -3,13 +3,16 @@
 #include "shell/BrowserWindowController.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <utility>
 
 #include "core/CommandBar.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/Sidebar.h"
+#include "core/SpaceSwipe.h"
 #include "core/TitleBar.h"
 #include "shell/Capture.h"
 #ifdef KITE_HAS_CEF
@@ -29,6 +32,8 @@ constexpr UINT_PTR kArchiveTimer = 2;
 constexpr UINT kArchiveIntervalMs = 15 * 60 * 1000;
 // Posted by the favicon worker when icons arrive (Favicons.h).
 constexpr UINT kFaviconsMessage = WM_APP + 4;
+// Posted by the frame clock once a composition frame while something animates.
+constexpr UINT kFrameMessage = WM_APP + 5;
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -50,22 +55,6 @@ bool CopyText(HWND owner, const std::wstring& text) {
 }
 
 // Puts `top` (premultiplied BGRA) over `base` with its top-left at `origin`, as
-// DirectComposition puts the command bar's target over the window's.
-void ComposeOver(Pixels& base, const Pixels& top, POINT origin) {
-    for (UINT y = 0; y < top.height; ++y) {
-        const LONG by = origin.y + static_cast<LONG>(y);
-        if (by < 0 || by >= static_cast<LONG>(base.height)) continue;
-        for (UINT x = 0; x < top.width; ++x) {
-            const LONG bx = origin.x + static_cast<LONG>(x);
-            if (bx < 0 || bx >= static_cast<LONG>(base.width)) continue;
-            const uint8_t* src = &top.bgra[(static_cast<size_t>(y) * top.width + x) * 4];
-            uint8_t* dst = &base.bgra[(static_cast<size_t>(by) * base.width + static_cast<size_t>(bx)) * 4];
-            const unsigned keep = 255u - src[3];
-            for (int c = 0; c < 4; ++c) dst[c] = static_cast<uint8_t>(src[c] + (dst[c] * keep + 127) / 255);
-        }
-    }
-}
-
 bool Inked(const Pixels& pixels) {
     for (size_t i = 3; i < pixels.bgra.size(); i += 4) {
         if (pixels.bgra[i] != 0) return true;
@@ -108,7 +97,9 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
       save_(std::move(save)),
       renderer_(std::move(renderer)),
       window_(instance),
-      theme_(state.SelectedSpace().theme) {}
+      themeFrom_(state.SelectedSpace().theme),
+      themeTo_(themeFrom_),
+      shownSpaceID_(state.SelectedSpace().id) {}
 
 BrowserWindowController::~BrowserWindowController() {
     // The views and the compositor go before the window: it stops calling into them first.
@@ -130,8 +121,10 @@ std::wstring BrowserWindowController::Init() {
     // on what's behind the window. Drawn now and then only when something changes; W9 adds
     // the space-switch crossfade.
     systemBackdrop_ = !options_.capture && window_.UseSystemBackdrop();
-    ApplyTheme(theme_);
-    const bool dark = !PrefersDarkForeground(theme_);
+    const bool dark = !PrefersDarkForeground(themeTo_);
+    dark_ = !dark;  // so the first ApplyAppearance applies
+    ApplyAppearance(themeTo_);
+    clock_ = std::make_unique<FrameClock>(window_.Handle(), kFrameMessage);
     compositor_ = Compositor::Create(window_.Handle(), *renderer_, error);
     if (!compositor_) return L"Kite couldn't start DirectComposition: " + error;
 
@@ -218,19 +211,115 @@ std::wstring BrowserWindowController::Init() {
     return {};
 }
 
-void BrowserWindowController::ApplyTheme(const Theme& theme) {
-    theme_ = theme;
-    const bool dark = !PrefersDarkForeground(theme_);
+void BrowserWindowController::ApplyAppearance(const Theme& theme) {
+    const bool dark = !PrefersDarkForeground(theme);
+    if (dark == dark_) return;
+    dark_ = dark;
     window_.SetDarkAppearance(dark);
     base_ = systemBackdrop_ ? Rgba{} : MaterialFallback(dark);
     if (caption_) caption_->SetDark(dark);
 }
 
+// MARK: Spaces
+
+void BrowserWindowController::SetTheme(const Theme& theme) {
+    if (theme == themeTo_) return;
+    const double now = FrameClock::Now();
+    // Interrupted mid-fade: continue from whichever side was showing more.
+    if (themeStart_ && now - *themeStart_ < space_motion::kThemeDuration / 2) themeTo_ = themeFrom_;
+    themeFrom_ = themeTo_;
+    themeTo_ = theme;
+    themeStart_ = now;
+    clock_->Start();
+}
+
+float BrowserWindowController::ThemeProgress(double time) {
+    if (!themeStart_) return 1;
+    const double elapsed = std::max(time - *themeStart_, 0.0);
+    if (elapsed >= space_motion::kThemeDuration) {
+        themeStart_.reset();
+        themeFrom_ = themeTo_;
+        return 1;
+    }
+    return static_cast<float>(ThemeCrossfadeProgress(elapsed));
+}
+
+void BrowserWindowController::SyncSpace() {
+    const Space& space = state_.SelectedSpace();
+    ApplyAppearance(space.theme);
+    SetTheme(space.theme);
+    if (space.id == shownSpaceID_) return;
+    if (auto old = state_.SpaceIndex(shownSpaceID_)) SpaceChanged(*old, state_.SelectedSpaceIndex());
+    shownSpaceID_ = space.id;
+}
+
+void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
+    // A switch from the keyboard slides the pages, as Arc's do: the new page comes in from the
+    // side it lies on, the page left behind built until they're at rest.
+    if (old == now) return;
+    settling_.reset();
+    pagesAnchor_ = state_.spaces[old].id;
+    pageOffset_ = (now > old ? 1.0 : -1.0) * kSidebarWidth;
+    sidebar_->SetPageOffset(static_cast<float>(pageOffset_));
+    SettlePages();
+}
+
+void BrowserWindowController::SettlePages() {
+    if (pageOffset_ == 0) return FinishSettling();
+    // No sidebar on screen to time frames from: just land.
+    if (!IsWindowVisible(window_.Handle()) || IsIconic(window_.Handle())) {
+        pageOffset_ = 0;
+        sidebar_->SetPageOffset(0);
+        return FinishSettling();
+    }
+    settling_ = Settle{pageOffset_, 0, FrameClock::Now()};
+    clock_->Start();
+}
+
+void BrowserWindowController::FinishSettling() {
+    settling_.reset();
+    // At rest: the new space's neighbours are built, the page left behind goes.
+    if (!pagesAnchor_) return;
+    pagesAnchor_.reset();
+    sidebar_->Update(state_);
+}
+
+void BrowserWindowController::Frame(double time) {
+    if (settling_) {
+        // Arc's page slide: a critically damped spring, stepped once a frame for the frame
+        // being made, so the strip is where the spring is when it reaches the screen.
+        const double left = SpaceSwipe::Settle(settling_->from - settling_->to, time - settling_->start, space_motion::kPageResponse);
+        pageOffset_ = settling_->to + left;
+        sidebar_->SetPageOffset(static_cast<float>(pageOffset_));
+        if (left == 0) FinishSettling();
+    }
+    const std::optional<double> crossfading = themeStart_;
+    DrawAt(time, nullptr);
+    if (options_.frameLog) {
+        const double theme = crossfading ? ThemeCrossfadeProgress(std::max(time - *crossfading, 0.0)) : 1;
+        frames_.push_back(LoggedFrame{time, pageOffset_, theme});
+    }
+    if (!settling_ && !themeStart_) clock_->Stop();
+}
+
+std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& file) const {
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    if (!out) return L"couldn't open " + file.wstring();
+    const double first = frames_.empty() ? 0 : frames_.front().time;
+    char line[128];
+    for (const LoggedFrame& frame : frames_) {
+        std::snprintf(line, sizeof line, "{\"t\":%.6f,\"offset\":%.4f,\"theme\":%.6f}\n", frame.time - first, frame.offset, frame.theme);
+        out << line;
+    }
+    out.flush();
+    return out ? std::wstring{} : L"couldn't write " + file.wstring();
+}
+
 // MARK: The session and the pages
 
 void BrowserWindowController::StateChanged() {
-    sidebar_->Update(state_);
-    caption_->SetDark(!PrefersDarkForeground(state_.SelectedSpace().theme));
+    SyncSpace();
+    sidebar_->Update(state_, pagesAnchor_);
     if (commandBar_) commandBar_->Refresh();
 }
 
@@ -383,6 +472,16 @@ void BrowserWindowController::MakeCommands() {
              state_.SelectAdjacentTab(-1);
              SelectionMoved();
          }},
+        {"nextSpace",
+         [this] {
+             state_.SelectAdjacentSpace(1);
+             SelectionMoved();
+         }},
+        {"previousSpace",
+         [this] {
+             state_.SelectAdjacentSpace(-1);
+             SelectionMoved();
+         }},
         // As the Mac: with no page, Back, Forward, Refresh and Stop do nothing; Developer
         // Tools beeps.
         {"goBack", [this] { PageCommand("goBack"); }},
@@ -398,6 +497,10 @@ void BrowserWindowController::MakeCommands() {
     for (int n = 1; n <= 9; ++n) {
         commands_[n == 9 ? "lastTab" : "tab" + std::to_string(n)] = [this, n] {
             state_.SelectTabNumber(n);
+            SelectionMoved();
+        };
+        commands_["space" + std::to_string(n)] = [this, n] {
+            state_.SelectSpaceAt(static_cast<size_t>(n - 1));
             SelectionMoved();
         };
     }
@@ -452,7 +555,10 @@ std::wstring BrowserWindowController::Rebuild() {
     return problem;
 }
 
-std::wstring BrowserWindowController::Draw(Pixels* readBack) {
+std::wstring BrowserWindowController::Draw(Pixels* readBack) { return DrawAt(FrameClock::Now(), readBack); }
+
+std::wstring BrowserWindowController::DrawAt(double time, Pixels* readBack) {
+    const float progress = ThemeProgress(time);
     RECT client{};
     GetClientRect(window_.Handle(), &client);
     const UINT width = static_cast<UINT>(client.right), height = static_cast<UINT>(client.bottom);
@@ -461,8 +567,9 @@ std::wstring BrowserWindowController::Draw(Pixels* readBack) {
         if (!compositor_ || compositor_->DeviceLost() || sidebar_->DeviceLost() || caption_->DeviceLost()) {
             if (problem = Rebuild(); !problem.empty()) break;
         }
-        problem = compositor_->Draw(width, height, MakeThemeUniforms(theme_, static_cast<float>(width), static_cast<float>(height)),
-                                    base_, readBack);
+        problem = compositor_->Draw(
+            width, height, MakeThemeUniforms(themeFrom_, themeTo_, progress, static_cast<float>(width), static_cast<float>(height)),
+            base_, readBack);
         // The sidebar and the buttons with it, shown together at the commit.
         if (problem.empty()) problem = sidebar_->Draw();
         if (problem.empty()) problem = caption_->Draw();
@@ -549,6 +656,11 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         }
         return true;
     }
+    if (message == kFrameMessage) {
+        clock_->Delivered();
+        if (clock_->Running()) Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr));
+        return true;
+    }
     if (message == kFaviconsMessage) {
         if (favicons_ && favicons_->TakeResults()) sidebar_->Invalidate();
         return true;
@@ -590,6 +702,21 @@ std::wstring BrowserWindowController::SmokeTest() {
     Pixels buttons;
     if (std::wstring problem = caption_->Draw(&buttons); !problem.empty()) return L"the caption buttons couldn't draw: " + problem;
     if (!Inked(buttons)) return L"the caption buttons drew nothing";
+    // Switching spaces: the pages slide and the theme crossfades, and both come to rest on the
+    // next space, then back on this one.
+    if (state_.spaces.size() > 1) {
+        const std::string before = state_.SelectedSpace().id;
+        RunCommand("nextSpace");
+        if (!settling_ || pageOffset_ != kSidebarWidth) return L"Next Space didn't slide the pages";
+        Frame(FrameClock::Now() + 1);
+        if (settling_ || pageOffset_ != 0 || pagesAnchor_ || themeStart_ || themeFrom_ != state_.SelectedSpace().theme) {
+            return L"Next Space didn't come to rest";
+        }
+        RunCommand("previousSpace");
+        Frame(FrameClock::Now() + 1);
+        if (state_.SelectedSpace().id != before || settling_ || pageOffset_ != 0) return L"Previous Space didn't come back";
+        frames_.clear();
+    }
     // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt and
     // draw again (a real device removal can't be caused from a test).
     DropCompositor();

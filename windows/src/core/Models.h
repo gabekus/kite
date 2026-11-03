@@ -201,6 +201,8 @@ struct BrowserState {
     // Favorites open in the current space; other tabs switch to their own space.
     void Select(const std::string& tabID, Timestamp now = Now());
     void SelectSpace(const std::string& id);
+    // The space at `index` (Space 1–9 counts from 0 here); nothing past the last.
+    void SelectSpaceAt(size_t index);
     void SelectAdjacentSpace(int offset);
     // Sidebar order with each split counted once, at its first member, standing for the pane it
     // would focus (the selected one, if it's the selected split): what Ctrl+1…9 and

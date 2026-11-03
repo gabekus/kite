@@ -5,10 +5,13 @@
 // (SidebarColumn.swift, SidebarHeader.swift, SidebarList.swift, SidebarListCells.swift,
 // SidebarListRows.swift). What it lists comes from core (SidebarRows).
 //
-// It's one DirectComposition surface in the window's chrome (Compositor::Chrome), over the
-// backdrop and behind the page, drawn with Direct2D and DirectWrite only when what it shows
-// changes. It shows hover and takes clicks and the wheel (HandleMouse); what a click does goes
-// to Actions. Not yet: the top row, favorites or the space bar.
+// It's DirectComposition surfaces in the window's chrome (Compositor::Chrome), over the backdrop
+// and behind the page, drawn with Direct2D and DirectWrite only when what they show changes: the
+// address field's, and one per built space page (the Mac's SidebarPagesView). The pages sit in a
+// strip, each at its space's place a sidebar's width apart, and a space switch's slide moves
+// only the strip (SetPageOffset), so no frame of it draws anything. It shows hover and takes
+// clicks and the wheel (HandleMouse); what a click does goes to Actions. Not yet: the top row,
+// favorites or the space bar.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -21,6 +24,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -68,9 +72,14 @@ public:
     // the compositor is rebuilt after a lost device).
     void UseCompositor(Compositor* compositor);
 
-    // What it shows: the selected space's page and the address, in that space's appearance.
-    // When anything changed, it draws on the next pass of the message loop.
-    void Update(const BrowserState& state);
+    // What it shows: the address, and the selected space's page with its neighbours' (or,
+    // while the pages settle after a switch, those of `anchor`, the space it left:
+    // SpaceSwipe::BuiltPages), all in the selected space's appearance. When anything changed,
+    // it draws on the next pass of the message loop.
+    void Update(const BrowserState& state, const std::optional<std::string>& anchor = std::nullopt);
+    // Where the strip of pages sits, in points from rest (positive shows the previous space's
+    // page coming in from the left). Shown at the compositor's next commit; draws nothing.
+    void SetPageOffset(float offset);
     // The window's size or DPI changed: `width` is the sidebar's, in points. Draw follows.
     void Layout(float width, UINT dpi);
     // Icons arrived (Favicons::TakeResults): the rows that wait for them draw again.
@@ -90,21 +99,49 @@ public:
 private:
     SidebarView(HWND window, Favicons* favicons) : window_(window), favicons_(favicons) {}
 
+    // A built space page: its rows, drawn into its own surface.
+    struct PageModel {
+        std::string spaceID;
+        size_t index = 0;  // the space's place in the session
+        std::vector<SidebarRow> rows;
+        bool operator==(const PageModel&) const = default;
+    };
     struct Model {
         bool dark = true;
         std::string address;
-        std::vector<SidebarRow> rows;
+        std::vector<SidebarRow> rows;  // the selected space's page
         std::string spaceID;
+        size_t index = 0;  // the selected space's
+        std::vector<PageModel> pages;  // in the session's order, the selected one among them
         bool operator==(const Model&) const = default;
+    };
+    using FaviconKey = std::pair<std::string, UINT>;
+    struct Page {
+        Microsoft::WRL::ComPtr<IDCompositionVisual> visual;
+        Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface;
+        UINT width = 0, height = 0;
+        bool dirty = true;
+        std::set<FaviconKey> icons;  // the favicons its last draw showed
     };
 
     bool CreateGpu(std::wstring& error);
     void ReleaseGpu();
-    void DrawContent(ID2D1DeviceContext* context);
+    void DrawHeader(ID2D1DeviceContext* context);
+    void DrawPage(ID2D1DeviceContext* context, const PageModel& page, float scroll, float bottom, bool selected);
+    // The scroll a page draws at: the selected one's, or where another was left.
+    float PageScroll(const PageModel& page) const;
+    std::wstring DrawPageSurface(const PageModel& page, Page& surfaces, Pixels* readBack);
+    void PlacePages();
+    // What has to draw again; ScheduleDraw draws it on the message loop's next pass.
+    void InvalidateSelectedPage();
+    void ScheduleDraw();
+    bool NeedsDraw() const;
     void DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, float top, bool hovered);
     D2D1_POINT_2F PointOf(POINT client) const;
     float Height() const;  // the window's, in points
     SidebarHit HitAt(D2D1_POINT_2F point) const;
+    // A point in the sidebar as the selected page sees it, with the strip's offset.
+    D2D1_POINT_2F OnPage(D2D1_POINT_2F point) const;
     void RefreshHover();
     void SetScroll(float scroll);
     void Perform(const SidebarTap& tap);
@@ -126,21 +163,23 @@ private:
 
     // GPU (drawn with the compositor's context).
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
-    Microsoft::WRL::ComPtr<IDCompositionVisual> visual_;
+    // The address field's visual and surface, then over it the pages: a container that clips
+    // them to the sidebar, the strip in it that the slide moves, and each page in the strip.
+    Microsoft::WRL::ComPtr<IDCompositionVisual> visual_, pagesClip_, strip_;
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
-    struct FaviconBitmap {
-        Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;
-        bool used = false;  // shown by the draw under way
-    };
-    std::map<std::pair<std::string, UINT>, FaviconBitmap> faviconBitmaps_;
+    std::map<std::string, Page> pages_;  // by space id: the built pages' GPU side
+    std::map<FaviconKey, Microsoft::WRL::ComPtr<ID2D1Bitmap1>> faviconBitmaps_;
+    std::set<FaviconKey>* drawnIcons_ = nullptr;  // the page being drawn's
     UINT surfaceWidth_ = 0, surfaceHeight_ = 0;
+    UINT clipWidth_ = 0;  // the pages' clip, in px
     bool deviceLost_ = false;
 
     // State.
     Model model_;
     float width_ = 240;
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
-    bool dirty_ = true;
+    bool dirty_ = true;  // the address field
+    float pageOffset_ = 0;  // the strip's, in points
     bool redrawPosted_ = false;
 
     // Pointer.

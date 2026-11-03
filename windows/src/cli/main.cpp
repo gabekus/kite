@@ -9,7 +9,7 @@
 //   kitecore [--profile DIR] collapse SPACE_ID
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
 //   kitecore [--profile DIR] select TAB_ID
-//   kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]
+//   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
@@ -449,6 +449,10 @@ int main(int argc, char** argv) {
         const std::string& action = args[1];
         if (action == "next") state.SelectAdjacentSpace(1);
         else if (action == "prev") state.SelectAdjacentSpace(-1);
+        else if (args.size() == 2 && action.size() == 1 && action[0] >= '1' && action[0] <= '9') {
+            // Space 1–9 (the Mac's selectSpaceNumber): nothing past the last space.
+            state.SelectSpaceAt(static_cast<size_t>(action[0] - '1'));
+        }
         else if (action == "select" && args.size() == 3) {
             const std::string id = Id(args[2]);
             if (!state.SpaceIndex(id)) return kNotFound;
