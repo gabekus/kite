@@ -21,7 +21,10 @@ if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   add_compile_options(/W4 /WX /permissive- /utf-8 /Zc:__cplusplus)
 else()
-  add_compile_options(-Wall -Wextra -Werror)
+  # No fused multiply-adds: the theme backdrop's grain hash ends in a fract() of values near
+  # 1e4, so contracting it (clang's default, and every arm64 build) moves the reference off
+  # the golden fixture the Mac shares. MSVC doesn't contract without /fp:contract.
+  add_compile_options(-Wall -Wextra -Werror -ffp-contract=off)
 endif()
 if(WIN32)
   add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)

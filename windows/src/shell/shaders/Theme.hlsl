@@ -40,8 +40,8 @@ float3 LinearToSRGB(float3 c) {
 
 // Dave Hoskins' hash: cheap, stable per pixel, no texture fetch. Kite.metal's
 // `p3 += dot(p3, p3.yzx + 33.33)`, with the dot written out in the CPU reference's order and
-// `precise` so no driver fuses or reorders it: the last frac() works on values near 1e4,
-// where a different rounding moves the grain visibly.
+// `precise` so no driver fuses or reorders it: the last frac() works on values near 1e4, where
+// another rounding shifts the grain by up to ~4e-4, more than the reference checks allow.
 float Hash12(float2 p) {
     precise float3 p3 = frac(float3(p.xyx) * 0.1031);
     precise float d = p3.x * (p3.y + 33.33) + p3.y * (p3.z + 33.33) + p3.z * (p3.x + 33.33);

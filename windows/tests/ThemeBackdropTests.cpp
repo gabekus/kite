@@ -113,8 +113,8 @@ TEST(uniformsNeverDrawAnEmptyOrOversizedPalette) {
     CHECK(MakeThemeUniforms(many, 100, 100).fromCount == 4);
 }
 
-TEST(materialFallbackIsWindowsSolidBackdropColours) {
-    // Windows 11's own fallback for its backdrops: #202020 dark, #F3F3F3 light, opaque.
+TEST(materialFallbackIsMicasBaseColours) {
+    // Windows 11's Mica base colours: #202020 dark, #F3F3F3 light, opaque.
     Rgba dark = MaterialFallback(true), light = MaterialFallback(false);
     CHECK(std::lround(dark.r * 255) == 0x20 && dark.r == dark.g && dark.g == dark.b && dark.a == 1);
     CHECK(std::lround(light.r * 255) == 0xF3 && light.r == light.g && light.g == light.b && light.a == 1);
@@ -154,7 +154,7 @@ TEST(referenceMatchesTheGoldenFixtureTheMacChecksKiteMetalAgainst) {
     if (!std::holds_alternative<json::Value>(parsed)) return;
     const json::Value& root = std::get<json::Value>(parsed);
     const json::Array& cases = *At(root, "cases").AsArray();
-    CHECK(cases.size() == 6);
+    CHECK(cases.size() == 7);
     for (const json::Value& c : cases) {
         const json::Array& size = *At(c, "size").AsArray();
         const ThemeUniforms u = MakeThemeUniforms(ThemeFromJson(At(c, "from")), ThemeFromJson(At(c, "to")),

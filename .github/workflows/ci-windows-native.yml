@@ -1,7 +1,7 @@
 name: CI (Windows app)
 
-# Kite for Windows (native C++, windows/). Runs only when it or the session fixture it
-# shares with the Mac changes.
+# Kite for Windows (native C++, windows/). Runs only when it or the fixtures it shares with
+# the Mac (Tests/Fixtures) change.
 on:
   push:
     branches: [main]
@@ -32,6 +32,12 @@ jobs:
           cmake -S windows -B /tmp/kite-core
           cmake --build /tmp/kite-core -j
           ctest --test-dir /tmp/kite-core --output-on-failure --timeout 120
+      - name: Golden backdrop fixture is current
+        # The CPU reference must write exactly the file the Mac's Kite.metal is tested against;
+        # after a deliberate shader change, regenerate it with this target.
+        run: |
+          cmake --build /tmp/kite-core --target gen-theme-golden
+          /tmp/kite-core/gen-theme-golden | diff -u Tests/Fixtures/theme-backdrop.json -
       - name: Cross-compile Kite.exe (MinGW-w64)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq g++-mingw-w64-x86-64 > /dev/null

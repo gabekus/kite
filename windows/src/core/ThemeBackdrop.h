@@ -46,8 +46,9 @@ Rgba ShadeThemePixel(const ThemeUniforms& u, float px, float py);
 
 // What the backdrop is drawn over where the system has no material (Windows 10, Windows 11
 // before 22H2, Server, or a capture, which must not depend on what's behind the window):
-// Windows 11's Mica base colours (acrylic's own fallback isn't checked yet). The Mac's .sidebar material has no fixed colour to copy, since it
-// blurs whatever is behind the window. Dark unless the theme wants dark text, as on the Mac.
+// Windows 11's Mica base colours (acrylic's own fallback isn't checked yet). The Mac's
+// .sidebar material has no fixed colour to copy, since it blurs whatever is behind the window.
+// Dark unless the theme wants dark text, as on the Mac.
 inline Rgba MaterialFallback(bool dark) {
     const float v = dark ? 0x20 / 255.f : 0xF3 / 255.f;
     return {v, v, v, 1};

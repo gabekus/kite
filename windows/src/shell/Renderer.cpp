@@ -3,10 +3,10 @@
 #include "shell/Renderer.h"
 
 #include <cstring>
+#include <iterator>
 
 #include <d3d11_4.h>
 #include <dxgi.h>
-#include <iterator>
 
 #include "shell/Errors.h"
 

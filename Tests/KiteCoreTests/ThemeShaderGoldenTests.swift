@@ -58,10 +58,12 @@ import Testing
         return bytes
     }
 
-    @Test func kiteMetalMatchesTheWindowsReference() throws {
+    // Skipped only where there's no Metal device at all (some virtual Macs); every real Mac has one.
+    @Test(.enabled(if: MTLCreateSystemDefaultDevice() != nil, "no Metal device"))
+    func kiteMetalMatchesTheWindowsReference() throws {
         let fixtureURL = Self.repository.appendingPathComponent("Tests/Fixtures/theme-backdrop.json")
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: fixtureURL))
-        #expect(fixture.cases.count == 6)
+        #expect(fixture.cases.count == 7)
 
         let device = try #require(MTLCreateSystemDefaultDevice(), "no Metal device")
         let queue = try #require(device.makeCommandQueue())

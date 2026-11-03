@@ -25,10 +25,10 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
@@ -37,6 +37,7 @@
 #include "shell/BackdropTest.h"
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
+#include "shell/Errors.h"
 #include "shell/MainWindow.h"
 #include "shell/Renderer.h"
 
@@ -278,17 +279,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (captureScale) window.UseFixedScale(captureScale);
     // A capture always has a set size (the Mac's default unless asked), even on a small screen.
     if (capture && !size) size = std::make_pair(kite::MainWindow::kDefaultWidth, kite::MainWindow::kDefaultHeight);
-    if (size) window.SetClientSize(size->first, size->second);
     if (capture) {
-        // A capture is one texture: refuse one the GPU can't hold rather than save it stretched.
-        RECT client{};
-        GetClientRect(window.Handle(), &client);
-        if (static_cast<UINT>(std::max(client.right, client.bottom)) > renderer->MaxTextureSize()) {
-            return Fail(quiet, L"the capture would be " + std::to_wstring(client.right) + L"×" + std::to_wstring(client.bottom) +
+        // A capture is one texture: refuse one the GPU can't hold, before sizing (and so
+        // drawing) the window that big, rather than save it stretched.
+        const int dpi = captureScale ? USER_DEFAULT_SCREEN_DPI * captureScale : static_cast<int>(GetDpiForWindow(window.Handle()));
+        const int widthPx = MulDiv(size->first, dpi, USER_DEFAULT_SCREEN_DPI);
+        const int heightPx = MulDiv(size->second, dpi, USER_DEFAULT_SCREEN_DPI);
+        if (static_cast<UINT>(std::max(widthPx, heightPx)) > renderer->MaxTextureSize()) {
+            return Fail(quiet, L"the capture would be " + std::to_wstring(widthPx) + L"×" + std::to_wstring(heightPx) +
                                    L" px, more than this GPU's " + std::to_wstring(renderer->MaxTextureSize()) + L" px a side",
                         kUsage);
         }
     }
+    if (size) window.SetClientSize(size->first, size->second);
     if (std::wstring problem = draw(); !problem.empty()) {
         return Fail(quiet, L"Kite couldn't draw its window: " + problem, kWindowFailed);
     }
@@ -328,11 +331,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
     // Messages, and the GPU's device-removed signal so a lost device is rebuilt even while
     // nothing is drawing (the composition would otherwise stay blank until the next resize).
+    // If a rebuild failed (no adapter yet, mid driver update), it's retried every second.
     for (bool running = true; running;) {
-        HANDLE removed = renderer ? renderer->DeviceRemovedEvent() : nullptr;
-        const DWORD woke = MsgWaitForMultipleObjectsEx(removed ? 1 : 0, removed ? &removed : nullptr, INFINITE, QS_ALLINPUT,
-                                                       MWMO_INPUTAVAILABLE);
-        if (removed && woke == WAIT_OBJECT_0) {
+        HANDLE removed = renderer && compositor ? renderer->DeviceRemovedEvent() : nullptr;
+        const DWORD woke = MsgWaitForMultipleObjectsEx(removed ? 1 : 0, removed ? &removed : nullptr, compositor ? INFINITE : 1000,
+                                                       QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        if ((removed && woke == WAIT_OBJECT_0) || woke == WAIT_TIMEOUT) {
+            if (renderer && compositor) {
+                const HRESULT reason = renderer->Device()->GetDeviceRemovedReason();
+                OutputDebugStringW(kite::HResultMessage(L"Kite: the GPU device was removed", reason).append(L"\n").c_str());
+            }
             compositor.reset();  // forces draw() to rebuild
             draw();
             continue;

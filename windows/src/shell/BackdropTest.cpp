@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <cwchar>
 #include <vector>
 
@@ -22,15 +21,15 @@ struct Case {
     UINT width, height;
 };
 
-// The GPU and CPU agree to about 1e-6 (CI's software adapter: mean 3e-8, worst 1.4e-6), from
-// float maths in another order and hardware exp and pow. A channel off by more than
-// kTolerance is an outlier: far below the ±0.5/255 dither, so dropping the dither or
-// misplacing the grain fails. A few outliers can be where the grain hash's fract() lands on
-// the other side of 1 on a GPU (Theme.hlsl marks the hash `precise` against that); a missed
-// row or column of the smallest case (333×217: 1/333 of it) is more than kMaxOutlierShare.
-constexpr double kTolerance = 1e-4;
+// The GPU and CPU agree to about 1e-6 on CI's software adapter (mean 3e-8, worst 1.4e-6);
+// the Mac's own Kite.metal is within 1.6e-5 of the same reference on an Apple GPU, so a
+// hardware GPU's exp and pow get the same room. A channel off by more than kTolerance is an
+// outlier: half the ±0.5/255 dither, so dropping the dither fails, as does a misplaced grain.
+// A missed row or column of the smallest case (333×217: 1/333 of it) is more than
+// kMaxOutlierShare.
+constexpr double kTolerance = 1e-3;
 constexpr double kMaxOutlierShare = 0.0005;
-constexpr double kMaxMeanDifference = 1e-5;
+constexpr double kMaxMeanDifference = 1e-4;
 
 }  // namespace
 
@@ -57,6 +56,9 @@ BackdropTestOutcome RunBackdropTest(std::wstring& report, std::wstring& problem)
                                    0.6f, 0.9f);
     cases.push_back({L"crossfade 1 colour -> 4 at 0.4", MakeThemeUniforms(one, four, 0.4f, 800, 500), MaterialFallback(true), 800, 500});
     cases.push_back({L"crossfade 4 colours -> 1 at 0.7", MakeThemeUniforms(four, one, 0.7f, 800, 500), MaterialFallback(false), 800, 500});
+    // Channels at or near 0, so sRGB's linear segment is drawn too.
+    const Theme saturated = Theme::Make({ThemeColor::FromHex(0xFF0000), ThemeColor::FromHex(0x050505), ThemeColor::FromHex(0x0000FF)}, 0, 1);
+    cases.push_back({L"saturated red, near-black and blue", MakeThemeUniforms(saturated, 640, 420), MaterialFallback(true), 640, 420});
     cases.push_back({L"odd size 333x217", MakeThemeUniforms(presets[3], 333, 217), MaterialFallback(true), 333, 217});
     cases.push_back({L"transparent base (Windows 11 backdrop)", MakeThemeUniforms(presets[2], 640, 420), Rgba{}, 640, 420});
 
