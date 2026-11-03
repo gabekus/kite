@@ -105,12 +105,13 @@ struct Chromium::Shared {
         return bounds;
     }
 
-    // Puts the shown tab's window on the card and sizes the rest 0×0, which makes CEF hide
-    // their widgets so the pages report hidden and stop drawing (CEF's own advice for
-    // windowed browsers). The windows aren't hidden as well: a window shown again together
-    // with its new size got its size while still hidden, and its page stayed hidden (seen
-    // on Gabe's PC). Only windows whose placement changed are touched, on CEF's thread,
-    // which owns them.
+    // Puts the shown tab's window on the card and the rest at 0×0, on CEF's thread, which
+    // owns them, and only for windows whose placement changed. 0×0 makes CEF shrink the
+    // page's widget, and the widget window itself (Chromium's Chrome_WidgetWin_1, the host
+    // window's child) is hidden and shown: that's what Chromium reads as the page's
+    // visibility (HWNDMessageHandler's SWP_SHOWWINDOW/SWP_HIDEWINDOW), so a background tab
+    // reports hidden and stops drawing, and reports visible again when it's back. Resizing
+    // or hiding only CEF's host window left a page hidden for good (seen on Gabe's PC).
     void Layout() {
         const RECT card = Bounds();
         std::vector<std::pair<HWND, Placement>> changes;
@@ -127,9 +128,12 @@ struct Chromium::Shared {
         // Shown first, then hidden, so the card is never empty in between.
         std::stable_partition(changes.begin(), changes.end(), [](const auto& c) { return c.second.visible; });
         RunOnCefUIThread([changes = std::move(changes)] {
-            for (const auto& [hwnd, placement] : changes) {
+            for (const auto& [host, placement] : changes) {
                 const RECT& r = placement.rect;
-                SetWindowPos(hwnd, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                const HWND widget = FindWindowExW(host, nullptr, L"Chrome_WidgetWin_1", nullptr);
+                if (!placement.visible && widget) ShowWindow(widget, SW_HIDE);
+                SetWindowPos(host, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                if (placement.visible && widget) ShowWindow(widget, SW_SHOWNA);
             }
         });
     }

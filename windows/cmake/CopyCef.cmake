@@ -10,3 +10,5 @@ foreach(file IN LISTS runtime)
   file(COPY "${file}" DESTINATION "${DEST}")
 endforeach()
 file(COPY "${CEF_ROOT}/Resources/" DESTINATION "${DEST}")
+# Left by builds from before they were excluded.
+file(REMOVE "${DEST}/bootstrap.exe" "${DEST}/bootstrapc.exe")
