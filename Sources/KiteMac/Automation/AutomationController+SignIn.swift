@@ -31,11 +31,17 @@ extension AutomationController {
 
         // Show the tab, and the password manager over it once the tab is in front (it fills the active tab).
         store.mutateWithoutUndo { $0.select(tab: tab.id) }
-        NSApp.activate(ignoringOtherApps: true)
-        host.window?.makeKeyAndOrderFront(nil)
-        if host.canOpenPasswordManager {
-            try? await Task.sleep(for: .milliseconds(300))
-            _ = host.openPasswordManager()
+        if UIDiagnostics.enabledByEnvironment {
+            // A test profile's run stays in the background and opens no other app; the log says what it skipped.
+            NSLog("[diagnostics] sign_in: would bring Kite forward%@",
+                  host.canOpenPasswordManager ? " and open the password manager" : "")
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+            host.window?.makeKeyAndOrderFront(nil)
+            if host.canOpenPasswordManager {
+                try? await Task.sleep(for: .milliseconds(300))
+                _ = host.openPasswordManager()
+            }
         }
 
         let outcome = await waitForSignIn(tab.id, start: start, actions: actions)
