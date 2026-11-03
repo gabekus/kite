@@ -504,3 +504,12 @@ enum SymbolPlacement {
     inkCache[ObjectIdentifier(image)] = result
     return result
 }
+
+/// A symbol at its own size, as a template: for an un-framed `Image(systemName:)`, whose frame is the image and
+/// whose glyph sits where the image puts it.
+@MainActor func rawSymbol(_ name: String, pointSize: CGFloat, weight: NSFont.Weight = .regular) -> NSImage? {
+    let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+        .withSymbolConfiguration(.init(pointSize: pointSize, weight: weight))
+    image?.isTemplate = true
+    return image
+}
