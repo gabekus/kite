@@ -95,16 +95,20 @@ extension BrowserWindowController: AutomationHost {
         ))
         host.sizingOptions = []
         host.safeAreaRegions = []
-        host.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(host)
-        let bottom = host.bottomAnchor.constraint(equalTo: root.bottomAnchor)
+        // In the window only while sign_in's pill shows: an empty host there still re-renders on every store change.
+        let strip = DetachingContainer(host: host)
+        strip.passesClicks = true
+        strip.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(strip)
+        let bottom = strip.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         claudeBannerBottom = bottom
         NSLayoutConstraint.activate([
-            host.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            host.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            host.heightAnchor.constraint(equalToConstant: 28),
+            strip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            strip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            strip.heightAnchor.constraint(equalToConstant: 28),
             bottom,
         ])
+        watchSignInBanner(strip, automation)
         claudeButton.onFrameChange = { [weak self] in self?.schedulePlaceClaudeBanner() }
         for view in [sidebarHostView, contentFrame] as [NSView] {
             view.postsFrameChangedNotifications = true
@@ -113,6 +117,19 @@ extension BrowserWindowController: AutomationHost {
             }
         }
         schedulePlaceClaudeBanner()
+    }
+
+    private func watchSignInBanner(_ strip: DetachingContainer, _ automation: AutomationController) {
+        withObservationTracking {
+            strip.isHidden = store.state.selectedTab.map { automation.signIns[$0.id] == nil } ?? true
+        } onChange: { [weak self, weak strip, weak automation] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, let strip, let automation else { return }
+                    self.watchSignInBanner(strip, automation)
+                }
+            }
+        }
     }
 
     /// Frames change mid-layout; move the pill once that pass is over, not inside it.
@@ -153,36 +170,58 @@ extension BrowserWindowController {
     /// Claude's orange border around the page while Claude drives the tab in front, so the tab says so
     /// with the sidebar hidden too. Above the pages, and never takes a click.
     fileprivate func installClaudeControlBorder(_ automation: AutomationController) {
-        let host = BannerHostingView(rootView: ClaudeControlBorder(automation: automation, store: store))
-        host.sizingOptions = []
-        host.safeAreaRegions = []
-        host.translatesAutoresizingMaskIntoConstraints = false
-        contentFrame.addSubview(host, positioned: .above, relativeTo: nil)
-        NSLayoutConstraint.activate([
-            host.leadingAnchor.constraint(equalTo: contentFrame.leadingAnchor),
-            host.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor),
-            host.topAnchor.constraint(equalTo: contentFrame.topAnchor),
-            host.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor),
-        ])
+        let border = ClaudeControlBorderView()
+        border.frame = contentFrame.bounds
+        border.autoresizingMask = [.width, .height]
+        contentFrame.addSubview(border, positioned: .above, relativeTo: nil)
+        watchClaudeControlBorder(border, automation)
+    }
+
+    private func watchClaudeControlBorder(_ border: ClaudeControlBorderView, _ automation: AutomationController) {
+        withObservationTracking {
+            border.isOn = store.state.selectedTab.map { automation.controlledTabIDs.contains($0.id) } ?? false
+        } onChange: { [weak self, weak border, weak automation] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, let border, let automation else { return }
+                    self.watchClaudeControlBorder(border, automation)
+                }
+            }
+        }
     }
 }
 
-/// The page's edge in Claude's orange while Claude drives the selected tab (like Claude in Chrome's).
-struct ClaudeControlBorder: View {
-    let automation: AutomationController
-    let store: BrowserStore
-
+/// The page's edge in Claude's orange while Claude drives the selected tab (like Claude in Chrome's): one
+/// layer's border, inside the page's rounded corners, fading in and out over 0.2s.
+final class ClaudeControlBorderView: NSView {
     static let lineWidth: CGFloat = 2
 
-    var body: some View {
-        let on = store.state.selectedTab.map { automation.controlledTabIDs.contains($0.id) } ?? false
-        RoundedRectangle(cornerRadius: ArcMetrics.Content.cornerRadius, style: .continuous)
-            .strokeBorder(Color.claude.opacity(0.85), lineWidth: Self.lineWidth)
-            .opacity(on ? 1 : 0)
-            .animation(.easeInOut(duration: 0.2), value: on)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+    var isOn = false {
+        didSet {
+            guard isOn != oldValue, let layer else { return }
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = layer.presentation()?.opacity ?? layer.opacity
+            fade.duration = 0.2
+            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.opacity = isOn ? 1 : 0
+            layer.add(fade, forKey: "opacity")
+        }
     }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = ArcMetrics.Content.cornerRadius
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = Self.lineWidth
+        layer?.borderColor = NSColor(Color.claude).withAlphaComponent(0.85).cgColor
+        layer?.opacity = 0
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
 }
 
 /// Where the banner's centre goes across the window, in the window's points from its left edge.

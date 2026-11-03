@@ -8,13 +8,17 @@ import SwiftUI
 struct ClaudeHandoffCard: View {
     let automation: AutomationController
     let store: BrowserStore
+    /// Opens once the host is in the window, so the card comes in with its transition.
+    let gate: HandoffCardGate
 
     var body: some View {
         let front = store.state.selectedTab?.id
         let waiting = automation.waitingHandoffSteps
         Group {
             // sign_in's own pill owns the bottom of a tab that's signing in.
-            if let front, automation.signIns[front] != nil {
+            if !gate.isOpen {
+                EmptyView()
+            } else if let front, automation.signIns[front] != nil {
                 EmptyView()
             } else if !automation.handoffCardCollapsed, let current = automation.cardStep(front: front) {
                 HandoffStepCard(automation: automation, handoff: current.handoff, step: current.step,
@@ -32,9 +36,24 @@ struct ClaudeHandoffCard: View {
                 .transition(.opacity)
             }
         }
-        .animation(.spring(duration: 0.28, bounce: 0.15), value: automation.cardStep(front: front)?.step.id)
+        .animation(.spring(duration: 0.28, bounce: 0.15), value: gate.isOpen ? automation.cardStep(front: front)?.step.id : nil)
         .animation(.easeInOut(duration: 0.18), value: automation.handoffCardCollapsed)
+        .animation(.easeInOut(duration: 0.18), value: gate.isOpen)
     }
+
+    /// Whether the card or its pill shows, as `body` decides it.
+    @MainActor static func shows(_ automation: AutomationController, front: UUID?) -> Bool {
+        if let front, automation.signIns[front] != nil { return false }
+        return !automation.waitingHandoffSteps.isEmpty
+    }
+}
+
+/// Lets the card in once its host is back in the window: a host attached with the card already showing would
+/// skip the card's transition.
+@MainActor
+@Observable
+final class HandoffCardGate {
+    var isOpen = false
 }
 
 /// One step: why Claude stopped, what to do, and (for a step outside the browser) the command to copy.
@@ -227,21 +246,50 @@ extension BrowserWindowController {
     /// The handoff card, over the bottom centre of the page. It takes clicks only on itself.
     func installClaudeHandoffCard(_ automation: AutomationController) {
         let card = HandoffCardFrame()
-        let host = HandoffHostingView(card: card, rootView: ClaudeHandoffCard(automation: automation, store: store)
+        let gate = HandoffCardGate()
+        let host = HandoffHostingView(card: card, rootView: ClaudeHandoffCard(automation: automation, store: store, gate: gate)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(HandoffCardFrame.space)) } action: { card.rect = $0 }
             .padding(.bottom, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             .coordinateSpace(.named(HandoffCardFrame.space)))
         host.sizingOptions = []
         host.safeAreaRegions = []
-        host.translatesAutoresizingMaskIntoConstraints = false
-        contentFrame.addSubview(host, positioned: .above, relativeTo: nil)
-        NSLayoutConstraint.activate([
-            host.leadingAnchor.constraint(equalTo: contentFrame.leadingAnchor),
-            host.trailingAnchor.constraint(equalTo: contentFrame.trailingAnchor),
-            host.topAnchor.constraint(equalTo: contentFrame.topAnchor),
-            host.bottomAnchor.constraint(equalTo: contentFrame.bottomAnchor),
-        ])
+        // In the window only while a step waits: an empty host there still re-renders on every store change.
+        let container = DetachingContainer(host: host)
+        container.passesClicks = true
+        container.frame = contentFrame.bounds
+        container.autoresizingMask = [.width, .height]
+        contentFrame.addSubview(container, positioned: .above, relativeTo: nil)
+        watchHandoffCard(container, gate, automation)
+    }
+
+    /// Attaches the host, then opens the gate a turn later so the card animates in; on close, the card animates
+    /// out before the host leaves.
+    private func watchHandoffCard(_ container: DetachingContainer, _ gate: HandoffCardGate, _ automation: AutomationController) {
+        let shows = withObservationTracking {
+            ClaudeHandoffCard.shows(automation, front: store.state.selectedTab?.id)
+        } onChange: { [weak self, weak container, weak gate, weak automation] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, let container, let gate, let automation else { return }
+                    self.watchHandoffCard(container, gate, automation)
+                }
+            }
+        }
+        if shows {
+            container.isHidden = false
+            guard !gate.isOpen else { return }
+            DispatchQueue.main.async { MainActor.assumeIsolated { if !container.isHidden { gate.isOpen = true } } }
+        } else if !container.isHidden {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self, weak container, weak gate, weak automation] in
+                MainActor.assumeIsolated {
+                    guard let self, let container, let gate, let automation,
+                          !ClaudeHandoffCard.shows(automation, front: self.store.state.selectedTab?.id) else { return }
+                    gate.isOpen = false
+                    container.isHidden = true
+                }
+            }
+        }
     }
 }
 
