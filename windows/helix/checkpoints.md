@@ -12,7 +12,7 @@ gets its own `helix/W<n>-…` branch.
 | W1 | Model core: tabs, folders, spaces, themes, favorites per profile, session.json shared with the Mac, `kitecore` | KiteCore Models, BrowserState (open, select, spaces), Profiles (favorites), SessionStore, URLInput | in review (#260) |
 | W2 | UI gate plumbing: Windows `--capture`, `--window-size`, `--capture-scale`; Mac `KITE_WINDOW_SIZE`; first `states/` fixture | `kite ui capture` | in review (#260) [CI checks the capture's size and pixels at 100%; the 2× run and the Mac side need Gabe's PC and Mac] |
 | W3a | Theme colour math (OKLab, lightness, glow, accent) | Theme.swift | in review (#260) |
-| W3 | DirectComposition root and the theme backdrop (HLSL port of Kite.metal), drawing only on change; `--capture` waits for the first presented frame and can render at a set scale | KiteMac/Metal, Shaders/Kite.metal | planned |
+| W3 | DirectComposition root and the theme backdrop (HLSL port of Kite.metal), drawing only on change; `--capture` waits for the first presented frame and can render at a set scale | KiteMac/Metal, Shaders/Kite.metal | in progress (#261) |
 | W4 | Sidebar skeleton: space title, pinned and unpinned rows from the session, static | Views/SidebarView.swift, ArcMetrics.swift | planned |
 | W5 | Closing, archiving and reopening tabs | BrowserState close/reopen/archive, Archive.swift | planned |
 | W6 | CEF windowed: one browser per tab, page beside the sidebar | Engine/ChromiumEngine.swift, CEFBridge | planned (needs Gabe's OK to download CEF) |

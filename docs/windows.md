@@ -70,8 +70,15 @@ the rest of the window, so nothing (glow, Peek, command bar) could overlap the p
   theme backdrop, sidebar, page texture, glow, command bar. It's the same
   layering as the macOS window, all on the GPU.
 - **Port the shaders to HLSL** (`Kite.metal` is about 150 lines of pure math:
-  OKLab blend, grain, rounded-rect SDF glow). Keep them in sync with a
-  golden-image test that renders both versions at fixed inputs.
+  OKLab blend, grain, rounded-rect SDF glow). `windows/src/shell/shaders/`
+  holds the ports; fxc compiles them when Kite builds, so nothing compiles
+  at startup. `core/ThemeBackdrop` is a CPU reference of the Metal shader,
+  and `Kite.exe --backdrop-test` checks the GPU's pixels against it in CI.
+- **Material:** the Mac's `.sidebar` material, blended behind the window, is
+  Windows 11's acrylic system backdrop (`DWMSBT_TRANSIENTWINDOW`) under a
+  window with no redirection bitmap. Where there's none (Windows 10, Server)
+  the backdrop is drawn over Windows' own solid fallback colour. As on the
+  Mac, the material's light or dark appearance follows the space's theme.
 - **Input:** the off-screen path forwards mouse, keyboard and IME events to
   CEF (`SendMouseClickEvent`, `SendKeyEvent`, ...). This is the most work and
   the main risk, so prototype it first.
