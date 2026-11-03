@@ -22,7 +22,7 @@ struct UIPointerProbe {
             let base = window.basePoint(point)
             let areasHere = areas.filter { $0.rect.contains(base) }
             crossTrackingAreas(to: areasHere, at: base)
-            move(to: base)
+            move(to: base, areas: areasHere)
             let hit = hitView(at: base)
             let rectsHere = cursorRects.filter { $0.rect.contains(base) }
             let cursor: String
@@ -75,13 +75,21 @@ struct UIPointerProbe {
     }
 
     /// A mouse-moved event straight to the window: hover handlers and tracking areas see it,
-    /// the window server and the real pointer don't.
-    private func move(to base: NSPoint) {
+    /// the window server and the real pointer don't. The window hands a move to its first responder only;
+    /// the window server also sends one to each active mouse-moved area's owner (how SwiftUI's hosting view
+    /// sees the pointer for `onHover`), so the probe does that too.
+    private func move(to base: NSPoint, areas: [Area]) {
         guard let event = NSEvent.mouseEvent(
             with: .mouseMoved, location: base, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0
         ) else { return }
         window.sendEvent(event)
+        var sent: Set<ObjectIdentifier> = []
+        for area in areas where area.area.options.contains(.mouseMoved) && !area.isWebContent && area.isActive(in: window) {
+            guard let owner = area.area.owner as? NSResponder, owner !== window.firstResponder,
+                  sent.insert(ObjectIdentifier(owner)).inserted else { continue }
+            owner.mouseMoved(with: event)
+        }
     }
 
     // MARK: Tracking areas

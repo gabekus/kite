@@ -159,7 +159,9 @@ What works with Kite in the background (checked on a test build behind other win
   `KITE_TEST_CONTEXT_MENU=1` (on a `KITE_SUPPORT_PATH` profile): a right-click (`input` with `"button":"right"`)
   writes the menu it built to stderr as `KITE_TEST_CONTEXT_MENU: Open Link in New Tab | … | ---` (disabled items
   in parentheses) instead of showing it. Put an item's title in `test-context-menu-pick` in the profile folder
-  and the next right-click chooses it. It works on both engines (Chromium: a bundled build, where a submenu's
+  and the next right-click chooses it (in a sidebar menu, `Submenu ▸ Item` chooses a submenu's item, such as
+  `Edit Pinned Page ▸ Edit…`). Site Controls' footer "…" menu goes through the same hook: a click logs its items and
+  runs the picked one. It works on both engines (Chromium: a bundled build, where a submenu's
   items follow its title in the line). WebKit only: it also keeps a covered test window's page answering, which
   the menu needs. Despite `input`'s first-mouse note, right-clicks on a page reach WebKit in the background. With
   `KITE_TEST_PASTEBOARD=name` the menu's Copy items write that named pasteboard instead of the clipboard.
