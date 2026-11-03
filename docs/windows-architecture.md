@@ -9,13 +9,9 @@ their own PR, never as a side effect of a checkpoint.
   call behind `#ifdef _WIN32` is fine, `<windows.h>` isn't), and nothing from
   the shell. It builds and its tests run on any OS. Everything here is
   unit-tested and reachable from `kitecore`.
-- `windows/src/shell`: the app, Win32, DirectComposition, Direct2D/DirectWrite,
-  D3D11, input, and the CEF host. It may use `core`; `core` never uses it.
-  `main.cpp`'s `wWinMain` reads the command line and loads and saves the
-  session; `BrowserWindowController` (the Mac's class of the same name) owns the
-  window and everything in it (the GPU, the backdrop, the sidebar, the caption
-  buttons, the command bar, Chromium and the shortcuts' commands) and wires them
-  to the session.
+- `windows/src/shell`: the app (`main.cpp`'s `wWinMain`), Win32,
+  DirectComposition, Direct2D/DirectWrite, D3D11, input, and the CEF host. It
+  may use `core`; `core` never uses it.
 - `windows/src/cli`: `kitecore`, a thin command layer over `core`. It may use
   Win32 for process plumbing (UTF-16 arguments, the console's UTF-8 output) and
   nothing else.

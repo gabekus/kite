@@ -10,6 +10,7 @@
 
 #include "core/Unicode.h"
 #include "shell/Errors.h"
+#include "shell/Text.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -114,22 +115,6 @@ HRESULT MakeAlphaStrip(ID2D1DeviceContext* context, const std::vector<float>& al
     return context->CreateBitmap(size, pixels.data(), row ? count * 4 : 4, &props, out.ReleaseAndGetAddressOf());
 }
 
-
-std::wstring Widen(std::string_view utf8) {
-    if (utf8.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    std::wstring out(static_cast<size_t>(std::max(size, 0)), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), out.data(), size);
-    return out;
-}
-
-std::string Narrow(std::wstring_view text) {
-    if (text.empty()) return {};
-    const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    std::string out(static_cast<size_t>(std::max(size, 0)), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr);
-    return out;
-}
 
 bool IsHighSurrogate(wchar_t c) { return c >= 0xD800 && c < 0xDC00; }
 // What would start a second line in the field (DirectWrite breaks at these even without

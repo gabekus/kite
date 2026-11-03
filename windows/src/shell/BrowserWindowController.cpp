@@ -17,6 +17,7 @@
 #endif
 #include "shell/Errors.h"
 #include "shell/Keys.h"
+#include "shell/Text.h"
 
 namespace kite {
 
@@ -28,14 +29,6 @@ constexpr UINT_PTR kArchiveTimer = 2;
 constexpr UINT kArchiveIntervalMs = 15 * 60 * 1000;
 // Posted by the favicon worker when icons arrive (Favicons.h).
 constexpr UINT kFaviconsMessage = WM_APP + 4;
-
-std::wstring Widen(const std::string& utf8) {
-    if (utf8.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    std::wstring out(static_cast<size_t>(std::max(size, 0)), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), out.data(), size);
-    return out;
-}
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -83,7 +76,8 @@ bool Inked(const Pixels& pixels) {
 }  // namespace
 
 std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
-                                                                          Options options, std::wstring& error) {
+                                                                          Options options, std::function<void()> save,
+                                                                          std::wstring& error) {
     // The GPU first: everything is set up before the window shows, so it never appears empty
     // or with the wrong title bar.
     std::unique_ptr<Renderer> renderer = Renderer::Create(error);
@@ -96,7 +90,7 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
         return nullptr;
     }
     std::unique_ptr<BrowserWindowController> controller(
-        new BrowserWindowController(instance, state, std::move(shortcuts), options, std::move(renderer)));
+        new BrowserWindowController(instance, state, std::move(shortcuts), options, std::move(save), std::move(renderer)));
     if (!controller->window_.IsValid()) {
         error = L"CreateWindowExW failed";
         return nullptr;
@@ -106,17 +100,19 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
 }
 
 BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                                                 std::unique_ptr<Renderer> renderer)
+                                                 std::function<void()> save, std::unique_ptr<Renderer> renderer)
     : instance_(instance),
       state_(state),
       shortcuts_(std::move(shortcuts)),
       options_(options),
+      save_(std::move(save)),
       renderer_(std::move(renderer)),
       window_(instance),
       theme_(state.SelectedSpace().theme) {}
 
 BrowserWindowController::~BrowserWindowController() {
     // The views and the compositor go before the window: it stops calling into them first.
+    window_.onClose = nullptr;
     window_.onSize = nullptr;
     window_.onFocus = nullptr;
     window_.onWake = nullptr;
@@ -133,10 +129,9 @@ std::wstring BrowserWindowController::Init() {
     // colour where there's none. A capture always uses the solid colour, so it doesn't depend
     // on what's behind the window. Drawn now and then only when something changes; W9 adds
     // the space-switch crossfade.
+    systemBackdrop_ = !options_.capture && window_.UseSystemBackdrop();
+    ApplyTheme(theme_);
     const bool dark = !PrefersDarkForeground(theme_);
-    window_.SetDarkAppearance(dark);
-    const bool systemBackdrop = !options_.capture && window_.UseSystemBackdrop();
-    base_ = systemBackdrop ? Rgba{} : MaterialFallback(dark);
     compositor_ = Compositor::Create(window_.Handle(), *renderer_, error);
     if (!compositor_) return L"Kite couldn't start DirectComposition: " + error;
 
@@ -214,7 +209,21 @@ std::wstring BrowserWindowController::Init() {
     window_.filter = [this](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
         return Filter(message, wParam, lParam, result);
     };
+    // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
+    // reported runs first (titles, addresses), then the caller saves.
+    window_.onClose = [this] {
+        RunPending();
+        if (save_) save_();
+    };
     return {};
+}
+
+void BrowserWindowController::ApplyTheme(const Theme& theme) {
+    theme_ = theme;
+    const bool dark = !PrefersDarkForeground(theme_);
+    window_.SetDarkAppearance(dark);
+    base_ = systemBackdrop_ ? Rgba{} : MaterialFallback(dark);
+    if (caption_) caption_->SetDark(dark);
 }
 
 // MARK: The session and the pages
@@ -711,7 +720,7 @@ Tab* BrowserWindowController::TabNamed(const std::string& id) {
     return location ? state_.TabAt(*location) : nullptr;
 }
 
-BrowserWindowController::ChromiumStart BrowserWindowController::StartChromium(const std::filesystem::path& root, std::wstring& error) {
+Chromium::StartResult BrowserWindowController::StartChromium(const std::filesystem::path& root, std::wstring& error) {
     PageEvents events;
     events.addressChanged = [this](const std::string& id, const std::string& url) {
         if (Tab* tab = TabNamed(id); tab && !url.empty()) tab->url = url;
@@ -785,10 +794,9 @@ BrowserWindowController::ChromiumStart BrowserWindowController::StartChromium(co
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
-    switch (Chromium::Start(instance_, window_.Handle(), root, std::move(events), chromium_, error)) {
-    case Chromium::StartResult::Started: break;
-    case Chromium::StartResult::AlreadyRunning: return ChromiumStart::AlreadyRunning;
-    case Chromium::StartResult::Failed: return ChromiumStart::Failed;
+    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), chromium_, error);
+        started != Chromium::StartResult::Started) {
+        return started;
     }
     window_.onWake = [this] { chromium_->RunPending(); };
     window_.onMinimize = [this] { chromium_->Minimized(); };
@@ -798,7 +806,7 @@ BrowserWindowController::ChromiumStart BrowserWindowController::StartChromium(co
         // The open bar keeps the keyboard in Kite's window.
         if (!commandBar_ || !commandBar_->IsOpen()) chromium_->Focus();
     };
-    return ChromiumStart::Started;
+    return Chromium::StartResult::Started;
 }
 
 std::wstring BrowserWindowController::ShutDownChromium() {

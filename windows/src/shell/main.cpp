@@ -28,14 +28,11 @@
 
 #include <algorithm>
 #include <charconv>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
-#include <map>
 #include <optional>
-#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -52,18 +49,14 @@
 #endif
 #include "shell/Capture.h"
 #include "shell/MainWindow.h"
+#include "shell/Text.h"
 
 namespace {
 
-enum ExitCode : int { kOk = 0, kUsage = 1, kBadSupportDirectory = 2, kWindowFailed = 3, kSaveFailed = 4, kCaptureFailed = 5 };
+using kite::Narrow;
+using kite::Widen;
 
-std::wstring Widen(const std::string& utf8) {
-    if (utf8.empty()) return {};
-    int size = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    std::wstring out(static_cast<size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), out.data(), size);
-    return out;
-}
+enum ExitCode : int { kOk = 0, kUsage = 1, kBadSupportDirectory = 2, kWindowFailed = 3, kSaveFailed = 4, kCaptureFailed = 5 };
 
 // Arguments after the program name, split by CommandLineToArgvW's rules (quotes, backslashes).
 std::vector<std::wstring> Arguments() {
@@ -131,14 +124,6 @@ void WriteUtf8(DWORD which, const std::wstring& text) {
     WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), utf8.data(), bytes, nullptr, nullptr);
     DWORD written = 0;
     WriteFile(handle, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
-}
-
-std::string Narrow(const std::wstring& text) {
-    if (text.empty()) return {};
-    const int size = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    std::string out(static_cast<size_t>(std::max(size, 0)), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), out.data(), size, nullptr, nullptr);
-    return out;
 }
 
 // The user's shortcut changes (keybindings.json, the Mac's KeyBindingsStore): none when the
@@ -267,15 +252,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     kite::BrowserWindowController::Options options;
     options.capture = capture.has_value();
     options.smokeTest = smokeTest;
-    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, problem);
+    // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
+    auto save = [&] {
+        if (maySave) saveError = session.Save(state);
+    };
+    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, save, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
     kite::MainWindow& window = controller->Window();
-    // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
-    window.onClose = [&] {
-        controller->RunPending();
-        if (maySave) saveError = session.Save(state);
-    };
 
     // Sized after the swap chain exists, so a capture also goes through a resize, as a real
     // window does when it's moved to another monitor or maximized.
@@ -312,13 +296,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // window isn't in the composition tree it reads back (until W10 makes pages textures).
     if (!capture) {
         switch (controller->StartChromium(supportDirectory / L"Chromium", problem)) {
-        case kite::BrowserWindowController::ChromiumStart::Started: break;
+        case kite::Chromium::StartResult::Started: break;
         // Another Kite has this profile and was told to come forward; this one leaves quietly,
         // before its window shows or it saves anything. A test run that found one tested
         // nothing, so it fails.
-        case kite::BrowserWindowController::ChromiumStart::AlreadyRunning:
+        case kite::Chromium::StartResult::AlreadyRunning:
             return quiet ? Fail(quiet, L"another Kite has this profile open", kWindowFailed) : kOk;
-        case kite::BrowserWindowController::ChromiumStart::Failed:
+        case kite::Chromium::StartResult::Failed:
             return Fail(quiet, L"Kite couldn't start Chromium: " + problem, kWindowFailed);
         }
     }

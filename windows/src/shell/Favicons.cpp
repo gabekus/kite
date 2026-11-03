@@ -4,6 +4,7 @@
 
 #include "core/Sidebar.h"
 #include "core/Url.h"
+#include "shell/Text.h"
 
 #include <d2d1_1.h>
 #include <wincodec.h>
@@ -46,14 +47,6 @@ constexpr UINT kMaxFrameSide = 1024;
 // The cache's bound: the Mac's NSCache keeps 500 icons; bytes bound what 500 can cost.
 constexpr size_t kMaxEntries = 500;
 constexpr size_t kMaxCacheBytes = 16 << 20;
-
-std::wstring Widen(const std::string& utf8) {
-    if (utf8.empty()) return {};
-    const int size = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
-    std::wstring out(static_cast<size_t>(std::max(size, 0)), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), out.data(), size);
-    return out;
-}
 
 struct Handle {
     HINTERNET value = nullptr;

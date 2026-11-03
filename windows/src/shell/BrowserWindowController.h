@@ -21,6 +21,9 @@
 #include "core/Models.h"
 #include "core/ThemeBackdrop.h"
 #include "shell/CaptionButtonsView.h"
+#ifdef KITE_HAS_CEF
+#include "shell/Chromium.h"
+#endif
 #include "shell/CommandBarView.h"
 #include "shell/Compositor.h"
 #include "shell/Favicons.h"
@@ -29,10 +32,6 @@
 #include "shell/SidebarView.h"
 
 namespace kite {
-
-#ifdef KITE_HAS_CEF
-class Chromium;
-#endif
 
 class BrowserWindowController {
 public:
@@ -46,16 +45,12 @@ public:
         bool smokeTest = false;
     };
 
-    // The content card, in points: right of the sidebar, inset on the other three sides
-    // (BrowserWindowController's Layout.defaultSidebarWidth and ArcMetrics.Content.inset).
-    static constexpr int kSidebarWidth = 240;
-    static constexpr int kContentInset = 10;
-
     // The window and everything in it, laid out and wired, not yet shown or drawn. Null with
     // `error` when the GPU, the window or a view couldn't be made. No command bar isn't a
-    // failure (CommandBar() is null then).
+    // failure (CommandBar() is null then). `save` runs as the window closes, and at logoff or
+    // shutdown, after the pages' last reports.
     static std::unique_ptr<BrowserWindowController> Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
-                                                           Options options, std::wstring& error);
+                                                           Options options, std::function<void()> save, std::wstring& error);
     ~BrowserWindowController();
     BrowserWindowController(const BrowserWindowController&) = delete;
     BrowserWindowController& operator=(const BrowserWindowController&) = delete;
@@ -69,16 +64,11 @@ public:
 #ifdef KITE_HAS_CEF
     // Starts Chromium for the window's pages, its profiles under `root`. AlreadyRunning: another
     // Kite has the profile and was told to come forward.
-    enum class ChromiumStart { Started, AlreadyRunning, Failed };
-    ChromiumStart StartChromium(const std::filesystem::path& root, std::wstring& error);
+    Chromium::StartResult StartChromium(const std::filesystem::path& root, std::wstring& error);
     // After the message loop: Chromium's shutdown, then what a smoke test checks of it. Empty
     // when it all went well (or there was no Chromium).
     std::wstring ShutDownChromium();
 #endif
-    // What the pages reported and Kite hasn't run yet (the window's close, at logoff, comes
-    // with no WM_CLOSE first).
-    void RunPending();
-
     // Shows the window (behind other windows for a quiet run) and, with Chromium, the first page,
     // and starts the auto-archive's timer.
     void Show(int showCommand, bool behindOtherWindows);
@@ -99,9 +89,21 @@ public:
     void RunMessageLoop();
 
 private:
+    // The content card, in points: right of the sidebar, inset on the other three sides
+    // (BrowserWindowController's Layout.defaultSidebarWidth and ArcMetrics.Content.inset).
+    static constexpr int kSidebarWidth = 240;
+    static constexpr int kContentInset = 10;
+
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                            std::unique_ptr<Renderer> renderer);
+                            std::function<void()> save, std::unique_ptr<Renderer> renderer);
     std::wstring Init();
+    // The backdrop's theme and what follows from it: the title bar's dark mode, the material
+    // under the backdrop, the caption buttons' glyphs. Not drawn until the next Draw. Only the
+    // launch's theme so far: W9 applies the selected space's as it changes.
+    void ApplyTheme(const Theme& theme);
+    // What the pages reported and Kite hasn't run yet (the window's close, at logoff, comes
+    // with no WM_CLOSE first).
+    void RunPending();
 
     // The session changed under the window: the sidebar and an open bar show it.
     void StateChanged();
@@ -139,6 +141,7 @@ private:
     BrowserState& state_;
     const ShortcutMap shortcuts_;
     const Options options_;
+    const std::function<void()> save_;
     // Destroyed in reverse: the views and the compositor before the window, the window before
     // Chromium (closing it destroys the browsers' windows, which Chromium's shutdown waits
     // for), and the GPU last.
@@ -147,8 +150,10 @@ private:
     std::unique_ptr<Chromium> chromium_;
 #endif
     MainWindow window_;
-    // The selected space's theme at launch (W9 changes it with the space).
+    // The backdrop's theme (ApplyTheme), and the colour under it: none over the system's
+    // acrylic, the solid material where there's none (and in a capture).
     Theme theme_;
+    bool systemBackdrop_ = false;
     Rgba base_{};
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
