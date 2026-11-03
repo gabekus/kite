@@ -47,7 +47,7 @@ final class SidebarHeaderView: NSView {
 
     var onHeightChange: () -> Void = {}
 
-    init(store: BrowserStore, actions: SidebarActions, hover: SidebarHoverModel, supportsDarkPages: Bool, accessory: AnyView?) {
+    init(store: BrowserStore, actions: SidebarActions, hover: SidebarHoverModel, supportsDarkPages: Bool, accessory: NSView?) {
         self.store = store
         self.actions = actions
         self.hover = hover
@@ -267,17 +267,14 @@ final class AddressFieldView: SidebarFlippedView {
     private let siteControls = SymbolButton(symbol: "slider.horizontal.3", pointSize: 12, weight: .semibold, label: "Site Control Center")
     private let install = SymbolButton(symbol: "desktopcomputer.and.arrow.down", pointSize: 12, weight: .semibold)
     private let extensions = SymbolButton(symbol: "puzzlepiece.extension", pointSize: 12, weight: .semibold, label: "Extensions")
-    private let accessory: NSHostingView<AnyView>?
+    /// The password manager's key: sized by its intrinsic size, zero while it's not shown.
+    private let accessory: NSView?
     private var pressed = false
 
     static let buttonSize: CGFloat = 30
 
-    init(accessory: AnyView?) {
-        self.accessory = accessory.map { view in
-            let host = NSHostingView(rootView: AnyView(view.foregroundStyle(.primary)))
-            host.sizingOptions = [.intrinsicContentSize]
-            return host
-        }
+    init(accessory: NSView?) {
+        self.accessory = accessory
         super.init(frame: .zero)
         fill.cornerRadius = M.cornerRadius
         fill.fill = chromeFill(M.fieldFill)

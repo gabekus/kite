@@ -452,6 +452,29 @@ unchanged.
 
 Not verified: the ⌘J bar opening (its host is attached the same way), and pixels (see above).
 
+## PR 11: the password manager's key in the address field
+
+The key at the address field's right end (`PasswordManagerFieldButton`) was a SwiftUI view in an
+`NSHostingView<AnyView>`. That host's mouse-moved tracking area spanned the whole window ([0,0 1280×820]:
+`.inVisibleRect` on a view near the window's root), so every mouse move in the window went to SwiftUI. The key is
+now a `SymbolButton` ("key.fill", 11pt semibold, 30×30, opacity 0.6 and 0.9 on hover, like the field's other
+buttons). Its wash keeps SwiftUI's `Color.primary.opacity(0.1)` rather than the chrome fill: the label colour at
+216/255 alpha, a tenth of it. It watches the window's `ExtensionsSelection` and its model as SwiftUI did, and
+takes no width while there's no password manager to show.
+
+Checks, main (dc7f03c) vs this PR, on fresh profiles (`ui tree`, `ui pointer`, `kite probe <pid> tree --text`):
+
+| | main | PR 11 |
+|---|---|---|
+| Frame | [260,49 30×30] | [260,49 30×30] |
+| Opacity, then hovered | 0.6, 0.9 | 0.6, 0.9 |
+| Hover wash, dark / light | #FFFFFF@0.08 / #000000@0.08, radius 6 continuous | the same |
+| Label | AXButton "Add 1Password to this profile" | the same |
+| Tracking areas | moved-events area over the whole window, and a tooltip area | the button's own bounds |
+
+Not verified: pixels (the glyph's placement: SwiftUI's ink is at [271.5,57 7.5×14]), the key opening the password
+manager or adding it (a fresh profile only offers to add it, and I didn't install it).
+
 ## Checks of what PR 1–6 left unverified
 
 **Context menus** (KITE_TEST_CONTEXT_MENU, which the sidebar's AppKit menus now go through): a right-click on each
