@@ -150,6 +150,16 @@ std::optional<SearchEngine> SearchEngineFromRaw(std::string_view raw) {
     return std::nullopt;
 }
 
+const char* DisplayName(SearchEngine engine) {
+    switch (engine) {
+    case SearchEngine::Google: return "Google";
+    case SearchEngine::DuckDuckGo: return "DuckDuckGo";
+    case SearchEngine::Kagi: return "Kagi";
+    case SearchEngine::Bing: return "Bing";
+    }
+    return "Google";
+}
+
 std::string SearchURL(SearchEngine engine, std::string_view query) {
     const char* prefix = "https://www.google.com/search?q=";
     switch (engine) {

@@ -4,6 +4,7 @@
 //
 //   kitecore [--profile DIR] state
 //   kitecore [--profile DIR] resolve TEXT...
+//   kitecore [--profile DIR] suggest TEXT... [--current]
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]
@@ -13,7 +14,8 @@
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
 // isn't running on: both write session.json. `theme` prints the space's theme maths
 // (lightness, foreground, glow, accent) and its window backdrop (material, and the corner and
-// centre pixels at WIDTH×HEIGHT px, default 1280×820) as sRGB hex.
+// centre pixels at WIDTH×HEIGHT px, default 1280×820) as sRGB hex. `suggest` prints the command
+// bar's rows for TEXT, top first (--current: editing the current tab's address, Ctrl+L).
 
 #include <algorithm>
 #include <charconv>
@@ -23,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "core/CommandBar.h"
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
 #include "core/SupportDirectory.h"
@@ -46,6 +49,7 @@ int Usage() {
     std::fputs(
         "usage: kitecore [--profile DIR] state\n"
         "       kitecore [--profile DIR] resolve TEXT...\n"
+        "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]\n"
@@ -215,6 +219,24 @@ int main(int argc, char** argv) {
         auto url = url_input::Resolve(Join(args, 1), engine);
         if (!url) return kNotFound;
         std::puts(url->c_str());
+        return kOk;
+    } else if (command == "suggest") {
+        CommandBarMode mode = CommandBarMode::NewTab;
+        std::vector<std::string> words;
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--current") mode = CommandBarMode::EditCurrent;
+            else words.push_back(args[i]);
+        }
+        json::Array rows;
+        for (const CommandSuggestion& row : CommandBarSuggestions(Join(words, 0), state, mode)) {
+            const char* kind = row.kind == CommandSuggestion::Kind::Open ? "open"
+                               : row.kind == CommandSuggestion::Kind::Search ? "search" : "switchTab";
+            json::Object o{{"kind", std::string(kind)}, {"url", row.url}, {"title", row.title}, {"detail", row.detail}};
+            if (!row.tabID.empty()) o.emplace("tabID", row.tabID);
+            if (row.faviconURL) o.emplace("faviconURL", *row.faviconURL);
+            rows.emplace_back(std::move(o));
+        }
+        std::puts(json::Write(json::Value(std::move(rows))).c_str());
         return kOk;
     } else if (command == "open") {
         std::optional<std::string> space;

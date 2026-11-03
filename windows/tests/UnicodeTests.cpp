@@ -30,10 +30,26 @@ TEST(splitsIntoCharactersLikeSwift) {
     CHECK(Characters("\r\n").size() == 1 && Characters("\n\xCC\x81").size() == 2);
     CHECK(Characters("a\xE2\x80\x8D").size() == 1);  // a + ZWJ
     CHECK(Characters("").empty());
+    // GB11: an emoji ZWJ sequence is one character; GB12/13: regional indicators pair up.
+    CHECK(Characters("\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA7").size() == 1);  // 👨‍👧
+    CHECK(Characters("\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8\xF0\x9F\x87\xAC").size() == 2);  // 🇺🇸 + 🇬
+    CHECK(Characters("a\xE2\x80\x8D\xF0\x9F\x91\xA7").size() == 2);  // ZWJ after a letter doesn't join an emoji
+    // GB9c: क्ष is one character (consonant, virama, consonant); a virama alone doesn't join on.
+    CHECK(Characters("\xE0\xA4\x95\xE0\xA5\x8D\xE0\xA4\xB7").size() == 1);
+    CHECK(Characters("a\xE0\xA5\x8D\xE0\xA4\xB7").size() == 2);
 }
 
 TEST(trimsUnicodeWhitespaceOnly) {
     CHECK(Trim("\xE3\x80\x80 a b\xC2\xA0\n") == "a b");
     CHECK(Trim("\xC3\xA9") == "\xC3\xA9");
     CHECK(Trim("  ").empty());
+}
+
+TEST(decomposesCanonically) {
+    CHECK(Decomposed("caf\xC3\xA9") == "cafe\xCC\x81");                      // é
+    CHECK(Decomposed("\xE1\xBB\x87") == "e\xCC\xA3\xCC\x82");                 // ệ: dot below, then circumflex
+    CHECK(Decomposed("e\xCC\x82\xCC\xA3") == "e\xCC\xA3\xCC\x82");             // marks put in canonical order
+    CHECK(Decomposed("\xED\x95\x9C") == "\xE1\x84\x92\xE1\x85\xA1\xE1\x86\xAB");  // 한 → ᄒ ᅡ ᆫ
+    CHECK(Decomposed("\xE2\x84\xAB") == "A\xCC\x8A");                         // Ångström sign
+    CHECK(Decomposed("plain") == "plain");
 }
