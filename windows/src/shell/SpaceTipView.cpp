@@ -83,6 +83,9 @@ LRESULT CALLBACK SpaceTipView::WindowProc(HWND hwnd, UINT message, WPARAM wParam
     // the cell's hover and the sidebar's rows never see the tip; a click never activates it.
     if (message == WM_NCHITTEST) return HTTRANSPARENT;
     if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    // Windows hides an owned window with its minimized owner and shows it again on restore
+    // (SW_PARENTOPENING): the tip shows only when SidebarView says, so it stays hidden.
+    if (message == WM_SHOWWINDOW && wParam && lParam == SW_PARENTOPENING) return 0;
     return DefWindowProcW(hwnd, message, wParam, lParam);
 }
 
