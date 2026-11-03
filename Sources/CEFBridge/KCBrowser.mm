@@ -1437,6 +1437,7 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
 }
 
 - (void)mainFrameDidStartLoading {
+    if ([_delegate respondsToSelector:@selector(browserMainFrameDidStartLoading:)]) [_delegate browserMainFrameDidStartLoading:self];
     if (!_runScriptAtLoadStart) return;
     _runScriptAtLoadStart = NO;
     if (_documentScriptSource) [self evaluateJavaScript:_documentScriptSource completion:^(id) {}];

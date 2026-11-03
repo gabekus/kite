@@ -163,7 +163,7 @@ enum MediaStateScript {
         }
         return result;
       };
-      proto.setActionHandler.__kiteMedia = true;
+      Object.defineProperty(proto.setActionHandler, '__kiteMedia', { value: true });
       // A call's microphone and camera state (the Mini Player's Toggle Microphone / Toggle Camera).
       for (const [name, key] of [['setMicrophoneActive', 'mic'], ['setCameraActive', 'cam']]) {
         const set = proto[name];
