@@ -3,7 +3,7 @@ import Foundation
 import PackageDescription
 
 // KiteCore is plain Foundation so it builds on macOS and Windows alike.
-// Platform shells (KiteMac today, KiteWindows later) sit on top of it.
+// Platform shells (KiteMac, KiteWindows) sit on top of it.
 var targets: [Target] = [
     .target(name: "KiteCore"),
     .testTarget(name: "KiteCoreTests", dependencies: ["KiteCore"]),
@@ -81,6 +81,24 @@ targets.append(
     )
 )
 products.append(.executable(name: "Kite", targets: ["KiteMac"]))
+#endif
+
+#if os(Windows)
+// The Windows shell (docs/windows.md). Win32 for now; Chromium (CEF) joins it once
+// scripts/fetch-cef.ps1 has run, the same way CEFBridge does on macOS.
+targets.append(
+    .executableTarget(
+        name: "KiteWindows",
+        dependencies: ["KiteCore"],
+        swiftSettings: [.swiftLanguageMode(.v5)],
+        linkerSettings: [
+            .linkedLibrary("user32"),
+            .linkedLibrary("dwmapi"),
+            .linkedLibrary("advapi32"),
+        ]
+    )
+)
+products.append(.executable(name: "Kite", targets: ["KiteWindows"]))
 #endif
 
 let package = Package(

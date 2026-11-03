@@ -13,11 +13,35 @@ possible with macOS.
   (one `KCBrowser` per tab, the same delegate events, DevTools/CDP calls), and
   Swift on Windows calls it through Swift's C++ interop.
 
+## Decision (2026-11-03)
+
+**Swift on Windows, reusing KiteCore, with a Win32 host window, CEF 156 for the
+engine, and WinUI 3 (through swift-winrt) for the chrome.** Reasons:
+
+- KiteCore is most of Kite's behaviour (about 100 files: spaces, tabs, the
+  command bar, Arc import, boosts, automation, Claude). It already builds and
+  passes its tests on Windows, so a non-Swift shell would mean rewriting it.
+- It's the stack Arc for Windows itself shipped on (The Browser Company's
+  Swift toolchain work, swift-winrt). Copying Arc 1:1 is easiest with the same
+  building blocks. Check this against the installed Arc for Windows (its DLLs
+  and its UI Automation tree) before relying on it.
+- CEF is the same version and API on both platforms, so the bridge keeps its
+  shape. On Windows it's a plain C API over C++ (`kite_cef.h`), which Swift calls
+  without C++ interop.
+
+Not chosen: Electron or Tauri (would mean a second app around KiteCore), and
+WebView2 as the main engine (no extensions API, no control of the Chromium
+version). WebView2 could stand in the way WebKit does on macOS while CEF is missing.
+
 ## Shell
 
+`Sources/KiteWindows` is a Win32 window in Swift (`import WinSDK`): per-monitor
+DPI v2, a dark title bar when Windows apps are dark, session load and save
+through KiteCore, and `--smoke-test` for CI. Arc-matching UI goes in only after
+it's measured on the real Arc for Windows, the same rule as on macOS.
+
 Swift 6 on Windows plus [swift-winrt](https://github.com/thebrowsercompany/swift-winrt)
-for the WinUI 3 and Win32 APIs. That's The Browser Company's own toolchain from
-Arc for Windows.
+for the WinUI 3 and Win32 APIs.
 
 The hard part is **airspace**. A Chromium child HWND always draws on top of
 XAML, so nothing (glow, Peek, command bar) could overlap the page. To avoid it:
@@ -67,8 +91,26 @@ Windows that means:
 
 
 
-1. CI: KiteCore builds and tests on `windows-latest` (done; see `.github/workflows/ci.yml`).
-2. Spike: Swift + CEF off-screen + D3D11 shared texture in a bare window,
-   measuring frame time and input latency.
-3. Port the bridge to C++ and the shaders to HLSL.
-4. WinUI shell: sidebar, command bar, spaces.
+## Plan
+
+1. CI: KiteCore builds and tests on `windows-latest` (done; see `.github/workflows/ci-windows.yml`).
+2. Win32 shell skeleton that CI builds and launches (`KiteWindows`, done).
+3. CEF for Windows: `scripts/fetch-cef.ps1` (written, not yet run), then a C
+   bridge (`CEFBridgeWin`) with one browser per tab, windowed first so pages
+   load, then the off-screen spike: D3D11 shared texture, frame time, input latency.
+4. Measure Arc for Windows: UI Automation tree (frames and roles only) and
+   captures, the Windows twin of `kite probe Arc`, written up in docs/arc-visual-spec.md.
+5. WinUI 3 chrome through swift-winrt: sidebar, command bar, spaces, matched to
+   those measurements. Shaders ported to HLSL.
+6. Packaging: signed MSIX or installer, updates, the Arc for Windows importer.
+
+## Building on Windows
+
+```powershell
+swift build --product Kite
+$env:KITE_SUPPORT_PATH = (New-Item -ItemType Directory "$env:TEMP\k-$(Get-Random)").FullName
+.build\debug\Kite.exe
+```
+
+Without `KITE_SUPPORT_PATH` the profile is `%LOCALAPPDATA%\Kite`. A
+`KITE_SUPPORT_PATH` that isn't an existing directory is refused.
