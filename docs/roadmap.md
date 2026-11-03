@@ -5,7 +5,7 @@ depends on Arc's data has to land before then.
 
 ## Before daily use
 
-- **Signing and notarization**, with Sparkle for updates.
+- ~~**Signing and notarization**, with Sparkle for updates.~~ Done (docs/updates.md).
 - **Back/forward history across hibernation on Chromium.** WebKit restores
   `interactionState`; CEF currently reloads the URL only.
 

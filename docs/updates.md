@@ -38,23 +38,26 @@ A release must be signed with Gabe's Developer ID (release.sh refuses anything e
 only installs an update signed by the same team as the Kite that's running, and 1Password only
 trusts a Developer ID browser.
 
-Release builds (`bundle-app.sh release` with a Developer ID) are signed with the hardened runtime
-and a secure timestamp, and each helper gets Chromium's entitlements from `Resources/entitlements`:
+`release.sh` and `package-share.sh` build with `KITE_HARDENED_RUNTIME=1`, so `bundle-app.sh` signs
+every binary with the hardened runtime and a secure timestamp, and each bundle gets the
+entitlements Arc's own (Developer ID signed, non-Google) Chromium bundles carry, from
+`Resources/entitlements`. Observed with `codesign -d --entitlements` on /Applications/Arc.app:
 
 | Signed code | Entitlements | Why |
 |---|---|---|
-| Kite.app | camera, microphone, location, calendars, Apple events | web pages' camera, mic and location; favorite previews' calendar; VPN tool's Tunnelblick scripting |
-| Kite Helper (utility processes) | JIT, camera, microphone | V8 in the proxy resolver; Chromium's audio and video capture services |
-| Kite Helper (Renderer), (GPU) | JIT | V8, SwiftShader |
-| Kite Helper (Plugin) | unsigned executable memory, no library validation | Chromium's plugin helper |
-| Helpers/kite | Apple events | `kite vpn` drives Tunnelblick through osascript |
+| Kite.app | camera, microphone, location, calendars | web pages' camera, mic and location (Arc's app has the same three); calendars for favorite previews' EventKit, which Arc doesn't have |
+| Kite Helper (utility processes, and the GPU process normally) | no library validation | the Widevine CDM is signed by Google's team, not Gabe's (Arc's `Browser Helper` has the same; Chrome needs none, being Google's) |
+| Kite Helper (Renderer), (GPU) | JIT | V8, SwiftShader (same as Arc and Chrome) |
+| Kite Helper (Alerts), (Plugin), Helpers/kite | none | CEF 156 never launches the Plugin helper |
 
-The CEF framework's dylibs are signed one by one, since the helpers' library validation only loads
-code from the same team. Debug builds stay unhardened, so a debugger can still attach. The
-designated requirement doesn't change (Developer ID, team 948JHP35FF), so 1Password's trust in
-Kite holds.
+The CEF framework's dylibs are signed one by one, since they aren't nested code codesign signs by
+itself. Every other build (debug, and `install-app.sh` / `update-app.sh` for Gabe's own Kite) is
+signed as before: no hardened runtime, no timestamp server, a debugger can attach. The designated
+requirement doesn't change (Developer ID, team 948JHP35FF), so 1Password's trust in Kite holds:
+the hardened build passes the exact requirement 1Password saved for Kite (`codesign -v -R`).
 
-`release.sh` and `package-share.sh` then run `scripts/notarize.sh`: it zips the app, submits it
+`release.sh` and `package-share.sh` check the notarytool profile first (`notarize.sh --check`),
+before the build, and after it run `scripts/notarize.sh`: it zips the app, submits it
 with `xcrun notarytool submit --wait`, prints Apple's log if it's rejected, staples the ticket
 (`xcrun stapler staple`) and checks Gatekeeper sees `source=Notarized Developer ID`. Stapling
 changes the app, so the release zip and its Sparkle signature are made after it. Updates

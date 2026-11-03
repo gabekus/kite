@@ -26,6 +26,10 @@ fi
 # last build anyone has to be sent by hand.
 export KITE_UPDATE_FEED="${KITE_UPDATE_FEED:-https://github.com/gabekus/kite/releases/latest/download/appcast.xml}"
 
+# Notarization needs the notarytool profile; check it now rather than after a long build.
+[[ "${KITE_SKIP_NOTARIZE:-}" == 1 ]] || scripts/notarize.sh --check
+export KITE_HARDENED_RUNTIME=1
+
 # The ad blocker links only when its library exists (see install-app.sh).
 ADBLOCK_LIB="Sources/KiteAdblock/rust/target/lib/libkite_adblock.a"
 [[ -f "$ADBLOCK_LIB" ]] || scripts/build-adblock.sh

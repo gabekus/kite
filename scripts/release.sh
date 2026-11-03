@@ -67,6 +67,10 @@ PUBLIC_KEY="$(swift scripts/sparkle-key.swift "$KEY_FILE")"
 PLIST_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' Resources/Info.plist 2>/dev/null || true)"
 [[ "$PUBLIC_KEY" == "$PLIST_KEY" ]] || fail "$KEY_FILE doesn't match SUPublicEDKey in Resources/Info.plist"
 
+# Notarization needs the notarytool profile; check it now rather than after a long build.
+[[ "${KITE_SKIP_NOTARIZE:-}" == 1 ]] || scripts/notarize.sh --check
+export KITE_HARDENED_RUNTIME=1
+
 # Build, ad blocker included (see install-app.sh).
 ADBLOCK_LIB="Sources/KiteAdblock/rust/target/lib/libkite_adblock.a"
 [[ -f "$ADBLOCK_LIB" ]] || scripts/build-adblock.sh

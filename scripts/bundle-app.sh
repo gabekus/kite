@@ -112,14 +112,21 @@ if [[ -z "$SIGN_ID" ]]; then
     SIGN_ID="-"
     echo "note: ad-hoc signing, so the keychain will ask again after each rebuild (run scripts/make-signing-cert.sh once to fix)"
 fi
-# Release builds signed with a Developer ID get the hardened runtime and a secure timestamp, which
-# notarization requires (scripts/notarize.sh). Under the hardened runtime a process only gets JIT,
-# the camera, the microphone and so on through an entitlement, so each helper has Chromium's
-# (Resources/entitlements). Debug builds stay unhardened so a debugger can attach.
+# Builds that get notarized (release.sh and package-share.sh set KITE_HARDENED_RUNTIME=1) are signed
+# with the hardened runtime and a secure timestamp, which notarization requires (scripts/notarize.sh).
+# Under the hardened runtime a process only gets JIT, the camera, the microphone and so on through an
+# entitlement, so each bundle has Arc's set (Resources/entitlements, docs/updates.md). Other builds,
+# Gabe's own install-app.sh one included, stay as they were: no timestamp server needed, debuggable.
 HARDEN=()
-if [[ "$CONFIG" == release && "$SIGN_ID" != "-" ]] \
-    && security find-identity -v -p codesigning | grep -F "$SIGN_ID" | grep -q '"Developer ID Application: '; then
-    HARDEN=(-o runtime --timestamp)
+if [[ "${KITE_HARDENED_RUNTIME:-}" == 1 ]]; then
+    # Read into a variable first: grep -q exits at the first match, and pipefail would see SIGPIPE.
+    IDENTITIES="$(security find-identity -v -p codesigning)"
+    if [[ "$SIGN_ID" != "-" ]] && grep -Fi "$SIGN_ID" <<<"$IDENTITIES" | grep -q '"Developer ID Application: '; then
+        HARDEN=(-o runtime --timestamp)
+        echo "note: hardened runtime and secure timestamps, for notarization"
+    else
+        echo "warning: KITE_HARDENED_RUNTIME=1 but $SIGN_ID isn't a Developer ID Application identity, so not hardened" >&2
+    fi
 fi
 ENTS="$ROOT/Resources/entitlements"
 # sign PATH [ENTITLEMENTS]: entitlements only when hardened (they mean nothing without it).
@@ -128,10 +135,11 @@ sign() {
     if [[ -n "${2:-}" && ${#HARDEN[@]} -gt 0 ]]; then args+=(--entitlements "$2"); fi
     codesign "${args[@]}" "$1"
 }
-sign "$CONTENTS/Helpers/kite" "$ENTS/kite-cli.entitlements"
+sign "$CONTENTS/Helpers/kite"
 for helper in "$CONTENTS/Frameworks/"*.app; do
     [[ -e "$helper" ]] || continue
-    # "Kite Helper (GPU).app" → Helper-GPU.entitlements; "Kite Helper.app" → Helper.entitlements.
+    # "Kite Helper (GPU).app" → Helper-GPU.entitlements; "Kite Helper.app" → Helper.entitlements;
+    # Alerts and Plugin (which CEF 156 never launches) have none.
     kind="$(basename "$helper" .app | sed -n 's/^Kite Helper (\(.*\))$/\1/p')"
     ent="$ENTS/Helper${kind:+-$kind}.entitlements"
     sign "$helper" "$([[ -f "$ent" ]] && echo "$ent")"
