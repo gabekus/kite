@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import KiteCore
 
 /// `kite setup`: starts Claude Code with Kite's setup guide (Resources/SETUP.md, shipped in
 /// Kite.app's Contents/Resources), so Claude walks the user through connecting it. The guide
@@ -55,11 +56,7 @@ enum Setup {
         guard let claude else { return 1 }
 
         let kite = executablePath() ?? "kite"
-        let prompt = """
-            Help me set up Kite, my web browser, on this Mac. Kite's setup guide is at \(guide) and Kite's \
-            command line tool is \(kite). Read the guide first, then take me through it one step at a time: \
-            check what's already done, explain each step briefly, and ask me before you change anything.
-            """
+        let prompt = ClaudeSetupPrompt.pointingAt(guidePath: guide, kite: kite)
         print("Starting Claude Code with Kite's setup guide…")
         let argv = [claude, prompt]
         var cArgs = argv.map { strdup($0) } + [nil]

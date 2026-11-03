@@ -33,9 +33,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let glowView = GlowView(margin: Layout.glowMargin)
     let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
     private let contentClip = ContentClipView()
-    /// View → Show Toolbar's bar across the top of the card.
-    private var toolbarHost: PageToolbarHost!
-    /// The page toolbar's place; the SwiftUI bar is in the window only while it shows.
+    /// View → Show Toolbar's bar's place: the bar is in the window only while it shows, so a hidden bar stops
+    /// following the store.
     private var toolbarContainer: DetachingContainer!
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
@@ -309,33 +308,35 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         )
         sidebar.hover = sidebarHover
         sidebar.miniPlayer = miniPlayerActions
-        var toolbar = PageToolbar(store: store, actions: actions)
-        toolbar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view, overlap: 4) }
         if !isIncognito {
-            toolbar.installApp = { [weak self] _ in self?.showInstallAppDialog() }
             sidebar.installApp = { [weak self] _ in self?.showInstallAppDialog() }
         }
         sidebar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view) }
         #if canImport(CEFBridge)
         // Extensions run in the persistent Chromium profiles only, each profile its own.
+        var extensions: ExtensionsSelection?
         if !isIncognito, pool.engine is ChromiumEngine {
-            let extensions = ExtensionsSelection(ExtensionsModel.shared(engine: pool.currentEngine))
-            extensionsSelection = extensions
-            toolbar.extensions = extensions
-            sidebar.showExtensions = { view in ExtensionsMenu.present(model: extensions.model, from: view) }
-            sidebar.fieldAccessory = PasswordManagerFieldButton(selection: extensions)
+            let selection = ExtensionsSelection(ExtensionsModel.shared(engine: pool.currentEngine))
+            extensions = selection
+            extensionsSelection = selection
+            sidebar.showExtensions = { view in ExtensionsMenu.present(model: selection.model, from: view) }
+            sidebar.fieldAccessory = PasswordManagerFieldButton(selection: selection)
         }
+        let toolbar = PageToolbar(store: store, actions: actions, extensions: extensions)
+        #else
+        let toolbar = PageToolbar(store: store, actions: actions)
         #endif
         sidebarHost = SidebarColumnView(configuration: sidebar)
-        let toolbarHost = PageToolbarHost(rootView: toolbar)
-        // Arc's right-click menu on the bar (Copy URL … Hide Toolbar).
-        toolbarHost.contextMenu = { [weak self, weak toolbarHost] in
-            guard let toolbarHost else { return nil }
-            return self?.toolbarContextMenu(from: toolbarHost)
+        toolbar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view, overlap: 4) }
+        if !isIncognito {
+            toolbar.installApp = { [weak self] _ in self?.showInstallAppDialog() }
         }
-        self.toolbarHost = toolbarHost
-        toolbarHost.sizingOptions = []
-        toolbarContainer = DetachingContainer(host: toolbarHost)
+        // Arc's right-click menu on the bar (Copy URL … Hide Toolbar).
+        toolbar.contextMenu = { [weak self, weak toolbar] in
+            guard let toolbar else { return nil }
+            return self?.toolbarContextMenu(from: toolbar)
+        }
+        toolbarContainer = DetachingContainer(host: toolbar)
         contentClip.toolbar = toolbarContainer
         commandBarHost = CommandBarOverlayView(store: store) { [weak self] suggestion, mode in
             self?.commit(suggestion, mode: mode)
@@ -353,6 +354,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         library.onOpenChange = { [weak self] open in self?.libraryOpened(open) }
         NotificationCenter.default.addObserver(self, selector: #selector(downloadDidStart(_:)), name: DownloadsModel.didStartDownload, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(themeCSSSharingChanged), name: .kiteThemeCSSSharingChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(forgetCommandBarPicks(_:)), name: Self.forgetPicks, object: nil)
 
         var dragStartWidth: CGFloat = 0
         resizeHandle.onBegin = { [weak self] in
@@ -553,6 +555,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     /// Settings › Advanced › "Allow websites to get your theme data" was switched.
     @objc private func themeCSSSharingChanged() { pool.updateThemeCSS() }
+
+    /// Clearing history forgets ⌘T picks in every window, blank windows' own states included.
+    static let forgetPicks = Notification.Name("KiteForgetCommandBarPicks")
+
+    static func forgetPicksEverywhere(since: Date?) {
+        NotificationCenter.default.post(name: forgetPicks, object: since)
+    }
+
+    @objc private func forgetCommandBarPicks(_ note: Notification) {
+        store.mutateWithoutUndo { $0.forgetCommandBarPicks(since: note.object as? Date) }
+    }
 
     // MARK: Sync with the store
 
@@ -844,7 +857,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         switch page {
         case .history:
-            return NSHostingView(rootView: HistoryPageView(store: store.history, open: open))
+            return NSHostingView(rootView: HistoryPageView(store: store.history, open: open, cleared: {
+                Self.forgetPicksEverywhere(since: nil)
+            }))
         case .archive:
             return NSHostingView(rootView: ArchivePageView(store: store, open: open) { [weak self] tabID in
                 self?.restoreArchivedTab(tabID)
@@ -854,7 +869,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let controls = ProfileDataControls(
                 page: { [weak self] in self?.pool.loadedPage(id) },
                 engine: pool.engine(forTab: id),
-                history: store.historyRoot?.forProfile(store.state.profileDirectory(ofTab: id)))
+                history: store.historyRoot?.forProfile(store.state.profileDirectory(ofTab: id)),
+                forgetPicks: { Self.forgetPicksEverywhere(since: $0) })
             return NSHostingView(rootView: SettingsPageView(
                 page: SettingsPage(url) ?? .privacy, controls: controls,
                 navigate: { [weak self] page, toast in self?.showSettingsPage(page, in: id, toast: toast) },

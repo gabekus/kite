@@ -444,3 +444,24 @@ extension History {
         Date(timeIntervalSinceReferenceDate: seconds)
     }
 }
+
+extension BrowserState {
+    /// Adds imported spaces. A space imported before (same ID) is replaced, so importing
+    /// again picks up changes.
+    @discardableResult
+    public mutating func merge(imported: [Space]) -> (added: Int, updated: Int) {
+        defer { syncPinnedURLs() }
+        var added = 0, updated = 0
+        for space in imported {
+            if let index = spaceIndex(space.id) {
+                spaces[index] = space
+                updated += 1
+            } else {
+                spaces.append(space)
+                added += 1
+            }
+        }
+        if let first = imported.first { selectedSpaceID = first.id }
+        return (added, updated)
+    }
+}
