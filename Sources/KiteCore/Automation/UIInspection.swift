@@ -195,7 +195,7 @@ public enum UIInspection: Hashable, Sendable {
                 "format": ["type": "string", "enum": ["png", "jpeg"]],
                 "save": ["type": "string", "description": "capture: also write the image to this path."],
                 "source": ["type": "string", "enum": .array(CaptureSource.allCases.map { .string($0.rawValue) }),
-                           "description": "capture: screen (ScreenCaptureKit, needs Screen Recording), window-server (Kite's own window, no permission), in-process (a view render without blur, Metal or web content), or auto (default: the first that works, never asking for permission)."],
+                           "description": "capture: screen (ScreenCaptureKit: exact, needs Screen Recording), in-process (Kite draws the window: views, the Metal theme and the pages exact, blurred materials unblurred and listed; needs no permission), or auto (default: screen when Screen Recording is granted, else in-process; never asks for permission)."],
                 "points": ["type": "array", "items": point, "description": "pointer: points to move through."],
                 "from": point, "to": point,
                 "hold": ["type": "number", "description": "input drag: seconds to keep the button down at \"to\" before releasing (max 10); returns at once."],

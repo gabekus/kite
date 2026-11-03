@@ -1628,9 +1628,25 @@ extension BrowserWindowController {
 }
 
 extension BrowserWindowController {
-    /// What `ui capture` draws itself when the window server won't give Kite its window's pixels: the material and the
-    /// Metal theme behind everything, and the pages Chromium shows.
-    var inProcessCaptureParts: (material: NSView, theme: ThemeView, pages: [WebPage]) {
-        (materialView, themeView, visiblePages)
+    /// `ui capture`'s in-process render: the window's backdrop, back to front: the material (its unblurred fallback)
+    /// and the Metal theme, drawn again off screen. `drawView` draws a view where it is; `drawImage` an image over a view.
+    func drawCaptureBackdrop(view drawView: (NSView) -> Void, image drawImage: (CGImage, NSView) -> Void) {
+        drawView(materialView)
+        if let image = themeView.snapshot() { drawImage(image, themeView) }
+    }
+
+    /// Runs `body` with the backdrop out of the way, so the views over it draw on their own.
+    func withCaptureBackdropHidden(_ body: () -> Void) {
+        let hidden = (materialView.isHidden, themeView.isHidden)
+        materialView.isHidden = true
+        themeView.isHidden = true
+        body()
+        materialView.isHidden = hidden.0
+        themeView.isHidden = hidden.1
+    }
+
+    /// The pages showing in this window: the tabs on screen and an open link preview's.
+    var capturePages: [WebPage] {
+        (visiblePages + [linkPeek?.page].compactMap { $0 }).filter { $0.view.window === window && !$0.view.isHiddenOrHasHiddenAncestor }
     }
 }

@@ -3,7 +3,7 @@ import MetalKit
 import QuartzCore
 
 /// Must match `ThemeUniforms` in Kite.metal (176 bytes). ThemeShaderGoldenTests builds the
-/// same bytes the same way (draw(in:)); change both together.
+/// same bytes the same way (uniforms(size:progress:)); change both together.
 private struct ThemeUniforms {
     typealias Palette = (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
     var fromLab: Palette
@@ -166,22 +166,23 @@ final class ThemeView: MTKView, MTKViewDelegate {
 
         if transitionStart == nil { clock.stop() }
 
-        guard let pass = currentRenderPassDescriptor,
+        guard pipeline != nil,
+              let pass = currentRenderPassDescriptor,
               let drawable = currentDrawable,
-              let commands = commandQueue.makeCommandBuffer(),
-              encode(into: pass, size: drawableSize, progress: progress, commands: commands)
+              let commands = commandQueue.makeCommandBuffer()
         else { return }
+        let uniforms = uniforms(size: drawableSize, progress: progress)
+        guard encode(into: pass, uniforms: uniforms, commands: commands) else { return }
         commands.present(drawable)
         commands.commit()
-        lastProgress = progress
+        lastDrawn = uniforms
     }
 
-    /// The crossfade's progress in the last frame drawn, for `snapshot`.
-    private var lastProgress: Float = 1
+    /// What the last frame drew, for `snapshot`.
+    private var lastDrawn: ThemeUniforms?
 
-    private func encode(into pass: MTLRenderPassDescriptor, size: CGSize, progress: Float, commands: MTLCommandBuffer) -> Bool {
-        guard let pipeline, let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return false }
-        var uniforms = ThemeUniforms(
+    private func uniforms(size: CGSize, progress: Float) -> ThemeUniforms {
+        ThemeUniforms(
             fromLab: palette(from),
             toLab: palette(to),
             size: SIMD2(Float(size.width), Float(size.height)),
@@ -193,6 +194,11 @@ final class ThemeView: MTKView, MTKViewDelegate {
             fromTint: from.tint,
             toTint: to.tint
         )
+    }
+
+    private func encode(into pass: MTLRenderPassDescriptor, uniforms: ThemeUniforms, commands: MTLCommandBuffer) -> Bool {
+        guard let pipeline, let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return false }
+        var uniforms = uniforms
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<ThemeUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
@@ -218,13 +224,15 @@ final class ThemeView: MTKView, MTKViewDelegate {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].clearColor = clearColor
         pass.colorAttachments[0].storeAction = .store
-        guard encode(into: pass, size: size, progress: interactiveProgress ?? lastProgress, commands: commands) else { return nil }
+        // Exactly the last frame on screen (a covered window's crossfade can stand still part way); before any frame, the
+        // theme as it rests.
+        guard encode(into: pass, uniforms: lastDrawn ?? uniforms(size: size, progress: 1), commands: commands) else { return nil }
         commands.commit()
         commands.waitUntilCompleted()
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         texture.getBytes(&bytes, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
-        let space = (layer as? CAMetalLayer)?.colorspace ?? CGColorSpace(name: CGColorSpace.sRGB)!
-        guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        guard let space = (layer as? CAMetalLayer)?.colorspace ?? CGColorSpace(name: CGColorSpace.sRGB),
+              let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
         return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4, space: space,
                        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
                        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)

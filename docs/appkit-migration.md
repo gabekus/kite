@@ -560,33 +560,39 @@ Not verified: a real pointer (the headless rule); the extensions popover's own c
 
 ## Helix Mc: `kite ui capture` without Screen Recording
 
-`ui capture` takes `source`: `screen` (ScreenCaptureKit), `window-server` (`CGWindowListCreateImage` of Kite's own
-window), `in-process`, or `auto` (the default). On macOS 15 the window server gives an app its own window only with
-Screen Recording too: launched through LaunchServices as `dev.gabek.Kite.dev` with no grant (`open -g`), it returned
-nothing. So the in-process render is what works without the permission: the window's material view, the Metal theme
-rendered again off screen (`ThemeView.snapshot`), the views with those two hidden, then each visible page from
-Chromium's own frame (`Page.captureScreenshot` through the page's DevTools bridge, no port), clipped to its card and
-to the window's continuous 10pt corners. `auto` uses ScreenCaptureKit only when `CGPreflightScreenCaptureAccess()`
-says it's granted (so it never puts a prompt up), and the output names the path that ran.
+`ui capture` takes `source`: `screen` (ScreenCaptureKit), `in-process`, or `auto` (the default). Asking the window
+server for Kite's own window (`CGWindowListCreateImage`) was tried and dropped: on macOS 15 it also needs Screen
+Recording (launched through LaunchServices as `dev.gabek.Kite.dev` with no grant, `open -g`, it returned nothing), and
+with the grant ScreenCaptureKit already works. So the in-process render is what works without the permission:
+1. the window's backdrop: the material view (its unblurred fallback), then the Metal theme drawn again off screen
+   from the last frame's uniforms (`ThemeView.snapshot`);
+2. the views over it;
+3. each visible page (the tabs on screen, an open link preview) from Chromium's own frame (`Page.captureScreenshot`
+   through the page's DevTools bridge, no port; 3 s timeout), clipped to its card's continuous corners;
+4. the views above each page drawn over it again (the card's overlays, the command bar, the Library);
+5. the window's continuous 10pt corners (not in full screen).
+
+`auto` uses ScreenCaptureKit only when `CGPreflightScreenCaptureAccess()` says it's granted (so it never puts a prompt
+up), and `screen` fails rather than asking. The output names the path that ran.
 
 In-process against ScreenCaptureKit, the same window state, 2x (max / mean channel delta):
 
 | State | sidebar | card | page |
 |---|---|---|---|
-| sidebar.json (dark) | 67 / 2.53 | 44 / 0.09 | 8 / 0.00 |
+| sidebar.json (dark) | 67 / 2.53 | 37 / 0.09 | 1 / 0.00 |
 | two-spaces.json (light pink theme) | 67 / 3.44 | 67 / 0.12 | 1 / 0.00 |
-| a rich dark session | 69 / 2.58 | 44 / 0.09 | 0 / 0.00 |
-| a rich light session | 86 / 4.68 | 89 / 0.18 | 0 / 0.00 |
-| favorites | 104 / 2.54 | 44 / 0.09 | 0 / 0.00 |
-| toolbar shown | 69 / 2.62 | 81 / 0.09 | 0 / 0.00 |
-| command bar open | 69 / 2.56 | 232 / 1.16 | 232 / 1.19 |
+| a rich dark session | 69 / 2.57 | 37 / 0.09 | 0 / 0.00 |
+| a rich light session | 86 / 4.68 | 81 / 0.18 | 0 / 0.00 |
+| favorites | 104 / 2.53 | 37 / 0.09 | 0 / 0.00 |
+| toolbar shown | 69 / 2.61 | 81 / 0.09 | 0 / 0.00 |
+| command bar open | 69 / 2.56 | 68 / 1.02 | 68 / 1.03 |
 
 The old view render it replaces: sidebar 65 / 11.56, page 210 / 4.40 (no theme, no page).
 
 What's left:
 - Materials. The window's behind-window material blurs the desktop, which no in-process render can see: the sidebar's
   background reads 2–3 levels off (#282828 against #2B2B28). The command bar's panel blurs the page under it, drawn
-  unblurred here (its 232). The output lists every material's frame so a diff can mark them material-only.
+  unblurred here (the command bar's mean of 1.0). The output lists every material's frame so a diff can mark them material-only.
 - Glyph edges: the space bar's emoji and the favorites tray's dashed border (max 58–67, a few hundred pixels).
 
 ## Checks of what PR 1–6 left unverified

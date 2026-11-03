@@ -51,13 +51,11 @@ public enum ImageFormat: String, Hashable, Sendable {
     public var mimeType: String { "image/\(rawValue)" }
 }
 
-/// Where `ui capture` gets a window's pixels. `screen` is ScreenCaptureKit (exact, needs Screen Recording);
-/// `windowServer` asks the window server for Kite's own window, which needs no permission; `inProcess` draws the
-/// views into a bitmap (no blur, vibrancy, Metal or web content). `auto` takes the first that works, and never
-/// asks for Screen Recording.
+/// Where `ui capture` gets a window's pixels. `screen` is ScreenCaptureKit (exact; needs Screen Recording, and fails
+/// rather than asking); `inProcess` has Kite draw the window itself: the views, the Metal theme and the pages, blurred
+/// materials unblurred. `auto` takes ScreenCaptureKit when Screen Recording is granted, else the in-process render.
 public enum CaptureSource: String, Hashable, Sendable, CaseIterable {
     case auto, screen
-    case windowServer = "window-server"
     case inProcess = "in-process"
 }
 

@@ -6,9 +6,9 @@ import ScreenCaptureKit
 /// web content included), even when the window is covered or Kite is in the background. Colours come back in
 /// sRGB, so hex values compare across captures and apps.
 ///
-/// ScreenCaptureKit needs Screen Recording permission. Without it, the window server still gives Kite its own
-/// window's pixels (an app may always capture its own windows); failing that, the views are drawn into a bitmap,
-/// which misses blur, Metal and web content. The output names the path that ran.
+/// ScreenCaptureKit needs Screen Recording permission (on macOS 15 so does the window server's image of Kite's own
+/// window). Without it, Kite draws the window itself: the views, the Metal theme and the pages from Chromium, with
+/// blurred materials unblurred. The output names the path that ran.
 @MainActor
 enum UICapture {
     /// Full-window images sent to Claude are scaled to this width at most; crops and saved files stay full size.
@@ -71,53 +71,37 @@ enum UICapture {
 
     /// The image, the path that made it, and notes on what that path misses.
     private static func capture(_ window: NSWindow, source: CaptureSource) async throws -> (CGImage, String, [String]) {
-        let viewNote = "This is a view render: no blur, vibrancy, Metal or web content."
-        let composedNote = "Drawn in Kite: blurred materials are their unblurred fallback (what's behind them isn't in it); "
-            + "the theme, the views and the pages are as on screen." + materialNote(window)
         switch source {
         case .screen:
-            return (try await screenCapture(window), "ScreenCaptureKit", [])
-        case .windowServer:
-            guard let image = windowServerCapture(window) else {
-                throw AutomationError(.failed, "The window server didn't give window \(window.windowNumber)'s pixels.")
+            // Asking would put a system prompt on the screen.
+            guard CGPreflightScreenCaptureAccess() else {
+                throw AutomationError(.failed, "Screen Recording isn't granted to the app that launched Kite; "
+                    + "capture with source in-process (kite ui capture --in-process) instead.")
             }
-            return (image, "the window server", [])
+            return (try await screenCapture(window), "ScreenCaptureKit", [])
         case .inProcess:
-            if let image = await composedRender(window) { return (image, "an in-process render", [composedNote]) }
-            guard let image = viewRender(window) else { throw AutomationError(.failed, "Couldn't draw the window's views.") }
-            return (image, "a view render", [viewNote])
+            return try await inProcess(window, notes: [])
         case .auto:
             var notes: [String] = []
-            // Only with Screen Recording already granted: asking would put a system prompt on the screen.
+            // Only with Screen Recording already granted, for the same reason.
             if CGPreflightScreenCaptureAccess() {
                 do { return (try await screenCapture(window), "ScreenCaptureKit", []) } catch {
                     notes.append("ScreenCaptureKit failed (\(error.localizedDescription)).")
                 }
             }
-            if let image = windowServerCapture(window) { return (image, "the window server", notes) }
-            if let image = await composedRender(window) { return (image, "an in-process render", notes + [composedNote]) }
-            guard let image = viewRender(window) else { throw AutomationError(.failed, "No capture path worked.") }
-            return (image, "a view render", notes + [viewNote])
+            return try await inProcess(window, notes: notes)
         }
     }
 
-    /// Kite's own window from the window server, composited as on screen. An app may capture its own windows without
-    /// Screen Recording permission. `CGWindowListCreateImage` is obsoleted in the macOS 15 SDK but still in
-    /// CoreGraphics, so it's looked up at run time.
-    private static func windowServerCapture(_ window: NSWindow) -> CGImage? {
-        typealias CreateImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
-        let create = unsafeBitCast(symbol, to: CreateImage.self)
-        let includingWindow: UInt32 = 1 << 3  // kCGWindowListOptionIncludingWindow
-        let options: UInt32 = (1 << 0) | (1 << 3)  // kCGWindowImageBoundsIgnoreFraming | kCGWindowImageBestResolution
-        guard let image = create(.null, includingWindow, CGWindowID(window.windowNumber), options)?.takeRetainedValue(),
-              image.width > 1, image.height > 1 else { return nil }
-        // In sRGB, as ScreenCaptureKit's captures are.
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return image }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        return context.makeImage() ?? image
+    /// The composed render for a browser window, else (Little Kite, a web app) a plain view render.
+    private static func inProcess(_ window: NSWindow, notes: [String]) async throws -> (CGImage, String, [String]) {
+        if let (image, composeNotes) = await composedRender(window) {
+            let note = "Drawn in Kite: blurred materials are their unblurred fallback (what's behind them isn't in it); "
+                + "the theme, the views and the pages are as on screen." + materialNote(window)
+            return (image, "an in-process render", notes + [note] + composeNotes)
+        }
+        guard let image = viewRender(window) else { throw AutomationError(.failed, "Couldn't draw the window's views.") }
+        return (image, "a view render", notes + ["This is a view render: no blur, vibrancy, Metal or web content."])
     }
 
     private static func screenCapture(_ window: NSWindow) async throws -> CGImage {
@@ -137,21 +121,23 @@ enum UICapture {
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 
-    /// A browser window drawn in Kite, back to front: the material (its unblurred fallback), the Metal theme rendered
-    /// again off screen, the views with those two hidden, then each visible page from Chromium's own frame, clipped
-    /// to its card's rounded corners. Nil for windows that aren't browser windows.
-    private static func composedRender(_ window: NSWindow) async -> CGImage? {
+    /// A browser window drawn in Kite, back to front: the backdrop (the material's unblurred fallback, the Metal theme
+    /// drawn again off screen), the views over it, then each page from Chromium's own frame in its card, with the views
+    /// above that page (overlays in the card, the command bar, the Library) drawn over it again. Nil for windows that
+    /// aren't browser windows; its notes say which pages didn't answer.
+    private static func composedRender(_ window: NSWindow) async -> (CGImage, [String])? {
         guard let controller = window.windowController as? BrowserWindowController,
               let root = window.contentView?.superview ?? window.contentView else { return nil }
-        let (material, theme, pages) = controller.inProcessCaptureParts
         let scale = window.backingScaleFactor
         let size = root.bounds.size
         let width = Int(size.width * scale), height = Int(size.height * scale)
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        // The window's rounded corners stay clear, as in the window server's image of it.
-        if let mask = windowCornerMask(width: width, height: height, scale: scale) {
+        // A titled window's rounded corners stay clear, as in a capture of it; a full-screen window's are square.
+        if !window.styleMask.contains(.fullScreen),
+           let mask = roundedMask(CGRect(x: 0, y: 0, width: width, height: height), radius: windowCornerRadius * scale,
+                                  curve: .continuous, width: width, height: height) {
             context.clip(to: CGRect(x: 0, y: 0, width: width, height: height), mask: mask)
         }
         context.scaleBy(x: scale, y: scale)
@@ -165,36 +151,43 @@ enum UICapture {
             if let image = bitmap.cgImage { context.draw(image, in: place(view.convert(view.bounds, to: root))) }
         }
 
-        draw(material)
-        if let image = theme.snapshot() { context.draw(image, in: place(theme.convert(theme.bounds, to: root))) }
-        // The views over them, without them (a Metal layer draws nothing here, and the material would cover the theme).
-        let wasHidden = (material.isHidden, theme.isHidden)
-        material.isHidden = true
-        theme.isHidden = true
-        draw(root)
-        material.isHidden = wasHidden.0
-        theme.isHidden = wasHidden.1
+        controller.drawCaptureBackdrop(view: draw) { image, view in context.draw(image, in: place(view.convert(view.bounds, to: root))) }
+        controller.withCaptureBackdropHidden { draw(root) }
 
-        for page in pages where page.view.window === window && !page.view.isHiddenOrHasHiddenAncestor {
-            let data: Data? = await withCheckedContinuation { done in
-                page.captureImage(area: page.view.bounds) { done.resume(returning: $0) }
+        var notes: [String] = []
+        for page in controller.capturePages {
+            let data: Data?
+            do {
+                data = try await withTimeout(3, "the page's frame") { done in page.captureImage(area: page.view.bounds) { done(.success($0)) } }
+            } catch {
+                notes.append("A page didn't give its frame within 3 s, so its card is drawn without it.")
+                continue
             }
-            guard let data, let image = NSBitmapImageRep(data: data)?.cgImage else { continue }
-            let frame = page.view.convert(page.view.bounds, to: root)
+            guard page.view.window === window, let data, let image = NSBitmapImageRep(data: data)?.cgImage else { continue }
             context.saveGState()
-            // The card's rounded corners: the nearest ancestor that clips with a corner radius.
+            // The card's rounded corners: the nearest ancestor that clips with a corner radius, in its own corner curve.
             var clip: NSView? = page.view
             while let view = clip, !(view.layer?.masksToBounds == true && (view.layer?.cornerRadius ?? 0) > 0) { clip = view.superview }
             if let clip, let layer = clip.layer {
-                let path = CGPath(roundedRect: place(clip.convert(clip.bounds, to: root)), cornerWidth: layer.cornerRadius,
-                                  cornerHeight: layer.cornerRadius, transform: nil)
-                context.addPath(path)
-                context.clip()
+                let rect = place(clip.convert(clip.bounds, to: root))
+                let device = CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale)
+                if let mask = roundedMask(device, radius: layer.cornerRadius * scale, curve: layer.cornerCurve, width: width, height: height) {
+                    context.clip(to: CGRect(origin: .zero, size: size), mask: mask)
+                }
             }
-            context.draw(image, in: place(frame))
+            context.draw(image, in: place(page.view.convert(page.view.bounds, to: root)))
             context.restoreGState()
+            // What's above the page on screen: its later siblings at every level up to the window.
+            var child: NSView = page.view
+            while let parent = child.superview {
+                if let index = parent.subviews.firstIndex(of: child) {
+                    for view in parent.subviews[(index + 1)...] where !view.isHidden && view.alphaValue > 0 { draw(view) }
+                }
+                if parent === root { break }
+                child = parent
+            }
         }
-        return context.makeImage()
+        return context.makeImage().map { ($0, notes) }
     }
 
     /// The frames of the materials an in-process render can't blur, so a diff can treat them as material-only.
@@ -216,18 +209,19 @@ enum UICapture {
     }
 
     /// A titled window's corner radius on macOS 15 (measured against ScreenCaptureKit's captures: continuous corners).
-    static let windowCornerRadius: CGFloat = 10
+    private static let windowCornerRadius: CGFloat = 10
 
-    /// White inside the window's continuous rounded rect, black outside, at `width`×`height` pixels.
-    private static func windowCornerMask(width: Int, height: Int, scale: CGFloat) -> CGImage? {
+    /// A `width`×`height` pixel mask, white inside `rect` (pixels, bottom-left origin) with rounded corners, black outside.
+    private static func roundedMask(_ rect: CGRect, radius: CGFloat, curve: CALayerCornerCurve, width: Int, height: Int) -> CGImage? {
         guard let gray = CGColorSpace(name: CGColorSpace.linearGray),
               let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: gray,
                                       bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
         let shape = CALayer()
-        shape.frame = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        shape.frame = rect
         shape.backgroundColor = CGColor(gray: 1, alpha: 1)
-        shape.cornerRadius = windowCornerRadius * scale
-        shape.cornerCurve = .continuous
+        shape.cornerRadius = radius
+        shape.cornerCurve = curve
+        context.translateBy(x: rect.minX, y: rect.minY)
         shape.render(in: context)
         return context.makeImage()
     }

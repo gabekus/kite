@@ -39,9 +39,9 @@ import Testing
             == .capture(window: nil, region: nil, format: .png, pixels: [], image: true, save: nil, source: .auto))
         #expect(try ui(["action": "capture", "source": "in-process"])
             == .capture(window: nil, region: nil, format: .png, pixels: [], image: true, save: nil, source: .inProcess))
-        #expect(try ui(["action": "capture", "source": "window-server"])
-            == .capture(window: nil, region: nil, format: .png, pixels: [], image: true, save: nil, source: .windowServer))
-        #expect(throws: (any Error).self) { try ui(["action": "capture", "source": "screen-recording"]) }
+        #expect(try ui(["action": "capture", "source": "screen"])
+            == .capture(window: nil, region: nil, format: .png, pixels: [], image: true, save: nil, source: .screen))
+        #expect(throws: (any Error).self) { try ui(["action": "capture", "source": "window-server"]) }
     }
 
     @Test func pointerSweepsIncludeBothEnds() throws {
