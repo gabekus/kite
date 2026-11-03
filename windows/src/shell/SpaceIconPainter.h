@@ -14,10 +14,13 @@
 //
 // Pictures are read and decoded on a worker thread (nothing that touches the disk runs on the UI
 // thread), which posts `message` to the window when they're ready; the caller's TakeResults moves
-// them in and the views draw again. Until then a picture draws nothing. A file over 1 MB or 2048px
-// on a side isn't decoded (Kite stores 128px PNGs: SpaceIconImages.pixelSize). A file that can't
-// be read shows the placeholder, and is looked for again at a draw 2 s on, as the Mac looks again
-// at its next layout. A --capture run decodes in place, so its one frame has the pictures.
+// them in and the views showing them draw again. Until then a picture draws nothing. Each file is
+// read once for the sizes asked of it together (the bar's and the header's), and keeps at most
+// two sizes. A file over 1 MB or 2048px on a side isn't decoded (Kite stores 128px PNGs:
+// SpaceIconImages.pixelSize). A file that can't be read shows the placeholder, and is looked for
+// again (still showing it) at a draw 2 s on, as the Mac looks again at its next layout; only an
+// answer that changes what shows draws again, so nothing loops while idle. A --capture run
+// decodes in place, so its one frame has the pictures.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -26,6 +29,7 @@
 #include <wrl/client.h>
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -33,6 +37,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "core/SpaceIcon.h"
 #include "shell/Capture.h"
@@ -47,7 +52,8 @@ public:
         bool synchronous = false;      // a --capture run: decode in place
     };
     static std::unique_ptr<SpaceIconPainter> Create(IDWriteFactory* dwrite, HWND window, const Pictures& pictures, std::wstring& error);
-    // Tells the worker to stop; it isn't waited for.
+    // Tells the worker to stop; it isn't waited for (one read of at most 1 MB may still finish
+    // at exit, as Favicons' fetches may).
     ~SpaceIconPainter();
     SpaceIconPainter(const SpaceIconPainter&) = delete;
     SpaceIconPainter& operator=(const SpaceIconPainter&) = delete;
@@ -56,9 +62,9 @@ public:
     // and makes its bitmap for `context`'s device once it's decoded. Call it before the draw that
     // shows it begins; Draw does it too, as a fallback.
     void Prepare(ID2D1DeviceContext* context, const SpaceIconLook& look, float size, float scale);
-    // On `message`: moves the decoded pictures in. True when one arrived that now draws (or
-    // turned out unreadable), so the views draw again.
-    bool TakeResults();
+    // On `message`: moves the decoded pictures in. The names whose drawing changed (a picture
+    // arrived, or turned out unreadable), for the views to draw again.
+    std::set<std::string> TakeResults();
     // Draws `look` (a symbol or a picture; anything else draws nothing) centred on `centre`, in
     // `context`'s points at the window's `scale`, for an icon size `size` (the Mac's 12.5 in the
     // bar, 15 in the header): a symbol in `symbol`, filled with `brush`. `dark` is the
@@ -87,16 +93,19 @@ private:
         bool calibrated = false;
         std::map<char16_t, std::optional<Outline>> outlines;
     };
-    // A picture at one size.
+    // One file, at the sizes (pixels on a side) asked of it.
     struct Picture {
-        enum class State { Loading, Ready, Unreadable } state = State::Loading;
-        bool requested = false;  // queued for the worker
+        struct Sized {
+            Pixels pixels;  // decoded, premultiplied BGRA
+            Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;  // the device's, made from `pixels`
+            Microsoft::WRL::ComPtr<ID2D1BitmapBrush> brush;
+            uint64_t used = 0;
+        };
+        bool unreadable = false;
         std::chrono::steady_clock::time_point unreadableAt;
-        Pixels pixels;  // decoded, premultiplied BGRA
-        Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;  // the device's, made from `pixels`
-        Microsoft::WRL::ComPtr<ID2D1BitmapBrush> brush;
+        std::set<UINT> requested;  // sizes queued for the worker
+        std::map<UINT, Sized> sized;
     };
-    using PictureKey = std::pair<std::string, UINT>;  // name, pixels on a side
 
     // Outlines are their factory's: a context from another (a new device) drops them.
     void UseFactoryOf(ID2D1DeviceContext* context);
@@ -105,13 +114,19 @@ private:
     const Outline* OutlineIn(Face& face, char16_t codePoint);
     void DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SymbolGlyph& glyph, D2D1_POINT_2F centre, float size,
                     D2D1_COLOR_F color);
-    void Arrived(const PictureKey& key, std::optional<Pixels> pixels);
+    // A decode's answer for `name`: `pixels` for each of `sides`, or none when it can't be read.
+    // True when what shows changed.
+    bool Arrived(const std::string& name, const std::vector<UINT>& sides, std::vector<Pixels> pixels);
+    void Request(const std::string& name, UINT side);
 
     Microsoft::WRL::ComPtr<ID2D1Factory> d2d_;
     std::optional<Face> fluent_, mdl2_;
     std::shared_ptr<Shared> shared_;
     bool synchronous_ = false;
-    std::map<PictureKey, Picture> pictures_;
+    Microsoft::WRL::ComPtr<IUnknown> captureWic_;  // a capture's WIC factory (IWICImagingFactory)
+    bool captureCom_ = false;
+    std::map<std::string, Picture> pictures_;
+    uint64_t clock_ = 0;
 };
 
 }  // namespace kite

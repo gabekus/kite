@@ -99,7 +99,7 @@ public:
     // Icons arrived (Favicons::TakeResults): the pages, whose rows wait for them, draw again
     // (the address field has none).
     void InvalidatePages();
-    // On the pictures' message: those that arrived draw, in the bar and the headers.
+    // On the pictures' message: the bar's cells and the headers showing those that arrived draw again.
     void PicturesArrived();
 
     // Draws now if anything changed since the last draw; with `readBack`, always, also

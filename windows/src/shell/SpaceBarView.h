@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -56,8 +57,8 @@ public:
     // SettleSegments), with the pages `built` around `selected`, `pageWidth` apart.
     void Slide(const std::vector<CubicSegment>& segments, double duration, double from, double to, double pageWidth,
                const std::vector<size_t>& built, size_t selected);
-    // Pictures arrived: the cells showing one draw again.
-    void InvalidatePictures();
+    // The pictures `names` arrived (or turned out unreadable): the cells showing them draw again.
+    void InvalidatePictures(const std::set<std::string>& names);
     // At rest: each cell as it is (the slide's end, or a slide cut short), from the next draw.
     void Land();
     // Scrolls the strip by `by` points (positive shows later spaces) when the spaces don't fit.

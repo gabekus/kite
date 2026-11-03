@@ -202,9 +202,9 @@ void SpaceBarView::Slide(const std::vector<CubicSegment>& segments, double durat
     ApplyOpacities();
 }
 
-void SpaceBarView::InvalidatePictures() {
+void SpaceBarView::InvalidatePictures(const std::set<std::string>& names) {
     for (size_t i = 0; i < cells_.size() && i < cellGpu_.size(); ++i) {
-        if (cells_[i].look.kind == SpaceIconLook::Kind::Picture) cellGpu_[i].dirty = true;
+        if (cells_[i].look.kind == SpaceIconLook::Kind::Picture && names.contains(cells_[i].look.text)) cellGpu_[i].dirty = true;
     }
 }
 

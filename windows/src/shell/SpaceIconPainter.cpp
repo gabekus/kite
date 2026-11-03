@@ -62,10 +62,11 @@ std::filesystem::path Verbatim(const std::filesystem::path& folder) {
 }
 
 // `name` in `folder` decoded, its centred square (the Mac's aspect fill; Kite stores them square
-// already, a file put there by hand needn't be) scaled to `side` px; none when it can't be read
-// or is too big.
-std::optional<Pixels> DecodePicture(IWICImagingFactory* wic, const std::filesystem::path& folder, const std::string& name, UINT side) {
-    if (!wic || folder.empty() || name.empty() || side == 0) return std::nullopt;
+// already, a file put there by hand needn't be) scaled to each of `sides` px; none when it can't
+// be read or is too big. The file is read and decoded once for all of them.
+std::optional<std::vector<Pixels>> DecodePicture(IWICImagingFactory* wic, const std::filesystem::path& folder, const std::string& name,
+                                                 const std::vector<UINT>& sides) {
+    if (!wic || folder.empty() || name.empty() || sides.empty()) return std::nullopt;
     const std::filesystem::path file = folder / Widen(name);
     std::error_code error;
     const uintmax_t bytes = std::filesystem::file_size(file, error);
@@ -74,7 +75,7 @@ std::optional<Pixels> DecodePicture(IWICImagingFactory* wic, const std::filesyst
     ComPtr<IWICBitmapFrameDecode> frame;
     ComPtr<IWICFormatConverter> converter;
     ComPtr<IWICBitmapClipper> clipper;
-    ComPtr<IWICBitmapScaler> scaler;
+    ComPtr<IWICBitmap> square;
     UINT width = 0, height = 0;
     if (FAILED(wic->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf())) ||
         FAILED(decoder->GetFrame(0, frame.GetAddressOf())) || FAILED(frame->GetSize(&width, &height)) || !width || !height ||
@@ -83,35 +84,44 @@ std::optional<Pixels> DecodePicture(IWICImagingFactory* wic, const std::filesyst
                                      WICBitmapPaletteTypeMedianCut))) {
         return std::nullopt;
     }
-    const UINT square = std::min(width, height);
-    const WICRect crop{static_cast<INT>((width - square) / 2), static_cast<INT>((height - square) / 2), static_cast<INT>(square),
-                       static_cast<INT>(square)};
+    const UINT side = std::min(width, height);
+    const WICRect crop{static_cast<INT>((width - side) / 2), static_cast<INT>((height - side) / 2), static_cast<INT>(side),
+                       static_cast<INT>(side)};
+    // Decoded once into memory, then scaled to each size from there.
+    if (FAILED(wic->CreateBitmapClipper(clipper.GetAddressOf())) || FAILED(clipper->Initialize(converter.Get(), &crop)) ||
+        FAILED(wic->CreateBitmapFromSource(clipper.Get(), WICBitmapCacheOnLoad, square.GetAddressOf()))) {
+        return std::nullopt;
+    }
     // High-quality cubic where there is one (4 in the SDK's enum, which MinGW's headers don't have
     // yet), Fant before, as the favicons.
     constexpr auto kHighQualityCubic = static_cast<WICBitmapInterpolationMode>(4);
-    if (FAILED(wic->CreateBitmapClipper(clipper.GetAddressOf())) || FAILED(clipper->Initialize(converter.Get(), &crop)) ||
-        FAILED(wic->CreateBitmapScaler(scaler.GetAddressOf())) ||
-        (FAILED(scaler->Initialize(clipper.Get(), side, side, kHighQualityCubic)) &&
-         FAILED(scaler->Initialize(clipper.Get(), side, side, WICBitmapInterpolationModeFant)))) {
-        return std::nullopt;
+    std::vector<Pixels> out;
+    for (UINT to : sides) {
+        ComPtr<IWICBitmapScaler> scaler;
+        if (to == 0 || FAILED(wic->CreateBitmapScaler(scaler.GetAddressOf())) ||
+            (FAILED(scaler->Initialize(square.Get(), to, to, kHighQualityCubic)) &&
+             FAILED(scaler->Initialize(square.Get(), to, to, WICBitmapInterpolationModeFant)))) {
+            return std::nullopt;
+        }
+        Pixels pixels;
+        pixels.width = pixels.height = to;
+        pixels.bgra.resize(static_cast<size_t>(to) * to * 4);
+        if (FAILED(scaler->CopyPixels(nullptr, to * 4, static_cast<UINT>(pixels.bgra.size()), pixels.bgra.data()))) return std::nullopt;
+        out.push_back(std::move(pixels));
     }
-    Pixels pixels;
-    pixels.width = pixels.height = side;
-    pixels.bgra.resize(static_cast<size_t>(side) * side * 4);
-    if (FAILED(scaler->CopyPixels(nullptr, side * 4, static_cast<UINT>(pixels.bgra.size()), pixels.bgra.data()))) return std::nullopt;
-    return pixels;
+    return out;
 }
 
+// One file to read, at every size asked of it while it waited.
 struct Job {
     std::string name;
-    UINT side = 0;
+    std::vector<UINT> sides;
 };
 struct Result {
     std::string name;
-    UINT side = 0;
-    std::optional<Pixels> pixels;
+    std::vector<UINT> sides;
+    std::optional<std::vector<Pixels>> pixels;  // one per side; none when it can't be read
 };
-
 }  // namespace
 
 struct SpaceIconPainter::Shared {
@@ -141,7 +151,7 @@ void Work(const std::shared_ptr<SpaceIconPainter::Shared>& shared) {
             job = std::move(shared->queue.front());
             shared->queue.pop_front();
         }
-        Result result{job.name, job.side, DecodePicture(wic.Get(), shared->folder, job.name, job.side)};
+        Result result{job.name, job.sides, DecodePicture(wic.Get(), shared->folder, job.name, job.sides)};
         std::lock_guard lock(shared->mutex);
         if (shared->stopping) break;
         shared->done.push_back(std::move(result));
@@ -186,12 +196,17 @@ SpaceIconPainter::~SpaceIconPainter() {
         shared_->queue.clear();
     }
     shared_->wake.notify_all();
+    pictures_.clear();
+    captureWic_.Reset();
+    if (captureCom_) CoUninitialize();
 }
 
 void SpaceIconPainter::ReleaseDevice() {
-    for (auto& [key, picture] : pictures_) {
-        picture.bitmap.Reset();
-        picture.brush.Reset();
+    for (auto& [name, picture] : pictures_) {
+        for (auto& [side, sized] : picture.sized) {
+            sized.bitmap.Reset();
+            sized.brush.Reset();
+        }
     }
     for (std::optional<Face>* face : {&fluent_, &mdl2_}) {
         if (*face) (*face)->outlines.clear();
@@ -200,7 +215,10 @@ void SpaceIconPainter::ReleaseDevice() {
 }
 
 void SpaceIconPainter::Retain(const std::set<std::string>& names) {
-    std::erase_if(pictures_, [&](const auto& entry) { return !names.contains(entry.first.first); });
+    std::erase_if(pictures_, [&](const auto& entry) { return !names.contains(entry.first); });
+    // And the reads nobody will show.
+    std::lock_guard lock(shared_->mutex);
+    std::erase_if(shared_->queue, [&](const Job& job) { return !names.contains(job.name); });
 }
 
 void SpaceIconPainter::UseFactoryOf(ID2D1DeviceContext* context) {
@@ -264,71 +282,96 @@ void SpaceIconPainter::DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBr
     context->SetTransform(transform);
 }
 
-void SpaceIconPainter::Arrived(const PictureKey& key, std::optional<Pixels> pixels) {
-    auto it = pictures_.find(key);
-    if (it == pictures_.end() || it->second.state != Picture::State::Loading) return;  // no longer shown
+bool SpaceIconPainter::Arrived(const std::string& name, const std::vector<UINT>& sides, std::vector<Pixels> pixels) {
+    const auto it = pictures_.find(name);
+    if (it == pictures_.end()) return false;  // no longer shown
     Picture& picture = it->second;
-    if (pixels) {
-        picture.state = Picture::State::Ready;
-        picture.pixels = std::move(*pixels);
-    } else {
-        picture.state = Picture::State::Unreadable;
+    for (UINT side : sides) picture.requested.erase(side);
+    if (pixels.empty()) {
+        // Unreadable: the placeholder, which changes nothing when it already showed.
+        const bool changed = !picture.unreadable;
+        picture.unreadable = true;
         picture.unreadableAt = std::chrono::steady_clock::now();
+        return changed;
     }
+    picture.unreadable = false;
+    for (size_t i = 0; i < sides.size() && i < pixels.size(); ++i) {
+        Picture::Sized& sized = picture.sized[sides[i]];
+        sized = Picture::Sized{};
+        sized.pixels = std::move(pixels[i]);
+        sized.used = ++clock_;
+    }
+    // At most two sizes (the bar's and the header's): a DPI change's old ones go.
+    while (picture.sized.size() > 2) {
+        picture.sized.erase(std::min_element(picture.sized.begin(), picture.sized.end(),
+                                             [](const auto& a, const auto& b) { return a.second.used < b.second.used; }));
+    }
+    return true;
 }
 
-bool SpaceIconPainter::TakeResults() {
+std::set<std::string> SpaceIconPainter::TakeResults() {
     std::deque<Result> done;
     {
         std::lock_guard lock(shared_->mutex);
         done.swap(shared_->done);
         shared_->posted = false;
     }
-    bool changed = false;
+    std::set<std::string> changed;
     for (Result& result : done) {
-        const PictureKey key{result.name, result.side};
-        const auto it = pictures_.find(key);
-        changed = changed || (it != pictures_.end() && it->second.state == Picture::State::Loading);
-        Arrived(key, std::move(result.pixels));
+        if (Arrived(result.name, result.sides, result.pixels ? std::move(*result.pixels) : std::vector<Pixels>{})) changed.insert(result.name);
     }
     return changed;
+}
+
+void SpaceIconPainter::Request(const std::string& name, UINT side) {
+    if (synchronous_) {
+        // A capture's one frame: decoded here, with one WIC factory for the run.
+        if (!captureWic_) {
+            captureCom_ = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE));
+            ComPtr<IWICImagingFactory> wic;
+            CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf()));
+            captureWic_ = wic;
+        }
+        ComPtr<IWICImagingFactory> wic;
+        if (captureWic_) captureWic_.As(&wic);
+        auto pixels = DecodePicture(wic.Get(), shared_->folder, name, {side});
+        Arrived(name, {side}, pixels ? std::move(*pixels) : std::vector<Pixels>{});
+        return;
+    }
+    {
+        // Into the file's read if it's still waiting, so the bar's size and the header's are one read.
+        std::lock_guard lock(shared_->mutex);
+        auto job = std::find_if(shared_->queue.begin(), shared_->queue.end(), [&](const Job& j) { return j.name == name; });
+        if (job != shared_->queue.end()) {
+            job->sides.push_back(side);
+            return;
+        }
+        shared_->queue.push_back(Job{name, {side}});
+    }
+    shared_->wake.notify_one();
 }
 
 void SpaceIconPainter::Prepare(ID2D1DeviceContext* context, const SpaceIconLook& look, float size, float scale) {
     if (look.kind != SpaceIconLook::Kind::Picture || look.text.empty()) return;
     UseFactoryOf(context);
-    const PictureKey key{look.text, PictureFrameAt(0, 0, size, scale).pixels};
-    Picture& picture = pictures_[key];
-    if (picture.state == Picture::State::Unreadable && std::chrono::steady_clock::now() - picture.unreadableAt >= kRetryAfter) {
-        picture = Picture{};  // looked for again
+    const UINT side = PictureFrameAt(0, 0, size, scale).pixels;
+    Picture& picture = pictures_[look.text];
+    const auto found = picture.sized.find(side);
+    if (found == picture.sized.end()) {
+        // Asked for once at a time; an unreadable file again 2 s on, its placeholder showing meanwhile.
+        const bool due = !picture.unreadable || std::chrono::steady_clock::now() - picture.unreadableAt >= kRetryAfter;
+        if (due && picture.requested.insert(side).second) Request(look.text, side);
+        return;
     }
-    if (picture.state == Picture::State::Loading && !picture.requested) {
-        picture.requested = true;
-        if (synchronous_) {
-            // A capture's one frame: decoded here, with this thread's COM for the while.
-            const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-            {
-                ComPtr<IWICImagingFactory> wic;
-                CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf()));
-                Arrived(key, DecodePicture(wic.Get(), shared_->folder, key.first, key.second));
-            }
-            if (SUCCEEDED(com)) CoUninitialize();
-        } else {
-            {
-                std::lock_guard lock(shared_->mutex);
-                shared_->queue.push_back(Job{key.first, key.second});
-            }
-            shared_->wake.notify_one();
-        }
-    }
-    if (picture.state != Picture::State::Ready || picture.bitmap) return;
-    // Its pixels are the window's: `pixels` of them is `pixels / scale` points. A failure here
-    // (the device's) is tried again at the next draw.
+    Picture::Sized& sized = found->second;
+    sized.used = ++clock_;
+    if (sized.bitmap) return;
+    // Its pixels are the window's: `side` of them is `side / scale` points. A failure here (the
+    // device's) is tried again at the next draw.
     const float dpi = USER_DEFAULT_SCREEN_DPI * scale;
-    const UINT side = picture.pixels.width;
     ComPtr<ID2D1Bitmap> bitmap;
     ComPtr<ID2D1BitmapBrush> brush;
-    if (SUCCEEDED(context->CreateBitmap(D2D1::SizeU(side, side), picture.pixels.bgra.data(), side * 4,
+    if (SUCCEEDED(context->CreateBitmap(D2D1::SizeU(side, side), sized.pixels.bgra.data(), side * 4,
                                         D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
                                                                dpi, dpi),
                                         bitmap.GetAddressOf())) &&
@@ -336,8 +379,8 @@ void SpaceIconPainter::Prepare(ID2D1DeviceContext* context, const SpaceIconLook&
                                              D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP,
                                                                          D2D1_BITMAP_INTERPOLATION_MODE_LINEAR),
                                              brush.GetAddressOf()))) {
-        picture.bitmap = std::move(bitmap);
-        picture.brush = std::move(brush);
+        sized.bitmap = std::move(bitmap);
+        sized.brush = std::move(brush);
     }
 }
 
@@ -351,18 +394,19 @@ void SpaceIconPainter::Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* b
     if (look.kind != SpaceIconLook::Kind::Picture) return;
     Prepare(context, look, size, scale);
     const PictureFrame frame = PictureFrameAt(centre.x, centre.y, size, scale);
-    const auto it = pictures_.find(PictureKey{look.text, frame.pixels});
-    const bool unreadable = look.text.empty() || (it != pictures_.end() && it->second.state == Picture::State::Unreadable);
-    if (!unreadable) {
-        // Loading draws nothing; ready, the picture.
-        if (it == pictures_.end() || !it->second.brush) return;
-        it->second.brush->SetTransform(D2D1::Matrix3x2F::Translation(frame.left, frame.top));
-        // Circular corners where the Mac's are continuous (a squircle's): within a pixel at these sizes.
-        context->FillRoundedRectangle(
-            D2D1::RoundedRect(D2D1::RectF(frame.left, frame.top, frame.left + frame.side, frame.top + frame.side), frame.radius, frame.radius),
-            it->second.brush.Get());
-        return;
+    const auto it = pictures_.find(look.text);
+    if (it != pictures_.end()) {
+        if (const auto sized = it->second.sized.find(frame.pixels); sized != it->second.sized.end() && sized->second.brush) {
+            sized->second.brush->SetTransform(D2D1::Matrix3x2F::Translation(frame.left, frame.top));
+            // Circular corners where the Mac's are continuous (a squircle's): within a pixel at these sizes.
+            context->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(frame.left, frame.top, frame.left + frame.side, frame.top + frame.side),
+                                                            frame.radius, frame.radius),
+                                          sized->second.brush.Get());
+            return;
+        }
     }
+    // Still loading draws nothing; unreadable (or no valid name), the placeholder.
+    if (!look.text.empty() && (it == pictures_.end() || !it->second.unreadable)) return;
     // The file can't be read: the placeholder.
     if (const auto photo = SymbolGlyphFor("photo")) {
         const float c = dark ? 1.0f : 0.0f;

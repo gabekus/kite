@@ -374,11 +374,15 @@ void SidebarView::InvalidatePages() {
 }
 
 void SidebarView::PicturesArrived() {
-    if (!icons_->TakeResults()) return;
-    bar_->InvalidatePictures();
-    for (auto& [id, page] : pages_) {
-        const auto model = std::find_if(model_.pages.begin(), model_.pages.end(), [&](const PageModel& p) { return p.spaceID == id; });
-        if (model != model_.pages.end() && !model->rows.empty() && model->rows.front().look.kind == SpaceIconLook::Kind::Picture) page.dirty = true;
+    const std::set<std::string> changed = icons_->TakeResults();
+    if (changed.empty()) return;
+    bar_->InvalidatePictures(changed);
+    // The built pages whose header shows one of them.
+    for (const PageModel& model : model_.pages) {
+        const SidebarRow* header = model.rows.empty() ? nullptr : &model.rows.front();
+        if (header && header->look.kind == SpaceIconLook::Kind::Picture && changed.contains(header->look.text)) {
+            if (auto page = pages_.find(model.spaceID); page != pages_.end()) page->second.dirty = true;
+        }
     }
     ScheduleDraw();
 }
