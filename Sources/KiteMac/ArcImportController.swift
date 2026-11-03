@@ -93,8 +93,11 @@ enum ArcImportController {
                 isReading = false
                 showNoSpaces(window)
             case .failure:
-                isReading = false
-                if testMode != nil { return testLog("no StorableSidebar.json that Kite can read") }
+                if testMode != nil {
+                    isReading = false
+                    return testLog("no StorableSidebar.json that Kite can read")
+                }
+                // Still reading as far as a second press goes, until the panel is answered.
                 askForFolder(store: store, window: window)
             }
         }
@@ -111,36 +114,40 @@ enum ArcImportController {
         panel.allowedContentTypes = [.json]
         panel.directoryURL = arcDirectory
         panel.beginSheetModal(for: window) { response in
-            guard response == .OK, let url = panel.url else { return }
             MainActor.assumeIsolated {
-                let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-                var folder = isFolder ? url : url.deletingLastPathComponent()
-                let loaded: Result<(result: ArcImport.Result, backup: Date?), Error>
-                if isFolder {
-                    // Application Support itself: the Arc folder in it.
-                    let inner = folder.appendingPathComponent("Arc", isDirectory: true)
-                    if !looksLikeArc(folder), looksLikeArc(inner) { folder = inner }
-                    loaded = loadSidebar(in: folder)
-                } else {
-                    loaded = readSidebar(file: url).map { ($0, nil) }
-                    // A copy kept elsewhere: the other files still come from Arc's own folder.
-                    if !looksLikeArc(folder) { folder = arcDirectory }
-                }
-                switch loaded {
-                case .success(let found):
-                    isReading = true
-                    confirm(found.result, backup: found.backup, folder: folder, store: store, window: window)
-                case .failure(ArcImport.Failure.noSpaces):
-                    showNoSpaces(window)
-                case .failure where !isFolder:
-                    showError("\(url.lastPathComponent) isn't Arc's sidebar.",
-                              detail: "Choose Arc's folder (Library › Application Support › Arc), or StorableSidebar.json in it.", window: window)
-                case .failure:
-                    showError("That folder has no Arc sidebar Kite can read.",
-                              detail: "Choose Arc's folder (Library › Application Support › Arc), or StorableSidebar.json in it.", window: window)
-                }
+                guard response == .OK, let url = panel.url else { return isReading = false }
+                Task { await load(picked: url, store: store, window: window) }
             }
         }
+    }
+
+    private static func load(picked url: URL, store: BrowserStore, window: NSWindow) async {
+        let isFolder = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        var folder = isFolder ? url : url.deletingLastPathComponent()
+        if isFolder {
+            // Application Support itself: the Arc folder in it.
+            let inner = folder.appendingPathComponent("Arc", isDirectory: true)
+            if !looksLikeArc(folder), looksLikeArc(inner) { folder = inner }
+        } else if !looksLikeArc(folder) {
+            // A copy kept elsewhere: the other files still come from Arc's own folder.
+            folder = arcDirectory
+        }
+        let sidebarFolder = folder
+        let loaded = await Task.detached {
+            isFolder ? loadSidebar(in: sidebarFolder) : readSidebar(file: url).map { ($0, nil) }
+        }.value
+        let help = "Choose Arc's folder (Library › Application Support › Arc), or StorableSidebar.json in it."
+        switch loaded {
+        case .success(let found):
+            return confirm(found.result, backup: found.backup, folder: folder, store: store, window: window)
+        case .failure(ArcImport.Failure.noSpaces):
+            showNoSpaces(window)
+        case .failure where !isFolder:
+            showError("\(url.lastPathComponent) isn't Arc's sidebar.", detail: help, window: window)
+        case .failure:
+            showError("That folder has no Arc sidebar Kite can read.", detail: help, window: window)
+        }
+        isReading = false
     }
 
     private static func showNoSpaces(_ window: NSWindow) {
@@ -149,9 +156,8 @@ enum ArcImportController {
 
     /// Arc's own folder rather than somewhere a copy of one file was kept.
     nonisolated private static func looksLikeArc(_ folder: URL) -> Bool {
-        ["User Data", "StorableSidebar.json"].allSatisfy {
-            FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)
-        }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return names.contains("User Data") && names.contains { $0.hasPrefix("StorableSidebar") }
     }
 
     /// Arc's sidebar from `folder`: StorableSidebar.json, read again a moment later if it was
@@ -163,7 +169,8 @@ enum ArcImportController {
         let candidates = ArcImport.sidebarCandidates(in: names)
         var current = readSidebar(file: folder.appendingPathComponent(candidates[0]))
         for _ in 0..<2 {
-            guard case .failure(let error) = current, (error as? ArcImport.Failure) != .noSpaces else { break }
+            // Only a cut-short file can be different a moment later.
+            guard case .failure(let error) = current, (error as? ArcImport.Failure) == .notJSON else { break }
             Thread.sleep(forTimeInterval: 0.2)
             current = readSidebar(file: folder.appendingPathComponent(candidates[0]))
         }
@@ -174,7 +181,10 @@ enum ArcImportController {
             guard ArcImport.triesBackup(after: error) else { return .failure(error) }
             for name in candidates.dropFirst() {
                 if case .success(let result) = readSidebar(file: folder.appendingPathComponent(name)) {
-                    return .success((result, ArcImport.backupDate(name) ?? .distantPast))
+                    // When its contents were last written, which can be well before the name's date.
+                    let file = folder.appendingPathComponent(name)
+                    let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+                    return .success((result, modified ?? ArcImport.backupDate(name) ?? .distantPast))
                 }
             }
             return .failure(error)
@@ -225,7 +235,7 @@ enum ArcImportController {
         var lines = [summary(result)]
         if let backup {
             let date = backup == .distantPast ? "an earlier date" : backup.formatted(date: .long, time: .shortened)
-            lines.append("Kite couldn't read Arc's current sidebar file, so this is from Arc's latest backup of it, made \(date). Changes since then aren't in it.")
+            lines.append("Kite couldn't read Arc's current sidebar file, so this is from the newest backup of it Kite could read, made \(date). Changes since then aren't in it.")
         }
         let extras = [
             archive.isEmpty ? nil : count(archive.count, "archived tab"),
