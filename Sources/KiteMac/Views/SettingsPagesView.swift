@@ -13,7 +13,7 @@ final class ProfileDataControls {
     private let forgetPicks: (Date?) -> Void
 
     init(page: @escaping () -> WebPage?, engine: WebEngine, history: HistoryStore?,
-         forgetPicks: @escaping (Date?) -> Void = { _ in }) {
+         forgetPicks: @escaping (Date?) -> Void) {
         self.page = page
         self.engine = engine
         self.history = history

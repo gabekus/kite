@@ -400,9 +400,12 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
 
     /// Learns ⌘T picks, so what was typed leads to the same tab next time.
     private func commit(_ item: CommandSuggestion) {
-        if mode == .newTab {
+        // Not in a Site Search, whose query is for the site.
+        if mode == .newTab, site == nil {
             let tab: UUID? = if case .switchTab(let tab) = item { tab.id } else { nil }
-            store.mutateWithoutUndo { $0.recordCommandBarPick(typed: typed, tab: tab) }
+            if store.state.commandBarPickChanges(typed: typed, tab: tab) {
+                store.mutateWithoutUndo { $0.recordCommandBarPick(typed: typed, tab: tab) }
+            }
         }
         onCommit(item)
     }
@@ -419,7 +422,7 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
             // Arc: "Press Shift + Enter for any web search to instantly open the top result."
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true, site == nil, InstantLinksController.isEnabled,
                InstantLinks.applies(to: query) {
-                onCommit(.instantLinks(query.trimmingCharacters(in: .whitespacesAndNewlines)))
+                commit(.instantLinks(query.trimmingCharacters(in: .whitespacesAndNewlines)))
                 return true
             }
             if items.indices.contains(highlighted) { commit(items[highlighted]) }

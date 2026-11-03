@@ -548,6 +548,46 @@ import Testing
         #expect(leader("inbox", state) == nil)
     }
 
+    @Test func anotherPickForTheStartForgetsLongerPicks() {
+        var (state, mail, _) = setup()
+        state.recordCommandBarPick(typed: "gmail inbox", tab: mail)
+        #expect(leader("gmail", state) == mail)
+        state.recordCommandBarPick(typed: "gmail", tab: nil)  // searched instead
+        #expect(leader("gmail", state) == nil)
+        #expect(state.commandBarPicks.isEmpty)
+    }
+
+    @Test func aPickedTabThatMovedOnNoLongerLeads() {
+        var (state, _, inbox) = setup()
+        state.recordCommandBarPick(typed: "inbox", tab: inbox)
+        state.update(tab: inbox) {
+            $0.url = URL(string: "https://news.example.com")
+            $0.title = "News"
+        }
+        #expect(leader("inbox", state) == nil)
+    }
+
+    @Test func picksForClosedTabsAreDropped() {
+        var (state, mail, inbox) = setup()
+        state.recordCommandBarPick(typed: "inbox", tab: inbox)
+        _ = state.close(tab: inbox)
+        state.recordCommandBarPick(typed: "gmail", tab: mail)
+        #expect(state.commandBarPicks.map(\.query) == ["gmail"])
+    }
+
+    @Test func theNextPickIsTriedWhenTheBestIsTheTabYoureOn() {
+        var (state, mail, inbox) = setup()
+        state.recordCommandBarPick(typed: "inbox (", tab: inbox, now: Date(timeIntervalSince1970: 1))
+        state.recordCommandBarPick(typed: "inbox", tab: mail, now: Date(timeIntervalSince1970: 2))
+        state.select(tab: mail)
+        #expect(leader("inbox", state) == inbox)
+        #expect(state.commandBarPickChanges(typed: "inbox", tab: nil))
+        #expect(!state.commandBarPickChanges(typed: "weather", tab: nil))
+        // A pick also leads for URL-like text, above the Open row.
+        state.recordCommandBarPick(typed: "mail.example", tab: inbox)
+        #expect(leader("mail.example", state) == inbox)
+    }
+
     @Test func anExactPickBeatsALongerOne() {
         var (state, mail, inbox) = setup()
         state.recordCommandBarPick(typed: "inbox", tab: inbox, now: Date(timeIntervalSince1970: 1))
@@ -577,7 +617,7 @@ import Testing
         let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
         #expect(decoded.commandBarPicks == state.commandBarPicks)
         state.forgetCommandBarPicks(since: Date(timeIntervalSince1970: 100))
-        #expect(state.commandBarPicks.allSatisfy { $0.at < Date(timeIntervalSince1970: 100) })
+        #expect(state.commandBarPicks.allSatisfy { $0.pickedAt < Date(timeIntervalSince1970: 100) })
         state.forgetCommandBarPicks(since: nil)
         #expect(state.commandBarPicks.isEmpty)
     }

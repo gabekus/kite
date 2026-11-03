@@ -844,7 +844,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         switch page {
         case .history:
-            return NSHostingView(rootView: HistoryPageView(store: store.history, open: open))
+            return NSHostingView(rootView: HistoryPageView(store: store.history, open: open, cleared: { [weak self] in
+                self?.store.mutateWithoutUndo { $0.forgetCommandBarPicks(since: nil) }
+            }))
         case .archive:
             return NSHostingView(rootView: ArchivePageView(store: store, open: open) { [weak self] tabID in
                 self?.restoreArchivedTab(tabID)
