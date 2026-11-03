@@ -426,7 +426,7 @@ final class PasswordManagerFieldButton: NSView {
 }
 
 extension ExtensionsMenu {
-    private static weak var shown: NSPopover?
+    private static var shown: NSPopover?
     private static weak var shownAnchor: NSView?
     /// A transient popover closes on the mouse-down on its own button, before the button acts: that click
     /// mustn't open it again.

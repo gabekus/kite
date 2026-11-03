@@ -538,8 +538,9 @@ CPU, main process, ms/s, two 30 s runs each (main → M2):
 | toolbar shown, idle | 2.05 / 1.67 | 1.96 / 3.07 |
 | toolbar shown, reloading every 0.5 s | 62.51 / 48.94 | 46.88 / 76.86 |
 
-Runs of the same build vary by 30–50%, so there's no measurable change either way. The hidden bar does no work by
-construction now: it follows the store only while it's in the window.
+Runs of the same build vary by 30–50%, so there's no measurable change either way. A hidden bar stops following the store
+(it follows it only while it's in the window); its extension items still re-check, coalesced, when extensions or
+defaults change.
 
 Behaviour, with posted events on a background test Kite (`kite ui input`):
 - back, forward, the address (opens the command bar), Site Controls, the extensions button and a pinned extension
@@ -553,7 +554,7 @@ Differences from main:
 - Right-clicking a pinned extension shows its own menu (Unpin, Turn Off, Options, Remove…), the one SwiftUI's
   `.contextMenu` declared; on main the bar's host took every right-click, so it showed the bar's menu instead.
   Arc's behaviour here isn't measured.
-- The bar follows the store only while it's in the window: a hidden bar (the default) does no work.
+- The bar follows the store only while it's in the window: a hidden bar (the default) doesn't update with it.
 
 Not verified: a real pointer (the headless rule); the extensions popover's own contents (still SwiftUI, unchanged).
 

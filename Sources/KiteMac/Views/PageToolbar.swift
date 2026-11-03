@@ -131,6 +131,9 @@ final class PageToolbar: NSView {
         siteControlsRing.cornerRadius = 4
         siteControlsRing.cornerCurve = .continuous
         siteControlsRing.borderWidth = 1.25
+        siteControlsRing.borderColor = Metrics.enabled.cgColor
+        // Not a view's layer, so no view turns off its implicit animations: the colour changes at once, as SwiftUI's did.
+        siteControlsRing.actions = ["borderColor": NSNull(), "bounds": NSNull(), "position": NSNull()]
         splitView.customImage = PageToolbar.splitViewImage()
         splitView.action = { [weak self] in self?.actions.addSplitView() }
         address.action = { [weak self] in
@@ -209,6 +212,7 @@ final class PageToolbar: NSView {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.updateScheduled = false
+                guard self.window != nil else { return }
                 self.apply(self.readModel())
             }
         }
@@ -373,7 +377,6 @@ final class ToolbarAddressButton: NSView {
         setAccessibilityLabel(text)
         alphaValue = url == nil ? 0 : 1
         needsLayout = true
-        superview?.needsLayout = true
     }
 
     override func layout() {
