@@ -261,9 +261,10 @@ Chromium::~Chromium() {
     // The main window is gone by now (Kite declares this before it), and with it every
     // browser's window; CEF finishes closing them on its thread. Bounded, so a wedged
     // browser can't keep Kite from exiting.
+    // (A browser not yet through DoClose means Kite left early, on an error path.)
     shared_->closing = true;
     for (auto& [id, page] : shared_->pages) {
-        if (page.browser) page.browser->GetHost()->CloseBrowser(true);
+        if (page.browser && !page.closeReady) page.browser->GetHost()->CloseBrowser(true);
     }
     shared_->SignalIfAllClosed();
     WaitForSingleObject(shared_->allClosed, 10'000);
