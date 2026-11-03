@@ -398,7 +398,7 @@ int main(int argc, char** argv) {
             }
             double shown = 0;
             auto [at, failed] = std::from_chars(value.data(), value.data() + value.size(), shown);
-            if (failed != std::errc() || at != value.data() + value.size()) return Usage();
+            if (failed != std::errc() || at != value.data() + value.size() || !std::isfinite(shown)) return Usage();
             live[Id(pair.substr(0, equals))] = shown;
         }
         for (const std::string& id : policy.TabsToEvict(live, keep)) {

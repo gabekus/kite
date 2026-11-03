@@ -169,6 +169,7 @@ function(evict_checks)
   endif()
   expect_exit_early(1 evict six a=1)
   expect_exit_early(1 evict 2 a)
+  expect_exit_early(1 evict 2 a=nan)
 endfunction()
 evict_checks()
 

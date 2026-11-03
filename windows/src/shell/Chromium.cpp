@@ -340,8 +340,6 @@ public:
         CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
         params->SetDictionary("color", color);
         browser->GetHost()->ExecuteDevToolsMethod(0, "Emulation.setDefaultBackgroundColorOverride", params);
-        if (!firstURL_.empty()) browser->GetMainFrame()->LoadURL(firstURL_);
-
         devTools_ = browser->GetHost()->AddDevToolsMessageObserver(this);  // for CheckBusy's answers
         const HWND hwnd = browser->GetHost()->GetWindowHandle();
         if (!FindPageWidget(hwnd)) {
@@ -351,7 +349,10 @@ public:
         // Kite is already closing (the window may be gone, so Attach may never run): closed
         // here, after Attach is queued, so DoClose's note finds the page.
         const bool closed = shared_->closing;
+        // Attach is queued before the first load: LoadURL reports loading at once, and a page's
+        // news reaches its tab only once Attach has made it the tab's page.
         shared_->Post([shared = shared_, id = tabID_, browser, hwnd, closed] { shared->Attach(id, browser, hwnd, closed); });
+        if (!closed && !firstURL_.empty()) browser->GetMainFrame()->LoadURL(firstURL_);
         {
             std::lock_guard lock(shared_->mutex);
             std::erase_if(shared_->popupTabs, [this](const auto& entry) { return entry.second == tabID_; });
