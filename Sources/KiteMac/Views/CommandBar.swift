@@ -237,13 +237,11 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         if let site {
             return site.url(for: text).map { [.siteSearch(site, text, $0)] } ?? []
         }
-        // Arc leaves out the tab you're on, in ⌘T too.
-        let tabs = TabSearch.rank(text, in: state, limit: 5)
-            .filter { $0.tab.id != state.selectedTab?.id }
-            .map { CommandSuggestion.switchTab($0.tab) }
+        let matches = TabSearch.switchTargets(text, in: state)
+        let tabs = matches.map { CommandSuggestion.switchTab($0.tab) }
         let search = CommandSuggestion.search(text, state.searchEngine.searchURL(for: text))
-        // Pages visited before, minus any already open as a tab.
-        let openURLs = Set(TabSearch.rank(text, in: state, limit: 5).compactMap(\.tab.url))
+        // Pages visited before, minus any already shown as a tab.
+        let openURLs = Set(matches.compactMap(\.tab.url))
         let visited = (store.history?.search(text, limit: 6) ?? [])
             .filter { !openURLs.contains($0.url) }
             .prefix(3)
@@ -260,7 +258,10 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         let engine = SearchSuggestions.lingering(engineSuggestions.items, for: text).map {
             CommandSuggestion.search($0, state.searchEngine.searchURL(for: $0))
         }
-        return CommandBarOrder.arrange(query: text, commands: strong, search: search, tabs: tabs,
+        // Arc's ⌘T order; editing the address keeps tabs under the engine's suggestions (not observed in Arc).
+        guard mode == .newTab else { return [search] + engine + tabs + history }
+        return CommandBarOrder.arrange(tabFirst: CommandBarOrder.tabFirst(text, best: matches.first),
+                                       strongCommands: strong, search: search, tabs: tabs,
                                        engine: engine, history: history, weakCommands: weak)
     }
 

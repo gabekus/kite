@@ -6,6 +6,9 @@ public enum TabSearch {
         public var tab: BrowserTab
         public var spaceID: UUID
         public var score: Int
+        /// The match itself, without the current space's lift: 100 title prefix, 80 word prefix, 70 host prefix,
+        /// 60 inside the title, 40 inside the address.
+        public var strength: Int
     }
 
     public static func rank(_ query: String, in state: BrowserState, limit: Int = 6) -> [Match] {
@@ -14,19 +17,25 @@ public enum TabSearch {
 
         var matches: [Match] = []
         for tab in state.favorites {
-            if let score = score(q, tab) { matches.append(Match(tab: tab, spaceID: state.selectedSpaceID, score: score + 5)) }
+            if let score = score(q, tab) { matches.append(Match(tab: tab, spaceID: state.selectedSpaceID, score: score + 5, strength: score)) }
         }
         for space in state.spaces {
             for tab in space.allTabs {
-                guard var score = score(q, tab) else { continue }
-                if space.id == state.selectedSpaceID { score += 5 }
-                matches.append(Match(tab: tab, spaceID: space.id, score: score))
+                guard let strength = score(q, tab) else { continue }
+                let score = space.id == state.selectedSpaceID ? strength + 5 : strength
+                matches.append(Match(tab: tab, spaceID: space.id, score: score, strength: strength))
             }
         }
         matches.sort { a, b in
             a.score != b.score ? a.score > b.score : a.tab.lastActiveAt > b.tab.lastActiveAt
         }
         return Array(matches.prefix(limit))
+    }
+
+    /// The command bar's "Switch to Tab" rows: the best matches, leaving out the tab you're on (Arc does, in ⌘T).
+    public static func switchTargets(_ query: String, in state: BrowserState, limit: Int = 5) -> [Match] {
+        let selected = state.selectedTab?.id
+        return Array(rank(query, in: state, limit: limit + 1).filter { $0.tab.id != selected }.prefix(limit))
     }
 
     static func score(_ q: String, _ tab: BrowserTab) -> Int? {
@@ -44,21 +53,3 @@ public enum TabSearch {
     }
 }
 
-/// Where the command bar's results go for a typed query (not a URL), as Arc 1.171 orders them (observed in
-/// an incognito and a regular window, 3 Nov 2026). Arc ranks with a model it trains on what you pick; this is
-/// the order it showed for tabs and favorites it hadn't learned yet: a matching tab sits right under the typed
-/// search, above the search engine's suggestions, and for a query of up to three characters the best tab
-/// match comes first, so Return switches to it.
-public enum CommandBarOrder {
-    public static let tabFirstMaxLength = 3
-
-    public static func arrange<T>(
-        query: String, commands: [T], search: T, tabs: [T], engine: [T], history: [T], weakCommands: [T]
-    ) -> [T] {
-        let short = query.trimmingCharacters(in: .whitespacesAndNewlines).count <= tabFirstMaxLength
-        if short, let first = tabs.first {
-            return [first] + commands + [search] + tabs.dropFirst() + engine + history + weakCommands
-        }
-        return commands + [search] + tabs + engine + history + weakCommands
-    }
-}
