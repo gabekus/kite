@@ -730,23 +730,3 @@ extension NSEvent.ModifierFlags {
         return m
     }
 }
-
-/// The space's list inside the (still SwiftUI) sidebar column.
-struct SidebarSpaceListRepresentable: NSViewRepresentable {
-    let store: BrowserStore
-    let space: Space
-    let actions: SidebarActions
-    let claude: ClaudeButtonModel
-    let drag: SidebarDragModel
-    let supportsDarkPages: Bool
-
-    func makeNSView(context: Context) -> SidebarSpaceList {
-        SidebarSpaceList(store: store, spaceID: space.id, actions: actions, claude: claude, drag: drag,
-                         supportsDarkPages: supportsDarkPages)
-    }
-
-    func updateNSView(_ view: SidebarSpaceList, context: Context) {
-        view.actions = actions
-        view.supportsDarkPages = supportsDarkPages
-    }
-}
