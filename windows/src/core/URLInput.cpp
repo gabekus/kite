@@ -56,6 +56,7 @@ std::optional<std::string> ExplicitURL(std::string_view text) {
     auto scheme = url::Scheme(text);
     if (!scheme || std::find(kKnownSchemes.begin(), kKnownSchemes.end(), *scheme) == kKnownSchemes.end()) return std::nullopt;
     std::string encoded = PercentEncode(text, IsURLCharacter);
+    if (!url::HasValidAuthority(encoded)) return std::nullopt;
     if (*scheme == "http" || *scheme == "https") {
         auto host = url::Host(encoded);
         if (!host || host->empty()) return std::nullopt;
@@ -63,20 +64,25 @@ std::optional<std::string> ExplicitURL(std::string_view text) {
     return encoded;
 }
 
-// Swift: four dot-separated parts that each parse as UInt8 ("010" and "+1" do).
+// Swift: four dot-separated parts that each parse as UInt8 ("010", "+1" and "-0" do).
 bool IsIPv4(std::string_view host) {
     int octets = 0;
     size_t start = 0;
     while (true) {
         size_t end = host.find('.', start);
         std::string_view part = host.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start);
-        if (!part.empty() && part.front() == '+') part.remove_prefix(1);
+        bool negative = false;
+        if (!part.empty() && (part.front() == '+' || part.front() == '-')) {
+            negative = part.front() == '-';
+            part.remove_prefix(1);
+        }
         if (part.empty() || !std::all_of(part.begin(), part.end(), [](char c) { return c >= '0' && c <= '9'; })) return false;
         unsigned value = 0;
         for (char c : part) {
             value = value * 10 + static_cast<unsigned>(c - '0');
             if (value > 255) return false;
         }
+        if (negative && value != 0) return false;
         ++octets;
         if (end == std::string_view::npos) break;
         start = end + 1;
@@ -84,33 +90,27 @@ bool IsIPv4(std::string_view host) {
     return octets == 4;
 }
 
-// A host of two or more labels made of letters, numbers and hyphens, ending in a top-level
-// domain of two or more letters (or an xn-- punycode one). Works on characters, as Swift
-// does: a combining mark belongs to the character before it, so "é" written e + U+0301 is
-// one letter.
+// Swift's isDomain: two or more labels of letters, numbers and hyphens, ending in a top-level
+// domain of two or more letters (or an xn-- punycode one). Like Swift it works on characters
+// (unicode::Characters) and classifies each by its first scalar, so "é" written e + U+0301 is
+// one letter and a TLD of Hangul jamo is one character.
 bool IsDomain(std::string_view host) {
-    std::vector<std::vector<char32_t>> labels(1);
-    for (char32_t c : unicode::Decode(host)) {
-        if (c == '.') labels.emplace_back();
-        else labels.back().push_back(c);
+    std::vector<std::vector<std::u32string>> labels(1);
+    for (auto& character : unicode::Characters(host)) {
+        if (character == U".") labels.emplace_back();
+        else labels.back().push_back(std::move(character));
     }
     if (labels.size() < 2) return false;
     for (const auto& label : labels) {
-        if (label.empty() || unicode::IsMark(label.front())) return false;
-        for (char32_t c : label) {
-            if (!(unicode::IsLetter(c) || unicode::IsNumber(c) || unicode::IsMark(c) || c == '-')) return false;
+        if (label.empty()) return false;
+        for (const auto& character : label) {
+            if (!(unicode::IsLetter(character[0]) || unicode::IsNumber(character[0]) || character == U"-")) return false;
         }
     }
     const auto& tld = labels.back();
-    size_t characters = 0;
-    bool letters = true;
-    for (char32_t c : tld) {
-        if (unicode::IsMark(c)) continue;
-        ++characters;
-        if (!unicode::IsLetter(c)) letters = false;
-    }
-    bool punycode = tld.size() >= 4 && tld[0] == 'x' && tld[1] == 'n' && tld[2] == '-' && tld[3] == '-';
-    return (letters && characters >= 2) || punycode;
+    bool letters = std::all_of(tld.begin(), tld.end(), [](const std::u32string& c) { return unicode::IsLetter(c[0]); });
+    bool punycode = tld.size() >= 4 && tld[0] == U"x" && tld[1] == U"n" && tld[2] == U"-" && tld[3] == U"-";
+    return (letters && tld.size() >= 2) || punycode;
 }
 
 std::optional<std::string> HostLikeURL(std::string_view text) {
@@ -119,6 +119,7 @@ std::optional<std::string> HostLikeURL(std::string_view text) {
     size_t colon = hostAndPort.find(':');
     std::string host = Lower(hostAndPort.substr(0, colon));
     if (host.empty()) return std::nullopt;
+    // Swift allows any Unicode digits here, but URL(string:) then rejects all but ASCII ones.
     if (colon != std::string_view::npos) {
         std::string_view port = hostAndPort.substr(colon + 1);
         if (port.empty() || port.find(':') != std::string_view::npos ||
@@ -134,7 +135,9 @@ std::optional<std::string> HostLikeURL(std::string_view text) {
     } else {
         return std::nullopt;
     }
-    return scheme + "://" + PercentEncode(text, IsURLCharacter);
+    std::string url = scheme + "://" + PercentEncode(text, IsURLCharacter);
+    if (!url::HasValidAuthority(url)) return std::nullopt;  // a port above 65535
+    return url;
 }
 
 }  // namespace

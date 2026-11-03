@@ -62,9 +62,53 @@ bool IsWhitespace(char32_t c) {
     }
 }
 
-bool IsLetter(char32_t c) { return InTable(kLetters, c); }
-bool IsNumber(char32_t c) { return InTable(kNumbers, c); }
-bool IsMark(char32_t c) { return InTable(kMarks, c); }
+bool IsLetter(char32_t c) { return InTable(kAlphabetic, c); }
+bool IsNumber(char32_t c) { return InTable(kNumeric, c); }
+
+namespace {
+
+enum class Break { Other, CR, LF, Control, Extend, ZWJ, SpacingMark, Prepend, L, V, T, LV, LVT };
+
+Break BreakClass(char32_t c) {
+    if (c == 0x0D) return Break::CR;
+    if (c == 0x0A) return Break::LF;
+    if (c == 0x200D) return Break::ZWJ;
+    if (c >= 0xAC00 && c <= 0xD7A3) return (c - 0xAC00) % 28 == 0 ? Break::LV : Break::LVT;  // Hangul syllables
+    if (InTable(kGcbControl, c)) return Break::Control;
+    if (InTable(kGcbExtend, c)) return Break::Extend;
+    if (InTable(kGcbSpacingMark, c)) return Break::SpacingMark;
+    if (InTable(kGcbPrepend, c)) return Break::Prepend;
+    if (InTable(kGcbL, c)) return Break::L;
+    if (InTable(kGcbV, c)) return Break::V;
+    if (InTable(kGcbT, c)) return Break::T;
+    return Break::Other;
+}
+
+// UAX #29 GB3–GB9b: whether a and b stay in one character.
+bool Joins(Break a, Break b) {
+    if (a == Break::CR && b == Break::LF) return true;                                        // GB3
+    if (a == Break::CR || a == Break::LF || a == Break::Control) return false;                // GB4
+    if (b == Break::CR || b == Break::LF || b == Break::Control) return false;                // GB5
+    if (a == Break::L && (b == Break::L || b == Break::V || b == Break::LV || b == Break::LVT)) return true;  // GB6
+    if ((a == Break::LV || a == Break::V) && (b == Break::V || b == Break::T)) return true;   // GB7
+    if ((a == Break::LVT || a == Break::T) && b == Break::T) return true;                     // GB8
+    if (b == Break::Extend || b == Break::ZWJ || b == Break::SpacingMark) return true;        // GB9, GB9a
+    return a == Break::Prepend;                                                                // GB9b
+}
+
+}  // namespace
+
+std::vector<std::u32string> Characters(std::string_view utf8) {
+    std::vector<std::u32string> out;
+    Break previous = Break::Control;  // never joins: the first scalar starts a character
+    for (char32_t c : Decode(utf8)) {
+        Break current = BreakClass(c);
+        if (out.empty() || !Joins(previous, current)) out.emplace_back();
+        out.back().push_back(c);
+        previous = current;
+    }
+    return out;
+}
 
 std::string_view Trim(std::string_view utf8) {
     size_t start = 0, end = utf8.size();

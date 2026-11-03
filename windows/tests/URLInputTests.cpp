@@ -64,6 +64,23 @@ TEST(classifiesUnicodeLettersLikeSwift) {
     CHECK(!url_input::LooksLikeURL("x.e\xCC\x81"));                  // e + combining acute: still one character
     CHECK(url_input::LooksLikeURL("caf\x65\xCC\x81.fr"));            // a combining mark inside a label
     CHECK(url_input::LooksLikeURL("example.xn--p1ai"));
+    CHECK(url_input::LooksLikeURL("x.\xE2\x85\xBB\xE2\x85\xBB"));       // ⅻⅻ: Roman numerals are Alphabetic
+    CHECK(url_input::LooksLikeURL("\xE2\x93\x9A\xE2\x93\x98.com"));    // ⓚⓘ: circled letters too
+    CHECK(url_input::LooksLikeURL("x.\xED\x95\x9C\xEA\xB5\xAD"));        // .한국
+    CHECK(!url_input::LooksLikeURL("x.\xE1\x84\x80\xE1\x85\xA1\xE1\x86\xA8"));  // one Hangul character as jamo
+}
+
+// Not in the Mac suite: what Foundation's URL(string:) refuses becomes a search, so a URL the
+// Mac can't decode never reaches session.json.
+TEST(rejectsURLsFoundationCannotParse) {
+    for (const char* input : {"https://example.com:abc", "http://[foo]/", "http://[::1", "https://a]b.com/",
+                              "localhost:99999999999999999999", "localhost:65536", "https://example.com:70000/"}) {
+        CHECK(!url_input::LooksLikeURL(input));
+    }
+    CHECK(url_input::LooksLikeURL("http://[::1]:3000/") && url_input::LooksLikeURL("localhost:65535"));
+    CHECK(url_input::LooksLikeURL("http://example.com:/") && url_input::LooksLikeURL("file:///C:/x"));
+    CHECK(url_input::LooksLikeURL("-0.1.2.3"));  // Swift's UInt8("-0") is 0
+    CHECK(!url_input::LooksLikeURL("-1.1.2.3"));
 }
 
 TEST(hostEdgeCasesFollowSwift) {

@@ -21,9 +21,11 @@ TEST(defaultsToLocalAppDataKite) {
     CHECK(std::get<fs::path>(result) == fs::path("C:/Users/x/AppData/Local") / "Kite");
 }
 
-TEST(emptyOverrideCountsAsUnset) {
+// Not the Mac's (an empty path there is the current directory): an empty override must never
+// mean the real profile.
+TEST(refusesAnEmptyOverride) {
     auto result = ResolveSupportDirectory(fs::path(), fs::path("C:/Local"));
-    CHECK(std::holds_alternative<fs::path>(result));
+    CHECK(std::holds_alternative<SupportDirectoryError>(result));
 }
 
 TEST(usesAnOverrideThatIsADirectory) {

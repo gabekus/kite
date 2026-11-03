@@ -9,10 +9,13 @@ their own PR, never as a side effect of a checkpoint.
   call behind `#ifdef _WIN32` is fine, `<windows.h>` isn't), and nothing from
   the shell. It builds and its tests run on any OS. Everything here is
   unit-tested and reachable from `kitecore`.
-- `windows/src/shell`: Win32, DirectComposition, Direct2D/DirectWrite, D3D11,
-  input, and the CEF host. It may use `core`; `core` never uses it.
+- `windows/src/shell`: the app (`main.cpp`'s `wWinMain`), Win32,
+  DirectComposition, Direct2D/DirectWrite, D3D11, input, and the CEF host. It
+  may use `core`; `core` never uses it.
 - `windows/src/cli`: `kitecore`, a thin command layer over `core`. It may use
-  Win32 for process plumbing (UTF-16 arguments) and nothing else.
+  Win32 for process plumbing (UTF-16 arguments, the console's UTF-8 output) and
+  nothing else.
+- `windows/resources`: the process manifest both executables embed.
 - No third-party code except CEF. No WinUI or Windows App SDK, no .NET, no
   Swift runtime, no Boost, no JSON or test libraries. First-party Windows APIs
   (WIC, DirectWrite, UI Automation, WinHTTP) are fine.

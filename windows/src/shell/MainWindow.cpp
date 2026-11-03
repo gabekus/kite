@@ -60,6 +60,12 @@ void MainWindow::SetClientSize(int width, int height) {
     ResizeClient(width, height);
 }
 
+bool MainWindow::HasClientSize(int width, int height) const {
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    return client.right - client.left == Scale(width, dpi_) && client.bottom - client.top == Scale(height, dpi_);
+}
+
 void MainWindow::ResizeClient(int width, int height) {
     RECT rect{0, 0, Scale(width, dpi_), Scale(height, dpi_)};
     AdjustWindowRectExForDpi(&rect, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
@@ -98,13 +104,19 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     }
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
-        info->ptMinTrackSize.x = Scale(kMinimumWidth, dpi_);
-        info->ptMinTrackSize.y = Scale(kMinimumHeight, dpi_);
+        // The minimum is the client area, like the Mac's (whose frame is its content with
+        // .fullSizeContentView); Windows wants the outer size, so add the frame.
+        RECT frame{0, 0, Scale(kMinimumWidth, dpi_), Scale(kMinimumHeight, dpi_)};
+        AdjustWindowRectExForDpi(&frame, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
+                                 static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), dpi_);
+        info->ptMinTrackSize.x = frame.right - frame.left;
+        info->ptMinTrackSize.y = frame.bottom - frame.top;
         if (allowLargerThanScreen_) info->ptMaxTrackSize = {32767, 32767};
         return 0;
     }
     case WM_SETTINGCHANGE:
-        ApplySystemAppearance();
+        // Light/dark changes arrive as "ImmersiveColorSet"; skip the many other broadcasts.
+        if (lParam && lstrcmpW(reinterpret_cast<const wchar_t*>(lParam), L"ImmersiveColorSet") == 0) ApplySystemAppearance();
         break;
     case WM_ENDSESSION:
         if (wParam && onClose) onClose();

@@ -9,11 +9,14 @@
 namespace kite {
 
 std::string NewUuid() {
-    thread_local std::mt19937_64 generator{std::random_device{}()};
+    // Every byte straight from the OS's secure generator (rand_s / BCryptGenRandom on Windows,
+    // /dev/urandom elsewhere). A PRNG seeded from one 32-bit word would give every launch one
+    // of only 2^32 id sequences, and two launches could mint the same ids in one profile.
+    std::random_device device;
     unsigned char bytes[16];
-    for (int i = 0; i < 16; i += 8) {
-        uint64_t r = generator();
-        for (int j = 0; j < 8; ++j) bytes[i + j] = static_cast<unsigned char>(r >> (8 * j));
+    for (int i = 0; i < 16; i += 4) {
+        uint32_t r = static_cast<uint32_t>(device());
+        for (int j = 0; j < 4; ++j) bytes[i + j] = static_cast<unsigned char>(r >> (8 * j));
     }
     bytes[6] = static_cast<unsigned char>((bytes[6] & 0x0F) | 0x40);  // version 4
     bytes[8] = static_cast<unsigned char>((bytes[8] & 0x3F) | 0x80);  // RFC 4122 variant

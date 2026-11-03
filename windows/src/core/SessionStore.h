@@ -27,7 +27,10 @@ public:
         std::optional<std::filesystem::path> quarantinedTo;
     };
     using LoadResult = std::variant<BrowserState, Missing, Error>;
-    LoadResult Load() const;
+    // The app moves an unreadable file aside, like the Mac; tools that only look (kitecore)
+    // leave it where it is.
+    enum class Unreadable { MoveAside, Leave };
+    LoadResult Load(Unreadable unreadable = Unreadable::MoveAside) const;
 
     // Whether saving after this load can't destroy the user's session: false when the file is
     // still there but couldn't be read (locked by antivirus or sync, a failed move aside).

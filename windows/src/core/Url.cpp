@@ -35,4 +35,40 @@ std::optional<std::string> Host(std::string_view url) {
     return std::string(authority.substr(0, authority.find(':')));
 }
 
+bool HasValidAuthority(std::string_view url) {
+    auto scheme = Scheme(url);
+    if (!scheme) return false;
+    std::string_view rest = url.substr(scheme->size() + 1);
+    if (rest.substr(0, 2) != "//") return true;
+    rest.remove_prefix(2);
+    std::string_view authority = rest.substr(0, rest.find_first_of("/?#"));
+    if (size_t at = authority.rfind('@'); at != std::string_view::npos) authority.remove_prefix(at + 1);
+    std::string_view port;
+    if (!authority.empty() && authority.front() == '[') {
+        size_t close = authority.find(']');
+        if (close == std::string_view::npos) return false;
+        std::string_view address = authority.substr(1, close - 1);
+        bool colon = false;
+        for (char c : address) {
+            if (c == ':') colon = true;
+            else if (!std::isxdigit(static_cast<unsigned char>(c)) && c != '.') return false;
+        }
+        if (!colon) return false;
+        std::string_view after = authority.substr(close + 1);
+        if (!after.empty() && after.front() != ':') return false;
+        if (!after.empty()) port = after.substr(1);
+    } else {
+        if (authority.find_first_of("[]") != std::string_view::npos) return false;
+        size_t colon = authority.find(':');
+        if (colon != std::string_view::npos) port = authority.substr(colon + 1);
+    }
+    unsigned value = 0;
+    for (char c : port) {
+        if (c < '0' || c > '9') return false;
+        value = value * 10 + static_cast<unsigned>(c - '0');
+        if (value > 65535) return false;
+    }
+    return true;
+}
+
 }  // namespace kite::url

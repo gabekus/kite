@@ -14,14 +14,16 @@ struct SupportDirectoryError {
 };
 
 // `overridePath` is KITE_SUPPORT_PATH and `localAppData` is %LOCALAPPDATA%, either absent.
-// An override that isn't an existing directory is refused rather than created or ignored:
+// An override that is empty or isn't an existing directory is refused rather than created or
+// ignored:
 // on macOS a bad path once made Chromium fall back to the user's own profile and change it.
 // Without one, the profile is %LOCALAPPDATA%\Kite (where Chrome keeps its User Data too).
 std::variant<std::filesystem::path, SupportDirectoryError> ResolveSupportDirectory(
     const std::optional<std::filesystem::path>& overridePath,
     const std::optional<std::filesystem::path>& localAppData);
 
-// An environment variable as a path (UTF-16 on Windows, so any user name works); empty counts as unset.
+// An environment variable as a path (UTF-16 on Windows, so any user name works); nullopt when
+// it isn't set, an empty path when it's set to nothing.
 std::optional<std::filesystem::path> EnvironmentPath(const char* name);
 
 }  // namespace kite

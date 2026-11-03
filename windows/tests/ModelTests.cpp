@@ -49,11 +49,11 @@ TEST(decodesTheSharedFixture) {
     CHECK(state.Favorites().size() == 1 && state.Favorites()[0].title == "Mail");
     auto pinned = state.spaces[0].Pinned();
     CHECK(pinned.size() == 2);
-    CHECK(pinned[0].DisplayTitle() == "Docs");
-    CHECK(pinned[1].DisplayTitle() == "Renamed");
+    CHECK(pinned[0]->DisplayTitle() == "Docs");
+    CHECK(pinned[1]->DisplayTitle() == "Renamed");
     CHECK(state.spaces[0].tabs[0].DisplayTitle() == "example.com");
     // The second space uses the pre-folders `pinned` array and has no `tint`.
-    CHECK(state.spaces[1].Pinned().size() == 1 && state.spaces[1].Pinned()[0].title == "Old pinned");
+    CHECK(state.spaces[1].Pinned().size() == 1 && state.spaces[1].Pinned()[0]->title == "Old pinned");
     CHECK(state.spaces[1].theme.tint == Theme::kDefaultTint);
     CHECK(state.spaces[1].extra.count("about") == 1);
     CHECK(state.extra.count("adblockAllowedHosts") == 1);
@@ -77,6 +77,15 @@ TEST(pinnedItemsUseSwiftEnumCoding) {
     json::Value item = Encode(state.spaces[0].pinnedItems[1]);
     const json::Value* folder = item.Find("folder");
     CHECK(folder && folder->Find("_0") && folder->Find("_0")->Find("name"));
+}
+
+// Swift's synthesized enum decoding looks only at the case keys.
+TEST(pinnedItemsIgnoreUnknownKeysButNeedOneCase) {
+    auto parse = [](const char* text) { return DecodePinnedItem(std::get<json::Value>(json::Parse(text))); };
+    const char* tab = R"({"tab":{"_0":{"id":"C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F","title":"T","lastActiveAt":0}},"x":1})";
+    CHECK(parse(tab).has_value());
+    CHECK(!parse(R"({"x":1})"));
+    CHECK(!parse(R"({"tab":{"_0":{}},"folder":{"_0":{}}})"));
 }
 
 TEST(themeFloatsAreWrittenLikeSwift) {
@@ -118,9 +127,40 @@ TEST(selectingAFavoriteKeepsTheSpace) {
     state.Select(state.Favorites()[0].id, 100);
     CHECK(state.selectedSpaceID == space);
     CHECK(state.Favorites()[0].lastActiveAt == 100);
-    state.Select(state.spaces[0].Pinned()[1].id, 200);  // inside a folder
+    state.Select(state.spaces[0].Pinned()[1]->id, 200);  // inside a folder
     CHECK(state.selectedSpaceID == state.spaces[0].id);
     CHECK(state.SelectedTab() && state.SelectedTab()->lastActiveAt == 200);
+}
+
+// FolderTests' shape (a folder inside a folder), selecting the innermost tab.
+TEST(selectsATabInANestedFolder) {
+    BrowserState state = BrowserState::MakeDefault(std::nullopt);
+    Tab outerTab, innerTab;
+    outerTab.id = NewUuid();
+    innerTab.id = NewUuid();
+    Folder inner{NewUuid(), "Inner", true, {PinnedItem{innerTab}}, std::nullopt, std::nullopt, {}};
+    Folder outer{NewUuid(), "Reading", true, {PinnedItem{outerTab}, PinnedItem{inner}}, std::nullopt, std::nullopt, {}};
+    state.spaces[1].pinnedItems.push_back(PinnedItem{outer});
+    state.Select(innerTab.id, 300);
+    CHECK(state.selectedSpaceID == state.spaces[1].id);
+    CHECK(state.SelectedTab() && state.SelectedTab()->id == innerTab.id && state.SelectedTab()->lastActiveAt == 300);
+    auto location = state.Location(innerTab.id);
+    CHECK(location && location->section == TabSection::Pinned && location->index == 1);
+    CHECK(state.FindTabByID(outerTab.id) && state.FindTabByID(outerTab.id)->lastActiveAt == 0);
+}
+
+// Every UI-gate state is a session both apps read.
+TEST(helixStatesDecode) {
+    int count = 0;
+    for (const auto& entry : fs::directory_iterator(fs::path(KITE_STATES_DIR))) {
+        if (entry.path().extension() != ".json") continue;
+        auto parsed = json::Parse(ReadFile(entry.path()));
+        CHECK(std::holds_alternative<json::Value>(parsed));
+        const json::Value* state = std::holds_alternative<json::Value>(parsed) ? std::get<json::Value>(parsed).Find("state") : nullptr;
+        CHECK(state && DecodeBrowserState(*state));
+        ++count;
+    }
+    CHECK(count >= 1);
 }
 
 // KiteCoreTests.swift BrowserStateTests.spacesCycleAndSelectionFollowsTab (cycling part)
@@ -140,7 +180,7 @@ TEST(sidebarTabsAreFavoritesPinnedThenUnpinned) {
     BrowserState state = LoadFixture();
     auto tabs = state.SidebarTabs(0);
     CHECK(tabs.size() == 4);
-    CHECK(tabs[0].title == "Mail" && tabs[1].title == "Docs" && tabs[2].title == "Shop" && tabs[3].url == std::optional<std::string>("https://example.com/"));
+    CHECK(tabs[0]->title == "Mail" && tabs[1]->title == "Docs" && tabs[2]->title == "Shop" && tabs[3]->url == std::optional<std::string>("https://example.com/"));
 }
 
 // KiteCoreTests.swift SessionStoreTests.roundTripsAndQuarantinesCorruptFiles
@@ -164,6 +204,17 @@ TEST(sessionRoundTripsAndQuarantinesCorruptFiles) {
         if (entry.path().filename().u8string().find(u8"corrupt") != std::u8string::npos) quarantined = true;
     }
     CHECK(quarantined);
+    fs::remove_all(dir);
+}
+
+TEST(lookingAtAnUnreadableSessionLeavesItInPlace) {
+    fs::path dir = TempDir();
+    SessionStore store(dir / "session.json");
+    std::ofstream(dir / "session.json", std::ios::trunc) << "{nope";
+    auto result = store.Load(SessionStore::Unreadable::Leave);
+    CHECK(std::holds_alternative<SessionStore::Error>(result));
+    CHECK(fs::exists(dir / "session.json"));
+    CHECK(!SessionStore::MaySave(result));
     fs::remove_all(dir);
 }
 
@@ -228,7 +279,7 @@ TEST(favoritesFollowTheSpacesProfile) {
     state.spaces[1].extra["profile"] = json::Value("Profile 1");
     state.spaces[1].selectedTabID = workFavorite.id;
     CHECK(state.SelectedProfileDirectory() == "Profile 1");
-    CHECK(state.SidebarTabs(1).front().title == "Work mail");
+    CHECK(state.SidebarTabs(1).front()->title == "Work mail");
     CHECK(state.SelectedTab() && state.SelectedTab()->id == workFavorite.id);
     CHECK(state.Location(workFavorite.id).has_value());
     // The Default grid isn't visible from a Profile 1 space.

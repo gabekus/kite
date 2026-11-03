@@ -23,7 +23,7 @@ bool SessionStore::MaySave(const LoadResult& result) {
     return true;
 }
 
-SessionStore::LoadResult SessionStore::Load() const {
+SessionStore::LoadResult SessionStore::Load(Unreadable unreadable) const {
     std::error_code error;
     bool exists = fs::exists(file_, error);
     if (error) return Error{"couldn't check " + PathText(file_) + ": " + error.message(), std::nullopt};
@@ -45,6 +45,7 @@ SessionStore::LoadResult SessionStore::Load() const {
         problem = "not a Kite session";
     }
 
+    if (unreadable == Unreadable::Leave) return Error{problem, std::nullopt};
     // Move it aside, like the Mac, so the next save doesn't overwrite it.
     auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     fs::path name = file_.stem();

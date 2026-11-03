@@ -63,8 +63,9 @@ struct PinnedItem {
     bool operator==(const PinnedItem&) const;
 };
 
-// Every tab in sidebar order, depth first.
-std::vector<Tab> TabsIn(const std::vector<PinnedItem>& items);
+// Every tab in sidebar order, depth first. The pointers stay valid until the tree changes.
+std::vector<const Tab*> TabsIn(const std::vector<PinnedItem>& items);
+const Tab* FindTab(const std::vector<PinnedItem>& items, const std::string& id);
 Tab* FindTab(std::vector<PinnedItem>& items, const std::string& id);
 
 struct ThemeColor {
@@ -77,11 +78,13 @@ struct Theme {
     static constexpr size_t kMaxColors = 4;
     static constexpr float kDefaultTint = 0.55f;
 
-    std::vector<ThemeColor> colors;
+    // Never empty (the Mac's Theme.init requires a colour); the first preset's by default.
+    std::vector<ThemeColor> colors{{0.1f, 0.1f, 0.1f}};
     float grain = 0.35f;
     float tint = kDefaultTint;
 
-    // Clamps like the Mac's Theme.init: at most four colors, grain and tint in 0...1.
+    // Clamps like the Mac's Theme.init: at most four colors, grain and tint in 0...1. Where the
+    // Mac traps on no colours, this keeps the default colour.
     static Theme Make(std::vector<ThemeColor> colors, float grain = 0.35f, float tint = kDefaultTint);
     static const std::vector<Theme>& Presets();
     bool operator==(const Theme&) const = default;
@@ -97,9 +100,9 @@ struct Space {
     std::optional<std::string> selectedTabID;
     json::Object extra;  // splits, tabGroups, profile, about
 
-    std::vector<Tab> Pinned() const { return TabsIn(pinnedItems); }
+    std::vector<const Tab*> Pinned() const { return TabsIn(pinnedItems); }
     // Sidebar order: pinned, then unpinned.
-    std::vector<Tab> AllTabs() const;
+    std::vector<const Tab*> AllTabs() const;
     bool operator==(const Space&) const = default;
 };
 
@@ -134,7 +137,7 @@ struct BrowserState {
     const Space& SelectedSpace() const { return spaces[SelectedSpaceIndex()]; }
     const Tab* SelectedTab() const;
     // Favorites, then the space's pinned and unpinned tabs.
-    std::vector<Tab> SidebarTabs(size_t space) const;
+    std::vector<const Tab*> SidebarTabs(size_t space) const;
     std::optional<size_t> SpaceIndex(const std::string& id) const;
     std::optional<TabLocation> Location(const std::string& id) const;
     const Tab* FindTabByID(const std::string& id) const;
@@ -150,8 +153,8 @@ struct BrowserState {
 
     bool operator==(const BrowserState&) const = default;
 
-private:
-    Tab* MutableTab(const TabLocation& location);
+    const Tab* TabAt(const TabLocation& location) const;
+    Tab* TabAt(const TabLocation& location);
 };
 
 // MARK: JSON (the Mac's Codable shapes)

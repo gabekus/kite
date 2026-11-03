@@ -3,6 +3,7 @@
 // character classes Swift's Character offers, from generated tables (UnicodeTables.inc).
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -13,9 +14,14 @@ std::vector<char32_t> Decode(std::string_view utf8);
 
 // Unicode's White_Space property (Swift's Character.isWhitespace / CharacterSet.whitespacesAndNewlines).
 bool IsWhitespace(char32_t c);
-bool IsLetter(char32_t c);  // general category L*
-bool IsNumber(char32_t c);  // general category N*
-bool IsMark(char32_t c);    // general category M*: combines with the character before it
+bool IsLetter(char32_t c);  // Alphabetic: Swift's Character.isLetter on a character starting with c
+bool IsNumber(char32_t c);  // Numeric_Type isn't None: Swift's Character.isNumber, likewise
+
+// Text split into characters the way Swift's String is: extended grapheme clusters (UAX #29),
+// so "e" + U+0301 or a Hangul syllable written as jamo is one character. Follows GB3–GB9b;
+// emoji ZWJ sequences and flag pairs (GB11–GB13) are split, which no caller can tell apart
+// since none of their parts is a letter or a number.
+std::vector<std::u32string> Characters(std::string_view utf8);
 
 // Trims leading and trailing Unicode whitespace.
 std::string_view Trim(std::string_view utf8);

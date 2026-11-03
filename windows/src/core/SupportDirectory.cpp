@@ -9,7 +9,10 @@ namespace kite {
 std::variant<std::filesystem::path, SupportDirectoryError> ResolveSupportDirectory(
     const std::optional<std::filesystem::path>& overridePath,
     const std::optional<std::filesystem::path>& localAppData) {
-    if (overridePath && !overridePath->empty()) {
+    if (overridePath) {
+        // Set but empty (KITE_SUPPORT_PATH= or --profile "$UNSET") is a mistake, not "use the
+        // real profile": a test run must never touch it.
+        if (overridePath->empty()) return SupportDirectoryError{"KITE_SUPPORT_PATH is set but empty"};
         std::error_code error;
         if (!std::filesystem::is_directory(*overridePath, error)) {
             auto text = overridePath->u8string();
@@ -37,7 +40,7 @@ std::optional<std::filesystem::path> EnvironmentPath(const char* name) {
 #else
     const char* value = std::getenv(name);
 #endif
-    if (!value || !*value) return std::nullopt;
+    if (!value) return std::nullopt;
     return std::filesystem::path(value);
 }
 

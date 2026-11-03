@@ -33,8 +33,10 @@ jobs:
       - name: Build
         run: cmake --build windows/build --config Release --parallel
       - name: Unit tests
-        run: ctest --test-dir windows/build -C Release --output-on-failure
+        timeout-minutes: 5
+        run: ctest --test-dir windows/build -C Release --output-on-failure --timeout 120
       - name: Launch checks
+        timeout-minutes: 8  # covers kitecore.exe, which has no per-call timeout
         run: |
           # Runs Kite.exe and returns its exit code, killing it after a minute so a run that
           # never quits fails the step instead of hanging the job.
@@ -68,8 +70,14 @@ jobs:
           $env:KITE_SUPPORT_PATH = $file
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 2) { throw "a file as KITE_SUPPORT_PATH: expected exit 2, got $code" }
+
+          # Test flags never run on the real profile.
+          Remove-Item Env:KITE_SUPPORT_PATH
+          $code = Run-Kite @('--smoke-test')
+          if ($code -ne 1) { throw "--smoke-test without KITE_SUPPORT_PATH: expected exit 1, got $code" }
           $global:LASTEXITCODE = 0
       - name: Capture (Helix UI gate plumbing)
+        timeout-minutes: 3
         run: |
           $profileDir = Join-Path $env:RUNNER_TEMP "kite-capture-$([guid]::NewGuid())"
           New-Item -ItemType Directory -Path $profileDir | Out-Null

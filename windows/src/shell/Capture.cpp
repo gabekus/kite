@@ -16,6 +16,9 @@ constexpr UINT PW_RENDERFULLCONTENT = 0x00000002;
 template <typename T>
 struct ComPtr {
     T* p = nullptr;
+    ComPtr() = default;
+    ComPtr(const ComPtr&) = delete;  // a copy would Release twice
+    ComPtr& operator=(const ComPtr&) = delete;
     ~ComPtr() {
         if (p) p->Release();
     }

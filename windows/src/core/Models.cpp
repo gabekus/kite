@@ -37,29 +37,67 @@ const std::string& PinnedItem::Id() const {
 
 bool PinnedItem::operator==(const PinnedItem& o) const { return value == o.value; }
 
-std::vector<Tab> TabsIn(const std::vector<PinnedItem>& items) {
-    std::vector<Tab> out;
+namespace {
+
+void CollectTabs(const std::vector<PinnedItem>& items, std::vector<const Tab*>& out) {
     for (const auto& item : items) {
-        if (auto* tab = std::get_if<Tab>(&item.value)) {
-            out.push_back(*tab);
-        } else {
-            auto nested = TabsIn(std::get<Folder>(item.value).items);
-            out.insert(out.end(), nested.begin(), nested.end());
-        }
+        if (auto* tab = std::get_if<Tab>(&item.value)) out.push_back(tab);
+        else CollectTabs(std::get<Folder>(item.value).items, out);
     }
-    return out;
 }
 
-Tab* FindTab(std::vector<PinnedItem>& items, const std::string& id) {
+// Shared by the const and non-const overloads, so neither needs a const_cast.
+template <typename Items>
+auto* FindTabIn(Items& items, const std::string& id) {
+    using TabPtr = decltype(std::get_if<Tab>(&items.front().value));
     for (auto& item : items) {
         if (auto* tab = std::get_if<Tab>(&item.value)) {
             if (tab->id == id) return tab;
-        } else if (Tab* found = FindTab(std::get<Folder>(item.value).items, id)) {
+        } else if (TabPtr found = FindTabIn(std::get<Folder>(item.value).items, id)) {
             return found;
         }
     }
-    return nullptr;
+    return TabPtr{nullptr};
 }
+
+// The tab at sidebar position `n` (depth first) of the tree; counts `n` down as it goes.
+template <typename Items>
+auto* NthTabIn(Items& items, size_t& n) {
+    using TabPtr = decltype(std::get_if<Tab>(&items.front().value));
+    for (auto& item : items) {
+        if (auto* tab = std::get_if<Tab>(&item.value)) {
+            if (n == 0) return tab;
+            --n;
+        } else if (TabPtr found = NthTabIn(std::get<Folder>(item.value).items, n)) {
+            return found;
+        }
+    }
+    return TabPtr{nullptr};
+}
+
+// The sidebar index of the tab `id` in the tree, counting tabs before it; nullopt if absent.
+bool IndexOfTab(const std::vector<PinnedItem>& items, const std::string& id, size_t& index) {
+    for (const auto& item : items) {
+        if (auto* tab = std::get_if<Tab>(&item.value)) {
+            if (tab->id == id) return true;
+            ++index;
+        } else if (IndexOfTab(std::get<Folder>(item.value).items, id, index)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+std::vector<const Tab*> TabsIn(const std::vector<PinnedItem>& items) {
+    std::vector<const Tab*> out;
+    CollectTabs(items, out);
+    return out;
+}
+
+const Tab* FindTab(const std::vector<PinnedItem>& items, const std::string& id) { return FindTabIn(items, id); }
+Tab* FindTab(std::vector<PinnedItem>& items, const std::string& id) { return FindTabIn(items, id); }
 
 ThemeColor ThemeColor::FromHex(uint32_t hex) {
     return {static_cast<float>((hex >> 16) & 0xFF) / 255.f, static_cast<float>((hex >> 8) & 0xFF) / 255.f,
@@ -67,6 +105,7 @@ ThemeColor ThemeColor::FromHex(uint32_t hex) {
 }
 
 Theme Theme::Make(std::vector<ThemeColor> colors, float grain, float tint) {
+    if (colors.empty()) colors = Theme{}.colors;
     if (colors.size() > kMaxColors) colors.resize(kMaxColors);
     return Theme{std::move(colors), std::clamp(grain, 0.f, 1.f), std::clamp(tint, 0.f, 1.f)};
 }
@@ -86,9 +125,10 @@ const std::vector<Theme>& Theme::Presets() {
     return presets;
 }
 
-std::vector<Tab> Space::AllTabs() const {
+std::vector<const Tab*> Space::AllTabs() const {
     auto all = Pinned();
-    all.insert(all.end(), tabs.begin(), tabs.end());
+    all.reserve(all.size() + tabs.size());
+    for (const auto& tab : tabs) all.push_back(&tab);
     return all;
 }
 
@@ -143,13 +183,16 @@ const Tab* BrowserState::SelectedTab() const {
     if (!space.selectedTabID) return nullptr;
     auto location = Location(*space.selectedTabID);
     if (!location || (location->space && *location->space != SelectedSpaceIndex())) return nullptr;
-    return FindTabByID(*space.selectedTabID);
+    return TabAt(*location);
 }
 
-std::vector<Tab> BrowserState::SidebarTabs(size_t space) const {
-    auto out = Favorites();
-    auto rest = spaces[space].AllTabs();
-    out.insert(out.end(), rest.begin(), rest.end());
+std::vector<const Tab*> BrowserState::SidebarTabs(size_t space) const {
+    const auto& favorites = Favorites();
+    std::vector<const Tab*> out;
+    out.reserve(favorites.size() + spaces[space].tabs.size());
+    for (const auto& tab : favorites) out.push_back(&tab);
+    CollectTabs(spaces[space].pinnedItems, out);
+    for (const auto& tab : spaces[space].tabs) out.push_back(&tab);
     return out;
 }
 
@@ -166,10 +209,8 @@ std::optional<TabLocation> BrowserState::Location(const std::string& id) const {
         if (favorites[i].id == id) return TabLocation{std::nullopt, TabSection::Favorite, i};
     }
     for (size_t s = 0; s < spaces.size(); ++s) {
-        auto pinned = spaces[s].Pinned();
-        for (size_t i = 0; i < pinned.size(); ++i) {
-            if (pinned[i].id == id) return TabLocation{s, TabSection::Pinned, i};
-        }
+        size_t index = 0;
+        if (IndexOfTab(spaces[s].pinnedItems, id, index)) return TabLocation{s, TabSection::Pinned, index};
         for (size_t i = 0; i < spaces[s].tabs.size(); ++i) {
             if (spaces[s].tabs[i].id == id) return TabLocation{s, TabSection::Unpinned, i};
         }
@@ -179,21 +220,39 @@ std::optional<TabLocation> BrowserState::Location(const std::string& id) const {
 
 const Tab* BrowserState::FindTabByID(const std::string& id) const {
     auto location = Location(id);
-    if (!location) return nullptr;
-    return const_cast<BrowserState*>(this)->MutableTab(*location);
+    return location ? TabAt(*location) : nullptr;
 }
 
-Tab* BrowserState::MutableTab(const TabLocation& location) {
+namespace {
+
+// Shared by both TabAt overloads; `State` is BrowserState or const BrowserState.
+template <typename State>
+auto* TabAtIn(State& state, const TabLocation& location) {
+    using TabPtr = decltype(&state.spaces[0].tabs[0]);
     switch (location.section) {
-    case TabSection::Favorite: return &favoritesByProfile[SelectedProfileDirectory()][location.index];
-    case TabSection::Unpinned: return &spaces[*location.space].tabs[location.index];
+    case TabSection::Favorite: {
+        auto it = state.favoritesByProfile.find(state.SelectedProfileDirectory());
+        if (it == state.favoritesByProfile.end() || location.index >= it->second.size()) return TabPtr{nullptr};
+        return &it->second[location.index];
+    }
+    case TabSection::Unpinned: {
+        if (!location.space || *location.space >= state.spaces.size()) return TabPtr{nullptr};
+        auto& tabs = state.spaces[*location.space].tabs;
+        return location.index < tabs.size() ? &tabs[location.index] : TabPtr{nullptr};
+    }
     case TabSection::Pinned: {
-        auto pinned = spaces[*location.space].Pinned();
-        return FindTab(spaces[*location.space].pinnedItems, pinned[location.index].id);
+        if (!location.space || *location.space >= state.spaces.size()) return TabPtr{nullptr};
+        size_t n = location.index;
+        return static_cast<TabPtr>(NthTabIn(state.spaces[*location.space].pinnedItems, n));
     }
     }
-    return nullptr;
+    return TabPtr{nullptr};
 }
+
+}  // namespace
+
+const Tab* BrowserState::TabAt(const TabLocation& location) const { return TabAtIn(*this, location); }
+Tab* BrowserState::TabAt(const TabLocation& location) { return TabAtIn(*this, location); }
 
 std::string BrowserState::OpenTab(std::optional<std::string> tabURL, std::optional<std::string> spaceID, bool select,
                                   Timestamp now, std::string id) {
@@ -217,7 +276,7 @@ void BrowserState::Select(const std::string& tabID, Timestamp now) {
     size_t s = location->space.value_or(SelectedSpaceIndex());
     spaces[s].selectedTabID = tabID;
     selectedSpaceID = spaces[s].id;
-    MutableTab(*location)->lastActiveAt = now;
+    if (Tab* tab = TabAt(*location)) tab->lastActiveAt = now;
 }
 
 void BrowserState::SelectSpace(const std::string& id) {
@@ -382,15 +441,18 @@ Value Encode(const PinnedItem& item) {
 }
 
 std::optional<PinnedItem> DecodePinnedItem(const Value& v) {
+    // Swift's synthesized enum decoding: exactly one of the case keys, others ignored.
     const Object* o = v.AsObject();
-    if (!o || o->size() != 1) return std::nullopt;
-    const auto& [key, wrapper] = *o->begin();
-    const Value* payload = wrapper.Find("_0");
+    if (!o) return std::nullopt;
+    auto tab = o->find("tab");
+    auto folder = o->find("folder");
+    if ((tab != o->end()) == (folder != o->end())) return std::nullopt;
+    const Value* payload = (tab != o->end() ? tab : folder)->second.Find("_0");
     if (!payload) return std::nullopt;
-    if (key == "tab") {
-        if (auto tab = DecodeTab(*payload)) return PinnedItem{std::move(*tab)};
-    } else if (key == "folder") {
-        if (auto folder = DecodeFolder(*payload)) return PinnedItem{std::move(*folder)};
+    if (tab != o->end()) {
+        if (auto decoded = DecodeTab(*payload)) return PinnedItem{std::move(*decoded)};
+    } else if (auto decoded = DecodeFolder(*payload)) {
+        return PinnedItem{std::move(*decoded)};
     }
     return std::nullopt;
 }

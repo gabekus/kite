@@ -15,6 +15,7 @@
 
 #include <shellapi.h>
 
+#include <charconv>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -70,18 +71,28 @@ OptionValue Option(const std::vector<std::wstring>& args, std::wstring_view name
     return {};
 }
 
-// "1280,800" → {1280, 800}; nullopt when malformed.
-std::optional<std::pair<int, int>> ParseSize(const std::wstring& text) {
-    size_t comma = text.find(L',');
-    if (comma == std::wstring::npos) return std::nullopt;
-    try {
-        int w = std::stoi(text.substr(0, comma));
-        int h = std::stoi(text.substr(comma + 1));
-        if (w < kite::MainWindow::kMinimumWidth || h < kite::MainWindow::kMinimumHeight || w > 16384 || h > 16384) return std::nullopt;
-        return std::make_pair(w, h);
-    } catch (...) {
-        return std::nullopt;
+// One whole decimal number, nothing else ("1280", not " 1280", "+1280" or "1280px").
+std::optional<int> ParseInt(std::wstring_view text) {
+    std::string narrow;
+    for (wchar_t c : text) {
+        if (c < L'0' || c > L'9') return std::nullopt;
+        narrow += static_cast<char>(c);
     }
+    int value = 0;
+    auto [end, ec] = std::from_chars(narrow.data(), narrow.data() + narrow.size(), value);
+    if (narrow.empty() || ec != std::errc() || end != narrow.data() + narrow.size()) return std::nullopt;
+    return value;
+}
+
+// "1280,800" → {1280, 800}; nullopt when malformed.
+std::optional<std::pair<int, int>> ParseSize(std::wstring_view text) {
+    size_t comma = text.find(L',');
+    if (comma == std::wstring_view::npos) return std::nullopt;
+    auto w = ParseInt(text.substr(0, comma));
+    auto h = ParseInt(text.substr(comma + 1));
+    if (!w || !h) return std::nullopt;
+    if (*w < kite::MainWindow::kMinimumWidth || *h < kite::MainWindow::kMinimumHeight || *w > 8192 || *h > 8192) return std::nullopt;
+    return std::make_pair(*w, *h);
 }
 
 constexpr UINT_PTR kSmokeTimer = 1;
@@ -121,7 +132,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return Fail(quiet, L"--window-size takes W,H in points", kUsage);
     }
 
-    auto resolved = kite::ResolveSupportDirectory(kite::EnvironmentPath("KITE_SUPPORT_PATH"), kite::EnvironmentPath("LOCALAPPDATA"));
+    const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
+    // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
+    // capture loads and re-saves the session, which must never be the user's own.
+    if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present) && !supportOverride) {
+        return Fail(quiet, L"--smoke-test, --capture, --window-size and --capture-scale need KITE_SUPPORT_PATH set to a test profile", kUsage);
+    }
+    auto resolved = kite::ResolveSupportDirectory(supportOverride, kite::EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<kite::SupportDirectoryError>(&resolved)) {
         return Fail(quiet, Widen(error->message), kBadSupportDirectory);
     }
@@ -160,8 +177,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     window.onClose = [&] {
         if (maySave) saveError = session.Save(state);
     };
+    // A capture always has a set size (the Mac's default unless asked), even on a small screen.
+    if (capture && !size) size = std::make_pair(kite::MainWindow::kDefaultWidth, kite::MainWindow::kDefaultHeight);
     if (size) window.SetClientSize(size->first, size->second);
-    window.Show(showCommand);
+    // Quiet runs don't take focus, and don't follow a launcher's "start maximized".
+    window.Show(quiet ? SW_SHOWNOACTIVATE : showCommand);
+    if (capture && !window.HasClientSize(size->first, size->second)) {
+        // A capture is compared pixel for pixel with the Mac's, so a window Windows resized
+        // (maximized by the launcher, clamped to 32767 px) would compare the wrong thing.
+        return Fail(quiet, L"the window didn't get the size --capture needs", kCaptureFailed);
+    }
 
     if (smokeTest) {
         SetTimer(window.Handle(), kSmokeTimer, 1000, [](HWND hwnd, UINT, UINT_PTR, DWORD) { PostMessageW(hwnd, WM_CLOSE, 0, 0); });

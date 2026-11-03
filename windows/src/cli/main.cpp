@@ -7,15 +7,21 @@
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]
+//   kitecore [--profile DIR] theme SPACE_ID
 //
-// DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite. Use it on a profile Kite.exe
-// isn't running on: both write session.json.
+// --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
+// an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
+// isn't running on: both write session.json. `theme` prints the space's theme maths
+// (lightness, foreground, glow, accent) as sRGB hex.
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
 
+#include "core/OKLab.h"
 #include "core/SessionStore.h"
 #include "core/SupportDirectory.h"
 #include "core/URLInput.h"
@@ -38,7 +44,8 @@ int Usage() {
         "       kitecore [--profile DIR] resolve TEXT...\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
-        "       kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]\n",
+        "       kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]\n"
+        "       kitecore [--profile DIR] theme SPACE_ID\n",
         stderr);
     return kUsage;
 }
@@ -62,7 +69,7 @@ json::Value Summary(const BrowserState& state) {
     json::Array spaces;
     for (const auto& space : state.spaces) {
         json::Array pinned, tabs;
-        for (const auto& tab : space.Pinned()) pinned.push_back(TabSummary(tab));
+        for (const Tab* tab : space.Pinned()) pinned.push_back(TabSummary(*tab));
         for (const auto& tab : space.tabs) tabs.push_back(TabSummary(tab));
         json::Object o{{"id", space.id}, {"name", space.name}, {"icon", space.icon},
                        {"pinned", json::Value(std::move(pinned))}, {"tabs", json::Value(std::move(tabs))}};
@@ -101,16 +108,43 @@ std::vector<std::string> Arguments(int argc, char** argv) {
 #endif
 }
 
+std::string Hex(const ThemeColor& c) {
+    auto byte = [](float v) { return static_cast<unsigned>(std::lround(std::clamp(v, 0.f, 1.f) * 255.f)); };
+    char buffer[8];
+    std::snprintf(buffer, sizeof(buffer), "#%02X%02X%02X", byte(c.r), byte(c.g), byte(c.b));
+    return buffer;
+}
+
+json::Value ThemeSummary(const Theme& theme) {
+    json::Array colors;
+    for (const auto& c : theme.colors) colors.push_back(json::Value(Hex(c)));
+    auto [glowA, glowB] = GlowColors(theme);
+    return json::Value(json::Object{{"colors", json::Value(std::move(colors))},
+                                    {"lightness", json::Value(static_cast<double>(Lightness(theme)))},
+                                    {"prefersDarkForeground", json::Value(PrefersDarkForeground(theme))},
+                                    {"glow", json::Value(json::Array{json::Value(Hex(glowA)), json::Value(Hex(glowB))})},
+                                    {"accent", json::Value(Hex(Accent(theme)))}});
+}
+
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    // Arguments come in as UTF-16 (CommandLineToArgvW) and are converted to UTF-8; output is
+    // UTF-8 too, which the console shows only once its output code page says so.
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     std::vector<std::string> args = Arguments(argc, argv);
-    // argv is UTF-8: the manifest sets the UTF-8 code page on Windows.
+    // --profile DIR anywhere on the line, so "open x --profile DIR" never writes to the real
+    // profile with "--profile DIR" as part of a search.
     std::optional<std::filesystem::path> profile;
-    if (args.size() >= 2 && args[0] == "--profile") {
-        profile = std::filesystem::path(std::u8string(args[1].begin(), args[1].end()));
-        args.erase(args.begin(), args.begin() + 2);
+    for (size_t i = 0; i < args.size(); ++i) {
+        if (args[i] != "--profile") continue;
+        if (i + 1 >= args.size() || profile) return Usage();
+        profile = std::filesystem::path(std::u8string(args[i + 1].begin(), args[i + 1].end()));
+        args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+        --i;
     }
     if (args.empty()) return Usage();
 
@@ -122,7 +156,8 @@ int main(int argc, char** argv) {
     SessionStore store(std::get<std::filesystem::path>(resolved) / "session.json");
 
     BrowserState state;
-    auto loaded = store.Load();
+    // kitecore never moves the user's session aside: an unreadable one is reported and left.
+    auto loaded = store.Load(SessionStore::Unreadable::Leave);
     if (auto* error = std::get_if<SessionStore::Error>(&loaded)) {
         std::fprintf(stderr, "kitecore: unreadable session: %s\n", error->message.c_str());
         return kLoadFailed;
@@ -136,6 +171,11 @@ int main(int argc, char** argv) {
 
     if (command == "state") {
         std::puts(json::Write(Summary(state)).c_str());
+        return kOk;
+    } else if (command == "theme" && args.size() == 2) {
+        auto space = state.SpaceIndex(Id(args[1]));
+        if (!space) return kNotFound;
+        std::puts(json::Write(ThemeSummary(state.spaces[*space].theme)).c_str());
         return kOk;
     } else if (command == "resolve") {
         auto url = url_input::Resolve(Join(args, 1), engine);
@@ -169,7 +209,7 @@ int main(int argc, char** argv) {
             const std::string id = Id(args[2]);
             if (!state.SpaceIndex(id)) return kNotFound;
             state.SelectSpace(id);
-        } else if (action == "add" && args.size() >= 3) {
+        } else if (action == "add" && args.size() >= 3 && !args[2].empty()) {  // the Mac drops nameless spaces
             const auto& presets = Theme::Presets();
             std::puts(state.AddSpace(args[2], args.size() >= 4 ? args[3] : "", presets[state.spaces.size() % presets.size()]).c_str());
         } else {

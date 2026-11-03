@@ -354,9 +354,19 @@ void WriteValue(std::string& out, const Value& value) {
     } else if (auto b = value.AsBool()) {
         out += *b ? "true" : "false";
     } else if (auto d = value.AsNumber()) {
+        // Whole numbers (ids, counts, PR numbers) as integers, like JSONEncoder writes an Int:
+        // shortest to_chars would write 1000000 as "1e+06". Everything else shortest round-trip.
         char buffer[32];
-        auto [end, ec] = std::to_chars(buffer, buffer + sizeof(buffer), *d);
-        out.append(buffer, ec == std::errc() ? end : buffer);
+        std::to_chars_result result;
+        if (!std::isfinite(*d)) {
+            out += "null";  // not JSON; the Mac's encoder refuses these, and nothing here makes one
+            return;
+        } else if (*d == std::trunc(*d) && std::fabs(*d) < 9007199254740992.0) {  // 2^53
+            result = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<long long>(*d));
+        } else {
+            result = std::to_chars(buffer, buffer + sizeof(buffer), *d);
+        }
+        out.append(buffer, result.ec == std::errc() ? result.ptr : buffer);
     } else if (auto* s = value.AsString()) {
         WriteString(out, *s);
     } else if (auto* a = value.AsArray()) {

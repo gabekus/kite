@@ -30,6 +30,8 @@ public:
     // Client area in DIPs (96 DPI points), scaled to the window's monitor. Can be larger
     // than the screen, so a capture has the same size on every machine.
     void SetClientSize(int width, int height);
+    // Whether the client area is exactly width × height points at the window's scale.
+    bool HasClientSize(int width, int height) const;
 
     // Runs before the window is destroyed (WM_CLOSE), and at logoff or shutdown
     // (WM_ENDSESSION), e.g. to save the session.

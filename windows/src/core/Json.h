@@ -2,8 +2,9 @@
 // A small JSON value, parser and writer: enough for session.json and the other files
 // Kite shares with the Mac app, with no third-party dependency.
 //
-// Objects keep their members in order and the writer sorts keys, like the Mac's
-// JSONEncoder(.sortedKeys), so files diff cleanly between the two apps.
+// Objects keep their members sorted by key and the writer emits them that way, like the Mac's
+// JSONEncoder(.sortedKeys). Output is equivalent to the Mac's, not byte-identical: Swift
+// also escapes "/" as "\/".
 
 #include <cstdint>
 #include <map>

@@ -33,6 +33,22 @@ TEST(clampsColorCount) {
     CHECK(theme.colors.size() == Theme::kMaxColors);
 }
 
+// KiteCoreTests.swift ThemeTests.tintRoundTripsAndClamps
+TEST(tintRoundTripsAndClamps) {
+    Theme theme = Theme::Make({ThemeColor::FromHex(0x3A4BC0)}, 0.35f, 1.4f);
+    CHECK(theme.tint == 1);
+    auto decoded = DecodeTheme(Encode(theme));
+    CHECK(decoded && *decoded == theme);
+}
+
+// Not in the Mac suite (Swift traps): a theme always keeps a colour, so the glow and accent
+// never read an empty palette.
+TEST(themeNeverHasNoColors) {
+    CHECK(Theme{}.colors.size() == 1);
+    CHECK(Theme::Make({}).colors.size() == 1);
+    CHECK(Accent(Theme::Make({})) == Accent(Theme{}));
+}
+
 // Not in the Mac suite: the glow and accent stay in gamut and in their lightness bands.
 TEST(glowAndAccentStayInRange) {
     for (const auto& theme : Theme::Presets()) {

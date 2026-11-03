@@ -60,6 +60,7 @@ std::pair<ThemeColor, ThemeColor> GlowColors(const Theme& theme) {
         lab.b *= 1.2f;
         return oklab::ToSRGB(lab);
     };
+    if (theme.colors.empty()) return {};  // Theme keeps at least one; a hand-built one may not
     const ThemeColor& first = theme.colors.front();
     const bool several = theme.colors.size() > 1;
     const ThemeColor& last = several ? theme.colors.back() : first;
@@ -67,6 +68,7 @@ std::pair<ThemeColor, ThemeColor> GlowColors(const Theme& theme) {
 }
 
 ThemeColor Accent(const Theme& theme) {
+    if (theme.colors.empty()) return {};
     Lab best = oklab::FromSRGB(theme.colors.front());
     float bestChroma = std::hypot(best.a, best.b);
     for (const auto& c : theme.colors) {

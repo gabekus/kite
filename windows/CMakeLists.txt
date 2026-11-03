@@ -47,7 +47,7 @@ target_link_libraries(kitecore PRIVATE KiteCoreWin)
 
 if(WIN32)
   add_executable(Kite WIN32
-    src/main.cpp
+    src/shell/main.cpp
     src/shell/Capture.cpp
     src/shell/MainWindow.cpp
     src/shell/SystemAppearance.cpp
@@ -56,11 +56,11 @@ if(WIN32)
   target_link_libraries(kitecore PRIVATE shell32)
   # Both get Kite.manifest: per-monitor DPI v2, the UTF-8 code page, long paths.
   if(MSVC)
-    target_sources(Kite PRIVATE src/shell/Kite.manifest)
-    target_sources(kitecore PRIVATE src/shell/Kite.manifest)
+    target_sources(Kite PRIVATE resources/Kite.manifest)
+    target_sources(kitecore PRIVATE resources/Kite.manifest)
   else()
-    target_sources(Kite PRIVATE src/shell/Kite.rc)
-    target_sources(kitecore PRIVATE src/shell/Kite.rc)
+    target_sources(Kite PRIVATE resources/Kite.rc)
+    target_sources(kitecore PRIVATE resources/Kite.rc)
     target_link_options(Kite PRIVATE -municode)
   endif()
 endif()
@@ -77,7 +77,8 @@ add_executable(KiteCoreTests
 )
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
 # The session fixture shared with the Mac test suite.
-target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures")
+target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
+                                               KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
 add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test

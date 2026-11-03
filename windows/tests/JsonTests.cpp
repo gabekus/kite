@@ -53,6 +53,14 @@ TEST(roundTripsNumbersExactly) {
     }
 }
 
+TEST(writesWholeNumbersAsIntegersLikeJSONEncoder) {
+    CHECK(Write(Value(1000000.0)) == "1000000");
+    CHECK(Write(Value(100000.0)) == "100000");
+    CHECK(Write(Value(-3.0)) == "-3");
+    CHECK(Write(Value(0.5)) == "0.5");
+    CHECK(Write(Value(1e300)) == "1e+300");
+}
+
 TEST(copiesAreIndependent) {
     Value a = P(R"({"x":[1]})");
     Value b = a;
