@@ -469,8 +469,11 @@ class KCClient : public CefClient,
         KCBrowser* owner = owner_;
         id<KCBrowserDelegate> delegate = owner.delegate;
         if (!delegate) return true;
-        // A target=_blank link (or ⇧-click) the delegate opens in Arc's Peek card: no popup.
-        bool linkClick = target_disposition == CEF_WOD_NEW_FOREGROUND_TAB || target_disposition == CEF_WOD_NEW_WINDOW;
+        // A target=_blank link (or ⇧-click) the delegate opens in Arc's Peek card: no popup. Not a named
+        // window (window.open(url, "AppleAuthentication")): a Peek has no window.opener, so the result of
+        // a sign-in popup would never reach the page.
+        bool linkClick = (target_disposition == CEF_WOD_NEW_FOREGROUND_TAB || target_disposition == CEF_WOD_NEW_WINDOW) &&
+                         target_frame_name.empty();
         if (user_gesture && linkClick && AskLinkPeek(owner, target_url, target_disposition == CEF_WOD_NEW_WINDOW)) return true;
         // Host the popup in a Kite tab instead of a separate native window.
         KCBrowser* popup = [[KCBrowser alloc] initPopupWithDelegate:delegate];
