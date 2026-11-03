@@ -81,7 +81,7 @@ final class SidebarHeaderView: NSView {
             store.showCommandBar(self.store.state.selectedTab == nil ? .newTab : .editCurrent)
         }
         field.toggleDark = {
-            // Read before mutating: reading the store's state inside its own mutation is a Swift exclusivity crash.
+            // Read first: reading store.state inside store.mutate is an exclusivity trap.
             let url = store.state.selectedTab?.url
             store.mutate { $0.toggleDarkPage(for: url) }
         }
