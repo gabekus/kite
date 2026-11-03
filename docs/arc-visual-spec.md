@@ -190,7 +190,7 @@ URL, so the current page under another fragment still shows.
 Site Search completion accepted with → (Arc 1.171 incognito, 3 Nov 2026, AX): "you" showed "youtube.com" with
 "tube.com" selected; → then "/" gave "youtube.com/"; typing "x" without → gave "youx". Kite matches: anything typed
 after the completion instead of over it accepts it (`CommandBar.autocomplete(to:)`), so → does, and so do ⌥→, ^E
-and a click past the end (those three not observed in Arc). End scrolls and leaves it selected; ⌘→ is Kite's hidden
+and a click past the end (those three not observed in Arc; after a click the rows follow on the next key). End scrolls and leaves it selected; ⌘→ is Kite's hidden
 Go Forward shortcut, so it doesn't reach the field (checked with `kite ui`).
 
 ## Arc vs Kite

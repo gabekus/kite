@@ -369,6 +369,8 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
     /// Arc completes a Site Search shortcut inline as you type ("you" → "you" + selected "tube.com"), so Return
     /// opens the site and Tab searches it. Only when typing forward: deleting the completion leaves what was typed.
     private func autocomplete(to new: String) {
+        // Not mid-composition (an input method's marked text): setting the text would break it.
+        if (field.currentEditor() as? NSTextView)?.hasMarkedText() == true { return }
         if new == completed { return }
         if let completed, new.hasPrefix(completed) {
             // Typed after the completion rather than over it: the caret had left it (→, ⌥→, a click), so it's
@@ -404,11 +406,13 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         case #selector(NSResponder.moveDown(_:)):
             highlighted = min(highlighted + 1, max(items.count - 1, 0))
             return true
-        case #selector(NSResponder.moveRight(_:)), #selector(NSResponder.moveToRightEndOfLine(_:)):
-            // → accepts the inline completion at once, so the rows follow it before the next key.
+        case #selector(NSResponder.moveRight(_:)), #selector(NSResponder.moveWordRight(_:)),
+             #selector(NSResponder.moveForward(_:)), #selector(NSResponder.moveToEndOfParagraph(_:)):
+            // →, ⌥→, ^F and ^E accept the inline completion at once, so the rows follow it before the next key.
             if let completed {
                 typed = completed
                 self.completed = nil
+                highlighted = 0
                 refresh()
             }
             return false
