@@ -102,7 +102,11 @@ void FrameClock::Run() {
         // mean the wait returned without one (no display, a locked session): then a frame is
         // Sleep's ~16 ms.
         if (!compositorClock || compositorClock(0, nullptr, 100) != WAIT_OBJECT_0) {
+            // DwmFlush returns at once when DWM has nothing outstanding: no faster than a
+            // millisecond, so the thread never spins.
+            const double flushed = Now();
             if (FAILED(DwmFlush())) Sleep(16);
+            else if (Now() - flushed < 0.001) Sleep(1);
         }
         if (Now() - lastFrame < 0.00025) Sleep(16);
         lastFrame = Now();

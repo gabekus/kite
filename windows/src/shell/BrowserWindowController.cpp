@@ -30,7 +30,7 @@ constexpr UINT_PTR kSmokeTimer = 1;
 // The auto-archive's pass, every 15 minutes as on the Mac (AppDelegate's archiveTimer).
 constexpr UINT_PTR kArchiveTimer = 2;
 constexpr UINT kArchiveIntervalMs = 15 * 60 * 1000;
-// When the pages' slide on the compositor has ended (its duration, rounded up).
+// When the pages' slide on the compositor has ended (its duration and a frame, rounded up).
 constexpr UINT_PTR kSettleTimer = 3;
 // Posted by the favicon worker when icons arrive (Favicons.h).
 constexpr UINT kFaviconsMessage = WM_APP + 4;
@@ -257,7 +257,9 @@ void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
     // The compositor runs it; Kite only hears when it has ended.
     sidebarSliding_ = true;
     slideStarted_ = true;
-    SetTimer(window_.Handle(), kSettleTimer, static_cast<UINT>(std::ceil(duration * 1000)), nullptr);
+    // The compositor starts it at the commit's frame, up to a frame after now: the timer allows
+    // for one at 60 Hz.
+    SetTimer(window_.Handle(), kSettleTimer, static_cast<UINT>(std::ceil(duration * 1000)) + 17, nullptr);
 }
 
 void BrowserWindowController::FinishSettling() {
