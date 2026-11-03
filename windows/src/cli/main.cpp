@@ -237,9 +237,7 @@ int main(int argc, char** argv) {
         std::ifstream in(std::get<std::filesystem::path>(resolved) / "keybindings.json", std::ios::binary);
         if (in) {
             const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-            auto parsed = json::Parse(text);
-            auto* value = std::get_if<json::Value>(&parsed);
-            auto read = value ? KeyBindings::FromJson(*value) : std::nullopt;
+            auto read = KeyBindings::FromText(text);
             if (!read) {
                 std::fputs("kitecore: unreadable keybindings.json (Kite uses the defaults)\n", stderr);
                 return kLoadFailed;

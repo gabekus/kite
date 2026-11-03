@@ -197,17 +197,17 @@ TEST(aUsersShortcutWinsOverDefaultsAndExtras) {
     CHECK(CommandAt(table, KeyShortcut("f5", {})) == "reloadPage");
     CHECK(CommandAt(table, KeyShortcut("f12", {})) == "viewSource");
     CHECK(!table.contains(KeyShortcut("u", {M::Control, M::Option})));
-    // View Source was rebound: its extra Ctrl+U goes with its old shortcut.
-    CHECK(!table.contains(KeyShortcut("u", {M::Control})));
+    // View Source was rebound: its extra Ctrl+U stays, as the Mac's hidden alternates do.
+    CHECK(CommandAt(table, KeyShortcut("u", {M::Control})) == "viewSource");
 }
 
-TEST(aRemovedShortcutTakesItsExtrasAndAPriorityChangeKeepsThem) {
+TEST(extrasOutliveARemovedShortcutAndTakeItsPriority) {
     KeyBindings bindings;
     bindings.SetShortcut(std::nullopt, "reloadPage");
     bindings.SetPriority(KeyShortcutPriority::OverrideWebView, "developerTools", KeyShortcut("i", {M::Control, M::Option}));
     const auto table = ShortcutTable(bindings);
     CHECK(!table.contains(KeyShortcut("r", {M::Control})));
-    CHECK(!table.contains(KeyShortcut("f5", {})));
+    CHECK(CommandAt(table, KeyShortcut("f5", {})) == "reloadPage");
     CHECK(CommandAt(table, KeyShortcut("f12", {})) == "developerTools");
     CHECK(table.at(KeyShortcut("f12", {})).priority == KeyShortcutPriority::OverrideWebView);
 }
@@ -224,7 +224,7 @@ TEST(aMacFilesCommandKeyIsCtrl) {
     const auto table = ShortcutTable(bindings);
     CHECK(CommandAt(table, KeyShortcut("w", {M::Control, M::Shift})) == "archiveTab");
     CHECK(!table.contains(KeyShortcut("w", {M::Control})));
-    CHECK(CommandAt(table, KeyShortcut("f4", {M::Control})) == "");  // archiveTab was rebound
+    CHECK(CommandAt(table, KeyShortcut("f4", {M::Control})) == "archiveTab");
     CHECK(CommandAt(table, KeyShortcut("r", {M::Control})) == "reloadPage");
     CHECK(CommandAt(table, KeyShortcut("f5", {})) == "reloadPage");
     CHECK(CommandAt(table, KeyShortcut("q", {M::Control})) == "quitKite");

@@ -190,7 +190,8 @@ Mac ignores an unsafe one. An override with no shortcut removes the command's
 shortcut (a priority-only change keeps it in the file, as the Mac writes it). A
 few commands also take the keys Windows users expect, without showing them:
 Ctrl+F4, F5, Ctrl+F5, Shift+F5, F12, Ctrl+Shift+I, Ctrl+U, Alt+Left and
-Alt+Right; they go when the user rebinds or removes the command's shortcut.
+Alt+Right; like the Mac's hidden alternates (⌘← for Back), they stay when the
+command is rebound, unless another command's shortcut takes them.
 `kitecore shortcuts` prints the table for a profile.
 
 In Kite's own window a shortcut runs from the window's key messages. In a page

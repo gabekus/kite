@@ -99,6 +99,8 @@ public:
     // Reads a file the Mac or Windows wrote; overrides it can't read are skipped. nullopt when
     // it isn't a key bindings file at all.
     static std::optional<KeyBindings> FromJson(const json::Value& value);
+    // The same, from the file's text; nullopt when it isn't JSON or a key bindings file.
+    static std::optional<KeyBindings> FromText(std::string_view text);
 
     bool operator==(const KeyBindings&) const = default;
 
@@ -135,20 +137,16 @@ private:
 
 // A command Kite for Windows has, with its default shortcut on Windows: the Mac's menu item
 // (MainMenu.swift) by its id, ⌘ made Ctrl. `more` are extra shortcuts Windows users expect
-// (F5, Alt+Left), which work but aren't the one shown, like the Mac's hidden items; they go
-// when the user rebinds or removes the command's shortcut.
+// (F5, Alt+Left), which work but aren't the one shown, like the Mac's hidden alternates
+// (⌘← for Back): they stay when the command is rebound, unless another command takes them.
 struct ShortcutCommand {
     std::string id;
     std::string title;
     std::optional<KeyShortcut> shortcut;
     std::vector<KeyShortcut> more;
-    bool repeats = false;  // a held key runs it again (Next and Previous Tab), as the Mac's menus
-    bool overBar = false;  // runs while the command bar is open; the others' keys are the bar's
 
-    ShortcutCommand(std::string id, std::string title, std::optional<KeyShortcut> shortcut, std::vector<KeyShortcut> more = {},
-                    bool repeats = false, bool overBar = false)
-        : id(std::move(id)), title(std::move(title)), shortcut(std::move(shortcut)), more(std::move(more)), repeats(repeats),
-          overBar(overBar) {}
+    ShortcutCommand(std::string id, std::string title, std::optional<KeyShortcut> shortcut, std::vector<KeyShortcut> more = {})
+        : id(std::move(id)), title(std::move(title)), shortcut(std::move(shortcut)), more(std::move(more)) {}
 };
 const std::vector<ShortcutCommand>& ShortcutCommands();
 

@@ -254,6 +254,12 @@ std::optional<KeyBindings> KeyBindings::FromJson(const json::Value& value) {
     return out;
 }
 
+std::optional<KeyBindings> KeyBindings::FromText(std::string_view text) {
+    auto parsed = json::Parse(text);
+    auto* value = std::get_if<json::Value>(&parsed);
+    return value ? FromJson(*value) : std::nullopt;
+}
+
 // MARK: ShortcutPriorityGate
 
 bool ShortcutPriorityGate::Press(const std::string& action, int window, double time, bool isRepeat) {
@@ -293,14 +299,13 @@ std::string ShortcutPriorityGate::Prompt(const KeyShortcut& shortcut, std::strin
 const std::vector<ShortcutCommand>& ShortcutCommands() {
     // The Mac's MainMenu items Kite for Windows has, in its menus' order, ⌘ made Ctrl.
     static const std::vector<ShortcutCommand> commands = [] {
-        constexpr bool kRepeats = true, kOverBar = true;
         std::vector<ShortcutCommand> c{
             {"newTab", "New Tab…", Ctrl("t")},
-            {"reopenClosedTab", "Restore Last Closed Tab", CtrlShift("t"), {}, false, kOverBar},
+            {"reopenClosedTab", "Restore Last Closed Tab", CtrlShift("t"), {}},
             {"openLocation", "Open Location…", std::nullopt},
-            {"archiveTab", "Archive Tab", Ctrl("w"), {Ctrl("f4")}, false, kOverBar},  // closes the bar first
-            {"closeWindow", "Close Window", CtrlShift("w"), {}, false, kOverBar},
-            {"quitKite", "Quit Kite", Ctrl("q"), {}, false, kOverBar},
+            {"archiveTab", "Archive Tab", Ctrl("w"), {Ctrl("f4")}},  // closes the bar first
+            {"closeWindow", "Close Window", CtrlShift("w"), {}},
+            {"quitKite", "Quit Kite", Ctrl("q"), {}},
             {"printPage", "Print", Ctrl("p")},
             {"copyCurrentURL", "Copy URL", CtrlShift("c")},
             {"collapsePinnedSection", "Collapse Pinned Tabs", std::nullopt},
@@ -309,8 +314,8 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
             {"forceReloadPage", "Force Refresh the Page", CtrlShift("r"), {Ctrl("f5"), KeyShortcut("f5", {Modifier::Shift})}},
             {"viewSource", "View Source", CtrlAlt("u"), {Ctrl("u")}},
             {"developerTools", "Developer Tools", CtrlAlt("i"), {Bare("f12"), CtrlShift("i")}},
-            {"nextTab", "Next Tab", CtrlAlt("down"), {}, kRepeats},
-            {"previousTab", "Previous Tab", CtrlAlt("up"), {}, kRepeats},
+            {"nextTab", "Next Tab", CtrlAlt("down"), {}},
+            {"previousTab", "Previous Tab", CtrlAlt("up"), {}},
         };
         for (int n = 1; n <= 9; ++n) {
             const std::string digit(1, static_cast<char>('0' + n));
@@ -318,7 +323,7 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
         }
         c.emplace_back("goBack", "Go Back", Ctrl("["), std::vector<KeyShortcut>{Alt("left")});
         c.emplace_back("goForward", "Go Forward", Ctrl("]"), std::vector<KeyShortcut>{Alt("right")});
-        c.emplace_back("minimize", "Minimize Window", Ctrl("m"), std::vector<KeyShortcut>{}, false, kOverBar);
+        c.emplace_back("minimize", "Minimize Window", Ctrl("m"));
         return c;
     }();
     return commands;
@@ -360,9 +365,6 @@ ShortcutMap ShortcutTable(const KeyBindings& bindings) {
         if (shortcut) table[*shortcut] = ShortcutTarget{byID.at(action), windows.Priority(action)};
     }
     for (const ShortcutCommand& command : ShortcutCommands()) {
-        // A command the user rebound or unbound keeps only what they chose.
-        const KeyBindingOverride* o = windows.Override(command.id);
-        if (o && o->shortcut != command.shortcut) continue;
         for (const KeyShortcut& extra : command.more) table.try_emplace(extra, ShortcutTarget{&command, windows.Priority(command.id)});
     }
     return table;

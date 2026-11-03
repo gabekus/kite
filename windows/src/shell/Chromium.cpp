@@ -539,11 +539,11 @@ public:
 
     // CefKeyboardHandler
 
-    // What a key runs, if it's one of Kite's shortcuts (PageEvents::shortcuts). AltGr (and a
-    // Ctrl+Alt key that types on this layout) is typing, never a shortcut.
+    // What a key runs, if it's one of Kite's shortcuts (PageEvents::shortcuts), looked up as
+    // Kite's window does: a Ctrl+Alt key that types on this layout (AltGr's) is typing.
     const ShortcutTarget* TargetOf(const CefKeyEvent& event) const {
         const bool keyDown = event.type == KEYEVENT_RAWKEYDOWN || event.type == KEYEVENT_KEYDOWN;
-        if (!keyDown || (event.modifiers & EVENTFLAG_ALTGR_DOWN)) return nullptr;
+        if (!keyDown) return nullptr;
         return ShortcutForKey(shared_->events.shortcuts, static_cast<UINT>(event.windows_key_code),
                               (event.modifiers & EVENTFLAG_CONTROL_DOWN) != 0, (event.modifiers & EVENTFLAG_ALT_DOWN) != 0,
                               (event.modifiers & EVENTFLAG_SHIFT_DOWN) != 0);
@@ -925,6 +925,8 @@ bool Chromium::Act(PageAction action) {
         case PageAction::Stop: browser->StopLoad(); break;
         case PageAction::Print: host->Print(); break;
         case PageAction::DevTools: {
+            // The page is closing (Kite quit after asking): no window that would hold it up.
+            if (shared->closing) break;
             // Already open: CEF brings that window forward and makes no browser.
             if (host->HasDevTools()) {
                 host->ShowDevTools(CefWindowInfo(), nullptr, CefBrowserSettings(), CefPoint());

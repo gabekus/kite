@@ -188,10 +188,7 @@ kite::KeyBindings LoadKeyBindings(const std::filesystem::path& file) {
     std::ifstream in(file, std::ios::binary);
     if (!in) return {};
     const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-    auto parsed = kite::json::Parse(text);
-    if (auto* value = std::get_if<kite::json::Value>(&parsed)) {
-        if (auto bindings = kite::KeyBindings::FromJson(*value)) return *bindings;
-    }
+    if (auto bindings = kite::KeyBindings::FromText(text)) return *bindings;
     OutputDebugStringW(L"Kite: couldn't read keybindings.json, using the default shortcuts\n");
     return {};
 }
@@ -621,6 +618,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     auto runCommand = [&](const std::string& command) {
         if (auto it = commands.find(command); it != commands.end()) it->second();
     };
+    // A shortcut ran from a key: the character Windows makes of that key isn't typed.
+    bool dropCharacter = false;
     // The window's own messages, before its default handling: the caption buttons, shortcuts,
     // the command bar, the sidebar.
     window.filter = [&](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
@@ -631,18 +630,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if ((message == WM_KEYDOWN || message == WM_CHAR) && commandBar && !commandBar->IsOpen() && keysForBar()) {
             openCommandBar(kite::CommandBarMode::NewTab);
         }
+        if ((message == WM_CHAR || message == WM_SYSCHAR) && dropCharacter) {
+            dropCharacter = false;
+            result = 0;
+            return true;
+        }
         // Kite's shortcuts, wherever the keyboard is in Kite's own window, the bar's field
         // included (as the Mac's menus come before its field editor), but for keys the field
         // edits with (Alt+Left). Alt's come as WM_SYSKEYDOWN. A page's come through Chromium.
         if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) {
+            dropCharacter = false;
             const auto pressed = kite::ShortcutOfKey(static_cast<UINT>(wParam), GetKeyState(VK_CONTROL) < 0, GetKeyState(VK_MENU) < 0,
                                                      GetKeyState(VK_SHIFT) < 0);
             const kite::ShortcutTarget* target = pressed ? kite::FindShortcut(shortcuts, *pressed) : nullptr;
             if (target && !(commandBar && commandBar->IsOpen() && kite::EditsText(*pressed))) {
-                // The character TranslateMessage made of it (Alt+K's WM_SYSCHAR would beep).
-                MSG typed;
-                while (PeekMessageW(&typed, window.Handle(), WM_CHAR, WM_DEADCHAR, PM_REMOVE)) {}
-                while (PeekMessageW(&typed, window.Handle(), WM_SYSCHAR, WM_SYSDEADCHAR, PM_REMOVE)) {}
+                // The character TranslateMessage made of it goes too (Alt+K's WM_SYSCHAR would beep).
+                dropCharacter = true;
                 runCommand(target->command->id);  // a held key repeats it, as the Mac's menus do
                 result = 0;
                 return true;
