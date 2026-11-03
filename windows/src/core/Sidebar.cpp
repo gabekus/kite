@@ -56,11 +56,18 @@ SidebarRow TabRow(const Tab& tab, bool pinned, bool selected, int depth) {
     return row;
 }
 
-void AppendPinned(const std::vector<PinnedItem>& items, int depth, const std::optional<std::string>& selectedID,
-                  std::vector<SidebarRow>& rows) {
+// A pinned tab's close button (BrowserState.showsCloseButton): none for a tab Claude opened in
+// its folders, unless it closes for good. Known from the walk, without looking the tab up.
+bool PinnedShowsClose(const Tab& tab, bool inEphemeralFolder) {
+    return !inEphemeralFolder || tab.splitPane == true || tab.IsBlank();
+}
+
+void AppendPinned(const BrowserState& state, const std::vector<PinnedItem>& items, bool ephemeral, int depth,
+                  const std::optional<std::string>& selectedID, std::vector<SidebarRow>& rows) {
     for (const PinnedItem& item : items) {
         if (const Tab* tab = std::get_if<Tab>(&item.value)) {
             rows.push_back(TabRow(*tab, true, selectedID && *selectedID == tab->id, depth));
+            rows.back().showsClose = PinnedShowsClose(*tab, ephemeral);
             continue;
         }
         const Folder& folder = std::get<Folder>(item.value);
@@ -72,11 +79,14 @@ void AppendPinned(const std::vector<PinnedItem>& items, int depth, const std::op
         row.expanded = folder.isExpanded;
         rows.push_back(std::move(row));
         if (folder.isExpanded) {
-            AppendPinned(folder.items, depth + 1, selectedID, rows);
+            AppendPinned(state, folder.items, folder.ephemeral == true, depth + 1, selectedID, rows);
         } else if (selectedID) {
             // Like Arc, a collapsed folder still shows its selected tab, from however deep in it.
             for (const Tab* tab : TabsIn(folder.items)) {
-                if (tab->id == *selectedID) rows.push_back(TabRow(*tab, true, true, depth + 1));
+                if (tab->id != *selectedID) continue;
+                // From however deep: one lookup for its own folder.
+                rows.push_back(TabRow(*tab, true, true, depth + 1));
+                rows.back().showsClose = state.ShowsCloseButton(tab->id);
             }
         }
     }
@@ -176,10 +186,12 @@ std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t spaceIndex
 
     // ShownPinnedItems, walked in place (this runs on every page event).
     if (!collapsed) {
-        AppendPinned(space.pinnedItems, 0, space.selectedTabID, rows);
+        AppendPinned(state, space.pinnedItems, false, 0, space.selectedTabID, rows);
     } else if (space.selectedTabID) {
         for (const Tab* tab : space.Pinned()) {
-            if (tab->id == *space.selectedTabID) rows.push_back(TabRow(*tab, true, true, 0));
+            if (tab->id != *space.selectedTabID) continue;
+            rows.push_back(TabRow(*tab, true, true, 0));
+            rows.back().showsClose = state.ShowsCloseButton(tab->id);
         }
     }
 
@@ -202,9 +214,6 @@ std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t spaceIndex
 
     float top = 0;
     for (SidebarRow& row : rows) {
-        // A tab Claude opened in its folders has none (unless it closes for good); every
-        // unpinned tab has one.
-        if (row.kind == SidebarRow::Kind::Tab) row.showsClose = !row.pinned || state.ShowsCloseButton(row.id);
         switch (row.kind) {
         case SidebarRow::Kind::Header: row.height = M::kHeaderHeight + M::kListTopSpacer; break;
         case SidebarRow::Kind::Divider: row.height = M::kDividerRowHeight; break;

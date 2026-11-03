@@ -456,10 +456,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // The Mac's field action: the bar edits the page's address, or opens a new tab with none.
     sidebarActions.editAddress = [&] { openCommandBar(kite::CommandBarMode::EditCurrent); };
     // A tab's close button and Ctrl+W (the Mac's close(tab:)). With Chromium, its page goes too.
-    std::function<void(const std::string& tabID)> closeTab = [&](const std::string& id) {
+    // The id by value: Ctrl+W's is the tab's own, which closing erases.
+    auto closeTab = [&](std::string id) {
         if (state.Close(id) == kite::CloseOutcome::NotFound) return;
-        pageGone(id);
+        // The next page shows first and the closed one hides in the same pass, so the card
+        // is never empty in between; then the closed page goes.
         showPage();
+        pageGone(id);
         stateChanged();
     };
     sidebarActions.closeTab = [&](const std::string& id) { closeTab(id); };
@@ -470,7 +473,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         else MessageBeep(MB_OK);
     };
     // Ctrl+Shift+T (Restore Last Closed Tab).
-    std::function<void()> reopenClosedTab = [&] {
+    auto reopenClosedTab = [&] {
         if (state.ReopenLastClosed()) {
             showPage();
             stateChanged();

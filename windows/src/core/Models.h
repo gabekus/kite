@@ -207,11 +207,13 @@ struct BrowserState {
     std::string AddSpace(std::string name, std::string icon, Theme theme);
 
     // MARK: Closing, archiving and reopening (TabClosing.cpp, BrowserState.swift)
+    // The mutators take the id by value: a caller's id is often the tab's own (SelectedTab()->id),
+    // which they move and erase.
 
     // Closes a tab: an unpinned one goes to Recently Closed and the archive; a pinned tab or
     // favorite only unloads, unless it closes for good. A selected tab hands the selection to
     // its split neighbour, else to the tab that slides into its place, else the one above.
-    CloseOutcome Close(const std::string& tabID);
+    CloseOutcome Close(std::string tabID);
     // A pinned tab or favorite that closing removes rather than unloads: a split pane, or a
     // tab that never had a page.
     bool ClosesForGood(const std::string& tabID) const;
@@ -222,11 +224,11 @@ struct BrowserState {
     bool IsInEphemeralFolder(const std::string& tabID) const;
     // Removes a pinned tab without archiving it; with `droppingEmptyFolder`, a folder it
     // leaves empty goes too, and Claude folders left empty after that.
-    bool RemovePinnedTab(const std::string& tabID, bool droppingEmptyFolder = false);
+    bool RemovePinnedTab(std::string tabID, bool droppingEmptyFolder = false);
     // Ctrl+Shift+T: the last closed tab back where it was, selected. Its id, or none.
     std::optional<std::string> ReopenLastClosed(Timestamp now = Now());
     // Undo Archive Tab: that tab back, if it's still among the recently closed.
-    std::optional<std::string> ReopenClosed(const std::string& tabID, Timestamp now = Now());
+    std::optional<std::string> ReopenClosed(std::string tabID, Timestamp now = Now());
     // Unpinned tabs (and tabs in Claude's folders) untouched for `interval` seconds go to the
     // archive, except each space's selected tab. Returns the tabs that went.
     std::vector<Tab> ArchiveStaleTabs(double interval, Timestamp now = Now());
@@ -234,7 +236,7 @@ struct BrowserState {
     std::optional<double> ArchiveAfterSeconds() const;
     // A page that closed itself (window.close() after a sign-in): its tab closes, and a popup
     // that was on screen hands it back to the tab that opened it, as the Mac's PagePool does.
-    void PageClosedItself(const std::string& tabID, const std::optional<std::string>& openerTabID);
+    void PageClosedItself(std::string tabID, std::optional<std::string> openerTabID);
     // Adds to the archive, stamped with when and why, dropping the oldest past kArchiveLimit.
     void AppendToArchive(std::vector<ClosedTab> tabs, ArchiveReason reason = ArchiveReason::Manual, Timestamp now = Now());
     // Splits keep only members that exist, each tab in one split, two panes or more.

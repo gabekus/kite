@@ -64,13 +64,16 @@ bool RemoveFolder(std::vector<PinnedItem>& items, const std::string& id) {
 }
 
 // Claude's folders (ephemeral) left empty go, from the inside out (dropEmptyEphemeralFolders).
+bool IsEmptyEphemeralFolder(const PinnedItem& item) {
+    const Folder* folder = std::get_if<Folder>(&item.value);
+    return folder && folder->ephemeral == true && folder->items.empty();
+}
+
 void DropEmptyEphemeralFolders(std::vector<PinnedItem>& items) {
-    std::erase_if(items, [](PinnedItem& item) {
-        Folder* folder = std::get_if<Folder>(&item.value);
-        if (!folder) return false;
-        DropEmptyEphemeralFolders(folder->items);
-        return folder->ephemeral == true && folder->items.empty();
-    });
+    for (PinnedItem& item : items) {
+        if (Folder* folder = std::get_if<Folder>(&item.value)) DropEmptyEphemeralFolders(folder->items);
+    }
+    std::erase_if(items, IsEmptyEphemeralFolder);
 }
 
 // The pinned tree without the stale tabs in Claude's folders, and without the Claude folders
@@ -78,34 +81,63 @@ void DropEmptyEphemeralFolders(std::vector<PinnedItem>& items) {
 template <typename Archive>
 void ArchiveStaleEphemeralTabs(std::vector<PinnedItem>& items, bool inEphemeral, const std::optional<std::string>& selected,
                                Timestamp cutoff, const Archive& archive) {
-    std::erase_if(items, [&](PinnedItem& item) {
-        if (Tab* tab = std::get_if<Tab>(&item.value)) {
-            if (!inEphemeral || tab->id == selected || !(tab->lastActiveAt < cutoff)) return false;
+    // Each item is visited first, then the ones that go are erased (an erase_if predicate
+    // mustn't change what it looks at).
+    std::vector<bool> goes(items.size(), false);
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (Tab* tab = std::get_if<Tab>(&items[i].value)) {
+            if (!inEphemeral || tab->id == selected || !(tab->lastActiveAt < cutoff)) continue;
             archive(*tab);
-            return true;
+            goes[i] = true;
+            continue;
         }
-        Folder& folder = std::get<Folder>(item.value);
+        Folder& folder = std::get<Folder>(items[i].value);
         ArchiveStaleEphemeralTabs(folder.items, inEphemeral || folder.ephemeral == true, selected, cutoff, archive);
-        return folder.ephemeral == true && folder.items.empty();
-    });
+        goes[i] = IsEmptyEphemeralFolder(items[i]);
+    }
+    size_t kept = 0;
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (goes[i]) continue;
+        if (kept != i) items[kept] = std::move(items[i]);
+        ++kept;
+    }
+    items.erase(items.begin() + static_cast<std::ptrdiff_t>(kept), items.end());
+}
+
+std::vector<double> EqualFactors(size_t count) {
+    return count ? std::vector<double>(count, 1.0 / static_cast<double>(count)) : std::vector<double>{};
 }
 
 std::vector<SplitView> Normalized(const std::vector<SplitView>& splits, const std::set<std::string>& members) {
     std::set<std::string> claimed;
     std::vector<SplitView> kept;
     for (SplitView split : splits) {
-        const std::vector<std::string> ids = split.tabIDs;
-        for (const std::string& id : ids) {
-            if (!members.contains(id) || claimed.contains(id)) split.Remove(id);
+        // SplitView::Remove for each id that goes, in one pass: the others share its width.
+        const auto goes = [&](const std::string& id) { return !members.contains(id) || claimed.contains(id); };
+        if (std::any_of(split.tabIDs.begin(), split.tabIDs.end(), goes)) {
+            const std::vector<double> factors = split.NormalizedFactors();
+            std::vector<std::string> ids;
+            std::vector<double> widths;
+            for (size_t i = 0; i < split.tabIDs.size(); ++i) {
+                if (goes(split.tabIDs[i])) continue;
+                ids.push_back(std::move(split.tabIDs[i]));
+                widths.push_back(factors[i]);
+            }
+            if (split.expandedTabID && goes(*split.expandedTabID)) split.expandedTabID.reset();
+            double total = 0;
+            for (double f : widths) total += f;
+            if (total > 0) {
+                for (double& f : widths) f /= total;
+            } else {
+                widths = EqualFactors(ids.size());
+            }
+            split.tabIDs = std::move(ids);
+            split.widthFactors = std::move(widths);
         }
         claimed.insert(split.tabIDs.begin(), split.tabIDs.end());
         if (split.tabIDs.size() >= 2) kept.push_back(std::move(split));
     }
     return kept;
-}
-
-std::vector<double> EqualFactors(size_t count) {
-    return count ? std::vector<double>(count, 1.0 / static_cast<double>(count)) : std::vector<double>{};
 }
 
 }  // namespace
@@ -191,7 +223,7 @@ bool BrowserState::ShowsCloseButton(const std::string& tabID) const {
     return !IsInEphemeralFolder(tabID) || ClosesForGood(tabID);
 }
 
-bool BrowserState::RemovePinnedTab(const std::string& tabID, bool droppingEmptyFolder) {
+bool BrowserState::RemovePinnedTab(std::string tabID, bool droppingEmptyFolder) {
     auto location = Location(tabID);
     if (!location || location->section != TabSection::Pinned || !location->space) return false;
     Space& space = spaces[*location->space];
@@ -222,7 +254,7 @@ void BrowserState::AppendToArchive(std::vector<ClosedTab> tabs, ArchiveReason re
     if (archived.size() > kArchiveLimit) archived.erase(archived.begin(), archived.end() - static_cast<std::ptrdiff_t>(kArchiveLimit));
 }
 
-CloseOutcome BrowserState::Close(const std::string& tabID) {
+CloseOutcome BrowserState::Close(std::string tabID) {
     const auto location = Location(tabID);
     if (!location) return CloseOutcome::NotFound;
     const size_t s = location->space.value_or(SelectedSpaceIndex());
@@ -310,7 +342,7 @@ std::optional<std::string> BrowserState::ReopenLastClosed(Timestamp now) {
     return ReopenClosed(recentlyClosed.back().tab.id, now);
 }
 
-std::optional<std::string> BrowserState::ReopenClosed(const std::string& tabID, Timestamp now) {
+std::optional<std::string> BrowserState::ReopenClosed(std::string tabID, Timestamp now) {
     auto it = std::find_if(recentlyClosed.rbegin(), recentlyClosed.rend(), [&](const ClosedTab& c) { return c.tab.id == tabID; });
     if (it == recentlyClosed.rend()) return std::nullopt;
     ClosedTab closed = std::move(*it);
@@ -331,6 +363,7 @@ std::optional<std::string> BrowserState::ReopenClosed(const std::string& tabID, 
 
 std::vector<Tab> BrowserState::ArchiveStaleTabs(double interval, Timestamp now) {
     std::vector<Tab> removed;
+    std::vector<ClosedTab> archive;  // appended once, in the Mac's order
     const Timestamp cutoff = now - interval;
     for (Space& space : spaces) {
         const std::optional<std::string> selected = space.selectedTabID;
@@ -339,8 +372,7 @@ std::vector<Tab> BrowserState::ArchiveStaleTabs(double interval, Timestamp now) 
             Tab& tab = space.tabs[index];
             if (tab.id != selected && tab.lastActiveAt < cutoff) {
                 removed.push_back(tab);
-                AppendToArchive({ClosedTab{tab, space.id, static_cast<long long>(index), std::nullopt, std::nullopt, std::nullopt, {}}},
-                                ArchiveReason::Auto, now);
+                archive.push_back(ClosedTab{std::move(tab), space.id, static_cast<long long>(index), std::nullopt, std::nullopt, std::nullopt, {}});
             } else {
                 kept.push_back(std::move(tab));
             }
@@ -348,9 +380,10 @@ std::vector<Tab> BrowserState::ArchiveStaleTabs(double interval, Timestamp now) 
         space.tabs = std::move(kept);
         ArchiveStaleEphemeralTabs(space.pinnedItems, false, selected, cutoff, [&](const Tab& tab) {
             removed.push_back(tab);
-            AppendToArchive({ClosedTab{tab, space.id, 0, std::nullopt, std::nullopt, std::nullopt, {}}}, ArchiveReason::Auto, now);
+            archive.push_back(ClosedTab{tab, space.id, 0, std::nullopt, std::nullopt, std::nullopt, {}});
         });
     }
+    AppendToArchive(std::move(archive), ArchiveReason::Auto, now);
     NormalizeSplits();
     return removed;
 }
@@ -364,7 +397,7 @@ std::optional<double> BrowserState::ArchiveAfterSeconds() const {
     return it->second;
 }
 
-void BrowserState::PageClosedItself(const std::string& tabID, const std::optional<std::string>& openerTabID) {
+void BrowserState::PageClosedItself(std::string tabID, std::optional<std::string> openerTabID) {
     const Tab* selected = SelectedTab();
     const bool wasSelected = selected && selected->id == tabID;
     Close(tabID);

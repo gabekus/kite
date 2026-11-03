@@ -82,7 +82,8 @@ public:
     // Shows the tab's page in `bounds` (client pixels) and hides every other tab's. The
     // browser is created the first time, in the profile's request context, loading `url`.
     void Show(const std::string& tabID, const std::string& profileDirectory, const std::string& url, const RECT& bounds);
-    // No tab is selected: every page is hidden (the card shows through).
+    // No tab is selected: every page is hidden (the card shows through), and the keyboard
+    // comes back to Kite's window.
     void ShowNothing();
     // Kite closed the tab, or unloaded it (a pinned tab): its page closes, without a
     // pageClosed, and Show makes a new one if it comes back. A page still being made closes

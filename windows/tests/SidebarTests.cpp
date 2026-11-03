@@ -484,4 +484,17 @@ TEST(aTabsCloseButtonClosesIt) {
     rows = SidebarRows(f.state, 0);  // header, Claude, Task, A, ...
     CHECK(rows[2].kind == K::Tab && !rows[2].showsClose && rows[3].showsClose);
     CHECK(SidebarHitTest(rows, 240, 800, 0, 214, 82 + rows[2].top + 20) == (SidebarHit{T::Row, 2}));
+    // One that never had a page closes for good, so it has one.
+    std::get<Folder>(space.pinnedItems[0].value).items.push_back(PinnedItem{MakeTab("about:blank", "Blank")});
+    rows = SidebarRows(f.state, 0);  // header, Claude, Task, Blank, A, ...
+    CHECK(rows[3].kind == K::Tab && rows[3].showsClose);
+    // Selected inside the closed folder, or the collapsed section, it still has none.
+    const std::string task = std::get<Tab>(std::get<Folder>(space.pinnedItems[0].value).items[0].value).id;
+    std::get<Folder>(space.pinnedItems[0].value).isExpanded = false;
+    f.state.Select(task);
+    rows = SidebarRows(f.state, 0);  // header, Claude, Task, A, ...
+    CHECK(rows[2].id == task && !rows[2].showsClose && rows[3].showsClose);
+    TogglePinnedSection(f.state, space.id);
+    rows = SidebarRows(f.state, 0);  // header, Task, divider, ...
+    CHECK(rows[1].id == task && !rows[1].showsClose);
 }

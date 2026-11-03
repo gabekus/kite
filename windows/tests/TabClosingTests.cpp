@@ -3,6 +3,7 @@
 // and SplitViewTests.swift's closing cases, plus edge cases the Mac doesn't check.
 
 #include <algorithm>
+#include <cmath>
 
 #include "Check.h"
 #include "core/Models.h"
@@ -461,6 +462,58 @@ TEST(splitsKeepOnlyLiveMembersInOneSplitEach) {
     CHECK(state.SplitContaining(b.id));
     state.Close(b.id);  // unloads, and leaves the split
     CHECK(state.favoriteSplitsByProfile.empty());
+}
+
+TEST(aSplitLosingPanesGivesTheirWidthToTheRest) {
+    auto [state, ids] = MakeState(2);
+    SplitView split = MakeSplit({ids[0], "gone", ids[1], "gone too"});
+    split.widthFactors = {0.4, 0.2, 0.2, 0.2};
+    split.expandedTabID = "gone";
+    state.spaces[0].splits = {split};
+    state.NormalizeSplits();
+    const SplitView& kept = state.spaces[0].splits.at(0);
+    CHECK(kept.tabIDs == (std::vector<std::string>{ids[0], ids[1]}));
+    CHECK(kept.widthFactors.size() == 2 && std::abs(kept.widthFactors[0] - 2.0 / 3) < 1e-12 &&
+          std::abs(kept.widthFactors[1] - 1.0 / 3) < 1e-12);
+    CHECK(!kept.expandedTabID);
+    // One that loses nothing keeps its factors as written.
+    state.spaces[0].splits[0].widthFactors = {3, 1};
+    state.NormalizeSplits();
+    CHECK(state.spaces[0].splits[0].widthFactors == (std::vector<double>{3, 1}));
+}
+
+// Ctrl+W passes the selected tab's own id, which closing moves and erases.
+TEST(closingTheSelectedTabByItsOwnIdSelectsTheNextOne) {
+    auto [state, ids] = MakeState(3);
+    state.Select(ids[1]);
+    CHECK(state.Close(state.SelectedTab()->id) == CloseOutcome::Removed);
+    CHECK(SelectedID(state) == ids[2]);
+    CHECK(!state.FindTabByID(ids[1]));
+    CHECK(state.recentlyClosed.back().tab.id == ids[1]);
+    // The last one: the one above.
+    CHECK(state.Close(state.SelectedTab()->id) == CloseOutcome::Removed);
+    CHECK(SelectedID(state) == ids[0]);
+    // And back, by the closed entry's own id.
+    CHECK(state.ReopenClosed(state.recentlyClosed.back().tab.id) == ids[2]);
+    CHECK(SelectedID(state) == ids[2]);
+}
+
+TEST(closingASelectedBlankPinnedTabOrFavoriteByItsOwnIdRemovesIt) {
+    auto [state, ids] = MakeState(1);
+    Tab blank = MakeTab("about:blank");
+    state.spaces[0].pinnedItems = {PinnedItem{blank}};
+    state.Select(blank.id);
+    CHECK(state.Close(state.SelectedTab()->id) == CloseOutcome::Removed);
+    CHECK(!state.FindTabByID(blank.id));
+    CHECK(SelectedID(state) == ids[0]);
+
+    Tab empty = MakeTab("about:blank");
+    Tab mail = MakeTab("https://mail.example");
+    state.SetFavorites({empty, mail});
+    state.Select(empty.id);
+    CHECK(state.Close(state.SelectedTab()->id) == CloseOutcome::Removed);
+    CHECK(state.Favorites().size() == 1 && state.Favorites()[0].id == mail.id);
+    CHECK(SelectedID(state) == mail.id);
 }
 
 TEST(closedTabsAndSplitsRoundTripTheMacsJSON) {
