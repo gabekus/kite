@@ -13,7 +13,7 @@ public enum ArcImport {
         /// Each space's `profile` is still Arc's profile folder ("Profile 1"; nil for Arc's
         /// Default): `BrowserState.merge` maps it to a Kite profile.
         public var spaces: [Space]
-        /// Arc's favorites grid for each profile the spaces use, by Arc profile folder.
+        /// Arc's favorites grid for Default and each profile the spaces use, by Arc profile folder.
         public var favoritesByProfile: [String: [BrowserTab]]
         /// Arc profile folders, in the order the spaces use them.
         public var profiles: [String]
@@ -27,7 +27,27 @@ public enum ArcImport {
         public var notes: [String]
 
         /// Every profile's favorites, in profile order.
-        public var favorites: [BrowserTab] { profiles.flatMap { favoritesByProfile[$0] ?? [] } }
+        public var favorites: [BrowserTab] { favorites(in: profiles) }
+
+        /// Default, which Kite always has, then `profiles`, without repeats.
+        public static func withDefault(_ profiles: [String]) -> [String] {
+            profiles.contains(Profile.defaultDirectory) ? profiles : profiles + [Profile.defaultDirectory]
+        }
+
+        /// The favorites of `profiles` and Default, the ones an import of those profiles' spaces brings.
+        public func favorites(in profiles: [String]) -> [BrowserTab] {
+            Self.withDefault(profiles).flatMap { favoritesByProfile[$0] ?? [] }
+        }
+
+        /// The profiles of the spaces that import unless the user includes the unnamed ones.
+        public var namedSpaceProfiles: [String] {
+            var result: [String] = []
+            for space in spaces where !untitledSpaceIDs.contains(space.id) {
+                let profile = space.profile ?? Profile.defaultDirectory
+                if !result.contains(profile) { result.append(profile) }
+            }
+            return result
+        }
     }
 
     public enum Failure: Error, Equatable {
@@ -110,7 +130,8 @@ public enum ArcImport {
 
             // Favorites: a grid per profile, in Arc and in Kite.
             var favorites: [String: [BrowserTab]] = [:]
-            for profile in profiles {
+            // Default's too: Kite always has that profile, even with no space in it.
+            for profile in Result.withDefault(profiles) {
                 guard let containerID = favoritesContainers[profile] else { continue }
                 // A split in the favorites grid can't stay one: favorites belong to no space.
                 spaceSplits = []
@@ -347,8 +368,9 @@ public enum ArcImport {
 }
 
 extension BrowserState {
-    /// What an import did. `profiles` maps each Arc profile folder the imported spaces use to
-    /// the Kite profile folder that now holds them, so the shell can bring each one's history.
+    /// What an Arc import did. `profiles` maps each Arc profile folder it brought (Default and
+    /// those the imported spaces use) to the Kite profile folder that holds it now, so the shell
+    /// can bring each one's history.
     public struct ArcMerge: Equatable, Sendable {
         public var added: Int
         public var updated: Int
@@ -357,78 +379,87 @@ extension BrowserState {
         public var newProfiles: [String]
     }
 
+    /// An Arc profile's name from Arc's `Local State`, or its folder's when it has none.
+    public static func arcProfileName(_ directory: String, names: [String: String]) -> String {
+        let name = names[directory]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? directory : name
+    }
+
     /// The Kite profile each Arc profile folder in `directories` goes to, for those that
-    /// already have one: Arc's Default is Kite's; otherwise a profile an imported space already
-    /// sits in (so a rename in Kite sticks), then one with the same name. The rest get a new
-    /// profile. `names` is Arc's folder → profile name, from Arc's `Local State`.
-    public func existingProfiles(forArc directories: [String], spaces imported: [Space], names: [String: String]) -> [String: String] {
+    /// already have one: Arc's Default is Kite's; then the profile an earlier import put it in
+    /// (so a rename in Kite sticks), while it exists; then one with the same name. The rest get
+    /// a new profile. `names` is Arc's folder → profile name, from Arc's `Local State`.
+    public func existingProfiles(forArc directories: [String], names: [String: String]) -> [String: String] {
         var result: [String: String] = [:]
         for arc in directories {
             if arc == Profile.defaultDirectory {
                 result[arc] = Profile.defaultDirectory
-                continue
-            }
-            let placed = imported
-                .filter { $0.profile == arc }
-                .compactMap { space in spaceIndex(space.id).flatMap { spaces[$0].profile } }
-                .first { directory in profiles.contains { $0.directory == directory } }
-            if let placed {
-                result[arc] = placed
-            } else if let name = names[arc]?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      let match = allProfiles.first(where: { $0.name.compare(name, options: .caseInsensitive) == .orderedSame }) {
-                result[arc] = match.directory
+            } else if let earlier = arcProfileMap[arc], profiles.contains(where: { $0.directory == earlier }) {
+                result[arc] = earlier
+            } else {
+                let name = Self.arcProfileName(arc, names: names)
+                if let match = allProfiles.first(where: { $0.name.compare(name, options: .caseInsensitive) == .orderedSame }) {
+                    result[arc] = match.directory
+                }
             }
         }
         return result
     }
 
-    /// Adds imported spaces and each profile's favorites, making a Kite profile for each Arc
-    /// profile that has none yet (see `existingProfiles`). A space imported before (same ID) is
-    /// replaced, so importing again before Arc shuts down picks up changes. `imported` spaces
-    /// carry Arc's profile folder, as `ArcImport.parse` leaves them.
+    /// Adds spaces and favorites from Arc, making a Kite profile for each Arc profile that has
+    /// none yet (see `existingProfiles`). `imported` spaces carry Arc's profile folder, as
+    /// `ArcImport.parse` leaves them. A space imported before (same ID) is replaced, so
+    /// importing again before Arc shuts down picks up changes, but it stays in the profile it's
+    /// in now once an import has placed its Arc profile, wherever the user moved it since.
     @discardableResult
-    public mutating func merge(
-        imported: [Space],
+    public mutating func mergeArc(
+        _ imported: [Space],
         favoritesByProfile newFavorites: [String: [BrowserTab]] = [:],
         profileNames names: [String: String] = [:]
     ) -> ArcMerge {
-        defer { syncPinnedURLs() }
         var arcProfiles: [String] = []
         for space in imported {
             let arc = space.profile ?? Profile.defaultDirectory
             if !arcProfiles.contains(arc) { arcProfiles.append(arc) }
         }
-        var map = existingProfiles(forArc: arcProfiles, spaces: imported, names: names)
+        arcProfiles = ArcImport.Result.withDefault(arcProfiles)
+        let placedBefore = Set(arcProfileMap.keys).union([Profile.defaultDirectory])
+        var map = existingProfiles(forArc: arcProfiles, names: names)
         var made: [String] = []
         for arc in arcProfiles where map[arc] == nil {
-            let name = names[arc].flatMap { validateProfileName($0) == nil ? $0 : nil } ?? arc
-            // The name can only be taken by a profile `existingProfiles` passed over; say where it's from.
-            let profile = (try? createProfile(named: name)) ?? (try? createProfile(named: "\(name) (Arc)"))
+            // Taken by a Kite profile that isn't this one, or by another Arc profile of the same name.
+            let name = Self.arcProfileName(arc, names: names)
+            let profile = [name, "\(name) (Arc)", arc, "\(arc) (Arc)"].lazy.compactMap { [self] candidate -> String? in
+                validateProfileName(candidate) == nil ? candidate : nil
+            }.first.flatMap { try? createProfile(named: $0) }
+            // Only a Kite profile named for each candidate stops this; the spaces stay in Default.
             map[arc] = profile?.directory ?? Profile.defaultDirectory
             if let profile { made.append(profile.directory) }
         }
+        for (arc, directory) in map where arc != Profile.defaultDirectory && directory != Profile.defaultDirectory {
+            arcProfileMap[arc] = directory
+        }
 
-        for (arc, tabs) in newFavorites {
-            guard let directory = map[arc] else { continue }
+        for arc in arcProfiles {
+            guard let tabs = newFavorites[arc], let directory = map[arc] else { continue }
             var grid = favoritesByProfile[directory] ?? []
             let existing = Set(grid.compactMap(\.url))
             grid += tabs.filter { $0.url.map { !existing.contains($0) } ?? false }
             favoritesByProfile[directory] = grid.isEmpty ? nil : grid
         }
 
-        var added = 0, updated = 0
-        for var space in imported {
-            let directory = map[space.profile ?? Profile.defaultDirectory] ?? Profile.defaultDirectory
-            space.profile = directory == Profile.defaultDirectory ? nil : directory
-            if let index = spaceIndex(space.id) {
-                spaces[index] = space
-                updated += 1
+        let spaces = imported.map { space in
+            var space = space
+            let arc = space.profile ?? Profile.defaultDirectory
+            if let index = spaceIndex(space.id), placedBefore.contains(arc) {
+                space.profile = self.spaces[index].profile
             } else {
-                spaces.append(space)
-                added += 1
+                let directory = map[arc] ?? Profile.defaultDirectory
+                space.profile = directory == Profile.defaultDirectory ? nil : directory
             }
+            return space
         }
-        if let first = imported.first { selectedSpaceID = first.id }
+        let (added, updated) = merge(imported: spaces)
         return ArcMerge(added: added, updated: updated, profiles: map, newProfiles: made)
     }
 }

@@ -71,10 +71,14 @@ enum ArcImportController {
 
     /// Reads Arc's sidebar from its usual place, or asks for the file if Arc isn't there.
     static func start(store: BrowserStore, window: NSWindow) {
+        if let test = testMode, test.dataPath == nil {
+            return testLog("no KITE_ARC_DATA_PATH, so nothing read")
+        }
         if let data = try? Data(contentsOf: sidebarFile) {
             confirm(data, store: store, window: window)
             return
         }
+        if testMode != nil { return testLog("no StorableSidebar.json") }
         let panel = NSOpenPanel()
         panel.message = "Kite couldn't find Arc's data. Choose StorableSidebar.json from Arc's folder in Application Support."
         panel.prompt = "Import"
@@ -102,20 +106,28 @@ enum ArcImportController {
             return showError("That isn't Arc's sidebar file.", detail: "Choose StorableSidebar.json from Arc's folder in Application Support.", window: window)
         }
 
+        // Incognito windows keep no history, so there's nowhere to put Arc's.
+        let wantsHistory = store.historyRoot != nil
+        let historyFiles = ArcImport.Result.withDefault(result.profiles).map { ($0, historyFile(profile: $0)) }
+        Task {
+            // Each profile's History can be large; copying and reading it stays off the main thread.
+            let histories = await Task.detached {
+                wantsHistory ? Dictionary(uniqueKeysWithValues: historyFiles.map { ($0.0, ArcHistoryImport.read(from: $0.1)) }) : [:]
+            }.value
+            confirm(result, histories: histories, store: store, window: window)
+        }
+    }
+
+    private static func confirm(_ result: ArcImport.Result, histories: [String: [HistoryEntry]], store: BrowserStore, window: NSWindow) {
         let reimported = result.spaces.filter { store.state.spaceIndex($0.id) != nil }.count
         let siteSearches = ArcSiteSearchImport.read()
         let keyBindings = (try? Data(contentsOf: keyBindingsFile)).flatMap { try? ArcKeyBindingsImport.parse($0) } ?? []
         let archive = (try? Data(contentsOf: archiveFile)).map(ArcArchiveImport.parse) ?? []
-        // Incognito windows keep no history, so there's nowhere to put Arc's.
-        var histories: [String: [HistoryEntry]] = [:]
-        if store.historyRoot != nil {
-            for profile in result.profiles {
-                histories[profile] = ArcHistoryImport.read(from: historyFile(profile: profile))
-            }
-        }
-        let historyCount = histories.values.reduce(0) { $0 + $1.count }
         let profileNames = readProfileNames()
         let settings = readArcSettings()
+        // What the dialog counts is what imports with the unnamed spaces left out, as they start.
+        let named = result.namedSpaceProfiles
+        let historyCount = ArcImport.Result.withDefault(named).reduce(0) { $0 + (histories[$1]?.count ?? 0) }
         var lines = [summary(result)]
         let extras = [
             archive.isEmpty ? nil : count(archive.count, "archived tab"),
@@ -128,7 +140,10 @@ enum ArcImportController {
         if archive.count > BrowserState.archiveLimit {
             lines.append("Kite's archive keeps the latest \(BrowserState.archiveLimit) tabs, so older archived tabs are left out.")
         }
-        if let profiles = profilesLine(result, names: profileNames, state: store.state) { lines.append(profiles) }
+        if let profiles = profilesLine(named, names: profileNames, state: store.state) { lines.append(profiles) }
+        if result.profiles.contains(where: { !named.contains($0) }) {
+            lines.append("A profile only unnamed spaces use comes over, with its favorites and history, only if you include them.")
+        }
         lines += result.notes
         lines.append(reimported > 0
             ? "\(count(reimported, "space")) imported before will be replaced with Arc's current version, including changes you made to them in Kite."
@@ -139,15 +154,15 @@ enum ArcImportController {
             let spaces = result.spaces.filter { includeUntitled || !result.untitledSpaceIDs.contains($0.id) }
             var merged: BrowserState.ArcMerge?
             store.mutateWithoutUndo {
-                merged = $0.merge(imported: spaces, favoritesByProfile: result.favoritesByProfile, profileNames: profileNames)
+                merged = $0.mergeArc(spaces, favoritesByProfile: result.favoritesByProfile, profileNames: profileNames)
                 $0.mergeSiteSearches(siteSearches)
                 $0.mergeArchive(imported: archive)
                 $0.apply(settings)
             }
-            if let little = settings.opensExternalLinksInLittleKite {
+            if let little = settings.opensExternalLinksInLittleKite, testMode == nil {
                 UserDefaults.standard.set(little, forKey: LittleKite.opensExternalLinksKey)
             }
-            // Each Arc profile's history goes to the Kite profile its spaces went to.
+            // Each Arc profile's history goes to the Kite profile it went to.
             for (arc, kite) in merged?.profiles ?? [:] {
                 if let entries = histories[arc], !entries.isEmpty { store.historyRoot?.forProfile(kite).merge(entries) }
             }
@@ -156,9 +171,9 @@ enum ArcImportController {
             }
         }
 
-        if let mode = BrowserImportController.testMode {
-            FileHandle.standardError.write(Data("KITE_TEST_IMPORT: Arc: \(lines.joined(separator: " | "))\n".utf8))
-            if mode != "show" { perform(includeUntitled: false) }
+        if let test = testMode {
+            testLog(lines.joined(separator: " | "))
+            if test.imports { perform(includeUntitled: false) }
             return
         }
 
@@ -190,15 +205,29 @@ enum ArcImportController {
         }
     }
 
+    // MARK: Test hook
+
+    /// `KITE_TEST_IMPORT`, on a throwaway profile with `KITE_ARC_DATA_PATH` set: Import from Arc
+    /// writes its dialog's text to stderr instead of showing it, since an alert sheet brings Kite
+    /// to the front. `KITE_TEST_IMPORT=Arc` then imports, leaving out the unnamed spaces, as
+    /// `Browser` does for Import from Another Browser. Without `KITE_ARC_DATA_PATH` it reads nothing.
+    private static var testMode: (imports: Bool, dataPath: String?)? {
+        guard let mode = BrowserImportController.testMode else { return nil }
+        return (mode == "Arc", ProcessInfo.processInfo.environment["KITE_ARC_DATA_PATH"])
+    }
+
+    private static func testLog(_ line: String) {
+        FileHandle.standardError.write(Data("KITE_TEST_IMPORT: Arc: \(line)\n".utf8))
+    }
+
     /// Which Arc profiles get a new Kite profile, or nil when every space stays in the default one.
-    /// Counts all spaces, the unnamed ones too, since the checkbox comes after.
-    private static func profilesLine(_ result: ArcImport.Result, names: [String: String], state: BrowserState) -> String? {
-        guard result.profiles.contains(where: { $0 != Profile.defaultDirectory }) else { return nil }
-        let existing = state.existingProfiles(forArc: result.profiles, spaces: result.spaces, names: names)
-        let new = result.profiles.filter { existing[$0] == nil }.map { names[$0] ?? $0 }
-        var line = "Your spaces use \(count(result.profiles.count, "Arc profile"))."
+    private static func profilesLine(_ profiles: [String], names: [String: String], state: BrowserState) -> String? {
+        guard profiles.contains(where: { $0 != Profile.defaultDirectory }) else { return nil }
+        let existing = state.existingProfiles(forArc: profiles, names: names)
+        let new = profiles.filter { existing[$0] == nil }.map { BrowserState.arcProfileName($0, names: names) }
+        var line = "Your spaces use \(count(profiles.count, "Arc profile"))."
         if !new.isEmpty { line += " Kite makes \(new.count == 1 ? "a profile" : "profiles") for \(list(new.map { "“\($0)”" }))." }
-        if new.count < result.profiles.count {
+        if new.count < profiles.count {
             line += new.isEmpty ? " They go into Kite profiles you already have." : " The others go into Kite profiles you already have."
         }
         return line + " Sign-ins don't carry over, so you'll sign in to sites again."
@@ -207,9 +236,10 @@ enum ArcImportController {
     private static func summary(_ result: ArcImport.Result) -> String {
         // Counts leave out unnamed spaces; their checkbox gives their own.
         let untitled = result.spaces.filter { result.untitledSpaceIDs.contains($0.id) }
+        let favorites = result.favorites(in: result.namedSpaceProfiles)
         var parts = [count(result.spaces.count - untitled.count, "space")]
-        if !result.favorites.isEmpty { parts.append(count(result.favorites.count, "favorite")) }
-        parts.append(count(result.tabCount - untitled.reduce(0) { $0 + $1.allTabs.count }, "tab"))
+        if !favorites.isEmpty { parts.append(count(favorites.count, "favorite")) }
+        parts.append(count(result.spaces.reduce(0) { $0 + (untitled.contains($1) ? 0 : $1.allTabs.count) }, "tab"))
         if result.folderCount > 0 { parts.append(count(result.folderCount, "folder")) }
         if result.splitCount > 0 { parts.append(count(result.splitCount, "split view")) }
         return "Found \(list(parts))."
@@ -225,6 +255,7 @@ enum ArcImportController {
     }
 
     private static func showError(_ message: String, detail: String, window: NSWindow) {
+        if testMode != nil { return testLog("\(message) \(detail)") }
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = message

@@ -173,10 +173,10 @@ import Testing
     @Test func reimportReplacesSameSpaces() throws {
         var state = BrowserState.makeDefault(seedURL: nil)
         let first = try ArcImport.parse(Self.fixture)
-        let merged = state.merge(imported: first.spaces, favoritesByProfile: first.favoritesByProfile)
+        let merged = state.mergeArc(first.spaces, favoritesByProfile: first.favoritesByProfile)
         #expect((merged.added, merged.updated) == (2, 0))
         let second = try ArcImport.parse(Self.fixture)
-        let again = state.merge(imported: second.spaces, favoritesByProfile: second.favoritesByProfile)
+        let again = state.mergeArc(second.spaces, favoritesByProfile: second.favoritesByProfile)
         #expect((again.added, again.updated) == (0, 2))
         #expect(again.newProfiles.isEmpty)
         #expect(state.spaces.count == 4)
@@ -188,8 +188,8 @@ import Testing
     @Test func eachArcProfileBecomesAKiteProfile() throws {
         var state = BrowserState.makeDefault(seedURL: nil)
         let result = try ArcImport.parse(Self.fixture)
-        let merged = state.merge(imported: result.spaces, favoritesByProfile: result.favoritesByProfile,
-                                 profileNames: ["Default": "Personal", "Profile 3": "Work stuff"])
+        let merged = state.mergeArc(result.spaces, favoritesByProfile: result.favoritesByProfile,
+                                    profileNames: ["Default": "Personal", "Profile 3": "Work stuff"])
         #expect(state.profiles.map(\.name) == ["Work stuff"])
         let work = try #require(state.profiles.first)
         #expect(merged.newProfiles == [work.directory])
@@ -202,8 +202,8 @@ import Testing
 
         // Renamed in Kite: importing again keeps the space's profile instead of making another.
         try state.renameProfile(work.directory, to: "Job")
-        let again = state.merge(imported: try ArcImport.parse(Self.fixture).spaces,
-                                profileNames: ["Profile 3": "Work stuff"])
+        let again = state.mergeArc(try ArcImport.parse(Self.fixture).spaces,
+                                   profileNames: ["Profile 3": "Work stuff"])
         #expect(again.newProfiles.isEmpty)
         #expect(state.profiles.map(\.name) == ["Job"])
         #expect(state.spaces.first { $0.id == result.spaces[1].id }?.profile == work.directory)
@@ -213,7 +213,7 @@ import Testing
         var state = BrowserState.makeDefault(seedURL: nil)
         let existing = try state.createProfile(named: "work STUFF")
         let result = try ArcImport.parse(Self.fixture)
-        let merged = state.merge(imported: result.spaces, profileNames: ["Profile 3": "Work stuff"])
+        let merged = state.mergeArc(result.spaces, profileNames: ["Profile 3": "Work stuff"])
         #expect(merged.newProfiles.isEmpty)
         #expect(state.profiles.map(\.directory) == [existing.directory])
         #expect(state.spaces.first { $0.id == result.spaces[1].id }?.profile == existing.directory)
@@ -223,16 +223,79 @@ import Testing
         let result = try ArcImport.parse(Self.fixture)
         // No name from Arc's Local State: the profile is named after its folder.
         var state = BrowserState.makeDefault(seedURL: nil)
-        state.merge(imported: result.spaces, profileNames: ["Profile 3": "  "])
+        state.mergeArc(result.spaces, profileNames: ["Profile 3": "  "])
         #expect(state.profiles.map(\.name) == ["Profile 3"])
 
         // A profile only a left-out space used isn't made, and its favorites stay behind.
         var personalOnly = BrowserState.makeDefault(seedURL: nil)
-        let merged = personalOnly.merge(imported: [result.spaces[0]], favoritesByProfile: result.favoritesByProfile,
-                                        profileNames: ["Profile 3": "Work stuff"])
+        let merged = personalOnly.mergeArc([result.spaces[0]], favoritesByProfile: result.favoritesByProfile,
+                                           profileNames: ["Profile 3": "Work stuff"])
         #expect(personalOnly.profiles.isEmpty)
         #expect(merged.profiles == ["Default": "Default"])
         #expect(personalOnly.favoritesByProfile.keys.sorted() == ["Default"])
+    }
+
+    @Test func defaultFavoritesComeEvenWithNoDefaultSpace() throws {
+        let result = try ArcImport.parse(Self.fixture)
+        var state = BrowserState.makeDefault(seedURL: nil)
+        let merged = state.mergeArc([result.spaces[1]], favoritesByProfile: result.favoritesByProfile)
+        #expect(merged.profiles["Default"] == "Default")
+        #expect(state.favoritesByProfile["Default"]?.map(\.title) == ["Site 300"])
+        #expect(result.favorites(in: ["Profile 3"]).map(\.title) == ["Site 310", "Site 300", "Site 300"])
+    }
+
+    @Test func reimportLeavesSpacesWhereTheUserPutThem() throws {
+        let result = try ArcImport.parse(Self.fixture)
+        let names = ["Profile 3": "Work"]
+        var state = BrowserState.makeDefault(seedURL: nil)
+        state.mergeArc(result.spaces, favoritesByProfile: result.favoritesByProfile, profileNames: names)
+        let work = try #require(state.profiles.first)
+        let other = try state.createProfile(named: "Other")
+        state.setProfile(other.directory, forSpace: result.spaces[1].id)
+        state.setProfile(other.directory, forSpace: result.spaces[0].id)
+
+        let again = state.mergeArc(result.spaces, favoritesByProfile: result.favoritesByProfile, profileNames: names)
+        // The spaces stay put; Work's favorites and history still go to Work.
+        #expect(state.spaces.first { $0.id == result.spaces[1].id }?.profile == other.directory)
+        #expect(state.spaces.first { $0.id == result.spaces[0].id }?.profile == other.directory)
+        #expect(again.profiles["Profile 3"] == work.directory)
+        #expect(state.favoritesByProfile[other.directory] == nil)
+
+        // Work emptied and renamed: Arc's profile still goes there, not to a new "Work".
+        state.spaces.removeAll { $0.id == result.spaces[1].id }
+        try state.renameProfile(work.directory, to: "Job")
+        let third = state.mergeArc(result.spaces, profileNames: names)
+        #expect(third.newProfiles.isEmpty)
+        #expect(state.spaces.first { $0.id == result.spaces[1].id }?.profile == work.directory)
+    }
+
+    @Test func spacesFromAnImportBeforeProfilesMoveToTheirProfile() throws {
+        let result = try ArcImport.parse(Self.fixture)
+        var state = BrowserState.makeDefault(seedURL: nil)
+        // As the import did before it knew profiles: everything in Default.
+        state.merge(imported: result.spaces.map { var space = $0; space.profile = nil; return space })
+        let merged = state.mergeArc(result.spaces, profileNames: ["Profile 3": "Work"])
+        #expect(state.spaces.first { $0.id == result.spaces[1].id }?.profile == merged.profiles["Profile 3"])
+        #expect(merged.newProfiles.count == 1)
+    }
+
+    @Test func sameNamedArcProfilesStayApart() throws {
+        var spaces = try ArcImport.parse(Self.fixture).spaces
+        var third = spaces[1]
+        third.id = UUID()
+        third.profile = "Profile 4"
+        spaces.append(third)
+        var state = BrowserState.makeDefault(seedURL: nil)
+        let merged = state.mergeArc(spaces, profileNames: ["Profile 3": "Work", "Profile 4": "work"])
+        #expect(state.profiles.map(\.name) == ["Work", "work (Arc)"])
+        #expect(merged.profiles["Profile 3"] != merged.profiles["Profile 4"])
+    }
+
+    @Test func arcProfileMapSurvivesARelaunch() throws {
+        var state = BrowserState.makeDefault(seedURL: nil)
+        state.mergeArc(try ArcImport.parse(Self.fixture).spaces, profileNames: ["Profile 3": "Work"])
+        let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
+        #expect(decoded.arcProfileMap == ["Profile 3": state.profiles[0].directory])
     }
 
     @Test func flagsUntitledSpaces() throws {
