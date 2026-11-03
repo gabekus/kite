@@ -52,12 +52,15 @@ public enum ArcImport {
     }
 
     public enum Failure: Error, Equatable {
+        /// Not JSON at all (or cut short).
+        case notJSON
         case notArcSidebar
         case noSpaces
     }
 
     public static func parse(_ data: Data, now: Date = Date()) throws -> Result {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let object = try? JSONSerialization.jsonObject(with: data) else { throw Failure.notJSON }
+        guard let root = object as? [String: Any],
               let sidebar = root["sidebar"] as? [String: Any],
               let containers = sidebar["containers"] as? [Any]
         else { throw Failure.notArcSidebar }
@@ -67,6 +70,15 @@ public enum ArcImport {
         let result = parser.buildSpaces()
         guard !result.spaces.isEmpty else { throw Failure.noSpaces }
         return result
+    }
+
+    /// The sidebar file to import from a listing of Arc's folder: StorableSidebar.json, then
+    /// Arc's dated backups of it (`StorableSidebar.2026-11-01-21-05-17-932.json`), newest first.
+    public static func sidebarCandidates(in fileNames: [String]) -> [String] {
+        let backups = fileNames.filter {
+            $0.hasPrefix("StorableSidebar.") && $0.hasSuffix(".json") && $0 != "StorableSidebar.json"
+        }
+        return (fileNames.contains("StorableSidebar.json") ? ["StorableSidebar.json"] : []) + backups.sorted(by: >)
     }
 
     /// Fills in panes without a stored width; nil (equal widths) if the stored ones don't add up.
