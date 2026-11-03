@@ -87,6 +87,8 @@ struct SidebarView: View {
     var miniPlayer: MiniPlayerActions?
     /// The sidebar's drags; the AppKit pages and the overlay share it.
     var drag = SidebarDragModel()
+    /// The AppKit parts' sizes the SwiftUI chrome lays out around.
+    var chromeMetrics = SidebarChromeMetrics()
     /// Where the space pages go (an AppKit view the column lays over this placeholder), in sidebar points.
     var pagesFrame: (CGRect) -> Void = { _ in }
     /// Whether the pointer is over the sidebar: Arc's URL row reads `sidebarHovered` for its buttons.
@@ -120,27 +122,9 @@ struct SidebarView: View {
                     Color.clear.frame(height: M.urlFieldTopGap + M.urlFieldHeight)
                 }
 
-                // Arc's tray shows while dragging even when there are no favorites (`AppTrayDisplayMode.onDrag`).
-                if !state.favorites.isEmpty || drag.isDragging || !UserDefaults.standard.bool(forKey: "favoritesEmptyStateDismissed") {
-                    FavoritesGrid(
-                        store: store,
-                        favorites: state.favorites,
-                        selectedID: selectedID,
-                        onSelect: { id in store.mutate { $0.select(tab: id) } },
-                        onUnload: actions.closeTab,
-                        onRemove: { id in store.mutate { $0.toggleFavorite(tab: id) } },
-                        onEditPinnedURL: actions.editPinnedURL,
-                        onReplacePinnedURL: actions.replacePinnedURL,
-                        onDrop: actions.didDrop,
-                        onPreview: actions.previewFavorite
-                    )
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag.favoritesArea = $0 }
-                    .onDisappear { drag.favoritesArea = nil }
-                    .padding(.top, M.favoritesTopGap)
-                    .padding(.bottom, M.favoritesBottomGap)
-                    // Arc's tray is a collection view the sidebar's width, insets and gaps included:
-                    // a press anywhere on it is the tray's, never a window move.
-                    .background(NoWindowDrag().padding(.horizontal, -M.padding))
+                // The favorites tray: AppKit (`FavoritesTrayView`), laid over this placeholder.
+                if chromeMetrics.favoritesHeight > 0 {
+                    Color.clear.frame(height: chromeMetrics.favoritesHeight)
                 }
 
                 // The space pages: AppKit (`SidebarPagesView`), laid over this by the column.
@@ -189,47 +173,6 @@ private struct ChromeFill: ViewModifier {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(Color.white.opacity(scheme == .dark ? strength : min(strength * 3.5, 0.7)))
         )
-    }
-}
-
-/// A favorite's tile. Unselected it's the field's white wash. Selected, Arc fills it white (0.45 dark,
-/// 0.8 light), lays the favorite's colour over that (0.2, 0.3 hovered; on a light theme only when
-/// hovered, 0.1), and strokes a 2pt ring of the colour on the tile inset by 1. With no colour (a
-/// grey or missing favicon) the tile is just white.
-private struct FavoriteFill: ViewModifier {
-    @Environment(\.colorScheme) private var scheme
-    let isSelected: Bool
-    let isHovered: Bool
-    let highlight: NSColor?
-
-    func body(content: Content) -> some View {
-        if isSelected {
-            let dark = scheme == .dark
-            let shape = RoundedRectangle(cornerRadius: M.favoriteCornerRadius, style: .continuous)
-            let tint = dark ? (isHovered ? M.favoriteTintHovered : M.favoriteTint) : (isHovered ? M.favoriteTintHoveredLight : 0)
-            content
-                .background {
-                    ZStack {
-                        shape.fill(Color.white.opacity(dark ? M.favoriteSelectedFill : M.favoriteSelectedFillLight))
-                        if let color { shape.fill(color.opacity(tint)) }
-                    }
-                }
-                .overlay {
-                    if let color {
-                        RoundedRectangle(cornerRadius: M.favoriteCornerRadius, style: .continuous)
-                            .inset(by: M.favoriteRingInset)
-                            .stroke(color, lineWidth: M.favoriteRingWidth)
-                            .allowsHitTesting(false)
-                    }
-                }
-        } else {
-            content.modifier(ChromeFill(strength: isHovered ? M.fieldFill + M.hoverFill : M.fieldFill, cornerRadius: M.favoriteCornerRadius))
-        }
-    }
-
-    /// The favicon's colour, lightened like Arc's ring (fitted, see `favoriteHighlightWhiten`).
-    private var color: Color? {
-        highlight?.blended(withFraction: M.favoriteHighlightWhiten, of: .white).map(Color.init(nsColor:))
     }
 }
 
@@ -295,140 +238,6 @@ struct InstallAppFieldButton: View {
     }
 }
 
-/// Arc's favorites: square tiles of favicons, shared by every space.
-private struct FavoritesGrid: View {
-    let store: BrowserStore
-    let favorites: [BrowserTab]
-    let selectedID: UUID?
-    let onSelect: (UUID) -> Void
-    let onUnload: (UUID) -> Void
-    let onRemove: (UUID) -> Void
-    let onEditPinnedURL: (UUID) -> Void
-    let onReplacePinnedURL: (UUID) -> Void
-    let onDrop: (SidebarDropOutcome) -> Void
-    let onPreview: (BrowserTab?, NSView?) -> Void
-    @Environment(\.sidebarDrag) private var drag
-    @AppStorage("favoritesEmptyStateDismissed") private var emptyStateDismissed = false
-
-    /// The tray's slots: each favorite or favorite split, and the drop gap while a drag aims between them.
-    private enum Slot: Identifiable, Hashable {
-        case tile(BrowserTab)
-        case split(SplitView, [BrowserTab])
-        case gap
-
-        var id: String {
-            switch self {
-            case .tile(let tab): tab.id.uuidString
-            case .split(let split, _): split.id.uuidString
-            case .gap: "gap"
-            }
-        }
-
-        var dragID: UUID? {
-            switch self {
-            case .tile(let tab): tab.id
-            case .split(let split, _): split.id
-            case .gap: nil
-            }
-        }
-    }
-
-    private var slots: [Slot] {
-        let splits = store.state.favoriteSplits
-        var slots = SidebarGroup.group(favorites.map(\.id), splits: splits).map { group -> Slot in
-            if let split = group.split { return .split(split, group.indices.map { favorites[$0] }) }
-            return .tile(favorites[group.indices[0]])
-        }
-        // Arc's tray counts one more item while a drag aims at it and leaves `dropGapFrame` empty.
-        if !favorites.isEmpty, case .favorites(let before)? = drag?.session?.target {
-            let at = before.flatMap { id in slots.firstIndex { $0.dragID == id } } ?? slots.count
-            slots.insert(.gap, at: at)
-        }
-        return slots
-    }
-
-    var body: some View {
-        let slots = slots
-        if slots.isEmpty {
-            if !emptyStateDismissed || drag?.isDragging == true {
-                FavoritesEmptyState(onDismiss: drag?.isDragging == true ? nil : { emptyStateDismissed = true })
-            }
-        } else {
-            FavoritesTrayLayout {
-                ForEach(slots) { slot in
-                    switch slot {
-                    case .gap:
-                        Color.clear
-                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag?.dropGap = $0 }
-                            .onDisappear { drag?.dropGap = nil }
-                    case .tile(let tab):
-                        draggable(tile(tab), id: tab.id, ghost: FavoriteGhost(tabs: [tab]))
-                    case .split(let split, let tabs):
-                        draggable(splitTile(split, tabs), id: split.id, ghost: FavoriteGhost(tabs: tabs))
-                    }
-                }
-            }
-            // No animation as the slot opens or moves: Arc's tray sets its drag info and invalidates the
-            // layout outside any animation context (decompiled), so its tiles jump to their new places.
-        }
-    }
-
-    private func tile(_ tab: BrowserTab) -> some View {
-        FavoriteTile(
-            tab: tab,
-            isSelected: tab.id == selectedID,
-            onSelect: { onSelect(tab.id) },
-            onUnload: { onUnload(tab.id) },
-            onRemove: { onRemove(tab.id) },
-            onEditPinnedURL: { onEditPinnedURL(tab.id) },
-            onReplacePinnedURL: { onReplacePinnedURL(tab.id) },
-            onPreview: { anchor in onPreview(anchor == nil || drag?.isDragging == true ? nil : tab, anchor) }
-        )
-    }
-
-    /// Arc's tile for a favorite split (`AppTrayItemChildStack`, binary): its panes share the tile
-    /// evenly, side by side (or stacked for a top/bottom split), 2pt apart, each with its own corners.
-    private func splitTile(_ split: SplitView, _ tabs: [BrowserTab]) -> some View {
-        let stack = split.orientation == .vertical
-            ? AnyLayout(VStackLayout(spacing: M.favoriteSplitSpacing))
-            : AnyLayout(HStackLayout(spacing: M.favoriteSplitSpacing))
-        return stack {
-            ForEach(tabs) { tab in
-                tile(tab)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .frame(height: M.favoriteHeight)
-    }
-
-    private func draggable(_ content: some View, id: UUID, ghost: FavoriteGhost) -> some View {
-        content
-            // Tiles being dragged out of the tray keep their place, invisible (Arc: alpha 0).
-            .opacity(drag?.session?.ids.contains(id) == true ? 0 : 1)
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { drag?.reportTile(id, frame: $0) }
-            .onDisappear { drag?.reportTile(id, frame: nil) }
-            .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
-                .onChanged { value in
-                    guard let drag else { return }
-                    if !drag.isDragging {
-                        let frame = drag.tileFrame(id) ?? .zero
-                        let row = SidebarDragModel.Row(id: id, kind: .tab, space: store.state.selectedSpaceID, pinned: false,
-                                                       folder: nil, depth: 0, frame: frame)
-                        drag.begin([id], row: row, at: value.startLocation, ghost: AnyView(ghost))
-                    }
-                    drag.move(to: value.location, in: store.state)
-                }
-                .onEnded { value in
-                    guard let drag, let drop = drag.end(at: value.location, in: store.state) else { return }
-                    var outcome: SidebarDropOutcome?
-                    withAnimation(.easeInOut(duration: 0.12)) {
-                        store.mutate { outcome = $0.dropSidebarItems(drop.ids, on: drop.target) }
-                    }
-                    if let outcome { onDrop(outcome) }
-                })
-    }
-}
-
 /// Arc's `AppTrayCollectionViewLayout` for favorites (Arc 1.169's binary): tiles 47pt high, 8pt
 /// apart, at most 4 a row. It fits as many columns as square tiles would allow, then balances
 /// the rows: 5 favorites are 3 + 2, 7 are 4 + 3, 9 are 3 × 3.
@@ -457,45 +266,6 @@ struct FavoritesTrayLayout: Layout {
             let y = bounds.minY + CGFloat(i / cols) * (M.favoriteHeight + M.favoriteSpacing)
             view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: width, height: M.favoriteHeight))
         }
-    }
-}
-
-/// Arc's empty favorites tray (`AppTrayEmptyStateView`): its title and subtitle from Arc's strings,
-/// with a close button that hides it until a drag needs somewhere to drop. Its size and look are
-/// unmeasured.
-private struct FavoritesEmptyState: View {
-    var onDismiss: (() -> Void)?
-    @State private var hovering = false
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Text("Drag to add Favorites")
-                .font(.system(size: 12, weight: .semibold))
-                .opacity(0.7)
-            Text("Favorites keep your most used sites and apps close")
-                .font(.system(size: 11))
-                .opacity(0.45)
-                .multilineTextAlignment(.center)
-        }
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity, minHeight: M.favoriteHeight)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: M.cornerRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.2), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-        )
-        .overlay(alignment: .topTrailing) {
-            if let onDismiss, hovering {
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).frame(width: 18, height: 18).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .opacity(0.5)
-                .padding(4)
-                .help("Dismiss")
-            }
-        }
-        .onHover { hovering = $0 }
     }
 }
 
@@ -545,55 +315,6 @@ struct DragGhost: View {
         .padding(.trailing, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .modifier(TabPillFill(isSelected: true, isHovered: false))
-    }
-}
-
-private struct FavoriteTile: View {
-    let tab: BrowserTab
-    let isSelected: Bool
-    let onSelect: () -> Void
-    let onUnload: () -> Void
-    let onRemove: () -> Void
-    let onEditPinnedURL: () -> Void
-    let onReplacePinnedURL: () -> Void
-    /// The pointer came onto the tile (its view) or left it (nil).
-    let onPreview: (NSView?) -> Void
-    @State private var hovering = false
-    @State private var anchor: NSView?
-    /// The favicon's dominant colour, for the selected tile's ring and tint.
-    @State private var highlight: NSColor?
-
-    var body: some View {
-        FaviconView(tab: tab, size: M.favoriteIconSize)
-            .frame(maxWidth: .infinity)
-            .frame(height: M.favoriteHeight)
-            .modifier(FavoriteFill(isSelected: isSelected, isHovered: hovering, highlight: highlight))
-            .contentShape(Rectangle())
-            .background(AnchorView(view: $anchor))
-            .task(id: FaviconView(tab: tab).url) {
-                guard let url = FaviconView(tab: tab).url, let image = await FaviconCache.shared.image(for: url) else { return }
-                highlight = image.dominantColor
-            }
-            .onHover { inside in
-                hovering = inside
-                onPreview(inside ? anchor : nil)
-            }
-            .onDisappear { if hovering { onPreview(nil) } }
-            .onTapGesture(perform: onSelect)
-            .help(tab.displayTitle)
-            .contextMenu {
-                Button("Remove from Favorites", action: onRemove)
-                if tab.pinnedURL != nil {
-                    EditPinnedPageMenu(onEdit: onEditPinnedURL, onReplace: onReplacePinnedURL)
-                }
-                Button("Copy Link") { copyLink(tab.url) }
-                Divider()
-                Button("Unload Tab", action: onUnload)
-            }
-            .accessibilityElement()
-            .accessibilityLabel(tab.displayTitle)
-            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            .accessibilityAction { onSelect() }
     }
 }
 
