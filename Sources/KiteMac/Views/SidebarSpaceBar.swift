@@ -262,8 +262,7 @@ final class SpaceBarView: SidebarFlippedView {
                 }
                 self.reorder = nil
                 self.ghost.isHidden = true
-                // The new order now, not on the observer's next turn: placed in the old order until then, every
-                // icon showed back in its old slot for a frame.
+                // Read the new order before placing the cells, not on the observer's next turn.
                 self.apply()
                 self.placeCells(animated: false)
             }
