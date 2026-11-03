@@ -311,9 +311,14 @@ final class ClaudeTasksController {
     func closeTabs(_ id: UUID) {
         guard let i = index(id) else { return }
         if tasks[i].ticket != nil {
-            // Claude › <ticket> may hold the ticket's other sessions' tabs: close only this task's.
+            // Claude › <ticket> may hold the ticket's other sessions' tabs: close only this task's, and only
+            // those still in it.
+            let folder = tasks[i].folderID.flatMap { store.state.folder(matching: $0.uuidString)?.folder }
+            let inFolder = Set(folder?.items.tabs.map(\.id) ?? [])
             store.mutateWithoutUndo { state in
-                for tab in tasks[i].tabIDs { state.removePinnedTab(tab, droppingEmptyFolder: state.isInEphemeralFolder(tab)) }
+                for tab in tasks[i].tabIDs where inFolder.contains(tab) {
+                    state.removePinnedTab(tab, droppingEmptyFolder: state.isInEphemeralFolder(tab))
+                }
             }
         } else if let folder = tasks[i].folderID {
             store.mutateWithoutUndo { _ = $0.removeFolder(folder) }
