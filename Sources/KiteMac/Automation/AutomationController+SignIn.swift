@@ -33,7 +33,7 @@ extension AutomationController {
         store.mutateWithoutUndo { $0.select(tab: tab.id) }
         if UIDiagnostics.enabledByEnvironment {
             // A test profile's run stays in the background and opens no other app; the log says what it skipped.
-            NSLog("[diagnostics] sign_in: would bring Kite forward%@",
+            NSLog("Kite: diagnostics: sign_in would bring Kite forward%@",
                   host.canOpenPasswordManager ? " and open the password manager" : "")
         } else {
             NSApp.activate(ignoringOtherApps: true)

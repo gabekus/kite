@@ -45,7 +45,7 @@ branch `helix/M<n>-<slug>` from main.
 
 | id | checkpoint | moves (SwiftUI → AppKit) | status |
 |---|---|---|---|
-| M1 | Test-safe sign_in and key: under `KITE_DIAGNOSTICS` on a test profile, sign_in doesn't bring Kite forward or open the password manager, and the address field's key logs what it would do | AutomationController+SignIn.swift, ExtensionsToolbar.swift (PasswordManagerFieldButton) | in progress |
+| M1 | Test-safe sign_in and password manager: on a test profile (`KITE_DIAGNOSTICS` with `KITE_SUPPORT_PATH`), sign_in doesn't bring Kite forward, and the address field's key, ⇧⌘X and the sign-in pill's button don't open or add the password manager; each logs what it would do | none (a test hook in AutomationController+SignIn.swift, ExtensionsToolbar.swift, BrowserWindowController+ExtensionTabs.swift) | in progress |
 | M2 | Page toolbar and its extension icons: the bar, its buttons, the address, the install icon, pinned extensions and the extensions button | PageToolbar.swift, ExtensionsToolbar.swift (ExtensionsToolbarItems) | in progress |
 | M3 | Site Controls popover | SiteControlsView.swift | planned |
 | M4 | The extensions popover | ExtensionsToolbar.swift (ExtensionsMenu) | planned |
