@@ -58,6 +58,15 @@ import Testing
         #expect(plain.observe(url("https://claude.ai/login?from=logout&returnTo=/oauth/authorize?\(query)"), tab: other, now: start) == nil)
         #expect(plain.observe(url("https://claude.ai/oauth/authorize?code=true"), tab: other, now: start + 20)?.query()?.contains("code_challenge=abc123") == true)
 
+        // Unencoded with code_challenge first: the part cut short at its first `&` looks like a request too,
+        // but the whole one wins, state and all.
+        var challengeFirst = OAuthResume()
+        let full = "code_challenge=abc123&client_id=9d1c&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=xyz"
+        #expect(challengeFirst.observe(url("https://claude.ai/login?returnTo=/oauth/authorize?\(full)"), tab: other, now: start) == nil)
+        let resumed = challengeFirst.observe(url("https://claude.ai/oauth/authorize"), tab: other, now: start + 20)
+        #expect(resumed.map(OAuthResume.query)?["state"] == "xyz")
+        #expect(resumed.map(OAuthResume.query)?["client_id"] == "9d1c")
+
         // A returnTo on another host is ignored.
         var foreign = OAuthResume()
         #expect(foreign.observe(url("https://claude.ai/login?returnTo=https%3A%2F%2Fevil.example%2Foauth%2Fauthorize%3F\(encoded)"), tab: tab, now: start) == nil)

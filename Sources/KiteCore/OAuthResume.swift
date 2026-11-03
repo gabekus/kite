@@ -145,12 +145,15 @@ public struct OAuthResume: Sendable {
                 candidates.append(rest.removingPercentEncoding ?? rest)
             }
         }
+        // An unencoded returnTo shows up twice, cut short at its first `&` and whole. The short one can still
+        // look like a request (`?code_challenge=…` alone), so keep the candidate with the most parameters.
+        var best: URL?
         for candidate in candidates {
             guard let target = URL(string: candidate, relativeTo: url)?.absoluteURL,
                   target.host()?.lowercased() == url.host()?.lowercased(), isAuthorizeRequest(target) else { continue }
-            return target
+            if best.map({ query(target).count > query($0).count }) ?? true { best = target }
         }
-        return nil
+        return best
     }
 
     static func redirectURI(of request: URL) -> URL? {
