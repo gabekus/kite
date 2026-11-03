@@ -33,6 +33,7 @@ target_include_directories(KiteCoreWin PUBLIC src)
 
 add_executable(Kite WIN32
   src/main.cpp
+  src/shell/Capture.cpp
   src/shell/MainWindow.cpp
   src/shell/SystemAppearance.cpp
 )
@@ -40,7 +41,7 @@ if(MSVC)
   # Per-monitor DPI v2, Windows 10+ behaviour, UTF-8 code page, long paths.
   target_sources(Kite PRIVATE src/shell/Kite.manifest)
 endif()
-target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi advapi32)
+target_link_libraries(Kite PRIVATE KiteCoreWin user32 gdi32 dwmapi advapi32 shell32 ole32 windowscodecs)
 if(MINGW)
   target_link_options(Kite PRIVATE -municode)
 endif()

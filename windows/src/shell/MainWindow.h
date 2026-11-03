@@ -26,6 +26,8 @@ public:
     bool IsValid() const { return hwnd_ != nullptr; }
     HWND Handle() const { return hwnd_; }
     void Show(int showCommand);
+    // Client area in DIPs (96 DPI points), scaled to the window's monitor.
+    void SetClientSize(int width, int height);
 
     // Runs before the window is destroyed, e.g. to save the session.
     std::function<void()> onClose;

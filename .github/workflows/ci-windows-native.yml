@@ -53,3 +53,18 @@ jobs:
           $run = Start-Process -FilePath $exe -ArgumentList '--smoke-test' -Wait -PassThru
           if ($run.ExitCode -ne 2) { throw "expected exit 2 for a file KITE_SUPPORT_PATH, got $($run.ExitCode)" }
           Write-Host "smoke test ok ($((Get-Item $exe).Length) bytes)"
+      - name: Capture (Helix UI gate plumbing)
+        run: |
+          $exe = Resolve-Path windows/build/Release/Kite.exe
+          $profileDir = Join-Path $env:RUNNER_TEMP "kite-capture-$([guid]::NewGuid())"
+          New-Item -ItemType Directory -Path $profileDir | Out-Null
+          Copy-Item windows/helix/states/two-spaces.json (Join-Path $profileDir 'session.json')
+          $env:KITE_SUPPORT_PATH = $profileDir
+          $png = Join-Path $env:RUNNER_TEMP 'kite-capture.png'
+          $run = Start-Process -FilePath $exe -ArgumentList '--capture', $png, '--window-size', '1280,800' -Wait -PassThru
+          if ($run.ExitCode -ne 0) { throw "Kite.exe --capture exited with $($run.ExitCode)" }
+          $bytes = [System.IO.File]::ReadAllBytes($png)
+          $width = [System.BitConverter]::ToUInt32(@($bytes[19], $bytes[18], $bytes[17], $bytes[16]), 0)
+          $height = [System.BitConverter]::ToUInt32(@($bytes[23], $bytes[22], $bytes[21], $bytes[20]), 0)
+          Write-Host "capture: ${width}x${height} px"
+          if ($width -lt 1280 -or $height -lt 800) { throw "capture is ${width}x${height}, expected at least 1280x800" }

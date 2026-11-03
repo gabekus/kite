@@ -44,6 +44,14 @@ void MainWindow::Show(int showCommand) {
     UpdateWindow(hwnd_);
 }
 
+void MainWindow::SetClientSize(int width, int height) {
+    RECT rect{0, 0, Scale(width, dpi_), Scale(height, dpi_)};
+    AdjustWindowRectExForDpi(&rect, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
+                             static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), dpi_);
+    SetWindowPos(hwnd_, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 void MainWindow::ApplySystemAppearance() {
     BOOL dark = AppsUseDarkTheme() ? TRUE : FALSE;
     DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));

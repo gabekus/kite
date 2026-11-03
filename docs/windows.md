@@ -38,14 +38,20 @@ instead of an implementation.
 - **Headless first.** `windows/src/core` has no UI and its tests run in
   milliseconds, so most of the port can be checked without launching the app.
 
+How the port is run, gate by gate: [helix.md](helix.md). The rules reviewers
+enforce: [windows-architecture.md](windows-architecture.md). The plan:
+[windows/helix/checkpoints.md](../windows/helix/checkpoints.md).
+
 ## Layout
 
 ```
 windows/
   CMakeLists.txt
-  src/core/     platform-free logic (KiteCore's counterpart), unit-tested
+  src/core/     the model (KiteCore's counterpart): JSON, BrowserState, session, URL input
   src/shell/    Win32 window, composition, input
+  src/cli/      kitecore: the model, headless
   tests/        unit tests (no test framework dependency)
+  helix/        checkpoints.md and states/ (sessions for the UI gate)
   scripts/      fetch-cef.ps1
 ```
 
@@ -99,9 +105,11 @@ Windows that means:
 
 ## Plan
 
+The checkpoint list in windows/helix/checkpoints.md is the detailed plan. In short:
+
 1. Win32 shell that CI builds with MSVC, tests and launches (done: `windows/`,
    `.github/workflows/ci-windows-native.yml`).
-2. Port BrowserState and the session file with their tests and shared fixtures.
+2. The model core and session file with their tests and a shared fixture (done).
 3. CEF: `windows/scripts/fetch-cef.ps1` (written, not run yet), one browser per
    tab, windowed first so pages load, then the off-screen spike: D3D11 shared
    texture, frame time, input latency.
