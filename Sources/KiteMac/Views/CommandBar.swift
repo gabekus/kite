@@ -238,15 +238,27 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
             return site.url(for: text).map { [.siteSearch(site, text, $0)] } ?? []
         }
         let matches = TabSearch.switchTargets(text, in: state)
-        let tabs = matches.map { CommandSuggestion.switchTab($0.tab) }
+        let looksLikeURL = URLInput.looksLikeURL(text)
+        // The tab above the rest, from what was typed, not a Site Search completion after it ("gi" + "thub.com").
+        let typedText = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        // When the leader comes from outside the five tab rows, it makes a sixth.
+        let lead = mode == .newTab
+            ? CommandBarOrder.leader(typedText, shown: text, in: state,
+                                     typedMatches: typedText == text ? matches : TabSearch.switchTargets(typedText, in: state),
+                                     looksLikeURL: looksLikeURL)
+            : nil
+        let leader = lead.map(CommandSuggestion.switchTab)
+        let tabs = matches.filter { $0.tab.id != lead?.id }.map { CommandSuggestion.switchTab($0.tab) }
         let search = CommandSuggestion.search(text, state.searchEngine.searchURL(for: text))
         // Pages visited before, minus any already shown as a tab and the page you're on (Arc showed neither).
-        let openURLs = Set((matches.map(\.tab) + [state.selectedTab].compactMap { $0 }).compactMap(\.url))
+        let shownTabs = matches.map(\.tab) + [lead, state.selectedTab].compactMap { $0 }
+        let openURLs = Set(shownTabs.compactMap(\.url) + [lead?.pinnedURL].compactMap { $0 })
         let visited = (store.history?.search(text, limit: 6) ?? [])
             .filter { !openURLs.contains($0.url) }
             .prefix(3)
-        if URLInput.looksLikeURL(text), let url = URLInput.resolve(text, engine: state.searchEngine) {
-            return [.open(url)] + tabs + visited.filter { $0.url != url }.map(CommandSuggestion.history) + [search]
+        if looksLikeURL, let url = URLInput.resolve(text, engine: state.searchEngine) {
+            let history = visited.filter { $0.url != url }.map(CommandSuggestion.history)
+            return CommandBarOrder.arrangeURL(leader: leader, open: .open(url), tabs: tabs, history: history, search: search)
         }
         let history = visited.map(CommandSuggestion.history)
         // Menu commands, Arc-style. A strong match ("copy url") goes above the web search.
@@ -260,8 +272,7 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         }
         // Arc's ⌘T order; editing the address keeps tabs under the engine's suggestions (not observed in Arc).
         guard mode == .newTab else { return [search] + engine + tabs + history }
-        return CommandBarOrder.arrange(tabFirst: CommandBarOrder.tabFirst(text, best: matches.first),
-                                       strongCommands: strong, search: search, tabs: tabs,
+        return CommandBarOrder.arrange(leader: leader, strongCommands: strong, search: search, tabs: tabs,
                                        engine: engine, history: history, weakCommands: weak)
     }
 
@@ -311,7 +322,7 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
             }
             row.configure(suggestion: item, engine: engine, accent: accent)
             row.onHover = { [weak self] in self?.highlighted = index }
-            row.onClick = { [weak self] in self?.onCommit(item) }
+            row.onClick = { [weak self] in self?.commit(item) }
         }
         if highlighted >= items.count { highlighted = 0 }
         applyHighlight()
@@ -358,11 +369,14 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
     /// Arc completes a Site Search shortcut inline as you type ("you" → "you" + selected "tube.com"), so Return
     /// opens the site and Tab searches it. Only when typing forward: deleting the completion leaves what was typed.
     private func autocomplete(to new: String) {
+        // Not mid-composition (an input method's marked text): setting the text would break it.
+        if (field.currentEditor() as? NSTextView)?.hasMarkedText() == true { return }
         if new == completed { return }
         if let completed, new.hasPrefix(completed) {
-            // Keys typed before the completion got selected belong after what was typed.
+            // Typed after the completion rather than over it: the caret had left it (→, ⌥→, a click), so it's
+            // accepted, as Arc ("you" → "youtube.com", → then "/" → "youtube.com/").
             self.completed = nil
-            setText(typed + new.dropFirst(completed.count))
+            typed = new
             return
         }
         completed = nil
@@ -387,11 +401,33 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         field.currentEditor()?.selectedRange = NSRange(location: (text as NSString).length, length: 0)
     }
 
+    /// Learns ⌘T picks, so what was typed leads to the same tab next time.
+    private func commit(_ item: CommandSuggestion) {
+        // Not in a Site Search, whose query is for the site, nor while a completion shows (no pick leads then).
+        if mode == .newTab, site == nil, completed == nil {
+            let tab: UUID? = if case .switchTab(let tab) = item { tab.id } else { nil }
+            if store.state.commandBarPickChanges(typed: typed, tab: tab) {
+                store.mutateWithoutUndo { $0.recordCommandBarPick(typed: typed, tab: tab) }
+            }
+        }
+        onCommit(item)
+    }
+
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
         case #selector(NSResponder.moveDown(_:)):
             highlighted = min(highlighted + 1, max(items.count - 1, 0))
             return true
+        case #selector(NSResponder.moveRight(_:)), #selector(NSResponder.moveWordRight(_:)),
+             #selector(NSResponder.moveForward(_:)), #selector(NSResponder.moveToEndOfParagraph(_:)):
+            // →, ⌥→, ^F and ^E accept the inline completion at once, so the rows follow it before the next key.
+            if let completed {
+                typed = completed
+                self.completed = nil
+                highlighted = 0
+                refresh()
+            }
+            return false
         case #selector(NSResponder.moveUp(_:)):
             highlighted = max(highlighted - 1, 0)
             return true
@@ -399,10 +435,10 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
             // Arc: "Press Shift + Enter for any web search to instantly open the top result."
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true, site == nil, InstantLinksController.isEnabled,
                InstantLinks.applies(to: query) {
-                onCommit(.instantLinks(query.trimmingCharacters(in: .whitespacesAndNewlines)))
+                commit(.instantLinks(query.trimmingCharacters(in: .whitespacesAndNewlines)))
                 return true
             }
-            if items.indices.contains(highlighted) { onCommit(items[highlighted]) }
+            if items.indices.contains(highlighted) { commit(items[highlighted]) }
             return true
         case #selector(NSResponder.insertTab(_:)):
             guard let target = tabTarget else { return true }

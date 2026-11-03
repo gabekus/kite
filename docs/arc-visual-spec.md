@@ -163,6 +163,8 @@ candidates:)` in the binary), so these are its orders for items it hadn't learne
 |---|---|---|
 | 1, 2, 3 letters starting a favorite's title (regular window) | Favorite's "Switch to Tab" row first and selected; Return switched the window to it | Same; Kite also does it when the query starts one of the title's words or the host (inferred: "127" was a host prefix) |
 | 4, 5, 6, 8, 11 letters of the same favorite | Typed search first, the favorite second, then suggestions | Same |
+| 2 to 10 letters of the same favorite's 11-letter host (its address) | The favorite first and selected, the field completing the host inline | Same (from what's typed, not a Site Search completion); Kite completes nothing inline here |
+| The favorite's whole host | An Open row first, the favorite third; Return opened a new tab | Open row first, the favorite second |
 | Incognito open tabs: "127" (their host's start) | A tab first | Same |
 | Incognito: "inbox" (5 letters, a title's start) | The tab first | Search first, tab second (**mismatch**: Arc's learned order) |
 | Incognito: "notes" (a title's word) | Search, then the tab | Same |
@@ -171,12 +173,29 @@ candidates:)` in the binary), so these are its orders for items it hadn't learne
 
 Not observed in Arc, so Kite's own choice: a menu command and a tab matching together (strong commands stay on
 top); several matching tabs (all go above the engine's suggestions; with a short query only the best goes above
-the search); short word or host prefixes of a favorite; the address-edit mode (same order as before, but the tab
+the search); short word or host prefixes of a favorite; an open tab's address past three letters (Kite keeps it under the
+search); the address-edit mode (same order as before, but the tab
 you're on is now left out of tabs and history there too); a URL-looking query on the tab you're on (left out);
 panes of the current split (offered); weak short matches such as "ai" inside a title (kept under the search).
-A Site Search shortcut's inline completion turns "gi" into "github.com", so a favorite on a site with a shortcut
-gets the URL row first, not its tab (Arc completed "gmail" to "gmail.com" the same way; not checked against a
-favorite on such a site). History is left out by exact URL, so the current page under another fragment still shows.
+A Site Search shortcut's inline completion ("gi" + "thub.com") makes the query URL-like: the Open row leads unless
+a favorite's host starts with what was typed, as Arc did while completing a favorite's host inline (not checked with
+a shortcut). The three-letter rule doesn't apply to URL-like queries. Also not observed, Kite's choice: a favorite
+whose address is being typed leads even over stronger title matches ("ma" with a "Maps" tab open) and from one
+letter; a favorite also leads by its pinned page's host (a Gmail favorite sent to accounts.google.com to sign in still
+leads for "mail"); with a Site Search completion for another site in the field ("m" + "usic.apple.com") no favorite
+leads, so the row matches the field; a whole host typed only rules out that favorite ("x.co" still leads to an x.com favorite);
+"www." and schemes aren't matched against the host ("www.goo" gets no leader). History is left out by exact
+URL, so the current page under another fragment still shows.
+
+Kite also learns ⌘T picks, which Arc doesn't do this way (one pick left Arc's order unchanged): the tab you picked
+for a text leads the next time you type it, or the start of it (2+ characters), until you pick something else for
+it. Picks are saved in the session and Delete browsing data › History forgets them.
+
+Site Search completion accepted with → (Arc 1.171 incognito, 3 Nov 2026, AX): "you" showed "youtube.com" with
+"tube.com" selected; → then "/" gave "youtube.com/"; typing "x" without → gave "youx". Kite matches: anything typed
+after the completion instead of over it accepts it (`CommandBar.autocomplete(to:)`), so → does, and so do ⌥→, ^E
+and a click past the end (those three not observed in Arc; after a click the rows follow on the next key). End scrolls and leaves it selected; ⌘→ is Kite's hidden
+Go Forward shortcut, so it doesn't reach the field (checked with `kite ui`).
 
 ## Arc vs Kite
 

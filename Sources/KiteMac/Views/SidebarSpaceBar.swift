@@ -185,10 +185,10 @@ final class SpaceBarView: SidebarFlippedView {
                 let slot = slots.firstIndex(of: id) ?? slots.firstIndex(of: nil) ?? max(slots.count - 1, 0)
                 let frame = CGRect(x: CGFloat(slot) * M.spaceCellPitch, y: 0, width: M.spaceCellSize.width, height: M.spaceCellSize.height)
                 if animated { cell.animator().frame = frame } else { cell.frame = frame }
-                // While an icon is dragged it leaves its cell (kept, invisible).
-                cell.alphaValue = reorder?.id == id ? 0 : 1
             }
         }
+        // While an icon is dragged it leaves its cell (kept, invisible) at once, not fading out under the ghost.
+        for (id, cell) in cells { cell.alphaValue = reorder?.id == id ? 0 : 1 }
     }
 
     /// The icons' frames, for tabs dropped onto a space (sidebar points).
@@ -227,6 +227,7 @@ final class SpaceBarView: SidebarFlippedView {
             for cell in cells.values { cell.setDragging(true) }
             ghost.copy(from: cell)
             ghost.isHidden = false
+            placeCells(animated: false)
         }
         reorder?.location = point
         placeGhost()
@@ -261,7 +262,8 @@ final class SpaceBarView: SidebarFlippedView {
                 }
                 self.reorder = nil
                 self.ghost.isHidden = true
-                for cell in self.cells.values { cell.setDragging(false) }
+                // Read the new order before placing the cells, not on the observer's next turn.
+                self.apply()
                 self.placeCells(animated: false)
             }
         }
