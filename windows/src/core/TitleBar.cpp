@@ -2,22 +2,28 @@
 
 #include "core/TitleBar.h"
 
+#include <cmath>
+
 #include "core/Sidebar.h"
 
 namespace kite {
 
 namespace T = title_bar;
 
-float CaptionButtonLeft(float width, CaptionButton button) {
-    const int index = button == CaptionButton::Minimize ? 0 : button == CaptionButton::Maximize ? 1 : 2;
-    return width - T::kButtonsWidth + static_cast<float>(index) * T::kButtonWidth;
+float CaptionEdgeFromRight(int buttons, float scale) {
+    return std::round(static_cast<float>(buttons) * T::kButtonWidth * scale) / scale;
 }
 
-TitleBarArea TitleBarAreaAt(float width, float sidebarWidth, float x, float y) {
+float CaptionButtonLeft(float width, CaptionButton button, float scale) {
+    const int fromRight = button == CaptionButton::Minimize ? 3 : button == CaptionButton::Maximize ? 2 : 1;
+    return width - CaptionEdgeFromRight(fromRight, scale);
+}
+
+TitleBarArea TitleBarAreaAt(float width, float sidebarWidth, float x, float y, float scale) {
     if (x < 0 || y < 0 || x >= width) return TitleBarArea::Client;
-    if (y < T::kButtonHeight && x >= width - T::kButtonsWidth) {
-        if (x < CaptionButtonLeft(width, CaptionButton::Maximize)) return TitleBarArea::Minimize;
-        if (x < CaptionButtonLeft(width, CaptionButton::Close)) return TitleBarArea::Maximize;
+    if (y < T::kButtonHeight && x >= CaptionButtonLeft(width, CaptionButton::Minimize, scale)) {
+        if (x < CaptionButtonLeft(width, CaptionButton::Maximize, scale)) return TitleBarArea::Minimize;
+        if (x < CaptionButtonLeft(width, CaptionButton::Close, scale)) return TitleBarArea::Maximize;
         return TitleBarArea::Close;
     }
     // The sidebar's top row, over its address field (nothing in it takes clicks yet: the Mac's

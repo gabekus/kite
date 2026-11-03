@@ -4,7 +4,6 @@
 
 #include "shell/MainWindow.h"
 
-
 #include <algorithm>
 #include <cmath>
 
@@ -209,9 +208,7 @@ void CaptionButtonsView::DrawContent(ID2D1DeviceContext* context, UINT width) {
     // Each button's edges on whole pixels, counted from the right edge (as Windows 11's own are
     // at 125% and 175%, where 46 points isn't a whole number of pixels).
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
-    auto edge = [&](int fromRight) {
-        return (static_cast<float>(width) - std::round(static_cast<float>(fromRight) * T::kButtonWidth * scale)) / scale;
-    };
+    auto edge = [&](int fromRight) { return static_cast<float>(width) / scale - CaptionEdgeFromRight(fromRight, scale); };
     for (size_t i = 0; i < 3; ++i) {
         const CaptionButton button = buttons[i];
         const float left = edge(3 - static_cast<int>(i)), right = edge(2 - static_cast<int>(i));

@@ -27,10 +27,14 @@ enum class CaptionButton { Minimize, Maximize, Close };
 enum class TitleBarArea { Client, Drag, Minimize, Maximize, Close };
 
 // At (x, y) points from the client area's top-left, in a client area `width` wide whose sidebar
-// is `sidebarWidth` wide.
-TitleBarArea TitleBarAreaAt(float width, float sidebarWidth, float x, float y);
+// is `sidebarWidth` wide, laid out at `scale` (pixels per point).
+TitleBarArea TitleBarAreaAt(float width, float sidebarWidth, float x, float y, float scale = 1);
 std::optional<CaptionButton> CaptionButtonOf(TitleBarArea area);
+// How far the edge `buttons` buttons in from the right sits from the client area's right edge,
+// in points: on a whole pixel at `scale` (46 points is 57.5 px at 125%), as both the drawing and
+// the hit test use it.
+float CaptionEdgeFromRight(int buttons, float scale = 1);
 // A button's left edge, in a client area `width` wide (its top is 0).
-float CaptionButtonLeft(float width, CaptionButton button);
+float CaptionButtonLeft(float width, CaptionButton button, float scale = 1);
 
 }  // namespace kite

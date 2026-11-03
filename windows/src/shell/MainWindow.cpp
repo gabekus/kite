@@ -44,10 +44,6 @@ std::optional<CaptionButton> CaptionButtonOfHit(WPARAM hit) {
     }
 }
 
-namespace {
-
-}  // namespace
-
 bool MainWindow::RegisterWindowClass(HINSTANCE instance) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -200,7 +196,9 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_SETTINGCHANGE:
-        // The taskbar's auto-hide may have changed (it changes the work area).
+    case WM_DISPLAYCHANGE:
+        // The taskbar's auto-hide may have changed (it changes the work area), or the
+        // monitors did (a handle can come back for another one).
         autoHideMonitor_ = nullptr;
         break;
     case WM_NCHITTEST: {

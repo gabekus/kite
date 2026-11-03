@@ -339,8 +339,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     window.hitTest = [&](float x, float y) {
         RECT client{};
         GetClientRect(window.Handle(), &client);
-        const float width = static_cast<float>(client.right) * USER_DEFAULT_SCREEN_DPI / static_cast<float>(window.Dpi());
-        return kite::TitleBarAreaAt(width, static_cast<float>(kSidebarWidth), x, y);
+        const float scale = static_cast<float>(window.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        return kite::TitleBarAreaAt(static_cast<float>(client.right) / scale, static_cast<float>(kSidebarWidth), x, y, scale);
     };
 
     // The command bar (Ctrl+T), over everything in the window. What it does with a row, and

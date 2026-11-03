@@ -57,3 +57,17 @@ TEST(aFractionalWidthKeepsTheButtonsFlushRight) {
     CHECK(CaptionButtonOf(TitleBarArea::Close) == CaptionButton::Close);
     CHECK(!CaptionButtonOf(TitleBarArea::Client));
 }
+
+TEST(at125PercentTheButtonsEdgesFallOnWholePixels) {
+    // 46 points is 57.5 px: the edges sit 58, 115 and 173 px in from the right (rounded), the
+    // same columns the buttons are drawn in.
+    CHECK(CaptionEdgeFromRight(1, 1.25f) * 1.25f == 58);
+    CHECK(CaptionEdgeFromRight(2, 1.25f) * 1.25f == 115);
+    CHECK(CaptionEdgeFromRight(3, 1.25f) * 1.25f == 173);
+    // A 1600-px client area (1280 points): the column 58 px in from the right is Close's.
+    const float width = 1280;
+    CHECK(TitleBarAreaAt(width, 240, (1600 - 58) / 1.25f, 5, 1.25f) == TitleBarArea::Close);
+    CHECK(TitleBarAreaAt(width, 240, (1600 - 59) / 1.25f, 5, 1.25f) == TitleBarArea::Maximize);
+    CHECK(TitleBarAreaAt(width, 240, (1600 - 173) / 1.25f, 5, 1.25f) == TitleBarArea::Minimize);
+    CHECK(TitleBarAreaAt(width, 240, (1600 - 174) / 1.25f, 5, 1.25f) == TitleBarArea::Drag);
+}
