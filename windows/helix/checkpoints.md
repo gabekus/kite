@@ -9,7 +9,8 @@ more as earlier ones land.
 | W0 | Win32 window, profile path, CI launch | AppDelegate.supportDirectory | done (#260) |
 | W1 | Model core: tabs, folders, spaces, themes, session.json shared with the Mac, `kitecore` | KiteCore Models, BrowserState (open, select, spaces), SessionStore, URLInput | done (#260) |
 | W2 | `--capture` and `--window-size` for the UI gate; first `states/` fixture | `kite ui capture` | in review (#260) |
-| W3 | DirectComposition root and the theme backdrop (HLSL port of Kite.metal), drawing only on change | KiteMac/Metal, Shaders/Kite.metal, Theme.swift (OKLab) | planned |
+| W3a | Theme colour math (OKLab, lightness, glow, accent) | Theme.swift | in review (#260) |
+| W3 | DirectComposition root and the theme backdrop (HLSL port of Kite.metal), drawing only on change | KiteMac/Metal, Shaders/Kite.metal | planned |
 | W4 | Sidebar skeleton: space title, pinned and unpinned rows from the session, static | Views/SidebarView.swift, ArcMetrics.swift | planned |
 | W5 | Closing, archiving and reopening tabs | BrowserState close/reopen/archive, Archive.swift | planned |
 | W6 | CEF windowed: one browser per tab, page beside the sidebar | Engine/ChromiumEngine.swift, CEFBridge | needs CEF download OK |

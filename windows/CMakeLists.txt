@@ -23,6 +23,7 @@ add_compile_definitions(UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WIN
 add_library(KiteCoreWin STATIC
   src/core/Json.cpp
   src/core/Models.cpp
+  src/core/OKLab.cpp
   src/core/SessionStore.cpp
   src/core/SupportDirectory.cpp
   src/core/URLInput.cpp
@@ -59,6 +60,7 @@ add_executable(KiteCoreTests
   tests/JsonTests.cpp
   tests/ModelTests.cpp
   tests/SupportDirectoryTests.cpp
+  tests/ThemeTests.cpp
   tests/URLInputTests.cpp
 )
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
