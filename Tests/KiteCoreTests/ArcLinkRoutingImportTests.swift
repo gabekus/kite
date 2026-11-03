@@ -89,7 +89,11 @@ import Testing
         #expect(result.keeping(spaces: []).defaultSpace == nil)
 
         let mostRecent = try JSONSerialization.data(withJSONObject: ["rules": [], "defaultDestination": ["mostRecent": [:]]])
-        #expect(ArcLinkRoutingImport.parse(mostRecent)?.defaultOpensInLittleKite == false)
+        let later = try #require(ArcLinkRoutingImport.parse(mostRecent))
+        #expect(later.defaultOpensInLittleKite == false)
+        // Arc's default changed since: the space default from the first import goes.
+        state.merge(arc: later)
+        #expect(state.defaultDestination == nil)
     }
 
     @Test func leavesOutWhatKiteCantReadOrOpen() throws {

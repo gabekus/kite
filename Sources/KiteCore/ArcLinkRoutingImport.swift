@@ -22,7 +22,7 @@ public enum ArcLinkRoutingImport {
         /// Routes Kite couldn't read.
         public var unreadable: Int
 
-        public var isEmpty: Bool { rules.isEmpty && defaultSpace == nil }
+        public var isEmpty: Bool { rules.isEmpty && defaultSpace == nil && defaultOpensInLittleKite == nil }
 
         /// Leaves out routes to spaces Kite doesn't have, which would never open anything.
         public func keeping(spaces ids: Set<UUID>) -> Result {
@@ -101,7 +101,12 @@ extension AirTrafficControl.State {
                 added += 1
             }
         }
-        if let space = imported.defaultSpace { defaultDestination = .space(space) }
+        if let space = imported.defaultSpace {
+            defaultDestination = .space(space)
+        } else if imported.defaultOpensInLittleKite != nil {
+            // Arc's default is now the Little Kite setting, so a space default from before goes.
+            defaultDestination = nil
+        }
         return added
     }
 }

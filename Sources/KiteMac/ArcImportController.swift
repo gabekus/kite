@@ -142,13 +142,16 @@ enum ArcImportController {
         // What the dialog counts is what imports with the unnamed spaces left out, as they start.
         let named = result.namedSpaceProfiles
         let historyCount = ArcImport.Result.withDefault(named).reduce(0) { $0 + (histories[$1]?.count ?? 0) }
+        // The routes that will come over: to a named space here or a space Kite already has.
+        let shownRoutes = routes?.keeping(spaces: Set(result.spaces.filter { !result.untitledSpaceIDs.contains($0.id) }.map(\.id))
+            .union(store.state.spaces.map(\.id)))
         var lines = [summary(result)]
         let extras = [
             archive.isEmpty ? nil : count(archive.count, "archived tab"),
             historyCount == 0 ? nil : count(historyCount, "history page"),
             siteSearches.isEmpty ? nil : count(siteSearches.count, "Site Search shortcut"),
             keyBindings.isEmpty ? nil : count(keyBindings.count, "keyboard shortcut change"),
-            routes.flatMap { $0.rules.isEmpty ? nil : count($0.rules.count, "Air Traffic Control route") },
+            shownRoutes.flatMap { $0.rules.isEmpty ? nil : count($0.rules.count, "Air Traffic Control route") },
             settings.isEmpty ? nil : count(settings.names.count, "Arc setting") + " (" + settings.names.joined(separator: ", ") + ")",
         ].compactMap { $0 }
         if !extras.isEmpty { lines.append("Also imports \(list(extras)).") }
@@ -161,10 +164,11 @@ enum ArcImportController {
         if let n = routes?.unreadable, n > 0 {
             lines.append("Kite couldn't read \(count(n, "Air Traffic Control route")), so \(n == 1 ? "it's" : "they're") left out.")
         }
-        if let routes, routes.rules.contains(where: { if case .space(let id) = $0.destination { !result.spaces.contains { $0.id == id } } else { false } }) {
+        if let routes, let shownRoutes, routes.rules.count > shownRoutes.rules.count {
             lines.append("Routes to a space that isn't imported are left out.")
         }
-        if let id = routes?.defaultSpace, let space = result.spaces.first(where: { $0.id == id }) {
+        if let id = shownRoutes?.defaultSpace,
+           let space = result.spaces.first(where: { $0.id == id }) ?? store.state.spaces.first(where: { $0.id == id }) {
             lines.append("Links from other apps that no route catches open in \(space.name), as in Arc.")
         }
         if let profiles = profilesLine(named, names: profileNames, state: store.state) { lines.append(profiles) }
@@ -175,7 +179,7 @@ enum ArcImportController {
         lines.append(reimported > 0
             ? "\(count(reimported, "space")) imported before will be replaced with Arc's current version, including changes you made to them in Kite."
             : "Importing again later replaces these spaces with Arc's current version, including changes you make to them in Kite.")
-        if let routes, !routes.rules.isEmpty {
+        if let shownRoutes, !shownRoutes.rules.isEmpty {
             lines.append("Importing again also replaces the Air Traffic Control routes that came from Arc.")
         }
 
