@@ -13,7 +13,7 @@ struct HistoryPageView: View {
     /// Opens a history entry: in this tab, or (⌘-click) in a new background tab.
     let open: (URL, _ newTab: Bool) -> Void
     /// Clear History also forgets what was typed in ⌘T to reach tabs.
-    var cleared: () -> Void = {}
+    let cleared: () -> Void
 
     @State private var query = ""
     @State private var confirmingClear = false

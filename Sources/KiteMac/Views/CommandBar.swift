@@ -400,8 +400,8 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
 
     /// Learns ⌘T picks, so what was typed leads to the same tab next time.
     private func commit(_ item: CommandSuggestion) {
-        // Not in a Site Search, whose query is for the site.
-        if mode == .newTab, site == nil {
+        // Not in a Site Search, whose query is for the site, nor while a completion shows (no pick leads then).
+        if mode == .newTab, site == nil, completed == nil {
             let tab: UUID? = if case .switchTab(let tab) = item { tab.id } else { nil }
             if store.state.commandBarPickChanges(typed: typed, tab: tab) {
                 store.mutateWithoutUndo { $0.recordCommandBarPick(typed: typed, tab: tab) }

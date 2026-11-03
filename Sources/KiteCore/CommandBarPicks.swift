@@ -25,17 +25,19 @@ extension BrowserState {
         // ("google" → search forgets "google docs" → Docs, which would otherwise still lead for "google").
         let open = allTabIDs
         commandBarPicks.removeAll { pick in
-            !open.contains(pick.tabID) || pick.query == key || (id == nil && pick.query.hasPrefix(key))
+            !open.contains(pick.tabID) || pick.query == key || (id == nil && key.count >= 2 && pick.query.hasPrefix(key))
         }
         guard let id else { return }
         commandBarPicks.insert(CommandBarPick(query: key, tabID: id, pickedAt: now), at: 0)
-        if commandBarPicks.count > Self.commandBarPickLimit { commandBarPicks.removeLast() }
+        if commandBarPicks.count > Self.commandBarPickLimit {
+            commandBarPicks.removeLast(commandBarPicks.count - Self.commandBarPickLimit)
+        }
     }
 
     /// Whether recording this pick would change anything, so a plain search needn't touch the store.
     public func commandBarPickChanges(typed: String, tab id: UUID?) -> Bool {
         let key = Self.pickKey(typed)
-        return !key.isEmpty && (id != nil || commandBarPicks.contains { $0.query.hasPrefix(key) })
+        return !key.isEmpty && (id != nil || commandBarPicks.contains { $0.query == key || (key.count >= 2 && $0.query.hasPrefix(key)) })
     }
 
     /// Delete browsing data › History forgets these too (every profile's; picks aren't kept per profile): they're what was typed.
