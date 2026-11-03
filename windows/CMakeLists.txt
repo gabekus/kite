@@ -38,6 +38,7 @@ add_library(KiteCoreWin STATIC
   src/core/Models.cpp
   src/core/OKLab.cpp
   src/core/SessionStore.cpp
+  src/core/SpaceBar.cpp
   src/core/SpaceSwipe.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
@@ -107,10 +108,11 @@ if(WIN32)
     src/shell/MainWindow.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
+    src/shell/SpaceBarView.cpp
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
-  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dwrite imm32 winhttp)
+  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -167,6 +169,7 @@ add_executable(KiteCoreTests
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
   tests/SidebarTests.cpp
+  tests/SpaceBarTests.cpp
   tests/SpaceSwipeTests.cpp
   tests/TabClosingTests.cpp
   tests/SupportDirectoryTests.cpp
