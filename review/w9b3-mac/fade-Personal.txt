@@ -1,0 +1,17 @@
+   53.0ms id=12304 alpha=1.000 bounds=472,909 186x28
+  500.0ms id=12304 alpha=0.181 bounds=427,909 208x28
+  506.4ms id=12304 alpha=0.303 bounds=427,909 208x28
+  517.1ms id=12304 alpha=0.428 bounds=427,909 208x28
+  523.7ms id=12304 alpha=0.541 bounds=427,909 208x28
+  532.1ms id=12304 alpha=0.637 bounds=427,909 208x28
+  540.3ms id=12304 alpha=0.717 bounds=427,909 208x28
+  548.8ms id=12304 alpha=0.783 bounds=427,909 208x28
+  557.0ms id=12304 alpha=0.836 bounds=427,909 208x28
+  564.1ms id=12304 alpha=0.880 bounds=427,909 208x28
+  573.3ms id=12304 alpha=0.915 bounds=427,909 208x28
+  583.9ms id=12304 alpha=0.942 bounds=427,909 208x28
+  589.3ms id=12304 alpha=0.963 bounds=427,909 208x28
+  598.4ms id=12304 alpha=0.979 bounds=427,909 208x28
+  602.8ms id=12304 alpha=0.990 bounds=427,909 208x28
+  615.3ms id=12304 alpha=0.997 bounds=427,909 208x28
+  622.7ms id=12304 alpha=1.000 bounds=427,909 208x28
