@@ -389,80 +389,174 @@ extension UserHandoff {
 
     /// The ring itself. It lives in a closed shadow root on a host element that takes no clicks, in an isolated
     /// world, so the page can neither style it nor read or fake its state. Every frame it follows the control's
-    /// box; the control is looked up again when the page redraws it.
+    /// box.
+    ///
+    /// Single-page apps (Cloudflare, Squarespace, Gmail) draw a page several times before it settles: a skeleton,
+    /// then the controls, then the same controls again. So the ring looks the control up again whenever the page
+    /// changes, moves only to a candidate that has stayed put for `settle` ms, and prefers a real control that says
+    /// exactly the words over a block of text that merely mentions them. It looks in same-origin frames too. A
+    /// control that's disabled is still ringed (dashed, grey) and reported, with the page's own reason when it
+    /// gives one, so Claude and the user hear why the step can't be done yet.
     static let ringFunction = #"""
         (cfg) => {
-          const K = window.__kiteHandoff || (window.__kiteHandoff = { step: null, el: null, done: null, scrolled: false, raf: 0, retry: 0 });
+          const settle = 300;
+          const K = window.__kiteHandoff || (window.__kiteHandoff = { step: null, el: null, cand: null, candAt: 0, done: null,
+            scrolled: false, raf: 0, retry: 0, dirty: true });
+          if (!K.docs) K.docs = new WeakSet();
           const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+          const style = (el) => (el.ownerDocument.defaultView || window).getComputedStyle(el);
           const shown = (el) => {
-            const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+            const r = el.getBoundingClientRect(), s = style(el);
             return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
           };
-          const controls = 'button,a[href],input:not([type=hidden]),select,textarea,label,summary,[role=button],[role=link],'
-            + '[role=checkbox],[role=switch],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=option],[tabindex]';
+          // The page and its same-origin frames, which Squarespace and Gmail draw parts of the page in.
+          const docs = () => {
+            const out = [];
+            const walk = (d, depth) => {
+              out.push(d);
+              if (depth >= 3) return;
+              for (const f of d.querySelectorAll('iframe,frame')) {
+                let inner = null;
+                try { inner = f.contentDocument; } catch (e) {}
+                if (inner && inner.documentElement) walk(inner, depth + 1);
+              }
+            };
+            walk(document, 0);
+            return out;
+          };
+          // Where a frame's element sits in the top page.
+          const offset = (el) => {
+            let x = 0, y = 0, w = el.ownerDocument.defaultView;
+            while (w && w !== window) {
+              let fe = null;
+              try { fe = w.frameElement; } catch (e) {}
+              if (!fe) break;
+              const r = fe.getBoundingClientRect();
+              x += r.left + fe.clientLeft; y += r.top + fe.clientTop;
+              w = fe.ownerDocument.defaultView;
+            }
+            return { x, y };
+          };
+          const real = 'button,a[href],input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=checkbox],'
+            + '[role=switch],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option]';
+          const controls = real + ',label,[tabindex]';
+          // A focusable block that's no control: a dialog, a panel, a help line.
+          const loose = '[tabindex]:not(' + real + ',label)';
           const words = (el) => norm(el.getAttribute('aria-label') || el.innerText || el.value || el.title
             || (el.labels && el.labels[0] && el.labels[0].innerText) || '');
+          // Cheap first look, before layout: could this element say the words at all?
+          const mentions = (el, want) => norm([el.getAttribute('aria-label'), el.textContent, el.value, el.title,
+            el.labels && el.labels[0] && el.labels[0].textContent].join(' ')).includes(want);
+          // Why a control can't be used, or null when it can: disabled, aria-disabled or inert, with the page's own
+          // words about it when it gives some (a title, a description, a tooltip attribute).
+          const blocked = (el) => {
+            const off = el.disabled === true || el.matches(':disabled') || !!el.closest('[aria-disabled="true"],[inert]');
+            if (!off) return null;
+            const own = words(el), said = [];
+            const desc = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+              .map((id) => el.ownerDocument.getElementById(id)).filter(Boolean).map((n) => n.textContent).join(' ');
+            said.push(el.getAttribute('aria-description'), desc);
+            for (let n = el, i = 0; n && n.getAttribute && i < 4; n = n.parentElement, i++) {
+              said.push(n.getAttribute('title'), n.getAttribute('data-tooltip'), n.getAttribute('data-tip'), n.getAttribute('data-title'));
+            }
+            const why = said.map((s) => (s || '').replace(/\s+/g, ' ').trim()).find((s) => s && norm(s) !== own) || '';
+            return { why: why.slice(0, 200) };
+          };
           const byText = (want) => {
             want = norm(want);
             if (!want) return null;
             let best = null, score = 0;
-            for (const el of document.querySelectorAll(controls)) {
-              if (!shown(el)) continue;
-              const t = words(el);
-              if (!t) continue;
-              const s = t === want ? 3 : t.startsWith(want) ? 2 : t.includes(want) ? 1 : 0;
-              // A tighter match wins; at a tie, the smaller element (a button inside a matching row).
-              if (s > score || (s === score && s > 0 && best && best.contains(el))) { best = el; score = s; }
+            for (const d of docs()) {
+              for (const el of d.querySelectorAll(controls)) {
+                if (el === K.host || !mentions(el, want) || !shown(el)) continue;
+                const t = words(el);
+                if (!t) continue;
+                // Exact words first. A partial match only counts on a control or label that says little else: a
+                // panel or a help line that mentions "Invite members" isn't the button.
+                const partial = t.length <= want.length + 40 && !el.matches(loose);
+                let s = t === want ? 30 : !partial ? 0 : t.startsWith(want) ? 20 : t.includes(want) ? 10 : 0;
+                if (!s) continue;
+                if (el.matches(real)) s += 4;
+                if (!blocked(el)) s += 1;
+                // At a tie, the smaller element (a button inside a matching row).
+                if (s > score || (s === score && best && best.contains(el))) { best = el; score = s; }
+              }
             }
             return best;
           };
-          // The control's own box. A label or other block that holds a short control ("☐ Super Administrator"
-          // across a whole row) is ringed around what it shows, not its full width.
+          const firstShown = (selector) => {
+            for (const d of docs()) {
+              let all = [];
+              try { all = d.querySelectorAll(selector); } catch (e) { return null; }
+              for (const el of all) if (shown(el)) return el;
+            }
+            return null;
+          };
+          // The control's own box, in the top page. A label or other block that holds a short control
+          // ("☐ Super Administrator" across a whole row) is ringed around what it shows, not its full width.
           const box = (el) => {
+            const o = offset(el), move = (r) => ({ left: r.left + o.x, top: r.top + o.y, right: r.right + o.x,
+              bottom: r.bottom + o.y, width: r.width, height: r.height });
             const r = el.getBoundingClientRect();
-            if (getComputedStyle(el).display === 'inline' || el.matches('input,select,textarea,button')) return r;
-            const range = document.createRange();
+            if (style(el).display === 'inline' || el.matches('input,select,textarea,button')) return move(r);
+            const range = el.ownerDocument.createRange();
             range.selectNodeContents(el);
             const c = range.getBoundingClientRect();
-            if (c.width <= 0 || c.height <= 0 || c.width >= r.width - 1) return r;
-            return { left: c.left, top: Math.min(c.top, r.top), right: c.right, bottom: Math.max(c.bottom, r.bottom),
-              width: c.width, height: Math.max(c.bottom, r.bottom) - Math.min(c.top, r.top) };
+            if (c.width <= 0 || c.height <= 0 || c.width >= r.width - 1) return move(r);
+            return move({ left: c.left, top: Math.min(c.top, r.top), right: c.right, bottom: Math.max(c.bottom, r.bottom),
+              width: c.width, height: Math.max(c.bottom, r.bottom) - Math.min(c.top, r.top) });
           };
           const find = (c) => {
             if (c.marker) {
-              const marked = document.querySelector('[data-kite-handoff="' + CSS.escape(c.marker) + '"]');
+              const marked = firstShown('[data-kite-handoff="' + CSS.escape(c.marker) + '"]');
               if (marked) return marked;
             }
-            if (c.selector) { try { return document.querySelector(c.selector); } catch (e) { return null; } }
+            if (c.selector) return firstShown(c.selector);
             // After a reload: the same place in the page, if it still says the same; otherwise its words.
             if (c.path) {
               let placed = null;
               try { placed = document.querySelector(c.path); } catch (e) {}
-              if (placed && (!c.text || words(placed) === norm(c.text))) return placed;
+              if (placed && shown(placed) && (!c.text || words(placed) === norm(c.text))) return placed;
             }
             return c.text ? byText(c.text) : null;
           };
+          const state = (el) => {
+            const b = el ? blocked(el) : null;
+            return JSON.stringify({ found: !!el, done: cfg && !cfg.probe ? K.done : null, disabled: !!b, why: b && b.why || null });
+          };
+          // A look without the ring: is the control there, and can it be used?
+          if (cfg && cfg.probe) return state(find(cfg));
           if (!K.clear) {
             K.clear = () => {
-              K.step = null; K.el = null; K.cfg = null; K.done = null;
+              K.step = null; K.el = null; K.cand = null; K.cfg = null; K.done = null;
               if (K.raf) cancelAnimationFrame(K.raf);
               K.raf = 0;
               if (K.host) K.host.remove();
               K.host = null;
             };
-            const report = (how) => (e) => {
-              if (!e.isTrusted || !K.step || !K.el || K.done) return;
-              const path = e.composedPath ? e.composedPath() : [];
-              if (!(path.includes(K.el) || K.el.contains(e.target))) return;
-              K.done = how;
-              try { window.kiteHandoffEvent(JSON.stringify({ step: K.step, how })); } catch (err) {}
-            };
-            document.addEventListener('click', report('click'), true);
-            document.addEventListener('change', report('change'), true);
           }
+          const report = (how) => (e) => {
+            if (!e.isTrusted || !K.step || !K.el || K.done || blocked(K.el)) return;
+            const path = e.composedPath ? e.composedPath() : [];
+            if (!(path.includes(K.el) || K.el.contains(e.target))) return;
+            K.done = how;
+            try { window.kiteHandoffEvent(JSON.stringify({ step: K.step, how })); } catch (err) {}
+          };
+          // Each document once: hear the user's click, and notice the page redrawing.
+          const watch = () => {
+            for (const d of docs()) {
+              if (K.docs.has(d)) continue;
+              K.docs.add(d);
+              d.addEventListener('click', report('click'), true);
+              d.addEventListener('change', report('change'), true);
+              new MutationObserver(() => { K.dirty = true; }).observe(d, { subtree: true, childList: true, characterData: true,
+                attributes: true, attributeFilter: ['disabled', 'aria-disabled', 'inert', 'hidden', 'aria-hidden', 'aria-label'] });
+            }
+          };
           if (!cfg) return JSON.stringify({ found: false });
-          if (K.step !== cfg.step) { K.step = cfg.step; K.el = null; K.done = null; K.scrolled = false; }
+          if (K.step !== cfg.step) { K.step = cfg.step; K.el = null; K.cand = null; K.done = null; K.scrolled = false; K.dirty = true; }
           K.cfg = cfg;
+          watch();
           if (!K.host || !K.host.isConnected) {
             const host = document.createElement('kite-handoff');
             host.style.cssText = 'all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;display:block;';
@@ -471,33 +565,49 @@ extension UserHandoff {
               + ':host{all:initial}'
               + '.ring{position:fixed;display:none;box-sizing:border-box;border:2px solid #D97757;border-radius:8px;'
               + 'box-shadow:0 0 0 4px rgba(217,119,87,.25);animation:kh 1.6s ease-in-out infinite;pointer-events:none}'
+              + '.ring.off{border:2px dashed #8E8E93;box-shadow:none;animation:none}'
               + '@keyframes kh{50%{box-shadow:0 0 0 8px rgba(217,119,87,.12)}}'
               + '.tag{position:fixed;display:none;max-width:320px;padding:4px 9px;border-radius:7px;background:#D97757;color:#fff;'
               + 'font:600 12px/16px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;white-space:nowrap;overflow:hidden;'
               + 'text-overflow:ellipsis;box-shadow:0 2px 8px rgba(0,0,0,.18);pointer-events:none}'
+              + '.tag.off{background:#636366}'
               + '@media (prefers-reduced-motion:reduce){.ring{animation:none}}'
               + '</style><div class="ring"></div><div class="tag"></div>';
             (document.documentElement || document.body).appendChild(host);
             K.host = host; K.ring = root.querySelector('.ring'); K.tag = root.querySelector('.tag');
           }
-          K.tag.textContent = 'Claude needs you · ' + cfg.number + '. ' + cfg.label;
+          const look = () => {
+            const now = Date.now();
+            const valid = K.el && K.el.isConnected && shown(K.el);
+            // Looking the control up walks the page: often while it's missing or a new one is settling, less once
+            // it's found, and only after the page changed (or every 2s, for changes the observer can't see).
+            const every = !valid || K.cand !== K.el ? 150 : K.dirty ? 500 : 2000;
+            if (now - K.retry >= every) {
+              K.retry = now; K.dirty = false;
+              watch();
+              const el = find(K.cfg);
+              if (el !== K.cand) { K.cand = el; K.candAt = now; }
+            }
+            // Move only once the page has stopped redrawing that part, so the ring doesn't land on a skeleton.
+            if (K.cand !== K.el && now - K.candAt >= settle) K.el = K.cand;
+            return K.el && K.el.isConnected && shown(K.el) ? K.el : null;
+          };
           const place = () => {
             K.raf = 0;
             if (!K.cfg || !K.host) return;
-            if (!K.el || !K.el.isConnected || !shown(K.el)) {
-              const now = Date.now();
-              // Looking the control up walks the page: at most every 400ms while it's missing.
-              if (now - K.retry > 400) { K.retry = now; K.el = find(K.cfg); }
-            }
-            const el = K.el && K.el.isConnected && shown(K.el) ? K.el : null;
+            const el = look();
             if (el) {
               if (K.cfg.scroll && !K.scrolled) {
                 K.scrolled = true;
-                const r0 = el.getBoundingClientRect();
+                const r0 = box(el);
                 if (r0.top < 0 || r0.bottom > innerHeight || r0.left < 0 || r0.right > innerWidth) {
                   el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
                 }
               }
+              const off = !!blocked(el);
+              K.ring.classList.toggle('off', off); K.tag.classList.toggle('off', off);
+              // A turned-off control says so first: the tag's end is cut off on a narrow page.
+              K.tag.textContent = (off ? 'Not clickable yet · ' : 'Claude needs you · ') + K.cfg.number + '. ' + K.cfg.label;
               const r = box(el), pad = 4;
               Object.assign(K.ring.style, { display: 'block', left: (r.left - pad) + 'px', top: (r.top - pad) + 'px',
                 width: (r.width + pad * 2) + 'px', height: (r.height + pad * 2) + 'px' });
@@ -525,8 +635,9 @@ extension UserHandoff {
             K.raf = requestAnimationFrame(place);
           };
           if (!K.raf) place();
-          const el = K.el && K.el.isConnected ? K.el : (K.el = find(cfg));
-          return JSON.stringify({ found: !!(el && shown(el)), done: K.done });
+          // The page in the background gets no frames: look here too. A control still settling counts as found.
+          const el = look() || (K.cand && K.cand.isConnected ? K.cand : null);
+          return state(el);
         }
         """#
 }
