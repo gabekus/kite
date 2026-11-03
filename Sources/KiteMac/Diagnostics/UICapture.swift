@@ -122,8 +122,9 @@ enum UICapture {
     }
 
     /// A browser window drawn in Kite, back to front: the backdrop (the material's unblurred fallback, the Metal theme
-    /// drawn again off screen), the views over it, then each page from Chromium's own frame in its card, with the views
-    /// above that page (overlays in the card, the command bar, the Library) drawn over it again. Nil for windows that
+    /// drawn again off screen), the views over it, then what a view render can't draw (each page from Chromium's own
+    /// frame, other Metal themes), each in its card with the views above it (overlays, the command bar, the Library)
+    /// drawn over it again. Nil for windows that
     /// aren't browser windows; its notes say which pages didn't answer.
     private static func composedRender(_ window: NSWindow) async -> (CGImage, [String])? {
         guard let controller = window.windowController as? BrowserWindowController,
@@ -155,6 +156,29 @@ enum UICapture {
         controller.withCaptureBackdropHidden { draw(root) }
 
         var notes: [String] = []
+        // Every page first, each clipped to its card; then, per card, the views above its page, clipped to that card,
+        // so overlays end up on top and nothing outside a card is drawn twice (split panes are cards side by side).
+        var cards: [(view: NSView, mask: CGImage?)] = []
+        // Metal draws nothing in a view render: other themes (the sidebar peek card's) go under their views like pages.
+        var metal: [NSView] = []
+        func findMetal(_ view: NSView) {
+            guard !view.isHidden, view.alphaValue > 0 else { return }
+            if let theme = view as? ThemeView, !controller.isCaptureBackdrop(theme) {
+                if let image = theme.snapshot() {
+                    let mask = cardMask(theme)
+                    context.saveGState()
+                    if let mask { context.clip(to: CGRect(origin: .zero, size: size), mask: mask) }
+                    context.draw(image, in: place(theme.convert(theme.bounds, to: root)))
+                    context.restoreGState()
+                    cards.append((theme, mask))
+                }
+                return
+            }
+            if view is GlowView { metal.append(view) }
+            view.subviews.forEach(findMetal)
+        }
+        findMetal(root)
+        if !metal.isEmpty { notes.append("The loading glow (Metal) isn't drawn.") }
         for page in controller.capturePages {
             let data: Data?
             do {
@@ -164,21 +188,22 @@ enum UICapture {
                 continue
             }
             guard page.view.window === window, let data, let image = NSBitmapImageRep(data: data)?.cgImage else { continue }
+            let mask = cardMask(page.view)
             context.saveGState()
-            // The card's rounded corners: the nearest ancestor that clips with a corner radius, in its own corner curve.
-            var clip: NSView? = page.view
-            while let view = clip, !(view.layer?.masksToBounds == true && (view.layer?.cornerRadius ?? 0) > 0) { clip = view.superview }
-            if let clip, let layer = clip.layer {
-                let rect = place(clip.convert(clip.bounds, to: root))
-                let device = CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale)
-                if let mask = roundedMask(device, radius: layer.cornerRadius * scale, curve: layer.cornerCurve, width: width, height: height) {
-                    context.clip(to: CGRect(origin: .zero, size: size), mask: mask)
-                }
-            }
+            if let mask { context.clip(to: CGRect(origin: .zero, size: size), mask: mask) }
             context.draw(image, in: place(page.view.convert(page.view.bounds, to: root)))
             context.restoreGState()
-            // What's above the page on screen: its later siblings at every level up to the window.
-            var child: NSView = page.view
+            cards.append((page.view, mask))
+        }
+        for (underlay, mask) in cards {
+            context.saveGState()
+            if let mask {
+                context.clip(to: CGRect(origin: .zero, size: size), mask: mask)
+            } else {
+                context.clip(to: place(underlay.convert(underlay.bounds, to: root)))
+            }
+            // What's above it on screen: its later siblings at every level up to the window.
+            var child: NSView = underlay
             while let parent = child.superview {
                 if let index = parent.subviews.firstIndex(of: child) {
                     for view in parent.subviews[(index + 1)...] where !view.isHidden && view.alphaValue > 0 { draw(view) }
@@ -186,6 +211,18 @@ enum UICapture {
                 if parent === root { break }
                 child = parent
             }
+            context.restoreGState()
+        }
+        /// The page's card: its nearest ancestor that clips with a corner radius, as a mask in that layer's corner curve.
+        func cardMask(_ view: NSView) -> CGImage? {
+            var clip: NSView? = view
+            while let candidate = clip, !(candidate.layer?.masksToBounds == true && (candidate.layer?.cornerRadius ?? 0) > 0) {
+                clip = candidate.superview
+            }
+            guard let clip, let layer = clip.layer else { return nil }
+            let rect = place(clip.convert(clip.bounds, to: root))
+            let device = CGRect(x: rect.minX * scale, y: rect.minY * scale, width: rect.width * scale, height: rect.height * scale)
+            return roundedMask(device, radius: layer.cornerRadius * scale, curve: layer.cornerCurve, width: width, height: height)
         }
         return context.makeImage().map { ($0, notes) }
     }

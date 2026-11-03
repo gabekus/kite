@@ -1645,6 +1645,9 @@ extension BrowserWindowController {
         themeView.isHidden = hidden.1
     }
 
+    /// Whether `view` is part of the backdrop `drawCaptureBackdrop` already drew.
+    func isCaptureBackdrop(_ view: NSView) -> Bool { view === materialView || view === themeView }
+
     /// The pages showing in this window: the tabs on screen and an open link preview's.
     var capturePages: [WebPage] {
         (visiblePages + [linkPeek?.page].compactMap { $0 }).filter { $0.view.window === window && !$0.view.isHiddenOrHasHiddenAncestor }
