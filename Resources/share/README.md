@@ -36,10 +36,11 @@ folder like this one.
 
 ## If macOS won't open it
 
-This build is signed but not notarized by Apple yet. `install.sh` handles it. If you
-dragged Kite.app in yourself, run `xattr -dr com.apple.quarantine /Applications/Kite.app`,
-or open it once and then click **Open Anyway** in System Settings › Privacy & Security.
-On a managed work Mac, IT may need to allow it.
+This build is signed and notarized by Apple, so macOS should open it like any other
+download. If it still refuses (a managed work Mac, or a test build that wasn't notarized),
+run `xattr -dr com.apple.quarantine /Applications/Kite.app`, or open it once and then click
+**Open Anyway** in System Settings › Privacy & Security. On a managed work Mac, IT may need
+to allow it.
 
 ## For Claude
 

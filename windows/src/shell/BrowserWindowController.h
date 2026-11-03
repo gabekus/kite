@@ -49,6 +49,9 @@ public:
         // --frame-log: each frame the clock delivered (when it was handled, the time it was
         // drawn for, the pages' offset and the theme's crossfade) is kept for SaveFrameLog.
         bool frameLog = false;
+        // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
+        // decodes them in place, the rest on a worker).
+        std::filesystem::path spaceIcons;
     };
 
     // The window and everything in it, laid out and wired, not yet shown or drawn. Null with

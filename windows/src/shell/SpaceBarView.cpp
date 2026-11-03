@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 #include "shell/Errors.h"
 #include "shell/Text.h"
@@ -41,9 +42,10 @@ D2D1_RECT_F Rect(float left, float top, float right, float bottom) { return D2D1
 
 }  // namespace
 
-std::unique_ptr<SpaceBarView> SpaceBarView::Create(IDWriteFactory* dwrite, std::wstring& error) {
+std::unique_ptr<SpaceBarView> SpaceBarView::Create(IDWriteFactory* dwrite, SpaceIconPainter* painter, std::wstring& error) {
     std::unique_ptr<SpaceBarView> view(new SpaceBarView());
     view->dwrite_ = dwrite;
+    view->painter_ = painter;
     HRESULT hr = dwrite->CreateTextFormat(L"Segoe UI Emoji", nullptr, DWRITE_FONT_WEIGHT_REGULAR, DWRITE_FONT_STYLE_NORMAL,
                                           DWRITE_FONT_STRETCH_NORMAL, kEmojiFontSize, L"", view->emojiFormat_.GetAddressOf());
     if (SUCCEEDED(hr)) hr = view->emojiFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -149,12 +151,12 @@ void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
     const bool reshaped = cells.size() != cells_.size();
     // A cell that shows something else draws again; one whose light alone changed only fades.
     for (size_t i = 0; i < cells.size() && i < cellGpu_.size(); ++i) {
-        if (i >= cells_.size() || cells[i].icon != cells_[i].icon || dark != dark_) cellGpu_[i].dirty = true;
+        if (i >= cells_.size() || cells[i].look != cells_[i].look || dark != dark_) cellGpu_[i].dirty = true;
     }
     if (dark != dark_) dirty_ = backingDirty_ = true;
     // Only a new light or layer needs new opacities: a slide's keep running through an icon edit.
     bool relit = reshaped;
-    for (size_t i = 0; !relit && i < cells.size(); ++i) relit = cells[i].lit != cells_[i].lit || cells[i].dot != cells_[i].dot;
+    for (size_t i = 0; !relit && i < cells.size(); ++i) relit = cells[i].lit != cells_[i].lit || cells[i].Dot() != cells_[i].Dot();
     const auto gone = [&](const std::optional<std::string>& id) {
         return id && std::none_of(cells.begin(), cells.end(), [&](const SpaceCell& c) { return c.spaceID == *id; });
     };
@@ -198,6 +200,12 @@ void SpaceBarView::Slide(const std::vector<CubicSegment>& segments, double durat
     opacitiesApplied_ = false;
     // The cells' new light comes with the strip's commit.
     ApplyOpacities();
+}
+
+void SpaceBarView::InvalidatePictures(const std::set<std::string>& names) {
+    for (size_t i = 0; i < cells_.size() && i < cellGpu_.size(); ++i) {
+        if (cells_[i].look.kind == SpaceIconLook::Kind::Picture && names.contains(cells_[i].look.text)) cellGpu_[i].dirty = true;
+    }
 }
 
 void SpaceBarView::Land() {
@@ -279,8 +287,16 @@ void SpaceBarView::DrawDot(ID2D1DeviceContext* context) {
     context->FillEllipse(D2D1::Ellipse(D2D1::Point2F(M::kCellWidth / 2, M::kCellHeight / 2), r, r), brush_.Get());
 }
 
-void SpaceBarView::DrawEmoji(ID2D1DeviceContext* context, const SpaceCell& cell) {
-    const std::wstring icon = Widen(cell.icon);
+void SpaceBarView::DrawIcon(ID2D1DeviceContext* context, const SpaceCell& cell, bool greyed) {
+    if (cell.look.kind != SpaceIconLook::Kind::Emoji) {
+        // A symbol: in the theme's accent, or greyed in labelColor at 45% (no saturation filter, as
+        // the Mac's tint). A picture: as it is (greyed by the caller's filter).
+        const ThemeColor& a = cell.look.accent;
+        painter_->Draw(context, brush_.Get(), cell.look, D2D1::Point2F(M::kCellWidth / 2, M::kCellHeight / 2), M::kIconFontSize, Scale(),
+                       greyed ? Primary(M::kGreyOpacity) : D2D1_COLOR_F{a.r, a.g, a.b, 1}, dark_);
+        return;
+    }
+    const std::wstring icon = Widen(cell.look.text);
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(dwrite_->CreateTextLayout(icon.c_str(), static_cast<UINT32>(icon.size()), emojiFormat_.Get(), M::kCellWidth, M::kCellHeight,
                                          layout.GetAddressOf()))) {
@@ -303,7 +319,7 @@ void SpaceBarView::DrawEmoji(ID2D1DeviceContext* context, const SpaceCell& cell)
     context->DrawTextLayout(D2D1::Point2F(x, y), layout.Get(), brush_.Get(), D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
 }
 
-ComPtr<ID2D1CommandList> SpaceBarView::RecordEmoji(const SpaceCell& cell, HRESULT& hr) {
+ComPtr<ID2D1CommandList> SpaceBarView::RecordIcon(const SpaceCell& cell, HRESULT& hr) {
     // Into a command list with the context to itself (no surface's draw under way), so the
     // greyed layer's draw only plays it through the saturation effect.
     ID2D1DeviceContext* context = compositor_->D2D();
@@ -314,7 +330,7 @@ ComPtr<ID2D1CommandList> SpaceBarView::RecordEmoji(const SpaceCell& cell, HRESUL
     context->SetTarget(list.Get());
     context->BeginDraw();
     context->SetTransform(D2D1::Matrix3x2F::Identity());
-    DrawEmoji(context, cell);
+    DrawIcon(context, cell, false);
     hr = context->EndDraw();
     context->SetTarget(target.Get());
     if (SUCCEEDED(hr)) hr = list->Close();
@@ -363,28 +379,35 @@ std::wstring SpaceBarView::DrawCell(size_t index, CellGpu& gpu, bool readBack, b
         placed_ = false;
     }
     std::wstring error;
-    if (cell.dot) {
+    if (cell.Dot()) {
         error = DrawLayer(gpu.lit, width, height, [&](ID2D1DeviceContext* context) { DrawDot(context); }, readBack, hr, fresh);
         if (gpu.grey.visual) gpu.visual->RemoveVisual(gpu.grey.visual.Get());
         gpu.grey = Layer{};
     } else {
-        error = DrawLayer(gpu.lit, width, height, [&](ID2D1DeviceContext* context) { DrawEmoji(context, cell); }, readBack, hr, fresh);
-        // Greyed, as the Mac's CIColorControls (saturation 0), at 45% inside its own fade.
-        ComPtr<ID2D1CommandList> emoji;
-        if (error.empty() && !(emoji = RecordEmoji(cell, hr))) error = HResultMessage(L"recording a space's icon", hr);
-        if (error.empty()) {
-            error = DrawLayer(
-                gpu.grey, width, height,
-                [&](ID2D1DeviceContext* context) {
-                    saturation_->SetInput(0, emoji.Get());
-                    context->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                                                              D2D1::IdentityMatrix(), M::kGreyOpacity),
-                                       nullptr);
-                    context->DrawImage(saturation_.Get());
-                    context->PopLayer();
-                    saturation_->SetInput(0, nullptr);
-                },
-                readBack, hr, fresh);
+        // A picture's bitmap, made before the layers' draws begin.
+        painter_->Prepare(compositor_->D2D(), cell.look, M::kIconFontSize, Scale());
+        error = DrawLayer(gpu.lit, width, height, [&](ID2D1DeviceContext* context) { DrawIcon(context, cell, false); }, readBack, hr, fresh);
+        if (error.empty() && GreysByTint(cell.look.kind)) {
+            error = DrawLayer(gpu.grey, width, height, [&](ID2D1DeviceContext* context) { DrawIcon(context, cell, true); }, readBack, hr, fresh);
+        } else if (error.empty()) {
+            // An emoji or a picture greyed, as the Mac's CIColorControls (saturation 0), at 45%
+            // inside its own fade.
+            ComPtr<ID2D1CommandList> icon;
+            if (!(icon = RecordIcon(cell, hr))) error = HResultMessage(L"recording a space's icon", hr);
+            if (error.empty()) {
+                error = DrawLayer(
+                    gpu.grey, width, height,
+                    [&](ID2D1DeviceContext* context) {
+                        saturation_->SetInput(0, icon.Get());
+                        context->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                                  D2D1::IdentityMatrix(), M::kGreyOpacity),
+                                           nullptr);
+                        context->DrawImage(saturation_.Get());
+                        context->PopLayer();
+                        saturation_->SetInput(0, nullptr);
+                    },
+                    readBack, hr, fresh);
+            }
         }
     }
     if (!error.empty()) {
@@ -470,7 +493,7 @@ void SpaceBarView::ApplyOpacities() {
         bool animated = false;
         if (slide_) {
             const CellOpacityAlong along = CellOpacityAlongSettle(
-                cell.dot, HighlightAlongSettle(i, slide_->selected, slide_->built, slide_->from, slide_->to, slide_->pageWidth));
+                cell.Dot(), HighlightAlongSettle(i, slide_->selected, slide_->built, slide_->from, slide_->to, slide_->pageWidth));
             auto make = [&](const LinearLit& opacity, ComPtr<IDCompositionAnimation>& out) {
                 HRESULT hr = compositor_->Device()->CreateAnimation(out.GetAddressOf());
                 for (const CubicSegment& s : MapSegments(slide_->segments, opacity.slope, opacity.rest)) {
@@ -489,7 +512,7 @@ void SpaceBarView::ApplyOpacities() {
             }
         }
         if (!animated) {
-            const CellOpacity rest = CellOpacityAt(cell.dot, cell.lit);
+            const CellOpacity rest = CellOpacityAt(cell.Dot(), cell.lit);
             gpu.lit.effect->SetOpacity(static_cast<float>(rest.lit));
             if (gpu.grey.effect) gpu.grey.effect->SetOpacity(static_cast<float>(rest.grey));
         }
@@ -581,8 +604,8 @@ std::wstring SpaceBarView::Draw(UINT clientHeight, Pixels* readBack) {
         }
         for (size_t i = 0; i < cellGpu_.size() && i < cells_.size(); ++i) {
             const POINT at{std::lround(layout_.cells[i].left * scale), std::lround(layout_.cells[i].top * scale)};
-            const CellOpacity opacity = CellOpacityAt(cells_[i].dot, cells_[i].lit);
-            if (!cells_[i].dot) ComposeOver(*readBack, cellGpu_[i].grey.pixels, at, static_cast<float>(opacity.grey), &clip);
+            const CellOpacity opacity = CellOpacityAt(cells_[i].Dot(), cells_[i].lit);
+            if (!cells_[i].Dot()) ComposeOver(*readBack, cellGpu_[i].grey.pixels, at, static_cast<float>(opacity.grey), &clip);
             ComposeOver(*readBack, cellGpu_[i].lit.pixels, at, static_cast<float>(opacity.lit), &clip);
         }
     }

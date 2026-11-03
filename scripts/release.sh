@@ -15,8 +15,9 @@
 # Usage: scripts/release.sh [--publish] [--allow-branch]
 #   --publish        create the GitHub release (draft first, published once its files are up)
 #   --allow-branch   build from something other than origin/main (never with --publish)
-# Environment: KITE_SPARKLE_KEY (default ~/.kite-secrets/sparkle-ed25519), and for local tests
-#   KITE_UPDATE_FEED / KITE_DOWNLOAD_BASE (feed and download URLs), KITE_ALLOW_NO_CODECS=1.
+# Environment: KITE_SPARKLE_KEY (default ~/.kite-secrets/sparkle-ed25519), KITE_NOTARY_PROFILE
+#   (notarytool keychain profile, default kite-notary), and for local tests KITE_UPDATE_FEED /
+#   KITE_DOWNLOAD_BASE (feed and download URLs), KITE_ALLOW_NO_CODECS=1, KITE_SKIP_NOTARIZE=1.
 set -euo pipefail
 
 PUBLISH=0
@@ -30,6 +31,10 @@ for arg in "$@"; do
 done
 if [[ "$PUBLISH" == 1 && "$ALLOW_BRANCH" == 1 ]]; then
     echo "error: releases are published from origin/main only" >&2
+    exit 2
+fi
+if [[ "$PUBLISH" == 1 && "${KITE_SKIP_NOTARIZE:-}" == 1 ]]; then
+    echo "error: published releases are notarized (unset KITE_SKIP_NOTARIZE)" >&2
     exit 2
 fi
 
@@ -62,6 +67,10 @@ PUBLIC_KEY="$(swift scripts/sparkle-key.swift "$KEY_FILE")"
 PLIST_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' Resources/Info.plist 2>/dev/null || true)"
 [[ "$PUBLIC_KEY" == "$PLIST_KEY" ]] || fail "$KEY_FILE doesn't match SUPublicEDKey in Resources/Info.plist"
 
+# Notarization needs the notarytool profile; check it now rather than after a long build.
+[[ "${KITE_SKIP_NOTARIZE:-}" == 1 ]] || scripts/notarize.sh --check
+export KITE_HARDENED_RUNTIME=1
+
 # Build, ad blocker included (see install-app.sh).
 ADBLOCK_LIB="Sources/KiteAdblock/rust/target/lib/libkite_adblock.a"
 [[ -f "$ADBLOCK_LIB" ]] || scripts/build-adblock.sh
@@ -88,6 +97,14 @@ BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info
 TAG="v$VERSION"
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
     fail "$TAG already exists"
+fi
+
+# Notarized and stapled, so a Kite downloaded from the release page opens without Gatekeeper's
+# block. Before zipping: stapling adds the ticket to the app, and the zip is what Sparkle signs.
+if [[ "${KITE_SKIP_NOTARIZE:-}" == 1 ]]; then
+    echo "note: not notarized (KITE_SKIP_NOTARIZE=1)"
+else
+    scripts/notarize.sh "$APP"
 fi
 
 OUT="$ROOT/dist/release/$VERSION"

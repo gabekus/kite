@@ -112,17 +112,51 @@ if [[ -z "$SIGN_ID" ]]; then
     SIGN_ID="-"
     echo "note: ad-hoc signing, so the keychain will ask again after each rebuild (run scripts/make-signing-cert.sh once to fix)"
 fi
-codesign --force --sign "$SIGN_ID" "$CONTENTS/Helpers/kite"
+# Builds that get notarized (release.sh and package-share.sh set KITE_HARDENED_RUNTIME=1) are signed
+# with the hardened runtime and a secure timestamp, which notarization requires (scripts/notarize.sh).
+# Under the hardened runtime a process only gets JIT, the camera, the microphone and so on through an
+# entitlement, so each bundle has Arc's set (Resources/entitlements, docs/updates.md). Other builds,
+# Gabe's own install-app.sh one included, stay as they were: no timestamp server needed, debuggable.
+HARDEN=()
+if [[ "${KITE_HARDENED_RUNTIME:-}" == 1 ]]; then
+    # Matched in a variable, not with grep -q: under pipefail its early exit can fail the pipe (SIGPIPE).
+    IDENTITIES="$(security find-identity -v -p codesigning)"
+    if [[ "$SIGN_ID" != "-" && "$(grep -Fi "$SIGN_ID" <<<"$IDENTITIES" || true)" == *'"Developer ID Application: '* ]]; then
+        HARDEN=(-o runtime --timestamp)
+        echo "note: hardened runtime and secure timestamps, for notarization"
+    else
+        echo "warning: KITE_HARDENED_RUNTIME=1 but $SIGN_ID isn't a Developer ID Application identity, so not hardened" >&2
+    fi
+fi
+ENTS="$ROOT/Resources/entitlements"
+# sign PATH [ENTITLEMENTS]: entitlements only when hardened (they mean nothing without it).
+sign() {
+    local args=(--force --sign "$SIGN_ID" ${HARDEN[@]+"${HARDEN[@]}"})
+    if [[ -n "${2:-}" && ${#HARDEN[@]} -gt 0 ]]; then args+=(--entitlements "$2"); fi
+    codesign "${args[@]}" "$1"
+}
+sign "$CONTENTS/Helpers/kite"
 for helper in "$CONTENTS/Frameworks/"*.app; do
-    [[ -e "$helper" ]] && codesign --force --sign "$SIGN_ID" "$helper"
+    [[ -e "$helper" ]] || continue
+    # "Kite Helper (GPU).app" → Helper-GPU.entitlements; "Kite Helper.app" → Helper.entitlements;
+    # Alerts and Plugin (which CEF 156 never launches) have none.
+    kind="$(basename "$helper" .app | sed -n 's/^Kite Helper (\(.*\))$/\1/p')"
+    ent="$ENTS/Helper${kind:+-$kind}.entitlements"
+    sign "$helper" "$([[ -f "$ent" ]] && echo "$ent")"
 done
 # Sparkle's helpers first, then the framework (Sparkle's documented order, hardened runtime as it ships).
 SPARKLE="$CONTENTS/Frameworks/Sparkle.framework"
-codesign --force --sign "$SIGN_ID" -o runtime "$SPARKLE/Versions/B/Autoupdate"
-codesign --force --sign "$SIGN_ID" -o runtime "$SPARKLE/Versions/B/Updater.app"
-codesign --force --sign "$SIGN_ID" -o runtime "$SPARKLE"
-if [[ -d "$CONTENTS/Frameworks/Chromium Embedded Framework.framework" ]]; then
-    codesign --force --sign "$SIGN_ID" "$CONTENTS/Frameworks/Chromium Embedded Framework.framework"
+codesign --force --sign "$SIGN_ID" -o runtime ${HARDEN[@]+--timestamp} "$SPARKLE/Versions/B/Autoupdate"
+codesign --force --sign "$SIGN_ID" -o runtime ${HARDEN[@]+--timestamp} "$SPARKLE/Versions/B/Updater.app"
+codesign --force --sign "$SIGN_ID" -o runtime ${HARDEN[@]+--timestamp} "$SPARKLE"
+CEF_FRAMEWORK="$CONTENTS/Frameworks/Chromium Embedded Framework.framework"
+if [[ -d "$CEF_FRAMEWORK" ]]; then
+    # The framework's dylibs (SwiftShader, Vulkan, the sandbox) aren't nested code codesign signs
+    # by itself, and the helpers' library validation refuses them unless they're ours too.
+    for lib in "$CEF_FRAMEWORK/Libraries/"*.dylib; do
+        [[ -e "$lib" ]] && sign "$lib"
+    done
+    sign "$CEF_FRAMEWORK"
 fi
 # Passkeys from iCloud Keychain (the macOS passwords app) only reach a browser
 # that has Apple's restricted com.apple.developer.web-browser.public-key-credential
@@ -133,15 +167,24 @@ fi
 # first. See docs/passkeys.md.
 PROFILE="${KITE_PROVISIONING_PROFILE:-$HOME/.kite-secrets/Kite.provisionprofile}"
 ENTITLEMENTS=()
+if [[ ${#HARDEN[@]} -gt 0 ]]; then
+    APP_ENT="$ROOT/build/Kite-signing.entitlements"
+    cp "$ENTS/Kite.entitlements" "$APP_ENT"
+    ENTITLEMENTS=(--entitlements "$APP_ENT")
+fi
 # The profile is for dev.gabek.Kite only, so other bundle IDs (debug builds) go without it.
 if [[ -f "$PROFILE" && "$SIGN_ID" != "-" && "$BUNDLE_ID" == dev.gabek.Kite ]]; then
     if ENT_PLIST="$(scripts/passkey-entitlements.sh "$PROFILE" "$SIGN_ID" "$ROOT/build")"; then
         cp "$PROFILE" "$CONTENTS/embedded.provisionprofile"
-        ENTITLEMENTS=(--entitlements "$ENT_PLIST")
+        if [[ ${#HARDEN[@]} -gt 0 ]]; then
+            /usr/libexec/PlistBuddy -c "Merge $ENT_PLIST" "$APP_ENT" >/dev/null
+        else
+            ENTITLEMENTS=(--entitlements "$ENT_PLIST")
+        fi
         echo "note: signing with the passkey entitlement from $PROFILE"
     else
         echo "warning: not adding the passkey entitlement (see above), iCloud Keychain passkeys stay off" >&2
     fi
 fi
-codesign --force --sign "$SIGN_ID" ${ENTITLEMENTS[@]+"${ENTITLEMENTS[@]}"} "$APP"
+codesign --force --sign "$SIGN_ID" ${HARDEN[@]+"${HARDEN[@]}"} ${ENTITLEMENTS[@]+"${ENTITLEMENTS[@]}"} "$APP"
 echo "Built $APP"

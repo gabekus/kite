@@ -5,8 +5,9 @@
 # They unzip it and run `bash install.sh`, which installs Kite and starts `kite setup`
 # (Claude Code with Resources/SETUP.md).
 #
-# Signing is bundle-app.sh's: a Developer ID cert when there is one. The build isn't
-# notarized, so install.sh clears macOS's quarantine flag.
+# Signing is bundle-app.sh's: a Developer ID cert when there is one. The app is then notarized
+# and stapled (scripts/notarize.sh), so Gatekeeper opens it. KITE_SKIP_NOTARIZE=1 skips that for a
+# local test, and install.sh still clears the quarantine flag for such a build.
 #
 # Builds into this checkout's build/, so run it in its own worktree, not in one that
 # install-app.sh or update-app.sh are using. It never touches /Applications.
@@ -25,6 +26,10 @@ fi
 # last build anyone has to be sent by hand.
 export KITE_UPDATE_FEED="${KITE_UPDATE_FEED:-https://github.com/gabekus/kite/releases/latest/download/appcast.xml}"
 
+# Notarization needs the notarytool profile; check it now rather than after a long build.
+[[ "${KITE_SKIP_NOTARIZE:-}" == 1 ]] || scripts/notarize.sh --check
+export KITE_HARDENED_RUNTIME=1
+
 # The ad blocker links only when its library exists (see install-app.sh).
 ADBLOCK_LIB="Sources/KiteAdblock/rust/target/lib/libkite_adblock.a"
 [[ -f "$ADBLOCK_LIB" ]] || scripts/build-adblock.sh
@@ -40,6 +45,11 @@ codesign --verify --deep --strict build/Kite.app
 TEAM="$(codesign -dv build/Kite.app 2>&1 | sed -n 's/^TeamIdentifier=//p')"
 if [[ -z "$TEAM" || "$TEAM" == "not set" ]]; then
     echo "warning: Kite.app isn't signed with a Developer ID; the keychain will ask again on every update" >&2
+fi
+if [[ "${KITE_SKIP_NOTARIZE:-}" == 1 ]]; then
+    echo "warning: not notarized (KITE_SKIP_NOTARIZE=1), so macOS blocks it unless install.sh runs" >&2
+else
+    scripts/notarize.sh build/Kite.app
 fi
 
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/Kite.app/Contents/Info.plist)"

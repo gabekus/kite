@@ -32,7 +32,7 @@ constexpr float kHeaderIconX = 13;   // in the window
 constexpr float kHeaderTextX = 41;   // in the window
 constexpr float kHeaderFontSize = 13;
 constexpr float kHeaderTextOpacity = 0.45f;
-constexpr float kHeaderEmojiSize = 15;
+constexpr float kHeaderIconFontSize = 15;  // SpaceIconImageView's size in the header: emoji, symbols, pictures
 constexpr float kIconSize = 18;
 constexpr float kIconTextGap = 8;
 constexpr float kNestingIndent = 16;
@@ -104,7 +104,8 @@ D2D1_RECT_F Rect(float left, float top, float right, float bottom) { return D2D1
 
 }  // namespace
 
-std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons, std::wstring& error) {
+std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons, const SpaceIconPainter::Pictures& pictures,
+                                                 std::wstring& error) {
     std::unique_ptr<SidebarView> view(new SidebarView(window, favicons));
     HRESULT hr = S_OK;
     if (FAILED(hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
@@ -132,7 +133,7 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kHeaderFontSize, view->headerFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kTabFontSize, view->tabFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kTabFontSize, view->folderFormat_)) ||
-        FAILED(hr = format(L"Segoe UI Emoji", DWRITE_FONT_WEIGHT_REGULAR, M::kHeaderEmojiSize, view->emojiFormat_)) ||
+        FAILED(hr = format(L"Segoe UI Emoji", DWRITE_FONT_WEIGHT_REGULAR, M::kHeaderIconFontSize, view->emojiFormat_)) ||
         FAILED(hr = format(installed(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets", DWRITE_FONT_WEIGHT_REGULAR,
                            M::kIconSize, view->iconFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
@@ -145,7 +146,9 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
         ComPtr<IDWriteInlineObject> ellipsis;
         if (SUCCEEDED(view->dwrite_->CreateEllipsisTrimmingSign(f, ellipsis.GetAddressOf()))) f->SetTrimming(&trimming, ellipsis.Get());
     }
-    view->bar_ = SpaceBarView::Create(view->dwrite_.Get(), error);
+    view->icons_ = SpaceIconPainter::Create(view->dwrite_.Get(), window, pictures, error);
+    if (!view->icons_) return nullptr;
+    view->bar_ = SpaceBarView::Create(view->dwrite_.Get(), view->icons_.get(), error);
     if (!view->bar_) return nullptr;
     // Emoji and symbols sit in the middle of their box.
     for (IDWriteTextFormat* f : {view->emojiFormat_.Get(), view->iconFormat_.Get()}) {
@@ -187,6 +190,7 @@ bool SidebarView::CreateGpu(std::wstring& error) {
 
 void SidebarView::ReleaseGpu() {
     faviconBitmaps_.clear();
+    if (icons_) icons_->ReleaseDevice();
     for (auto& [id, page] : pages_) {
         if (page.visual && strip_) {
             page.visual->SetContent(nullptr);
@@ -218,7 +222,14 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
     const size_t selected = state.SelectedSpaceIndex();
     next.dark = !PrefersDarkForeground(state.SelectedSpace().theme);
     // The space bar's cells, and their light along a slide that has just begun.
-    bar_->Update(SpaceCells(state), next.dark);
+    std::vector<SpaceCell> cells = SpaceCells(state);
+    // The pictures any space shows, in the bar or its header: the painter keeps only these.
+    std::set<std::string> pictures;
+    for (const SpaceCell& cell : cells) {
+        if (cell.look.kind == SpaceIconLook::Kind::Picture) pictures.insert(cell.look.text);
+    }
+    icons_->Retain(pictures);
+    bar_->Update(std::move(cells), next.dark);
     if (barSlidePending_) {
         barSlidePending_ = false;
         const std::optional<size_t> left = anchor ? state.SpaceIndex(*anchor) : std::nullopt;
@@ -362,6 +373,20 @@ void SidebarView::InvalidatePages() {
     ScheduleDraw();
 }
 
+void SidebarView::PicturesArrived() {
+    const std::set<std::string> changed = icons_->TakeResults();
+    if (changed.empty()) return;
+    bar_->InvalidatePictures(changed);
+    // The built pages whose header shows one of them.
+    for (const PageModel& model : model_.pages) {
+        const SidebarRow* header = model.rows.empty() ? nullptr : &model.rows.front();
+        if (header && header->look.kind == SpaceIconLook::Kind::Picture && changed.contains(header->look.text)) {
+            if (auto page = pages_.find(model.spaceID); page != pages_.end()) page->second.dirty = true;
+        }
+    }
+    ScheduleDraw();
+}
+
 void SidebarView::InvalidateSelectedPage() {
     if (auto found = pages_.find(model_.spaceID); found != pages_.end()) found->second.dirty = true;
     ScheduleDraw();
@@ -436,6 +461,10 @@ std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixe
     }
     gpu.width = width;
     gpu.height = height;
+    // The header's picture's bitmap, made before the page's draw begins.
+    if (!page.rows.empty() && page.rows.front().kind == SidebarRow::Kind::Header) {
+        icons_->Prepare(compositor_->D2D(), page.rows.front().look, M::kHeaderIconFontSize, scale);
+    }
     std::set<FaviconKey> icons;
     drawnIcons_ = &icons;
     std::wstring error = compositor_->DrawSurface(
@@ -455,6 +484,11 @@ std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixe
 }
 
 std::wstring SidebarView::Draw(Pixels* readBack) {
+    // The pictures this draw asks for (the pages' headers and the bar's) go to the worker together.
+    struct SendRequests {
+        SpaceIconPainter* icons;
+        ~SendRequests() { if (icons) icons->SendRequests(); }
+    } sendRequests{icons_.get()};
     if (!compositor_) return L"no compositor";
     if (deviceLost_) return L"the GPU device was lost";
     RECT client{};
@@ -656,13 +690,22 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
     const float tabBaseline = pillTop + TextTop(M::kPillHeight, tabLine) + M::kTabFontSize * kAscender;
     switch (row.kind) {
     case SidebarRow::Kind::Header: {
-        // An icon-less space has no icon slot: its name starts at the icon's place.
+        // An icon-less space has no icon slot: its name starts at the icon's place. Any icon keeps
+        // the slot (SpaceHeaderRowCell's showsIcon), even one that draws nothing: a symbol with
+        // no stand-in.
         float x = M::kHeaderIconX;
         const D2D1_RECT_F iconBox = Rect(x, top + M::kHeaderIconTop, x + M::kHeaderIconSize, top + M::kHeaderIconTop + M::kHeaderIconSize);
         if (!row.icon.empty()) {
-            // An emoji is drawn; SF Symbols and pictures keep their slot for now.
-            if (!row.icon.starts_with("symbol:") && !row.icon.starts_with("image:")) {
-                const std::wstring icon = Widen(row.icon);
+            if (row.look.kind == SpaceIconLook::Kind::Dot) {
+                // Blank.
+            } else if (row.look.kind != SpaceIconLook::Kind::Emoji) {
+                // A symbol in the theme's accent, or a picture (SpaceIconImageView, never greyed here).
+                const ThemeColor& a = row.look.accent;
+                icons_->Draw(context, brush_.Get(), row.look,
+                             D2D1::Point2F((iconBox.left + iconBox.right) / 2, (iconBox.top + iconBox.bottom) / 2), M::kHeaderIconFontSize,
+                             static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI, D2D1_COLOR_F{a.r, a.g, a.b, 1}, model_.dark);
+            } else {
+                const std::wstring icon = Widen(row.look.text);
                 ComPtr<IDWriteTextLayout> layout;
                 if (SUCCEEDED(dwrite_->CreateTextLayout(icon.c_str(), static_cast<UINT32>(icon.size()), emojiFormat_.Get(), M::kHeaderIconSize,
                                                         M::kHeaderIconSize, layout.GetAddressOf()))) {

@@ -50,7 +50,6 @@ struct ClaudeSidebarButton: View {
     }
 }
 
-/// A plain starburst, Kite's own drawing (not Anthropic's logo file).
 /// Claude's logo, the spark, as one filled shape on a 24-point square (Simple Icons' "claude" path, CC0),
 /// scaled to fit. Fill it in `Color.claude`.
 struct ClaudeMark: Shape {

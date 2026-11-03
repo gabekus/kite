@@ -23,8 +23,9 @@ If neither exists, the person hasn't installed it yet: the folder they were sent
 
 ## 2. Let macOS open it
 
-Builds shared by hand aren't notarized yet, so macOS may say Kite "can't be opened"
-or "Apple could not verify" it. Check for the download quarantine flag:
+Kite builds are notarized by Apple, so macOS normally opens them without asking. If
+it says Kite "can't be opened" or "Apple could not verify" it anyway (a test build that
+wasn't notarized, or a managed Mac's rules), check for the download quarantine flag:
 
 ```bash
 xattr -p com.apple.quarantine "$KITE_APP" 2>/dev/null && echo quarantined

@@ -49,7 +49,8 @@ touching /Applications) and packs `dist/Kite/` plus a zip of it: Kite.app,
 `install.sh`, a README and [SETUP.md](Resources/SETUP.md). The person unzips it and
 runs `bash install.sh`, which installs Kite and starts `kite setup`: Claude Code with
 the setup guide, which walks them through connecting Claude Code and the Claude app.
-The build is signed but not notarized yet, so install.sh clears macOS's quarantine flag.
+The build is signed with Gabe's Developer ID, hardened and notarized (`scripts/notarize.sh`,
+see [docs/updates.md](docs/updates.md#signing-and-notarization)), so macOS opens it.
 
 For quick UI work without Chromium, `swift run Kite` runs on WebKit.
 `swift test` runs the core tests.

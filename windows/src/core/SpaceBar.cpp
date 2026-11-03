@@ -77,17 +77,13 @@ std::optional<size_t> SpaceCellAt(const SpaceBarLayout& layout, float x, float y
     return std::nullopt;
 }
 
-bool SpaceIconShowsDot(const std::string& icon) {
-    return icon.empty() || icon.starts_with("symbol:") || icon.starts_with("image:");
-}
-
 std::vector<SpaceCell> SpaceCells(const BrowserState& state) {
     std::vector<SpaceCell> cells;
     cells.reserve(state.spaces.size());
     const size_t selected = state.SelectedSpaceIndex();
     for (size_t i = 0; i < state.spaces.size(); ++i) {
         const Space& space = state.spaces[i];
-        cells.push_back({space.id, space.icon, SpaceIconShowsDot(space.icon), i + 1, i == selected ? 1.0 : 0.0, i == selected});
+        cells.push_back({space.id, space.icon, SpaceIconLookOf(space.icon, space.theme), i + 1, i == selected ? 1.0 : 0.0, i == selected});
     }
     return cells;
 }
