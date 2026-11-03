@@ -241,17 +241,18 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         let looksLikeURL = URLInput.looksLikeURL(text)
         // The tab above the rest, from what was typed, not a Site Search completion after it ("gi" + "thub.com").
         let typedText = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Every match, so a favorite whose address is being typed isn't pushed out by five better title matches.
+        // When the leader comes from outside the five tab rows, it makes a sixth.
         let lead = mode == .newTab
-            ? CommandBarOrder.leader(typedText, matches: TabSearch.switchTargets(typedText, in: state, limit: .max),
-                                     looksLikeURL: looksLikeURL)?.tab
+            ? CommandBarOrder.leader(typedText, shown: text, in: state,
+                                     matches: typedText == text ? matches : TabSearch.switchTargets(typedText, in: state),
+                                     looksLikeURL: looksLikeURL)
             : nil
         let leader = lead.map(CommandSuggestion.switchTab)
         let tabs = matches.filter { $0.tab.id != lead?.id }.map { CommandSuggestion.switchTab($0.tab) }
         let search = CommandSuggestion.search(text, state.searchEngine.searchURL(for: text))
         // Pages visited before, minus any already shown as a tab and the page you're on (Arc showed neither).
-        let shown = matches.map(\.tab) + [lead, state.selectedTab].compactMap { $0 }
-        let openURLs = Set(shown.compactMap(\.url))
+        let shownTabs = matches.map(\.tab) + [lead, state.selectedTab].compactMap { $0 }
+        let openURLs = Set(shownTabs.compactMap(\.url) + [lead?.pinnedURL].compactMap { $0 })
         let visited = (store.history?.search(text, limit: 6) ?? [])
             .filter { !openURLs.contains($0.url) }
             .prefix(3)

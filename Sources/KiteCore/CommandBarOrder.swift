@@ -13,14 +13,15 @@ public enum CommandBarOrder {
     /// A host prefix (Arc put a tab first for "127", its host's start); weaker matches stay under the search.
     static let shortQueryMinStrength = TabSearch.hostPrefix
 
-    /// The tab that goes above everything but strong commands, from `matches` (best first) for what was typed,
-    /// without any inline completion after it; `typed` may be untrimmed.
-    public static func leader(_ typed: String, matches: [TabSearch.Match], looksLikeURL: Bool) -> TabSearch.Match? {
-        if let favorite = matches.first(where: { $0.isFavorite && $0.completesHost }) { return favorite }
+    /// The tab that goes above everything but strong commands, from what was typed (without the inline completion
+    /// `shown` adds; either may be untrimmed) and its `matches` (best first). It may be outside `matches`.
+    public static func leader(_ typed: String, shown: String, in state: BrowserState, matches: [TabSearch.Match],
+                              looksLikeURL: Bool) -> BrowserTab? {
+        if let favorite = TabSearch.addressFavorite(typed, shown: shown, in: state) { return favorite }
         guard !looksLikeURL, let best = matches.first, best.strength >= shortQueryMinStrength,
               typed.trimmingCharacters(in: .whitespacesAndNewlines).count <= shortQueryMaxLength
         else { return nil }
-        return best
+        return best.tab
     }
 
     /// Strong commands, the leading tab if there is one, the typed search, the other tabs, the engine's

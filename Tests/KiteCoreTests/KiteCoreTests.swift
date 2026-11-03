@@ -365,8 +365,9 @@ import Testing
         return (state, mail)
     }
 
-    func leader(_ query: String, _ state: BrowserState, url: Bool = false) -> UUID? {
-        CommandBarOrder.leader(query, matches: TabSearch.switchTargets(query, in: state, limit: .max), looksLikeURL: url)?.tab.id
+    func leader(_ query: String, _ state: BrowserState) -> UUID? {
+        CommandBarOrder.leader(query, shown: query, in: state, matches: TabSearch.switchTargets(query, in: state),
+                               looksLikeURL: URLInput.looksLikeURL(query))?.id
     }
 
     @Test func aTabMatchSitsUnderTheTypedSearchAboveSuggestions() {
@@ -392,12 +393,17 @@ import Testing
         // Arc showed this for 2 to 10 letters of an 11-letter host; the whole host opened it as a URL instead.
         let (state, mail) = gmail()
         for query in ["mail", "mail.", "mail.goo", "mail.google.co"] {
-            #expect(leader(query, state, url: query.contains(".")) == mail)
+            #expect(leader(query, state) == mail)
         }
-        #expect(leader("mail.google.com", state, url: true) == nil)
+        #expect(leader("mail.google.com", state) == nil)
+        #expect(leader("mail.google.com/", state) == nil)
+        // The favorite you're on doesn't lead.
+        var front = state
+        front.select(tab: mail)
+        #expect(leader("mail.goo", front) == nil)
         // Only favorites: an open tab's address past three letters stays under the search (not observed in Arc).
         let (tabs, _) = gmail(favorite: false)
-        #expect(leader("mail.goo", tabs, url: true) == nil)
+        #expect(leader("mail.goo", tabs) == nil)
     }
 
     @Test func aRedirectedFavoriteLeadsByItsPinnedAddress() {
@@ -407,7 +413,7 @@ import Testing
             $0.title = "Gmail"
         }
         #expect(state.tab(mail)?.pinnedURL?.host() == "mail.google.com")
-        #expect(leader("mail.goo", state, url: true) == mail)
+        #expect(leader("mail.goo", state) == mail)
     }
 
     @Test func theFavoriteLeadsEvenBehindStrongerMatches() {
@@ -427,14 +433,30 @@ import Testing
         let hub = state.openTab(url: URL(string: "https://github.com/gabekus"))
         state.update(tab: hub) { $0.title = "gabekus" }
         state.select(tab: state.openTab(url: URL(string: "https://example.com")))
-        #expect(leader("gi", state, url: true) == nil)
-        #expect(leader("gi", state) == hub)
+        func lead(_ url: Bool) -> UUID? {
+            CommandBarOrder.leader("gi", shown: url ? "github.com" : "gi", in: state,
+                                   matches: TabSearch.switchTargets("gi", in: state), looksLikeURL: url)?.id
+        }
+        #expect(lead(true) == nil)
+        #expect(lead(false) == hub)
         state.toggleFavorite(tab: hub)
-        #expect(leader("gi", state, url: true) == hub)
+        #expect(lead(true) == hub)
         #expect(CommandBarOrder.arrangeURL(leader: "fav", open: "open", tabs: ["tab"], history: ["h"], search: "search")
             == ["fav", "open", "tab", "h", "search"])
         #expect(CommandBarOrder.arrangeURL(leader: nil, open: "open", tabs: [], history: [], search: "search")
             == ["open", "search"])
+    }
+
+    @Test func aCompletionForAnotherSiteKeepsTheFavoriteOut() {
+        // "m" completed to "music.apple.com" in the field: the Gmail favorite would disagree with it.
+        let (state, mail) = gmail()
+        func lead(_ shown: String) -> UUID? {
+            CommandBarOrder.leader("m", shown: shown, in: state, matches: TabSearch.switchTargets("m", in: state),
+                                   looksLikeURL: URLInput.looksLikeURL(shown))?.id
+        }
+        #expect(lead("music.apple.com") == nil)
+        #expect(lead("mail.google.com") == mail)
+        #expect(lead("m") == mail)
     }
 
     @Test func aWeakShortMatchStaysUnderTheSearch() {
@@ -444,7 +466,7 @@ import Testing
             #expect(!TabSearch.switchTargets(query, in: state).isEmpty)
             #expect(leader(query, state) == nil)
         }
-        #expect(CommandBarOrder.leader("gm", matches: [], looksLikeURL: false) == nil)
+        #expect(CommandBarOrder.leader("gm", shown: "gm", in: state, matches: [], looksLikeURL: false) == nil)
     }
 
     @Test func aStrongCommandStaysOnTop() {
