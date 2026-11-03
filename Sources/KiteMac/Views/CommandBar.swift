@@ -371,9 +371,10 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
     private func autocomplete(to new: String) {
         if new == completed { return }
         if let completed, new.hasPrefix(completed) {
-            // Keys typed before the completion got selected belong after what was typed.
+            // Typed after the completion rather than over it: the caret had left it (→, ⌥→, a click), so it's
+            // accepted, as Arc ("you" → "youtube.com", → then "/" → "youtube.com/").
             self.completed = nil
-            setText(typed + new.dropFirst(completed.count))
+            typed = new
             return
         }
         completed = nil
@@ -403,12 +404,12 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         case #selector(NSResponder.moveDown(_:)):
             highlighted = min(highlighted + 1, max(items.count - 1, 0))
             return true
-        case #selector(NSResponder.moveRight(_:)), #selector(NSResponder.moveToEndOfLine(_:)),
-             #selector(NSResponder.moveToEndOfDocument(_:)), #selector(NSResponder.moveToRightEndOfLine(_:)):
-            // → accepts the inline completion, as Arc: what's typed next goes after it ("you" → "youtube.com/").
+        case #selector(NSResponder.moveRight(_:)), #selector(NSResponder.moveToRightEndOfLine(_:)):
+            // → accepts the inline completion at once, so the rows follow it before the next key.
             if let completed {
                 typed = completed
                 self.completed = nil
+                refresh()
             }
             return false
         case #selector(NSResponder.moveUp(_:)):
