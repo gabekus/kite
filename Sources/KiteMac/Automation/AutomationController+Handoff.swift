@@ -28,8 +28,10 @@ extension AutomationController {
         startHandoffPoller()
         if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
         await lookAtSteps(id, attempts: UserHandoff.probeAttempts)
-        // A step Claude handed over blocked is news now, not after the wait.
-        return try await handoffReport(id, wait: request.wait, reportBlockedAfter: 0)
+        // A step Claude handed over blocked is news now, not after the wait. One that turns off later, during the
+        // wait, may only be the page checking what the user just did: it waits out the usual delay.
+        let blocked = handoffs.first { $0.id == id }.map { !$0.blockedSteps.isEmpty } ?? false
+        return try await handoffReport(id, wait: blocked ? 0 : request.wait, reportBlockedAfter: UserHandoff.blockedReportDelay)
     }
 
     func handoffStatus(_ id: String?, wait: Double, cancel: Bool, connection: Int) async throws -> ToolOutput {
@@ -90,6 +92,8 @@ extension AutomationController {
     private func lookAtSteps(_ id: String, attempts: Int) async {
         guard let host else { return }
         for attempt in 0..<attempts {
+            // A look already under way may have started before what Claude just did: let it finish, then look.
+            while handoffPolling { try? await Task.sleep(for: .milliseconds(50)) }
             await pollHandoffs()
             guard let handoff = handoffs.first(where: { $0.id == id }) else { return }
             var missing = false
@@ -144,9 +148,9 @@ extension AutomationController {
 
     // MARK: What the card and the sidebar ask
 
-    /// Every step still waiting on the user, oldest handoff first.
+    /// Every step still waiting on the user, newest handoff first (the order tabs show them in: waitingStep).
     var waitingHandoffSteps: [(handoff: Handoff, step: Handoff.Step)] {
-        handoffs.flatMap { handoff in handoff.waiting.map { (handoff, $0) } }
+        handoffs.reversed().flatMap { handoff in handoff.waiting.map { (handoff, $0) } }
     }
 
     /// The step the card shows: the tab in front's (the first one waiting on it), or the one brought up with Next.
@@ -155,11 +159,11 @@ extension AutomationController {
         // A step brought up with Next stays up over the front tab's own until another tab comes forward.
         let focused = focusedHandoffStep.flatMap { id in waiting.first { $0.step.id == id } }
         if let focused, focusedHandoffFront == front { return focused }
-        if let front, let found = waiting.first(where: { $0.step.tab == front }) { return found }
+        // The front tab's step is the one its ring shows (waitingStep: the newest handoff's).
+        if let front, let step = waitingStep(on: front), let found = waiting.first(where: { $0.step.id == step.id }) { return found }
         return focused
     }
 
-    /// The first step waiting on a tab, for its sidebar row.
     /// The step a tab shows: the newest handoff's first waiting one there (Claude's latest word for that page, such as
     /// the step that turns on an older step's control).
     func waitingStep(on tab: UUID) -> Handoff.Step? {
