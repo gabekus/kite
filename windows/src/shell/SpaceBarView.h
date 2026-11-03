@@ -100,7 +100,7 @@ private:
                            bool& fresh);
     std::wstring DrawBacking(bool readBack);
     void DrawBar(ID2D1DeviceContext* context);
-    // The emoji centred on its ink in the cell (the Mac's CenteredTextView), into `context`.
+    // The emoji centred on its ink in the cell, into `context`.
     void DrawEmoji(ID2D1DeviceContext* context, const SpaceCell& cell);
     void DrawDot(ID2D1DeviceContext* context);
     // The emoji recorded for the greyed layer, before that layer's draw begins.

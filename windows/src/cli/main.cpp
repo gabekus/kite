@@ -20,8 +20,9 @@
 // bar's rows for TEXT, top first (--current: editing the current tab's address, Ctrl+L).
 // `sidebar` prints what the sidebar shows for a space (default the selected one): the address
 // field's text and the space page's rows, top to bottom, with their place in points, then the
-// space bar's cells (in the bar's points, for a 240pt sidebar). `click` in the bar's 50pt along
-// the bottom selects the space whose cell it hits.
+// space bar's cells (in the bar's points, for a 240pt sidebar, exact: the window snaps them to
+// its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
+// bottom selects the space whose cell it hits.
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space.
 
 #include <algorithm>

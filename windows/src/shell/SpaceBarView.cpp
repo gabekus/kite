@@ -30,8 +30,9 @@ constexpr float kStroke = 1.25f;
 constexpr float kBoxInkWidth = 15, kBoxInkHeight = 13.5f, kLidHeight = 4.05f, kBoxWidth = 12.55f;
 constexpr float kLidRadius = 0.75f, kBoxRadius = 1.2f, kSlotLength = 5.8f, kSlotFromTop = 6.4f;
 constexpr float kPlusLength = 12;
-// Apple Color Emoji draws a 12.5pt emoji 14.5pt across; Segoe UI Emoji's glyphs fill less of
-// their em (12.75pt at 12.5), so it's set larger to draw the Mac's size.
+// The Mac's 12.5pt emoji (Apple Color Emoji) inks 14.5pt square (🏠, 29x29px in its 2x capture of
+// the bar); Segoe UI Emoji's 🏠 inks 12.75pt at 12.5 (the PC's capture), so it's set larger to
+// ink the same.
 constexpr float kEmojiFontSize = space_bar_metrics::kIconFontSize * 14.5f / 12.75f;
 // The saturation effect's D2D1_SATURATION_PROP_SATURATION (MinGW's headers don't name it).
 constexpr UINT32 kSaturationProperty = 0;
@@ -151,6 +152,9 @@ void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
         if (i >= cells_.size() || cells[i].icon != cells_[i].icon || dark != dark_) cellGpu_[i].dirty = true;
     }
     if (dark != dark_) dirty_ = backingDirty_ = true;
+    // Only a new light or layer needs new opacities: a slide's keep running through an icon edit.
+    bool relit = reshaped;
+    for (size_t i = 0; !relit && i < cells.size(); ++i) relit = cells[i].lit != cells_[i].lit || cells[i].dot != cells_[i].dot;
     const auto gone = [&](const std::optional<std::string>& id) {
         return id && std::none_of(cells.begin(), cells.end(), [&](const SpaceCell& c) { return c.spaceID == *id; });
     };
@@ -169,7 +173,7 @@ void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
     }
     // A slide that's under way keeps its animation unless the spaces changed under it.
     if (reshaped) slide_.reset();
-    opacitiesApplied_ = false;
+    if (relit) opacitiesApplied_ = false;
 }
 
 void SpaceBarView::Layout(float width, UINT dpi) {
@@ -278,6 +282,9 @@ void SpaceBarView::DrawEmoji(ID2D1DeviceContext* context, const SpaceCell& cell)
         return;
     }
     // Its ink in the middle of the cell, whatever the glyph's side bearings and the line's ascent.
+    // (The Mac's CenteredTextView centres the string's typographic box instead; with Apple Color
+    // Emoji's metrics that puts the ink within 0.25pt of the cell's centre in its capture, which
+    // Segoe UI Emoji's ascent and descent wouldn't.)
     DWRITE_TEXT_METRICS metrics{};
     DWRITE_OVERHANG_METRICS overhang{};
     float x = 0, y = 0;
