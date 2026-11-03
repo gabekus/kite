@@ -19,7 +19,10 @@
 // centre pixels at WIDTH×HEIGHT px, default 1280×820) as sRGB hex. `suggest` prints the command
 // bar's rows for TEXT, top first (--current: editing the current tab's address, Ctrl+L).
 // `sidebar` prints what the sidebar shows for a space (default the selected one): the address
-// field's text and the space page's rows, top to bottom, with their place in points.
+// field's text and the space page's rows, top to bottom, with their place in points, then the
+// space bar's cells (in the bar's points, for a 240pt sidebar, exact: the window snaps them to
+// its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
+// bottom selects the space whose cell it hits.
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space.
 
 #include <algorithm>
@@ -40,6 +43,7 @@
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
 #include "core/Sidebar.h"
+#include "core/SpaceBar.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
 #include "core/URLInput.h"
@@ -319,7 +323,26 @@ int main(int argc, char** argv) {
             }
             rows.emplace_back(std::move(o));
         }
-        json::Object out{{"address", AddressFieldText(state)}, {"rows", json::Value(std::move(rows))}};
+        // The space bar under it, laid out for Kite's 240pt sidebar: each space's cell in bar
+        // points (from the bar's top-left), lit 1 for the space you're in.
+        const std::vector<SpaceCell> cells = SpaceCells(state);
+        const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
+        json::Array bar;
+        for (size_t i = 0; i < cells.size(); ++i) {
+            const BarRect& r = layout.cells[i];
+            bar.emplace_back(json::Object{{"id", cells[i].spaceID},
+                                          {"icon", cells[i].icon},
+                                          {"dot", cells[i].dot},
+                                          {"lit", cells[i].lit},
+                                          {"selected", cells[i].selected},
+                                          {"left", static_cast<double>(r.left)},
+                                          {"top", static_cast<double>(r.top)},
+                                          {"width", static_cast<double>(r.Width())},
+                                          {"height", static_cast<double>(r.Height())}});
+        }
+        json::Object out{{"address", AddressFieldText(state)},
+                         {"rows", json::Value(std::move(rows))},
+                         {"spaceBar", json::Object{{"fits", layout.fits}, {"cells", json::Value(std::move(bar))}}}};
         std::puts(json::Write(json::Value(std::move(out))).c_str());
         return kOk;
     } else if (command == "click" && args.size() >= 3 && args.size() <= 5) {
@@ -331,24 +354,43 @@ int main(int argc, char** argv) {
             if (error != std::errc() || end != args[i].data() + args[i].size()) return Usage();
         }
         const auto rows = SidebarRows(state, state.SelectedSpaceIndex());
-        const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1);
-        static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton"};
-        static constexpr const char* kActions[] = {"none",      "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
-                                                   "newTab",    "closeTab"};
-        json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
-        if (press) {
-            if (!press->id.empty()) out.emplace("id", press->id);
-            const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1]);
-            out.emplace("action", std::string(kActions[static_cast<int>(tap.action)]));
-            switch (tap.action) {
-            case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;
-            case SidebarTap::Action::SetFolderExpanded: state.SetFolderExpanded(tap.id, tap.expanded); changed = true; break;
-            case SidebarTap::Action::TogglePinnedSection: TogglePinnedSection(state, tap.id); changed = true; break;
-            case SidebarTap::Action::CloseTab: state.Close(tap.id); changed = true; break;
-            default: break;  // the command bar's, in the window
+        // The space bar along the bottom: a click on a space's cell selects it (pressed and let
+        // go at the point, as the window's).
+        if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
+            const std::vector<SpaceCell> cells = SpaceCells(state);
+            const SpaceBarLayout layout = LayOutSpaceBar(240, cells.size());
+            const float x = values[0], y = values[1] - SpaceBarTop(values[2]);
+            const auto press = SpaceBarPressAt(layout, cells, x, y);
+            json::Object out{{"target", std::string(press ? "spaceCell" : "none")}};
+            if (press) {
+                out.emplace("id", press->spaceID);
+                if (const auto space = SpaceBarRelease(*press, layout, cells, x, y)) {
+                    out.emplace("action", std::string("selectSpace"));
+                    state.SelectSpace(*space);
+                    changed = true;
+                }
             }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else {
+            const auto press = SidebarPressAt(rows, 240, values[2], values[3], values[0], values[1], 1);
+            static constexpr const char* kTargets[] = {"none", "addressField", "row", "pinnedChevron", "closeButton"};
+            static constexpr const char* kActions[] = {"none",      "editAddress", "togglePinnedSection", "selectTab", "setFolderExpanded",
+                                                       "newTab",    "closeTab"};
+            json::Object out{{"target", std::string(kTargets[static_cast<int>(press ? press->target : SidebarHit::Target::None)])}};
+            if (press) {
+                if (!press->id.empty()) out.emplace("id", press->id);
+                const SidebarTap tap = SidebarRelease(*press, rows, 240, values[2], values[3], values[0], values[1]);
+                out.emplace("action", std::string(kActions[static_cast<int>(tap.action)]));
+                switch (tap.action) {
+                case SidebarTap::Action::SelectTab: state.Select(tap.id); changed = true; break;
+                case SidebarTap::Action::SetFolderExpanded: state.SetFolderExpanded(tap.id, tap.expanded); changed = true; break;
+                case SidebarTap::Action::TogglePinnedSection: TogglePinnedSection(state, tap.id); changed = true; break;
+                case SidebarTap::Action::CloseTab: state.Close(tap.id); changed = true; break;
+                default: break;  // the command bar's, in the window
+                }
+            }
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
         }
-        std::puts(json::Write(json::Value(std::move(out))).c_str());
     } else if (command == "collapse" && args.size() == 2) {
         const std::string id = Id(args[1]);
         if (!state.SpaceIndex(id)) return kNotFound;

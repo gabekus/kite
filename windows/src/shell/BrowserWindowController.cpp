@@ -57,8 +57,8 @@ bool CopyText(HWND owner, const std::wstring& text) {
 }
 
 // Puts `top` (premultiplied BGRA) over `base` with its top-left at `origin`, as
-bool Inked(const Pixels& pixels) {
-    for (size_t i = 3; i < pixels.bgra.size(); i += 4) {
+bool Inked(const Pixels& pixels, UINT fromRow = 0) {
+    for (size_t i = static_cast<size_t>(fromRow) * pixels.width * 4 + 3; i < pixels.bgra.size(); i += 4) {
         if (pixels.bgra[i] != 0) return true;
     }
     return false;
@@ -189,6 +189,11 @@ std::wstring BrowserWindowController::Init() {
     // The Mac's field action: the bar edits the page's address, or opens a new tab with none.
     actions.editAddress = [this] { OpenCommandBar(CommandBarMode::EditCurrent); };
     actions.closeTab = [this](const std::string& id) { CloseTab(id); };
+    // A space's cell in the bar: that space, the pages sliding to it (the Mac's select(cell)).
+    actions.selectSpace = [this](const std::string& spaceID) {
+        state_.SelectSpace(spaceID);
+        SelectionMoved();
+    };
     sidebar_->SetActions(std::move(actions));
 
     MakeCommands();
@@ -757,6 +762,12 @@ std::wstring BrowserWindowController::SmokeTest() {
     Pixels chrome;
     if (std::wstring problem = sidebar_->Draw(&chrome); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
     if (!Inked(chrome)) return L"the sidebar drew nothing";
+    // The space bar along its bottom: the end buttons and the spaces' cells.
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    const long barTop = std::lround(SpaceBarTop(static_cast<float>(chrome.height) / scale) * scale);
+    if (barTop < 0 || barTop >= static_cast<long>(chrome.height) || !Inked(chrome, static_cast<UINT>(barTop))) {
+        return L"the space bar drew nothing";
+    }
     // And the caption buttons their glyphs.
     Pixels buttons;
     if (std::wstring problem = caption_->Draw(&buttons); !problem.empty()) return L"the caption buttons couldn't draw: " + problem;

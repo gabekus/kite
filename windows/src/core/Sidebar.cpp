@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cctype>
 
+#include "core/SpaceBar.h"
 #include "core/Url.h"
 
 namespace kite {
@@ -225,7 +226,7 @@ std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t spaceIndex
     return rows;
 }
 
-float SidebarListBottom(float height) { return std::max(M::kHeaderAreaHeight, height - M::kBottomBarHeight); }
+float SidebarListBottom(float height) { return std::max(M::kHeaderAreaHeight, SpaceBarTop(height)); }
 
 float SidebarContentHeight(const std::vector<SidebarRow>& rows) { return rows.empty() ? 0 : rows.back().top + rows.back().height; }
 

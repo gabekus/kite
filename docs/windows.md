@@ -240,6 +240,26 @@ a timer at its end builds the new space's neighbours and drops the page left
 behind. A page no longer built loses its place in its list, as the Mac's list
 goes with its scroll view.
 
+The space bar (W9b) sits along the sidebar's bottom, 50pt tall: Arc's Library
+button and + button at its ends (drawn; what they open comes later), and a cell
+per space centred between them on a 34pt pitch, or from the room's leading edge
+when they don't fit, scrolled with a sideways wheel or Shift and the wheel
+(`core/SpaceBar.h`). A cell shows its emoji in colour for the space you're in and
+greyed (saturation 0, at 45%) for the others, or a dot for an icon-less space;
+SF Symbol and picture icons show as a dot until W9b2. A switch's slide relights
+the cells with the pages: each cell's two layers have DirectComposition opacity
+animations on the strip's spring (its light is linear in the strip's offset,
+`HighlightAlongSettle`), so the slide still draws nothing. A click selects the
+space; the pointer over another space's cell shows its rounded backing, a small
+visual of its own that moves with the pointer and the scroll, so hovering and
+scrolling draw nothing. The Library and + symbols are drawn from the Mac's
+measured archivebox and plus (Segoe Fluent's glyphs differ in size and shape),
+and the emoji is set so it draws the Mac's 14.5pt, centred on its ink. Cells sit
+on whole pixels at every scale (core snaps them), so they draw where they take
+clicks. Known differences: in the 2pt where two cells overlap only the later
+cell's backing shows (the Mac shows both), and a touchpad's sideways scroll over
+the bar scrolls the strip until W9c sends it to the swipe.
+
 Known differences from the Mac: during the 0.2 s slide only the selected page
 takes clicks and shows hover (the Mac's outgoing page is a live list too), and
 Space n for a missing space is passed on from Kite's own window but still kept
