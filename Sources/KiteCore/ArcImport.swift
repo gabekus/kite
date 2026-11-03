@@ -408,6 +408,8 @@ extension BrowserState {
         public var profiles: [String: String]
         /// Kite profiles the import made, in order.
         public var newProfiles: [String]
+        /// Arc profiles put in Kite's Default only because no Kite profile could be made for them.
+        public var fellBack: Set<String> = []
     }
 
     /// An Arc profile's name from Arc's `Local State`, or its folder's when it has none.
@@ -495,6 +497,6 @@ extension BrowserState {
             return space
         }
         let (added, updated) = merge(imported: spaces)
-        return ArcMerge(added: added, updated: updated, profiles: map, newProfiles: made)
+        return ArcMerge(added: added, updated: updated, profiles: map, newProfiles: made, fellBack: fellBack)
     }
 }

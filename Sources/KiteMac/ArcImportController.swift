@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 // "Import from Arc…" item in MainMenu.swift, KiteCore/ArcImport.swift, ArcArchiveImport.swift,
 // ArcSettingsImport.swift, ArcKeyBindingsImport.swift, ArcHistoryImport.swift,
 // ArcSiteSearchImport.swift, ArcLinkRoutingImport.swift, ArcExtensionsImport.swift, ArcCookieImport.swift,
-// ArcCookiesInstaller.swift,
+// ArcCookiesInstaller.swift (and make BrowserHistoryImport.withCopy private again),
 // ArcExtensionsInstaller.swift with its item in ExtensionsMenuBar.swift, BrowserState.arcProfileMap,
 // and the Arc*Tests files; then make AppDelegate.airTraffic and ExtensionManifest.strippingBOM private again.
 
@@ -307,7 +307,10 @@ enum ArcImportController {
                 (NSApp.delegate as? AppDelegate)?.airTraffic.state.merge(arc: routes)
             }
             #if canImport(CEFBridge)
-            if signIns, let profiles = merged?.profiles { importSignIns(profiles, folder: folder, window: window) }
+            if signIns, let merged {
+                // Another Arc profile's sessions would mix with Default's: only ones with a profile of their own.
+                importSignIns(merged.profiles.filter { !merged.fellBack.contains($0.key) }, folder: folder, window: window)
+            }
             #endif
         }
 
@@ -344,12 +347,13 @@ enum ArcImportController {
         // Off unless asked: Kite would hold every session Arc has.
         var signInsBox: NSButton?
         #if canImport(CEFBridge)
-        if (NSApp.delegate as? AppDelegate)?.engine is ChromiumEngine {
+        if (NSApp.delegate as? AppDelegate)?.engine is ChromiumEngine, ArcCookiesInstaller.isAllowed {
             let box = NSButton(
-                checkboxWithTitle: "Bring sign-ins: Arc's cookies, so sites stay signed in (macOS asks to let Kite use Arc's key)",
+                checkboxWithTitle: "Bring sign-ins (Arc's cookies; replaces Kite's for the same sites)",
                 target: nil,
                 action: nil
             )
+            box.toolTip = "macOS asks you to let Kite use \"Arc Safe Storage\", Arc's key for its cookies."
             boxes.append(box)
             signInsBox = box
         }
@@ -373,31 +377,50 @@ enum ArcImportController {
     }
 
     #if canImport(CEFBridge)
-    /// Arc's cookies into the Kite profiles `profiles` (Arc profile folder → Kite's) maps them to.
-    /// Getting Arc's key makes macOS ask the user; reading and decrypting stay off the main thread.
+    /// Arc's cookies into the Kite profiles `profiles` (Arc profile folder → Kite's) maps them to,
+    /// one Arc profile at a time, then says how many came over. Getting Arc's key makes macOS ask
+    /// the user; reading and decrypting stay off the main thread.
     private static func importSignIns(_ profiles: [String: String], folder: URL, window: NSWindow) {
         Task {
-            let read = await Task.detached { () -> Result<[(kite: String, cookies: [ArcCookieImport.Cookie])], Error> in
-                Result {
-                    let key = try ArcCookiesInstaller.key(arcFolder: folder)
-                    return profiles.keys.sorted().map { arc in
-                        (profiles[arc]!, ArcCookiesInstaller.read(profile: arc, arcFolder: folder, key: key))
-                    }
-                }
-            }.value
-            guard case .success(let perProfile) = read else {
+            let found = await Task.detached { try? ArcCookiesInstaller.key(arcFolder: folder) }.value
+            guard var key = found else {
                 return showError("Kite couldn't get Arc's key, so sign-ins didn't come over.",
                                  detail: "Import from Arc again and allow Kite to use \"Arc Safe Storage\" when macOS asks.", window: window)
             }
-            var total = 0
-            for (kite, cookies) in perProfile where !cookies.isEmpty {
-                total += await withCheckedContinuation { done in
-                    ArcCookiesInstaller.set(cookies, inProfile: kite) { done.resume(returning: $0) }
+            var set = 0, rows = 0, unreadable = 0
+            for arc in profiles.keys.sorted() {
+                let readKey = key
+                guard let read = await Task.detached(operation: {
+                    ArcCookiesInstaller.read(profile: arc, arcFolder: folder, key: readKey)
+                }).value else {
+                    unreadable += 1
+                    continue
+                }
+                rows += read.rows
+                guard !read.cookies.isEmpty, let kite = profiles[arc] else { continue }
+                set += await withCheckedContinuation { done in
+                    ArcCookiesInstaller.set(read.cookies, inProfile: kite) { done.resume(returning: $0) }
                 }
             }
-            NSLog("Kite: Arc import: set %ld cookies", total)
-            if testMode != nil { testLog("sign-ins: set \(count(total, "cookie"))") }
+            key.resetBytes(in: 0..<key.count)
+            NSLog("Kite: Arc import: set %ld of %ld cookies", set, rows)
+            if testMode != nil { return testLog("sign-ins: set \(count(set, "cookie")) of \(rows)") }
+            if set > 0 {
+                showNote("Sign-ins came over from Arc.",
+                         detail: "Kite set \(count(set, "cookie")). Sites you were signed in to in Arc should be signed in here too.", window: window)
+            } else {
+                showError("No sign-ins came over from Arc.",
+                          detail: unreadable > 0 ? "Kite couldn't read Arc's cookies. Quit Arc and import again." : "Kite found no cookies it could use.",
+                          window: window)
+            }
         }
+    }
+
+    private static func showNote(_ message: String, detail: String, window: NSWindow) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = detail
+        alert.beginSheetModal(for: window)
     }
     #endif
 

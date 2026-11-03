@@ -125,7 +125,7 @@ NS_SWIFT_UI_ACTOR
 /// profile path: its own cookies, storage, history and extensions. One object per folder.
 + (instancetype)contextForProfileDirectory:(NSString *)directory NS_SWIFT_NAME(init(profileDirectory:));
 - (instancetype)init NS_UNAVAILABLE;
-/// Sets cookies in this profile (Import from Arc's sign-ins). Each is a dictionary: "url" (NSURL it's
+/// Sets cookies in this profile (first used by Import from Arc's sign-ins). Each is a dictionary: "url" (NSURL it's
 /// set for), "name", "value", "path" (NSString), optional "domain" (with its leading dot, for a domain
 /// cookie), "secure", "httpOnly" (NSNumber BOOL), "expires" (NSNumber, microseconds since 1601 UTC;
 /// 0 or absent for a session cookie), "sameSite" (0 unspecified, 1 none, 2 lax, 3 strict) and

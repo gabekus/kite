@@ -16,13 +16,29 @@ enum ArcCookiesInstaller {
         case noKey
     }
 
+    /// Whether this run may bring sign-ins: a real profile that keeps its own cookies encrypted
+    /// with the login keychain, or a test build reading a hand-made Arc folder (`isTest`). Never a
+    /// test build reading the real Arc, whose sessions would land in a throwaway profile under
+    /// Chromium's mock-keychain key.
+    static var isAllowed: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        if environment["KITE_SUPPORT_PATH"] != nil { return isTest }
+        return environment["KITE_MOCK_KEYCHAIN"] != "1"
+    }
+
+    /// A test build with a hand-made Arc folder: the key comes from a file in it, never the keychain.
+    static var isTest: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["KITE_SUPPORT_PATH"] != nil && environment["KITE_ARC_DATA_PATH"] != nil
+    }
+
     /// The key Arc encrypts cookies with: PBKDF2-SHA1 of its "Arc Safe Storage" keychain password.
-    /// Reading it makes macOS ask the user, once. A test build (`KITE_TEST_IMPORT` with
-    /// `KITE_ARC_DATA_PATH`) reads the password from `arc-safe-storage-test-password` in that
-    /// folder instead and never touches the keychain.
+    /// Reading it makes macOS ask the user, once. A test build (`isTest`) reads the password from
+    /// `arc-safe-storage-test-password` in the Arc data folder instead.
     static func key(arcFolder: URL) throws -> Data {
-        let password: Data
-        if BrowserImportController.testMode != nil {
+        guard isAllowed else { throw Failure.noKey }
+        var password: Data
+        if isTest {
             guard let test = try? Data(contentsOf: arcFolder.appendingPathComponent("arc-safe-storage-test-password")) else {
                 throw Failure.noKey
             }
@@ -54,6 +70,7 @@ enum ArcCookiesInstaller {
                 }
             }
         }
+        password.resetBytes(in: 0..<password.count)
         guard status == kCCSuccess else { throw Failure.noKey }
         return key
     }
@@ -79,11 +96,18 @@ enum ArcCookiesInstaller {
         return out.prefix(moved)
     }
 
-    /// One Arc profile's cookies that are still good, decrypted.
-    static func read(profile: String, arcFolder: URL, key: Data, now: Date = Date()) -> [ArcCookieImport.Cookie] {
+    /// One Arc profile's cookies that are still good, decrypted, and how many rows it had. The
+    /// database can't be read (missing, or torn while Arc writes it): nil.
+    static func read(profile: String, arcFolder: URL, key: Data, now: Date = Date()) -> (cookies: [ArcCookieImport.Cookie], rows: Int)? {
+        var read = 0
+        guard let cookies = readRows(profile: profile, arcFolder: arcFolder, key: key, now: now, count: &read) else { return nil }
+        return (cookies, read)
+    }
+
+    private static func readRows(profile: String, arcFolder: URL, key: Data, now: Date, count read: inout Int) -> [ArcCookieImport.Cookie]? {
         let file = arcFolder.appendingPathComponent("User Data", isDirectory: true)
             .appendingPathComponent(profile, isDirectory: true).appendingPathComponent("Cookies")
-        return (try? BrowserHistoryImport.withCopy(file) { db -> [ArcCookieImport.Cookie] in
+        return try? BrowserHistoryImport.withCopy(file) { db -> [ArcCookieImport.Cookie] in
             var version = 0
             var meta: OpaquePointer?
             if sqlite3_prepare_v2(db, "SELECT value FROM meta WHERE key = 'version'", -1, &meta, nil) == SQLITE_OK,
@@ -93,29 +117,46 @@ enum ArcCookiesInstaller {
             sqlite3_finalize(meta)
 
             let sql = """
-                SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite, priority
+                SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite, priority,
+                       source_scheme, source_port, top_frame_site_key
                 FROM cookies
                 """
             var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { return [] }
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { throw ReadFailure.unknownSchema }
             defer { sqlite3_finalize(statement) }
             var cookies: [ArcCookieImport.Cookie] = []
             while sqlite3_step(statement) == SQLITE_ROW {
                 func text(_ i: Int32) -> String { sqlite3_column_text(statement, i).map { String(cString: $0) } ?? "" }
                 let blob = sqlite3_column_blob(statement, 3)
                 let encrypted = blob.map { Data(bytes: $0, count: Int(sqlite3_column_bytes(statement, 3))) } ?? Data()
-                let row = ArcCookieImport.Row(
+                var row = ArcCookieImport.Row(
                     host: text(0), name: text(1), value: text(2), encryptedValue: encrypted, path: text(4),
                     expiresUTC: sqlite3_column_int64(statement, 5),
                     isSecure: sqlite3_column_int(statement, 6) != 0, isHTTPOnly: sqlite3_column_int(statement, 7) != 0,
                     sameSite: Int(sqlite3_column_int(statement, 8)), priority: Int(sqlite3_column_int(statement, 9))
                 )
-                if let cookie = ArcCookieImport.cookie(from: row, databaseVersion: version, now: now, decrypt: { decrypt($0, key: key) }) {
+                row.sourceScheme = Int(sqlite3_column_int(statement, 10))
+                row.sourcePort = Int(sqlite3_column_int(statement, 11))
+                row.topFrameSiteKey = text(12)
+                read += 1
+                if let cookie = ArcCookieImport.cookie(from: row, databaseVersion: version, now: now,
+                                                       decrypt: { decrypt($0, key: key) }, hostHash: sha256) {
                     cookies.append(cookie)
                 }
             }
             return cookies
-        }) ?? []
+        }
+    }
+
+    enum ReadFailure: Error { case unknownSchema }
+
+    static func sha256(_ text: String) -> Data {
+        let data = Data(text.utf8)
+        var digest = Data(count: Int(CC_SHA256_DIGEST_LENGTH))
+        digest.withUnsafeMutableBytes { out in
+            data.withUnsafeBytes { _ = CC_SHA256($0.baseAddress, CC_LONG(data.count), out.baseAddress?.assumingMemoryBound(to: UInt8.self)) }
+        }
+        return digest
     }
 
     /// Sets `cookies` in Kite profile `directory`; `completion` gets how many went in.

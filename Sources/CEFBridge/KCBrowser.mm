@@ -855,9 +855,13 @@ namespace {
 class CookieBatch : public CefSetCookieCallback {
 public:
     CookieBatch(NSInteger total, void (^completion)(NSInteger)) : remaining_(total), completion_([completion copy]) {}
+    // CEF dropped callbacks it never ran (it shut down first): answer with what did go in.
+    ~CookieBatch() override {
+        if (remaining_.exchange(0) > 0) Finish();
+    }
     void OnComplete(bool success) override {
         if (success) succeeded_++;
-        if (--remaining_ == 0) Finish();
+        if (remaining_.fetch_sub(1) == 1) Finish();
     }
     void Finish() {
         void (^completion)(NSInteger) = completion_;

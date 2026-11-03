@@ -111,12 +111,13 @@ enum BrowserHistoryImport {
         let fm = FileManager.default
         guard fm.fileExists(atPath: file.path) else { throw Failure.unreadable }
         guard canRead(file) else { throw Failure.noAccess }
-        let folder = fm.temporaryDirectory.appendingPathComponent("kite-history-\(UUID().uuidString)", isDirectory: true)
+        let folder = fm.temporaryDirectory.appendingPathComponent("kite-import-\(UUID().uuidString)", isDirectory: true)
         try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: folder) }
         let copy = folder.appendingPathComponent(file.lastPathComponent)
         guard (try? fm.copyItem(at: file, to: copy)) != nil else { throw Failure.noAccess }
-        for suffix in ["-wal", "-shm"] {
+        // Chromium's cookie database keeps a rollback journal; History a write-ahead log.
+        for suffix in ["-wal", "-shm", "-journal"] {
             let side = URL(fileURLWithPath: file.path + suffix)
             if fm.fileExists(atPath: side.path) { try? fm.copyItem(at: side, to: URL(fileURLWithPath: copy.path + suffix)) }
         }
