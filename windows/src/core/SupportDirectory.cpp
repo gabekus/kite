@@ -24,6 +24,11 @@ std::variant<std::filesystem::path, SupportDirectoryError> ResolveSupportDirecto
 std::optional<std::filesystem::path> EnvironmentPath(const char* name) {
 #ifdef _WIN32
     std::wstring wide(name, name + std::char_traits<char>::length(name));  // names are ASCII
+    // Read once at startup, before any thread could change the environment. _wdupenv_s
+    // would avoid C4996, but MinGW's msvcrt doesn't export it.
+#ifdef _MSC_VER
+#pragma warning(suppress : 4996)
+#endif
     const wchar_t* value = _wgetenv(wide.c_str());
 #else
     const char* value = std::getenv(name);
