@@ -212,6 +212,7 @@ private:
     bool caretAdded_ = false;
     bool deviceLost_ = false;
     bool redrawPosted_ = false;
+    bool drawOnRestore_ = false;  // a draw came while the window was minimized
 
     // State.
     bool open_ = false;

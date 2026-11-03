@@ -405,13 +405,14 @@ public:
             shared_->keysToKite = true;
             // The keyboard goes to Kite's window now, from this thread (the input queues are
             // attached), so the keys typed next wait in Kite's queue as real keys and
-            // characters. Kite takes its posted wake before them, so the bar is open by then.
-            // Until Kite answers (BlockInput), the page doesn't take the keyboard back.
+            // characters. Until Kite answers (BlockInput), the page doesn't take it back.
             shared_->inputBlocked = true;
-            SetFocus(shared_->window);
             shared_->Post([shared = shared_] {
                 if (shared->events.newTab) shared->events.newTab();
             });
+            // After the wake is posted; a key Kite still takes first opens the bar itself
+            // (KeysComeToKite).
+            SetFocus(shared_->window);
             return true;
         }
         if (!shared_->keysToKite) return false;
@@ -644,6 +645,8 @@ void Chromium::BlockInput(bool blocked) {
         });
     }
 }
+
+bool Chromium::KeysComeToKite() const { return shared_->keysToKite; }
 
 bool Chromium::Navigate(const std::string& tabID, const std::string& url) {
     auto it = shared_->pages.find(tabID);

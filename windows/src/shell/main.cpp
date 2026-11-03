@@ -309,6 +309,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     std::function<void(const std::string& tabID, const std::string& url)> loadInTab = [](const std::string&, const std::string&) {};
     std::function<void()> showPage = [] {};
     std::function<void(bool blocked)> blockPages = [](bool) {};
+    std::function<bool()> keysForBar = [] { return false; };
     kite::CommandBarView::Callbacks barCallbacks;
     barCallbacks.suggestions = [&](std::string_view text, kite::CommandBarMode mode) {
         return kite::CommandBarSuggestions(text, state, mode);
@@ -395,6 +396,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     };
     // Ctrl+T, wherever the keyboard is in Kite's own window (a page's comes through Chromium).
     window.filter = [&](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+        // A key typed straight after Ctrl+T in a page can come before Chromium's note that
+        // Ctrl+T was pressed: it opens the bar itself, and the note then finds it open.
+        if ((message == WM_KEYDOWN || message == WM_CHAR) && commandBar && !commandBar->IsOpen() && keysForBar()) {
+            openCommandBar(kite::CommandBarMode::NewTab);
+        }
         if (commandBar && commandBar->HandleMessage(message, wParam, lParam, result)) return true;
         if (message == WM_KEYDOWN && wParam == 'T' && GetKeyState(VK_CONTROL) < 0 && GetKeyState(VK_MENU) >= 0 &&
             GetKeyState(VK_SHIFT) >= 0) {
@@ -494,6 +500,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             closedPages.erase(id);
             if (!chromium->Navigate(id, url)) showSelectedTab();
         };
+        keysForBar = [&] { return chromium->KeysComeToKite(); };
         blockPages = [&](bool blocked) {
             chromium->BlockInput(blocked);
             if (!blocked) chromium->Focus();

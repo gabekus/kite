@@ -96,6 +96,9 @@ public:
     // still being made loads it once it exists. False when the tab has no page (Show makes
     // one with the tab's address).
     bool Navigate(const std::string& tabID, const std::string& url);
+    // Ctrl+T was pressed in a page and the keyboard moved to Kite's window, but Kite hasn't
+    // answered yet (PageEvents::newTab is on its way): keys arriving now are for the bar.
+    bool KeysComeToKite() const;
     // Whether the window may close now. The first call starts closing every browser and
     // returns false (unless there are none); WM_CLOSE comes again as each one is ready.
     bool MayCloseWindow();

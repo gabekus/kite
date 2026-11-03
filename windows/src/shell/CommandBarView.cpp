@@ -525,6 +525,8 @@ void CommandBarView::Hide() {
     selecting_ = false;
     composing_ = false;
     hoveredRow_ = -1;
+    redrawPosted_ = false;
+    drawOnRestore_ = false;
     // Its buffers go until it opens again; the device, target and shadow strips stay.
     ReleaseBuffers();
     if (caretAdded_ && visual_) visual_->RemoveVisual(caretVisual_.Get());
@@ -549,12 +551,16 @@ void CommandBarView::Layout() {
         // Only moved (a resize of a window wider than the bar): no redraw.
         visual_->SetOffsetX(static_cast<float>(g.leftPx - g.marginPx));
         visual_->SetOffsetY(static_cast<float>(g.topPx - g.marginPx));
-        composition_->Commit();
+        UpdateCaret();  // the hidden system caret follows; commits
     } else {
         KeepCaretVisible();
         Invalidate();
     }
     if (composing_) PlaceImeWindow();
+    if (drawOnRestore_) {
+        drawOnRestore_ = false;
+        Invalidate();
+    }
 }
 
 void CommandBarView::Refresh() {
@@ -954,7 +960,8 @@ void CommandBarView::RestartCaretBlink() {
     // INFINITE: the user turned blinking off.
     if (open_ && focused_ && blink && blink != INFINITE) SetTimer(window_, kCaretTimer, blink, nullptr);
     else KillTimer(window_, kCaretTimer);
-    UpdateCaret();
+    // With a draw on its way, the caret moves with the text it belongs to (Draw places it).
+    if (!redrawPosted_) UpdateCaret();
 }
 
 void CommandBarView::Invalidate() {
@@ -1031,16 +1038,25 @@ void CommandBarView::UpdateCaret() {
 // Messages -------------------------------------------------------------------------------
 
 bool CommandBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
-    if (!open_) return false;
     result = 0;
-    switch (message) {
-    case kRedrawMessage:
+    if (message == kRedrawMessage) {
+        // Also after the bar closed, so a redraw that was on its way never leaves the flag set.
+        redrawPosted_ = false;
+        if (!open_) return true;
+        // Drawn on restore instead: a minimized window's frame never comes (the latency wait).
+        if (IsIconic(window_)) {
+            drawOnRestore_ = true;
+            return true;
+        }
         if (std::wstring problem = Draw(); !problem.empty()) {
             // A bar that can't draw mustn't stay open unseen, holding the keyboard and clicks.
             OutputDebugStringW((L"Kite: the command bar couldn't draw, so it closed: " + problem + L"\n").c_str());
             Hide();
         }
         return true;
+    }
+    if (!open_) return false;
+    switch (message) {
     case WM_KEYDOWN: {
         // AltGr is Ctrl+Alt: its characters come as WM_CHAR, never as a Ctrl shortcut.
         const bool alt = GetKeyState(VK_MENU) < 0;
@@ -1054,9 +1070,11 @@ bool CommandBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, L
     case WM_IME_STARTCOMPOSITION:
         composing_ = true;
         PlaceImeWindow();
+        Invalidate();  // the placeholder goes, as NSTextField's does under marked text
         return false;  // Windows' composition window draws it; the result comes as WM_CHAR
     case WM_IME_ENDCOMPOSITION:
         composing_ = false;
+        Invalidate();
         return false;
     case WM_SETFOCUS:
         focused_ = true;
@@ -1272,8 +1290,9 @@ void CommandBarView::DrawField(ID2D1DeviceContext* context) {
     const D2D1_POINT_2F origin{C::kTextX - scrollX_, top};
     context->PushAxisAlignedClip(D2D1::RectF(C::kTextX - 1, 0, width - C::kIconX, C::kFieldHeight), D2D1_ANTIALIAS_MODE_ALIASED);
     if (text_.empty()) {
+        // Not under an IME's composition, which Windows draws over the field at the caret.
         brush_->SetColor(WithAlpha(Primary(), C::kPlaceholderOpacity));
-        if (placeholderLayout_) context->DrawTextLayout(origin, placeholderLayout_.Get(), brush_.Get());
+        if (placeholderLayout_ && !composing_) context->DrawTextLayout(origin, placeholderLayout_.Get(), brush_.Get());
     } else if (textLayout_) {
         if (HasSelection()) {
             UINT32 count = 0;
