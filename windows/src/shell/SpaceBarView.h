@@ -170,7 +170,6 @@ private:
         double offset, pageWidth;
         std::vector<size_t> built;
         size_t selected;
-        bool operator==(const Held&) const = default;
     };
     std::optional<Held> follow_;
     bool opacitiesApplied_ = false;

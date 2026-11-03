@@ -221,6 +221,7 @@ private:
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
     bool dirty_ = true;  // the address field
     float pageOffset_ = 0;  // the strip's, in points: at rest, or where a slide ends
+    std::vector<size_t> built_;  // the built pages' spaces, by index (model_.pages')
     struct Slide {
         std::vector<CubicSegment> segments;
         double duration;

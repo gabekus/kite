@@ -385,7 +385,8 @@ Windows that means:
   a thread waits on `DCompositionWaitForCompositorClock` (Windows 11), or
   `DwmFlush` before it, and posts the window one message a frame, only while
   something has to redraw each frame (the theme's crossfade, a shader mix that
-  a compositor property can't do). While it runs it calls
+  a compositor property can't do), or a touchpad gesture's DirectManipulation
+  updates need stepping (W9c). While it runs it calls
   `DCompositionBoostCompositorClock`, so a display with a dynamic refresh rate
   runs at its highest, as the Mac asks for the screen's maximum rate. The
   compositor's clock is the system's: with several displays it follows the

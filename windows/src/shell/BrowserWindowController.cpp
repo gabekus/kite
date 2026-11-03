@@ -228,6 +228,8 @@ std::wstring BrowserWindowController::Init() {
     // reported runs first (titles, addresses), then the caller saves.
     window_.onClose = [this] {
         clock_->Stop();
+        // DirectManipulation lets the window go while it's still a window.
+        touchpad_.reset();
         RunPending();
         if (save_) save_();
     };
@@ -303,7 +305,8 @@ void BrowserWindowController::FinishSettling() {
 }
 
 SpaceSwipeGesture::Step BrowserWindowController::SwipeInputArrived(const SwipeInput& input) {
-    // Over the sidebar (the touchpad takes only contacts there) and with nothing over it.
+    // The touchpad takes only contacts over the sidebar; the command bar may have opened over it
+    // since.
     const bool overSidebar = !(commandBar_ && commandBar_->IsOpen());
     const SpaceSwipeGesture::Step step = swipe_.Handle(input, overSidebar, [this] { return BeginSwipe(); });
     switch (step) {
@@ -364,7 +367,7 @@ void BrowserWindowController::FinishSwipe(int landing) {
     const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
     if (visible) {
         theme_.FinishInteractive(space.theme, FrameClock::Now());
-        clock_->Start();
+        if (theme_.Fading()) clock_->Start();
     } else {
         theme_.Snap(space.theme);
     }

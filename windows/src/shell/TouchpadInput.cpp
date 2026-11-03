@@ -7,10 +7,6 @@
 #include "shell/Errors.h"
 #include "shell/FrameClock.h"
 
-#ifndef DM_POINTERHITTEST
-#define DM_POINTERHITTEST 0x0250
-#endif
-
 namespace kite {
 
 namespace {
@@ -22,8 +18,9 @@ constexpr CLSID kManagerClass = {0x54e211b6, 0x3650, 0x4f75, {0x83, 0x34, 0xfa, 
 // and the viewport goes back over the middle after each one.
 constexpr float kViewport = 1000;
 constexpr LONG kContentMargin = 1 << 20;
-// How long a taken contact keeps the frames coming before DirectManipulation says it's running.
-constexpr double kFirstWord = 0.5;
+// How long a taken contact keeps the frames coming before DirectManipulation says it's running
+// (a tap or a resting finger never does): a few frames, for its manual updates to start it.
+constexpr double kFirstWord = 0.25;
 
 }  // namespace
 

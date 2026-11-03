@@ -45,12 +45,11 @@ public:
     // The window's px per point (its DPI / 96): what moved is reported in points.
     void SetScale(float scale) { scale_ = scale > 0 ? scale : 1; }
 
+private:
+    class Handler;
     // The event handler's: DirectManipulation's state and its content's transform changed.
     void StatusChanged(int current, int previous);
     void ContentMoved(float x, float y);
-
-private:
-    class Handler;
     TouchpadInput(HWND window, std::function<void(const SwipeInput&)> input) : window_(window), input_(std::move(input)) {}
     std::wstring Init();
     void Emit(SwipeInput::Phase phase, double dx, double dy);

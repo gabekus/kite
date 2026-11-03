@@ -294,6 +294,8 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         it = pages_.erase(it);
     }
     model_ = std::move(next);
+    built_.clear();
+    for (const PageModel& page : model_.pages) built_.push_back(page.index);
     PlacePages();
     ScheduleDraw();
     // Rows moved under a still pointer: it now hovers whatever is there.
@@ -307,9 +309,7 @@ void SidebarView::SetPageOffset(float offset) {
     slide_.reset();
     barSlidePending_ = false;
     // The bar's light with them: a swipe's frame lights the cells between the pages it shows.
-    std::vector<size_t> built;
-    for (const PageModel& page : model_.pages) built.push_back(page.index);
-    bar_->Follow(offset, width_, built, model_.index);
+    bar_->Follow(offset, width_, built_, model_.index);
     if (bar_->NeedsDraw()) ScheduleDraw();
     PlaceStrip();
     // At rest the rows have moved under a still pointer; mid-swipe, as AppKit's, hover waits.

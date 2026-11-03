@@ -293,6 +293,19 @@ TEST(aSwipeLetGoBackSettlesOnTheThemeItLeft) {
     CHECK(fade.from == a && fade.to == a);
 }
 
+TEST(aSwipeBetweenOneThemeFadesNothing) {
+    const Theme a = Solid(0x112233);
+    ThemeCrossfade fade(a);
+    // Past the last space (or to a neighbour with the same theme): the progress never moves.
+    fade.SetInteractive(a, a, 0.2f);
+    const float held = fade.Progress(0);
+    fade.SetInteractive(a, a, 0.7f);
+    CHECK(fade.Progress(0) == held);
+    // And the release is at rest at once: no frames for a fade between identical themes.
+    fade.FinishInteractive(a, 1);
+    CHECK(!fade.Fading() && !fade.Interactive() && fade.from == a && fade.to == a && fade.Progress(1) == 1);
+}
+
 TEST(aSnapEndsASwipesCrossfade) {
     const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
     ThemeCrossfade fade(a);

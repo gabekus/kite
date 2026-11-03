@@ -236,8 +236,8 @@ private:
     std::wstring barError_;
     // Frames while something animates (before the window in destruction: it posts to it).
     std::unique_ptr<FrameClock> clock_;
-    // A precision touchpad's gestures over the sidebar (null where there's no DirectManipulation;
-    // before the window in destruction: it lets the window go).
+    // A precision touchpad's gestures over the sidebar (null where there's no DirectManipulation,
+    // and once the window closes: it lets the window go while it's still a window).
     std::unique_ptr<TouchpadInput> touchpad_;
     struct LoggedFrame {
         double handled, target, offset, theme;

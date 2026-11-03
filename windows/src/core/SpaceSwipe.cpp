@@ -199,13 +199,15 @@ void ThemeCrossfade::Snap(const Theme& theme) {
 void ThemeCrossfade::SetInteractive(const Theme& fromTheme, const Theme& toTheme, float progress) {
     from = fromTheme;
     to = toTheme;
-    interactive = std::clamp(progress, 0.0f, 1.0f);
+    interactive = from == to ? 1.0f : std::clamp(progress, 0.0f, 1.0f);
     start.reset();
 }
 
 void ThemeCrossfade::FinishInteractive(const Theme& theme, double now) {
     const float progress = interactive.value_or(1.0f);
     interactive.reset();
+    // Rubber-banded past the last space, or between two spaces with the same theme.
+    if (from == to && theme == to) return Snap(theme);
     if (theme == to) {
         startProgress = progress;
     } else {

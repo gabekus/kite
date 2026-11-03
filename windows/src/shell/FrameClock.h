@@ -7,8 +7,10 @@
 // highest. The compositor's clock is the system's, not this window's display's: on several
 // displays it follows the fastest.
 //
-// Only for what has to draw again each frame (the theme's crossfade, a shader mix):
-// what a compositor property can do (an offset, an opacity) is an IDCompositionAnimation.
+// Only for what has to draw again each frame (the theme's crossfade, a shader mix), and for
+// stepping DirectManipulation's manual updates while a touchpad gesture or its momentum runs
+// (shell/TouchpadInput.h): what a compositor property can do (an offset, an opacity) is an
+// IDCompositionAnimation.
 //
 // Time() is when the frame being made will reach the screen (DirectComposition's estimate),
 // as the Mac's targetTimestamp, in seconds on the QueryPerformanceCounter clock.

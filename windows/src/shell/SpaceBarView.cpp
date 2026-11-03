@@ -214,10 +214,17 @@ void SpaceBarView::InvalidatePictures(const std::set<std::string>& names) {
 
 void SpaceBarView::Follow(double offset, double pageWidth, const std::vector<size_t>& built, size_t selected) {
     if (offset == 0) return Land();
-    Held held{offset, pageWidth, built, selected};
-    if (!slide_ && follow_ == held) return;
+    if (!slide_ && follow_ && follow_->offset == offset && follow_->pageWidth == pageWidth && follow_->selected == selected &&
+        follow_->built == built) {
+        return;
+    }
     slide_.reset();
-    follow_ = std::move(held);
+    // In place: a swipe's frames reuse the indices' storage.
+    if (!follow_) follow_.emplace();
+    follow_->offset = offset;
+    follow_->pageWidth = pageWidth;
+    follow_->built.assign(built.begin(), built.end());
+    follow_->selected = selected;
     opacitiesApplied_ = false;
 }
 

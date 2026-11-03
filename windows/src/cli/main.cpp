@@ -559,7 +559,7 @@ int main(int argc, char** argv) {
             }
             gesture.Handle(SwipeInput{SwipeInput::Phase::Ended, 0, 0, (events + 1) / 60.0}, true, begin);
             out.emplace("landing", static_cast<double>(gesture.Landing()));
-            state.SelectSpaceAt(index + gesture.Landing());
+            state.SelectSpaceAt(index + static_cast<size_t>(gesture.Landing()));
             out.emplace("space", state.SelectedSpace().id);
             std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else if (action == "next") state.SelectAdjacentSpace(1);
