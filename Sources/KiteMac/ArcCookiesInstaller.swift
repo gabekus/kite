@@ -54,7 +54,8 @@ enum ArcCookiesInstaller {
             guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else {
                 throw Failure.noKey
             }
-            password = data
+            // A buffer of Kite's own, so the wipe below clears it (best effort: the keychain's copy is freed, not cleared).
+            password = data.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: $0.count) }
         }
         var key = Data(count: kCCKeySizeAES128)
         let salt = Data("saltysalt".utf8)

@@ -382,8 +382,10 @@ enum ArcImportController {
     /// the user; reading and decrypting stay off the main thread.
     private static func importSignIns(_ profiles: [String: String], folder: URL, window: NSWindow) {
         Task {
-            let found = await Task.detached { try? ArcCookiesInstaller.key(arcFolder: folder) }.value
-            guard var key = found else {
+            // A test build only ever reads its hand-made Arc folder, never one picked in the panel.
+            guard !ArcCookiesInstaller.isTest || folder.standardizedFileURL == arcDirectory.standardizedFileURL,
+                  var key = await Task.detached(operation: { try? ArcCookiesInstaller.key(arcFolder: folder) }).value
+            else {
                 return showError("Kite couldn't get Arc's key, so sign-ins didn't come over.",
                                  detail: "Import from Arc again and allow Kite to use \"Arc Safe Storage\" when macOS asks.", window: window)
             }
@@ -406,8 +408,9 @@ enum ArcImportController {
             NSLog("Kite: Arc import: set %ld of %ld cookies", set, rows)
             if testMode != nil { return testLog("sign-ins: set \(count(set, "cookie")) of \(rows)") }
             if set > 0 {
+                let missed = unreadable > 0 ? " Kite couldn't read \(count(unreadable, "Arc profile"))'s cookies; quit Arc and import again for those." : ""
                 showNote("Sign-ins came over from Arc.",
-                         detail: "Kite set \(count(set, "cookie")). Sites you were signed in to in Arc should be signed in here too.", window: window)
+                         detail: "Kite set \(count(set, "cookie")). Sites you were signed in to in Arc should be signed in here too.\(missed)", window: window)
             } else {
                 showError("No sign-ins came over from Arc.",
                           detail: unreadable > 0 ? "Kite couldn't read Arc's cookies. Quit Arc and import again." : "Kite found no cookies it could use.",
