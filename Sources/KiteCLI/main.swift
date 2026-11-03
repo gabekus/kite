@@ -43,6 +43,7 @@ let usage = """
       kite call TOOL [JSON]                          Call any MCP tool, e.g. kite call computer '{"action":"scroll"}'
       kite ui ACTION [JSON] [-o FILE]                Kite's own UI (Diagnostics for Claude): windows, tree, capture,
                                                      pointer, input, menu, key_log, trace. kite ui tree '{"match":"Sidebar"}'
+                                                     (capture --in-process: Kite draws the window, no Screen Recording)
       kite probe APP [tree | capture] [...]          The same for another app, e.g. Arc (kite probe --help)
       kite tools                                     List every tool
       kite mcp                                       Run as an MCP server on stdin/stdout
@@ -340,6 +341,10 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
                 throw CLIError("The arguments must be a JSON object.")
             }
             json.merge(given) { _, new in new }
+        }
+        // --in-process: Kite draws the window itself (no Screen Recording needed).
+        if json["action"] == .string("capture"), json["source"] == nil, args.flags.contains("--in-process") {
+            json["source"] = "in-process"
         }
         // Kite writes a capture at full resolution itself; the image sent back is scaled for Claude.
         if json["action"] == .string("capture"), let output = args.options["-o"], json["save"] == nil {

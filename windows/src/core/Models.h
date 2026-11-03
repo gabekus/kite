@@ -181,6 +181,9 @@ struct BrowserState {
 
     // The profile folder a space uses: its `profile` when that profile still exists, else Default.
     std::string ProfileDirectory(size_t space) const;
+    // A profile folder's name in the lists: "Default" for the default one (Profile.defaultName),
+    // else its `profiles` entry's name (the default's when it has gone, as profile(_:)).
+    std::string ProfileName(const std::string& directory) const;
     std::string SelectedProfileDirectory() const { return ProfileDirectory(SelectedSpaceIndex()); }
     // The favorites grid of the current space's profile, shown above the pinned tabs.
     const std::vector<Tab>& Favorites() const;

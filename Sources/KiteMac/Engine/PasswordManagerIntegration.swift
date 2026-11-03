@@ -35,7 +35,8 @@ enum PasswordManagerIntegration {
 
     /// Set once Kite has asked to install a manager's extension, so a "Cancel" sticks. Each
     /// profile has its own extensions, so each is asked once: the default profile remembers in
-    /// UserDefaults, the others with a file in their folder, which goes when they're deleted.
+    /// UserDefaults (in `OneShotFlags`' file on a test build), the others with a file in their folder, which goes when
+    /// they're deleted.
     /// (1Password's names predate Bitwarden.)
     private static func offeredKey(_ manager: PasswordManager) -> String {
         manager == .onePassword ? "onePasswordInstallOffered" : "\(manager.rawValue)InstallOffered"
@@ -47,12 +48,12 @@ enum PasswordManagerIntegration {
 
     private static func wasOffered(_ manager: PasswordManager, _ profile: String) -> Bool {
         profile == Profile.defaultDirectory
-            ? UserDefaults.standard.bool(forKey: offeredKey(manager))
+            ? OneShotFlags.standard.bool(forKey: offeredKey(manager))
             : FileManager.default.fileExists(atPath: offeredMarker(manager, profile).path)
     }
 
     private static func markOffered(_ manager: PasswordManager, _ profile: String) {
-        if profile == Profile.defaultDirectory { return UserDefaults.standard.set(true, forKey: offeredKey(manager)) }
+        if profile == Profile.defaultDirectory { return OneShotFlags.standard.set(true, forKey: offeredKey(manager)) }
         try? FileManager.default.createDirectory(at: ProfileFolders.folder(profile), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: offeredMarker(manager, profile).path, contents: Data())
     }

@@ -2,6 +2,7 @@
 // for dropMovesTheSpaceKeepingTheCurrentOne, which needs BrowserState's moveSpace (W9d's), plus
 // SpaceBarView's layout, presses, the cells, their light along a page settle and the tip.
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -253,6 +254,81 @@ TEST(aTipShowsTheNameAndTheFirstNinesKeys) {
     const Lab accent = oklab::FromSRGB(tip.accent), fill = oklab::FromSRGB(tip.fill);
     CHECK(fill.L < accent.L * 0.6f && fill.L > accent.L * 0.4f);
     CHECK(std::abs(std::atan2(fill.b, fill.a) - std::atan2(accent.b, accent.a)) < 0.1f);
-    CHECK(!SpaceTipOf(space, 10).number);
+    CHECK(!SpaceTipOf(space, 10).number && SpaceTipOf(space, 10).keys.empty());
     CHECK(SpaceTipOf(space, 9).number == 9u);
+    // The Mac's ⌃3 is Alt+3 on Windows.
+    CHECK((tip.keys == std::vector<std::string>{"Alt", "3"}));
+}
+
+TEST(aTipNamesTheSpacesProfile) {
+    // SpaceCellView's profileName: state.profile(space.profile).name, the default's "Default"
+    // for the default folder or a profile that has gone.
+    BrowserState state;
+    Space a, b, c;
+    a.id = "a";
+    b.id = "b";
+    c.id = "c";
+    b.extra["profile"] = json::Value(std::string("Profile 1"));
+    c.extra["profile"] = json::Value(std::string("Profile 9"));
+    state.spaces = {a, b, c};
+    state.extra["profiles"] = json::Value(json::Array{json::Value(json::Object{{"directory", json::Value(std::string("Profile 1"))},
+                                                                              {"name", json::Value(std::string("Komado"))}})});
+    CHECK(SpaceTipOf(state, 0).profile == "Default");
+    CHECK(SpaceTipOf(state, 1).profile == "Komado" && SpaceTipOf(state, 1).number == 2u);
+    CHECK(SpaceTipOf(state, 2).profile == "Default");
+}
+
+TEST(aTipLaysOutItsNameChipAndKeysInOneLine) {
+    // SpaceTip: HStack(spacing: 8) in 10pt of padding, 28pt tall; the chip 21pt with 7pt inside
+    // and 4pt from the face to the name; keycaps 18pt square 3pt apart, wider for "Alt".
+    Space space;
+    space.name = "Work";
+    const SpaceTip tip = SpaceTipOf(space, 3, "Default");
+    const SpaceTipLayout layout = LayOutSpaceTip(tip, SpaceTipWidths{30, 11, 40, {19, 7}});
+    CHECK(layout.nameX == 10 && layout.height == 28);
+    CHECK(layout.chip && *layout.chip == (BarRect{48, 3.5f, 117, 24.5f}));
+    CHECK(layout.chipSymbolX == 55 && layout.chipTextX == 70);
+    CHECK(layout.keys.size() == 2);
+    CHECK(layout.keys[0] == (BarRect{125, 5, 152, 23}));  // "Alt": 19 + 4 either side
+    CHECK(layout.keys[1] == (BarRect{155, 5, 173, 23}));  // a digit fits 18
+    CHECK(layout.width == 183);
+    // Without a profile or keys (a tenth space in an incognito window): the name alone.
+    SpaceTip bare = SpaceTipOf(space, 10);
+    const SpaceTipLayout alone = LayOutSpaceTip(bare, SpaceTipWidths{30, 0, 0, {}});
+    CHECK(!alone.chip && alone.keys.empty() && alone.width == 50);
+}
+
+TEST(aTipSitsCentredJustAboveItsCellOnWholePixels) {
+    // SpaceTipWindow: x (cell.midX - width / 2).rounded(), its bottom 2pt above the cell; it may
+    // start left of the window (Arc's reaches past the browser window's edge).
+    const BarRect cell{60, 790, 96, 824};
+    CHECK(SpaceTipOrigin(cell, 183, 28, 2) == (TipOrigin{-13.5f, 760}));
+    CHECK(SpaceTipOrigin(cell, 100, 28, 2) == (TipOrigin{28, 760}));
+    // At 125%, on a pixel: 78 - 91.7 = -13.7pt is -17.125px, so -17px.
+    const TipOrigin odd = SpaceTipOrigin(cell, 183.4f, 28, 1.25f);
+    CHECK(std::abs(odd.x * 1.25f - std::round(odd.x * 1.25f)) < 1e-4f && std::abs(odd.x * 1.25f + 17) < 1e-4f);
+}
+
+TEST(aTipFadesInOnCoreAnimationsDefaultCurve) {
+    // The Mac's panel alpha (CGWindowListCopyWindowInfo, every 6-10 ms) fits kCAMediaTimingFunctionDefault
+    // over 0.15 s ten times better than easeInEaseOut, easeOut or linear.
+    const double* c = kDefaultTiming;
+    CHECK(TimingCurveAt(c[0], c[1], c[2], c[3], 0) == 0 && TimingCurveAt(c[0], c[1], c[2], c[3], 1) == 1);
+    // Fast start, long settle: past 80% at half the time.
+    CHECK(TimingCurveAt(c[0], c[1], c[2], c[3], 0.5) > 0.8);
+    // linear: y = x.
+    CHECK(std::abs(TimingCurveAt(0, 0, 1, 1, 0.3) - 0.3) < 1e-6);
+    const double duration = space_tip_metrics::kFadeIn;
+    const auto segments = TimingCurveSegments(c[0], c[1], c[2], c[3], duration);
+    CHECK(segments.size() == 8 && segments.front().begin == 0);
+    double worst = 0;
+    for (int i = 0; i <= 300; ++i) {
+        const double t = duration * i / 300;
+        auto it = std::upper_bound(segments.begin(), segments.end(), t, [](double v, const CubicSegment& s) { return v < s.begin; });
+        const CubicSegment& s = *std::prev(it);
+        const double u = t - s.begin;
+        const double v = s.constant + u * (s.linear + u * (s.quadratic + u * s.cubic));
+        worst = std::max(worst, std::abs(v - TimingCurveAt(c[0], c[1], c[2], c[3], t / duration)));
+    }
+    CHECK(worst < 0.002);
 }

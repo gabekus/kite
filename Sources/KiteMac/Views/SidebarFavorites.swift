@@ -28,7 +28,7 @@ final class FavoritesTrayView: SidebarFlippedView {
     private let empty = FavoritesEmptyStateView()
     private var showsEmpty = false
     private var updateScheduled = false
-    private var defaultsObserver: NSObjectProtocol?
+    private var flagsObserver: NSObjectProtocol?
 
     /// The tray's slots: each favorite or favorite split, and the drop gap while a drag aims between them.
     enum Slot: Equatable {
@@ -53,23 +53,33 @@ final class FavoritesTrayView: SidebarFlippedView {
         }
     }
 
+    private static let emptyStateDismissedKey = "favoritesEmptyStateDismissed"
+    /// The empty state's Dismiss: read at first and again whenever it's set (in any window).
+    private var emptyStateDismissed = OneShotFlags.standard.bool(forKey: FavoritesTrayView.emptyStateDismissedKey)
+
     init(store: BrowserStore, actions: SidebarActions, drag: SidebarDragModel, metrics: SidebarChromeMetrics) {
         self.store = store
         self.actions = actions
         self.drag = drag
         self.metrics = metrics
         super.init(frame: .zero)
-        empty.onDismiss = { UserDefaults.standard.set(true, forKey: "favoritesEmptyStateDismissed") }
+        empty.onDismiss = { OneShotFlags.standard.set(true, forKey: Self.emptyStateDismissedKey) }
         addSubview(empty)
-        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
-                                                                  queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.scheduleUpdate() }
+        // Every window's tray follows a Dismiss in any of them.
+        flagsObserver = NotificationCenter.default.addObserver(forName: OneShotFlags.didChange, object: nil,
+                                                                  queue: .main) { [weak self] note in
+            guard note.userInfo?["key"] as? String == Self.emptyStateDismissedKey else { return }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.emptyStateDismissed = OneShotFlags.standard.bool(forKey: Self.emptyStateDismissedKey)
+                self.scheduleUpdate()
+            }
         }
         update()
     }
 
     isolated deinit {
-        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+        if let flagsObserver { NotificationCenter.default.removeObserver(flagsObserver) }
     }
 
     override var mouseDownCanMoveWindow: Bool { false }
@@ -103,7 +113,7 @@ final class FavoritesTrayView: SidebarFlippedView {
         let state = store.state
         let favorites = state.favorites
         let dragging = drag.isDragging
-        let dismissed = UserDefaults.standard.bool(forKey: "favoritesEmptyStateDismissed")
+        let dismissed = emptyStateDismissed
         let creating = store.spaceCreation.map { $0.spaceID == state.selectedSpaceID } ?? false
         let shown = !creating && (!favorites.isEmpty || dragging || !dismissed)
         var slots = SidebarGroup.group(favorites.map(\.id), splits: state.favoriteSplits).map { group -> Slot in
