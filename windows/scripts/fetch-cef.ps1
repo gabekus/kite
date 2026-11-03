@@ -5,19 +5,22 @@
 # unpacked); run it only when you mean to.
 #
 #   pwsh windows/scripts/fetch-cef.ps1
-#   pwsh windows/scripts/fetch-cef.ps1 -AllowUnpinned   # first run only, see $CefSha1
+#   pwsh windows/scripts/fetch-cef.ps1 -AllowUnpinned   # a new $CefVersion, see $CefSha1
+#   pwsh windows/scripts/fetch-cef.ps1 -Configs Release # CI: one wrapper build
 #
 # Needs cmake, Ninja and the MSVC build tools (a "Developer PowerShell" or vcvars64).
-param([switch] $AllowUnpinned)
+param([switch] $AllowUnpinned, [string[]] $Configs = @('Release', 'Debug'))
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # Windows PowerShell 5.1's progress bar slows downloads to a crawl
 
+# Changing either also changes CI's CEF cache key (.github/workflows/ci-windows-native.yml).
 $CefVersion = '156.0.7+g47dbc1d+chromium-156.0.8078.17'
 $CefPlatform = 'windows64'
-# The archive's SHA-1, like scripts/fetch-cef.sh pins the macOS one. Until it's set the
-# script refuses to run; -AllowUnpinned checks against the CDN's own .sha1 instead (which
-# guards only against corruption) and prints the value to pin here.
-$CefSha1 = ''
+# The archive's SHA-1, like scripts/fetch-cef.sh pins the macOS one (2026-11-03, matched the
+# CDN's .sha1). -AllowUnpinned checks against the CDN's own .sha1 instead (which guards only
+# against corruption) and prints the value to pin here, for a new $CefVersion.
+$CefSha1 = 'e13cb97c5be44784c2dba6df960791ea5cf6d406'
+if ($AllowUnpinned) { $CefSha1 = '' }
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot '..')  # windows/
 $ThirdParty = Join-Path $Root 'ThirdParty'
@@ -36,13 +39,14 @@ if ((Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $CefVersion)) 
     $url = 'https://cef-builds.spotifycdn.com/' + [uri]::EscapeDataString("$Name.tar.bz2")
     if (-not (Test-Path $Archive)) {
         Write-Host "Downloading $url"
-        Invoke-WebRequest -Uri $url -OutFile "$Archive.part"
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile "$Archive.part"
         Move-Item "$Archive.part" $Archive
     }
     $expected = $CefSha1
     if (-not $expected) {
         # .Content is a byte[] when the CDN doesn't send a text content type.
-        $body = (Invoke-WebRequest -Uri "$url.sha1").Content
+        # -UseBasicParsing: Windows PowerShell 5.1 otherwise throws without Internet Explorer.
+        $body = (Invoke-WebRequest -UseBasicParsing -Uri "$url.sha1").Content
         if ($body -is [byte[]]) { $body = [System.Text.Encoding]::ASCII.GetString($body) }
         $expected = ($body.Trim() -split '\s+')[0]
     }
@@ -69,14 +73,18 @@ if ((Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $CefVersion)) 
 # libcef_dll_wrapper: CEF's C++ API on top of its C ABI. Built for Release (/MT) and Debug
 # (/MTd), so either configuration of Kite links against a wrapper with the same CRT
 # (otherwise LNK2038). They land in build-release and build-debug; Kite picks by $<CONFIG>.
-foreach ($config in 'Release', 'Debug') {
+foreach ($config in $Configs) {
     $buildDir = Join-Path $Dest ("build-" + $config.ToLower())
     $wrapper = Join-Path $buildDir 'libcef_dll_wrapper\libcef_dll_wrapper.lib'
     if (Test-Path $wrapper) { continue }
+    # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot. USE_SANDBOX off until W6b
+    # (bootstrap.exe): with it on, the wrapper is built against a fixed CEF API version while
+    # Kite.exe isn't, and the two must match.
     cmake -S $Dest -B $buildDir -G Ninja `
-        -DCMAKE_BUILD_TYPE=$config `
-        -DPROJECT_ARCH=x86_64 `
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+        "-DCMAKE_BUILD_TYPE=$config" `
+        '-DPROJECT_ARCH=x86_64' `
+        '-DUSE_SANDBOX=OFF' `
+        '-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
     if ($LASTEXITCODE -ne 0) { throw "cmake configure ($config) failed" }
     cmake --build $buildDir --target libcef_dll_wrapper
     if ($LASTEXITCODE -ne 0) { throw "cmake build ($config) failed" }

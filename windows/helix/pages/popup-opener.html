@@ -1,0 +1,47 @@
+<!doctype html>
+<!-- A manual check for Kite for Windows' Chromium host (W6). The page has no background of
+     its own (it must show white), and its title logs what happens to it:
+       "size:WxH"          its size when it loaded
+       "hidden"/"visible"  document.visibilityState changes (a hidden tab must report hidden)
+       "resize:WxH"        a resize (a tab switch must not resize the page that goes hidden)
+       "msg:hi"            a popup reached it through window.opener
+     "open" opens a popup (hosted as a tab) that messages its opener and closes itself after
+     3 s, which must close only the popup's tab, not Kite, and show this tab again.
+     "open twice" opens a popup with a "nested" button, which opens a second popup from the
+     first. The second closes after 3 s (Kite shows the first again), and the first 6 s after
+     the second messaged it (Kite shows this tab again, never the closed second popup).
+     Ctrl-click the link: it opens in a new background tab, and this page stays. -->
+<title>start</title>
+<body style="margin:0">
+<button id="open" style="width:200px;height:80px">open</button>
+<button id="twice" style="width:200px;height:80px">open twice</button>
+<p><a href="smoke.html">smoke page link</a></p>
+<script>
+const log = [];
+function note(text) {
+  log.push(text);
+  document.title = log.join(' ');
+}
+note('size:' + innerWidth + 'x' + innerHeight);
+document.addEventListener('visibilitychange', () => note(document.visibilityState));
+window.addEventListener('resize', () => note('resize:' + innerWidth + 'x' + innerHeight));
+window.addEventListener('message', (event) => note('msg:' + event.data));
+
+// Opens a popup from `from` that messages `from` and then closes itself: after 3 s, or with
+// `nests`, 6 s after its own popup (from its "nested" button) has messaged it.
+function openPopup(from, title, nests) {
+  const popup = from.open('');
+  popup.document.write('<title>' + title + '</title><body>' + title + ' page ' +
+    (nests ? '<button id="nested" style="width:200px;height:80px">nested</button>' : '') + '</body>');
+  popup.document.close();
+  const script = popup.document.createElement('script');
+  script.textContent = 'opener.postMessage("hi", "*");' + (nests
+    ? 'document.getElementById("nested").onclick = () => opener.openPopup(window, "nested", false);' +
+      'addEventListener("message", () => setTimeout(() => close(), 6000));'
+    : 'setTimeout(() => close(), 3000);');
+  popup.document.body.appendChild(script);
+}
+document.getElementById('open').onclick = () => openPopup(window, 'popup', false);
+document.getElementById('twice').onclick = () => openPopup(window, 'popup', true);
+</script>
+</body>

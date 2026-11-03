@@ -1,0 +1,7 @@
+<!doctype html>
+<!-- The page CI's smoke test loads (ci-windows-native.yml), so it doesn't depend on the
+     network. Its title says whether it loaded visible; the test checks that "Kite smoke page
+     visible" reached the session (a page that came up hidden for good would say hidden). -->
+<title>Kite smoke page</title>
+<script>document.title = 'Kite smoke page ' + document.visibilityState;</script>
+<p>Kite smoke page</p>

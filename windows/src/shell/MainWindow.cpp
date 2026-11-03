@@ -133,7 +133,14 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_SIZE:
-        if (wParam != SIZE_MINIMIZED && onSize) onSize();
+        if (wParam == SIZE_MINIMIZED) {
+            if (onMinimize) onMinimize();
+        } else if (onSize) {
+            onSize();
+        }
+        return 0;
+    case WM_MOVE:
+        if (onMove) onMove();
         return 0;
     case WM_ERASEBKGND:
         return 1;  // nothing to erase: there's no redirection bitmap
@@ -143,10 +150,17 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         EndPaint(hwnd_, &paint);
         return 0;
     }
+    case kWakeMessage:
+        if (onWake) onWake();
+        return 0;
+    case WM_SETFOCUS:
+        if (onFocus) onFocus();
+        return 0;
     case WM_ENDSESSION:
         if (wParam && onClose) onClose();
         return 0;
     case WM_CLOSE:
+        if (mayClose && !mayClose()) return 0;
         if (onClose) onClose();
         DestroyWindow(hwnd_);
         return 0;

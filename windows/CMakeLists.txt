@@ -97,6 +97,34 @@ if(WIN32)
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
   target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp)
+
+  # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
+  # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
+  set(KITE_CEF_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/cef" CACHE PATH "CEF binary distribution (fetch-cef.ps1)")
+  if(MSVC AND EXISTS "${KITE_CEF_ROOT}/include/cef_version.h")
+    message(STATUS "Chromium: CEF at ${KITE_CEF_ROOT}")
+    target_sources(Kite PRIVATE src/shell/Chromium.cpp)
+    target_compile_definitions(Kite PRIVATE KITE_HAS_CEF)
+    target_include_directories(Kite SYSTEM PRIVATE "${KITE_CEF_ROOT}")
+    # The minimal distribution has Release binaries only; libcef.dll's C ABI serves either
+    # configuration. The C++ wrapper is built per configuration for the matching static CRT.
+    target_link_libraries(Kite PRIVATE
+      "${KITE_CEF_ROOT}/Release/libcef.lib"
+      "${KITE_CEF_ROOT}/build-$<IF:$<CONFIG:Debug>,debug,release>/libcef_dll_wrapper/libcef_dll_wrapper.lib"
+      comctl32 rpcrt4 shlwapi ws2_32 delayimp)
+    # Kite.exe is also Chromium's renderer, GPU and utility process. Like chrome.exe (and
+    # CEF's own CEF_EXE_LINKER_FLAGS) it gets an 8 MiB main-thread stack, which deep pages
+    # need, and loads the window's graphics DLLs only in the process that draws the window.
+    target_link_options(Kite PRIVATE /STACK:0x800000
+      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:dwmapi.dll)
+    # libcef.dll and its resources go next to Kite.exe, where Chromium looks for them.
+    add_custom_command(TARGET Kite POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -DCEF_ROOT=${KITE_CEF_ROOT} -DDEST=$<TARGET_FILE_DIR:Kite>
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyCef.cmake
+      VERBATIM)
+  else()
+    message(STATUS "Chromium: no CEF at ${KITE_CEF_ROOT}, building without pages")
+  endif()
   if(KITE_FXC)
     message(STATUS "Shaders: precompiled with ${KITE_FXC}")
   else()

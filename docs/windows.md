@@ -103,6 +103,41 @@ Fallback if the off-screen path is too costly: windowed CEF (child HWND), with
 any overlays in separate layered top-level windows. That's simpler but less
 flexible.
 
+**Today (W6): windowed CEF**, so pages load while the off-screen path is
+built (W10). `shell/Chromium` creates one Alloy-style browser per tab (as
+the Mac's) as a child window over the content card (right of the sidebar's
+240pt, inset 10pt). Other tabs' windows, and the shown one while Kite is
+minimized, are hidden along with their Chromium widget window (the host's
+`Chrome_WidgetWin_N` child), which is what Chromium reads as the page's
+visibility: they report `hidden` and stop drawing, and `visible` when
+they're back. They keep their size, as on the Mac, so a tab switch doesn't
+resize and reflow them. That leans on Chromium's window layout, so `--smoke-test` fails
+if the widget isn't found; W10's off-screen pages replace it with `WasHidden`.
+A Kite window that's covered rather than minimized still draws its page
+(Chromium's occlusion tracking covers only its own top-level windows).
+`windows/helix/pages/popup-opener.html` logs the page's `visibilityState`,
+resizes and opener messages in its title to check all this (on Gabe's PC,
+not in CI). CEF runs its own UI
+thread (`multi_threaded_message_loop`), so Kite's message loop and
+DirectComposition are untouched; CEF's callbacks reach Kite's thread through
+`PostMessage`, and Kite moves its page windows on CEF's thread. Some calls
+stay synchronous between the threads, because a child window on another
+thread shares its parent's input (focus and DPI changes, destroying the
+window), until W10 removes the child windows. A second
+launch hands over to the running Kite (Chromium allows one per profile). Profiles sit where the Mac keeps them: `<support>\Chromium`
+is `root_cache_path`, the default profile is `Chromium\Default`, and a
+space's other profile gets its own request context in `Chromium\<directory>`.
+Popups and `target=_blank` links open as tabs that keep `window.opener`, as
+on the Mac, and a popup that closes itself hands the screen back to its
+opener; its tab stays in the session until W5 closes tabs, but this run never
+shows it again. Ctrl-click and middle-click open a link in a background tab,
+Ctrl+Shift-click in a foreground one (a `target=_blank` link opens as a popup
+tab either way, as on the Mac). The first page is made once the window is on
+screen and not minimized. `--smoke-test` loads
+`windows/helix/pages/smoke.html` in CI and fails unless one `WM_CLOSE`
+closes every browser in time. Not yet: the card's 6pt corners (a child window can't be clipped
+smoothly; W10), the sandbox (W6b), and the page in `--capture` (W4).
+
 ## Refresh rate
 
 Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to
@@ -136,9 +171,9 @@ The checkpoint list in windows/helix/checkpoints.md is the detailed plan. In sho
    `windows/`, `.github/workflows/ci-windows-native.yml`).
 2. The model core and session file with their tests and a shared fixture (in
    review, #260).
-3. CEF: `windows/scripts/fetch-cef.ps1` (written, not run yet), one browser per
-   tab, windowed first so pages load, then the off-screen spike: D3D11 shared
-   texture, frame time, input latency.
+3. CEF: `windows/scripts/fetch-cef.ps1`, one browser per tab, windowed first
+   so pages load (W6), then the sandbox (W6b) and the off-screen spike: D3D11
+   shared texture, frame time, input latency (W10).
 4. DirectComposition tree and the chrome (sidebar, command bar, spaces), matched
    to measurements of Kite for Mac. HLSL shaders with a golden-image test.
 5. Packaging: signing, installer, updates.

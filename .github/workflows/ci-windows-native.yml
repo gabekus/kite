@@ -46,12 +46,32 @@ jobs:
 
   windows-app:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'windows-latest' || vars.WINDOWS_RUNNER || 'windows-latest' }}
-    timeout-minutes: 20
+    timeout-minutes: 35  # a cold CEF cache downloads and builds its wrapper
     defaults:
       run:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+      # Chromium (CEF): the pinned build from windows/scripts/fetch-cef.ps1. The unpacked
+      # distribution is cached between runs; its C++ wrapper is built every run, by this
+      # runner's MSVC, so a cache made by another toolset can't reach this linker.
+      - name: Cache CEF
+        uses: actions/cache@v4
+        with:
+          path: |
+            windows/ThirdParty/cef
+            !windows/ThirdParty/cef/build-*
+          # The pinned $CefVersion and $CefSha1 in fetch-cef.ps1; change with them.
+          key: cef-windows64-156.0.7+g47dbc1d-e13cb97c5be44784c2dba6df960791ea5cf6d406
+      - name: Fetch CEF and build its wrapper
+        timeout-minutes: 15
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y --no-progress }
+          & windows/scripts/fetch-cef.ps1 -Configs Release
       - name: Configure (MSVC)
         run: cmake -S windows -B windows/build -A x64  # newest Visual Studio found
       - name: Build
@@ -80,10 +100,23 @@ jobs:
           $profileDir = Join-Path $env:RUNNER_TEMP "kite-smoke-$([guid]::NewGuid())"
           New-Item -ItemType Directory -Path $profileDir | Out-Null
           $env:KITE_SUPPORT_PATH = $profileDir
+          # The selected tab is a page from the repo, so the smoke test needs no network.
+          $smokePage = ([uri](Resolve-Path windows/helix/pages/smoke.html).Path).AbsoluteUri
+          & windows/build/Release/kitecore.exe --profile $profileDir open $smokePage | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "kitecore open exited with $LASTEXITCODE" }
 
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 0) { throw "--smoke-test exited with $code" }
           if (-not (Test-Path (Join-Path $profileDir 'session.json'))) { throw 'Kite.exe wrote no session.json' }
+          # With Chromium the smoke test loaded the selected tab's page in the default profile,
+          # where the Mac keeps it.
+          if (-not (Test-Path (Join-Path $profileDir 'Chromium\Default'))) { throw 'Chromium made no profile in Chromium\Default' }
+          # ...and saved what the page reported into the session.
+          $tab = (& windows/build/Release/kitecore.exe --profile $profileDir state | ConvertFrom-Json).selectedTab
+          if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
+          Write-Host "selected tab after the smoke test: $($tab.title) <$($tab.url)>"
+          # The page titles itself with its visibility as it loads: it must have come up visible.
+          if ($tab.title -ne 'Kite smoke page visible') { throw "the session has no title from a visible page: '$($tab.title)'" }
           # The headless model reads what the app wrote.
           & windows/build/Release/kitecore.exe --profile $profileDir state
           if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
@@ -163,14 +196,19 @@ jobs:
               }
             } finally { $bitmap.Dispose() }
           }
-      - name: Upload Kite.exe
-        # The Release build, for trying it on a Windows machine without Visual Studio.
+      - name: Upload Kite
+        # The Release build with Chromium's runtime beside it, for trying it on a Windows
+        # machine without Visual Studio: unzip and run Kite.exe.
         uses: actions/upload-artifact@v4
         with:
           name: kite-windows-x64
+          retention-days: 7  # over 400 MB with Chromium's runtime
           path: |
-            windows/build/Release/Kite.exe
-            windows/build/Release/kitecore.exe
+            windows/build/Release/
+            !windows/build/Release/**/*.lib
+            !windows/build/Release/**/*.pdb
+            !windows/build/Release/**/*.exp
+            !windows/build/Release/KiteCoreTests.exe
           if-no-files-found: error
       - name: Upload the capture
         if: always()
