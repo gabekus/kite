@@ -175,7 +175,10 @@ std::wstring BrowserWindowController::Init() {
     bar.dpi = [this] { return window_.Dpi(); };
     commandBar_ = CommandBarView::Create(window_.Handle(), std::move(bar), error);
     if (commandBar_) commandBar_->UseCompositor(compositor_.get());
-    else OutputDebugStringW((L"Kite: no command bar: " + error + L"\n").c_str());
+    else {
+        barError_ = error;
+        OutputDebugStringW((L"Kite: no command bar: " + error + L"\n").c_str());
+    }
 
     window_.onSize = [this] { OnSize(); };
     // A hover's redraw found the GPU gone: rebuild and draw everything.
@@ -211,8 +214,6 @@ std::wstring BrowserWindowController::Init() {
     window_.filter = [this](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
         return Filter(message, wParam, lParam, result);
     };
-    // The auto-archive's later passes (the launch's ran before the window). A capture never archives.
-    if (!options_.capture) SetTimer(window_.Handle(), kArchiveTimer, kArchiveIntervalMs, nullptr);
     return {};
 }
 
@@ -559,6 +560,8 @@ void BrowserWindowController::Show(int showCommand, bool behindOtherWindows) {
 #ifdef KITE_HAS_CEF
     ShowFirstPage();
 #endif
+    // The auto-archive's later passes (the launch's ran before the window). A capture never archives.
+    if (!options_.capture) SetTimer(window_.Handle(), kArchiveTimer, kArchiveIntervalMs, nullptr);
 }
 
 // MARK: Tests

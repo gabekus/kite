@@ -269,7 +269,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.smokeTest = smokeTest;
     auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
-    if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar", kWindowFailed);
+    if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
     kite::MainWindow& window = controller->Window();
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
     window.onClose = [&] {

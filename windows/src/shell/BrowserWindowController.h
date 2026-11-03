@@ -38,7 +38,8 @@ class BrowserWindowController {
 public:
     struct Options {
         // A --capture run: the solid material under the backdrop (not what's behind the
-        // window), no favicons (no network), no Chromium, and no auto-archive.
+        // window), no favicons (no network) and no auto-archive. The caller doesn't start
+        // Chromium for one.
         bool capture = false;
         // --smoke-test: every shortcut command must do something, and the first page's load
         // closes the window.
@@ -61,6 +62,8 @@ public:
 
     MainWindow& Window() { return window_; }
     CommandBarView* CommandBar() { return commandBar_.get(); }
+    // Why there's no command bar, when there isn't one.
+    const std::wstring& CommandBarError() const { return barError_; }
     UINT MaxTextureSize() const { return renderer_ ? renderer_->MaxTextureSize() : 0; }
 
 #ifdef KITE_HAS_CEF
@@ -68,7 +71,6 @@ public:
     // Kite has the profile and was told to come forward.
     enum class ChromiumStart { Started, AlreadyRunning, Failed };
     ChromiumStart StartChromium(const std::filesystem::path& root, std::wstring& error);
-    Chromium* PageEngine() { return chromium_.get(); }
     // After the message loop: Chromium's shutdown, then what a smoke test checks of it. Empty
     // when it all went well (or there was no Chromium).
     std::wstring ShutDownChromium();
@@ -77,7 +79,8 @@ public:
     // with no WM_CLOSE first).
     void RunPending();
 
-    // Shows the window (behind other windows for a quiet run) and, with Chromium, the first page.
+    // Shows the window (behind other windows for a quiet run) and, with Chromium, the first page,
+    // and starts the auto-archive's timer.
     void Show(int showCommand, bool behindOtherWindows);
 
     // Draws the backdrop, the sidebar and the caption buttons and commits them; with
@@ -152,6 +155,7 @@ private:
     std::unique_ptr<SidebarView> sidebar_;
     std::unique_ptr<CaptionButtonsView> caption_;
     std::unique_ptr<CommandBarView> commandBar_;
+    std::wstring barError_;
 
     // What each shortcut's command does, by id (MainMenu.swift's items).
     std::map<std::string, std::function<void()>, std::less<>> commands_;
