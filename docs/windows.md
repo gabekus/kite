@@ -107,9 +107,9 @@ flexible.
 built (W10). `shell/Chromium` creates one Alloy-style browser per tab (as
 the Mac's) as a child window over the content card (right of the sidebar's
 240pt, inset 10pt). Other tabs' windows, and the shown one while Kite is
-minimized, are hidden and sized 0×0, which CEF documents as hiding the
-widget and saving resources (whether pages then report `hidden` is checked
-on Gabe's PC, not in CI). CEF runs its own UI thread
+minimized, are sized 0×0, which CEF documents as hiding the widget and
+saving resources; `windows/helix/pages/popup-opener.html` logs the page's
+`visibilityState` in its title to check it (on Gabe's PC, not in CI). CEF runs its own UI thread
 (`multi_threaded_message_loop`), so Kite's message loop and DirectComposition
 are untouched; CEF's callbacks reach Kite's thread through `PostMessage`, and
 Kite moves its page windows on CEF's thread, never waiting on it. A second

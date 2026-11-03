@@ -66,7 +66,7 @@ struct Chromium::Shared {
 
     // Kite's UI thread only.
     struct Placement {
-        bool visible = true;  // SetAsChild windows start visible, at the card
+        bool visible = true;  // on the card, rather than 0×0; SetAsChild windows start there
         RECT rect{};
         bool operator==(const Placement& o) const { return visible == o.visible && EqualRect(&rect, &o.rect); }
     };
@@ -105,9 +105,12 @@ struct Chromium::Shared {
         return bounds;
     }
 
-    // Puts the shown tab's window on the card and hides the rest, sized 0×0 so Chromium
-    // hides their widgets and stops drawing them (CEF's own advice for windowed browsers).
-    // Only windows whose placement changed are touched, on CEF's thread, which owns them.
+    // Puts the shown tab's window on the card and sizes the rest 0×0, which makes CEF hide
+    // their widgets so the pages report hidden and stop drawing (CEF's own advice for
+    // windowed browsers). The windows aren't hidden as well: a window shown again together
+    // with its new size got its size while still hidden, and its page stayed hidden (seen
+    // on Gabe's PC). Only windows whose placement changed are touched, on CEF's thread,
+    // which owns them.
     void Layout() {
         const RECT card = Bounds();
         std::vector<std::pair<HWND, Placement>> changes;
@@ -126,8 +129,7 @@ struct Chromium::Shared {
         RunOnCefUIThread([changes = std::move(changes)] {
             for (const auto& [hwnd, placement] : changes) {
                 const RECT& r = placement.rect;
-                SetWindowPos(hwnd, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top,
-                             SWP_NOZORDER | SWP_NOACTIVATE | (placement.visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+                SetWindowPos(hwnd, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
             }
         });
     }
@@ -399,7 +401,19 @@ Chromium::~Chromium() {
     for (auto& [id, page] : shared_->pages) {
         if (page.browser && !page.closeReady) page.browser->GetHost()->CloseBrowser(true);
     }
-    WaitForSingleObject(shared_->allClosed, 10'000);
+    // Messages are pumped while waiting: the page windows' teardown on CEF's thread sends
+    // messages to this one (their input queues are attached), and a bare wait stalled
+    // OnBeforeClose until the timeout, then shut down under live browsers.
+    const ULONGLONG deadline = GetTickCount64() + 10'000;
+    for (;;) {
+        const ULONGLONG now = GetTickCount64();
+        if (now >= deadline) break;
+        const DWORD woke = MsgWaitForMultipleObjectsEx(1, &shared_->allClosed, static_cast<DWORD>(deadline - now), QS_ALLINPUT,
+                                                       MWMO_INPUTAVAILABLE);
+        if (woke != WAIT_OBJECT_0 + 1) break;  // signalled, timed out or failed
+        MSG message;
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+    }
     shared_->pages.clear();
     shared_->contexts.clear();
     {
