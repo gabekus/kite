@@ -515,6 +515,8 @@ enum SymbolOrigins {
         Key("puzzlepiece.extension", 13.0, .medium, 32.0, 28.0): (7.0, 6.5), // max 37
         Key("slider.horizontal.3", 8.0, .semibold, 37.0, 32.0): (13.5, 11.5), // max 42
         Key("link", 11.0, .medium, 14.5, 16.0): (0.0, 0.5), // max 34
+        Key("desktopcomputer.and.arrow.down", 12.0, .semibold, 24.0, 24.0): (3.0, 3.5), // max 22
+        Key("xmark", 13.0, .medium, 37.0, 32.0): (12.0, 9.5), // max 101 (reload while loading)
     ]
 }
 

@@ -53,8 +53,8 @@ final class PageToolbar: NSView {
     private let forward = PageToolbar.symbolButton("arrow.right", "Forward")
     private let reload = PageToolbar.symbolButton("arrow.clockwise", "Reload")
     private let siteControls = PageToolbar.symbolButton("slider.horizontal.3", "Site Control Center", pointSize: 8, weight: .semibold)
-    /// Site Controls' 16pt rounded frame around its symbol.
-    private let siteControlsRing = NSView()
+    /// Site Controls' 16pt rounded frame around its symbol. Clicks on it are the button's.
+    private let siteControlsRing = PassthroughView()
     private let splitView = PageToolbar.symbolButton("rectangle.split.2x1", "Add Split View")
     private let address = ToolbarAddressButton()
     private let install = SymbolButton(symbol: "desktopcomputer.and.arrow.down", pointSize: 12, weight: .semibold)
@@ -351,4 +351,9 @@ final class ToolbarAddressButton: NSView {
         action()
         return true
     }
+}
+
+/// A view that draws and never takes a click: its button gets it.
+private final class PassthroughView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

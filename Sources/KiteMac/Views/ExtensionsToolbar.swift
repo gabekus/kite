@@ -187,7 +187,8 @@ private final class PinnedExtensionIcon: NSView {
     override func menu(for event: NSEvent) -> NSMenu? { ExtensionActions.menu(item: item, model: model) }
 
     override func rightMouseDown(with event: NSEvent) {
-        NSMenu.popUpContextMenu(ExtensionActions.menu(item: item, model: model), with: event, for: self)
+        // Through the sidebar's menu hook, so KITE_TEST_CONTEXT_MENU can read it from the background.
+        showSidebarMenu(ExtensionActions.menu(item: item, model: model), with: event, for: self)
     }
 }
 
