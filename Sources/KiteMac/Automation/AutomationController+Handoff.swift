@@ -16,7 +16,6 @@ extension AutomationController {
             if spec.command == nil, spec.tab != nil || request.tab != nil || spec.target != nil {
                 let tab = try resolveTab(spec.tab ?? request.tab)
                 step.tab = tab.id
-                step.url = tab.url?.absoluteString
                 step.locator = try await locator(for: spec.target, step: step.id, tab: tab)
             }
             steps.append(step)
@@ -117,14 +116,20 @@ extension AutomationController {
         page.view.window != nil && !page.view.isHiddenOrHasHiddenAncestor
     }
 
-    /// What the last look at a step's control saw.
-    /// What a look at a step's control saw. When the control isn't there and the tab has left the step's page,
-    /// that's what's in the way.
+    /// What a look at a step's control saw. Where the control is found becomes the step's page (so a step that
+    /// happens after a redirect, or on the page an earlier step leads to, gets that page). A control missing for a
+    /// while, on a tab at another address than its page, means the tab has left it.
     private func setLook(_ stepID: String, _ state: UserHandoff.RingState, tab: UUID) {
         let current = store.state.tab(tab)?.url
+        let now = Date()
+        if state.found { controlMissingSince[stepID] = nil } else if controlMissingSince[stepID] == nil { controlMissingSince[stepID] = now }
+        let missing = controlMissingSince[stepID].map { now.timeIntervalSince($0) >= UserHandoff.offPageDelay } ?? false
         update(handoffID(of: stepID)) { h in
             guard let i = h.steps.firstIndex(where: { $0.id == stepID }), h.steps[i].isWaiting else { return }
-            let off = Handoff.isOffPage(stepURL: h.steps[i].url, current: current, found: state.found)
+            if state.found, let current, Handoff.canReturn(to: current), h.steps[i].url != current.absoluteString {
+                h.steps[i].url = current.absoluteString
+            }
+            let off = missing && Handoff.isOffPage(stepURL: h.steps[i].url, current: current)
             let blocker = state.blocker ?? (off ? .offPage : nil)
             if h.steps[i].found != state.found { h.steps[i].found = state.found }
             if h.steps[i].blocker != blocker { h.steps[i].blocker = blocker }
@@ -135,8 +140,10 @@ extension AutomationController {
         guard let index = handoffs.firstIndex(where: { $0.id == id }) else { return }
         let before = handoffs[index]
         change(&handoffs[index])
-        // Only what the user or Claude did is saved; what the ring found isn't.
-        if handoffs[index].steps.map(\.state) != before.steps.map(\.state) { saveHandoffs() }
+        // Saved: what the user or Claude did, and the steps' pages and tabs; not what the ring found.
+        if handoffs[index].steps.map({ [$0.state.rawValue, $0.url, $0.tab?.uuidString] }) != before.steps.map({ [$0.state.rawValue, $0.url, $0.tab?.uuidString] }) {
+            saveHandoffs()
+        }
         if handoffs[index].isFinished, let focused = focusedHandoffStep, focused.hasPrefix(id + ".") { focusedHandoffStep = nil }
     }
 
@@ -216,25 +223,43 @@ extension AutomationController {
         }
     }
 
-    /// Take Me Back and Reopen Page on the card: back to the page the step was handed over on, in its own tab, or in
-    /// a new tab when that one was closed (its other waiting steps move along).
+    /// The step's tab was closed (and isn't back).
+    func stepTabIsClosed(_ step: Handoff.Step) -> Bool {
+        step.tab.map { store.state.tab($0) == nil } ?? false
+    }
+
+    /// Reopen Tab can bring the tab back, or at least open the step's page.
+    func canReopenStepTab(_ step: Handoff.Step) -> Bool {
+        guard let id = step.tab else { return false }
+        return store.state.recentlyClosed.contains { $0.tab.id == id } || step.url.flatMap(URL.init(string:)).map(Handoff.canReturn) == true
+    }
+
+    /// Take Me Back on the card, for the tab in front: loads the step's page in it again.
     func returnToStepPage(_ stepID: String) {
         guard let host, let step = waitingHandoffSteps.first(where: { $0.step.id == stepID })?.step,
-              let string = step.url, let url = URL(string: string) else { return }
-        if let id = step.tab, let tab = store.state.tab(id) {
-            store.mutateWithoutUndo { $0.select(tab: id) }
-            host.automationPage(for: tab).load(url)
-        } else {
+              let id = step.tab, id == store.state.selectedTab?.id, let tab = store.state.tab(id),
+              let url = step.url.flatMap(URL.init(string:)), Handoff.canReturn(to: url) else { return }
+        controlMissingSince[stepID] = nil
+        host.automationPage(for: tab).load(url)
+        pollHandoffsSoon()
+    }
+
+    /// Reopen Tab on the card, for a step whose tab was closed: the tab itself comes back where it was (its space,
+    /// place and history), as Undo Close does. Pushed out of the recently closed, a new tab opens at the step's page,
+    /// and this handoff's steps on the old tab move to it.
+    func reopenStepTab(_ stepID: String) {
+        guard let step = waitingHandoffSteps.first(where: { $0.step.id == stepID })?.step, let id = step.tab,
+              store.state.tab(id) == nil else { return }
+        if store.mutateWithoutUndo({ $0.reopenClosed(tab: id) }) == nil {
+            guard let url = step.url.flatMap(URL.init(string:)), Handoff.canReturn(to: url) else { return }
             let opened = store.mutateWithoutUndo { $0.openTab(url: url) }
-            for index in handoffs.indices {
-                for i in handoffs[index].steps.indices
-                where handoffs[index].steps[i].isWaiting && handoffs[index].steps[i].tab == step.tab {
-                    handoffs[index].steps[i].tab = opened
-                    handoffs[index].steps[i].blocker = nil
-                    handoffs[index].steps[i].found = nil
+            update(handoffID(of: stepID)) { h in
+                for i in h.steps.indices where h.steps[i].isWaiting && h.steps[i].tab == id {
+                    h.steps[i].tab = opened
+                    h.steps[i].blocker = nil
+                    h.steps[i].found = nil
                 }
             }
-            saveHandoffs()
         }
         focusedHandoffStep = nil
         pollHandoffsSoon()
@@ -284,12 +309,15 @@ extension AutomationController {
     private func pollHandoffsOnce() async {
         guard let host else { return }
         let live = store.state.allTabIDs
-        // A closed tab keeps its steps, for the card to offer their page again (not while the window's tabs haven't
-        // loaded yet).
-        for handoff in handoffs where !handoff.isFinished && !live.isEmpty {
-            for step in handoff.waiting where step.tab.map({ !live.contains($0) }) == true && step.blocker != .tabClosed {
+        // A closed tab keeps its steps, for the card to offer the tab back; one that's back (Undo Close, the archive)
+        // is open again.
+        for handoff in handoffs where !handoff.isFinished {
+            for step in handoff.waiting {
+                guard let tab = step.tab else { continue }
+                let closed = !live.contains(tab)
+                guard closed != (step.blocker == .tabClosed) else { continue }
                 update(handoff.id) { h in
-                    if let i = h.steps.firstIndex(where: { $0.id == step.id }) { h.steps[i].found = nil; h.steps[i].blocker = .tabClosed }
+                    if let i = h.steps.firstIndex(where: { $0.id == step.id }) { h.steps[i].found = nil; h.steps[i].blocker = closed ? .tabClosed : nil }
                 }
             }
         }
@@ -308,15 +336,7 @@ extension AutomationController {
             // A page off screen keeps its ring for when it's back; one whose steps ended loses it.
             guard (step != nil && onScreen) || (step == nil && ringShown[id] != nil),
                   let actions = page.automation as? PageActions else { continue }
-            // On another site the ring has nothing to look for: the card offers the way back.
-            if let step, let stepURL = step.url.flatMap(URL.init(string:)), ["http", "https"].contains(stepURL.scheme ?? ""),
-               let current = store.state.tab(id)?.url, !Handoff.isSameSite(stepURL, current) {
-                if ringShown[id] != nil {
-                    _ = try? await actions.runIsolated(UserHandoff.clearScript, world: UserHandoff.worldName, binding: UserHandoff.bindingName)
-                    ringShown[id] = nil
-                }
-                setLook(step.id, .init(found: false), tab: id)
-            } else if let step {
+            if let step {
                 try? await track(id, page: page, actions: actions)
                 let first = ringShown[id] != step.id
                 let script = UserHandoff.ringScript(.init(step: step, scroll: first))
