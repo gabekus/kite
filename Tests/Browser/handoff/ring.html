@@ -17,6 +17,13 @@ const cases = {
   'enabled-twin': '<button disabled>Save</button> <button id="target">Save</button>',
   'hidden-first': '<button class="go" style="display:none">Go</button> <button class="go" id="target">Go</button>',
   'in-frame': '<iframe id="frame" srcdoc="<button id=target style=margin:20px>Approve</button>"></iframe>',
+  // Words in separate blocks, as many sign-in buttons draw them.
+  'split-words': '<button id="target"><div>Continue</div><div>with Google</div></button>',
+  // A ref'd control inside a menu that closed: the ring must not jump to another control with the same words.
+  'closed-menu': '<div style="display:none"><button id="marked" data-kite-handoff="m1">Delete</button></div> <button id="other">Delete</button>',
+  'far-below': '<button id="target" style="margin-top:3000px">Save changes</button>',
+  // A control whose words are longer than what Claude passed.
+  'long-label': '<button id="target" aria-label="Delete this repository and all of its issues permanently">Delete</button>',
 };
 function draw(name) { document.getElementById('app').innerHTML = cases[name]; return name; }
 // The element the ring settled on, as "#id" (or its tag), and the ring's box when it's shown.
