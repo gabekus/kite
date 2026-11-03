@@ -383,3 +383,35 @@ between the top row and the space bar, as SwiftUI's did (its stack ends in a Spa
 
 Not verified: the Mini Player (the test page's audio autoplay was blocked, so nothing played), and Create a Space's
 controls (typing a name, the theme row, Create, Cancel).
+
+## PR 8: command bar
+
+`CommandBarOverlayView` / `CommandBarPanelView` (AppKit): the panel (blurred page under a dark tint, hairline
+border, black outline, the wide soft shadow), the field with its magnifier or the Site Search site's icon, the
+inline Site Search completion, Tab into a site's search (its brand-colour chip), Backspace out of it, the hint
+and keycap, and the suggestions with the highlighted row, arrow keys, Return, ⇧Return and Escape. The SwiftUI
+`CommandBarPanel` stays for ⌘J's Claude bar.
+
+| Scenario (median of 3) | CPU ms/s main before #262 → PR 8 | Wakeups/s |
+|---|---|---|
+| **Opening the bar, typing "static page", closing it, every second** (`TYPE=1`) | **139.83 → 105.95** | **59.40 → 31.10** |
+| Idle (6 runs: 1.87, 1.93, 2.35, 4.98, 6.75, 11.70) | 2.65 → 3.67 | 4.40 → 4.22 |
+
+A first cut rebuilt every suggestion row on every keystroke and re-rendered its symbol images (165 ms/s, more than
+SwiftUI); rows are reused now and symbol images drawn once. The idle spikes aren't the bar: a 20 s `sample` of an
+idle instance has every main-thread sample in the run loop's wait; the extra time is on Chromium's threads.
+
+Pixels (captured back to back with main before #262, dark and light): the empty bar max 27/28, mean ≤ 0.30, its
+shadow equal at every sampled point once drawn by a plain layer (AppKit resets a view's own layer's shadow;
+SwiftUI's shadow radius is Core Animation's `shadowRadius`). The panel sits on the half point like SwiftUI's
+ZStack centres it; the magnifier rounds up to 23; NSTextField's text is 1.5pt above SwiftUI's TextField's in the
+same box (measured); row contents centre on the pixel grid rounding up. A highlighted row matches to max 153 /
+mean 1.6 (dark), 130 / 2.6 (light): text edges and the blurred backdrop inside the panel, which reads a flat 21
+in AppKit where SwiftUI's varies 18–24 under a long list. The field with a Site Search chip: max 126.
+
+Behaviour (both builds): a URL and Return opens it in a new tab; Escape closes the bar. Main highlights whichever
+row the real pointer is over (SwiftUI's row hover follows the real pointer over the covered test window), so
+initial highlights were compared one row apart.
+
+Not verified: ⇧Return (Instant Links), clicking a suggestion, the menu-command rows, and the inline completion's
+selection against main (main's code selects through `NSApp.keyWindow`, which is nil in a background window).
