@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Handoff: ring cases</title>
+<!-- scripts/test-handoff-ring.sh draws one case at a time with draw(name), runs the handoff ring on it and checks
+     which element the ring settled on (window.__kiteHandoff.el) and what it reported. -->
+<style>body{font:14px system-ui;margin:40px} iframe{width:360px;height:90px;border:1px solid #888;margin-top:120px}</style>
+<div id="app"></div>
+<script>
+const cases = {
+  // A help line and a panel mention the words; the button isn't drawn yet.
+  'mentions-only': '<p class="help" tabindex="0">Tip: use Invite members to add people.</p>'
+    + '<div tabindex="-1">Loading… Invite members</div>',
+  'label-and-button': '<label>Invite members to the team</label> <button id="target">Invite members</button>',
+  'disabled-title': '<span title="Only Super Administrators can remove members"><button id="target" disabled>Remove member</button></span>',
+  'aria-disabled': '<button id="target" aria-disabled="true" aria-describedby="why">Transfer ownership</button>'
+    + '<span id="why" hidden>Verify your email address first.</span>',
+  'enabled-twin': '<button disabled>Save</button> <button id="target">Save</button>',
+  'hidden-first': '<button class="go" style="display:none">Go</button> <button class="go" id="target">Go</button>',
+  'in-frame': '<iframe id="frame" srcdoc="<button id=target style=margin:20px>Approve</button>"></iframe>',
+  'frame-below': '<iframe id="frame" srcdoc="<button id=target style=margin-top:2000px>Approve</button>"></iframe>',
+  // Words in separate blocks, as many sign-in buttons draw them.
+  'split-words': '<button id="target"><div>Continue</div><div>with Google</div></button>',
+  // A ref'd control inside a menu that closed: the ring must not jump to another control with the same words.
+  'closed-menu': '<div style="display:none"><button id="marked" data-kite-handoff="m1">Delete</button></div> <button id="other">Delete</button>',
+  'far-below': '<button id="target" style="margin-top:3000px">Save changes</button>',
+  // A control whose words are longer than what Claude passed.
+  'long-label': '<button id="target" aria-label="Delete this repository and all of its issues permanently">Delete</button>',
+};
+function draw(name) { document.getElementById('app').innerHTML = cases[name]; return name; }
+// The element the ring settled on, as "#id" (or its tag), and the ring's box when it's shown.
+function settled() {
+  const K = window.__kiteHandoff, el = K && K.el;
+  let at = null;
+  if (el) {
+    const r = el.getBoundingClientRect(), f = el.ownerDocument !== document ? document.getElementById('frame') : null;
+    const o = f ? f.getBoundingClientRect() : { left: 0, top: 0 };
+    at = [Math.round(r.left + o.left + (f ? f.clientLeft : 0)), Math.round(r.top + o.top + (f ? f.clientTop : 0))];
+  }
+  const ring = K && K.ring && K.ring.style.display === 'block'
+    ? [Math.round(parseFloat(K.ring.style.left) + 4), Math.round(parseFloat(K.ring.style.top) + 4)] : null;
+  return JSON.stringify({ el: el ? (el.id ? '#' + el.id : el.tagName.toLowerCase()) : null,
+    frame: !!(el && el.ownerDocument !== document), at, ring, off: !!(K && K.ring && K.ring.classList.contains('off')) });
+}
+</script>
