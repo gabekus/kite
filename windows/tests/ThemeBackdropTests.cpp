@@ -154,7 +154,7 @@ TEST(referenceMatchesTheGoldenFixtureTheMacChecksKiteMetalAgainst) {
     if (!std::holds_alternative<json::Value>(parsed)) return;
     const json::Value& root = std::get<json::Value>(parsed);
     const json::Array& cases = *At(root, "cases").AsArray();
-    CHECK(cases.size() == 7);
+    CHECK(cases.size() == 8);
     for (const json::Value& c : cases) {
         const json::Array& size = *At(c, "size").AsArray();
         const ThemeUniforms u = MakeThemeUniforms(ThemeFromJson(At(c, "from")), ThemeFromJson(At(c, "to")),

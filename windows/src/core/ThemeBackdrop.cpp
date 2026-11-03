@@ -4,9 +4,14 @@
 #include "core/ThemeBackdrop.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 
 #include "core/OKLab.h"
+
+// Every step rounds to float as the GPU does; x87's wider intermediates would drift off the
+// golden fixture the Mac's shader is tested against.
+static_assert(FLT_EVAL_METHOD == 0, "the reference needs float arithmetic evaluated in float");
 
 namespace kite {
 namespace {

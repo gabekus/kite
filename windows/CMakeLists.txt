@@ -52,6 +52,7 @@ target_link_libraries(kitecore PRIVATE KiteCoreWin)
 if(WIN32)
   # HLSL shaders (src/shell/shaders). MSVC builds compile them with the Windows SDK's fxc
   # at build time and embed the bytecode, so Kite.exe never compiles a shader at startup.
+  # /Gis keeps IEEE float rules (no reassociating the grain hash); /WX fails on any warning.
   # Where there's no fxc (the MinGW cross-compile check) the source is embedded instead and
   # compiled with D3DCompile at startup (KITE_RUNTIME_SHADERS).
   set(KITE_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
@@ -66,11 +67,11 @@ if(WIN32)
   if(KITE_FXC)
     set(KITE_SHADER_HEADERS "${KITE_SHADER_DIR}/FullscreenVertex.h" "${KITE_SHADER_DIR}/ThemePixel.h")
     add_custom_command(OUTPUT "${KITE_SHADER_DIR}/FullscreenVertex.h"
-      COMMAND "${KITE_FXC}" /nologo /T vs_4_0 /E FullscreenVertex /O3 /Vn kFullscreenVertexShader
+      COMMAND "${KITE_FXC}" /nologo /T vs_4_0 /E FullscreenVertex /O3 /Gis /WX /Vn kFullscreenVertexShader
               /Fh "${KITE_SHADER_DIR}/FullscreenVertex.h" "${KITE_THEME_HLSL}"
       DEPENDS "${KITE_THEME_HLSL}" VERBATIM)
     add_custom_command(OUTPUT "${KITE_SHADER_DIR}/ThemePixel.h"
-      COMMAND "${KITE_FXC}" /nologo /T ps_4_0 /E ThemePixel /O3 /Vn kThemePixelShader
+      COMMAND "${KITE_FXC}" /nologo /T ps_4_0 /E ThemePixel /O3 /Gis /WX /Vn kThemePixelShader
               /Fh "${KITE_SHADER_DIR}/ThemePixel.h" "${KITE_THEME_HLSL}"
       DEPENDS "${KITE_THEME_HLSL}" VERBATIM)
   elseif(MSVC)

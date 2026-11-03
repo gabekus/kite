@@ -53,6 +53,8 @@ int main() {
     const Theme dark = Theme::Make(hex({0x1E1E2E}));
     // Channels at or near 0, so sRGB's linear segment (c <= 0.0031308) is drawn too.
     const Theme saturated = Theme::Make(hex({0xFF0000, 0x050505, 0x0000FF}), 0, 1);
+    // Pure red alone: its lightened glow leaves the sRGB gamut, so LinearToSRGB's clamp decides it.
+    const Theme red = Theme::Make(hex({0xFF0000}), 0, 1);
     const std::vector<Case> cases = {
         {"one colour, no grain, opaque", one, one, 1, 300, 300},
         {"two colours", work, work, 1, 1280, 820},
@@ -61,6 +63,7 @@ int main() {
         {"crossfade one colour to four at 0.4", fadedOne, four, 0.4f, 800, 500},
         {"dark single colour with grain", dark, dark, 1, 640, 420},
         {"saturated red, near-black and blue, opaque", saturated, saturated, 1, 640, 420},
+        {"one saturated red, opaque", red, red, 1, 640, 420},
     };
 
     // Written by hand rather than json::Write, one sample a line, so a regenerated file diffs

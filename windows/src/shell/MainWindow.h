@@ -34,7 +34,8 @@ public:
     // captures that must compare with the Mac's 2× ones on any display. Monitor changes then
     // keep this scale. Call before SetClientSize.
     void UseFixedScale(int scale);
-    // Client area in DIPs (96 DPI points), scaled to the window's monitor. Can be larger
+    // Client area in DIPs (96 DPI points), scaled to the window's monitor (or to the fixed
+    // scale, after UseFixedScale). Can be larger
     // than the screen, so a capture has the same size on every machine.
     void SetClientSize(int width, int height);
     // Whether the client area is exactly width × height points at the window's scale.

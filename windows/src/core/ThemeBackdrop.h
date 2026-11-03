@@ -4,6 +4,8 @@
 // Mac's Shaders/Kite.metal line for line; the GPU's output is checked against ShadeThemePixel() in CI
 // (Kite.exe --backdrop-test), so the reference is the spec the shader has to meet.
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -58,6 +60,13 @@ inline Rgba MaterialFallback(bool dark) {
 inline Rgba Over(const Rgba& top, const Rgba& bottom) {
     const float k = 1 - top.a;
     return {top.r + bottom.r * k, top.g + bottom.g * k, top.b + bottom.b * k, top.a + bottom.a * k};
+}
+
+// Each channel rounded to the nearest of 256 levels, as the 8-bit swap chain stores the shader's
+// output before DirectComposition blends it over the material.
+inline Rgba Quantize8(const Rgba& c) {
+    auto level = [](float v) { return std::nearbyint(std::clamp(v, 0.f, 1.f) * 255.f) / 255.f; };
+    return {level(c.r), level(c.g), level(c.b), level(c.a)};
 }
 
 }  // namespace kite

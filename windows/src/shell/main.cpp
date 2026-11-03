@@ -14,6 +14,8 @@
 //                            Pair with KITE_SUPPORT_PATH and a session from windows/helix/states.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
+//                            Prints a report; exits 0 when it matches, 5 when it differs, 3
+//                            when it couldn't run (no GPU device, no float target).
 
 #include <windows.h>
 
@@ -312,6 +314,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             return Fail(quiet, L"the window isn't per-monitor DPI aware (v2): Kite.manifest wasn't embedded", kWindowFailed);
         }
         if (GetACP() != CP_UTF8) return Fail(quiet, L"the process code page isn't UTF-8: Kite.manifest wasn't embedded", kWindowFailed);
+        // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt
+        // and draw again (a real device removal can't be caused from a test).
+        compositor.reset();
+        if (std::wstring problem = draw(); !problem.empty()) {
+            return Fail(quiet, L"Kite couldn't rebuild its renderer: " + problem, kWindowFailed);
+        }
         SetTimer(window.Handle(), kSmokeTimer, 1000, [](HWND hwnd, UINT, UINT_PTR, DWORD) { PostMessageW(hwnd, WM_CLOSE, 0, 0); });
     }
     std::wstring captureError;
@@ -331,10 +339,22 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 
     // Messages, and the GPU's device-removed signal so a lost device is rebuilt even while
     // nothing is drawing (the composition would otherwise stay blank until the next resize).
-    // If a rebuild failed (no adapter yet, mid driver update), it's retried every second.
+    // If a rebuild failed (no adapter yet, mid driver update), it's retried every second for a
+    // minute; after that only a resize retries, so a machine with no usable GPU doesn't wake
+    // Kite every second for good.
+    constexpr ULONGLONG kRetryForMs = 60'000;
+    ULONGLONG retryUntil = 0;
     for (bool running = true; running;) {
         HANDLE removed = renderer && compositor ? renderer->DeviceRemovedEvent() : nullptr;
-        const DWORD woke = MsgWaitForMultipleObjectsEx(removed ? 1 : 0, removed ? &removed : nullptr, compositor ? INFINITE : 1000,
+        DWORD timeout = INFINITE;
+        if (!compositor) {
+            const ULONGLONG now = GetTickCount64();
+            if (!retryUntil) retryUntil = now + kRetryForMs;
+            if (now < retryUntil) timeout = 1000;
+        } else {
+            retryUntil = 0;
+        }
+        const DWORD woke = MsgWaitForMultipleObjectsEx(removed ? 1 : 0, removed ? &removed : nullptr, timeout,
                                                        QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if ((removed && woke == WAIT_OBJECT_0) || woke == WAIT_TIMEOUT) {
             if (renderer && compositor) {

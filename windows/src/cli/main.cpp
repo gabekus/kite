@@ -120,12 +120,13 @@ std::string Hex(const ThemeColor& c) {
 std::string Hex(const Rgba& c) { return Hex(ThemeColor{c.r, c.g, c.b}); }
 
 json::Value ThemeSummary(const Theme& theme, int width, int height) {
-    // The window's backdrop at width × height px: the theme over the solid material colour,
-    // as Kite.exe --capture draws it (CI compares the two).
+    // The window's backdrop at width × height px: the theme, stored at 8 bits a channel as the
+    // swap chain does, over the solid material colour, as Kite.exe --capture draws it (CI
+    // compares the two).
     const Rgba material = MaterialFallback(!PrefersDarkForeground(theme));
     const float w = static_cast<float>(width), h = static_cast<float>(height);
     const ThemeUniforms uniforms = MakeThemeUniforms(theme, w, h);
-    auto at = [&](float x, float y) { return json::Value(Hex(Over(ShadeThemePixel(uniforms, x + 0.5f, y + 0.5f), material))); };
+    auto at = [&](float x, float y) { return json::Value(Hex(Over(Quantize8(ShadeThemePixel(uniforms, x + 0.5f, y + 0.5f)), material))); };
     json::Object backdrop{{"size", json::Value(json::Array{json::Value(w), json::Value(h)})},
                           {"material", json::Value(Hex(material))},
                           {"topLeft", at(0, 0)},

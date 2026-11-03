@@ -124,11 +124,13 @@ jobs:
           $env:KITE_SUPPORT_PATH = $profileDir
           # Captures at 1x and 2x (the window laid out at that scale, so 2x works on the runner's
           # 100% display). Each sampled pixel must match core's CPU reference of the Mac's shader
-          # (kitecore theme, the same theme over the same solid material) within two levels: that
-          # catches the wrong material, tint, grain, size or space in what the window shows.
+          # (kitecore theme: the same theme, stored at 8 bits like the swap chain, over the same solid
+          # material) within one level: that catches the wrong material, tint, grain, size or space.
           Add-Type -AssemblyName System.Drawing
           $kitecore = Resolve-Path windows/build/Release/kitecore.exe
-          $space = (& $kitecore state | ConvertFrom-Json).selectedSpaceID
+          $state = & $kitecore state
+          if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
+          $space = ($state | ConvertFrom-Json).selectedSpaceID
           foreach ($scale in 1, 2) {
             $png = Join-Path $env:RUNNER_TEMP "kite-capture-${scale}x.png"
             $stderrFile = Join-Path $env:RUNNER_TEMP "kite-capture-${scale}x-stderr.txt"
@@ -155,7 +157,7 @@ jobs:
                 $er = ($expected -shr 16) -band 255; $eg = ($expected -shr 8) -band 255; $eb = $expected -band 255
                 Write-Host "  $name $($point -join ','): #$($pixel.Name), reference $($reference.$name)"
                 if ($pixel.A -ne 255) { throw "capture pixel $name isn't opaque" }
-                if ([Math]::Abs($pixel.R - $er) -gt 2 -or [Math]::Abs($pixel.G - $eg) -gt 2 -or [Math]::Abs($pixel.B - $eb) -gt 2) {
+                if ([Math]::Abs($pixel.R - $er) -gt 1 -or [Math]::Abs($pixel.G - $eg) -gt 1 -or [Math]::Abs($pixel.B - $eb) -gt 1) {
                   throw "capture pixel $name is #$($pixel.Name), the reference is $($reference.$name)"
                 }
               }

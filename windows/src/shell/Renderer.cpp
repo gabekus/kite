@@ -31,7 +31,7 @@ namespace {
 ComPtr<ID3DBlob> Compile(const char* entry, const char* target, std::wstring& error) {
     ComPtr<ID3DBlob> code, messages;
     HRESULT hr = D3DCompile(kThemeHlsl, std::strlen(kThemeHlsl), "Theme.hlsl", nullptr, nullptr, entry, target,
-                            D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, code.GetAddressOf(), messages.GetAddressOf());
+                            D3DCOMPILE_OPTIMIZATION_LEVEL3 | D3DCOMPILE_IEEE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS, 0, code.GetAddressOf(), messages.GetAddressOf());
     if (FAILED(hr)) {
         error = HResultMessage(L"compiling Theme.hlsl", hr);
         if (messages) {

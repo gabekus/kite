@@ -87,8 +87,9 @@ Compositor::~Compositor() {
 
 std::wstring Compositor::Draw(UINT width, UINT height, const ThemeUniforms& uniforms, const Rgba& base, Pixels* readBack) {
     if (deviceLost_) return L"the GPU device was lost";
-    // At most the GPU's largest texture; a bigger window (over 5461 points at 300%) is
-    // stretched to fit. A capture refuses that size instead (main.cpp).
+    // At most the GPU's largest texture: past it (over 5461 points at 300%) the swap chain stops
+    // growing and DirectComposition shows it at that size, top-left, leaving the rest of the
+    // window to the material. A capture refuses that size instead (main.cpp).
     width = std::clamp(width, 1u, renderer_.MaxTextureSize());
     height = std::clamp(height, 1u, renderer_.MaxTextureSize());
     const bool unchanged = presented_ && width == width_ && height == height_ &&
@@ -117,7 +118,7 @@ std::wstring Compositor::Draw(UINT width, UINT height, const ThemeUniforms& unif
     }
     // Wait for the frame queue to have room, so this frame is the next one shown. Bounded, so
     // a stalled compositor can't hang the UI thread.
-    if (frameLatency_) WaitForSingleObjectEx(frameLatency_, 1000, TRUE);
+    if (frameLatency_) WaitForSingleObjectEx(frameLatency_, 1000, FALSE);
     renderer_.DrawTheme(view.Get(), width, height, uniforms, base);
     std::wstring readBackError;
     if (readBack) {
