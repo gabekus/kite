@@ -187,6 +187,11 @@ leads, so the row matches the field; a whole host typed only rules out that favo
 "www." and schemes aren't matched against the host ("www.goo" gets no leader). History is left out by exact
 URL, so the current page under another fragment still shows.
 
+Site Search completion accepted with → (Arc 1.171 incognito, 3 Nov 2026, AX): "you" showed "youtube.com" with
+"tube.com" selected; → then "/" gave "youtube.com/"; typing "x" without → gave "youx". Kite matches: →, End and
+⌘→ accept the completion (`CommandBar.control(_:textView:doCommandBy:)`). A mouse click that moves the caret
+isn't handled (not observed in Arc).
+
 ## Arc vs Kite
 
 Kite was built from this branch, run on WebKit with a fresh `KITE_SUPPORT_PATH` (`mktemp -d`) and a session seeded

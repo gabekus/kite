@@ -403,6 +403,14 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         case #selector(NSResponder.moveDown(_:)):
             highlighted = min(highlighted + 1, max(items.count - 1, 0))
             return true
+        case #selector(NSResponder.moveRight(_:)), #selector(NSResponder.moveToEndOfLine(_:)),
+             #selector(NSResponder.moveToEndOfDocument(_:)), #selector(NSResponder.moveToRightEndOfLine(_:)):
+            // → accepts the inline completion, as Arc: what's typed next goes after it ("you" → "youtube.com/").
+            if let completed {
+                typed = completed
+                self.completed = nil
+            }
+            return false
         case #selector(NSResponder.moveUp(_:)):
             highlighted = max(highlighted - 1, 0)
             return true
