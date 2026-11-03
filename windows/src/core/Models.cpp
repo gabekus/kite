@@ -3,7 +3,9 @@
 #include "core/Models.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <charconv>
+#include <cmath>
 #include <chrono>
 
 #include "core/Url.h"
@@ -465,20 +467,30 @@ Value Encode(const Theme& theme) {
     return Value(Object{{"colors", Value(std::move(colors))}, {"grain", FloatValue(theme.grain)}, {"tint", FloatValue(theme.tint)}});
 }
 
+// A Swift Float member: JSONDecoder refuses a number a Float can't hold.
+std::optional<float> FloatMember(const Value* v) {
+    if (!v || !v->AsNumber() || std::fabs(*v->AsNumber()) > static_cast<double>(FLT_MAX)) return std::nullopt;
+    return static_cast<float>(*v->AsNumber());
+}
+
 std::optional<Theme> DecodeTheme(const Value& v) {
     const Value* colorsValue = v.Find("colors");
-    const Value* grain = v.Find("grain");
-    if (!colorsValue || !colorsValue->AsArray() || !grain || !grain->AsNumber()) return std::nullopt;
+    auto grain = FloatMember(v.Find("grain"));
+    if (!colorsValue || !colorsValue->AsArray() || !grain) return std::nullopt;
     std::vector<ThemeColor> colors;
     for (const auto& c : *colorsValue->AsArray()) {
-        const Value *r = c.Find("r"), *g = c.Find("g"), *b = c.Find("b");
-        if (!r || !g || !b || !r->AsNumber() || !g->AsNumber() || !b->AsNumber()) return std::nullopt;
-        colors.push_back({static_cast<float>(*r->AsNumber()), static_cast<float>(*g->AsNumber()), static_cast<float>(*b->AsNumber())});
+        auto r = FloatMember(c.Find("r")), g = FloatMember(c.Find("g")), b = FloatMember(c.Find("b"));
+        if (!r || !g || !b) return std::nullopt;
+        colors.push_back({*r, *g, *b});
     }
     if (colors.empty()) return std::nullopt;  // the Mac requires at least one color
     float tint = Theme::kDefaultTint;  // sessions from before `tint`
-    if (const Value* t = v.Find("tint"); t && t->AsNumber()) tint = static_cast<float>(*t->AsNumber());
-    return Theme::Make(std::move(colors), static_cast<float>(*grain->AsNumber()), tint);
+    if (const Value* t = v.Find("tint"); t && !t->IsNull()) {
+        auto value = FloatMember(t);
+        if (!value) return std::nullopt;
+        tint = *value;
+    }
+    return Theme::Make(std::move(colors), *grain, tint);
 }
 
 Value Encode(const Space& space) {

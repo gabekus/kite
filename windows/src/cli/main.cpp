@@ -25,6 +25,7 @@
 #include "core/SessionStore.h"
 #include "core/SupportDirectory.h"
 #include "core/URLInput.h"
+#include "core/Unicode.h"
 #include "core/Uuid.h"
 
 #ifdef _WIN32
@@ -214,9 +215,11 @@ int main(int argc, char** argv) {
             const std::string id = Id(args[2]);
             if (!state.SpaceIndex(id)) return kNotFound;
             state.SelectSpace(id);
-        } else if (action == "add" && args.size() >= 3 && !args[2].empty()) {  // the Mac drops nameless spaces
+        } else if (action == "add" && (args.size() == 3 || args.size() == 4) && !unicode::Trim(args[2]).empty()) {
+            // Like the Mac's New Space sheet: a name of only spaces isn't one.
             const auto& presets = Theme::Presets();
-            std::puts(state.AddSpace(args[2], args.size() >= 4 ? args[3] : "", presets[state.spaces.size() % presets.size()]).c_str());
+            std::puts(state.AddSpace(std::string(unicode::Trim(args[2])), args.size() == 4 ? args[3] : "",
+                                     presets[state.spaces.size() % presets.size()]).c_str());
         } else {
             return Usage();
         }

@@ -55,9 +55,15 @@ SessionStore::LoadResult SessionStore::Load(Unreadable unreadable) const {
     if (unreadable == Unreadable::Leave) return Error{problem, std::nullopt};
     // Move it aside, like the Mac, so the next save doesn't overwrite it.
     auto seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    fs::path name = file_.stem();
-    name += ".corrupt-" + std::to_string(seconds) + ".json";
-    fs::path backup = file_.parent_path() / name;
+    // Never over an earlier backup (rename would replace it; the Mac's moveItem refuses).
+    fs::path backup;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        fs::path name = file_.stem();
+        name += ".corrupt-" + std::to_string(seconds) + (attempt ? "-" + std::to_string(attempt) : "") + ".json";
+        backup = file_.parent_path() / name;
+        if (!fs::exists(backup, error) && !error) break;
+    }
+    if (fs::exists(backup, error)) return Error{problem, std::nullopt};
     fs::rename(file_, backup, error);
     return Error{problem, error ? std::nullopt : std::optional<fs::path>(backup)};
 }

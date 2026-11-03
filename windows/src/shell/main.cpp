@@ -122,6 +122,14 @@ std::wstring gCaptureError;
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const std::vector<std::wstring> args = Arguments();
+    // An unknown flag (a typo like --smoketest or --capture-scale=2) is an error, never a
+    // normal launch on the real profile.
+    for (size_t i = 0; i < args.size(); ++i) {
+        const std::wstring& a = args[i];
+        if (a == L"--smoke-test") continue;
+        if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale") { ++i; continue; }
+        if (a.starts_with(L"-")) return Fail(true, L"unknown option " + a, kUsage);
+    }
     const bool smokeTest = HasFlag(args, L"--smoke-test");
     const OptionValue captureOption = Option(args, L"--capture");
     const OptionValue sizeOption = Option(args, L"--window-size");
@@ -173,6 +181,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
                                 L": " + Widen(error->message) + L"\n").c_str());
         }
         state = kite::BrowserState::MakeDefault();
+    }
+    // A test run must show the session it was given, never a default in its place.
+    if (quiet && std::holds_alternative<kite::SessionStore::Error>(loaded)) {
+        return Fail(quiet, L"couldn't read the session: " + Widen(std::get<kite::SessionStore::Error>(loaded).message), kSaveFailed);
     }
     std::string saveError;
     std::wstring loadError;

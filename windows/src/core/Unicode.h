@@ -20,7 +20,8 @@ bool IsNumber(char32_t c);  // Numeric_Type isn't None: Swift's Character.isNumb
 // Text split into characters the way Swift's String is: extended grapheme clusters (UAX #29),
 // so "e" + U+0301 or a Hangul syllable written as jamo is one character. Follows GB3–GB9b;
 // emoji ZWJ sequences and flag pairs (GB11–GB13) are split, which no caller can tell apart
-// since none of their parts is a letter or a number.
+// since none of their parts is a letter or a number. Indic conjuncts (GB9c, Unicode 15.1) are
+// split too: a TLD like "क्ष" counts as two characters here and may count as one on the Mac.
 std::vector<std::u32string> Characters(std::string_view utf8);
 
 // Trims leading and trailing Unicode whitespace.

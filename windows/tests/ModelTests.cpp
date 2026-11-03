@@ -79,6 +79,26 @@ TEST(pinnedItemsUseSwiftEnumCoding) {
     CHECK(folder && folder->Find("_0") && folder->Find("_0")->Find("name"));
 }
 
+// Swift's JSONDecoder refuses a number a Float can't hold, and a tint of the wrong type.
+TEST(themeFloatsMustFitAFloat) {
+    auto parse = [](const char* text) { return DecodeTheme(std::get<json::Value>(json::Parse(text))); };
+    CHECK(parse(R"({"colors":[{"r":1,"g":0,"b":0}],"grain":0.3})").has_value());
+    CHECK(!parse(R"({"colors":[{"r":1e39,"g":0,"b":0}],"grain":0.3})"));
+    CHECK(!parse(R"({"colors":[{"r":1,"g":0,"b":0}],"grain":-1e300})"));
+    CHECK(!parse(R"({"colors":[{"r":1,"g":0,"b":0}],"grain":0.3,"tint":"x"})"));
+    CHECK(parse(R"({"colors":[{"r":1,"g":0,"b":0}],"grain":0.3,"tint":null})")->tint == Theme::kDefaultTint);
+}
+
+TEST(setFavoritesWritesTheCurrentProfilesGrid) {
+    BrowserState state = BrowserState::MakeDefault(std::nullopt);
+    Tab tab;
+    tab.id = NewUuid();
+    state.SetFavorites({tab});
+    CHECK(state.favoritesByProfile.count("Default") == 1 && state.Favorites().size() == 1);
+    state.SetFavorites({});
+    CHECK(state.favoritesByProfile.empty() && state.Favorites().empty());  // empty grids have no entry
+}
+
 // Swift's synthesized enum decoding looks only at the case keys.
 TEST(pinnedItemsIgnoreUnknownKeysButNeedOneCase) {
     auto parse = [](const char* text) { return DecodePinnedItem(std::get<json::Value>(json::Parse(text))); };
@@ -215,6 +235,30 @@ TEST(lookingAtAnUnreadableSessionLeavesItInPlace) {
     CHECK(std::holds_alternative<SessionStore::Error>(result));
     CHECK(fs::exists(dir / "session.json"));
     CHECK(!SessionStore::MaySave(result));
+    fs::remove_all(dir);
+}
+
+TEST(quarantineNeverReplacesAnEarlierBackup) {
+    fs::path dir = TempDir();
+    SessionStore store(dir / "session.json");
+    for (int i = 0; i < 3; ++i) {
+        std::ofstream(dir / "session.json", std::ios::trunc) << "{nope" << i;
+        auto result = store.Load();
+        CHECK(std::holds_alternative<SessionStore::Error>(result) && std::get<SessionStore::Error>(result).quarantinedTo);
+    }
+    int backups = 0;
+    for (const auto& entry : fs::directory_iterator(dir)) backups += entry.path().filename().u8string().find(u8"corrupt") != std::u8string::npos;
+    CHECK(backups == 3);
+    fs::remove_all(dir);
+}
+
+TEST(loadsASessionWithAByteOrderMark) {
+    fs::path dir = TempDir();
+    SessionStore store(dir / "session.json");
+    CHECK(store.Save(BrowserState::MakeDefault()).empty());
+    std::string text = "\xEF\xBB\xBF" + ReadFile(dir / "session.json");
+    std::ofstream(dir / "session.json", std::ios::binary | std::ios::trunc) << text;
+    CHECK(std::holds_alternative<BrowserState>(store.Load()));
     fs::remove_all(dir);
 }
 
