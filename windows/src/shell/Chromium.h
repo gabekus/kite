@@ -50,6 +50,14 @@ struct PageEvents {
     std::function<void(const std::string& tabID)> pageClosed;
     // Another launch of Kite found this one running (one Kite per profile, as Chromium allows).
     std::function<void()> relaunched;
+    // Ctrl+T in a page: Kite's shortcut, which the page never sees. The keyboard moves to
+    // Kite's window at once, so what's typed straight after Ctrl+T lands in the bar, as the
+    // Mac holds keys until its field has focus; keys the page had already taken come to Kite
+    // too (keyForwarded, in order). Kite answers with BlockInput, true or false.
+    std::function<void()> newTab;
+    // A key (`character` false: a virtual-key code) or a typed UTF-16 unit (`character` true)
+    // that reached a page while its keys go to Kite.
+    std::function<void(bool character, unsigned code, bool ctrl, bool shift)> keyForwarded;
 };
 
 class Chromium {
@@ -75,8 +83,22 @@ public:
     void Minimized();
     // The window is being moved or resized: open <select> and autofill popups follow it.
     void WindowMoved();
-    // Gives the shown page keyboard focus (the window was activated).
+    // Gives the shown page keyboard focus (the window was activated), unless input is blocked.
     void Focus();
+    // While something of Kite's is over the pages (the command bar), they take no input:
+    // their windows are disabled, so clicks go to Kite's window; they don't take the focus
+    // back (on a navigation, say); and keys that still reach one come to Kite (keyForwarded).
+    // Unblocked, the keys go to the pages again. The windows are disabled on CEF's thread, so
+    // a click in the moment before that runs (CEF's thread busy with a heavy page) still
+    // reaches the page; keys don't, since they follow the focus.
+    void BlockInput(bool blocked);
+    // Loads `url` in the tab's page (the command bar's Enter on the current tab); a page
+    // still being made loads it once it exists. False when the tab has no page (Show makes
+    // one with the tab's address).
+    bool Navigate(const std::string& tabID, const std::string& url);
+    // Ctrl+T was pressed in a page and the keyboard moved to Kite's window, but Kite hasn't
+    // answered yet (PageEvents::newTab is on its way): keys arriving now are for the bar.
+    bool KeysComeToKite() const;
     // Whether the window may close now. The first call starts closing every browser and
     // returns false (unless there are none); WM_CLOSE comes again as each one is ready.
     bool MayCloseWindow();

@@ -59,8 +59,17 @@ windows/
 
 ## Rendering
 
-The hard part is **airspace**. A Chromium child HWND always draws on top of
-the rest of the window, so nothing (glow, Peek, command bar) could overlap the page. To avoid it:
+The hard part is **airspace**. A Chromium child HWND draws on top of the
+window's own composition tree, so the glow and Peek couldn't overlap the page.
+Until W10, the command bar gets around it with a second DirectComposition
+target on the window with topmost TRUE, which shows over child windows, though
+it can't blur the page under it. While the bar is open the page windows are
+disabled, so clicks reach Kite's window. Ctrl+T pressed in a page reaches Kite
+on CEF's UI thread (`OnPreKeyEvent`), which calls `SetFocus` on Kite's window
+so the keys typed next come to the bar. That call waits for Kite's thread:
+usually less than a frame, and at most one frame-latency wait (1 s) when Kite
+is mid-draw. Keys that arrive before the bar opens open it
+(`Chromium::KeysComeToKite`). The way out of the airspace problem:
 
 - **Render Chromium off-screen with shared textures.** CEF's
   `shared_texture_enabled` hands us each frame as a D3D11 texture with no CPU
@@ -84,10 +93,12 @@ the rest of the window, so nothing (glow, Peek, command bar) could overlap the p
   every `Present`/`ResizeBuffers`, then rebuilds the renderer and composition
   tree on whatever adapter is there and redraws.
 - **Captures** (`--capture`, the Helix UI gate) read back the frame the
-  window presents, laid out at `--capture-scale`× on any monitor. Today that's
-  the one backdrop swap chain; when the sidebar and page become sibling
-  visuals (W4, W6), the capture has to read the composed window instead
-  (Windows.Graphics.Capture), not re-render the layers.
+  window presents, laid out at `--capture-scale`× on any monitor. That's the
+  backdrop swap chain, with the command bar's buffer (`--command-bar`) put
+  over it on the CPU, as DirectComposition puts it. The caret is left out:
+  it's its own visual. Once the sidebar and page are more visuals (W4, W10),
+  the capture should read the composed window instead
+  (Windows.Graphics.Capture).
 - **Material:** the Mac's `.sidebar` material, blended behind the window, is
   Windows 11's acrylic system backdrop (`DWMSBT_TRANSIENTWINDOW`) under a
   window with no redirection bitmap. Where there's none (Windows 10, Windows

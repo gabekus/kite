@@ -110,6 +110,10 @@ LRESULT CALLBACK MainWindow::WindowProc(HWND hwnd, UINT message, WPARAM wParam, 
 }
 
 LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
+    if (filter) {
+        LRESULT result = 0;
+        if (filter(message, wParam, lParam, result)) return result;
+    }
     switch (message) {
     case WM_DPICHANGED: {
         if (fixedScale_) return 0;

@@ -14,6 +14,8 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_focus_handler.h"
+#include "include/cef_keyboard_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_handler.h"
 #include "include/cef_task.h"
@@ -70,6 +72,10 @@ struct Chromium::Shared {
     PageEvents events;
     std::filesystem::path root;
     std::atomic<bool> closing{false};
+    // BlockInput: the pages take no input (Kite's command bar is over them).
+    std::atomic<bool> inputBlocked{false};
+    // Keys that reach a page go to Kite: from Ctrl+T in a page until Kite unblocks input.
+    std::atomic<bool> keysToKite{false};
 
     // Both threads, under the mutex.
     std::mutex mutex;
@@ -95,6 +101,7 @@ struct Chromium::Shared {
         HWND hwnd = nullptr;
         bool closeReady = false;  // through DoClose while closing
         Placement placed;         // as last sent to CEF's thread
+        std::string pendingURL;   // Navigate before the browser existed
     };
     std::map<std::string, Page> pages;  // by tab id
     std::map<std::string, CefRefPtr<CefRequestContext>> contexts;  // by profile directory
@@ -174,6 +181,7 @@ struct Chromium::Shared {
     }
 
     void FocusShown() {
+        if (inputBlocked) return;
         auto it = pages.find(shown);
         if (it != pages.end() && it->second.browser) it->second.browser->GetHost()->SetFocus(true);
     }
@@ -197,6 +205,11 @@ struct Chromium::Shared {
             return;
         }
         Layout();
+        if (inputBlocked) RunOnCefUIThread([hwnd] { EnableWindow(hwnd, FALSE); });
+        if (!page.pendingURL.empty()) {
+            browser->GetMainFrame()->LoadURL(page.pendingURL);
+            page.pendingURL.clear();
+        }
         // The window got focus before this page existed (at launch, or when a popup tab
         // replaced its opener): hand it over now.
         if (tabID == shown && GetForegroundWindow() == window) FocusShown();
@@ -228,6 +241,8 @@ private:
 class PageClient : public CefClient,
                    public CefLifeSpanHandler,
                    public CefDisplayHandler,
+                   public CefFocusHandler,
+                   public CefKeyboardHandler,
                    public CefLoadHandler,
                    public CefRequestHandler {
 public:
@@ -237,6 +252,8 @@ public:
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+    CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+    CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
@@ -366,6 +383,50 @@ public:
         shared_->Post([shared = shared_, id = tabID_, text = title.ToString()] {
             if (shared->events.titleChanged) shared->events.titleChanged(id, text);
         });
+    }
+
+    // CefFocusHandler
+
+    // While Kite's command bar is open, a page never takes the keyboard back (Chromium
+    // focuses a page as it navigates), as the Mac blurs its pages while the bar is open.
+    bool OnSetFocus(CefRefPtr<CefBrowser>, FocusSource) override { return shared_->inputBlocked; }
+
+    // CefKeyboardHandler
+
+    // Kite's own shortcut, Ctrl+T, before the page sees it. The keys after it come to Kite
+    // until it unblocks input (Chromium.h, PageEvents::newTab).
+    bool OnPreKeyEvent(CefRefPtr<CefBrowser>, const CefKeyEvent& event, CefEventHandle, bool*) override {
+        const uint32_t modifiers = event.modifiers & (EVENTFLAG_SHIFT_DOWN | EVENTFLAG_CONTROL_DOWN | EVENTFLAG_ALT_DOWN);
+        // AltGr is Ctrl+Alt: never a Ctrl shortcut.
+        const bool ctrl = (modifiers & EVENTFLAG_CONTROL_DOWN) && !(modifiers & EVENTFLAG_ALT_DOWN);
+        const bool shift = (modifiers & EVENTFLAG_SHIFT_DOWN) != 0;
+        const bool keyDown = event.type == KEYEVENT_RAWKEYDOWN || event.type == KEYEVENT_KEYDOWN;
+        if (keyDown && event.windows_key_code == 'T' && modifiers == EVENTFLAG_CONTROL_DOWN) {
+            shared_->keysToKite = true;
+            // The keyboard goes to Kite's window now, from this thread (the input queues are
+            // attached), so the keys typed next wait in Kite's queue as real keys and
+            // characters. Until Kite answers (BlockInput), the page doesn't take it back.
+            shared_->inputBlocked = true;
+            shared_->Post([shared = shared_] {
+                if (shared->events.newTab) shared->events.newTab();
+            });
+            // After the wake is posted; a key Kite still takes first opens the bar itself
+            // (KeysComeToKite).
+            SetFocus(shared_->window);
+            return true;
+        }
+        if (!shared_->keysToKite) return false;
+        // Keys this page had already taken before the focus moved. Chromium drops the
+        // characters of a key whose keydown was handled here, so only the keys themselves
+        // (arrows, Backspace, Enter, Escape) reliably arrive this way.
+        if (keyDown || event.type == KEYEVENT_CHAR) {
+            const bool character = event.type == KEYEVENT_CHAR;
+            const unsigned code = character ? static_cast<unsigned>(event.character) : static_cast<unsigned>(event.windows_key_code);
+            shared_->Post([shared = shared_, character, code, ctrl, shift] {
+                if (shared->events.keyForwarded) shared->events.keyForwarded(character, code, ctrl, shift);
+            });
+        }
+        return true;
     }
 
     // CefLoadHandler
@@ -568,6 +629,32 @@ void Chromium::WindowMoved() {
 }
 
 void Chromium::Focus() { shared_->FocusShown(); }
+
+void Chromium::BlockInput(bool blocked) {
+    shared_->inputBlocked = blocked;
+    shared_->keysToKite = blocked;
+    std::vector<HWND> hosts;
+    for (const auto& [id, page] : shared_->pages) {
+        if (page.hwnd) hosts.push_back(page.hwnd);
+    }
+    // Disabled, the page windows are skipped when Windows looks for the window under the
+    // pointer, so clicks reach Kite's window. On CEF's thread, which owns them.
+    if (!hosts.empty()) {
+        RunOnCefUIThread([hosts = std::move(hosts), blocked] {
+            for (HWND host : hosts) EnableWindow(host, blocked ? FALSE : TRUE);
+        });
+    }
+}
+
+bool Chromium::KeysComeToKite() const { return shared_->keysToKite; }
+
+bool Chromium::Navigate(const std::string& tabID, const std::string& url) {
+    auto it = shared_->pages.find(tabID);
+    if (it == shared_->pages.end() || shared_->closing) return false;
+    if (it->second.browser) it->second.browser->GetMainFrame()->LoadURL(url);
+    else it->second.pendingURL = url;
+    return true;
+}
 
 bool Chromium::MayCloseWindow() {
     const bool started = !shared_->closing.exchange(true);  // before the queue, so it opens no new page
