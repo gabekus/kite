@@ -166,17 +166,25 @@ final class ThemeView: MTKView, MTKViewDelegate {
 
         if transitionStart == nil { clock.stop() }
 
-        guard let pipeline,
-              let pass = currentRenderPassDescriptor,
+        guard let pass = currentRenderPassDescriptor,
               let drawable = currentDrawable,
               let commands = commandQueue.makeCommandBuffer(),
-              let encoder = commands.makeRenderCommandEncoder(descriptor: pass)
+              encode(into: pass, size: drawableSize, progress: progress, commands: commands)
         else { return }
+        commands.present(drawable)
+        commands.commit()
+        lastProgress = progress
+    }
 
+    /// The crossfade's progress in the last frame drawn, for `snapshot`.
+    private var lastProgress: Float = 1
+
+    private func encode(into pass: MTLRenderPassDescriptor, size: CGSize, progress: Float, commands: MTLCommandBuffer) -> Bool {
+        guard let pipeline, let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return false }
         var uniforms = ThemeUniforms(
             fromLab: palette(from),
             toLab: palette(to),
-            size: SIMD2(Float(drawableSize.width), Float(drawableSize.height)),
+            size: SIMD2(Float(size.width), Float(size.height)),
             fromGrain: from.grain,
             toGrain: to.grain,
             progress: progress,
@@ -189,7 +197,36 @@ final class ThemeView: MTKView, MTKViewDelegate {
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<ThemeUniforms>.stride, index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
-        commands.present(drawable)
+        return true
+    }
+
+    /// The theme as the last frame drew it, rendered again off screen (`ui capture`'s in-process path: a Metal
+    /// layer's drawable can't be read back, and drawing the view's layer leaves it blank). Premultiplied BGRA.
+    func snapshot() -> CGImage? {
+        let size = drawableSize
+        let width = Int(size.width), height = Int(size.height)
+        guard width > 0, height > 0, let device else { return nil }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: colorPixelFormat, width: width, height: height,
+                                                                  mipmapped: false)
+        descriptor.usage = [.renderTarget]
+        descriptor.storageMode = .shared
+        guard let texture = device.makeTexture(descriptor: descriptor), let commands = commandQueue.makeCommandBuffer() else {
+            return nil
+        }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].clearColor = clearColor
+        pass.colorAttachments[0].storeAction = .store
+        guard encode(into: pass, size: size, progress: interactiveProgress ?? lastProgress, commands: commands) else { return nil }
         commands.commit()
+        commands.waitUntilCompleted()
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        texture.getBytes(&bytes, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+        let space = (layer as? CAMetalLayer)?.colorspace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4, space: space,
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
     }
 }

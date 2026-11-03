@@ -68,7 +68,8 @@ public enum UIInspection: Hashable, Sendable {
     case tree(window: Int?, root: String?, depth: Int, match: String?, layers: Bool, maxNodes: Int)
     /// Pixels of a window as they reach the screen (blur, Metal and web content included).
     /// `pixels` reads single pixels' colours as hex; with `image` false only those come back.
-    case capture(window: Int?, region: UIRect?, format: ImageFormat, pixels: [UIPoint], image: Bool, save: String?)
+    case capture(window: Int?, region: UIRect?, format: ImageFormat, pixels: [UIPoint], image: Bool, save: String?,
+                 source: CaptureSource = .auto)
     /// Synthetic pointer moves through the points: at each, the view hit, cursor rects, tracking
     /// areas and the cursor Kite sets.
     /// `modifiers` are held through the moves (⇧ for link previews).
@@ -119,8 +120,17 @@ public enum UIInspection: Hashable, Sendable {
             let pixels = try a.points("pixels") ?? []
             guard pixels.count <= 200 else { throw Invalid("At most 200 \"pixels\" at a time.") }
             let image = try a.values["image"].map { _ in try a.bool("image") } ?? pixels.isEmpty
+            let source: CaptureSource
+            if let name = try a.string("source") {
+                guard let known = CaptureSource(rawValue: name) else {
+                    throw Invalid("\"source\" is " + CaptureSource.allCases.map(\.rawValue).joined(separator: ", ") + ".")
+                }
+                source = known
+            } else {
+                source = .auto
+            }
             self = .capture(window: window, region: try a.rect("region"), format: format, pixels: pixels, image: image,
-                            save: try a.nonEmpty("save"))
+                            save: try a.nonEmpty("save"), source: source)
         case "pointer":
             let points: [UIPoint]
             if let list = try a.points("points") {
@@ -184,6 +194,8 @@ public enum UIInspection: Hashable, Sendable {
                 "image": ["type": "boolean", "description": "capture: return the image (default: true unless pixels)."],
                 "format": ["type": "string", "enum": ["png", "jpeg"]],
                 "save": ["type": "string", "description": "capture: also write the image to this path."],
+                "source": ["type": "string", "enum": .array(CaptureSource.allCases.map { .string($0.rawValue) }),
+                           "description": "capture: screen (ScreenCaptureKit, needs Screen Recording), window-server (Kite's own window, no permission), in-process (a view render without blur, Metal or web content), or auto (default: the first that works, never asking for permission)."],
                 "points": ["type": "array", "items": point, "description": "pointer: points to move through."],
                 "from": point, "to": point,
                 "hold": ["type": "number", "description": "input drag: seconds to keep the button down at \"to\" before releasing (max 10); returns at once."],

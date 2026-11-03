@@ -204,7 +204,7 @@ struct Arguments {
 
     static let valued: Set<String> = ["--tab", "--space", "--session", "--max", "--selector", "--ref", "--socket", "-o", "--output", "--format",
                                       "--window", "--depth", "--match", "--region", "--pixels",
-                                      "--status", "--host", "--type", "--url", "--since", "--limit", "--profile", "--timeout"]
+                                      "--status", "--host", "--type", "--url", "--since", "--limit", "--profile", "--timeout", "--source"]
 
     init(_ raw: ArraySlice<String>) throws {
         var iterator = raw.makeIterator()
@@ -340,6 +340,11 @@ func toolCall(for name: String, _ args: Arguments) throws -> (AutomationCommand.
                 throw CLIError("The arguments must be a JSON object.")
             }
             json.merge(given) { _, new in new }
+        }
+        // --in-process: Kite draws the window itself (no Screen Recording needed); --source picks any path.
+        if json["action"] == .string("capture"), json["source"] == nil {
+            if args.flags.contains("--in-process") { json["source"] = "in-process" }
+            if let source = args.options["--source"] { json["source"] = .string(source) }
         }
         // Kite writes a capture at full resolution itself; the image sent back is scaled for Claude.
         if json["action"] == .string("capture"), let output = args.options["-o"], json["save"] == nil {

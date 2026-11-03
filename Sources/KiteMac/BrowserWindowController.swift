@@ -1626,3 +1626,11 @@ extension BrowserWindowController {
         return NSSize(width: parts[0], height: parts[1])
     }
 }
+
+extension BrowserWindowController {
+    /// What `ui capture` draws itself when the window server won't give Kite its window's pixels: the material and the
+    /// Metal theme behind everything, and the pages Chromium shows.
+    var inProcessCaptureParts: (material: NSView, theme: ThemeView, pages: [WebPage]) {
+        (materialView, themeView, visiblePages)
+    }
+}

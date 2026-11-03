@@ -34,6 +34,16 @@ import Testing
             == .capture(window: nil, region: nil, format: .jpeg, pixels: [UIPoint(x: 1, y: 1)], image: true, save: nil))
     }
 
+    @Test func captureSourceDefaultsToAutoAndRejectsUnknownOnes() throws {
+        #expect(try ui(["action": "capture"])
+            == .capture(window: nil, region: nil, format: .png, pixels: [], image: true, save: nil, source: .auto))
+        #expect(try ui(["action": "capture", "source": "in-process"])
+            == .capture(window: nil, region: nil, format: .png, pixels: [], image: true, save: nil, source: .inProcess))
+        #expect(try ui(["action": "capture", "source": "window-server"])
+            == .capture(window: nil, region: nil, format: .png, pixels: [], image: true, save: nil, source: .windowServer))
+        #expect(throws: (any Error).self) { try ui(["action": "capture", "source": "screen-recording"]) }
+    }
+
     @Test func pointerSweepsIncludeBothEnds() throws {
         guard case .pointer(_, let points, _) = try ui(["action": "pointer", "from": [-4, 100], "to": [4, 100], "steps": 8]) else {
             Issue.record("not a pointer sweep")
