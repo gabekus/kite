@@ -192,8 +192,9 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     private func checkFirstDocument() {
         guard !firstDocumentChecked else { return }
         firstDocumentChecked = true
-        browser.callDevToolsMethod("Runtime.evaluate", params: ["expression": "0"]) { [weak self] _, _ in
-            guard let self, !mediaReported else { return }
+        browser.callDevToolsMethod("Runtime.evaluate", params: ["expression": "0"]) { [weak self] _, error in
+            // An error (the document already gone) says nothing about the scripts.
+            guard let self, error == nil, !mediaReported else { return }
             browser.callDevToolsMethod("Page.getFrameTree", params: nil) { [weak self] result, _ in
                 guard let self, let frame = (result?["frameTree"] as? [String: Any])?["frame"] as? [String: Any],
                       let frameID = frame["id"] as? String else { return }
@@ -539,6 +540,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func browser(_ browser: KCBrowser, faviconDidChange url: URL?) { onEvent?(.favicon(url)) }
     func browser(_ browser: KCBrowser, progressDidChange progress: Double) { onEvent?(.progress(progress)) }
 
+    @objc(browserMainFrameDidStartLoading:)
     func browserMainFrameDidStartLoading(_ browser: KCBrowser) {
         checkFirstDocument()
     }
