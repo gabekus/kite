@@ -4,6 +4,7 @@
 
 #include "Check.h"
 #include "core/Sidebar.h"
+#include "core/Url.h"
 #include "core/Uuid.h"
 
 using namespace kite;
@@ -240,4 +241,34 @@ TEST(theAddressFieldShowsTheSelectedTabsHost) {
     CHECK(AddressFieldText(state) == "Search or enter URL");
     state.OpenTab("about:blank");
     CHECK(AddressFieldText(state) == "Search or enter URL");
+}
+
+// URLSession loads a page's data: icon on the Mac (FaviconCache); Windows decodes it in place.
+TEST(dataFaviconsDecodeInPlace) {
+    CHECK(url::DataBytes("data:image/png;base64,iVBORw0KGgo=") == std::optional<std::string>("\x89PNG\r\n\x1a\n"));
+    CHECK(url::DataBytes("DATA:image/x-icon;BASE64,AAAB") == std::optional<std::string>(std::string("\0\0\1", 3)));
+    // Without ;base64 the text itself, percent escapes decoded (an inline SVG).
+    CHECK(url::DataBytes("data:image/svg+xml,%3Csvg%20xmlns='x'/%3E") == std::optional<std::string>("<svg xmlns='x'/>"));
+    CHECK(url::DataBytes("data:,") == std::optional<std::string>(""));
+    // Whitespace in base64 is skipped; anything else outside its alphabet fails.
+    CHECK(url::DataBytes("data:;base64,QU JD\nRA==") == std::optional<std::string>("ABCD"));
+    CHECK(!url::DataBytes("data:;base64,QU*J"));
+    CHECK(!url::DataBytes("data:;base64,QUJDR"));  // a lone sixth bit group
+    CHECK(!url::DataBytes("data:image/png;base64"));  // no comma
+    CHECK(!url::DataBytes("https://a.example/favicon.ico"));
+    CHECK(!url::DataBytes("datax:,a"));
+    // A lone or broken escape stays as it is.
+    CHECK(url::DataBytes("data:,100%") == std::optional<std::string>("100%"));
+    CHECK(url::DataBytes("data:,%zz%4") == std::optional<std::string>("%zz%4"));
+}
+
+// GitHub's and Hacker News's icons are SVG (NSImage reads them on the Mac); bitmaps are not.
+TEST(svgFaviconsAreRecognised) {
+    CHECK(LooksLikeSvg("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><path d=\"M0 0h16v16H0z\"/></svg>"));
+    CHECK(LooksLikeSvg("\xEF\xBB\xBF\n  <?xml version=\"1.0\"?>\n<!-- icon -->\n<svg/>"));
+    CHECK(!LooksLikeSvg("\x89PNG\r\n\x1a\n<svg"));
+    CHECK(!LooksLikeSvg(std::string("\0\0\1\0", 4)));  // an .ico
+    CHECK(!LooksLikeSvg("<!doctype html><html><body>Not found</body></html>"));
+    CHECK(!LooksLikeSvg(""));
+    CHECK(!LooksLikeSvg("   "));
 }

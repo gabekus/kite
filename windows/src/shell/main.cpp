@@ -431,7 +431,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             openCommandBar(kite::CommandBarMode::NewTab);
         }
         if (commandBar && commandBar->HandleMessage(message, wParam, lParam, result)) return true;
-        if (sidebar->HandleMessage(message)) return true;
+        if (sidebar->HandleMessage(message)) {
+            // Its own redraw found the GPU gone: the window's draw rebuilds everything.
+            if (sidebar->DeviceLost()) draw();
+            return true;
+        }
         if (message == kFaviconsMessage) {
             if (favicons && favicons->TakeResults()) sidebar->Invalidate();
             return true;

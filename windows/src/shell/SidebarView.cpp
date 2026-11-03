@@ -16,7 +16,42 @@ namespace kite {
 
 namespace {
 
-namespace M = sidebar_metrics;
+// ArcMetrics.Sidebar, in points: the rows' geometry from core, and how the view draws them.
+namespace M {
+using namespace sidebar_metrics;
+constexpr float kPadding = 8;  // the list, address field and pills sit this far in from each side
+constexpr float kTopRowY = 7.5f;
+constexpr float kTopRowHeight = 32;
+constexpr float kUrlFieldTopGap = 6.5f;
+constexpr float kUrlFieldHeight = 36;
+constexpr float kUrlFieldTextInset = 12;
+constexpr float kUrlFieldFontSize = 13;
+constexpr float kUrlFieldTextOpacity = 0.6f;
+constexpr float kCornerRadius = 11;  // the address field and the pills
+constexpr float kFieldFill = 0.10f;  // white over the theme, for the address field
+constexpr float kHeaderIconSize = 26;
+constexpr float kHeaderIconX = 13;   // in the window
+constexpr float kHeaderIconTop = 5;
+constexpr float kHeaderTextX = 41;   // in the window
+constexpr float kHeaderFontSize = 13;
+constexpr float kHeaderTextOpacity = 0.45f;
+constexpr float kHeaderEmojiSize = 15;
+constexpr float kPillHeight = 36;
+constexpr float kIconSize = 18;
+constexpr float kIconInset = 9;      // the favicon's leading edge in the pill
+constexpr float kIconTextGap = 8;
+constexpr float kNestingIndent = 16;
+constexpr float kTabFontSize = 14;
+constexpr float kTabTextOpacity = 0.865f;
+constexpr float kSelectedFill = 0.20f;
+constexpr float kSelectedFillLight = 0.85f;
+constexpr float kDividerInset = 10;
+constexpr float kDividerThickness = 0.5f;
+constexpr float kDividerOpacity = 0.08f;
+constexpr float kBottomBarHeight = 50;
+// The header (top row and address field) the space page starts under.
+constexpr float kHeaderAreaHeight = kTopRowY + kTopRowHeight + kUrlFieldTopGap + kUrlFieldHeight;
+}  // namespace M
 
 // NSColor.labelColor: black (light) or white (dark) at 85%. The Mac's sidebar labels are that
 // colour, faded further by their view's alphaValue.
@@ -118,12 +153,12 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
         error = HResultMessage(L"CreateTextFormat", hr);
         return nullptr;
     }
-    // One line, cut off at the end with "…" (SidebarLabel's byTruncatingTail).
-    if (SUCCEEDED(view->dwrite_->CreateEllipsisTrimmingSign(view->tabFormat_.Get(), view->ellipsis_.GetAddressOf()))) {
-        const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-        for (IDWriteTextFormat* f : {view->addressFormat_.Get(), view->headerFormat_.Get(), view->tabFormat_.Get(), view->folderFormat_.Get()}) {
-            f->SetTrimming(&trimming, view->ellipsis_.Get());
-        }
+    // One line, cut off at the end with "…" in the label's own font (SidebarLabel's
+    // byTruncatingTail).
+    const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+    for (IDWriteTextFormat* f : {view->addressFormat_.Get(), view->headerFormat_.Get(), view->tabFormat_.Get(), view->folderFormat_.Get()}) {
+        ComPtr<IDWriteInlineObject> ellipsis;
+        if (SUCCEEDED(view->dwrite_->CreateEllipsisTrimmingSign(f, ellipsis.GetAddressOf()))) f->SetTrimming(&trimming, ellipsis.Get());
     }
     // Emoji and symbols sit in the middle of their box.
     for (IDWriteTextFormat* f : {view->emojiFormat_.Get(), view->iconFormat_.Get()}) {
@@ -188,9 +223,10 @@ void SidebarView::Update(const BrowserState& state) {
 }
 
 void SidebarView::Layout(float width, UINT dpi) {
+    // The height comes with the window's: Draw draws again only when it changes what's shown.
+    if (width == width_ && dpi == dpi_) return;
     width_ = width;
     dpi_ = dpi;
-    // The height comes with the window's (Draw reads it); either way it draws again.
     dirty_ = true;
 }
 
@@ -214,18 +250,24 @@ bool SidebarView::HandleMessage(UINT message) {
 
 std::wstring SidebarView::Draw(Pixels* readBack) {
     if (!compositor_) return L"no compositor";
-    if (!dirty_ && !readBack) return {};
     if (deviceLost_) return L"the GPU device was lost";
     RECT client{};
     GetClientRect(window_, &client);
     // Minimized: nothing to draw into until it's restored (onSize lays it out again).
     if (client.bottom <= 0 || client.right <= 0) return {};
-    std::wstring error;
-    if (!context_ && !CreateGpu(error)) return error;
+    // The surface runs down to the last row, or to where the list is cut off above the space
+    // bar, whichever is higher: a window resize that moves neither draws nothing.
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const float contentBottom = M::kHeaderAreaHeight + (model_.rows.empty() ? 0 : model_.rows.back().top + model_.rows.back().height);
+    const float listBottom = std::max(M::kHeaderAreaHeight, static_cast<float>(client.bottom) / scale - M::kBottomBarHeight);
+    const float bottom = std::max(M::kHeaderAreaHeight, std::min(contentBottom, listBottom));
     const UINT largest = compositor_->GetRenderer().MaxTextureSize();
     const UINT width = std::clamp(static_cast<UINT>(std::ceil(width_ * scale)), 1u, largest);
-    const UINT height = std::clamp(static_cast<UINT>(client.bottom), 1u, largest);
+    const UINT height = std::clamp(static_cast<UINT>(std::ceil(bottom * scale)), 1u, largest);
+    if (height != surfaceHeight_ || width != surfaceWidth_) dirty_ = true;
+    if (!dirty_ && !readBack) return {};
+    std::wstring error;
+    if (!context_ && !CreateGpu(error)) return error;
     auto fail = [this](const wchar_t* what, HRESULT hr) {
         deviceLost_ = IsDeviceLost(hr);
         if (context_) context_->SetTarget(nullptr);
@@ -262,7 +304,10 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         context_->PushAxisAlignedClip(Rect(0, 0, static_cast<float>(width) / scale, static_cast<float>(height) / scale),
                                       D2D1_ANTIALIAS_MODE_ALIASED);
         context_->Clear(D2D1_COLOR_F{0, 0, 0, 0});
+        for (auto& entry : faviconBitmaps_) entry.second.used = false;
         DrawContent(context_.Get());
+        // Only the icons this draw showed stay on the GPU.
+        std::erase_if(faviconBitmaps_, [](const auto& entry) { return !entry.second.used; });
         context_->PopAxisAlignedClip();
         made = context_->EndDraw();
         context_->SetTarget(nullptr);
@@ -373,16 +418,17 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
                 ComPtr<ID2D1Bitmap1> bitmap;
                 if (SUCCEEDED(context->CreateBitmap(D2D1::SizeU(pixels->width, pixels->height), pixels->bgra.data(), pixels->width * 4,
                                                     &props, bitmap.GetAddressOf()))) {
-                    found = faviconBitmaps_.emplace(key, bitmap).first;
+                    found = faviconBitmaps_.emplace(key, FaviconBitmap{bitmap, false}).first;
                 }
             }
         }
         if (found != faviconBitmaps_.end()) {
+            found->second.used = true;
             // Stretched to the square, its corners rounded (FaviconImageView's layer).
             ComPtr<ID2D1BitmapBrush1> brush;
             const D2D1_BITMAP_BRUSH_PROPERTIES1 props{D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP, D2D1_INTERPOLATION_MODE_LINEAR};
-            if (SUCCEEDED(context->CreateBitmapBrush(found->second.Get(), &props, nullptr, brush.GetAddressOf()))) {
-                const D2D1_SIZE_F size = found->second->GetSize();
+            if (SUCCEEDED(context->CreateBitmapBrush(found->second.bitmap.Get(), &props, nullptr, brush.GetAddressOf()))) {
+                const D2D1_SIZE_F size = found->second.bitmap->GetSize();
                 brush->SetTransform(D2D1::Matrix3x2F::Scale(side / size.width, side / size.height) *
                                     D2D1::Matrix3x2F::Translation(box.left, box.top));
                 const float corner = side * kFaviconCorner;
@@ -397,7 +443,18 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
 
 void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, float top) {
     const float left = M::kPadding, right = width_ - M::kPadding;  // the row, in window points
-    const float pillTop = top + (M::kRowPitch - M::kPillHeight) / 2;
+    // The pill sits 2.5pt into its row: whole pixels at 2x as on the Mac's screens, snapped to
+    // them at other scales so its edges and the favicon stay sharp.
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    auto snap = [scale](float points) { return std::round(points * scale) / scale; };
+    const float pillTop = snap(top + (M::kRowPitch - M::kPillHeight) / 2);
+    const float pillBottom = snap(pillTop + M::kPillHeight);
+    // The favicon's square, a whole number of pixels on the pixel grid.
+    const float iconSide = std::round(M::kIconSize * scale) / scale;
+    auto faviconBox = [&](float x) {
+        const float iconLeft = snap(x), iconTop = snap(pillTop + (M::kPillHeight - M::kIconSize) / 2);
+        return Rect(iconLeft, iconTop, iconLeft + iconSide, iconTop + iconSide);
+    };
     const float tabLine = LineHeight(M::kTabFontSize);
     const float tabBaseline = pillTop + TextTop(M::kPillHeight, tabLine) + M::kTabFontSize * kAscender;
     switch (row.kind) {
@@ -440,12 +497,11 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
         if (row.selected) {
             // White on both appearances: 20% on a dark theme, 85% on a light one.
             brush_->SetColor(D2D1_COLOR_F{1, 1, 1, model_.dark ? M::kSelectedFill : M::kSelectedFillLight});
-            context->FillRoundedRectangle(D2D1::RoundedRect(Rect(left, pillTop, right, pillTop + M::kPillHeight), M::kCornerRadius, M::kCornerRadius),
+            context->FillRoundedRectangle(D2D1::RoundedRect(Rect(snap(left), pillTop, snap(right), pillBottom), M::kCornerRadius, M::kCornerRadius),
                                           brush_.Get());
         }
         const float x = left + M::kIconInset + static_cast<float>(row.depth) * M::kNestingIndent;
-        const float iconTop = pillTop + (M::kPillHeight - M::kIconSize) / 2;
-        DrawFavicon(context, row, Rect(x, iconTop, x + M::kIconSize, iconTop + M::kIconSize));
+        DrawFavicon(context, row, faviconBox(x));
         const float textX = x + M::kIconSize + M::kIconTextGap;
         // Nothing trails a tab that isn't hovered: the title runs to 6pt and a gap from the end.
         const float textEnd = right - 6 - M::kIconTextGap;
@@ -454,10 +510,8 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
     }
     case SidebarRow::Kind::Folder: {
         const float x = left + M::kIconInset + static_cast<float>(row.depth) * M::kNestingIndent;
-        const float iconTop = pillTop + (M::kPillHeight - M::kIconSize) / 2;
         // folder (open) or folder.fill (closed) at 14pt in the favicon's square.
-        DrawGlyph(context, row.expanded ? kFolder : kFolderFill, 14 / kGlyphInk, Rect(x, iconTop, x + M::kIconSize, iconTop + M::kIconSize),
-                  Primary(kLabelAlpha * kFolderIconOpacity));
+        DrawGlyph(context, row.expanded ? kFolder : kFolderFill, 14 / kGlyphInk, faviconBox(x), Primary(kLabelAlpha * kFolderIconOpacity));
         const float textX = x + M::kIconSize + M::kIconTextGap;
         const float textEnd = right - M::kIconInset - kFolderChevronWidth - M::kIconTextGap - M::kIconTextGap;
         DrawText(context, row.title, folderFormat_.Get(), textX, tabBaseline, textEnd - textX, Primary(kLabelAlpha * M::kTabTextOpacity));
@@ -473,8 +527,7 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
         break;
     case SidebarRow::Kind::NewTab: {
         const float x = left + M::kIconInset;
-        const float iconTop = pillTop + (M::kPillHeight - M::kIconSize) / 2;
-        DrawGlyph(context, kPlus, 14 / kGlyphInk, Rect(x, iconTop, x + M::kIconSize, iconTop + M::kIconSize), Primary(kLabelAlpha * kNewTabOpacity));
+        DrawGlyph(context, kPlus, 14 / kGlyphInk, faviconBox(x), Primary(kLabelAlpha * kNewTabOpacity));
         const float textX = x + M::kIconSize + M::kIconTextGap;
         DrawText(context, row.title, tabFormat_.Get(), textX, tabBaseline, right - M::kIconInset - textX, Primary(kLabelAlpha * kNewTabOpacity));
         break;
@@ -496,13 +549,14 @@ void SidebarView::DrawContent(ID2D1DeviceContext* context) {
     const float addressLine = LineHeight(M::kUrlFieldFontSize);
     const float addressBaseline = fieldTop + std::floor((M::kUrlFieldHeight - addressLine) / 2) + M::kUrlFieldFontSize * kAscender;
     const float addressX = left + M::kUrlFieldTextInset;
-    DrawText(context, model_.address, addressFormat_.Get(), addressX, addressBaseline, right - M::kUrlFieldTextInset - addressX,
+    // With no buttons in the field, the text runs to 2pt from its end (SidebarHeader's layout).
+    DrawText(context, model_.address, addressFormat_.Get(), addressX, addressBaseline, right - 2 - addressX,
              Primary(kLabelAlpha * M::kUrlFieldTextOpacity));
 
-    // The space's page, under the header and above the space bar; rows past it are cut off
-    // (the Mac's list scrolls there).
+    // The space's page, under the header and above the space bar (where Draw ends the
+    // surface); rows past it are cut off (the Mac's list scrolls there).
     const float listTop = M::kHeaderAreaHeight;
-    const float listBottom = std::max(listTop, height - M::kBottomBarHeight);
+    const float listBottom = std::max(listTop, height);
     context->PushAxisAlignedClip(Rect(0, listTop, width_, listBottom), D2D1_ANTIALIAS_MODE_ALIASED);
     for (const SidebarRow& row : model_.rows) {
         if (listTop + row.top >= listBottom) break;

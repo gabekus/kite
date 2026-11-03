@@ -57,7 +57,8 @@ public:
     std::wstring Draw(Pixels* readBack = nullptr);
     bool DeviceLost() const { return deviceLost_; }
 
-    // The window's messages: its posted redraw. True when it handled `message`.
+    // The window's messages: its posted redraw. True when it handled `message`; if the GPU was
+    // lost meanwhile, DeviceLost says so and the window rebuilds.
     bool HandleMessage(UINT message);
     static constexpr UINT kRedrawMessage = WM_APP + 3;
 
@@ -90,7 +91,6 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Factory1> d2dFactory_;
     Microsoft::WRL::ComPtr<IDWriteFactory> dwrite_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> addressFormat_, headerFormat_, tabFormat_, folderFormat_, emojiFormat_, iconFormat_;
-    Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis_;
     std::map<IDWriteTextFormat*, float> baselines_;  // each format's first baseline from its line's top
 
     // GPU.
@@ -99,7 +99,11 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
     Microsoft::WRL::ComPtr<IDCompositionVisual> visual_;
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
-    std::map<std::pair<std::string, UINT>, Microsoft::WRL::ComPtr<ID2D1Bitmap1>> faviconBitmaps_;
+    struct FaviconBitmap {
+        Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;
+        bool used = false;  // shown by the draw under way
+    };
+    std::map<std::pair<std::string, UINT>, FaviconBitmap> faviconBitmaps_;
     UINT surfaceWidth_ = 0, surfaceHeight_ = 0;
     bool deviceLost_ = false;
 

@@ -3,6 +3,7 @@
 #include "core/Sidebar.h"
 
 #include <algorithm>
+#include <cctype>
 
 #include "core/Url.h"
 
@@ -140,6 +141,15 @@ FaviconSource FaviconSourceOf(const std::optional<std::string>& page, const std:
     return source;
 }
 
+bool LooksLikeSvg(std::string_view bytes) {
+    // After any byte-order mark and whitespace, an element (an XML declaration and comments
+    // count), with an <svg> element in the first 4KB.
+    const std::string_view head = bytes.substr(0, 4096);
+    size_t at = head.starts_with("\xEF\xBB\xBF") ? 3 : 0;
+    while (at < head.size() && std::isspace(static_cast<unsigned char>(head[at]))) ++at;
+    return at < head.size() && head[at] == '<' && head.find("<svg") != std::string_view::npos;
+}
+
 std::string AddressFieldText(const BrowserState& state) {
     const Tab* tab = state.SelectedTab();
     if (tab && tab->url) {
@@ -160,9 +170,17 @@ std::vector<SidebarRow> SidebarRows(const BrowserState& state, size_t spaceIndex
     header.icon = space.icon;
     header.hasPinned = !space.pinnedItems.empty();
     header.pinnedCollapsed = IsPinnedSectionCollapsed(state, space.id);
+    const bool collapsed = header.pinnedCollapsed;
     rows.push_back(std::move(header));
 
-    AppendPinned(ShownPinnedItems(state, space), 0, space.selectedTabID, rows);
+    // ShownPinnedItems, walked in place (this runs on every page event).
+    if (!collapsed) {
+        AppendPinned(space.pinnedItems, 0, space.selectedTabID, rows);
+    } else if (space.selectedTabID) {
+        for (const Tab* tab : space.Pinned()) {
+            if (tab->id == *space.selectedTabID) rows.push_back(TabRow(*tab, true, true, 0));
+        }
+    }
 
     // The Mac also shows it when Tidy Tabs could run, which needs Claude (not on Windows yet).
     if (!space.pinnedItems.empty() || !space.tabs.empty()) {

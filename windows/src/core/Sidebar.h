@@ -7,50 +7,19 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/Models.h"
 
 namespace kite {
 
-// ArcMetrics.Sidebar, in points.
+// The rows' geometry from ArcMetrics.Sidebar, in points (the view keeps the rest of it).
 namespace sidebar_metrics {
-constexpr float kPadding = 8;  // the list, address field and pills sit this far in from each side
-constexpr float kTopRowY = 7.5f;
-constexpr float kTopRowHeight = 32;
-constexpr float kUrlFieldTopGap = 6.5f;
-constexpr float kUrlFieldHeight = 36;
-constexpr float kUrlFieldTextInset = 12;
-constexpr float kUrlFieldFontSize = 13;
-constexpr float kUrlFieldTextOpacity = 0.6f;
-constexpr float kCornerRadius = 11;  // the address field and the pills
-constexpr float kFieldFill = 0.10f;  // white over the theme, for the address field
 constexpr float kHeaderHeight = 36;
-constexpr float kHeaderIconSize = 26;
-constexpr float kHeaderIconX = 13;   // in the window
-constexpr float kHeaderIconTop = 5;
-constexpr float kHeaderTextX = 41;   // in the window
-constexpr float kHeaderFontSize = 13;
-constexpr float kHeaderTextOpacity = 0.45f;
-constexpr float kHeaderEmojiSize = 15;
-constexpr float kRowPitch = 41;
-constexpr float kPillHeight = 36;
-constexpr float kIconSize = 18;
-constexpr float kIconInset = 9;      // the favicon's leading edge in the pill
-constexpr float kIconTextGap = 8;
-constexpr float kNestingIndent = 16;
-constexpr float kTabFontSize = 14;
-constexpr float kTabTextOpacity = 0.865f;
-constexpr float kSelectedFill = 0.20f;
-constexpr float kSelectedFillLight = 0.85f;
 constexpr float kListTopSpacer = 3;
+constexpr float kRowPitch = 41;
 constexpr float kDividerRowHeight = 25;
-constexpr float kDividerInset = 10;
-constexpr float kDividerThickness = 0.5f;
-constexpr float kDividerOpacity = 0.08f;
-constexpr float kBottomBarHeight = 50;
-// The header (top row and address field) the space page starts under.
-constexpr float kHeaderAreaHeight = kTopRowY + kTopRowHeight + kUrlFieldTopGap + kUrlFieldHeight;
 }  // namespace sidebar_metrics
 
 // View → Collapse Pinned Tabs, per space: the Mac's spacesWithCollapsedPinnedSections, which
@@ -74,6 +43,10 @@ struct FaviconSource {
     bool operator==(const FaviconSource&) const = default;
 };
 FaviconSource FaviconSourceOf(const std::optional<std::string>& page, const std::optional<std::string>& icon);
+
+// Whether a favicon's bytes are an SVG document rather than a bitmap (the Mac's NSImage reads
+// both): markup that starts with an element, with an <svg> near the start.
+bool LooksLikeSvg(std::string_view bytes);
 
 // The address field's text: the selected tab's host, else the Mac's "Search or enter URL".
 std::string AddressFieldText(const BrowserState& state);
