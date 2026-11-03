@@ -45,7 +45,7 @@ final class PageToolbar: NSView {
     /// Opens Site Controls under the button.
     var showSiteControls: ((NSView) -> Void)?
     /// Chrome's install icon after the address, for an installable page; nil in incognito.
-    var installApp: ((NSView) -> Void)? { didSet { update() } }
+    var installApp: ((NSView) -> Void)? { didSet { scheduleUpdate() } }
 
     private let store: BrowserStore
     private let actions: SidebarActions
@@ -53,8 +53,8 @@ final class PageToolbar: NSView {
     private let forward = PageToolbar.symbolButton("arrow.right", "Forward")
     private let reload = PageToolbar.symbolButton("arrow.clockwise", "Reload")
     private let siteControls = PageToolbar.symbolButton("slider.horizontal.3", "Site Control Center", pointSize: 8, weight: .semibold)
-    /// Site Controls' 16pt rounded frame around its symbol. Clicks on it are the button's.
-    private let siteControlsRing = PassthroughView()
+    /// Site Controls' 16pt rounded frame around its symbol: a layer, so clicks on it are the button's.
+    private let siteControlsRing = CALayer()
     private let splitView = PageToolbar.symbolButton("rectangle.split.2x1", "Add Split View")
     private let address = ToolbarAddressButton()
     private let install = SymbolButton(symbol: "desktopcomputer.and.arrow.down", pointSize: 12, weight: .semibold)
@@ -63,7 +63,18 @@ final class PageToolbar: NSView {
     private let extensions: ToolbarExtensionItems?
     #endif
     private var defaultsObserver: NSObjectProtocol?
-    private var hiddenButtons: Set<ChromeButton> = []
+    /// What the bar shows, applied only when it changes.
+    private struct Model: Equatable {
+        var canGoBack = false, canGoForward = false, isLoading = false, hasTab = false, hasSite = false
+        var url: URL?
+        var offerName: String?
+        var hidden: Set<ChromeButton> = []
+        var fullURL = false
+    }
+    private var model: Model?
+    /// Bumped when the bar leaves the window, so its observation stops (a hidden bar is out of the window).
+    private var generation = 0
+    private var updateScheduled = false
 
     #if canImport(CEFBridge)
     init(store: BrowserStore, actions: SidebarActions, extensions: ExtensionsSelection?) {
@@ -84,6 +95,10 @@ final class PageToolbar: NSView {
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
+    isolated deinit {
+        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+    }
+
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
 
@@ -95,6 +110,8 @@ final class PageToolbar: NSView {
         button.disabledOpacity = 1
         button.tint = Metrics.enabled
         button.toolTip = label
+        // ⌃-click shows the bar's menu, as anywhere on the SwiftUI bar.
+        button.controlClickShowsMenu = true
         return button
     }
 
@@ -111,10 +128,9 @@ final class PageToolbar: NSView {
             guard let self else { return }
             self.showSiteControls?(self.siteControls)
         }
-        siteControlsRing.wantsLayer = true
-        siteControlsRing.layer?.cornerRadius = 4
-        siteControlsRing.layer?.cornerCurve = .continuous
-        siteControlsRing.layer?.borderWidth = 1.25
+        siteControlsRing.cornerRadius = 4
+        siteControlsRing.cornerCurve = .continuous
+        siteControlsRing.borderWidth = 1.25
         splitView.customImage = PageToolbar.splitViewImage()
         splitView.action = { [weak self] in self?.actions.addSplitView() }
         address.action = { [weak self] in
@@ -130,7 +146,7 @@ final class PageToolbar: NSView {
             self.installApp?(self.install)
         }
         for view in [back, forward, reload, siteControls, splitView, address, install] as [NSView] { addSubview(view) }
-        siteControls.addSubview(siteControlsRing)
+        siteControls.layer?.addSublayer(siteControlsRing)
         #if canImport(CEFBridge)
         if let extensions {
             extensions.onSizeChange = { [weak self] in self?.needsLayout = true }
@@ -139,10 +155,8 @@ final class PageToolbar: NSView {
         #endif
         defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
                                                                   queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.readDefaults() }
+            MainActor.assumeIsolated { self?.scheduleUpdate() }
         }
-        readDefaults()
-        observe()
     }
 
     private let divider = CALayer()
@@ -161,52 +175,92 @@ final class PageToolbar: NSView {
         return image
     }
 
-    /// Settings → Advanced → Toolbar hides buttons (their commands still work from the menu bar), and Kite menu →
-    /// Show Full URL in Toolbar (Arc: "Show full URL when Toolbar is enabled") shows the whole URL.
-    private func readDefaults() {
-        let defaults = UserDefaults.standard
-        let hidden = Set([ChromeButton.back, .forward, .reload, .siteControls, .splitView].filter { defaults.bool(forKey: $0.hiddenKey) })
-        let full = ToolbarURL.showsFullURL(in: defaults)
-        guard hidden != hiddenButtons || full != address.showsFullURL else { return }
-        hiddenButtons = hidden
-        address.showsFullURL = full
-        update()
+    /// The bar follows the store only while it's in the window (View › Show Toolbar on).
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        generation += 1
+        guard window != nil else { return }
+        observe(generation)
+        #if canImport(CEFBridge)
+        // SwiftUI's onAppear: the extensions are read again whenever the bar comes back.
+        extensions?.refresh()
+        #endif
     }
 
-    private func observe() {
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        needsLayout = true
+    }
+
+    private func observe(_ generation: Int) {
+        guard generation == self.generation else { return }
         withObservationTracking {
-            update()
+            apply(readModel())
         } onChange: { [weak self] in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.observe() } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.observe(generation) } }
         }
+    }
+
+    /// Defaults and the install callback aren't observable: they re-read the model on the next turn.
+    private func scheduleUpdate() {
+        guard window != nil, !updateScheduled else { return }
+        updateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.updateScheduled = false
+                self.apply(self.readModel())
+            }
+        }
+    }
+
+    /// Settings → Advanced → Toolbar hides buttons (their commands still work from the menu bar), and Kite menu →
+    /// Show Full URL in Toolbar (Arc: "Show full URL when Toolbar is enabled") shows the whole URL.
+    private func readModel() -> Model {
+        let selected = store.state.selectedTab
+        let page = selected.flatMap { store.pages[$0.id] } ?? PageStatus()
+        // Read whether or not the bar offers installs, so a later offer is observed.
+        let offer = WebAppInstallOffers.shared.offer(for: selected?.id)
+        let defaults = UserDefaults.standard
+        return Model(
+            canGoBack: page.canGoBack, canGoForward: page.canGoForward, isLoading: page.isLoading, hasTab: selected != nil,
+            hasSite: SiteControls.applies(to: selected?.url), url: selected?.url,
+            offerName: installApp == nil ? nil : offer?.name,
+            hidden: Set([ChromeButton.back, .forward, .reload, .siteControls, .splitView].filter { defaults.bool(forKey: $0.hiddenKey) }),
+            fullURL: ToolbarURL.showsFullURL(in: defaults)
+        )
     }
 
     /// The buttons' states and the address, from the selected tab.
-    private func update() {
-        let selected = store.state.selectedTab
-        let page = selected.flatMap { store.pages[$0.id] } ?? PageStatus()
+    private func apply(_ new: Model) {
+        guard new != model else { return }
+        let old = model
+        model = new
         func set(_ button: SymbolButton, enabled: Bool) {
+            guard button.isEnabled != enabled || old == nil else { return }
             button.isEnabled = enabled
             button.tint = enabled ? Metrics.enabled : Metrics.disabled
         }
-        set(back, enabled: page.canGoBack)
-        set(forward, enabled: page.canGoForward)
-        reload.symbol = page.isLoading ? "xmark" : "arrow.clockwise"
-        set(reload, enabled: selected != nil)
-        let hasSite = SiteControls.applies(to: selected?.url)
-        set(siteControls, enabled: hasSite)
-        siteControlsRing.layer?.borderColor = (hasSite ? Metrics.enabled : Metrics.disabled).cgColor
-        address.url = selected?.url
-        let offer = installApp == nil ? nil : WebAppInstallOffers.shared.offer(for: selected?.id)
-        install.toolTip = offer.map { "Install \($0.name)" }
+        set(back, enabled: new.canGoBack)
+        set(forward, enabled: new.canGoForward)
+        reload.symbol = new.isLoading ? "xmark" : "arrow.clockwise"
+        set(reload, enabled: new.hasTab)
+        set(siteControls, enabled: new.hasSite)
+        siteControlsRing.borderColor = (new.hasSite ? Metrics.enabled : Metrics.disabled).cgColor
+        address.showsFullURL = new.fullURL
+        address.url = new.url
+        install.toolTip = new.offerName.map { "Install \($0)" }
         install.setAccessibilityLabel(install.toolTip)
-        install.isHidden = offer == nil
-        back.isHidden = hiddenButtons.contains(.back)
-        forward.isHidden = hiddenButtons.contains(.forward)
-        reload.isHidden = hiddenButtons.contains(.reload)
-        siteControls.isHidden = hiddenButtons.contains(.siteControls)
-        splitView.isHidden = hiddenButtons.contains(.splitView)
-        needsLayout = true
+        install.isHidden = new.offerName == nil
+        back.isHidden = new.hidden.contains(.back)
+        forward.isHidden = new.hidden.contains(.forward)
+        reload.isHidden = new.hidden.contains(.reload)
+        siteControls.isHidden = new.hidden.contains(.siteControls)
+        splitView.isHidden = new.hidden.contains(.splitView)
+        // Frames move only with the address text, the install icon or the hidden buttons.
+        if old?.url != new.url || old?.fullURL != new.fullURL || old?.offerName != new.offerName || old?.hidden != new.hidden {
+            needsLayout = true
+        }
     }
 
     /// SwiftUI puts views on the device's pixel grid, a half pixel rounding up.
@@ -237,7 +291,10 @@ final class PageToolbar: NSView {
             end -= pitch
             siteControls.frame = CGRect(x: end, y: 0, width: pitch, height: h)
             let ring = Metrics.siteControlsSize
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
             siteControlsRing.frame = CGRect(x: (pitch - ring) / 2, y: (h - ring) / 2, width: ring, height: ring)
+            CATransaction.commit()
         }
         #if canImport(CEFBridge)
         if let extensions {
@@ -268,13 +325,6 @@ final class PageToolbar: NSView {
         if let menu = contextMenu() { NSMenu.popUpContextMenu(menu, with: event, for: self) }
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        #if canImport(CEFBridge)
-        // SwiftUI's onAppear: the extensions are read again whenever the bar comes back.
-        if window != nil { extensions?.refresh() }
-        #endif
-    }
 }
 
 /// The toolbar's address: a link symbol and the page's host (or full URL), clicking into the command bar.
@@ -312,7 +362,8 @@ final class ToolbarAddressButton: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     /// The symbol's layout size: SwiftUI sizes an `Image` of a symbol by its alignment rect.
-    private var iconSize: NSSize { rawSymbol("link", pointSize: Self.iconPointSize, weight: .medium)?.alignmentRect.size ?? .zero }
+    private static let iconSize = rawSymbol("link", pointSize: iconPointSize, weight: .medium)?.alignmentRect.size ?? .zero
+    private var iconSize: NSSize { Self.iconSize }
 
     var naturalWidth: CGFloat { iconSize.width + Self.spacing + label.naturalWidth }
 
@@ -328,13 +379,19 @@ final class ToolbarAddressButton: NSView {
     override func layout() {
         super.layout()
         let box = NSSize(width: iconSize.width, height: bounds.height)
-        icon.image = symbolImage("link", pointSize: Self.iconPointSize, weight: .medium, box: box, placement: .center)
+        if icon.frame.size != box {
+            icon.image = symbolImage("link", pointSize: Self.iconPointSize, weight: .medium, box: box, placement: .center)
+        }
         icon.frame = CGRect(origin: .zero, size: box)
         let x = box.width + Self.spacing
         label.place(textRect: CGRect(x: x, y: 0, width: max(bounds.width - x, 0), height: bounds.height))
     }
 
-    override func mouseDown(with event: NSEvent) { pressed = true }
+    override func mouseDown(with event: NSEvent) {
+        // ⌃-click shows the bar's menu, as anywhere on the SwiftUI bar.
+        if event.modifierFlags.contains(.control) { return rightMouseDown(with: event) }
+        pressed = true
+    }
 
     override func mouseUp(with event: NSEvent) {
         defer { pressed = false }
@@ -348,12 +405,8 @@ final class ToolbarAddressButton: NSView {
     }
 
     override func accessibilityPerformPress() -> Bool {
+        guard url != nil else { return false }
         action()
         return true
     }
-}
-
-/// A view that draws and never takes a click: its button gets it.
-private final class PassthroughView: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

@@ -143,6 +143,8 @@ final class SymbolButton: NSView {
     var tint: NSColor? { didSet { imageView.contentTintColor = tint ?? .labelColor } }
     var isEnabled = true { didSet { applyOpacity() } }
     var disabledOpacity: Double = 0.25
+    /// ⌃-click opens the right-click menu of the view it sits in (the page toolbar's buttons) instead of pressing.
+    var controlClickShowsMenu = false
     private(set) var isHovered = false
 
     private let imageView = SidebarImageView()
@@ -229,6 +231,7 @@ final class SymbolButton: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if controlClickShowsMenu, event.modifierFlags.contains(.control) { return rightMouseDown(with: event) }
         guard isEnabled else { return }
         pressed = true
     }

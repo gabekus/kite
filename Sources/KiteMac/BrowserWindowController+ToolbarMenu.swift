@@ -1,11 +1,10 @@
 import AppKit
 import KiteCore
-import SwiftUI
 
 extension BrowserWindowController {
     /// Arc's `commandBarToolbarContextMenuActions` for the selected tab. Under KITE_TEST_CONTEXT_MENU the
     /// menu is logged (and an item picked) instead of shown.
-    func toolbarContextMenu(from host: NSView) -> NSMenu? {
+    func toolbarContextMenu(from toolbar: NSView) -> NSMenu? {
         let url = store.state.selectedTab?.url
         #if canImport(CEFBridge)
         let extensions = extensionsSelection
@@ -32,7 +31,7 @@ extension BrowserWindowController {
                 menu.addItem(.separator())
                 continue
             }
-            let item = ToolbarMenuAction(title: title) { [weak self, weak host] in
+            let item = ToolbarMenuAction(title: title) { [weak self, weak toolbar] in
                 guard let self else { return }
                 switch entry {
                 case .copyURL: copyURL(nil)
@@ -43,9 +42,9 @@ extension BrowserWindowController {
                 case .manageExtensions:
                     #if canImport(CEFBridge)
                     // Under the bar's right end, where its extensions sit.
-                    if let host, let model = extensions?.model {
-                        let rect = NSRect(x: host.bounds.maxX - 56, y: host.isFlipped ? host.bounds.maxY - 4 : 4, width: 1, height: 1)
-                        ExtensionsMenu.present(model: model, from: host, rect: rect)
+                    if let toolbar, let model = extensions?.model {
+                        let rect = NSRect(x: toolbar.bounds.maxX - 56, y: toolbar.isFlipped ? toolbar.bounds.maxY - 4 : 4, width: 1, height: 1)
+                        ExtensionsMenu.present(model: model, from: toolbar, rect: rect)
                     }
                     #endif
                 case .fullURL: (NSApp.delegate as? AppDelegate)?.toggleToolbarFullURLs(nil)
@@ -66,7 +65,7 @@ extension BrowserWindowController {
     }
 }
 
-final class ToolbarMenuAction: NSMenuItem {
+private final class ToolbarMenuAction: NSMenuItem {
     private let body: () -> Void
 
     init(title: String, _ body: @escaping () -> Void) {

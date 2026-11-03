@@ -31,9 +31,7 @@ final class ToolbarExtensionItems: NSView {
     private var defaultsObserver: NSObjectProtocol?
     private var hidesPinned = false
     private var hidesButton = false
-    private weak var popover: NSPopover?
-    /// A transient popover closes on the mouse-down on its own button, before the button acts.
-    private var menuClosedAt: Date?
+    private var updateScheduled = false
 
     init(selection: ExtensionsSelection) {
         self.selection = selection
@@ -41,23 +39,28 @@ final class ToolbarExtensionItems: NSView {
         button.opacity = 1
         button.tint = PageToolbar.Metrics.enabled
         button.toolTip = "Extensions"
-        button.action = { [weak self] in self?.toggleMenu() }
+        button.action = { [weak self] in
+            guard let self else { return }
+            ExtensionsMenu.toggle(model: self.selection.model, from: self.button)
+        }
         addSubview(button)
         selectionChange = selection.$model.sink { [weak self] model in
-            self?.modelChange = model.objectWillChange.sink { [weak self] in
-                // objectWillChange: read the model once the change is in.
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.update() } }
-            }
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.update() } }
+            // objectWillChange: read the model once the change is in.
+            self?.modelChange = model.objectWillChange.sink { [weak self] in self?.scheduleUpdate() }
+            self?.scheduleUpdate()
         }
         defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
                                                                   queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.update() }
+            MainActor.assumeIsolated { self?.scheduleUpdate() }
         }
         update()
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    isolated deinit {
+        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+    }
 
     override var isFlipped: Bool { true }
 
@@ -76,13 +79,29 @@ final class ToolbarExtensionItems: NSView {
         return width
     }
 
+    private func scheduleUpdate() {
+        guard !updateScheduled else { return }
+        updateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                self?.updateScheduled = false
+                self?.update()
+            }
+        }
+    }
+
+    /// Rebuilds the icons and resizes only when the pins, the profile or the hidden buttons changed.
     private func update() {
         let defaults = UserDefaults.standard
-        hidesPinned = defaults.bool(forKey: ChromeButton.pinnedExtensions.hiddenKey)
-        hidesButton = defaults.bool(forKey: ChromeButton.extensions.hiddenKey)
+        let hidesPinned = defaults.bool(forKey: ChromeButton.pinnedExtensions.hiddenKey)
+        let hidesButton = defaults.bool(forKey: ChromeButton.extensions.hiddenKey)
         let model = selection.model
-        let items = pinned
-        if icons.map(\.item) != items {
+        let items = hidesPinned ? [] : model.pinned
+        let iconsChanged = icons.map(\.item) != items || icons.contains { $0.model !== model }
+        guard iconsChanged || hidesPinned != self.hidesPinned || hidesButton != self.hidesButton else { return }
+        self.hidesPinned = hidesPinned
+        self.hidesButton = hidesButton
+        if iconsChanged {
             icons.forEach { $0.removeFromSuperview() }
             icons = items.map { PinnedExtensionIcon(item: $0, model: model) }
             icons.forEach { addSubview($0) }
@@ -105,31 +124,13 @@ final class ToolbarExtensionItems: NSView {
                               width: Metrics.buttonSize.width, height: Metrics.buttonSize.height)
     }
 
-    private func toggleMenu() {
-        if let popover, popover.isShown { return popover.close() }
-        if let menuClosedAt, Date().timeIntervalSince(menuClosedAt) < 0.3 { return }
-        let model = selection.model
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: ExtensionsMenu(model: model) { [weak popover] in popover?.close() })
-        var token: NSObjectProtocol?
-        token = NotificationCenter.default.addObserver(forName: NSPopover.didCloseNotification, object: popover, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.menuClosedAt = Date()
-                if let token { NotificationCenter.default.removeObserver(token) }
-            }
-        }
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: ExtensionPopover.belowEdge(of: button))
-        self.popover = popover
-        model.refresh()
-    }
 }
 
 /// One pinned extension: clicking opens its popup under the icon; the right-click menu pins, turns off or removes it.
 @MainActor
 private final class PinnedExtensionIcon: NSView {
     let item: InstalledExtension
-    private let model: ExtensionsModel
+    let model: ExtensionsModel
     private let image = SidebarImageView()
     private var pressed = false
 
@@ -166,7 +167,10 @@ private final class PinnedExtensionIcon: NSView {
         image.frame = CGRect(x: (bounds.width - size) / 2, y: (bounds.height - size) / 2, width: size, height: size)
     }
 
-    override func mouseDown(with event: NSEvent) { pressed = true }
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) { return rightMouseDown(with: event) }
+        pressed = true
+    }
 
     override func mouseUp(with event: NSEvent) {
         defer { pressed = false }
@@ -295,20 +299,15 @@ private struct ExtensionActions: View {
         let menu = NSMenu()
         menu.autoenablesItems = false
         let pinned = model.isPinned(item.id)
-        func add(_ title: String, enabled: Bool = true, _ action: @escaping () -> Void) {
-            let entry = ToolbarMenuAction(title: title, action)
-            entry.isEnabled = enabled
-            menu.addItem(entry)
-        }
-        add(pinned ? "Unpin" : "Pin to Toolbar", enabled: item.enabled || pinned) { model.setPinned(item.id, !pinned) }
-        add(item.enabled ? "Turn Off" : "Turn On", enabled: item.mayDisable) { model.setEnabled(item.id, !item.enabled) }
+        menu.add(pinned ? "Unpin" : "Pin to Toolbar", enabled: item.enabled || pinned) { model.setPinned(item.id, !pinned) }
+        menu.add(item.enabled ? "Turn Off" : "Turn On", enabled: item.mayDisable) { model.setEnabled(item.id, !item.enabled) }
         if let options = item.optionsURL {
-            add("Options") {
+            menu.add("Options") {
                 NSApp.sendAction(#selector(AppDelegate.openURLFromExtensionsMenu(_:)), to: nil, from: options as NSURL)
             }
         }
-        menu.addItem(.separator())
-        add("Remove…") { model.remove(item.id) }
+        menu.addSeparator()
+        menu.add("Remove…") { model.remove(item.id) }
         return menu
     }
 
@@ -427,18 +426,38 @@ final class PasswordManagerFieldButton: NSView {
 }
 
 extension ExtensionsMenu {
-    private static var shown: NSPopover?
+    private static weak var shown: NSPopover?
+    private static weak var shownAnchor: NSView?
+    /// A transient popover closes on the mouse-down on its own button, before the button acts: that click
+    /// mustn't open it again.
+    private static var closed: (anchor: ObjectIdentifier, at: Date)?
 
     /// The extensions popover hanging from `view`, from places that aren't SwiftUI
-    /// popovers already (the sidebar's address field, the menu bar).
+    /// popovers already (the sidebar's address field, the toolbar, the menu bar).
     static func present(model: ExtensionsModel, from view: NSView, rect: NSRect? = nil) {
         shown?.close()
         let popover = NSPopover()
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: ExtensionsMenu(model: model) { [weak popover] in popover?.close() })
+        let anchor = ObjectIdentifier(view)
+        var token: NSObjectProtocol?
+        token = NotificationCenter.default.addObserver(forName: NSPopover.didCloseNotification, object: popover, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                closed = (anchor, Date())
+                if let token { NotificationCenter.default.removeObserver(token) }
+            }
+        }
         popover.show(relativeTo: rect ?? view.bounds, of: view, preferredEdge: ExtensionPopover.belowEdge(of: view))
         shown = popover
+        shownAnchor = view
         model.refresh()
+    }
+
+    /// The toolbar's button: opens the popover, or closes it when it hangs from this button.
+    static func toggle(model: ExtensionsModel, from view: NSView) {
+        if let shown, shown.isShown, shownAnchor === view { return shown.close() }
+        if let closed, closed.anchor == ObjectIdentifier(view), Date().timeIntervalSince(closed.at) < 0.3 { return }
+        present(model: model, from: view)
     }
 }
 #endif

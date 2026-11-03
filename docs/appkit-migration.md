@@ -529,17 +529,31 @@ with Back enabled):
 
 Geometry (`ui tree`): every frame matches main's, also with Back hidden and with the full URL shown.
 
-CPU, main process, ms/s (two 30 s runs each, toolbar shown): idle 3.97 / 4.59 → 2.38 / 2.56; reloading the front
-tab every 0.5 s 75.23 / 69.47 → 68.50 / 36.72 (interrupt wakeups 24.5 / 24.6 → 23.3 / 16.4).
+CPU, main process, ms/s, two 30 s runs each (main → M2):
+
+| Scenario | main | M2 |
+|---|---|---|
+| toolbar hidden (the default), idle | 4.82 / 6.48 | 4.81 / 2.02 |
+| toolbar hidden, reloading every 0.5 s | 56.45 / 80.55 | 65.91 / 65.52 |
+| toolbar shown, idle | 2.05 / 1.67 | 1.96 / 3.07 |
+| toolbar shown, reloading every 0.5 s | 62.51 / 48.94 | 46.88 / 76.86 |
+
+Runs of the same build vary by 30–50%, so there's no measurable change either way. The hidden bar does no work by
+construction now: it follows the store only while it's in the window.
 
 Behaviour, with posted events on a background test Kite (`kite ui input`):
 - back, forward, the address (opens the command bar), Site Controls, the extensions button and a pinned extension
   (each opens its popover or popup) all work;
-- the bar's right-click menu and the pinned icon's ("Unpin | Turn Off | --- | Remove…") read through
-  `KITE_TEST_CONTEXT_MENU`.
+- the bar's right-click menu, and ⌃-click on any of its controls, show the bar's menu; the pinned icon's is "Unpin |
+  Turn Off | --- | Remove…" (both read through `KITE_TEST_CONTEXT_MENU`); a ⌃-click doesn't press the control.
 
-Differences from main: the toolbar's controls take the click that brings a background window forward, as the
-sidebar's do (on main, the SwiftUI host only did so for some of them). Site Controls' ring no longer takes the click.
+Differences from main:
+- The toolbar's controls take the click that brings a background window forward, as the sidebar's do (on main, the
+  SwiftUI host only did so for some of them).
+- Right-clicking a pinned extension shows its own menu (Unpin, Turn Off, Options, Remove…), the one SwiftUI's
+  `.contextMenu` declared; on main the bar's host took every right-click, so it showed the bar's menu instead.
+  Arc's behaviour here isn't measured.
+- The bar follows the store only while it's in the window: a hidden bar (the default) does no work.
 
 Not verified: a real pointer (the headless rule); the extensions popover's own contents (still SwiftUI, unchanged).
 

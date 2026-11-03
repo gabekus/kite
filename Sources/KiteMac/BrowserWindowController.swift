@@ -33,9 +33,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private let glowView = GlowView(margin: Layout.glowMargin)
     let contentFrame = ShadowView(cornerRadius: Layout.cornerRadius)
     private let contentClip = ContentClipView()
-    /// View → Show Toolbar's bar across the top of the card.
-    private var toolbarHost: PageToolbar!
-    /// The page toolbar's place; the SwiftUI bar is in the window only while it shows.
+    /// View → Show Toolbar's bar's place: the bar is in the window only while it shows, so a hidden bar stops
+    /// following the store.
     private var toolbarContainer: DetachingContainer!
     private let emptyLabel = NSTextField(labelWithString: "Press ⌘T to open a tab")
     private let resizeHandle = SidebarResizeHandle()
@@ -323,22 +322,21 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             sidebar.showExtensions = { view in ExtensionsMenu.present(model: selection.model, from: view) }
             sidebar.fieldAccessory = PasswordManagerFieldButton(selection: selection)
         }
-        let toolbarHost = PageToolbar(store: store, actions: actions, extensions: extensions)
+        let toolbar = PageToolbar(store: store, actions: actions, extensions: extensions)
         #else
-        let toolbarHost = PageToolbar(store: store, actions: actions)
+        let toolbar = PageToolbar(store: store, actions: actions)
         #endif
         sidebarHost = SidebarColumnView(configuration: sidebar)
-        toolbarHost.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view, overlap: 4) }
+        toolbar.showSiteControls = { [weak self] view in self?.toggleSiteControls(from: view, overlap: 4) }
         if !isIncognito {
-            toolbarHost.installApp = { [weak self] _ in self?.showInstallAppDialog() }
+            toolbar.installApp = { [weak self] _ in self?.showInstallAppDialog() }
         }
         // Arc's right-click menu on the bar (Copy URL … Hide Toolbar).
-        toolbarHost.contextMenu = { [weak self, weak toolbarHost] in
-            guard let toolbarHost else { return nil }
-            return self?.toolbarContextMenu(from: toolbarHost)
+        toolbar.contextMenu = { [weak self, weak toolbar] in
+            guard let toolbar else { return nil }
+            return self?.toolbarContextMenu(from: toolbar)
         }
-        self.toolbarHost = toolbarHost
-        toolbarContainer = DetachingContainer(host: toolbarHost)
+        toolbarContainer = DetachingContainer(host: toolbar)
         contentClip.toolbar = toolbarContainer
         commandBarHost = CommandBarOverlayView(store: store) { [weak self] suggestion, mode in
             self?.commit(suggestion, mode: mode)

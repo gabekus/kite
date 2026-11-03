@@ -388,7 +388,7 @@ the springs and eases in Arc's binary (see the vocabulary table above).
   options after any state change that adds, removes or moves rows. SwiftUI makes a new row's view after the table has
   animated, so the new row gets its own 0.12s opacity animation on the group's curve.
 
-## Extensions in the toolbar → `ExtensionsToolbarItems`, `ExtensionsMenu`
+## Extensions in the toolbar → `ToolbarExtensionItems`, `ExtensionsMenu`
 
 Measured on Arc 1.169 with the masked probe (roles and frames only) on a window with the content toolbar showing
 (sidebar hidden), Oct 2026. Window points; the toolbar row is y 10–42.
@@ -2874,7 +2874,7 @@ through `DialogsClient` (`SharedWindowFeature/WindowData+Dialogs.swift`, `ARCCli
   (command id `toggleToolbarFullURLs`, Arc's action name), not an Arc menu item. The right-click menu is built
   now (g105, next section).
 
-## Toolbar right-click menu → `ToolbarMenu` (KiteCore), `PageToolbarHost`, `BrowserWindowController+ToolbarMenu` (Arc 1.171 disassembly and strings, 1 Nov 2026, g105)
+## Toolbar right-click menu → `ToolbarMenu` (KiteCore), `PageToolbar`, `BrowserWindowController+ToolbarMenu` (Arc 1.171 disassembly and strings, 1 Nov 2026, g105)
 
 All from `~/rea-arc/decomp/arc.s` (Arc 1.171) and `~/rea-arc/arc-strings.txt`; nothing in Arc was opened or
 pressed, so none of it was seen on screen.
