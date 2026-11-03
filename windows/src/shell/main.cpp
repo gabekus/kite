@@ -20,6 +20,10 @@
 //   Kite.exe --capture FILE.png --space-tip N
 //                            the same with space N's tip (1-based) over its cell, at rest (the
 //                            cell's hover backing isn't drawn: no pointer is on it).
+//   Kite.exe --capture FILE.png --swipe DX
+//                            the same with two fingers on a touchpad holding the sidebar's
+//                            content dragged DX points sideways (positive towards the previous
+//                            space): the pages, the bar's light and the theme as they follow.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -35,6 +39,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -165,7 +170,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         const std::wstring& a = args[i];
         if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
         if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
-            a == L"--space-tip") {
+            a == L"--space-tip" || a == L"--swipe") {
             ++i;
             continue;
         }
@@ -218,6 +223,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         tipIndex = static_cast<size_t>(std::stoi(*tipOption.value) - 1);
     }
     if (tipOption.present && !captureOption.present) return Fail(quiet, L"--space-tip only goes with --capture", kUsage);
+    const OptionValue swipeOption = Option(args, L"--swipe");
+    std::optional<double> swipe;
+    if (swipeOption.present) {
+        const std::string text = swipeOption.value ? Narrow(*swipeOption.value) : std::string();
+        double dx = 0;
+        auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), dx);
+        if (text.empty() || error != std::errc() || end != text.data() + text.size() || !(std::abs(dx) <= 10000)) {
+            return Fail(quiet, L"--swipe takes the points the fingers dragged, -10000 to 10000", kUsage);
+        }
+        swipe = dx;
+    }
+    if (swipeOption.present && !captureOption.present) return Fail(quiet, L"--swipe only goes with --capture", kUsage);
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
 
@@ -352,7 +369,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         kite::Pixels pixels;
         const std::optional<std::string> barText =
             commandBarOption.present ? std::optional<std::string>(Narrow(*commandBarOption.value)) : std::nullopt;
-        captureError = controller->Capture(pixels, barText, tipIndex);
+        if (swipe) captureError = controller->HoldSwipe(*swipe);
+        if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);
         PostMessageW(window.Handle(), WM_CLOSE, 0, 0);
     }

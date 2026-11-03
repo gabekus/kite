@@ -3,6 +3,7 @@
 #include "shell/BrowserWindowController.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -138,6 +139,16 @@ std::wstring BrowserWindowController::Init() {
     sidebar_->Layout(static_cast<float>(kSidebarWidth), window_.Dpi());
     sidebar_->Update(state_);
 
+    // Two fingers on a precision touchpad over the sidebar: a swipe between spaces, or the
+    // list's scroll. Without DirectManipulation they stay the system's wheel messages.
+    if (!options_.capture) {
+        touchpad_ = TouchpadInput::Create(
+            window_.Handle(), [this](const SwipeInput& input) { SwipeInputArrived(input); }, error);
+        if (touchpad_) touchpad_->SetScale(static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI);
+        else OutputDebugStringW((L"Kite: no touchpad gestures: " + error + L"\n").c_str());
+        error.clear();
+    }
+
     // Windows' minimize, maximize and close buttons, top-right over the backdrop (the window
     // has no caption), and where dragging moves the window.
     caption_ = CaptionButtonsView::Create(window_.Handle(), error);
@@ -254,8 +265,11 @@ void BrowserWindowController::SyncSpace() {
 
 void BrowserWindowController::SpaceChanged(size_t old, size_t now) {
     // A switch from the keyboard slides the pages, as Arc's do: the new page comes in from the
-    // side it lies on, the page left behind built until they're at rest.
-    if (old == now) return;
+    // side it lies on, the page left behind built until they're at rest. A swipe's own landing
+    // doesn't (its pages are already there), and mid-swipe the pages are the fingers'.
+    if (old == now || selectingBySwipe_ || swipe_.Swiping()) return;
+    // A swipe's landing still to come is overtaken by this switch.
+    pendingLanding_.reset();
     KillTimer(window_.Handle(), kSettleTimer);
     pagesAnchor_ = state_.spaces[old].id;
     const float from = (now > old ? 1.0f : -1.0f) * static_cast<float>(kSidebarWidth);
@@ -278,11 +292,109 @@ void BrowserWindowController::FinishSettling() {
     KillTimer(window_.Handle(), kSettleTimer);
     sidebarSliding_ = false;
     slideStarted_ = false;
+    // A swipe's landing: its space is selected now the pages are at rest, its page where the
+    // neighbour's was.
+    CommitLanding();
     sidebar_->SetPageOffset(0);
     // At rest: the new space's neighbours are built, the page left behind goes.
     if (!pagesAnchor_) return;
     pagesAnchor_.reset();
     sidebar_->Update(state_);
+}
+
+SpaceSwipeGesture::Step BrowserWindowController::SwipeInputArrived(const SwipeInput& input) {
+    // Over the sidebar (the touchpad takes only contacts there) and with nothing over it.
+    const bool overSidebar = !(commandBar_ && commandBar_->IsOpen());
+    const SpaceSwipeGesture::Step step = swipe_.Handle(input, overSidebar, [this] { return BeginSwipe(); });
+    switch (step) {
+    case SpaceSwipeGesture::Step::Pass:
+        // A vertical gesture is the list's scroll (and its momentum): content dragged down
+        // goes back up the list.
+        if (input.dy != 0 && overSidebar) sidebar_->ScrollList(swipeContact_, static_cast<float>(-input.dy));
+        break;
+    case SpaceSwipeGesture::Step::Move:
+        ShowSwipe();
+        break;
+    case SpaceSwipeGesture::Step::Release:
+        FinishSwipe(swipe_.Landing());
+        break;
+    case SpaceSwipeGesture::Step::Swallow:
+        break;
+    }
+    return step;
+}
+
+SwipeStart BrowserWindowController::BeginSwipe() {
+    // Caught mid-settle: carry on from where the pages are, with the selected space's
+    // neighbours, a landing still to come selected first.
+    float offset = sidebar_->PageOffset();
+    KillTimer(window_.Handle(), kSettleTimer);
+    sidebarSliding_ = false;
+    slideStarted_ = false;
+    offset += static_cast<float>(CommitLanding() * kSidebarWidth);
+    if (pagesAnchor_) {
+        pagesAnchor_.reset();
+        sidebar_->Update(state_);
+    }
+    sidebar_->SetPageOffset(offset);
+    const size_t index = state_.SelectedSpaceIndex();
+    return SwipeStart{static_cast<double>(kSidebarWidth), index > 0, index + 1 < state_.spaces.size(), offset};
+}
+
+void BrowserWindowController::ShowSwipe() {
+    const SpaceSwipe& swipe = *swipe_.Swipe();
+    sidebar_->SetPageOffset(static_cast<float>(swipe.Offset()));
+    // The theme crossfades towards the neighbour the pages are moving to, drawn on the next
+    // frame (the clock's, which runs while the touchpad does).
+    const size_t index = state_.SelectedSpaceIndex();
+    const Theme& current = state_.spaces[index].theme;
+    const size_t neighbour = index + static_cast<size_t>(swipe.Direction());
+    const bool hasNeighbour = swipe.Direction() != 0 && neighbour < state_.spaces.size();
+    theme_.SetInteractive(current, hasNeighbour ? state_.spaces[neighbour].theme : current, static_cast<float>(swipe.Progress()));
+    swipeMoved_ = true;
+    clock_->Start();
+}
+
+void BrowserWindowController::FinishSwipe(int landing) {
+    const size_t index = state_.SelectedSpaceIndex();
+    // A space selected under the swipe (from the keyboard) may leave no neighbour that side.
+    const size_t target = index + static_cast<size_t>(landing);
+    if (landing != 0 && target >= state_.spaces.size()) landing = 0;
+    const Space& space = state_.spaces[index + static_cast<size_t>(landing)];
+    const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
+    if (visible) {
+        theme_.FinishInteractive(space.theme, FrameClock::Now());
+        clock_->Start();
+    } else {
+        theme_.Snap(space.theme);
+    }
+    // The pages slide on to the neighbour's page before the space is selected: selecting it
+    // redraws the sidebar and swaps the web page, work that would stall the slide's first frames.
+    if (landing != 0) pendingLanding_ = Landing{space.id, landing};
+    const float to = -static_cast<float>(landing * kSidebarWidth);
+    const double duration = visible ? sidebar_->SlidePages(sidebar_->PageOffset(), to) : 0;
+    if (duration <= 0) {
+        sidebar_->SetPageOffset(to);
+        return FinishSettling();
+    }
+    sidebarSliding_ = true;
+    // The bar's light slides with them (SlidePages leaves that to the sidebar's next Update).
+    sidebar_->Update(state_, pagesAnchor_);
+    SetTimer(window_.Handle(), kSettleTimer, static_cast<UINT>(std::ceil(duration * 1000)) + 17, nullptr);
+}
+
+int BrowserWindowController::CommitLanding() {
+    if (!pendingLanding_) return 0;
+    const Landing landing = *pendingLanding_;
+    pendingLanding_.reset();
+    if (!state_.SpaceIndex(landing.spaceID)) return 0;
+    // The page left behind stays built until the next pass at rest (FinishSettling's).
+    pagesAnchor_ = state_.SelectedSpace().id;
+    selectingBySwipe_ = true;
+    state_.SelectSpace(landing.spaceID);
+    SelectionMoved();
+    selectingBySwipe_ = false;
+    return landing.pages;
 }
 
 bool BrowserWindowController::CommandEnabled(const std::string& command) const {
@@ -296,14 +408,21 @@ bool BrowserWindowController::CommandEnabled(const std::string& command) const {
 void BrowserWindowController::Frame(double time) {
     ++frameCount_;
     lastFrameTime_ = time;
-    // Minimized: nothing to draw into (OnSize draws the end of it on restore).
-    if (!IsIconic(window_.Handle())) DrawAt(time, nullptr);
-    else lastThemeProgress_ = theme_.Progress(time);
+    // The touchpad's movement this frame first, so the frame shows it.
+    if (touchpad_ && touchpad_->Active()) touchpad_->Update();
+    // Only what moved draws: the crossfade, or a swipe's step. The touchpad's other frames (a
+    // vertical scroll's, a swipe's swallowed momentum) leave the backdrop as it is.
+    if (theme_.Fading() || swipeMoved_) {
+        swipeMoved_ = false;
+        // Minimized: nothing to draw into (OnSize draws the end of it on restore).
+        if (!IsIconic(window_.Handle())) DrawAt(time, nullptr);
+        else lastThemeProgress_ = theme_.Progress(time);
+    }
     if (options_.frameLog) {
         if (frames_.empty()) frames_.reserve(1024);
         frames_.push_back(LoggedFrame{FrameClock::Now(), time, sidebar_->PageOffset(), lastThemeProgress_});
     }
-    if (!theme_.Fading()) {
+    if (!theme_.Fading() && !(touchpad_ && touchpad_->Active())) {
         clock_->Stop();
         lastFrameTime_.reset();
     }
@@ -612,6 +731,7 @@ void BrowserWindowController::OnSize() {
 #endif
     sidebar_->Layout(static_cast<float>(kSidebarWidth), window_.Dpi());
     caption_->Layout(window_.Dpi());
+    if (touchpad_) touchpad_->SetScale(static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI);
     Draw();
     if (commandBar_) commandBar_->Layout();
 #ifdef KITE_HAS_CEF
@@ -627,6 +747,24 @@ void BrowserWindowController::OnSize() {
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
     // The caption buttons' presses, whatever else is open.
     if (caption_->HandleMessage(message, wParam, lParam, result)) return true;
+    // Two fingers coming down on a precision touchpad: over the sidebar (and nothing over it),
+    // the gesture is DirectManipulation's, and its frames come with the clock.
+    if (message == DM_POINTERHITTEST && touchpad_) {
+        const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        const bool taken = touchpad_->HitTest(wParam, [&](POINT at) {
+            RECT client{};
+            GetClientRect(window_.Handle(), &client);
+            return !(commandBar_ && commandBar_->IsOpen()) && at.x >= 0 && at.y >= 0 && at.y < client.bottom &&
+                   static_cast<float>(at.x) < static_cast<float>(kSidebarWidth) * scale;
+        });
+        if (taken) {
+            swipeContact_ = touchpad_->Contact();
+            clock_->Start();
+            result = 0;
+            return true;
+        }
+        return false;
+    }
 #ifdef KITE_HAS_CEF
     // A key typed straight after Ctrl+T in a page can come before Chromium's note that Ctrl+T
     // was pressed: it opens the bar itself, and the note then finds it open.
@@ -723,44 +861,118 @@ void BrowserWindowController::Show(int showCommand, bool behindOtherWindows) {
 
 // MARK: Tests
 
+std::wstring BrowserWindowController::RunToRest(const wchar_t* what) {
+    const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
+    const bool fades = theme_.Fading();
+    if (visible && !sidebarSliding_) return std::wstring(what) + L" didn't slide the pages";
+    if (!visible && (sidebarSliding_ || fades)) return std::wstring(what) + L" animated a hidden window";
+    // The clock's frames until the fade ends and the slide's timer fires (2 s at most). Only
+    // those (and the window's other timers): the rest waits for the message loop, so a page
+    // that loads meanwhile can't close the window mid-switch.
+    const size_t framesBefore = frameCount_;
+    const ULONGLONG deadline = GetTickCount64() + 2000;
+    MSG message;
+    while ((clock_->Running() || sidebarSliding_) && GetTickCount64() < deadline) {
+        if (PeekMessageW(&message, window_.Handle(), kFrameMessage, kFrameMessage, PM_REMOVE) ||
+            PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE)) {
+            DispatchMessageW(&message);
+        } else {
+            Sleep(1);
+        }
+    }
+    if (clock_->Running()) return std::wstring(what) + L": the frame clock never stopped";
+    if (sidebarSliding_) return std::wstring(what) + L": the pages' slide never ended";
+    if (fades && frameCount_ == framesBefore) return std::wstring(what) + L": the crossfade got no frames";
+    if (sidebar_->PageOffset() != 0 || pagesAnchor_ || pendingLanding_) return std::wstring(what) + L": the pages didn't come to rest";
+    if (theme_.Fading() || theme_.Interactive() || theme_.from != state_.SelectedSpace().theme) {
+        return std::wstring(what) + L": the theme didn't come to rest";
+    }
+    return {};
+}
+
 std::wstring BrowserWindowController::SmokeTestSpaces() {
     const std::string before = state_.SelectedSpace().id;
     const size_t index = state_.SelectedSpaceIndex();
-    const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
-    const auto settle = [&](const wchar_t* what) -> std::wstring {
-        const bool fades = theme_.Fading();
-        if (visible && !sidebarSliding_) return std::wstring(what) + L" didn't slide the pages";
-        if (!visible && (sidebarSliding_ || fades)) return std::wstring(what) + L" animated a hidden window";
-        // The clock's frames until the fade ends and the slide's timer fires (2 s at most). Only
-        // those (and the window's other timers): the rest waits for the message loop, so a page
-        // that loads meanwhile can't close the window mid-switch.
-        const size_t framesBefore = frameCount_;
-        const ULONGLONG deadline = GetTickCount64() + 2000;
-        MSG message;
-        while ((clock_->Running() || sidebarSliding_) && GetTickCount64() < deadline) {
-            if (PeekMessageW(&message, window_.Handle(), kFrameMessage, kFrameMessage, PM_REMOVE) ||
-                PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE)) {
-                DispatchMessageW(&message);
-            } else {
-                Sleep(1);
-            }
-        }
-        if (clock_->Running()) return std::wstring(what) + L": the frame clock never stopped";
-        if (sidebarSliding_) return std::wstring(what) + L": the pages' slide never ended";
-        if (fades && frameCount_ == framesBefore) return std::wstring(what) + L": the crossfade got no frames";
-        if (sidebar_->PageOffset() != 0 || pagesAnchor_) return std::wstring(what) + L": the pages didn't come to rest";
-        if (theme_.Fading() || theme_.from != state_.SelectedSpace().theme) return std::wstring(what) + L": the theme didn't come to rest";
-        return {};
-    };
     RunCommand("nextSpace");
     if (state_.SelectedSpaceIndex() == index) return L"Next Space didn't select another space";
-    if (std::wstring problem = settle(L"Next Space"); !problem.empty()) return problem;
+    if (std::wstring problem = RunToRest(L"Next Space"); !problem.empty()) return problem;
     RunCommand("previousSpace");
-    if (std::wstring problem = settle(L"Previous Space"); !problem.empty()) return problem;
+    if (std::wstring problem = RunToRest(L"Previous Space"); !problem.empty()) return problem;
     if (state_.SelectedSpace().id != before) return L"Previous Space didn't come back";
     // Space n past the last space passes its key on.
     if (CommandEnabled("space9") != (state_.spaces.size() >= 9)) return L"Space 9 is enabled without a ninth space";
     frames_.clear();
+    return {};
+}
+
+std::wstring BrowserWindowController::SmokeTestSwipe() {
+    // Touchpad events as DirectManipulation reports them, a frame apart, over the list.
+    using Phase = SwipeInput::Phase;
+    using Step = SpaceSwipeGesture::Step;
+    const float scale = static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+    swipeContact_ = POINT{std::lround(120 * scale), std::lround(200 * scale)};
+    double stamp = FrameClock::Now();
+    const auto send = [&](Phase phase, double dx, double dy, double after = 1.0 / 60) {
+        stamp += after;
+        return SwipeInputArrived(SwipeInput{phase, dx, dy, stamp});
+    };
+    const std::string before = state_.SelectedSpace().id;
+    const size_t index = state_.SelectedSpaceIndex();
+    // Towards whichever neighbour there is: the next space's content comes in from the right.
+    const int towards = index + 1 < state_.spaces.size() ? 1 : -1;
+    const size_t neighbour = index + static_cast<size_t>(towards);
+
+    // A gesture that starts vertically scrolls the list and never swipes, sideways or not.
+    send(Phase::Began, 0, 0);
+    if (send(Phase::Changed, 2, -10) != Step::Pass || send(Phase::Changed, -towards * 60.0, 0) != Step::Pass ||
+        swipe_.Swiping() || sidebar_->PageOffset() != 0) {
+        return L"a vertical gesture swiped";
+    }
+    send(Phase::Ended, 0, 0);
+    send(Phase::MomentumEnded, 0, 0);
+
+    // Sideways: the pages and the theme follow the fingers, and a frame draws it.
+    send(Phase::Began, 0, 0);
+    for (int i = 0; i < 6; ++i) send(Phase::Changed, -towards * 25.0, 0);
+    if (!swipe_.Swiping()) return L"a sideways gesture didn't swipe";
+    if (std::abs(sidebar_->PageOffset() + towards * 150.0f) > 0.01f) return L"the pages didn't follow the swipe";
+    if (!theme_.Interactive() || std::abs(theme_.Progress(0) - 150.0f / kSidebarWidth) > 1e-4f ||
+        theme_.to != state_.spaces[neighbour].theme) {
+        return L"the theme didn't follow the swipe";
+    }
+    if (std::wstring problem = Draw(); !problem.empty()) return L"a swipe's frame didn't draw: " + problem;
+    // Let go past half a page: it lands on the neighbour, its momentum swallowed.
+    if (send(Phase::Ended, 0, 0) != Step::Release || swipe_.Landing() != towards) return L"a swipe past half a page didn't land";
+    if (send(Phase::Momentum, -towards * 40.0, 30) != Step::Swallow) return L"a swipe's momentum wasn't swallowed";
+    send(Phase::MomentumEnded, 0, 0);
+    if (std::wstring problem = RunToRest(L"A swipe"); !problem.empty()) return problem;
+    if (state_.SelectedSpaceIndex() != neighbour) return L"a swipe didn't select the space it landed on";
+
+    // A short slow drag back stays where it is.
+    send(Phase::Began, 0, 0);
+    for (int i = 0; i < 4; ++i) send(Phase::Changed, towards * 10.0, 0, 0.1);
+    if (send(Phase::Ended, 0, 0) != Step::Release || swipe_.Landing() != 0) return L"a short slow swipe didn't stay";
+    if (std::wstring problem = RunToRest(L"A short swipe"); !problem.empty()) return problem;
+    if (state_.SelectedSpaceIndex() != neighbour) return L"a short swipe moved the selection";
+
+    // A flick back lands on the space it started from, however short.
+    send(Phase::Began, 0, 0);
+    for (int i = 0; i < 3; ++i) send(Phase::Changed, towards * 20.0, 0);
+    if (send(Phase::Ended, 0, 0) != Step::Release || swipe_.Landing() != -towards) return L"a flick didn't land";
+    if (std::wstring problem = RunToRest(L"A flick"); !problem.empty()) return problem;
+    if (state_.SelectedSpace().id != before) return L"a flick back didn't come back";
+    frames_.clear();
+    return {};
+}
+
+std::wstring BrowserWindowController::HoldSwipe(double dx) {
+    using Phase = SwipeInput::Phase;
+    double stamp = FrameClock::Now();
+    SwipeInputArrived(SwipeInput{Phase::Began, 0, 0, stamp});
+    // At a steady pace, a frame at a time, as fingers would.
+    const int steps = std::max(1, static_cast<int>(std::ceil(std::abs(dx) / 20)));
+    for (int i = 0; i < steps; ++i) SwipeInputArrived(SwipeInput{Phase::Changed, dx / steps, 0, stamp += 1.0 / 60});
+    if (!swipe_.Swiping()) return L"the swipe didn't begin";
     return {};
 }
 
@@ -789,6 +1001,8 @@ std::wstring BrowserWindowController::SmokeTest() {
     // clock's frames, and both come to rest on the next space, then back on this one.
     if (state_.spaces.size() > 1) {
         if (std::wstring problem = SmokeTestSpaces(); !problem.empty()) return problem;
+        // And swiping between them with two fingers on a touchpad.
+        if (std::wstring problem = SmokeTestSwipe(); !problem.empty()) return problem;
     }
     // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt and
     // draw again (a real device removal can't be caused from a test).

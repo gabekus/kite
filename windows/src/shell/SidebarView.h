@@ -87,7 +87,8 @@ public:
     // it draws on the next pass of the message loop.
     void Update(const BrowserState& state, const std::optional<std::string>& anchor = std::nullopt);
     // Where the strip of pages sits, in points from rest (positive shows the previous space's
-    // page coming in from the left). Shown at the compositor's next commit; draws nothing.
+    // page coming in from the left), the bar's light with it (a swipe's frame). Shown at the
+    // compositor's next commit; draws nothing.
     void SetPageOffset(float offset);
     // The strip settles from `from` to `to` points with Arc's page spring, on the compositor
     // from the next commit (core's SettleSegments). How long that takes, in seconds; 0 when
@@ -95,6 +96,9 @@ public:
     double SlidePages(float from, float to);
     // Where the strip is now, mid-slide too (for hit tests, and a slide caught mid-way).
     float PageOffset() const;
+    // A touchpad's scroll at `at` (client px): over the selected space's list it scrolls by
+    // `distance` points (positive moves it on, down the list) and is the list's (true).
+    bool ScrollList(POINT at, float distance);
     // The window's size or DPI changed: `width` is the sidebar's, in points. Draw follows.
     void Layout(float width, UINT dpi);
     // Icons arrived (Favicons::TakeResults): the pages, whose rows wait for them, draw again
@@ -179,6 +183,7 @@ private:
     // A point in the sidebar as the space bar sees it, when it's over the bar.
     std::optional<D2D1_POINT_2F> BarPoint(D2D1_POINT_2F point) const;
     void SetScroll(float scroll);
+    bool OverList(D2D1_POINT_2F p) const;
     void Perform(const SidebarTap& tap);
     void DrawText(ID2D1DeviceContext* context, const std::string& text, IDWriteTextFormat* format, float x, float baseline,
                   float maxWidth, D2D1_COLOR_F color);

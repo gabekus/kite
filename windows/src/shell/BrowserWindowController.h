@@ -21,6 +21,7 @@
 #include "core/KeyBindings.h"
 #include "core/Models.h"
 #include "core/SpaceSwipe.h"
+#include "core/SpaceSwipeGesture.h"
 #include "core/ThemeBackdrop.h"
 #include "shell/CaptionButtonsView.h"
 #ifdef KITE_HAS_CEF
@@ -33,6 +34,7 @@
 #include "shell/MainWindow.h"
 #include "shell/Renderer.h"
 #include "shell/SidebarView.h"
+#include "shell/TouchpadInput.h"
 
 namespace kite {
 
@@ -97,6 +99,9 @@ public:
     // The window's frame as the screen shows it: the backdrop with the sidebar, the caption
     // buttons and (with `barText`) the command bar opened with that text, composed over it.
     std::wstring Capture(Pixels& pixels, const std::optional<std::string>& barText, std::optional<size_t> tip = std::nullopt);
+    // For a capture: two fingers over the sidebar have dragged its content `dx` points sideways
+    // and are held there (the pages, the bar's light and the theme as they follow).
+    std::wstring HoldSwipe(double dx);
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
@@ -122,15 +127,29 @@ private:
     void SyncSpace();
     void SpaceChanged(size_t old, size_t now);
     void FinishSettling();
+    // Two fingers over the sidebar (the Mac's SpaceSwipeController): each touchpad event goes
+    // through core's SpaceSwipeGesture; a swipe's pages, bar and theme follow it, and its
+    // release settles on a space, selected once the pages are at rest (CommitLanding, which
+    // says how many pages the selection moved). A vertical gesture scrolls the list.
+    SpaceSwipeGesture::Step SwipeInputArrived(const SwipeInput& input);
+    SwipeStart BeginSwipe();
+    void ShowSwipe();
+    void FinishSwipe(int landing);
+    int CommitLanding();
     // Whether a shortcut's command would do anything now (the Mac's validateMenuItem): Space n
     // for a space there isn't passes its key on.
     bool CommandEnabled(const std::string& command) const;
-    // One frame of the clock's: the theme's crossfade drawn for the composition frame at
-    // `time` (the pages' slide runs on the compositor).
+    // One frame of the clock's: the touchpad's movement, then the theme's crossfade or a
+    // swipe's step drawn for the composition frame at `time` (the pages' slide runs on the
+    // compositor).
     void Frame(double time);
     std::wstring DrawAt(double time, Pixels* readBack);
     // The smoke test's space switch, there and back, run to rest.
     std::wstring SmokeTestSpaces();
+    // The smoke test's swipes, fed to SwipeInputArrived as a touchpad's events would be.
+    std::wstring SmokeTestSwipe();
+    // The clock's frames and the slide's timer, until the theme and the pages are at rest.
+    std::wstring RunToRest(const wchar_t* what);
     // What the pages reported and Kite hasn't run yet (the window's close, at logoff, comes
     // with no WM_CLOSE first).
     void RunPending();
@@ -198,6 +217,17 @@ private:
     std::optional<std::string> pagesAnchor_;
     bool sidebarSliding_ = false;
     bool slideStarted_ = false;
+    // The swipe's: where the touchpad's contact is (client px), the space a release landed on,
+    // selected when the pages come to rest, and that selection under way.
+    SpaceSwipeGesture swipe_;
+    POINT swipeContact_{};
+    struct Landing {
+        std::string spaceID;
+        int pages;
+    };
+    std::optional<Landing> pendingLanding_;
+    bool selectingBySwipe_ = false;
+    bool swipeMoved_ = false;  // since the clock's last frame drew
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
     std::unique_ptr<SidebarView> sidebar_;
@@ -206,6 +236,9 @@ private:
     std::wstring barError_;
     // Frames while something animates (before the window in destruction: it posts to it).
     std::unique_ptr<FrameClock> clock_;
+    // A precision touchpad's gestures over the sidebar (null where there's no DirectManipulation;
+    // before the window in destruction: it lets the window go).
+    std::unique_ptr<TouchpadInput> touchpad_;
     struct LoggedFrame {
         double handled, target, offset, theme;
     };

@@ -10,6 +10,7 @@
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
+//   kitecore [--profile DIR] space swipe DX [SECONDS]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
@@ -24,6 +25,10 @@
 // its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
 // bottom selects the space whose cell it hits.
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space.
+// `space swipe` is two fingers sideways over the sidebar: the content dragged DX points (positive
+// towards the previous space) at a steady pace over SECONDS (default 0.25), an event every
+// 1/60 s, then let go. It prints where the pages were at the release (offset, the theme's
+// progress and direction) and where it lands, and selects that space.
 
 #include <algorithm>
 #include <charconv>
@@ -44,6 +49,7 @@
 #include "core/SessionStore.h"
 #include "core/Sidebar.h"
 #include "core/SpaceBar.h"
+#include "core/SpaceSwipeGesture.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
 #include "core/URLInput.h"
@@ -78,6 +84,7 @@ int Usage() {
         "       kitecore [--profile DIR] archive-stale [NOW]\n"
         "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
         "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
+        "       kitecore [--profile DIR] space swipe DX [SECONDS]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n",
         stderr);
     return kUsage;
@@ -527,7 +534,35 @@ int main(int argc, char** argv) {
         }
     } else if (command == "space" && args.size() >= 2) {
         const std::string& action = args[1];
-        if (action == "next") state.SelectAdjacentSpace(1);
+        if (action == "swipe" && (args.size() == 3 || args.size() == 4)) {
+            double values[2] = {0, 0.25};
+            for (size_t i = 2; i < args.size(); ++i) {
+                auto [end, error] = std::from_chars(args[i].data(), args[i].data() + args[i].size(), values[i - 2]);
+                if (error != std::errc() || end != args[i].data() + args[i].size()) return Usage();
+            }
+            if (!std::isfinite(values[0]) || !std::isfinite(values[1]) || values[1] < 0) return Usage();
+            // The window's sidebar, the pages at rest.
+            const size_t index = state.SelectedSpaceIndex();
+            const SwipeStart start{240, index > 0, index + 1 < state.spaces.size(), 0};
+            SpaceSwipeGesture gesture;
+            const auto begin = [&] { return start; };
+            const int events = std::max(1, static_cast<int>(std::lround(values[1] * 60)));
+            gesture.Handle(SwipeInput{SwipeInput::Phase::Began, 0, 0, 0}, true, begin);
+            for (int i = 1; i <= events; ++i) {
+                gesture.Handle(SwipeInput{SwipeInput::Phase::Changed, values[0] / events, 0, i / 60.0}, true, begin);
+            }
+            json::Object out;
+            if (const auto& swipe = gesture.Swipe()) {
+                out.emplace("offset", swipe->Offset());
+                out.emplace("progress", swipe->Progress());
+                out.emplace("direction", static_cast<double>(swipe->Direction()));
+            }
+            gesture.Handle(SwipeInput{SwipeInput::Phase::Ended, 0, 0, (events + 1) / 60.0}, true, begin);
+            out.emplace("landing", static_cast<double>(gesture.Landing()));
+            state.SelectSpaceAt(index + gesture.Landing());
+            out.emplace("space", state.SelectedSpace().id);
+            std::puts(json::Write(json::Value(std::move(out))).c_str());
+        } else if (action == "next") state.SelectAdjacentSpace(1);
         else if (action == "prev") state.SelectAdjacentSpace(-1);
         else if (args.size() == 2 && action.size() == 1 && action[0] >= '1' && action[0] <= '9') {
             // Space 1–9 (the Mac's selectSpaceNumber): nothing past the last space.

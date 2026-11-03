@@ -57,6 +57,10 @@ public:
     // SettleSegments), with the pages `built` around `selected`, `pageWidth` apart.
     void Slide(const std::vector<CubicSegment>& segments, double duration, double from, double to, double pageWidth,
                const std::vector<size_t>& built, size_t selected);
+    // The cells' light with the pages held `offset` points from rest (a swipe's frame:
+    // SpaceSwipe::Highlight), the pages `built` around `selected`, from the next draw. At 0 it's
+    // Land.
+    void Follow(double offset, double pageWidth, const std::vector<size_t>& built, size_t selected);
     // The pictures `names` arrived (or turned out unreadable): the cells showing them draw again.
     void InvalidatePictures(const std::set<std::string>& names);
     // At rest: each cell as it is (the slide's end, or a slide cut short), from the next draw.
@@ -115,8 +119,10 @@ private:
     Microsoft::WRL::ComPtr<ID2D1CommandList> RecordIcon(const SpaceCell& cell, HRESULT& hr);
     void PlaceCells();
     void ShowBacking();
-    // The opacities each layer shows at rest, or along the slide.
+    // The opacities each layer shows at rest, along the slide, or held by a swipe.
     void ApplyOpacities();
+    // How lit cell `index` is with no slide: as the session has it, or as a swipe holds it.
+    double LitAtRest(size_t index) const;
     D2D1_COLOR_F Primary(float alpha) const;
     float Scale() const { return static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI; }
 
@@ -160,6 +166,13 @@ private:
         size_t selected;
     };
     std::optional<Relight> slide_;
+    struct Held {
+        double offset, pageWidth;
+        std::vector<size_t> built;
+        size_t selected;
+        bool operator==(const Held&) const = default;
+    };
+    std::optional<Held> follow_;
     bool opacitiesApplied_ = false;
 };
 

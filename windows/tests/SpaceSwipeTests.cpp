@@ -247,3 +247,56 @@ TEST(theSettlesSegmentsFollowTheSpring) {
     CHECK(SettleDuration(0.05, space_motion::kPageResponse) == 0);
     CHECK(SettleSegments(0, space_motion::kPageResponse).empty());
 }
+
+// The crossfade following a swipe (ThemeView.setInteractiveTheme, finishInteractiveTheme).
+
+TEST(aSwipesCrossfadeFollowsTheFingers) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 0.4f);
+    CHECK(fade.Interactive() && !fade.Fading());
+    CHECK(fade.from == a && fade.to == b);
+    // Held whatever the time: it moves when the fingers do.
+    CHECK(fade.Progress(10) == 0.4f && fade.Progress(20) == 0.4f);
+    fade.SetInteractive(a, b, 1.5f);
+    CHECK(fade.Progress(0) == 1);
+    // A switch mid-swipe waits for the release.
+    CHECK(!fade.Set(Solid(0x445566), 1));
+    CHECK(fade.Interactive() && fade.to == b);
+}
+
+TEST(aReleasedSwipeSettlesFromWhereTheFingersLeftIt) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 0.6f);
+    fade.FinishInteractive(b, 5);
+    CHECK(!fade.Interactive() && fade.Fading());
+    CHECK(fade.from == a && fade.to == b);
+    CHECK(std::abs(fade.Progress(5) - 0.6f) < 1e-6);
+    CHECK(fade.Progress(5.05) > 0.6f);
+    CHECK(fade.Progress(5.5) == 1);
+    CHECK(!fade.Fading() && fade.from == b && fade.to == b);
+    // The next switch starts from nothing again.
+    CHECK(fade.Set(a, 6));
+    CHECK(fade.Progress(6) == 0);
+}
+
+TEST(aSwipeLetGoBackSettlesOnTheThemeItLeft) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 0.3f);
+    fade.FinishInteractive(a, 1);
+    // The same mix read from the other end: 30% of the way to `b` is 70% of the way back.
+    CHECK(fade.from == b && fade.to == a);
+    CHECK(std::abs(fade.Progress(1) - 0.7f) < 1e-6);
+    CHECK(fade.Progress(1.5) == 1);
+    CHECK(fade.from == a && fade.to == a);
+}
+
+TEST(aSnapEndsASwipesCrossfade) {
+    const Theme a = Solid(0x112233), b = Solid(0xAABBCC);
+    ThemeCrossfade fade(a);
+    fade.SetInteractive(a, b, 0.5f);
+    fade.Snap(b);
+    CHECK(!fade.Interactive() && !fade.Fading() && fade.from == b && fade.to == b && fade.Progress(0) == 1);
+}

@@ -43,6 +43,7 @@ add_library(KiteCoreWin STATIC
   src/core/SymbolShape.cpp
   src/core/PictureLoads.cpp
   src/core/SpaceSwipe.cpp
+  src/core/SpaceSwipeGesture.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
   src/core/TabClosing.cpp
@@ -114,6 +115,7 @@ if(WIN32)
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
     src/shell/SpaceTipView.cpp
+    src/shell/TouchpadInput.cpp
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
@@ -178,6 +180,7 @@ add_executable(KiteCoreTests
   tests/SpaceIconTests.cpp
   tests/PictureLoadsTests.cpp
   tests/SpaceSwipeTests.cpp
+  tests/SpaceSwipeGestureTests.cpp
   tests/SymbolShapeTests.cpp
   tests/TabClosingTests.cpp
   tests/SupportDirectoryTests.cpp
