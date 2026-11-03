@@ -122,8 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         claudeTasks = ClaudeTasksController(store: store, automation: automation, supportDirectory: Self.supportDirectory)
         // A notification clicked: the bubble, on that task.
         claudeTasks.showPanel = { [weak self] id in
-            NSApp.activate(ignoringOtherApps: true)
-            self?.windowController.window?.makeKeyAndOrderFront(nil)
+            // A diagnostics run stays behind the user's windows (kite test-ticket opens the bar too).
+            if !UIDiagnostics.enabledByEnvironment {
+                NSApp.activate(ignoringOtherApps: true)
+                self?.windowController.window?.makeKeyAndOrderFront(nil)
+            }
             self?.windowController.claudeBubble.open(task: id)
         }
         claudeTasks.isPanelVisible = { [weak self] in self?.windowController.claudeBubble.isOpen == true }
