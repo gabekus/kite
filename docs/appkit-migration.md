@@ -607,9 +607,11 @@ never touching the screen, the real pointer or another app.
 2. **Mini Player: works, and a bug found.** With `--autoplay-policy=no-user-gesture-required`, a local page playing a
    looping tone, then another tab selected: the Mini Player shows (AXGroup "Mini Player" [8,690 224×66], "Tone",
    "Pause"), and a posted click on Pause paused the page's audio (`paused` true) and turned the button to "Play".
-   **Bug:** a tab opened straight onto a page that starts playing never reports its media: no speaker button, no Mini
-   Player. The media scripts are added with `Page.addScriptToEvaluateOnNewDocument`, asynchronously, while the
-   tab's first document is already loading; the same page loaded again in the tab reports normally. Planned as M1e.
+   **Bug:** a tab opened straight onto a page that starts playing at once never reports its media: no speaker button,
+   no Mini Player (0 of 5 runs). A tab opened on another page and then navigated to it reports (5 of 5). Adding the
+   media scripts with `runImmediately` didn't change it, so it isn't only when the scripts are registered. The
+   likeliest cause, not yet proven: the script reports only on changes, and its first report (playing) comes before
+   Kite's DevTools handler listens, with nothing changing afterwards. Planned as M1e.
 3. **The 1Password key: checked in M1** (#289): a posted click logs the action it would take ("would add 1Password"),
    and its frame and label match main (AXButton "Add 1Password to this profile" [260,49 30×30]). Opening Gabe's real
    1Password can only be confirmed on his real profile.
