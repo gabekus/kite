@@ -12,6 +12,10 @@ struct CodePointRange {
     char32_t first, last;
 };
 
+struct LowercaseMapping {
+    char32_t from, to;
+};
+
 #include "core/UnicodeTables.inc"
 
 template <size_t N>
@@ -108,6 +112,49 @@ std::vector<std::u32string> Characters(std::string_view utf8) {
         previous = current;
     }
     return out;
+}
+
+std::string Encode(std::u32string_view codePoints) {
+    std::string out;
+    out.reserve(codePoints.size());
+    for (char32_t c : codePoints) {
+        if ((c >= 0xD800 && c <= 0xDFFF) || c > 0x10FFFF) c = 0xFFFD;
+        if (c < 0x80) {
+            out += static_cast<char>(c);
+        } else if (c < 0x800) {
+            out += static_cast<char>(0xC0 | (c >> 6));
+            out += static_cast<char>(0x80 | (c & 0x3F));
+        } else if (c < 0x10000) {
+            out += static_cast<char>(0xE0 | (c >> 12));
+            out += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (c & 0x3F));
+        } else {
+            out += static_cast<char>(0xF0 | (c >> 18));
+            out += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+            out += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (c & 0x3F));
+        }
+    }
+    return out;
+}
+
+std::string Lowercased(std::string_view utf8) {
+    std::u32string lowered;
+    lowered.reserve(utf8.size());
+    for (char32_t c : Decode(utf8)) {
+        if (c == 0x130) {  // İ: the one mapping to two scalars (SpecialCasing)
+            lowered += U"i\u0307";
+            continue;
+        }
+        if (c < 0x80) {
+            lowered += (c >= U'A' && c <= U'Z') ? c + 32 : c;
+            continue;
+        }
+        auto it = std::lower_bound(std::begin(kLowercase), std::end(kLowercase), c,
+                                   [](const LowercaseMapping& m, char32_t value) { return m.from < value; });
+        lowered += it != std::end(kLowercase) && it->from == c ? it->to : c;
+    }
+    return Encode(lowered);
 }
 
 std::string_view Trim(std::string_view utf8) {

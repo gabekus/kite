@@ -27,6 +27,22 @@ if(NOT first STREQUAL "https://news.ycombinator.com/item?id=1")
   message(FATAL_ERROR "new tab isn't on top: ${state}")
 endif()
 
+# The command bar's rows: a URL opens first, then the open tab it matches, then the search.
+kitecore(rows suggest news.ycombinator.com)
+string(JSON count LENGTH "${rows}")
+string(JSON kind0 GET "${rows}" 0 kind)
+string(JSON tab1 GET "${rows}" 1 tabID)
+string(JSON kind2 GET "${rows}" 2 kind)
+if(NOT count EQUAL 3 OR NOT kind0 STREQUAL "open" OR NOT tab1 STREQUAL id OR NOT kind2 STREQUAL "search")
+  message(FATAL_ERROR "suggest gave ${rows}")
+endif()
+# Editing the current tab's address doesn't offer that tab.
+kitecore(rows suggest news.ycombinator.com --current)
+string(JSON count LENGTH "${rows}")
+if(NOT count EQUAL 2)
+  message(FATAL_ERROR "suggest --current gave ${rows}")
+endif()
+
 kitecore(ignored space next)
 kitecore(state state)
 string(JSON work GET "${state}" spaces 1 id)

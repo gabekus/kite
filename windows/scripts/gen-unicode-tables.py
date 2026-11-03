@@ -8,6 +8,9 @@ library:
   numericType != nil.
 - Grapheme_Cluster_Break values (UAX #29), so text splits into Characters (extended
   grapheme clusters) like Swift's String.
+- Lowercase_Mapping (UnicodeData plus SpecialCasing's unconditional mappings), so
+  lowercasing matches Swift's String.lowercased(), which maps scalar by scalar. The one
+  mapping to more than one scalar (U+0130 to "i" + U+0307) is left to Unicode.cpp.
 
     python3 -m venv /tmp/ucd && /tmp/ucd/bin/pip install regex==2023.12.25
     /tmp/ucd/bin/python windows/scripts/gen-unicode-tables.py
@@ -58,6 +61,29 @@ def table(name, rs):
     return "\n".join(lines)
 
 
+def lowercase_table():
+    lines = ["inline constexpr LowercaseMapping kLowercase[] = {"]
+    row = []
+    for cp in range(sys.maxunicode + 1):
+        if 0xD800 <= cp <= 0xDFFF:
+            continue
+        lower = chr(cp).lower()  # one scalar alone: no Final_Sigma context, as in Swift
+        if lower == chr(cp):
+            continue
+        if len(lower) != 1:
+            if cp != 0x130:
+                sys.exit(f"U+{cp:04X} lowercases to {len(lower)} scalars; Unicode.cpp handles only U+0130")
+            continue
+        row.append(f"{{0x{cp:X}, 0x{ord(lower):X}}}")
+        if len(row) == 6:
+            lines.append("    " + ", ".join(row) + ",")
+            row = []
+    if row:
+        lines.append("    " + ", ".join(row) + ",")
+    lines.append("};")
+    return "\n".join(lines)
+
+
 def main():
     if unicodedata.unidata_version != UNICODE_VERSION:
         sys.exit(f"Python's unicodedata is {unicodedata.unidata_version}; this script expects {UNICODE_VERSION}")
@@ -87,6 +113,8 @@ def main():
         table("kGcbV", gcb("V")),
         "",
         table("kGcbT", gcb("T")),
+        "",
+        lowercase_table(),
         "",
     ]
     out.write_text("\n".join(parts))

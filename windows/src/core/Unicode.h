@@ -12,6 +12,9 @@ namespace kite::unicode {
 // Code points of UTF-8 text; each invalid byte becomes U+FFFD.
 std::vector<char32_t> Decode(std::string_view utf8);
 
+// UTF-8 for code points (U+FFFD for a surrogate or anything past U+10FFFF).
+std::string Encode(std::u32string_view codePoints);
+
 // Unicode's White_Space property (Swift's Character.isWhitespace / CharacterSet.whitespacesAndNewlines).
 bool IsWhitespace(char32_t c);
 bool IsLetter(char32_t c);  // Alphabetic: Swift's Character.isLetter on a character starting with c
@@ -26,5 +29,9 @@ std::vector<std::u32string> Characters(std::string_view utf8);
 
 // Trims leading and trailing Unicode whitespace.
 std::string_view Trim(std::string_view utf8);
+
+// Lowercased scalar by scalar with Unicode's full Lowercase_Mapping, as Swift's
+// String.lowercased() does (no Final_Sigma context: "ΑΣ" becomes "ασ", not "ας").
+std::string Lowercased(std::string_view utf8);
 
 }  // namespace kite::unicode
