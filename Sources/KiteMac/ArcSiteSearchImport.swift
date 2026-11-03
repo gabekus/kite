@@ -7,13 +7,13 @@ import SQLite3
 // Delete with ArcImportController.swift once Arc has shut down.
 
 enum ArcSiteSearchImport {
-    static var webDataFile: URL {
-        ArcImportController.arcDirectory.appendingPathComponent("User Data/Default/Web Data")
+    static func webDataFile(in folder: URL = ArcImportController.arcDirectory) -> URL {
+        folder.appendingPathComponent("User Data/Default/Web Data")
     }
 
     /// The shortcuts the user added or turned on, oldest first. Chromium's built-in
     /// engines (Google, Bing…) are left out; Kite has its own default engine setting.
-    static func read(from file: URL = webDataFile) -> [SiteSearch] {
+    static func read(from file: URL = webDataFile()) -> [SiteSearch] {
         // Arc keeps the database open and locked, so read a copy.
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent("kite-arc-webdata-\(UUID().uuidString)")
         guard (try? FileManager.default.copyItem(at: file, to: copy)) != nil else { return [] }
