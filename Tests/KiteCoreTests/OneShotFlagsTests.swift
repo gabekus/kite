@@ -54,7 +54,7 @@ struct OneShotFlagsTests {
     @Test func settingPostsDidChangeWithTheKey() {
         let (defaults, suite) = scratchDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
-        var keys: [String] = []
+        let keys = Keys()
         let token = NotificationCenter.default.addObserver(forName: OneShotFlags.didChange, object: nil, queue: nil) { note in
             if let key = note.userInfo?["key"] as? String { keys.append(key) }
         }
@@ -63,6 +63,24 @@ struct OneShotFlagsTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         OneShotFlags(defaults: defaults, environment: [:]).set(true, forKey: "real")
         OneShotFlags(defaults: defaults, environment: ["KITE_SUPPORT_PATH": folder.path]).set(true, forKey: "test")
-        #expect(keys.contains("real") && keys.contains("test"))
+        #expect(keys.all.contains("real") && keys.all.contains("test"))
+    }
+}
+
+/// The keys a test's observer saw. The observer block is `@Sendable`, so it can't append to a captured `var`.
+private final class Keys: @unchecked Sendable {
+    private let lock = NSLock()
+    private var keys: [String] = []
+
+    func append(_ key: String) {
+        lock.lock()
+        keys.append(key)
+        lock.unlock()
+    }
+
+    var all: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return keys
     }
 }
