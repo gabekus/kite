@@ -47,7 +47,7 @@ branch `helix/M<n>-<slug>` from main.
 |---|---|---|---|
 | M1 | Test-safe sign_in and password manager: on a test profile (`KITE_DIAGNOSTICS` with `KITE_SUPPORT_PATH`), sign_in doesn't bring Kite forward; the address field's key, ⇧⌘X and the sign-in pill's button don't open or add the password manager, and launch doesn't offer to add it; each logs what it would do | none (a test hook in AutomationController+SignIn.swift, ExtensionsToolbar.swift, BrowserWindowController+ExtensionTabs.swift, PasswordManagerIntegration.swift) | in review (#289) |
 | M1b | The sign-in pill's buttons take clicks: its host let every click through to the page, SwiftUI's own buttons included | none (a fix in ClaudeControlBanner.swift) | planned [after the handoff-reliability work: shares the handoff card's pass-through host] |
-| M2 | Page toolbar and its extension icons: the bar, its buttons, the address, the install icon, pinned extensions and the extensions button | PageToolbar.swift, ExtensionsToolbar.swift (ToolbarExtensionItems, was ExtensionsToolbarItems) | in review |
+| M2 | Page toolbar and its extension icons: the bar, its buttons, the address, the install icon, pinned extensions and the extensions button | PageToolbar.swift, ExtensionsToolbar.swift (ToolbarExtensionItems, was ExtensionsToolbarItems) | in review (#300) |
 | M3 | Site Controls popover | SiteControlsView.swift | planned |
 | M4 | The extensions popover | ExtensionsToolbar.swift (ExtensionsMenu) | planned |
 | M5 | Link preview card | LinkPreviewCard.swift | planned |
