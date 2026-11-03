@@ -5,6 +5,8 @@
 //   kitecore [--profile DIR] state
 //   kitecore [--profile DIR] resolve TEXT...
 //   kitecore [--profile DIR] suggest TEXT... [--current]
+//   kitecore [--profile DIR] sidebar [SPACE_ID]
+//   kitecore [--profile DIR] collapse SPACE_ID
 //   kitecore [--profile DIR] open TEXT... [--space ID] [--background]
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]
@@ -16,6 +18,9 @@
 // (lightness, foreground, glow, accent) and its window backdrop (material, and the corner and
 // centre pixels at WIDTH×HEIGHT px, default 1280×820) as sRGB hex. `suggest` prints the command
 // bar's rows for TEXT, top first (--current: editing the current tab's address, Ctrl+L).
+// `sidebar` prints what the sidebar shows for a space (default the selected one): the address
+// field's text and the space page's rows, top to bottom, with their place in points.
+// `collapse` is View → Collapse / Expand Pinned Tabs for a space.
 
 #include <algorithm>
 #include <charconv>
@@ -28,6 +33,7 @@
 #include "core/CommandBar.h"
 #include "core/OKLab.h"
 #include "core/SessionStore.h"
+#include "core/Sidebar.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
 #include "core/URLInput.h"
@@ -50,6 +56,8 @@ int Usage() {
         "usage: kitecore [--profile DIR] state\n"
         "       kitecore [--profile DIR] resolve TEXT...\n"
         "       kitecore [--profile DIR] suggest TEXT... [--current]\n"
+        "       kitecore [--profile DIR] sidebar [SPACE_ID]\n"
+        "       kitecore [--profile DIR] collapse SPACE_ID\n"
         "       kitecore [--profile DIR] open TEXT... [--space ID] [--background]\n"
         "       kitecore [--profile DIR] select TAB_ID\n"
         "       kitecore [--profile DIR] space next|prev|select ID|add NAME [ICON]\n"
@@ -238,6 +246,45 @@ int main(int argc, char** argv) {
         }
         std::puts(json::Write(json::Value(std::move(rows))).c_str());
         return kOk;
+    } else if (command == "sidebar" && args.size() <= 2) {
+        const auto space = args.size() == 2 ? state.SpaceIndex(Id(args[1])) : std::optional<size_t>(state.SelectedSpaceIndex());
+        if (!space) return kNotFound;
+        json::Array rows;
+        for (const SidebarRow& row : SidebarRows(state, *space)) {
+            static constexpr const char* kKinds[] = {"header", "tab", "folder", "divider", "newTab"};
+            json::Object o{{"kind", std::string(kKinds[static_cast<int>(row.kind)])}, {"id", row.id}, {"top", static_cast<double>(row.top)},
+                           {"height", static_cast<double>(row.height)}};
+            switch (row.kind) {
+            case SidebarRow::Kind::Header:
+                o.emplace("title", row.title);
+                o.emplace("icon", row.icon);
+                o.emplace("pinnedCollapsed", row.pinnedCollapsed);
+                break;
+            case SidebarRow::Kind::Tab:
+                o.emplace("title", row.title);
+                o.emplace("depth", row.depth);
+                o.emplace("pinned", row.pinned);
+                o.emplace("selected", row.selected);
+                if (row.favicon.url) o.emplace("favicon", *row.favicon.url);
+                break;
+            case SidebarRow::Kind::Folder:
+                o.emplace("title", row.title);
+                o.emplace("depth", row.depth);
+                o.emplace("expanded", row.expanded);
+                break;
+            case SidebarRow::Kind::Divider: o.emplace("line", row.showsLine); break;
+            case SidebarRow::Kind::NewTab: o.emplace("title", row.title); break;
+            }
+            rows.emplace_back(std::move(o));
+        }
+        json::Object out{{"address", AddressFieldText(state)}, {"rows", json::Value(std::move(rows))}};
+        std::puts(json::Write(json::Value(std::move(out))).c_str());
+        return kOk;
+    } else if (command == "collapse" && args.size() == 2) {
+        const std::string id = Id(args[1]);
+        if (!state.SpaceIndex(id)) return kNotFound;
+        TogglePinnedSection(state, id);
+        changed = true;
     } else if (command == "open") {
         std::optional<std::string> space;
         bool background = false;

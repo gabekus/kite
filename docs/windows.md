@@ -61,9 +61,11 @@ windows/
 
 The hard part is **airspace**. A Chromium child HWND draws on top of the
 window's own composition tree, so the glow and Peek couldn't overlap the page.
-Until W10, the command bar gets around it with a second DirectComposition
-target on the window with topmost TRUE, which shows over child windows, though
-it can't blur the page under it. While the bar is open the page windows are
+The window's composition tree is one DirectComposition device with two
+targets: the backdrop with the chrome over it (the sidebar, one surface drawn
+with Direct2D), behind the page; and the overlay, topmost TRUE, over the page.
+Until W10, the command bar lives in the overlay, which shows over child windows,
+though it can't blur the page under it. While the bar is open the page windows are
 disabled, so clicks reach Kite's window. Ctrl+T pressed in a page reaches Kite
 on CEF's UI thread (`OnPreKeyEvent`), which calls `SetFocus` on Kite's window
 so the keys typed next come to the bar. That call waits for Kite's thread:
@@ -94,11 +96,11 @@ is mid-draw. Keys that arrive before the bar opens open it
   tree on whatever adapter is there and redraws.
 - **Captures** (`--capture`, the Helix UI gate) read back the frame the
   window presents, laid out at `--capture-scale`× on any monitor. That's the
-  backdrop swap chain, with the command bar's buffer (`--command-bar`) put
-  over it on the CPU, as DirectComposition puts it. The caret is left out:
-  it's its own visual. Once the sidebar and page are more visuals (W4, W10),
-  the capture should read the composed window instead
-  (Windows.Graphics.Capture).
+  backdrop swap chain, with the sidebar's surface and the command bar's buffer
+  (`--command-bar`) drawn again into textures and put over it on the CPU, as
+  DirectComposition puts them. The caret is left out: it's its own visual.
+  The page isn't in it: a child window isn't part of the tree until W10 makes
+  pages textures.
 - **Material:** the Mac's `.sidebar` material, blended behind the window, is
   Windows 11's acrylic system backdrop (`DWMSBT_TRANSIENTWINDOW`) under a
   window with no redirection bitmap. Where there's none (Windows 10, Windows
@@ -147,7 +149,7 @@ tab either way, as on the Mac). The first page is made once the window is on
 screen and not minimized. `--smoke-test` loads
 `windows/helix/pages/smoke.html` in CI and fails unless one `WM_CLOSE`
 closes every browser in time. Not yet: the card's 6pt corners (a child window can't be clipped
-smoothly; W10), the sandbox (W6b), and the page in `--capture` (W4).
+smoothly; W10), the sandbox (W6b), and the page in `--capture` (W10).
 
 ## Refresh rate
 

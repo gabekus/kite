@@ -264,9 +264,10 @@ CommandBarView::~CommandBarView() {
     ReleaseGpu();
 }
 
-void CommandBarView::UseRenderer(Renderer* renderer) {
+void CommandBarView::UseCompositor(Compositor* compositor) {
     ReleaseGpu();
-    renderer_ = renderer;
+    compositor_ = compositor;
+    renderer_ = compositor ? &compositor->GetRenderer() : nullptr;
     deviceLost_ = false;
     if (open_ && renderer_) Draw();
 }
@@ -284,12 +285,11 @@ bool CommandBarView::CreateGpu(std::wstring& error) {
     }
     // Grayscale: ClearType needs an opaque background, and the panel isn't.
     context_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-    // topmost TRUE: over the page's child window (the backdrop's target is behind it).
-    if (FAILED(hr = DCompositionCreateDevice(dxgi.Get(), IID_PPV_ARGS(composition_.ReleaseAndGetAddressOf()))) ||
-        FAILED(hr = composition_->CreateTargetForHwnd(window_, TRUE, target_.ReleaseAndGetAddressOf())) ||
-        FAILED(hr = composition_->CreateVisual(visual_.ReleaseAndGetAddressOf())) ||
-        FAILED(hr = composition_->CreateVisual(caretVisual_.ReleaseAndGetAddressOf())) || FAILED(hr = target_->SetRoot(visual_.Get())) ||
-        FAILED(hr = composition_->Commit())) {
+    // In the overlay: over the page's child window (the backdrop is behind it).
+    composition_ = compositor_->Device();
+    if (FAILED(hr = composition_->CreateVisual(visual_.ReleaseAndGetAddressOf())) ||
+        FAILED(hr = composition_->CreateVisual(caretVisual_.ReleaseAndGetAddressOf())) ||
+        FAILED(hr = compositor_->Overlay()->AddVisual(visual_.Get(), FALSE, nullptr)) || FAILED(hr = composition_->Commit())) {
         error = HResultMessage(L"building the command bar's composition tree", hr);
         ReleaseGpu();
         return false;
@@ -309,12 +309,11 @@ void CommandBarView::ReleaseGpu() {
     caretSurface_.Reset();
     caretWidth_ = caretHeight_ = 0;
     caretAdded_ = false;
-    if (target_) {
-        target_->SetRoot(nullptr);
+    if (visual_ && compositor_) {
+        compositor_->Overlay()->RemoveVisual(visual_.Get());
         composition_->Commit();
     }
     visual_.Reset();
-    target_.Reset();
     composition_.Reset();
     brush_.Reset();
     context_.Reset();
