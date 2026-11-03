@@ -73,6 +73,7 @@ TEST(eachDrawnSymbolInksTheMacsBoxWithItsWeight) {
         {"theatermasks.fill", -11.0f, 10.6f, -7.5f, 7.0f, 183.6f},
     };
     CHECK(DrawnSymbols().size() == std::size(mac));
+    if (DrawnSymbols().size() != std::size(mac)) return;
     for (size_t i = 0; i < std::size(mac); ++i) {
         const Mac& m = mac[i];
         CHECK(DrawnSymbols()[i] == m.name);
@@ -99,8 +100,22 @@ TEST(aDrawnSymbolsHolesAndGapsShowThrough) {
     // A pad hole (0.85, 0.85 along and across the strip, turned 45 degrees) and the pad's middle.
     CHECK(!Covers(*SymbolShapeFor("bandage.fill"), 0.96f, 0.25f) && Covers(*SymbolShapeFor("bandage.fill"), -0.24f, 0.25f));
     CHECK(!Covers(*SymbolShapeFor("takeoutbag.and.cup.and.straw.fill"), -3.2f, -5.5f));
-    CHECK(Covers(*SymbolShapeFor("baseball.fill"), 0, 0));
+    // A seam (the left one's middle, the ball turned 20 degrees) between inked leather.
+    const SymbolShape& ball = *SymbolShapeFor("baseball.fill");
+    CHECK(Covers(ball, 0, 0) && !Covers(ball, -2.35f, -0.86f) && Covers(ball, -4.2f, -1.5f));
+    // Both masks, the gap between them across the middle, and the front one's open mouth.
     const SymbolShape& masks = *SymbolShapeFor("theatermasks.fill");
     CHECK(Covers(masks, -5, -4) && Covers(masks, 5, 3));
+    CHECK(Covers(masks, -0.75f, 0) && !Covers(masks, 0.25f, 0) && Covers(masks, 1.0f, 0));
+    CHECK(!Covers(masks, -4.4f, 1.17f) && Covers(masks, -4.4f, 4.0f));
     CHECK(!Covers(*SymbolShapeFor("pawprint.fill"), -1.75f, -2.0f));  // between a toe and the pad
+}
+
+TEST(aRoundedPolygonsRepeatedCornerCountsOnce) {
+    using C = ShapeBuilder::Corner;
+    const SymbolShape square =
+        ShapeBuilder().RoundedPolygon({C{0, 0, 1}, C{4, 0, 1}, C{4, 0, 1}, C{4, 4, 1}, C{0, 4, 1}, C{0, 0, 1}}).Build();
+    const ShapeBounds b = BoundsOf(square);
+    CHECK(Near(b.left, 0) && Near(b.right, 4) && Near(b.top, 0) && Near(b.bottom, 4));
+    CHECK(Near(InkedArea(square), 16 - (4 - 3.14159f), 0.05f));
 }

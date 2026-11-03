@@ -75,7 +75,7 @@ TEST(everySymbolTheIconTabOffersHasAPrivateUseGlyphForBothFonts) {
     for (std::string_view name : all) {
         const auto glyph = SymbolGlyphFor(name);
         CHECK(glyph);
-        if (glyph->drawn) continue;
+        if (!glyph || glyph->drawn) continue;
         CHECK(glyph->fluent >= 0xE700 && glyph->fluent <= 0xF8FF && glyph->mdl2 >= 0xE700 && glyph->mdl2 <= 0xF8FF);
     }
     // That each is in its font is the PC's cmap check (the table's comment). Where the fonts differ:
@@ -84,11 +84,14 @@ TEST(everySymbolTheIconTabOffersHasAPrivateUseGlyphForBothFonts) {
     // Nine have no such object in either font: Kite draws its own shape for each, and only those.
     std::vector<std::string_view> drawn;
     for (std::string_view name : all) {
-        if (SymbolGlyphFor(name)->drawn) drawn.push_back(name);
-        CHECK(SymbolGlyphFor(name)->drawn == (SymbolShapeFor(name) != nullptr));
+        const auto glyph = SymbolGlyphFor(name);
+        if (!glyph) continue;  // failed above
+        if (glyph->drawn) drawn.push_back(name);
+        CHECK(glyph->drawn == (SymbolShapeFor(name) != nullptr));
     }
     CHECK(drawn == DrawnSymbols());
-    CHECK(SymbolGlyphFor("pawprint.fill") == (SymbolGlyph{0, 0, true}) && !SymbolGlyphFor("star.fill")->drawn);
+    CHECK(SymbolGlyphFor("pawprint.fill") == (SymbolGlyph{0, 0, true}));
+    CHECK(SymbolGlyphFor("star.fill") == (SymbolGlyph{u'\uE735', u'\uE735'}));
 }
 
 TEST(aPictureIsTheMacsRoundedSquareOnThePixelGrid) {

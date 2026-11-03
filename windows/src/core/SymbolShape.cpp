@@ -143,8 +143,14 @@ ShapeBuilder& ShapeBuilder::RoundRect(float left, float top, float right, float 
     return Close();
 }
 
-ShapeBuilder& ShapeBuilder::RoundedPolygon(const std::vector<Corner>& corners) {
+ShapeBuilder& ShapeBuilder::RoundedPolygon(const std::vector<Corner>& given) {
     Close();
+    // A corner repeated straight after itself would make an edge of no length (and no direction).
+    std::vector<Corner> corners;
+    for (const Corner& c : given) {
+        if (corners.empty() || c.x != corners.back().x || c.y != corners.back().y) corners.push_back(c);
+    }
+    while (corners.size() > 1 && corners.front().x == corners.back().x && corners.front().y == corners.back().y) corners.pop_back();
     const size_t n = corners.size();
     if (n < 3) return *this;
     const auto point = [&](size_t i) { return ShapePoint{corners[i % n].x, corners[i % n].y}; };

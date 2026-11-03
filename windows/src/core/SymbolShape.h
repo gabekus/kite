@@ -49,6 +49,7 @@ struct ShapeBounds {
 // Builds figures, then orients them (clockwise on screen, y down).
 class ShapeBuilder {
 public:
+    // After a Close (or a whole figure), a Line, Cubic or Arc starts a new figure at the last point.
     ShapeBuilder& Move(float x, float y);
     ShapeBuilder& Line(float x, float y);
     ShapeBuilder& Cubic(float x1, float y1, float x2, float y2, float x, float y);
@@ -62,7 +63,8 @@ public:
     ShapeBuilder& Ellipse(float cx, float cy, float rx, float ry, float degrees = 0);
     ShapeBuilder& Circle(float cx, float cy, float r) { return Ellipse(cx, cy, r, r); }
     ShapeBuilder& RoundRect(float left, float top, float right, float bottom, float radius);
-    // A polygon through `corners`, each rounded to its own radius (clamped to fit its edges).
+    // A polygon through `corners`, each rounded to its own radius (clamped to fit its edges; a
+    // corner repeated straight after itself counts once).
     struct Corner {
         float x = 0, y = 0, radius = 0;
     };
