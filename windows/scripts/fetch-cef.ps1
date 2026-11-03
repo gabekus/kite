@@ -5,10 +5,11 @@
 # unpacked); run it only when you mean to.
 #
 #   pwsh windows/scripts/fetch-cef.ps1
-#   pwsh windows/scripts/fetch-cef.ps1 -AllowUnpinned   # first run only, see $CefSha1
+#   pwsh windows/scripts/fetch-cef.ps1 -AllowUnpinned   # a new $CefVersion, see $CefSha1
+#   pwsh windows/scripts/fetch-cef.ps1 -Configs Release # CI: one wrapper build
 #
 # Needs cmake, Ninja and the MSVC build tools (a "Developer PowerShell" or vcvars64).
-param([switch] $AllowUnpinned)
+param([switch] $AllowUnpinned, [string[]] $Configs = @('Release', 'Debug'))
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'  # Windows PowerShell 5.1's progress bar slows downloads to a crawl
 
@@ -71,14 +72,17 @@ if ((Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $CefVersion)) 
 # libcef_dll_wrapper: CEF's C++ API on top of its C ABI. Built for Release (/MT) and Debug
 # (/MTd), so either configuration of Kite links against a wrapper with the same CRT
 # (otherwise LNK2038). They land in build-release and build-debug; Kite picks by $<CONFIG>.
-foreach ($config in 'Release', 'Debug') {
+foreach ($config in $Configs) {
     $buildDir = Join-Path $Dest ("build-" + $config.ToLower())
     $wrapper = Join-Path $buildDir 'libcef_dll_wrapper\libcef_dll_wrapper.lib'
     if (Test-Path $wrapper) { continue }
-    # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot.
+    # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot. USE_SANDBOX off until W6b
+    # (bootstrap.exe): with it on, the wrapper is built against a fixed CEF API version while
+    # Kite.exe isn't, and the two must match.
     cmake -S $Dest -B $buildDir -G Ninja `
         "-DCMAKE_BUILD_TYPE=$config" `
         '-DPROJECT_ARCH=x86_64' `
+        '-DUSE_SANDBOX=OFF' `
         '-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
     if ($LASTEXITCODE -ne 0) { throw "cmake configure ($config) failed" }
     cmake --build $buildDir --target libcef_dll_wrapper

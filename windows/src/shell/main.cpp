@@ -316,6 +316,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return Fail(quiet, L"Kite couldn't draw its window: " + problem, kWindowFailed);
     }
 
+    if (smokeTest) {
+        // Checked before Chromium starts, so a failure here leaves no browser half-created.
+        // The manifest took effect: without it the window would be DPI-unaware and text in the
+        // ANSI code page, which a 100% CI display can't tell apart by size alone.
+        if (!AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window.Handle()), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+            return Fail(quiet, L"the window isn't per-monitor DPI aware (v2): Kite.manifest wasn't embedded", kWindowFailed);
+        }
+        if (GetACP() != CP_UTF8) return Fail(quiet, L"the process code page isn't UTF-8: Kite.manifest wasn't embedded", kWindowFailed);
+    }
+
 #ifdef KITE_HAS_CEF
     // The selected tab's page on the content card. A capture leaves Chromium out: it saves
     // the backdrop alone until W4 captures the composed window.
@@ -347,7 +357,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             if (kite::Tab* tab = tabNamed(id)) tab->url = url;
         };
         events.titleChanged = [&, tabNamed](const std::string& id, const std::string& title) {
-            if (kite::Tab* tab = tabNamed(id)) tab->title = title;
+            // An empty title keeps the last one, as the Mac's BrowserStore does.
+            if (kite::Tab* tab = tabNamed(id); tab && !title.empty()) tab->title = title;
         };
         events.loadingChanged = [&](const std::string&, bool loading) {
             // A smoke test closes once the first page has loaded (or shown its error page).
@@ -363,18 +374,45 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         events.popupOpened = [&](const std::string& openerID, const std::string& id, const std::string& url) {
             std::optional<std::string> spaceID;
             if (auto location = state.Location(openerID); location && location->space) spaceID = state.spaces[*location->space].id;
-            state.OpenTab(url, spaceID, true, kite::Now(), id);
+            // window.open('') has no address yet, which the session keeps as none (the Mac's nil).
+            state.OpenTab(url.empty() ? std::nullopt : std::optional<std::string>(url), spaceID, true, kite::Now(), id);
             showSelectedTab();
         };
+        events.pageClosed = [&](const std::string& id) {
+            // The tab stays in the session until W5 closes tabs; Kite moves to the space's most
+            // recently used other tab, if it was showing this one.
+            const kite::Tab* selected = state.SelectedTab();
+            if (!selected || selected->id != id) return;
+            const kite::Tab* next = nullptr;
+            for (const kite::Tab* tab : state.SidebarTabs(state.SelectedSpaceIndex())) {
+                if (tab->id != id && (!next || tab->lastActiveAt > next->lastActiveAt)) next = tab;
+            }
+            if (!next) return;
+            state.Select(next->id);
+            showSelectedTab();
+        };
+        events.relaunched = [&] {
+            // Kite was launched again: this one comes forward instead.
+            if (IsIconic(window.Handle())) ShowWindow(window.Handle(), SW_RESTORE);
+            SetForegroundWindow(window.Handle());
+        };
         std::wstring chromiumError;
-        chromium = kite::Chromium::Start(instance, window.Handle(), supportDirectory / L"Chromium", std::move(events), chromiumError);
-        if (!chromium) return Fail(quiet, L"Kite couldn't start Chromium: " + chromiumError, kWindowFailed);
+        switch (kite::Chromium::Start(instance, window.Handle(), supportDirectory / L"Chromium", std::move(events), chromium, chromiumError)) {
+        case kite::Chromium::StartResult::Started: break;
+        // Another Kite has this profile and was told to come forward; this one leaves quietly,
+        // before its window shows or it saves anything.
+        case kite::Chromium::StartResult::AlreadyRunning: return kOk;
+        case kite::Chromium::StartResult::Failed: return Fail(quiet, L"Kite couldn't start Chromium: " + chromiumError, kWindowFailed);
+        }
         window.onWake = [&] { chromium->RunPending(); };
+        window.onMinimize = [&] { chromium->Minimized(); };
+        window.onMove = [&] { chromium->WindowMoved(); };
         window.mayClose = [&] { return chromium->MayCloseWindow(); };
         window.onFocus = [&] { chromium->Focus(); };
         window.onSize = [&] {
             draw();
             chromium->SetBounds(contentBounds());
+            chromium->WindowMoved();
         };
         showSelectedTab();
     }
@@ -390,12 +428,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
 
     if (smokeTest) {
-        // The manifest took effect: without it the window would be DPI-unaware and text in the
-        // ANSI code page, which a 100% CI display can't tell apart by size alone.
-        if (!AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window.Handle()), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
-            return Fail(quiet, L"the window isn't per-monitor DPI aware (v2): Kite.manifest wasn't embedded", kWindowFailed);
-        }
-        if (GetACP() != CP_UTF8) return Fail(quiet, L"the process code page isn't UTF-8: Kite.manifest wasn't embedded", kWindowFailed);
         // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt
         // and draw again (a real device removal can't be caused from a test).
         compositor.reset();

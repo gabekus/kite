@@ -104,12 +104,16 @@ any overlays in separate layered top-level windows. That's simpler but less
 flexible.
 
 **Today (W6): windowed CEF**, so pages load while the off-screen path is
-built (W10). `shell/Chromium` creates one browser per tab as a child window
-over the content card (right of the sidebar's 240pt, inset 10pt) and hides
-the others, which Chromium counts as occluded and throttles. CEF runs its own
-UI thread (`multi_threaded_message_loop`), so Kite's message loop and
-DirectComposition are untouched; CEF's callbacks reach Kite's thread through
-`PostMessage`. Profiles sit where the Mac keeps them: `<support>\Chromium`
+built (W10). `shell/Chromium` creates one Alloy-style browser per tab (as
+the Mac's) as a child window over the content card (right of the sidebar's
+240pt, inset 10pt). Other tabs' windows, and the shown one while Kite is
+minimized, are hidden and sized 0×0, which CEF documents as hiding the
+widget and saving resources (whether pages then report `hidden` is checked
+on Gabe's PC, not in CI). CEF runs its own UI thread
+(`multi_threaded_message_loop`), so Kite's message loop and DirectComposition
+are untouched; CEF's callbacks reach Kite's thread through `PostMessage`, and
+Kite moves its page windows on CEF's thread, never waiting on it. A second
+launch hands over to the running Kite (Chromium allows one per profile). Profiles sit where the Mac keeps them: `<support>\Chromium`
 is `root_cache_path`, the default profile is `Chromium\Default`, and a
 space's other profile gets its own request context in `Chromium\<directory>`.
 Popups and `target=_blank` links open as tabs that keep `window.opener`, as

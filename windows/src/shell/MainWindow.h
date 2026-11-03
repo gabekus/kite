@@ -64,6 +64,10 @@ public:
     std::function<void()> onWake;
     // The window got keyboard focus (activated, or restored from minimized).
     std::function<void()> onFocus;
+    // The window was minimized (onSize follows when it's restored).
+    std::function<void()> onMinimize;
+    // The window moved on screen.
+    std::function<void()> onMove;
     // The client area changed size (also after a DPI change); GetClientRect has the new one.
     std::function<void()> onSize;
 

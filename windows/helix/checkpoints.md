@@ -18,7 +18,7 @@ gets its own `helix/W<n>-…` branch.
 | W5 | Closing, archiving and reopening tabs | BrowserState close/reopen/archive, Archive.swift | planned |
 | W6 | CEF windowed: one browser per tab, the selected tab's page on the content card (right of the sidebar's 240pt, 10pt inset), popups hosted as tabs with their opener, titles and addresses saved to the session; `--smoke-test` waits for the first page | Engine/ChromiumEngine.swift, CEFBridge (KCRuntime, KCBrowser) | in progress (helix/W6-cef) [moved ahead of W4–W5 at Gabe's ask, 2026-11-03; the card's 6pt corners wait for W10's off-screen pages] |
 | W6b | Chromium's sandbox: CEF's bootstrap executable with Kite as its DLL, as the Mac's helpers enter the sandbox | KiteHelper/main.mm | planned |
-| W7 | Command bar (Ctrl+T): URL input and tab search | Views/CommandBarView.swift, CommandSearch.swift, TabSearch.swift | planned |
+| W7 | Command bar (Ctrl+T): URL input and tab search | Views/CommandBarView.swift, CommandSearch.swift, TabSearch.swift | planned [the window's focus goes to the page today (WM_SETFOCUS → the browser); the command bar needs a focus block like the Mac's `focusBlocked`] |
 | W8 | Keyboard shortcuts (Ctrl in place of ⌘) | MainMenu.swift, KeyBindings.swift | planned |
 | W9 | Spaces switching and swipe | SpaceSwipe.swift, sidebar space bar | planned |
-| W10 | CEF off-screen spike: shared D3D11 texture in the composition tree, frame time, input latency | docs/windows.md Rendering | planned |
+| W10 | CEF off-screen spike: shared D3D11 texture in the composition tree, frame time, input latency | docs/windows.md Rendering | planned [keep multi_threaded_message_loop: OnAcceleratedPaint runs on CEF's thread and its texture goes back to the pool when it returns, so copy and present each page there, on its own D3D11 device or a multithread-protected context] |
