@@ -627,3 +627,26 @@ final class DetachingContainer: NSView {
 
     override var acceptsFirstResponder: Bool { false }
 }
+
+/// Shows a sidebar context menu for `event`. Under `KITE_TEST_CONTEXT_MENU` (throwaway profiles only) the menu
+/// is logged instead, submenus as "Title ▸ [a / b]", and the item the test asked for runs: a context menu is
+/// modal and can't be read from the background.
+@MainActor func showSidebarMenu(_ menu: NSMenu, with event: NSEvent, for view: NSView) {
+    guard PageContextMenuItems.testMode != nil else {
+        return NSMenu.popUpContextMenu(menu, with: event, for: view)
+    }
+    menu.update()
+    let items = menu.items
+    let entries: [(title: String?, enabled: Bool)] = items.map { item in
+        if item.isSeparatorItem { return (nil, true) }
+        if let submenu = item.submenu {
+            submenu.update()
+            let inner = submenu.items.map { $0.isSeparatorItem ? "---" : ($0.isEnabled ? $0.title : "(\($0.title))") }
+            return ("\(item.title) ▸ [\(inner.joined(separator: " / "))]", item.isEnabled)
+        }
+        return (item.title, item.isEnabled)
+    }
+    guard let index = PageContextMenuItems.logForTest(entries), index < items.count else { return }
+    let item = items[index]
+    if let action = item.action { NSApp.sendAction(action, to: item.target, from: item) }
+}

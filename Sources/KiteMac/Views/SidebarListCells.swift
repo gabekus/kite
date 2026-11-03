@@ -148,7 +148,7 @@ class SidebarRowCell: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         guard let menu = menu(for: event) else { return }
-        NSMenu.popUpContextMenu(menu, with: event, for: self)
+        showSidebarMenu(menu, with: event, for: self)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {

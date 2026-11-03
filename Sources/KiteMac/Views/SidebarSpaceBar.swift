@@ -453,7 +453,7 @@ final class SpaceCellView: SidebarFlippedView {
 
     override func rightMouseDown(with event: NSEvent) {
         guard let menu = bar?.menu(for: self) else { return }
-        NSMenu.popUpContextMenu(menu, with: event, for: self)
+        showSidebarMenu(menu, with: event, for: self)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? { bar?.menu(for: self) }
