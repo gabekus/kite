@@ -5,6 +5,8 @@ import CEFBridge
 #endif
 
 MainActor.assumeIsolated {
+    // A build install-app.sh staged that the last quit didn't swap in: swap it now and open that one instead.
+    StagedUpdate.finishIfWaiting()
     let environment = ProcessInfo.processInfo.environment
     if environment["KITE_SUPPORT_PATH"] != nil {
         // A test run shares UserDefaults with whatever app has its bundle ID. Debug bundles are
