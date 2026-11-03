@@ -200,109 +200,10 @@ struct SidebarView: View {
         .environment(\.sidebarDrag, drag)
     }
 
-    /// One space's page: its header, pinned items, new tab and today's tabs.
+    /// One space's page: its header, pinned items, new tab and today's tabs (an AppKit table).
     private func spaceList(_ space: Space) -> some View {
-        ScrollViewReader { proxy in
-            spaceRows(space)
-                // Tabs › Reveal Tab in Sidebar. Next turn, so a sidebar that was just shown has laid out.
-                .onChange(of: store.revealRequest) { _, request in
-                    guard let request, space.id == store.state.selectedSpaceID else { return }
-                    DispatchQueue.main.async { withAnimation { proxy.scrollTo(request.rowID) } }
-                }
-        }
-    }
-
-    private func spaceRows(_ space: Space) -> some View {
-        List {
-            Section {
-                // A row rather than a section header: a plain List paints headers with an opaque bar.
-                SpaceHeader(store: store, actions: actions, space: space)
-                    .modifier(dropOnly(.header, space: space.id))
-                    .background {
-                        if space.id == store.state.selectedSpaceID { SidebarScrollViewFinder(drag: drag) }
-                    }
-                    .sidebarRow(pill: false)
-                // View → Collapse Pinned Tabs leaves only the selected pinned tab.
-                let shownPinned = store.state.shownPinnedItems(in: space)
-                let pinnedGroups = SidebarGroup.group(shownPinned.map(\.id), splits: space.splits)
-                ForEach(pinnedGroups) { group in
-                    pinnedGroup(group, in: shownPinned, parent: nil, depth: 0, space: space, selectedID: space.selectedTabID)
-                        .sidebarRow()
-                }
-            }
-            Section {
-                // Arc's Tidy and Clear buttons sit on this divider (UnpinnedSectionDividerCellView).
-                let canTidy = TidyTabs.isEnabled() && store.state.canTidyTabs(inSpace: space.id)
-                let canClear = !space.tabs.isEmpty
-                if !space.pinnedItems.isEmpty || canTidy || canClear {
-                    TodayDivider(
-                        showsLine: !space.pinnedItems.isEmpty,
-                        canTidy: canTidy,
-                        canClear: canClear,
-                        clearAction: store.state.todayClearAction(inSpace: space.id),
-                        isTidying: store.tidyingSpaceIDs.contains(space.id),
-                        onTidy: { actions.tidyTabs(space.id) },
-                        onClear: { actions.clearToday(space.id) })
-                        .modifier(dropOnly(.divider, space: space.id))
-                        .sidebarRow(pill: false)
-                }
-                NewTabRow { store.showCommandBar(.newTab) }
-                    .modifier(dropOnly(.newTab, space: space.id))
-                    .sidebarRow()
-                // Where Instant Links' results will open (Arc's SidebarInstantLinks item).
-                ForEach(store.instantLinksRows.filter { $0.spaceID == space.id }) { row in
-                    InstantLinksRow(row: row) { actions.dismissInstantLinks(row.id) }
-                        .sidebarRow()
-                }
-                let unpinnedGroups = SidebarGroup.group(space.tabs.map(\.id), splits: space.splits)
-                ForEach(unpinnedGroups) { group in
-                    unpinnedGroup(group, in: space.tabs, space: space, selectedID: space.selectedTabID)
-                        .sidebarRow()
-                }
-            }
-        }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        // With a mouse connected macOS shows a legacy scroller, which took 15pt from every pill
-        // and drew a track in the sidebar. Scrolling still works; only the indicator goes.
-        .scrollIndicators(.never)
-        .environment(\.defaultMinListRowHeight, 1)
-    }
-
-    /// Tabs Claude is driving right now (none in incognito).
-    private var claudeControlled: Set<UUID> { claude.automation?.controlledTabIDs ?? [] }
-
-    /// A Claude folder (Space › Claude › session) shows Claude at work while Claude drives a tab in it:
-    /// the folder holding the tab, and a collapsed folder above it, so it shows wherever the tab is hidden.
-    private func claudeShowsActivity(on folder: TabFolder) -> Bool {
-        guard folder.ephemeral == true else { return false }
-        let controlled = claudeControlled
-        guard !controlled.isEmpty, folder.items.tabs.contains(where: { controlled.contains($0.id) }) else { return false }
-        if !folder.isExpanded { return true }
-        return folder.items.contains { item in
-            if case .tab(let tab) = item { return controlled.contains(tab.id) }
-            return false
-        }
-    }
-
-    /// Stop on a Claude folder: takes back every tab in it that Claude is driving.
-    private func stopClaude(in folder: TabFolder) {
-        let tabs = Set(folder.items.tabs.map(\.id)).intersection(claudeControlled)
-        if !tabs.isEmpty { claude.automation?.stop(tabs: tabs) }
-    }
-
-    /// How many tabs in a folded folder have a step Claude handed the user (handoff), so the folder says so
-    /// while its tab rows are hidden. 0 for an open folder: its rows show it.
-    private func claudeNeedsYouCount(in folder: TabFolder) -> Int {
-        guard !folder.isExpanded, let tabs = claude.automation?.handoffTabs, !tabs.isEmpty else { return 0 }
-        return folder.items.tabs.filter { tabs.contains($0.id) }.count
-    }
-
-    /// A tab row's tooltip while Claude drives it, naming the session when it has one; nil when it doesn't.
-    private func claudeControlHelp(_ tab: UUID) -> String? {
-        guard claudeControlled.contains(tab) else { return nil }
-        if let session = claude.automation?.sessionName(controlling: tab) { return "Claude is controlling this tab (\(session))" }
-        return "Claude is controlling this tab"
+        SidebarSpaceListRepresentable(store: store, space: space, actions: actions, claude: claude, drag: drag,
+                                      supportsDarkPages: supportsDarkPages)
     }
 
     /// Nil hides the moon: nothing to darken, or the engine can't.
@@ -310,196 +211,9 @@ struct SidebarView: View {
         guard supportsDarkPages, let url = tab?.url, url.host() != nil else { return nil }
         return store.state.wantsDarkPage(for: url, systemIsDark: store.systemIsDark)
     }
-
-    /// Folders nest, so this recursion has to erase its type.
-    private func pinnedItem(_ item: PinnedItem, parent: UUID?, depth: Int, space: Space, selectedID: UUID?) -> AnyView {
-        switch item {
-        case .tab(let tab):
-            return AnyView(row(tab, pinned: true, selected: tab.id == selectedID, depth: depth, space: space.id, parent: parent))
-        case .folder(let folder):
-            // Like Arc, a collapsed folder still shows its selected tab.
-            let visible = folder.isExpanded
-                ? folder.items
-                : folder.items.tabs.filter { $0.id == selectedID }.map(PinnedItem.tab)
-            return AnyView(VStack(spacing: M.rowPitch - M.pillHeight) {
-                FolderRow(
-                    folder: folder, depth: depth,
-                    isRenaming: store.renamingFolderID == folder.id,
-                    onToggle: { store.mutate { $0.setFolderExpanded(folder.id, !folder.isExpanded) } },
-                    onRename: { actions.renameFolder(folder.id) },
-                    onCommitRename: { name in
-                        guard store.renamingFolderID == folder.id else { return }
-                        store.mutate { $0.renameFolder(folder.id, to: name) }
-                        store.endRenamingFolder()
-                    },
-                    onCancelRename: { store.endRenamingFolder() },
-                    onDelete: { actions.deleteFolder(folder.id) },
-                    showsIntro: store.liveFolderIntroID == folder.id,
-                    onDismissIntro: { store.liveFolderIntroID = nil },
-                    claudeActive: claudeShowsActivity(on: folder),
-                    onStopClaude: { stopClaude(in: folder) },
-                    isClaudeFolder: folder.ephemeral == true,
-                    claudeNeedsYou: claudeNeedsYouCount(in: folder))
-                    .modifier(SidebarDragSource(
-                        store: store,
-                        row: .init(id: folder.id, kind: .folder(expanded: folder.isExpanded), space: space.id, pinned: true,
-                                   folder: parent, depth: depth, frame: .zero),
-                        onDrop: actions.didDrop) { DragGhost(icon: .symbol("folder.fill"), title: folder.name, depth: depth) })
-                ForEach(SidebarGroup.group(visible.map(\.id), splits: space.splits)) { group in
-                    pinnedGroup(group, in: visible, parent: folder.id, depth: depth + 1, space: space, selectedID: selectedID)
-                }
-            })
-        }
-    }
-
-    @ViewBuilder
-    private func unpinnedGroup(_ group: SidebarGroup, in tabs: [BrowserTab], space: Space, selectedID: UUID?) -> some View {
-        // Tidy Tabs' header rides on the first tab of its group, so drag offsets stay the tabs'.
-        if let header = store.state.tabGroupHeader(above: tabs[group.indices[0]].id, inSpace: store.state.selectedSpace) {
-            VStack(spacing: 0) {
-                TabGroupHeaderRow(
-                    group: header,
-                    onClose: { header.tabIDs.forEach(actions.closeTab) },
-                    onRemoveHeader: { actions.removeTabGroupHeader(header.id) })
-                unpinnedTabs(group, in: tabs, space: space, selectedID: selectedID)
-            }
-        } else {
-            unpinnedTabs(group, in: tabs, space: space, selectedID: selectedID)
-        }
-    }
-
-    @ViewBuilder
-    private func unpinnedTabs(_ group: SidebarGroup, in tabs: [BrowserTab], space: Space, selectedID: UUID?) -> some View {
-        if let split = group.split {
-            splitRow(split, tabs: group.indices.map { tabs[$0] }, pinned: false, selectedID: selectedID, space: space.id, parent: nil)
-        } else {
-            let tab = tabs[group.indices[0]]
-            row(tab, pinned: false, selected: tab.id == selectedID, space: space.id, parent: nil)
-        }
-    }
-
-    private func pinnedGroup(_ group: SidebarGroup, in items: [PinnedItem], parent: UUID?, depth: Int, space: Space, selectedID: UUID?) -> AnyView {
-        guard let split = group.split else {
-            return pinnedItem(items[group.indices[0]], parent: parent, depth: depth, space: space, selectedID: selectedID)
-        }
-        let tabs = group.indices.compactMap { index -> BrowserTab? in
-            if case .tab(let tab) = items[index] { return tab }
-            return nil
-        }
-        return AnyView(splitRow(split, tabs: tabs, pinned: true, selectedID: selectedID, depth: depth, space: space.id, parent: parent))
-    }
-
-    private func splitRow(_ split: SplitView, tabs: [BrowserTab], pinned: Bool, selectedID: UUID?, depth: Int = 0,
-                          space: UUID, parent: UUID?) -> some View {
-        SplitRow(
-            tabs: tabs,
-            isPinned: pinned,
-            orientation: split.orientation,
-            focusedID: tabs.contains { $0.id == selectedID } ? selectedID : nil,
-            depth: depth,
-            onSelect: { id in
-                store.mutate { state in
-                    if let target = id ?? state.focusTarget(of: split) { state.select(tab: target) }
-                }
-            },
-            onClose: actions.closeTab,
-            onSeparate: { id in store.mutate { $0.separateFromSplit(tab: id) } },
-            onSeparateAll: { store.mutate { $0.separateAllTabs(split: split.id) } },
-            onAddTab: {
-                store.mutate { state in
-                    if let target = state.focusTarget(of: split) { state.select(tab: target) }
-                }
-                actions.addSplitView()
-            },
-            onFlipOrientation: {
-                store.mutate { $0.setSplitOrientation(split.id, split.orientation == .horizontal ? .vertical : .horizontal) }
-            },
-            audio: { id in (store.pages[id]?.isAudible ?? false, store.pages[id]?.isAudioMuted ?? false) },
-            onToggleMute: actions.toggleMute
-        )
-        .modifier(SidebarDragSource(
-            store: store,
-            row: .init(id: split.id, kind: .split, space: space, pinned: pinned, folder: parent, depth: depth, frame: .zero,
-                       members: split.tabIDs),
-            onDrop: actions.didDrop) { DragGhost(icon: .tabs(tabs), title: "", depth: depth) })
-    }
-
-    /// The space's header, the Today divider and New Tab take drops but don't drag.
-    private func dropOnly(_ kind: SidebarDragModel.Row.Kind, space: UUID) -> SidebarDragSource<EmptyView> {
-        SidebarDragSource(store: store, row: .init(id: space, kind: kind, space: space, pinned: kind != .newTab, folder: nil, depth: 0, frame: .zero),
-                          draggable: false) { EmptyView() }
-    }
-
-    private func row(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int = 0, space: UUID, parent: UUID?) -> some View {
-        let live = parent.flatMap { store.state.folder(matching: $0.uuidString)?.folder }.flatMap { $0.live == nil ? nil : $0 }
-        return SplitDropPreview(side: drag.splitSide(for: tab.id)) {
-            tabRow(tab, pinned: pinned, selected: selected, depth: depth, liveFolder: live)
-        }
-        .modifier(SidebarDragSource(
-            store: store,
-            row: .init(id: tab.id, kind: .tab, space: space, pinned: pinned, folder: parent, depth: depth, frame: .zero),
-            onDrop: actions.didDrop) { DragGhost(icon: .tabs([tab]), title: tab.displayTitle, depth: depth) })
-    }
-
-    private func tabRow(_ tab: BrowserTab, pinned: Bool, selected: Bool, depth: Int, liveFolder: TabFolder? = nil) -> some View {
-        TabRow(
-            tab: tab,
-            isPinned: pinned,
-            isSelected: selected,
-            depth: depth,
-            showsClose: store.state.showsCloseButton(tab: tab.id),
-            isRenaming: store.renamingTabID == tab.id,
-            aiRename: store.aiRenames[tab.id],
-            onSelect: { store.mutate { $0.select(tab: tab.id) } },
-            onClose: { actions.closeTab(tab.id) },
-            onTogglePin: { store.mutate { $0.togglePin(tab: tab.id) } },
-            onFavorite: { store.mutate { $0.toggleFavorite(tab: tab.id) } },
-            canReset: pinned && tab.hasLeftPinnedURL,
-            onReset: { actions.resetTab(tab.id) },
-            onSeparate: { actions.separateFromPinnedTab(tab.id) },
-            onEditPinnedURL: { actions.editPinnedURL(tab.id) },
-            onReplacePinnedURL: { actions.replacePinnedURL(tab.id) },
-            onRename: { actions.renameTab(tab.id) },
-            onCommitRename: { name in
-                guard store.renamingTabID == tab.id else { return }
-                store.mutate { $0.renameTab(tab.id, to: name) }
-                store.endRenamingTab()
-            },
-            onCancelRename: { store.endRenamingTab() },
-            isAudible: store.pages[tab.id]?.isAudible ?? false,
-            isMuted: store.pages[tab.id]?.isAudioMuted ?? false,
-            onToggleMute: { actions.toggleMute(tab.id) },
-            isUnread: liveFolder?.isUnread(tab) ?? false,
-            icon: liveFolder.flatMap { _ in LiveFolderIcons.pullRequest(tab, dark: colorScheme == .dark) },
-            peek: store.linkPeekBadges[tab.id],
-            claudeControl: claudeControlHelp(tab.id),
-            onStopClaude: { claude.automation?.stop(tabs: [tab.id]) },
-            claudeNeedsYou: claude.automation?.waitingStep(on: tab.id).map { "Claude needs you: \($0.instruction)" }
-        )
-    }
 }
 
 private typealias M = ArcMetrics.Sidebar
-
-private extension View {
-    /// Pills sit 41pt apart, centred in their row, like Arc's. `pill: false` is for
-    /// rows that set their own height (the header, the divider).
-    func sidebarRow(pill: Bool = true) -> some View {
-        let gap = pill ? (M.rowPitch - M.pillHeight) / 2 : 0
-        return modifier(ListEdgeCompensation())
-            .listRowInsets(EdgeInsets(top: gap, leading: 0, bottom: gap, trailing: 0))
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
-    }
-}
-
-/// A plain List on macOS keeps 8pt before and 9pt after each row whatever the
-/// row insets say; Arc's pills run the sidebar's full padded width.
-private struct ListEdgeCompensation: ViewModifier {
-    func body(content: Content) -> some View {
-        content.padding(.leading, -8).padding(.trailing, -9)
-    }
-}
 
 /// Translucent white reads well on any theme. `strength` is Arc's opacity over
 /// a dark tint; light tints need about three times as much to show.
@@ -1189,7 +903,7 @@ private struct FavoriteTile: View {
 /// Claude works; Clear ("↓ Clear", tooltip "Clear Today tabs") runs Clear Today for this space,
 /// or, when the selected tab is one of several Today tabs, drops the arrow ("Clear unselected
 /// Today tabs") and keeps that tab (Arc's `clearOthers`).
-private struct TodayDivider: View {
+struct TodayDivider: View {
     let showsLine: Bool
     let canTidy: Bool
     let canClear: Bool
@@ -1257,6 +971,38 @@ private struct TodayDivider: View {
     }
 }
 
+/// The space's header as the space list shows it, reading the store itself so a rename or a new icon shows.
+struct SpaceHeaderRow: View {
+    let store: BrowserStore
+    let actions: SidebarActions
+    let spaceID: UUID
+
+    var body: some View {
+        if let space = store.state.spaces.first(where: { $0.id == spaceID }) {
+            SpaceHeader(store: store, actions: actions, space: space)
+        }
+    }
+}
+
+/// The Today divider as the space list shows it, reading the store itself.
+struct TodayDividerRow: View {
+    let store: BrowserStore
+    let actions: SidebarActions
+    let space: Space
+
+    var body: some View {
+        let space = store.state.spaces.first { $0.id == self.space.id } ?? self.space
+        TodayDivider(
+            showsLine: !space.pinnedItems.isEmpty,
+            canTidy: TidyTabs.isEnabled() && store.state.canTidyTabs(inSpace: space.id),
+            canClear: !space.tabs.isEmpty,
+            clearAction: store.state.todayClearAction(inSpace: space.id),
+            isTidying: store.tidyingSpaceIDs.contains(space.id),
+            onTidy: { actions.tidyTabs(space.id) },
+            onClear: { actions.clearToday(space.id) })
+    }
+}
+
 /// Arc's SidebarClearButton: a bold `arrow.down` 2 pt left of the "Clear" label, no background.
 /// Pressing it dims it and drops the arrow 3 pt (0.175 s); releasing puts the arrow back, and
 /// the click counts only if the pointer is still on the button (an ordinary button release).
@@ -1281,159 +1027,9 @@ private struct ClearButtonStyle: ButtonStyle {
     }
 }
 
-/// Arc's tab group header (TabGroupHeaderCellView) above a Tidy Tabs group: its name, a close
-/// button on hover ("Close tab group", archives the group's tabs) and Remove Header in its menu.
-private struct TabGroupHeaderRow: View {
-    let group: TodayTabGroup
-    let onClose: () -> Void
-    let onRemoveHeader: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Text(group.title)
-                .font(.system(size: 11, weight: .semibold))
-                .opacity(0.55)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 0)
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .opacity(hovering ? 0.55 : 0)
-            .help("Close tab group")
-            .accessibilityLabel("Close tab group")
-        }
-        .padding(.horizontal, M.iconInset)
-        .frame(height: M.dividerRowHeight)
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .contextMenu {
-            Button("Remove header", action: onRemoveHeader)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(group.title)
-    }
-}
-
-private struct FolderRow: View {
-    let folder: TabFolder
-    let depth: Int
-    let isRenaming: Bool
-    let onToggle: () -> Void
-    let onRename: () -> Void
-    let onCommitRename: (String) -> Void
-    let onCancelRename: () -> Void
-    let onDelete: () -> Void
-    /// A live folder's intro popover (Arc's LiveItemIntroPopover), to the folder's right.
-    var showsIntro = false
-    var onDismissIntro: () -> Void = {}
-    /// Claude is driving a tab in this Claude folder: Claude's mark turns in place of the folder icon,
-    /// with Stop on hover and in the menu.
-    var claudeActive = false
-    var onStopClaude: () -> Void = {}
-    /// A Claude folder (the space's Claude folder or a session folder in it): Claude's logo is its icon.
-    var isClaudeFolder = false
-    /// Tabs in this folded folder with a step waiting on the user (handoff): Claude's dot at the row's end.
-    var claudeNeedsYou = 0
-    @State private var hovering = false
-    @State private var draft = ""
-    @FocusState private var fieldFocused: Bool
-
-    var body: some View {
-        HStack(spacing: M.iconTextGap) {
-            if claudeActive || isClaudeFolder {
-                ClaudeWorkingMark(turning: claudeActive)
-                    .frame(width: M.iconSize, height: M.iconSize)
-                    .transition(.opacity)
-            } else {
-                Image(systemName: folder.isExpanded ? "folder" : "folder.fill")
-                    .font(.system(size: 14))
-                    .frame(width: M.iconSize, height: M.iconSize)
-                    .opacity(0.75)
-            }
-            if isRenaming {
-                // In place, like a tab's title (Arc's EditableTextFieldWithCompletionHandler).
-                TextField("", text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: M.tabFontSize, weight: .semibold))
-                    .focused($fieldFocused)
-                    .onSubmit { onCommitRename(draft) }
-                    .onExitCommand(perform: onCancelRename)
-                    .onAppear {
-                        draft = folder.name
-                        fieldFocused = true
-                    }
-                    .onChange(of: fieldFocused) { _, focused in if !focused { onCommitRename(draft) } }
-            } else {
-                Text(folder.name)
-                    .font(.system(size: M.tabFontSize, weight: .semibold))
-                    .opacity(M.tabTextOpacity)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            Spacer(minLength: 0)
-            if claudeNeedsYou > 0 && !isRenaming {
-                ClaudeNeedsYouDot()
-                    .help(claudeNeedsYou == 1 ? "Claude needs you in a tab here" : "Claude needs you in \(claudeNeedsYou) tabs here")
-            }
-            if claudeActive && hovering && !isRenaming {
-                ClaudeStopButton(action: onStopClaude)
-            }
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .bold))
-                .rotationEffect(.degrees(folder.isExpanded ? 90 : 0))
-                .opacity(hovering ? 0.5 : 0)
-        }
-        .animation(.easeInOut(duration: 0.15), value: claudeActive)
-        .help(claudeActive ? "Claude is working in “\(folder.name)”" : "")
-        .padding(.leading, M.iconInset + indent(depth))
-        .padding(.trailing, M.iconInset)
-        .frame(height: M.pillHeight)
-        .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0))
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture { if !isRenaming { onToggle() } }
-        // Arc's folder menu (SidebarMenu+ListContextMenu), in its order, with the items Kite has.
-        .contextMenu {
-            if let live = folder.live {
-                LiveFolderMenu(folder: folder, live: live, onDelete: onDelete)
-            } else {
-                if claudeActive {
-                    Button("Stop Claude", action: onStopClaude)
-                    Divider()
-                }
-                Button("Delete", action: onDelete)
-                Divider()
-                Button("Copy All Links") { copyLinks(folder.items.tabs.compactMap(\.url)) }
-                    .disabled(folder.items.tabs.allSatisfy { $0.url == nil })
-                Divider()
-                Button("Rename…", action: onRename)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityValue(folder.isExpanded ? "Expanded" : "Collapsed")
-        .accessibilityAction { onToggle() }
-        .popover(isPresented: Binding(get: { showsIntro }, set: { if !$0 { onDismissIntro() } }), arrowEdge: .trailing) {
-            if let live = folder.live { LiveFolderIntro(source: live.source) }
-        }
-    }
-}
-
 /// Arc's folder nesting per level (see `ArcMetrics.Sidebar.nestingIndent`).
 private func indent(_ depth: Int) -> CGFloat {
     CGFloat(depth) * M.nestingIndent
-}
-
-private func copyLinks(_ urls: [URL]) {
-    guard !urls.isEmpty else { return }
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(urls.map(\.absoluteString).joined(separator: "\n"), forType: .string)
 }
 
 private func copyLink(_ url: URL?) {
@@ -1442,254 +1038,13 @@ private func copyLink(_ url: URL?) {
     NSPasteboard.general.setString(url.absoluteString, forType: .string)
 }
 
-private struct NewTabRow: View {
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: M.iconTextGap) {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .medium))
-                    .frame(width: M.iconSize, height: M.iconSize)
-                Text("New Tab")
-                    .font(.system(size: M.tabFontSize))
-            }
-            .opacity(M.tabTextOpacity * 0.75)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, M.iconInset)
-            .frame(height: M.pillHeight)
-            .modifier(ChromeFill(strength: hovering ? M.hoverFill : 0))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-    }
-}
-
-private struct TabRow: View {
-    let tab: BrowserTab
-    let isPinned: Bool
-    let isSelected: Bool
-    var depth = 0
-    /// Off for tabs Claude opened in its folders (`BrowserState.showsCloseButton`).
-    var showsClose = true
-    var isRenaming = false
-    /// A Tidy Tab Titles name that just landed: the title wipes over from the old one.
-    var aiRename: BrowserStore.AIRename?
-    let onSelect: () -> Void
-    let onClose: () -> Void
-    let onTogglePin: () -> Void
-    let onFavorite: () -> Void
-    /// A pinned tab away from its pinned page (Arc's TabCellState.canResetTab).
-    var canReset = false
-    var onReset: () -> Void = {}
-    var onSeparate: () -> Void = {}
-    var onEditPinnedURL: () -> Void = {}
-    var onReplacePinnedURL: () -> Void = {}
-    let onRename: () -> Void
-    let onCommitRename: (String) -> Void
-    let onCancelRename: () -> Void
-    /// Arc's TabCellState.isAudible / isMuted: the speaker button between favicon and title.
-    var isAudible = false
-    var isMuted = false
-    var onToggleMute: () -> Void = {}
-    /// A live folder's pull request that a refresh added and the user hasn't opened.
-    var isUnread = false
-    /// Shown instead of the page's favicon (a live folder's pull request).
-    var icon: URL?
-    /// The page of a Peek open over this tab (Arc's TabCellState `modalIcon`), shown as a badge at the row's end.
-    var peek: LinkPeekBadge?
-    /// Claude is driving this tab: the tooltip to show (naming its session), with Claude's ring on the
-    /// favicon and Stop Claude in the menu. Nil when it isn't.
-    var claudeControl: String?
-    var onStopClaude: () -> Void = {}
-    /// Claude handed the user a step on this tab (handoff): the tooltip for Claude's dot at the row's end.
-    var claudeNeedsYou: String?
-    @State private var hovering = false
-    @State private var draft = ""
-    @State private var titleWidth: CGFloat = 0
-    @FocusState private var fieldFocused: Bool
-
-    private var showsAudio: Bool { TabAudioButton.isShown(isAudible: isAudible, isMuted: isMuted) }
-
-    var body: some View {
-        HStack(spacing: M.iconTextGap) {
-            FaviconView(page: tab.url, icon: icon ?? tab.faviconURL, size: M.iconSize)
-                .overlay {
-                    if let claudeControl {
-                        ClaudeControlRing()
-                            .help(claudeControl)
-                            .transition(.opacity)
-                    }
-                }
-                .animation(.easeInOut(duration: 0.15), value: claudeControl != nil)
-            if showsAudio {
-                TabAudioButtonView(isMuted: isMuted, action: onToggleMute)
-                    // Arc: 2pt after the button, not the row's favicon-to-title gap.
-                    .padding(.trailing, TabAudioButton.spacingAfter - M.iconTextGap)
-                    .transition(.opacity)
-            }
-            if isRenaming {
-                // In place, like the space name (Arc: "Double-click to rename").
-                TextField("Keep it short and sweet!", text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: M.tabFontSize))
-                    .focused($fieldFocused)
-                    .onSubmit { onCommitRename(draft) }
-                    .onExitCommand(perform: onCancelRename)
-                    .onAppear {
-                        draft = tab.displayTitle
-                        fieldFocused = true
-                    }
-                    .onChange(of: fieldFocused) { _, focused in if !focused { onCommitRename(draft) } }
-            } else if let aiRename {
-                AIRenameTitle(oldTitle: aiRename.oldTitle, newTitle: tab.displayTitle, start: aiRename.start)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { titleWidth = $0 }
-            } else {
-                Text(tab.displayTitle)
-                    .font(.system(size: M.tabFontSize))
-                    .opacity(M.tabTextOpacity)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            Spacer(minLength: 0)
-            if let claudeNeedsYou, !isRenaming {
-                ClaudeNeedsYouDot().help(claudeNeedsYou)
-            }
-            if isUnread && !hovering { LiveUnreadDot() }
-            if hovering && canReset && !isRenaming {
-                // Arc's tooltip; its icon and placement are unverified (see arc-visual-spec.md).
-                Button(action: onReset) {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .opacity(0.6)
-                .help("Back to Pinned URL")
-                .accessibilityLabel("Back to Pinned URL")
-            }
-            if hovering && !isRenaming && showsClose {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .opacity(0.6)
-                .help(isPinned ? "Unload" : "Close Tab")
-            }
-            if let peek, !isRenaming { LinkPeekBadgeView(badge: peek) }
-        }
-        .animation(.easeInOut(duration: TabAudioButton.showHideDuration), value: showsAudio)
-        .padding(.leading, M.iconInset + indent(depth))
-        .padding(.trailing, 6)
-        .frame(height: M.pillHeight)
-        .modifier(TabPillFill(isSelected: isSelected, isHovered: hovering))
-        .overlay {
-            if let aiRename { AIRenameSparks(start: aiRename.start, titleWidth: titleWidth) }
-        }
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture(perform: onSelect)
-        // Alongside the single tap so selecting isn't held back waiting for a second click.
-        .simultaneousGesture(TapGesture(count: 2).onEnded(onRename))
-        .contextMenu {
-            if claudeControl != nil {
-                Button("Stop Claude", action: onStopClaude)
-                Divider()
-            }
-            Button("Add to Favorites", action: onFavorite)
-            Button(isPinned ? "Unpin Tab" : "Pin Tab", action: onTogglePin)
-            if canReset {
-                Button("Back to Pinned URL", action: onReset)
-                Button("Separate From Pinned Tab", action: onSeparate)
-            }
-            if isPinned && tab.pinnedURL != nil {
-                EditPinnedPageMenu(onEdit: onEditPinnedURL, onReplace: onReplacePinnedURL)
-            }
-            Button("Copy Link") { copyLink(tab.url) }
-            Button("Rename…", action: onRename)
-            if showsAudio {
-                Button(TabAudioButton.menuTitle(isMuted: isMuted), action: onToggleMute)
-            }
-            Divider()
-            Button(isPinned ? "Unload Tab" : "Close Tab", action: onClose)
-        }
-    }
-}
-
-/// Claude's mark in Claude's orange: the Claude folder's icon, and a session folder's while Claude works
-/// in it, when it turns slowly.
-private struct ClaudeWorkingMark: View {
-    var turning = true
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !turning)) { context in
-            let turns = turning ? context.date.timeIntervalSinceReferenceDate / 6 : 0
-            ClaudeMark()
-                .fill(Color.claude)
-                .frame(width: 13, height: 13)
-                .rotationEffect(.degrees(turns.truncatingRemainder(dividingBy: 1) * 360))
-        }
-        .accessibilityLabel(turning ? "Claude is working" : "Claude")
-    }
-}
-
-/// A ring in Claude's orange around a tab's favicon while Claude drives the tab, breathing gently.
-private struct ClaudeControlRing: View {
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-            let phase = (sin(context.date.timeIntervalSinceReferenceDate * .pi / 1.2) + 1) / 2
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .strokeBorder(Color.claude, lineWidth: 1.5)
-                .padding(-3)
-                .opacity(0.55 + 0.45 * phase)
-        }
-        .accessibilityLabel("Claude is controlling this tab")
-    }
-}
-
-/// A step Claude handed the user waits here (handoff): a dot in Claude's orange at the row's end, like a live
-/// folder's unread dot.
-private struct ClaudeNeedsYouDot: View {
-    var body: some View {
-        Circle()
-            .fill(Color.claude)
-            .frame(width: 7, height: 7)
-            .frame(width: 24, height: 24)
-            .accessibilityLabel("Claude needs you")
-    }
-}
-
-/// Stop on a Claude folder's row: takes its tabs back from Claude.
-private struct ClaudeStopButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "stop.fill")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(Color.claude)
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Stop Claude")
-        .accessibilityLabel("Stop Claude")
-    }
-}
-
 private typealias TitleAnimation = TidyTabTitleAnimation
 
 /// Arc's AnimatedGradientView on a tab row: the old title fades out and the new one in behind a
 /// soft edge that sweeps left to right (0.5 s, linear). Each is masked by a linear gradient from
 /// (-1.5, 0.5) to (1.5, 0.5) whose start and end x move to 1 and 3; stops at
 /// [0, w/(2w+70), (w+70)/(2w+70), 1], opaque-to-clear for the new title, the reverse for the old.
-private struct AIRenameTitle: View {
+struct AIRenameTitle: View {
     let oldTitle: String
     let newTitle: String
     let start: Date
@@ -1739,7 +1094,7 @@ private struct AIRenameTitle: View {
 /// Arc's SparksView over a renamed tab's row: an emitter runs along the row's middle from left
 /// to right during the wipe, throwing small sparks every way that fall, shrink and fade
 /// (lifetime 1 s, 100 ± 30 pt/s, gravity 200 pt/s², 75 × row/title width per second).
-private struct AIRenameSparks: View {
+struct AIRenameSparks: View {
     let start: Date
     let titleWidth: CGFloat
 
@@ -1770,27 +1125,6 @@ private struct AIRenameSparks: View {
     private static let spill: CGFloat = 60
 }
 
-/// Arc's `ModalV2SidebarBadgeView`: the icon of the Peek open over the tab, on a faint rounded square
-/// (`LinkPeek.Badge`). It takes no clicks of its own: clicking it is clicking the row.
-private struct LinkPeekBadgeView: View {
-    private typealias B = LinkPeek.Badge
-    let badge: LinkPeekBadge
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        FaviconView(page: badge.page, icon: badge.icon, size: B.iconSize)
-            .clipShape(RoundedRectangle(cornerRadius: B.iconCornerRadius, style: .continuous))
-            .frame(width: B.side, height: B.side)
-            .background(
-                RoundedRectangle(cornerRadius: B.cornerRadius, style: .continuous)
-                    .fill(colorScheme == .dark ? Color.white.opacity(B.fillOpacityDark) : Color.black.opacity(B.fillOpacityLight))
-            )
-            .allowsHitTesting(false)
-            .accessibilityElement()
-            .accessibilityIdentifier("sidebarTabCellPeekBadge")
-    }
-}
-
 /// Arc's "Edit Pinned Page" submenu on a pinned tab or favorite (SidebarMenu+TabContextMenu,
 /// SidebarMenu+MoveMenu): "Edit…" opens the Edit Pinned URL dialog, and "Replace Pinned URL
 /// with Current" pins the page the tab is on. Arc builds both items unconditionally.
@@ -1808,7 +1142,7 @@ private struct EditPinnedPageMenu: View {
 
 /// Arc's audibility button (TabCellView.audibilityButton): a 24pt speaker that mutes or
 /// unmutes the tab, drawn as Arc's animated speaker (`TabSpeakerIcon`: waves, slash).
-private struct TabAudioButtonView: View {
+struct TabAudioButtonView: View {
     let isMuted: Bool
     let action: () -> Void
 
@@ -1823,170 +1157,6 @@ private struct TabAudioButtonView: View {
         .help(TabAudioButton.tooltip(isMuted: isMuted))
         .accessibilityLabel(TabAudioButton.tooltip(isMuted: isMuted))
         .accessibilityIdentifier("sidebarTabCellMuteButton")
-    }
-}
-
-/// A split view's sidebar row: its panes side by side, 4pt apart and equally wide, each a
-/// favicon and title (only the favicon when it gets 60pt or narrower), like Arc's.
-private struct SplitRow: View {
-    private typealias S = ArcMetrics.Split
-
-    let tabs: [BrowserTab]
-    let isPinned: Bool
-    let orientation: SplitOrientation
-    /// The focused pane, when this split is the one on screen.
-    let focusedID: UUID?
-    var depth = 0
-    /// A pane's tab, or nil for the row as a whole.
-    let onSelect: (UUID?) -> Void
-    let onClose: (UUID) -> Void
-    let onSeparate: (UUID) -> Void
-    /// Arc's Separate All Tabs: the split ends and its tabs stay where they are.
-    let onSeparateAll: () -> Void
-    /// Arc's Add Tab…: a new pane in this split, filled from the command bar.
-    let onAddTab: () -> Void
-    /// Convert to Vertical / Horizontal Split View.
-    let onFlipOrientation: () -> Void
-    /// A pane's (isAudible, isMuted), for its Mute / Unmute item.
-    let audio: (UUID) -> (audible: Bool, muted: Bool)
-    let onToggleMute: (UUID) -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        GeometryReader { geometry in
-            let count = CGFloat(max(tabs.count, 1))
-            let width = (geometry.size.width - S.rowItemSpacing * (count - 1)) / count
-            HStack(spacing: S.rowItemSpacing) {
-                ForEach(tabs) { tab in
-                    item(tab, width: width)
-                }
-            }
-        }
-        .padding(.leading, indent(depth))
-        .frame(height: M.pillHeight)
-        .modifier(TabPillFill(isSelected: focusedID != nil, isHovered: hovering))
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture { onSelect(nil) }
-        .contextMenu { menu }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Split View")
-    }
-
-    /// Arc's "Split View Context Menu", as Arc 1.171 shows it: the split's own items, then under a
-    /// Tab Options header one submenu per pane, then the row's items. Kite leaves out what it has no
-    /// counterpart for yet (each pane's Share, the row's Change Icon…, Rename…, Duplicate and
-    /// Archive Other Tabs / Below / Above).
-    @ViewBuilder private var menu: some View {
-        Button("Separate All Tabs", action: onSeparateAll)
-        Button("Add Tab…", action: onAddTab)
-            .disabled(tabs.count >= SplitView.maxPanes)
-        Button(orientation == .horizontal ? "Convert to Vertical Split View" : "Convert to Horizontal Split View",
-               action: onFlipOrientation)
-        Divider()
-        Section("Tab Options") {
-            ForEach(tabs) { tab in
-                Menu(tab.displayTitle) {
-                    Button("Separate from Split View") { onSeparate(tab.id) }
-                    Divider()
-                    let sound = audio(tab.id)
-                    // Arc shows Mute greyed out for a pane that isn't playing anything.
-                    Button(TabAudioButton.menuTitle(isMuted: sound.muted)) { onToggleMute(tab.id) }
-                        .disabled(!sound.audible && !sound.muted)
-                    Button("Copy Link") { copyLink(tab.url) }
-                    Button("Copy link as Markdown") { copyMarkdownLink(tab) }
-                    Divider()
-                    Button("Archive Item") { onClose(tab.id) }
-                }
-            }
-        }
-        Divider()
-        Button("Archive Item") { tabs.forEach { onClose($0.id) } }
-    }
-
-    private func item(_ tab: BrowserTab, width: CGFloat) -> some View {
-        let compact = width <= S.rowCompactWidth
-        // Like Arc's SplitViewCellChildItemView: a title with 20pt or less to show is hidden
-        // rather than cut to a letter and an ellipsis.
-        // The HStack's gap comes twice: favicon to title, and title to the spacer after it.
-        let titleWidth = width - 2 * M.iconInset - M.iconSize - 2 * M.iconTextGap
-        let showsTitle = !compact && titleWidth > S.rowTitleMinWidth
-        // Arc shows every pane's button while the row is hovered, not just the hovered pane's.
-        let showsButton = showsTitle && hovering
-        return HStack(spacing: M.iconTextGap) {
-            FaviconView(tab: tab, size: M.iconSize)
-            if !showsTitle && !compact { Spacer(minLength: 0) }
-            if showsTitle {
-                Text(tab.displayTitle)
-                    .font(.system(size: M.tabFontSize))
-                    .opacity(M.tabTextOpacity)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 0)
-            }
-            if showsButton { trailingButton(tab) }
-        }
-        .padding(.leading, compact ? 0 : M.iconInset)
-        .padding(.trailing, compact ? 0 : showsButton ? S.rowButtonTrailingInset : M.iconInset)
-        .frame(width: width, height: M.pillHeight)
-        .background(
-            // Unverified: Arc's focused pane gets the item's fill; the row carries the selection.
-            RoundedRectangle(cornerRadius: min(width / 2, S.rowItemMaxCornerRadius), style: .continuous)
-                .fill(Color.white.opacity(tab.id == focusedID ? M.hoverFill : 0))
-        )
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect(tab.id) }
-        .help(tab.displayTitle)
-        .accessibilityElement(children: .contain)
-        // Icon-only items would otherwise read as the favicon's symbol name.
-        .accessibilityLabel(tab.displayTitle)
-        .accessibilityAddTraits(tab.id == focusedID ? [.isButton, .isSelected] : .isButton)
-    }
-
-    /// Arc's per-pane trailing button (SplitViewCellChildItemView): × closes the pane's tab, and while
-    /// ⌥ alone is held it becomes Separate from Split View (measured in Arc 1.171, docs/arc-visual-spec.md).
-    private func trailingButton(_ tab: BrowserTab) -> some View {
-        let state = SplitTabButton.state(isPinned: isPinned, modifiers: HeldModifiers.shared.flags.chordModifiers)
-        return Button {
-            if state == .separate { onSeparate(tab.id) } else { onClose(tab.id) }
-        } label: {
-            Group {
-                if state == .separate {
-                    // Arc's icon-separate-from-split: an arrow pointing out of a split box, drawn here
-                    // from SF Symbols (Arc's asset isn't copied).
-                    HStack(spacing: -1) {
-                        Image(systemName: "arrow.down.left").font(.system(size: S.rowSeparateGlyphSize * 0.55, weight: .bold))
-                        Image(systemName: "square.split.2x1").font(.system(size: S.rowSeparateGlyphSize * 0.95, weight: .medium))
-                    }
-                } else {
-                    Image(systemName: "xmark").font(.system(size: S.rowCloseGlyphSize, weight: .semibold))
-                }
-            }
-            .frame(width: S.rowButtonSize, height: S.rowButtonSize)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .opacity(S.rowButtonOpacity)
-        .help(state.title)
-        .accessibilityLabel(state.title)
-        .accessibilityIdentifier("splitTabTrailingButton")
-    }
-}
-
-private func copyMarkdownLink(_ tab: BrowserTab) {
-    guard let url = tab.url else { return }
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(LinkFormat.markdown(title: tab.displayTitle, url: url), forType: .string)
-}
-
-private extension NSEvent.ModifierFlags {
-    var chordModifiers: KeyChord.Modifiers {
-        var m: KeyChord.Modifiers = []
-        if contains(.option) { m.insert(.alt) }
-        if contains(.control) { m.insert(.control) }
-        if contains(.command) { m.insert(.meta) }
-        if contains(.shift) { m.insert(.shift) }
-        return m
     }
 }
 
@@ -2379,7 +1549,7 @@ private struct SpaceContextMenu: View {
 /// The space's icon and name above its pinned tabs, Arc's small semibold caption. As in Arc, the name
 /// is renamed in place (`didBeginEditingSpaceName`, `didRenameSpace`, `didCancelRenameSpace`), the icon
 /// is a button that changes it (`didClickEditableIcon`), and a right-click gives the space's menu.
-private struct SpaceHeader: View {
+struct SpaceHeader: View {
     let store: BrowserStore
     let actions: SidebarActions
     let space: Space
