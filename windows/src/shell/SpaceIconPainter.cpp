@@ -311,9 +311,9 @@ ComPtr<ID2D1PathGeometry> LayerPath(ID2D1Factory* d2d, const ShapeLayer& layer) 
     return SUCCEEDED(sink->Close()) ? path : nullptr;
 }
 
-// How closely a cut or a join follows the curves, in the shape's points: a fifth of a pixel at
-// the header's 15pt (1.2x the shape) on a 4x screen, as Direct2D's default is a quarter.
-constexpr float kShapeTolerance = 0.05f;
+// How closely a cut or a join follows the curves, in the shape's points: 0.04 is a fifth of a
+// pixel at the header's 15pt (1.2x the shape) on a 4x screen, inside Direct2D's default quarter.
+constexpr float kShapeTolerance = 0.04f;
 
 }  // namespace
 

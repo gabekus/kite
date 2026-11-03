@@ -2,12 +2,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <utility>
 
 namespace kite {
 namespace {
 
-constexpr float kPi = 3.14159265358979f;
+constexpr float kPi = std::numbers::pi_v<float>;
 
 ShapePoint CubicAt(ShapePoint p0, ShapePoint p1, ShapePoint p2, ShapePoint p3, float t) {
     const float u = 1 - t;

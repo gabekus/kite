@@ -49,7 +49,8 @@ struct ShapeBounds {
 // Builds figures, then orients them (clockwise on screen, y down).
 class ShapeBuilder {
 public:
-    // After a Close (or a whole figure), a Line, Cubic or Arc starts a new figure at the last point.
+    // After a Close (or a whole figure), a Line or an Arc starts a new figure at its own first point
+    // (a Line's end) and a Cubic at the last point.
     ShapeBuilder& Move(float x, float y);
     ShapeBuilder& Line(float x, float y);
     ShapeBuilder& Cubic(float x1, float y1, float x2, float y2, float x, float y);

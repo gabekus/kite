@@ -248,11 +248,11 @@ when they don't fit, scrolled with a sideways wheel or Shift and the wheel
 greyed (saturation 0, at 45%) for the others, or a dot for an icon-less space.
 SF Symbol and picture icons (W9b2) draw in the bar and the page header
 (`core/SpaceIcon.h`, `shell/SpaceIconPainter.h`). Apple's SF Symbols only draw on
-Apple's systems, so each of the Icon tab's 56 symbols (and "briefcase" and
-"photo") but nine has a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets
-where Fluent isn't installed, picked by eye from every glyph each font has and
-checked against both fonts' character maps; the nine are drawn shapes (below). A symbol fills its glyph's outline, centred
-on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
+Apple's systems, so the Icon tab's 56 symbols, "briefcase" and "photo" each
+have a stand-in glyph in Segoe Fluent Icons, or Segoe MDL2 Assets where Fluent
+isn't installed, picked by eye from every glyph each font has and checked
+against both fonts' character maps, except nine drawn as shapes (below). A
+symbol fills its glyph's outline, centred on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
 factor for every symbol), in the theme's accent when lit and in the label colour
 at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
 side with 22% corners, its PNG from the profile's SpaceIcons folder scaled to the
