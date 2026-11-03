@@ -353,6 +353,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         library.onOpenChange = { [weak self] open in self?.libraryOpened(open) }
         NotificationCenter.default.addObserver(self, selector: #selector(downloadDidStart(_:)), name: DownloadsModel.didStartDownload, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(themeCSSSharingChanged), name: .kiteThemeCSSSharingChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(forgetCommandBarPicks(_:)), name: Self.forgetPicks, object: nil)
 
         var dragStartWidth: CGFloat = 0
         resizeHandle.onBegin = { [weak self] in
@@ -553,6 +554,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     /// Settings › Advanced › "Allow websites to get your theme data" was switched.
     @objc private func themeCSSSharingChanged() { pool.updateThemeCSS() }
+
+    /// Clearing history forgets ⌘T picks in every window, blank windows' own states included.
+    static let forgetPicks = Notification.Name("KiteForgetCommandBarPicks")
+
+    static func forgetPicksEverywhere(since: Date?) {
+        NotificationCenter.default.post(name: forgetPicks, object: since)
+    }
+
+    @objc private func forgetCommandBarPicks(_ note: Notification) {
+        store.mutateWithoutUndo { $0.forgetCommandBarPicks(since: note.object as? Date) }
+    }
 
     // MARK: Sync with the store
 
@@ -844,7 +856,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
         switch page {
         case .history:
-            return NSHostingView(rootView: HistoryPageView(store: store.history, open: open))
+            return NSHostingView(rootView: HistoryPageView(store: store.history, open: open, cleared: {
+                Self.forgetPicksEverywhere(since: nil)
+            }))
         case .archive:
             return NSHostingView(rootView: ArchivePageView(store: store, open: open) { [weak self] tabID in
                 self?.restoreArchivedTab(tabID)
@@ -854,7 +868,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             let controls = ProfileDataControls(
                 page: { [weak self] in self?.pool.loadedPage(id) },
                 engine: pool.engine(forTab: id),
-                history: store.historyRoot?.forProfile(store.state.profileDirectory(ofTab: id)))
+                history: store.historyRoot?.forProfile(store.state.profileDirectory(ofTab: id)),
+                forgetPicks: { Self.forgetPicksEverywhere(since: $0) })
             return NSHostingView(rootView: SettingsPageView(
                 page: SettingsPage(url) ?? .privacy, controls: controls,
                 navigate: { [weak self] page, toast in self?.showSettingsPage(page, in: id, toast: toast) },

@@ -511,6 +511,136 @@ import Testing
     }
 }
 
+@Suite struct CommandBarPickTests {
+    func setup() -> (BrowserState, mail: UUID, inbox: UUID) {
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let mail = state.openTab(url: URL(string: "https://mail.google.com/mail/u/0/#inbox"))
+        state.update(tab: mail) { $0.title = "Inbox (3) - someone@example.com - Gmail" }
+        state.toggleFavorite(tab: mail)
+        let inbox = state.openTab(url: URL(string: "https://mail.example.com/inbox"))
+        state.update(tab: inbox) { $0.title = "Inbox (12)" }
+        state.select(tab: state.openTab(url: URL(string: "https://example.com")))
+        return (state, mail, inbox)
+    }
+
+    func leader(_ typed: String, _ state: BrowserState, shown: String? = nil) -> UUID? {
+        let shown = shown ?? typed
+        return CommandBarOrder.leader(typed, shown: shown, in: state, typedMatches: TabSearch.switchTargets(typed, in: state),
+                                      looksLikeURL: URLInput.looksLikeURL(shown))?.id
+    }
+
+    @Test func aPickLeadsNextTime() {
+        var (state, mail, _) = setup()
+        #expect(leader("gmail", state) == nil)  // Arc's order: the search first
+        state.recordCommandBarPick(typed: "Gmail ", tab: mail)
+        #expect(leader("gmail", state) == mail)
+        #expect(leader("gm", state) == mail)  // a shorter start of what was picked for
+        #expect(leader("gmailx", state) == nil)
+    }
+
+    @Test func aLaterPickReplacesAnEarlierOneAndASearchForgetsIt() {
+        var (state, mail, inbox) = setup()
+        state.recordCommandBarPick(typed: "inbox", tab: mail, now: Date(timeIntervalSince1970: 1))
+        state.recordCommandBarPick(typed: "inbox", tab: inbox, now: Date(timeIntervalSince1970: 2))
+        #expect(leader("inbox", state) == inbox)
+        #expect(state.commandBarPicks.count == 1)
+        state.recordCommandBarPick(typed: "inbox", tab: nil)
+        #expect(leader("inbox", state) == nil)
+    }
+
+    @Test func anotherPickForTheStartForgetsLongerPicks() {
+        var (state, mail, _) = setup()
+        state.recordCommandBarPick(typed: "gmail inbox", tab: mail)
+        #expect(leader("gmail", state) == mail)
+        state.recordCommandBarPick(typed: "gmail", tab: nil)  // searched instead
+        #expect(leader("gmail", state) == nil)
+        #expect(state.commandBarPicks.isEmpty)
+    }
+
+    @Test func aPickedTabThatMovedOnNoLongerLeads() {
+        var (state, _, inbox) = setup()
+        state.recordCommandBarPick(typed: "inbox", tab: inbox)
+        state.update(tab: inbox) {
+            $0.url = URL(string: "https://news.example.com")
+            $0.title = "News"
+        }
+        #expect(leader("inbox", state) == nil)
+    }
+
+    @Test func aOneLetterSearchKeepsLongerPicks() {
+        var (state, mail, _) = setup()
+        state.recordCommandBarPick(typed: "gmail", tab: mail)
+        #expect(!state.commandBarPickChanges(typed: "g", tab: nil))
+        state.recordCommandBarPick(typed: "g", tab: nil)
+        #expect(state.commandBarPicks.map(\.query) == ["gmail"])
+    }
+
+    @Test func aSessionOverTheCapIsTrimmedOnTheNextPick() {
+        var (state, mail, _) = setup()
+        state.commandBarPicks = (0..<(BrowserState.commandBarPickLimit + 50)).map {
+            CommandBarPick(query: "q\($0)", tabID: mail, pickedAt: Date(timeIntervalSince1970: Double($0)))
+        }
+        state.recordCommandBarPick(typed: "gmail", tab: mail)
+        #expect(state.commandBarPicks.count == BrowserState.commandBarPickLimit)
+        #expect(state.commandBarPicks.first?.query == "gmail")
+    }
+
+    @Test func picksForClosedTabsAreDropped() {
+        var (state, mail, inbox) = setup()
+        state.recordCommandBarPick(typed: "inbox", tab: inbox)
+        _ = state.close(tab: inbox)
+        state.recordCommandBarPick(typed: "gmail", tab: mail)
+        #expect(state.commandBarPicks.map(\.query) == ["gmail"])
+    }
+
+    @Test func theNextPickIsTriedWhenTheBestIsTheTabYoureOn() {
+        var (state, mail, inbox) = setup()
+        state.recordCommandBarPick(typed: "inbox (", tab: inbox, now: Date(timeIntervalSince1970: 1))
+        state.recordCommandBarPick(typed: "inbox", tab: mail, now: Date(timeIntervalSince1970: 2))
+        state.select(tab: mail)
+        #expect(leader("inbox", state) == inbox)
+        #expect(state.commandBarPickChanges(typed: "inbox", tab: nil))
+        #expect(!state.commandBarPickChanges(typed: "weather", tab: nil))
+        // A pick also leads for URL-like text, above the Open row.
+        state.recordCommandBarPick(typed: "mail.example", tab: inbox)
+        #expect(leader("mail.example", state) == inbox)
+    }
+
+    @Test func anExactPickBeatsALongerOne() {
+        var (state, mail, inbox) = setup()
+        state.recordCommandBarPick(typed: "inbox", tab: inbox, now: Date(timeIntervalSince1970: 1))
+        state.recordCommandBarPick(typed: "inbox (3)", tab: mail, now: Date(timeIntervalSince1970: 2))
+        #expect(leader("inbox", state) == inbox)
+        #expect(leader("inb", state) == mail)  // both start with it: the latest
+    }
+
+    @Test func aPickWaitsForItsTabAndForTheField() {
+        var (state, mail, inbox) = setup()
+        state.recordCommandBarPick(typed: "gi", tab: inbox)
+        // A completion showing something else in the field ("gi" + "thub.com"): the pick would disagree.
+        #expect(leader("gi", state, shown: "github.com") == nil)
+        state.recordCommandBarPick(typed: "gmail", tab: mail)
+        state.select(tab: mail)
+        #expect(leader("gmail", state) == nil)  // you're on it
+        _ = state.close(tab: inbox)
+        #expect(leader("gi", state) == nil)  // closed
+    }
+
+    @Test func picksAreSavedCappedAndForgottenWithHistory() throws {
+        var (state, mail, _) = setup()
+        for i in 0..<(BrowserState.commandBarPickLimit + 5) {
+            state.recordCommandBarPick(typed: "q\(i)", tab: mail, now: Date(timeIntervalSince1970: Double(i)))
+        }
+        #expect(state.commandBarPicks.count == BrowserState.commandBarPickLimit)
+        let decoded = try JSONDecoder().decode(BrowserState.self, from: JSONEncoder().encode(state))
+        #expect(decoded.commandBarPicks == state.commandBarPicks)
+        state.forgetCommandBarPicks(since: Date(timeIntervalSince1970: 100))
+        #expect(state.commandBarPicks.allSatisfy { $0.pickedAt < Date(timeIntervalSince1970: 100) })
+        state.forgetCommandBarPicks(since: nil)
+        #expect(state.commandBarPicks.isEmpty)
+    }
+}
+
 @Suite struct LiveTabPolicyTests {
     @Test func evictsLeastRecentlyShownFirst() {
         let ids = (0..<5).map { _ in UUID() }

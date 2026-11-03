@@ -12,6 +12,8 @@ struct HistoryPageView: View {
     let store: HistoryStore?
     /// Opens a history entry: in this tab, or (⌘-click) in a new background tab.
     let open: (URL, _ newTab: Bool) -> Void
+    /// Clear History also forgets what was typed in ⌘T to reach tabs.
+    let cleared: () -> Void
 
     @State private var query = ""
     @State private var confirmingClear = false
@@ -35,7 +37,10 @@ struct HistoryPageView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .alert("Clear all browsing history?", isPresented: $confirmingClear) {
-            Button("Clear History", role: .destructive) { store?.removeAll() }
+            Button("Clear History", role: .destructive) {
+                store?.removeAll()
+                cleared()
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Every page in Kite's history is removed. Open tabs, the archive and site data are kept.")

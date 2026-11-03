@@ -187,6 +187,10 @@ leads, so the row matches the field; a whole host typed only rules out that favo
 "www." and schemes aren't matched against the host ("www.goo" gets no leader). History is left out by exact
 URL, so the current page under another fragment still shows.
 
+Kite also learns ⌘T picks, which Arc doesn't do this way (one pick left Arc's order unchanged): the tab you picked
+for a text leads the next time you type it, or the start of it (2+ characters), until you pick something else for
+it. Picks are saved in the session and Delete browsing data › History forgets them.
+
 Site Search completion accepted with → (Arc 1.171 incognito, 3 Nov 2026, AX): "you" showed "youtube.com" with
 "tube.com" selected; → then "/" gave "youtube.com/"; typing "x" without → gave "youx". Kite matches: anything typed
 after the completion instead of over it accepts it (`CommandBar.autocomplete(to:)`), so → does, and so do ⌥→, ^E

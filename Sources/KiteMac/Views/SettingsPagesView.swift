@@ -10,11 +10,14 @@ final class ProfileDataControls {
     private let page: () -> WebPage?
     let engine: WebEngine
     private let history: HistoryStore?
+    private let forgetPicks: (Date?) -> Void
 
-    init(page: @escaping () -> WebPage?, engine: WebEngine, history: HistoryStore?) {
+    init(page: @escaping () -> WebPage?, engine: WebEngine, history: HistoryStore?,
+         forgetPicks: @escaping (Date?) -> Void) {
         self.page = page
         self.engine = engine
         self.history = history
+        self.forgetPicks = forgetPicks
     }
 
     /// The Delete browsing data checkboxes this engine can act on.
@@ -50,7 +53,10 @@ final class ProfileDataControls {
     /// Only after the dialog's Delete: never call this without the user's say-so.
     func delete(_ types: Set<BrowsingDataType>, period: BrowsingDataPeriod, completion: @escaping () -> Void) {
         let since = period.since(Date())
-        if types.contains(.history) { history?.removeVisits(since: since) }
+        if types.contains(.history) {
+            history?.removeVisits(since: since)
+            forgetPicks(since)
+        }
         if types.contains(.downloads) { DownloadsModel.shared.removeHistory(since: since) }
         if types.contains(.siteSettings), let page = page() {
             for permission in SitePermission.allCases {

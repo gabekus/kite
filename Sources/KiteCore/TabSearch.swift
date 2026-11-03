@@ -63,6 +63,12 @@ public enum TabSearch {
         }.max { $0.lastActiveAt < $1.lastActiveAt }
     }
 
+    /// Whether `q` (trimmed, lowercased) finds the tab at all, by its page or, for a pinned tab or favorite sent
+    /// elsewhere (to sign in, say), its pinned page's host.
+    static func matches(_ q: String, _ tab: BrowserTab) -> Bool {
+        score(q, tab) != nil || host(tab.pinnedURL).map { $0.hasPrefix(q) } == true
+    }
+
     static func score(_ q: String, _ tab: BrowserTab) -> Int? {
         // A renamed tab is found by its name as well as its page's title.
         let title = [tab.customTitle, tab.title].compactMap { $0 }.joined(separator: " ").lowercased()
