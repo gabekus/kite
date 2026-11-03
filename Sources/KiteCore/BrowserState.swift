@@ -199,7 +199,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
         profiles = try c.decodeIfPresent([Profile].self, forKey: .profiles) ?? []
         retiredProfileDirectories = try c.decodeIfPresent([String].self, forKey: .retiredProfileDirectories) ?? []
         profileSettings = try c.decodeIfPresent([String: ProfileSettings].self, forKey: .profileSettings) ?? [:]
-        arcProfileMap = try c.decodeIfPresent([String: UUID].self, forKey: .arcProfiles) ?? [:]
+        arcProfileMap = (try? c.decodeIfPresent([String: UUID].self, forKey: .arcProfiles)) ?? [:]
         // The default profile's favorites keep the key they had before profiles.
         favoritesByProfile = try c.decodeIfPresent([String: [BrowserTab]].self, forKey: .profileFavorites) ?? [:]
         let favorites = try c.decodeIfPresent([BrowserTab].self, forKey: .favorites) ?? []
