@@ -440,13 +440,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             chromium->SetBounds(contentBounds());
             chromium->WindowMoved();
         };
-        showSelectedTab();
     }
 #endif
 
     // Quiet runs open behind other windows without focus, and ignore a launcher's "start maximized".
     if (quiet) window.ShowBehindOtherWindows();
     else window.Show(showCommand);
+#ifdef KITE_HAS_CEF
+    // The first page is made once the window is on screen. Made before, it could come up
+    // in a window that was still hidden, which Chromium took as a hidden page that nothing
+    // then showed (an empty card until the first click, 1 launch in 7 on Gabe's PC).
+    if (chromium) showSelectedTab();
+#endif
     if (capture && !window.HasClientSize(size->first, size->second)) {
         // A capture is compared pixel for pixel with the Mac's, so a window Windows resized
         // (maximized by the launcher, clamped to 32767 px) would compare the wrong thing.
