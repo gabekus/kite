@@ -1,6 +1,9 @@
 #pragma once
 // Kite's top-level browser window: a Win32 window with no redirection bitmap, so all it shows
 // is its DirectComposition tree (shell/Compositor.h) over the system backdrop; see docs/windows.md.
+// It has no caption: the client area runs up to the window's top edge (the Mac's
+// .fullSizeContentView), keeping Windows' resize borders, and the title bar's buttons and drag
+// areas are Kite's (hitTest, shell/CaptionButtonsView.h).
 
 #include <windows.h>
 
@@ -70,6 +73,10 @@ public:
     std::function<void()> onMove;
     // The client area changed size (also after a DPI change); GetClientRect has the new one.
     std::function<void()> onSize;
+    // What a client point (px) is, below the top resize border: HTCLIENT, HTCAPTION (drags the
+    // window) or HTMINBUTTON, HTMAXBUTTON or HTCLOSE (Windows 11 shows Snap Layouts over
+    // HTMAXBUTTON). Unset, all of it is HTCLIENT.
+    std::function<LRESULT(POINT client)> hitTest;
     // Sees every message first (the command bar takes the keyboard and mouse while it's
     // open); true when it handled the message, with `result`.
     std::function<bool(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result)> filter;
@@ -78,6 +85,12 @@ private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT Handle(UINT message, WPARAM wParam, LPARAM lParam);
     void ResizeClient(int width, int height);
+    // The window rect around a client area `width` × `height` px: the frame's borders but no
+    // caption (WM_NCCALCSIZE takes it off).
+    RECT FrameAround(int width, int height) const;
+    // The resize border's thickness, in the monitor's px (a maximized window hangs this far off
+    // the screen on every side).
+    int ResizeBorder() const;
 
     HWND hwnd_ = nullptr;
     UINT dpi_ = USER_DEFAULT_SCREEN_DPI;

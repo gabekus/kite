@@ -3,6 +3,8 @@
 #include "shell/MainWindow.h"
 
 #include <dwmapi.h>
+#include <shellapi.h>
+#include <windowsx.h>
 
 namespace kite {
 namespace {
@@ -17,6 +19,18 @@ constexpr DWORD kSystemBackdropType = 38;    // DWMWA_SYSTEMBACKDROP_TYPE
 constexpr int kBackdropTransientWindow = 3;  // DWMSBT_TRANSIENTWINDOW: acrylic
 
 int Scale(int value, UINT dpi) { return MulDiv(value, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI); }
+
+constexpr DWORD kStyle = WS_OVERLAPPEDWINDOW;
+
+// Whether an auto-hiding taskbar sits on `edge` (ABE_LEFT…) of `monitor`: a maximized window
+// then leaves a pixel there so the pointer can still bring the taskbar up.
+bool AutoHideTaskbarOn(UINT edge, const RECT& monitor) {
+    APPBARDATA data{};
+    data.cbSize = sizeof(data);
+    data.uEdge = edge;
+    data.rc = monitor;
+    return SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &data) != 0;
+}
 
 }  // namespace
 
@@ -35,8 +49,9 @@ MainWindow::MainWindow(HINSTANCE instance) {
     // The default size is the client area, like the Mac's content rect; add the frame to it.
     UINT systemDpi = GetDpiForSystem();
     RECT rect{0, 0, Scale(kDefaultWidth, systemDpi), Scale(kDefaultHeight, systemDpi)};
-    AdjustWindowRectExForDpi(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0, systemDpi);
-    CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, kClassName, L"Kite", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+    AdjustWindowRectExForDpi(&rect, kStyle, FALSE, 0, systemDpi);
+    rect.top = 0;  // no caption (WM_NCCALCSIZE)
+    CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, kClassName, L"Kite", kStyle, CW_USEDEFAULT, CW_USEDEFAULT,
                     rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr, instance, this);
     // Windows sends no WM_DPICHANGED at creation, so a window that lands on a monitor with
     // another scale than the system's is resized for that monitor here.
@@ -77,11 +92,22 @@ bool MainWindow::HasClientSize(int width, int height) const {
 void MainWindow::ResizeClient(int width, int height) {
     // The client area at the layout scale; the frame at the monitor's (they differ under
     // UseFixedScale).
-    RECT rect{0, 0, Scale(width, dpi_), Scale(height, dpi_)};
-    AdjustWindowRectExForDpi(&rect, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
-                             static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), GetDpiForWindow(hwnd_));
+    const RECT rect = FrameAround(Scale(width, dpi_), Scale(height, dpi_));
     SetWindowPos(hwnd_, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+RECT MainWindow::FrameAround(int width, int height) const {
+    RECT rect{0, 0, width, height};
+    AdjustWindowRectExForDpi(&rect, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
+                             static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), GetDpiForWindow(hwnd_));
+    rect.top = 0;  // the caption WM_NCCALCSIZE takes off
+    return rect;
+}
+
+int MainWindow::ResizeBorder() const {
+    const UINT dpi = GetDpiForWindow(hwnd_);
+    return GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
 }
 
 void MainWindow::SetDarkAppearance(bool dark) {
@@ -115,6 +141,50 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         if (filter(message, wParam, lParam, result)) return result;
     }
     switch (message) {
+    case WM_NCCALCSIZE: {
+        if (!wParam) break;
+        // Windows' frame on the left, right and bottom (its resize borders, invisible on
+        // Windows 10 and 11), but none at the top: the client area starts at the window's top
+        // edge, and its top resize border is hit-tested in it (WM_NCHITTEST).
+        auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
+        const LONG top = params->rgrc[0].top;
+        if (const LRESULT result = DefWindowProcW(hwnd_, message, wParam, lParam); result != 0) return result;
+        params->rgrc[0].top = top;
+        if (IsZoomed(hwnd_)) {
+            // A maximized window hangs off the screen by its resize border; the client area
+            // starts on the screen.
+            params->rgrc[0].top += ResizeBorder();
+            // And it leaves a pixel for an auto-hiding taskbar to come up from.
+            MONITORINFO monitor{};
+            monitor.cbSize = sizeof(monitor);
+            if (GetMonitorInfoW(MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST), &monitor)) {
+                RECT& client = params->rgrc[0];
+                if (AutoHideTaskbarOn(ABE_TOP, monitor.rcMonitor)) client.top += 1;
+                if (AutoHideTaskbarOn(ABE_BOTTOM, monitor.rcMonitor)) client.bottom -= 1;
+                if (AutoHideTaskbarOn(ABE_LEFT, monitor.rcMonitor)) client.left += 1;
+                if (AutoHideTaskbarOn(ABE_RIGHT, monitor.rcMonitor)) client.right -= 1;
+            }
+        }
+        return 0;
+    }
+    case WM_NCHITTEST: {
+        // The left, right and bottom borders are still Windows' frame.
+        const LRESULT frame = DefWindowProcW(hwnd_, message, wParam, lParam);
+        if (frame != HTCLIENT) return frame;
+        POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        ScreenToClient(hwnd_, &at);
+        // The top resize border, over everything (as over a standard title bar), but for a
+        // maximized window, which doesn't resize.
+        const int border = ResizeBorder();
+        if (!IsZoomed(hwnd_) && at.y < border) {
+            RECT client{};
+            GetClientRect(hwnd_, &client);
+            if (at.x < border) return HTTOPLEFT;
+            if (at.x >= client.right - border) return HTTOPRIGHT;
+            return HTTOP;
+        }
+        return hitTest ? hitTest(at) : HTCLIENT;
+    }
     case WM_DPICHANGED: {
         if (fixedScale_) return 0;
         // Take the rect Windows suggests so the window keeps its physical size on the new monitor.
@@ -134,9 +204,7 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
         // The minimum is the client area, like the Mac's (whose frame is its content with
         // .fullSizeContentView); Windows wants the outer size, so add the frame.
-        RECT frame{0, 0, Scale(kMinimumWidth, dpi_), Scale(kMinimumHeight, dpi_)};
-        AdjustWindowRectExForDpi(&frame, static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE)), FALSE,
-                                 static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_EXSTYLE)), GetDpiForWindow(hwnd_));
+        const RECT frame = FrameAround(Scale(kMinimumWidth, dpi_), Scale(kMinimumHeight, dpi_));
         info->ptMinTrackSize.x = frame.right - frame.left;
         info->ptMinTrackSize.y = frame.bottom - frame.top;
         if (allowLargerThanScreen_) info->ptMaxTrackSize = {32767, 32767};

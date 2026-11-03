@@ -45,7 +45,9 @@
 #include "core/SessionStore.h"
 #include "core/SupportDirectory.h"
 #include "core/ThemeBackdrop.h"
+#include "core/TitleBar.h"
 #include "shell/BackdropTest.h"
+#include "shell/CaptionButtonsView.h"
 #ifdef KITE_HAS_CEF
 #include "shell/Chromium.h"
 #endif
@@ -327,12 +329,35 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     sidebar->Layout(static_cast<float>(kSidebarWidth), window.Dpi());
     sidebar->Update(state);
 
+    // Windows' minimize, maximize and close buttons, top-right over the backdrop (the window
+    // has no caption), and where dragging moves the window.
+    std::unique_ptr<kite::CaptionButtonsView> caption = kite::CaptionButtonsView::Create(window.Handle(), gpuError);
+    if (!caption) return Fail(quiet, L"Kite couldn't make the caption buttons: " + gpuError, kWindowFailed);
+    caption->UseCompositor(compositor.get());
+    caption->Layout(window.Dpi());
+    caption->SetDark(dark);
+    window.hitTest = [&](POINT at) -> LRESULT {
+        RECT client{};
+        GetClientRect(window.Handle(), &client);
+        const float scale = static_cast<float>(window.Dpi()) / USER_DEFAULT_SCREEN_DPI;
+        switch (kite::TitleBarAreaAt(static_cast<float>(client.right) / scale, static_cast<float>(kSidebarWidth),
+                                     static_cast<float>(at.x) / scale, static_cast<float>(at.y) / scale)) {
+        case kite::TitleBarArea::Drag: return HTCAPTION;
+        case kite::TitleBarArea::Minimize: return HTMINBUTTON;
+        case kite::TitleBarArea::Maximize: return HTMAXBUTTON;
+        case kite::TitleBarArea::Close: return HTCLOSE;
+        case kite::TitleBarArea::Client: break;
+        }
+        return HTCLIENT;
+    };
+
     // The command bar (Ctrl+T), over everything in the window. What it does with a row, and
     // how a page shows, depend on Chromium, so they're filled in with it below.
     std::unique_ptr<kite::CommandBarView> commandBar;
     // The session changed under the window: the sidebar and an open bar show it.
     auto stateChanged = [&] {
         sidebar->Update(state);
+        caption->SetDark(!kite::PrefersDarkForeground(state.SelectedSpace().theme));
         if (commandBar) commandBar->Refresh();
     };
     std::function<void(const std::string& tabID, const std::string& url)> loadInTab = [](const std::string&, const std::string&) {};
@@ -399,6 +424,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // next draw rebuilds it).
     auto dropCompositor = [&] {
         sidebar->UseCompositor(nullptr);
+        caption->UseCompositor(nullptr);
         if (commandBar) commandBar->UseCompositor(nullptr);
         compositor.reset();
     };
@@ -410,6 +436,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (renderer) compositor = kite::Compositor::Create(window.Handle(), *renderer, problem);
         if (compositor) {
             sidebar->UseCompositor(compositor.get());
+            caption->UseCompositor(compositor.get());
             if (commandBar) commandBar->UseCompositor(compositor.get());
         }
         return problem;
@@ -420,21 +447,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         const UINT width = static_cast<UINT>(client.right), height = static_cast<UINT>(client.bottom);
         std::wstring problem;
         for (int attempt = 0; attempt < 2; ++attempt) {
-            if (!compositor || compositor->DeviceLost() || sidebar->DeviceLost()) {
+            if (!compositor || compositor->DeviceLost() || sidebar->DeviceLost() || caption->DeviceLost()) {
                 if (problem = rebuild(); !problem.empty()) break;
             }
             problem = compositor->Draw(width, height, kite::MakeThemeUniforms(theme, static_cast<float>(width), static_cast<float>(height)),
                                        base, readBack);
             // The sidebar with it, shown together at the commit.
             if (problem.empty()) problem = sidebar->Draw();
+            if (problem.empty()) problem = caption->Draw();
             if (problem.empty()) compositor->Commit();
-            if (!compositor->DeviceLost() && !sidebar->DeviceLost()) break;
+            if (!compositor->DeviceLost() && !sidebar->DeviceLost() && !caption->DeviceLost()) break;
         }
         if (!problem.empty()) OutputDebugStringW((L"Kite: drawing failed: " + problem + L"\n").c_str());
         return problem;
     };
     window.onSize = [&] {
         sidebar->Layout(static_cast<float>(kSidebarWidth), window.Dpi());
+        caption->Layout(window.Dpi());
         draw();
         if (commandBar) commandBar->Layout();
     };
@@ -483,6 +512,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     sidebar->SetActions(sidebarActions);
     // Ctrl+T, wherever the keyboard is in Kite's own window (a page's comes through Chromium).
     window.filter = [&](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+        // The caption buttons' presses, whatever else is open.
+        if (caption->HandleMessage(message, wParam, lParam, result)) return true;
         // A key typed straight after Ctrl+T in a page can come before Chromium's note that
         // Ctrl+T was pressed: it opens the bar itself, and the note then finds it open.
         if ((message == WM_KEYDOWN || message == WM_CHAR) && commandBar && !commandBar->IsOpen() && keysForBar()) {
@@ -587,7 +618,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         GetClientRect(window.Handle(), &client);
         const int dpi = static_cast<int>(window.Dpi());
         auto px = [dpi](int points) { return MulDiv(points, dpi, USER_DEFAULT_SCREEN_DPI); };
-        RECT card{px(kSidebarWidth), px(kContentInset), client.right - px(kContentInset), client.bottom - px(kContentInset)};
+        // Its top under the caption buttons.
+        RECT card{px(kSidebarWidth), px(static_cast<int>(kite::title_bar::kContentTop)), client.right - px(kContentInset),
+                  client.bottom - px(kContentInset)};
         card.right = std::max(card.right, card.left + 1);
         card.bottom = std::max(card.bottom, card.top + 1);
         return card;
@@ -736,6 +769,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             // The page first, so CEF's thread moves it while Kite draws.
             chromium->SetBounds(contentBounds());
             sidebar->Layout(static_cast<float>(kSidebarWidth), window.Dpi());
+            caption->Layout(window.Dpi());
             draw();
             if (commandBar) commandBar->Layout();
             chromium->WindowMoved();
@@ -773,6 +807,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         bool inked = false;
         for (size_t i = 3; i < chrome.bgra.size() && !inked; i += 4) inked = chrome.bgra[i] != 0;
         if (!inked) return Fail(quiet, L"the sidebar drew nothing", kWindowFailed);
+        // And the caption buttons their glyphs.
+        kite::Pixels buttons;
+        if (std::wstring problem = caption->Draw(&buttons); !problem.empty()) {
+            return Fail(quiet, L"the caption buttons couldn't draw: " + problem, kWindowFailed);
+        }
+        inked = false;
+        for (size_t i = 3; i < buttons.bgra.size() && !inked; i += 4) inked = buttons.bgra[i] != 0;
+        if (!inked) return Fail(quiet, L"the caption buttons drew nothing", kWindowFailed);
         // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt
         // and draw again (a real device removal can't be caused from a test).
         dropCompositor();
@@ -799,6 +841,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             kite::Pixels chrome;
             captureError = sidebar->Draw(&chrome);
             if (captureError.empty()) ComposeOver(pixels, chrome, POINT{0, 0});
+        }
+        if (captureError.empty()) {
+            kite::Pixels buttons;
+            POINT origin{};
+            captureError = caption->Draw(&buttons, &origin);
+            if (captureError.empty()) ComposeOver(pixels, buttons, origin);
         }
         if (captureError.empty() && commandBarOption.present) {
             // The bar as Ctrl+T opens it, with the text typed in.

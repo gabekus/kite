@@ -42,6 +42,7 @@ add_library(KiteCoreWin STATIC
   src/core/TabClosing.cpp
   src/core/SupportDirectory.cpp
   src/core/ThemeBackdrop.cpp
+  src/core/TitleBar.cpp
   src/core/Unicode.cpp
   src/core/URLInput.cpp
   src/core/Url.cpp
@@ -93,6 +94,7 @@ if(WIN32)
   add_executable(Kite WIN32
     src/shell/main.cpp
     src/shell/BackdropTest.cpp
+    src/shell/CaptionButtonsView.cpp
     src/shell/Capture.cpp
     src/shell/CommandBarView.cpp
     src/shell/Compositor.cpp
@@ -163,6 +165,7 @@ add_executable(KiteCoreTests
   tests/SupportDirectoryTests.cpp
   tests/ThemeBackdropTests.cpp
   tests/ThemeTests.cpp
+  tests/TitleBarTests.cpp
   tests/UnicodeTests.cpp
   tests/URLInputTests.cpp
 )
