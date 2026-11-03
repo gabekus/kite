@@ -246,8 +246,12 @@ D2D1_COLOR_F SpaceBarView::Primary(float alpha) const {
 }
 
 void SpaceBarView::DrawBar(ID2D1DeviceContext* context) {
-    // Arc's Library button and + menu: labelColor at SymbolButton's 70%.
-    brush_->SetColor(Primary(kLabelAlpha * M::kButtonOpacity));
+    // Arc's Library button and + menu: labelColor at SymbolButton's 70%, each symbol faded as a
+    // whole (an image's alphaValue), so where its strokes meet the ink doesn't double.
+    brush_->SetColor(Primary(1));
+    context->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(),
+                                              kLabelAlpha * M::kButtonOpacity),
+                       nullptr);
     D2D1_MATRIX_3X2_F transform{};
     context->GetTransform(&transform);
     const auto centred = [&](const BarRect& box) {
@@ -265,6 +269,7 @@ void SpaceBarView::DrawBar(ID2D1DeviceContext* context) {
     context->DrawLine(D2D1::Point2F(-arm, 0), D2D1::Point2F(arm, 0), brush_.Get(), kStroke, roundCaps_.Get());
     context->DrawLine(D2D1::Point2F(0, -arm), D2D1::Point2F(0, arm), brush_.Get(), kStroke, roundCaps_.Get());
     context->SetTransform(transform);
+    context->PopLayer();
 }
 
 void SpaceBarView::DrawDot(ID2D1DeviceContext* context) {
