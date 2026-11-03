@@ -278,7 +278,8 @@ HEIC without its extension) shows the placeholder where the Mac draws it, and an
 embedded colour profile or JPEG orientation isn't applied (only a file put there
 by hand can be any of these); if the worker thread can't start, pictures are
 decoded on the UI thread as a last resort; a file that turns up after a miss shows
-at the icon's next redraw (a switch, not a hover), as the Mac's next reload reads it;
+at the icon's next redraw (a switch, or a hover over the page's rows; the bar's
+hover only moves its backing), as the Mac's next reload reads it;
 a picture's corners are circular where the Mac's are continuous; the MDL2 fallback (Windows without
 Segoe Fluent Icons) is checked against the font's map but not yet seen drawn;
 and the tip over a cell comes in W9b3.
