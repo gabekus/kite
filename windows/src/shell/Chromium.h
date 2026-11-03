@@ -16,7 +16,7 @@
 //
 // Closing the window: the first WM_CLOSE force-closes every browser and is cancelled; as
 // each browser is through DoClose or closed, the window is asked to close again, and closes
-// once all are. That destroys the browsers' windows, and the destructor waits for their
+// once all are. That destroys the browsers' windows, and Shutdown waits for their
 // OnBeforeClose before CefShutdown. A page that closes itself (window.close(), as a sign-in
 // popup does) takes only its own window with it.
 
@@ -43,6 +43,9 @@ struct PageEvents {
     // keeping window.opener (sign-in popups need it), as the Mac does. `url` may be empty
     // (window.open('') before the opener writes to it).
     std::function<void(const std::string& openerTabID, const std::string& tabID, const std::string& url)> popupOpened;
+    // A link the user opened in a new tab (Ctrl-click or middle-click: background; Ctrl+Shift:
+    // foreground), as the Mac's openURLInNewTab. No opener: it's an ordinary new tab.
+    std::function<void(const std::string& openerTabID, const std::string& url, bool foreground)> openInNewTab;
     // The tab's page is gone on its own: it closed itself, or its popup was never created.
     std::function<void(const std::string& tabID)> pageClosed;
     // Another launch of Kite found this one running (one Kite per profile, as Chromium allows).
@@ -58,6 +61,7 @@ public:
     // AlreadyRunning: another Kite has this profile and has been told to come forward.
     static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
                              std::unique_ptr<Chromium>& out, std::wstring& error);
+    // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();
     Chromium(const Chromium&) = delete;
     Chromium& operator=(const Chromium&) = delete;
@@ -81,12 +85,18 @@ public:
     // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden
     // tabs would keep drawing (a CEF update moved it). --smoke-test fails on it.
     bool PagesCanBeHidden() const;
+    // After the main window is gone: waits (at most 10 s) for every browser to close, then
+    // shuts Chromium down. False when a browser didn't close in time, here or within the
+    // window's 5 s close deadline, so Chromium went down under it. --smoke-test fails on it.
+    bool Shutdown();
 
     struct Shared;  // state both threads touch, behind a mutex (Chromium.cpp)
 
 private:
     explicit Chromium(std::shared_ptr<Shared> shared);
     std::shared_ptr<Shared> shared_;
+    bool shutDown_ = false;
+    bool cleanShutdown_ = false;
 };
 
 }  // namespace kite

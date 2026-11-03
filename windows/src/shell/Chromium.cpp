@@ -15,6 +15,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_request_context.h"
+#include "include/cef_request_handler.h"
 #include "include/cef_task.h"
 #include "core/Uuid.h"
 #include "shell/MainWindow.h"
@@ -82,8 +83,8 @@ struct Chromium::Shared {
 
     // Kite's UI thread only.
     struct Placement {
-        bool visible = true;  // on the card, rather than 0×0; SetAsChild windows start there
-        RECT rect{};
+        bool visible = true;  // shown on the card, rather than hidden; SetAsChild windows start shown
+        RECT rect{};          // where it was last put; a hidden page keeps its size
         bool operator==(const Placement& o) const { return visible == o.visible && EqualRect(&rect, &o.rect); }
     };
     struct Page {
@@ -97,6 +98,7 @@ struct Chromium::Shared {
     std::string shown;
     bool minimized = false;
     ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
+    bool closeForced = false;    // the deadline closed the window before every browser was ready
 
     // Hands work to Kite's UI thread; one wake per batch.
     void Post(std::function<void()> work) {
@@ -125,15 +127,17 @@ struct Chromium::Shared {
         return bounds;
     }
 
-    // Puts the shown tab's window on the card and the rest at 0×0, on CEF's thread, which
-    // owns them, and only for windows whose placement changed. 0×0 makes CEF shrink the
-    // page's widget, and the widget window itself (Chromium's Chrome_WidgetWin_N, the host
-    // window's child; FindPageWidget) is hidden and shown: that's what Chromium reads as the page's
-    // visibility (HWNDMessageHandler's SWP_SHOWWINDOW/SWP_HIDEWINDOW), so a background tab
-    // reports hidden and stops drawing, and reports visible again when it's back. Resizing
-    // or hiding only CEF's host window left a page hidden for good (seen on Gabe's PC). It
-    // leans on Chromium's window layout, so a missing widget is reported (widgetMissing,
-    // which fails --smoke-test); W10's off-screen pages replace it with WasHidden.
+    // Puts the shown tab's window on the card and hides the rest, on CEF's thread, which owns
+    // them, and only for windows whose placement changed. The page's widget window
+    // (Chromium's Chrome_WidgetWin_N, the host window's child; FindPageWidget) is hidden and
+    // shown itself: that's what Chromium reads as the page's visibility (HWNDMessageHandler's
+    // SWP_SHOWWINDOW/SWP_HIDEWINDOW), so a background tab reports hidden and stops drawing,
+    // and reports visible again when it's back. Hiding only CEF's host window left a page
+    // hidden for good (seen on Gabe's PC). A hidden page keeps its size, as on the Mac, which
+    // only hides the view: resizing it to 0×0 would give the page a resize to nothing, and a
+    // reflow, on every tab switch. It leans on Chromium's window layout, so a missing widget
+    // is reported (widgetMissing, which fails --smoke-test); W10's off-screen pages replace it
+    // with WasHidden.
     void Layout() {
         const RECT card = Bounds();
         std::vector<std::pair<HWND, Placement>> changes;
@@ -141,7 +145,7 @@ struct Chromium::Shared {
             if (!page.hwnd) continue;
             Placement wanted;
             wanted.visible = id == shown && !minimized;
-            wanted.rect = wanted.visible ? card : RECT{};
+            wanted.rect = wanted.visible ? card : page.placed.rect;
             if (wanted == page.placed) continue;
             page.placed = wanted;
             changes.emplace_back(page.hwnd, wanted);
@@ -151,11 +155,16 @@ struct Chromium::Shared {
         std::stable_partition(changes.begin(), changes.end(), [](const auto& c) { return c.second.visible; });
         RunOnCefUIThread([changes = std::move(changes)] {
             for (const auto& [host, placement] : changes) {
-                const RECT& r = placement.rect;
                 const HWND widget = FindPageWidget(host);
-                if (!placement.visible && widget) ShowWindow(widget, SW_HIDE);
-                SetWindowPos(host, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
-                if (placement.visible && widget) ShowWindow(widget, SW_SHOWNA);
+                if (placement.visible) {
+                    const RECT& r = placement.rect;
+                    SetWindowPos(host, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    if (widget) ShowWindow(widget, SW_SHOWNA);
+                } else {
+                    if (widget) ShowWindow(widget, SW_HIDE);
+                    ShowWindow(host, SW_HIDE);
+                }
             }
         });
     }
@@ -171,7 +180,8 @@ struct Chromium::Shared {
         return &it->second;
     }
 
-    void Attach(const std::string& tabID, CefRefPtr<CefBrowser> browser, HWND hwnd) {
+    // `closed`: OnAfterCreated already closed it, Kite having started closing by then.
+    void Attach(const std::string& tabID, CefRefPtr<CefBrowser> browser, HWND hwnd, bool closed) {
         Page& page = pages[tabID];
         page.browser = browser;
         page.hwnd = hwnd;
@@ -179,7 +189,7 @@ struct Chromium::Shared {
         // resized or maximized since the browser was asked for.
         page.placed = {true, RECT{-1, -1, -1, -1}};
         if (closing) {
-            browser->GetHost()->CloseBrowser(true);
+            if (!closed) browser->GetHost()->CloseBrowser(true);  // closing started since
             return;
         }
         Layout();
@@ -211,7 +221,11 @@ private:
 };
 
 // One per tab: CEF's handlers for that tab's browser, on CEF's UI thread.
-class PageClient : public CefClient, public CefLifeSpanHandler, public CefDisplayHandler, public CefLoadHandler {
+class PageClient : public CefClient,
+                   public CefLifeSpanHandler,
+                   public CefDisplayHandler,
+                   public CefLoadHandler,
+                   public CefRequestHandler {
 public:
     // `firstURL` is loaded once the browser exists, after the white-background override.
     PageClient(std::string tabID, std::shared_ptr<Chromium::Shared> shared, std::string firstURL = {})
@@ -220,6 +234,7 @@ public:
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
+    CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
     // CefLifeSpanHandler
 
@@ -241,12 +256,16 @@ public:
             shared_->widgetMissing = true;
             OutputDebugStringW(L"Kite: no Chromium widget window in the page's host window; background tabs won't be hidden\n");
         }
-        shared_->Post([shared = shared_, id = tabID_, browser, hwnd] { shared->Attach(id, browser, hwnd); });
+        // Kite is already closing (the window may be gone, so Attach may never run): closed
+        // here, after Attach is queued, so DoClose's note finds the page.
+        const bool closed = shared_->closing;
+        shared_->Post([shared = shared_, id = tabID_, browser, hwnd, closed] { shared->Attach(id, browser, hwnd, closed); });
         {
             std::lock_guard lock(shared_->mutex);
             std::erase_if(shared_->popupTabs, [this](const auto& entry) { return entry.second == tabID_; });
         }
         shared_->Count(-1, +1);
+        if (closed) browser->GetHost()->CloseBrowser(true);
     }
 
     bool OnBeforePopup(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, int popupID, const CefString& targetURL,
@@ -353,6 +372,22 @@ public:
         });
     }
 
+    // CefRequestHandler
+
+    // Ctrl-click and middle-click (a background tab), Ctrl+Shift-click (a foreground one): a
+    // new Kite tab, as the Mac's KCBrowser does. Otherwise Alloy would load the link in this
+    // tab, replacing the page. Anything else, or without a click, goes on as Chromium decides.
+    bool OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString& targetURL,
+                          cef_window_open_disposition_t disposition, bool userGesture) override {
+        const bool background = disposition == CEF_WOD_NEW_BACKGROUND_TAB;
+        const bool foreground = disposition == CEF_WOD_NEW_FOREGROUND_TAB;
+        if (!userGesture || !(background || foreground) || targetURL.empty() || shared_->closing) return false;
+        shared_->Post([shared = shared_, opener = tabID_, url = targetURL.ToString(), foreground] {
+            if (shared->events.openInNewTab) shared->events.openInNewTab(opener, url, foreground);
+        });
+        return true;
+    }
+
 private:
     // A popup that will never be created: its placeholder goes, and Kite moves off its tab.
     void AbandonPopup(const std::string& id) {
@@ -424,11 +459,14 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
 
 Chromium::Chromium(std::shared_ptr<Shared> shared) : shared_(std::move(shared)) {}
 
-Chromium::~Chromium() {
-    // The main window is gone by now (Kite declares this before it), and with it every
-    // browser's window; CEF finishes closing them on its thread. Bounded, so a wedged
-    // browser can't keep Kite from exiting. (A browser not yet through DoClose means Kite
-    // left early, on an error path.)
+Chromium::~Chromium() { Shutdown(); }
+
+bool Chromium::Shutdown() {
+    if (shutDown_) return cleanShutdown_;
+    shutDown_ = true;
+    // The main window is gone by now, and with it every browser's window; CEF finishes
+    // closing them on its thread. Bounded, so a wedged browser can't keep Kite from exiting.
+    // (A browser not yet through DoClose means Kite left early, on an error path.)
     shared_->closing = true;
     for (auto& [id, page] : shared_->pages) {
         if (page.browser && !page.closeReady) page.browser->GetHost()->CloseBrowser(true);
@@ -436,16 +474,19 @@ Chromium::~Chromium() {
     // Messages are pumped while waiting: the page windows' teardown on CEF's thread sends
     // messages to this one (their input queues are attached), and a bare wait stalled
     // OnBeforeClose until the timeout, then shut down under live browsers.
+    bool allClosed = false;
     const ULONGLONG deadline = GetTickCount64() + 10'000;
     for (;;) {
         const ULONGLONG now = GetTickCount64();
         if (now >= deadline) break;
         const DWORD woke = MsgWaitForMultipleObjectsEx(1, &shared_->allClosed, static_cast<DWORD>(deadline - now), QS_ALLINPUT,
                                                        MWMO_INPUTAVAILABLE);
+        if (woke == WAIT_OBJECT_0) allClosed = true;
         if (woke != WAIT_OBJECT_0 + 1) break;  // signalled, timed out or failed
         MSG message;
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
     }
+    if (!allClosed) OutputDebugStringW(L"Kite: browsers still open after 10 s; shutting Chromium down anyway\n");
     shared_->pages.clear();
     shared_->contexts.clear();
     {
@@ -454,6 +495,8 @@ Chromium::~Chromium() {
     }
     CefShutdown();
     CloseHandle(shared_->allClosed);
+    cleanShutdown_ = allClosed && !shared_->closeForced;
+    return cleanShutdown_;
 }
 
 void Chromium::Show(const std::string& tabID, const std::string& profileDirectory, const std::string& url, const RECT& bounds) {
@@ -536,14 +579,19 @@ bool Chromium::MayCloseWindow() {
                      PostMessageW(hwnd, WM_CLOSE, 0, 0);
                  });
     }
-    if (GetTickCount64() - shared_->closingSince >= kCloseDeadlineMs) return true;
+    bool ready = true;
     {
         std::lock_guard lock(shared_->mutex);
-        if (shared_->creating > 0) return false;
+        ready = shared_->creating == 0;
     }
     for (const auto& [id, page] : shared_->pages) {
-        if (!page.browser || !page.closeReady) return false;
+        if (!ready) break;
+        ready = page.browser && page.closeReady;
     }
+    if (ready) return true;
+    if (GetTickCount64() - shared_->closingSince < kCloseDeadlineMs) return false;
+    OutputDebugStringW(L"Kite: a browser didn't close within 5 s; closing the window anyway\n");
+    shared_->closeForced = true;
     return true;
 }
 

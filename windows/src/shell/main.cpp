@@ -3,8 +3,9 @@
 //   Kite.exe                 normal launch
 //   Kite.exe --smoke-test    opens the window, runs the message loop for a second (with
 //                            Chromium: until the selected tab's page has loaded, at most
-//                            30 s), saves the session and exits 0 (CI). Errors go to the
-//                            exit code, never a dialog.
+//                            30 s, then one WM_CLOSE must close every browser in time),
+//                            saves the session and exits 0 (CI). Errors go to the exit
+//                            code, never a dialog.
 //   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]
 //                            opens the window at W×H points (client area), saves the frame
 //                            it presents as a PNG and exits: the Helix UI gate
@@ -26,7 +27,9 @@
 #include <charconv>
 #include <filesystem>
 #include <memory>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -331,6 +334,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // the backdrop alone until W4 captures the composed window.
     bool pageLoaded = false, pageLoading = false;
     ULONGLONG closeAskedAt = 0;  // when the smoke test asked the window to close
+    // Until W5 closes tabs, a page that closed itself leaves its tab in the session: Kite
+    // never shows it again this run (that would load it afresh, a sign-in page say).
+    std::set<std::string> closedPages;
+    std::map<std::string, std::string> popupOpeners;  // popup tab → the tab that opened it
     auto contentBounds = [&] {
         RECT client{};
         GetClientRect(window.Handle(), &client);
@@ -343,7 +350,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     };
     auto showSelectedTab = [&] {
         const kite::Tab* tab = state.SelectedTab();
-        if (!tab) return;  // the Mac's empty state arrives with the command bar (W7)
+        // The Mac's empty state arrives with the command bar (W7).
+        if (!tab || closedPages.contains(tab->id)) return;
         const std::string url = tab->url ? *tab->url : tab->pinnedURL.value_or("");
         chromium->Show(tab->id, state.SelectedProfileDirectory(), url, contentBounds());
     };
@@ -376,19 +384,37 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             if (auto location = state.Location(openerID); location && location->space) spaceID = state.spaces[*location->space].id;
             // window.open('') has no address yet, which the session keeps as none (the Mac's nil).
             state.OpenTab(url.empty() ? std::nullopt : std::optional<std::string>(url), spaceID, true, kite::Now(), id);
+            popupOpeners[id] = openerID;
             showSelectedTab();
         };
+        events.openInNewTab = [&](const std::string& openerID, const std::string& url, bool foreground) {
+            // In the space of the tab the link was in, as the Mac's openTab(url:select:).
+            std::optional<std::string> spaceID;
+            if (auto location = state.Location(openerID); location && location->space) spaceID = state.spaces[*location->space].id;
+            state.OpenTab(url, spaceID, foreground);
+            if (foreground) showSelectedTab();
+        };
         events.pageClosed = [&](const std::string& id) {
-            // The tab stays in the session until W5 closes tabs; Kite moves to the space's most
-            // recently used other tab, if it was showing this one.
+            closedPages.insert(id);
+            const auto opener = popupOpeners.extract(id);
             const kite::Tab* selected = state.SelectedTab();
             if (!selected || selected->id != id) return;
-            const kite::Tab* next = nullptr;
-            for (const kite::Tab* tab : state.SidebarTabs(state.SelectedSpaceIndex())) {
-                if (tab->id != id && (!next || tab->lastActiveAt > next->lastActiveAt)) next = tab;
+            // A popup hands the screen back to the tab that opened it, as the Mac's PagePool
+            // does; otherwise (or with its opener gone too) Kite moves to the space's most
+            // recently used other tab.
+            auto usable = [&](const std::string& tabID) { return state.Location(tabID) && !closedPages.contains(tabID); };
+            std::string next;
+            if (opener && usable(opener.mapped())) {
+                next = opener.mapped();
+            } else {
+                const kite::Tab* recent = nullptr;
+                for (const kite::Tab* tab : state.SidebarTabs(state.SelectedSpaceIndex())) {
+                    if (usable(tab->id) && (!recent || tab->lastActiveAt > recent->lastActiveAt)) recent = tab;
+                }
+                if (recent) next = recent->id;
             }
-            if (!next) return;
-            state.Select(next->id);
+            if (next.empty()) return;
+            state.Select(next);
             showSelectedTab();
         };
         events.relaunched = [&] {
@@ -496,6 +522,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
 #ifdef KITE_HAS_CEF
+    // Every browser closed within the window's 5 s deadline and Chromium's shutdown wait,
+    // rather than Chromium going down under one.
+    const bool chromiumClosedCleanly = !chromium || chromium->Shutdown();
+    if (smokeTest && !chromiumClosedCleanly) return Fail(quiet, L"a browser didn't close in time; Chromium shut down under it", kWindowFailed);
     if (smokeTest && chromium && !pageLoaded) return Fail(quiet, L"the first page didn't finish loading within 30 s", kWindowFailed);
     if (smokeTest && chromium && !chromium->PagesCanBeHidden()) {
         return Fail(quiet, L"a page had no Chromium widget window to hide: background tabs would keep drawing", kWindowFailed);

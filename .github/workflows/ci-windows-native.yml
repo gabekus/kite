@@ -100,6 +100,10 @@ jobs:
           $profileDir = Join-Path $env:RUNNER_TEMP "kite-smoke-$([guid]::NewGuid())"
           New-Item -ItemType Directory -Path $profileDir | Out-Null
           $env:KITE_SUPPORT_PATH = $profileDir
+          # The selected tab is a page from the repo, so the smoke test needs no network.
+          $smokePage = ([uri](Resolve-Path windows/helix/pages/smoke.html).Path).AbsoluteUri
+          & windows/build/Release/kitecore.exe --profile $profileDir open $smokePage | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "kitecore open exited with $LASTEXITCODE" }
 
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 0) { throw "--smoke-test exited with $code" }
@@ -111,8 +115,7 @@ jobs:
           $tab = (& windows/build/Release/kitecore.exe --profile $profileDir state | ConvertFrom-Json).selectedTab
           if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
           Write-Host "selected tab after the smoke test: $($tab.title) <$($tab.url)>"
-          # A tab's display title falls back to its host until the page reports a title.
-          if (-not $tab.url -or $tab.title -eq ([uri]$tab.url).Host) { throw 'the session has no title from the page' }
+          if ($tab.title -ne 'Kite smoke page') { throw 'the session has no title from the page' }
           # The headless model reads what the app wrote.
           & windows/build/Release/kitecore.exe --profile $profileDir state
           if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
