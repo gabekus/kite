@@ -1,0 +1,139 @@
+name: CI (Windows app)
+
+# Kite for Windows (native C++, windows/). Runs only when it or the session fixture it
+# shares with the Mac changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'windows/**'
+      - 'Tests/Fixtures/**'
+      - '.github/workflows/ci-windows-native.yml'
+  pull_request:
+    paths:
+      - 'windows/**'
+      - 'Tests/Fixtures/**'
+      - '.github/workflows/ci-windows-native.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # The rules in docs/windows-architecture.md that MSVC can't check: core and its tests
+  # build and pass on any OS, and the app builds with MinGW-w64 GCC -Wall -Wextra -Werror.
+  portable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core and tests (GCC, Linux)
+        run: |
+          cmake -S windows -B /tmp/kite-core
+          cmake --build /tmp/kite-core -j
+          ctest --test-dir /tmp/kite-core --output-on-failure --timeout 120
+      - name: Cross-compile Kite.exe (MinGW-w64)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq g++-mingw-w64-x86-64 > /dev/null
+          cmake -S windows -B /tmp/kite-mingw -DCMAKE_TOOLCHAIN_FILE="$PWD/windows/cmake/mingw-w64.cmake"
+          cmake --build /tmp/kite-mingw -j
+
+  windows-app:
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'windows-latest' || vars.WINDOWS_RUNNER || 'windows-latest' }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (MSVC)
+        run: cmake -S windows -B windows/build -A x64  # newest Visual Studio found
+      - name: Build
+        run: cmake --build windows/build --config Release --parallel
+      - name: Unit tests
+        timeout-minutes: 5
+        run: ctest --test-dir windows/build -C Release --output-on-failure --timeout 120
+      - name: Launch checks
+        timeout-minutes: 8  # covers kitecore.exe, which has no per-call timeout
+        run: |
+          # Runs Kite.exe and returns its exit code, killing it after a minute so a run that
+          # never quits fails the step instead of hanging the job.
+          # Kite.exe writes why it failed to stderr, shown here.
+          function Run-Kite([string[]] $arguments) {
+            $stderrFile = Join-Path $env:RUNNER_TEMP "kite-stderr-$([guid]::NewGuid()).txt"
+            $process = Start-Process -FilePath (Resolve-Path windows/build/Release/Kite.exe) -ArgumentList $arguments `
+              -RedirectStandardError $stderrFile -PassThru
+            $null = $process.Handle  # keep the handle, or ExitCode reads empty after WaitForExit(timeout)
+            if (-not $process.WaitForExit(60000)) {
+              $process.Kill()
+              throw "Kite.exe $arguments didn't exit within 60 s"
+            }
+            if ((Test-Path $stderrFile) -and (Get-Item $stderrFile).Length -gt 0) { Write-Host (Get-Content $stderrFile -Raw) }
+            return $process.ExitCode
+          }
+          $profileDir = Join-Path $env:RUNNER_TEMP "kite-smoke-$([guid]::NewGuid())"
+          New-Item -ItemType Directory -Path $profileDir | Out-Null
+          $env:KITE_SUPPORT_PATH = $profileDir
+
+          $code = Run-Kite @('--smoke-test')
+          if ($code -ne 0) { throw "--smoke-test exited with $code" }
+          if (-not (Test-Path (Join-Path $profileDir 'session.json'))) { throw 'Kite.exe wrote no session.json' }
+          # The headless model reads what the app wrote.
+          & windows/build/Release/kitecore.exe --profile $profileDir state
+          if ($LASTEXITCODE -ne 0) { throw "kitecore state exited with $LASTEXITCODE" }
+
+          # A flag without its value is a usage error (exit 1), never a normal launch.
+          $code = Run-Kite @('--capture')
+          if ($code -ne 1) { throw "--capture without a path: expected exit 1, got $code" }
+
+          # A KITE_SUPPORT_PATH that isn't a directory is refused (exit 2), never fallen back from.
+          $file = Join-Path $profileDir 'not-a-dir'
+          Set-Content -Path $file -Value x
+          $env:KITE_SUPPORT_PATH = $file
+          $code = Run-Kite @('--smoke-test')
+          if ($code -ne 2) { throw "a file as KITE_SUPPORT_PATH: expected exit 2, got $code" }
+
+          # Test flags never run on the real profile.
+          Remove-Item Env:KITE_SUPPORT_PATH
+          $code = Run-Kite @('--smoke-test')
+          if ($code -ne 1) { throw "--smoke-test without KITE_SUPPORT_PATH: expected exit 1, got $code" }
+          $global:LASTEXITCODE = 0
+      - name: Capture (Helix UI gate plumbing)
+        timeout-minutes: 3
+        run: |
+          $profileDir = Join-Path $env:RUNNER_TEMP "kite-capture-$([guid]::NewGuid())"
+          New-Item -ItemType Directory -Path $profileDir | Out-Null
+          Copy-Item windows/helix/states/two-spaces.json (Join-Path $profileDir 'session.json')
+          $env:KITE_SUPPORT_PATH = $profileDir
+          $png = Join-Path $env:RUNNER_TEMP 'kite-capture.png'
+          $stderrFile = Join-Path $env:RUNNER_TEMP 'kite-capture-stderr.txt'
+          $process = Start-Process -FilePath (Resolve-Path windows/build/Release/Kite.exe) `
+            -ArgumentList '--capture', $png, '--window-size', '1280,820' -RedirectStandardError $stderrFile -PassThru
+          $null = $process.Handle
+          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Kite.exe --capture hung' }
+          if ($process.ExitCode -ne 0) { throw "Kite.exe --capture exited with $($process.ExitCode): $(Get-Content $stderrFile -Raw)" }
+          $bytes = [System.IO.File]::ReadAllBytes($png)
+          $width = [System.BitConverter]::ToUInt32(@($bytes[19], $bytes[18], $bytes[17], $bytes[16]), 0)
+          $height = [System.BitConverter]::ToUInt32(@($bytes[23], $bytes[22], $bytes[21], $bytes[20]), 0)
+          Write-Host "capture: ${width}x${height} px"
+          # The runner's display is at 100%, so points are pixels.
+          if ($width -ne 1280 -or $height -ne 820) { throw "capture is ${width}x${height}, expected 1280x820" }
+          # Until W3 draws the backdrop the client area is the black placeholder, so a crop that
+          # took in the title bar or frame shows up as a non-black corner.
+          Add-Type -AssemblyName System.Drawing
+          $bitmap = [System.Drawing.Bitmap]::new($png)
+          try {
+            foreach ($point in @(@(0, 0), @(1279, 0), @(0, 819), @(1279, 819), @(640, 410))) {
+              $pixel = $bitmap.GetPixel($point[0], $point[1])
+              if ($pixel.R -ne 0 -or $pixel.G -ne 0 -or $pixel.B -ne 0 -or $pixel.A -ne 255) {
+                throw "capture pixel $($point -join ',') is $($pixel.Name), expected the black placeholder"
+              }
+            }
+          } finally { $bitmap.Dispose() }
+      - name: Upload the capture
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kite-windows-capture
+          path: ${{ runner.temp }}/kite-capture.png
+          if-no-files-found: ignore

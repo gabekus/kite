@@ -161,6 +161,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         window.minSize = NSSize(width: 640, height: 420)
         window.center()
         if !incognito, let autosaveName { window.setFrameAutosaveName(autosaveName) }
+        // Helix's UI gate (docs/helix.md): a test profile can fix the content size in points, so a
+        // capture lines up with Kite for Windows' `--window-size`. Never applies to a real profile.
+        if let size = Self.testWindowSize(ProcessInfo.processInfo.environment) { window.setContentSize(size) }
         super.init(window: window)
         window.delegate = self
 
@@ -1586,5 +1589,15 @@ final class ShadowView: NSView {
             layer.add(animation, forKey: "shadowPath")
         }
         layer.shadowPath = path
+    }
+}
+
+extension BrowserWindowController {
+    /// KITE_WINDOW_SIZE="W,H" (points), honoured only with KITE_SUPPORT_PATH (a test profile).
+    static func testWindowSize(_ environment: [String: String]) -> NSSize? {
+        guard environment["KITE_SUPPORT_PATH"] != nil, let text = environment["KITE_WINDOW_SIZE"] else { return nil }
+        let parts = text.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 2, parts[0] >= 640, parts[1] >= 420 else { return nil }
+        return NSSize(width: parts[0], height: parts[1])
     }
 }
