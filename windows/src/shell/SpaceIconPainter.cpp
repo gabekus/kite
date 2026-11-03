@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -29,8 +30,6 @@ constexpr float kOutlineEm = 100;
 // What the worker will decode: Kite's own pictures are 128px PNGs of a few tens of KB.
 constexpr uintmax_t kMaxFileBytes = 1 << 20;
 constexpr UINT kMaxFrameSide = 2048;
-// An unreadable picture is looked for again at a draw this long after.
-constexpr auto kRetryAfter = std::chrono::seconds(2);
 
 std::optional<ComPtr<IDWriteFontFace>> FaceNamed(IDWriteFontCollection* fonts, const wchar_t* family) {
     UINT32 index = 0;
@@ -185,7 +184,14 @@ std::unique_ptr<SpaceIconPainter> SpaceIconPainter::Create(IDWriteFactory* dwrit
     painter->shared_->folder = Verbatim(pictures.folder);
     painter->synchronous_ = pictures.synchronous;
     // The worker holds the queue too, so it outlives the painter if a read is still running.
-    if (!painter->synchronous_) std::thread(Work, painter->shared_).detach();
+    if (!painter->synchronous_) {
+        try {
+            std::thread(Work, painter->shared_).detach();
+        } catch (const std::system_error&) {
+            // No thread to be had: decode in place rather than never.
+            painter->synchronous_ = true;
+        }
+    }
     return painter;
 }
 
@@ -196,17 +202,15 @@ SpaceIconPainter::~SpaceIconPainter() {
         shared_->queue.clear();
     }
     shared_->wake.notify_all();
-    pictures_.clear();
+    sized_.clear();
     captureWic_.Reset();
     if (captureCom_) CoUninitialize();
 }
 
 void SpaceIconPainter::ReleaseDevice() {
-    for (auto& [name, picture] : pictures_) {
-        for (auto& [side, sized] : picture.sized) {
-            sized.bitmap.Reset();
-            sized.brush.Reset();
-        }
+    for (auto& [key, sized] : sized_) {
+        sized.bitmap.Reset();
+        sized.brush.Reset();
     }
     for (std::optional<Face>* face : {&fluent_, &mdl2_}) {
         if (*face) (*face)->outlines.clear();
@@ -215,7 +219,8 @@ void SpaceIconPainter::ReleaseDevice() {
 }
 
 void SpaceIconPainter::Retain(const std::set<std::string>& names) {
-    std::erase_if(pictures_, [&](const auto& entry) { return !names.contains(entry.first); });
+    loads_.Retain(names);
+    std::erase_if(sized_, [&](const auto& entry) { return !names.contains(entry.first.first); });
     // And the reads nobody will show.
     std::lock_guard lock(shared_->mutex);
     std::erase_if(shared_->queue, [&](const Job& job) { return !names.contains(job.name); });
@@ -282,31 +287,19 @@ void SpaceIconPainter::DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBr
     context->SetTransform(transform);
 }
 
+double SpaceIconPainter::Now() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 bool SpaceIconPainter::Arrived(const std::string& name, const std::vector<UINT>& sides, std::vector<Pixels> pixels) {
-    const auto it = pictures_.find(name);
-    if (it == pictures_.end()) return false;  // no longer shown
-    Picture& picture = it->second;
-    for (UINT side : sides) picture.requested.erase(side);
-    if (pixels.empty()) {
-        // Unreadable: the placeholder, which changes nothing when it already showed.
-        const bool changed = !picture.unreadable;
-        picture.unreadable = true;
-        picture.unreadableAt = std::chrono::steady_clock::now();
-        return changed;
+    if (!loads_.Known(name)) return false;  // no longer shown
+    const bool readable = !pixels.empty() && pixels.size() == sides.size();
+    const PictureLoads::Answer answer = loads_.Arrived(name, std::vector<unsigned>(sides.begin(), sides.end()), readable, Now());
+    if (readable) {
+        for (size_t i = 0; i < sides.size(); ++i) sized_[SizedKey{name, sides[i]}] = Sized{std::move(pixels[i]), nullptr, nullptr};
     }
-    picture.unreadable = false;
-    for (size_t i = 0; i < sides.size() && i < pixels.size(); ++i) {
-        Picture::Sized& sized = picture.sized[sides[i]];
-        sized = Picture::Sized{};
-        sized.pixels = std::move(pixels[i]);
-        sized.used = ++clock_;
-    }
-    // At most two sizes (the bar's and the header's): a DPI change's old ones go.
-    while (picture.sized.size() > 2) {
-        picture.sized.erase(std::min_element(picture.sized.begin(), picture.sized.end(),
-                                             [](const auto& a, const auto& b) { return a.second.used < b.second.used; }));
-    }
-    return true;
+    for (unsigned side : answer.evicted) sized_.erase(SizedKey{name, side});
+    return answer.changed;
 }
 
 std::set<std::string> SpaceIconPainter::TakeResults() {
@@ -355,17 +348,12 @@ void SpaceIconPainter::Prepare(ID2D1DeviceContext* context, const SpaceIconLook&
     if (look.kind != SpaceIconLook::Kind::Picture || look.text.empty()) return;
     UseFactoryOf(context);
     const UINT side = PictureFrameAt(0, 0, size, scale).pixels;
-    Picture& picture = pictures_[look.text];
-    const auto found = picture.sized.find(side);
-    if (found == picture.sized.end()) {
-        // Asked for once at a time; an unreadable file again 2 s on, its placeholder showing meanwhile.
-        const bool due = !picture.unreadable || std::chrono::steady_clock::now() - picture.unreadableAt >= kRetryAfter;
-        if (due && picture.requested.insert(side).second) Request(look.text, side);
-        return;
-    }
-    Picture::Sized& sized = found->second;
-    sized.used = ++clock_;
-    if (sized.bitmap) return;
+    const PictureLoads::Need need = loads_.Prepare(look.text, side, Now());
+    if (need.ask) Request(look.text, side);
+    if (need.show != PictureLoads::Show::Picture) return;
+    const auto found = sized_.find(SizedKey{look.text, side});
+    if (found == sized_.end() || found->second.bitmap) return;
+    Sized& sized = found->second;
     // Its pixels are the window's: `side` of them is `side / scale` points. A failure here (the
     // device's) is tried again at the next draw.
     const float dpi = USER_DEFAULT_SCREEN_DPI * scale;
@@ -394,20 +382,19 @@ void SpaceIconPainter::Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* b
     if (look.kind != SpaceIconLook::Kind::Picture) return;
     Prepare(context, look, size, scale);
     const PictureFrame frame = PictureFrameAt(centre.x, centre.y, size, scale);
-    const auto it = pictures_.find(look.text);
-    if (it != pictures_.end()) {
-        if (const auto sized = it->second.sized.find(frame.pixels); sized != it->second.sized.end() && sized->second.brush) {
-            sized->second.brush->SetTransform(D2D1::Matrix3x2F::Translation(frame.left, frame.top));
-            // Circular corners where the Mac's are continuous (a squircle's): within a pixel at these sizes.
-            context->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(frame.left, frame.top, frame.left + frame.side, frame.top + frame.side),
-                                                            frame.radius, frame.radius),
-                                          sized->second.brush.Get());
-            return;
-        }
+    const PictureLoads::Show shows = loads_.Shows(look.text, frame.pixels);
+    if (shows == PictureLoads::Show::Nothing) return;  // still loading
+    if (shows == PictureLoads::Show::Picture) {
+        const auto sized = sized_.find(SizedKey{look.text, frame.pixels});
+        if (sized == sized_.end() || !sized->second.brush) return;  // its bitmap failed: tried again at the next draw
+        sized->second.brush->SetTransform(D2D1::Matrix3x2F::Translation(frame.left, frame.top));
+        // Circular corners where the Mac's are continuous (a squircle's): within a pixel at these sizes.
+        context->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(frame.left, frame.top, frame.left + frame.side, frame.top + frame.side), frame.radius, frame.radius),
+            sized->second.brush.Get());
+        return;
     }
-    // Still loading draws nothing; unreadable (or no valid name), the placeholder.
-    if (!look.text.empty() && (it == pictures_.end() || !it->second.unreadable)) return;
-    // The file can't be read: the placeholder.
+    // The file can't be read (or the name isn't valid): the placeholder.
     if (const auto photo = SymbolGlyphFor("photo")) {
         const float c = dark ? 1.0f : 0.0f;
         DrawSymbol(context, brush, *photo, centre, size * kPlaceholderSize,

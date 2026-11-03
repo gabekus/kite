@@ -247,10 +247,11 @@ string(JSON workAccent GET "${work}" rows 0 accent)
 if(NOT workShows STREQUAL "symbol" OR NOT workGlyph STREQUAL "E821" OR NOT workAccent STREQUAL "#D74B86")
   message(FATAL_ERROR "Work's header gave ${work}")
 endif()
-# Work's icon as a picture, then as a symbol Windows has no stand-in for: a picture in the bar
-# and the header; the dot in the bar and a blank slot in the header.
+# Work's icon as a picture (a valid name and an invalid one), as a symbol Windows has no
+# stand-in for, and as none: a picture in the bar and the header; the dot in the bar with a blank
+# slot in the header; the dot with no slot.
 file(READ "${CMAKE_CURRENT_LIST_DIR}/../helix/states/sidebar.json" sidebarState)
-foreach(icon "image:x.png" "symbol:not.a.symbol")
+foreach(icon "image:x.png" "image:a/b.png" "symbol:not.a.symbol" "")
   set(other "${WORK}-icon")
   file(REMOVE_RECURSE "${other}")
   file(MAKE_DIRECTORY "${other}")
@@ -260,9 +261,13 @@ foreach(icon "image:x.png" "symbol:not.a.symbol")
                   OUTPUT_STRIP_TRAILING_WHITESPACE)
   string(JSON cellShows GET "${out}" spaceBar cells 1 shows)
   string(JSON headShows GET "${out}" rows 0 shows)
-  if(icon STREQUAL "image:x.png")
+  # An invalid picture name is still a picture (its placeholder); no icon has no header slot.
+  if(icon MATCHES "^image:")
     set(wantCell "picture")
     set(wantHead "picture")
+  elseif(icon STREQUAL "")
+    set(wantCell "dot")
+    set(wantHead "none")
   else()
     set(wantCell "dot")
     set(wantHead "blank")

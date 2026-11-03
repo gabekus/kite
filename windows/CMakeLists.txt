@@ -40,6 +40,7 @@ add_library(KiteCoreWin STATIC
   src/core/SessionStore.cpp
   src/core/SpaceBar.cpp
   src/core/SpaceIcon.cpp
+  src/core/PictureLoads.cpp
   src/core/SpaceSwipe.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
@@ -173,6 +174,7 @@ add_executable(KiteCoreTests
   tests/SidebarTests.cpp
   tests/SpaceBarTests.cpp
   tests/SpaceIconTests.cpp
+  tests/PictureLoadsTests.cpp
   tests/SpaceSwipeTests.cpp
   tests/TabClosingTests.cpp
   tests/SupportDirectoryTests.cpp
