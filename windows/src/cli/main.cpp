@@ -181,7 +181,6 @@ json::Value ThemeSummary(const Theme& theme, int width, int height) {
                                     {"backdrop", json::Value(std::move(backdrop))}});
 }
 
-// Ids typed in either case, like UUID(uuidString:).
 // What an icon shows: "dot", "emoji", "symbol" (with its Segoe Fluent and MDL2 glyphs as hex)
 // or "picture".
 void AddLook(json::Object& o, const SpaceIconLook& look) {
@@ -191,11 +190,12 @@ void AddLook(json::Object& o, const SpaceIconLook& look) {
         char fluent[8], mdl2[8];
         std::snprintf(fluent, sizeof fluent, "%04X", static_cast<unsigned>(look.glyph->fluent));
         std::snprintf(mdl2, sizeof mdl2, "%04X", static_cast<unsigned>(look.glyph->mdl2));
-        o.emplace("glyph", json::Object{{"fluent", std::string(fluent)}, {"mdl2", std::string(mdl2)}});
+        o.emplace("glyph", json::Object{{"fluent", std::string(fluent)}, {"mdl2", std::string(mdl2)}, {"standIn", look.glyph->standIn}});
     }
     if (look.kind == SpaceIconLook::Kind::Symbol) o.emplace("accent", Hex(look.accent));
 }
 
+// Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
 
 }  // namespace

@@ -256,12 +256,18 @@ on its ink, at the size that makes the briefcase ink the Mac's 15pt at 12.5 (one
 factor for every symbol), in the theme's accent when lit and in the label colour
 at 45% when greyed. A picture is the Mac's rounded square, round(size × 1.2) on a
 side with 22% corners, its PNG from the profile's SpaceIcons folder scaled to the
-square's pixels, greyed as an emoji is; a missing file shows "photo". Known
-differences: Fluent has one weight where the Mac's symbols are semibold, several
-stand-ins are outlines of filled symbols, nine have no such object in either font
-(bookmark, paw, bed, cutlery, dumbbell, bandage, baseball, takeaway bag, theatre
-masks) and show the nearest glyph until W9b4 draws them, a picture's corners are
-circular where the Mac's are continuous, and the tip over a cell comes in W9b3.
+square's pixels, greyed as an emoji is; a missing file shows "photo". Pictures
+decode once per size and device, before the draw that shows them, and a file
+that can't be read is remembered, so redraws and hovers don't go to the disk.
+Known differences: Fluent has one weight where the Mac's symbols are semibold
+(the placeholder's "photo" is regular on the Mac), several stand-ins are outlines
+of filled symbols, nine have no such object in either font (bookmark, paw, bed,
+cutlery, dumbbell, bandage, baseball, takeaway bag, theatre masks) and show the
+nearest glyph until W9b4 draws them, symbols are centred on their ink where the
+Mac centres the symbol's image (checked only for the briefcase, within 0.25pt),
+an SF Symbol name outside the 58 (which the Mac draws, from automation or a
+hand-edited session) shows the dot, a picture's corners are circular where the
+Mac's are continuous, and the tip over a cell comes in W9b3.
 A switch's slide relights
 the cells with the pages: each cell's two layers have DirectComposition opacity
 animations on the strip's spring (its light is linear in the strip's offset,

@@ -1,6 +1,7 @@
 // What a space's icon shows (core/SpaceIcon.h): the Mac's icon prefixes, its picture names
 // (SpacesTests.anImageIconIsAFileNameInTheIconsFolder's names) and the symbols' stand-ins.
 
+#include <cmath>
 #include <set>
 #include <string>
 #include <string_view>
@@ -23,11 +24,12 @@ TEST(anIconIsAnEmojiASymbolAPictureOrADot) {
     CHECK(picture.kind == Kind::Picture && picture.text == "3F2A.png");
 }
 
-TEST(aSymbolWindowsHasNoGlyphForDrawsNothing) {
-    // NSImage(systemSymbolName:) is nil for a name SF Symbols doesn't have, and the view is blank.
-    const SpaceIconLook look = SpaceIconLookOf("symbol:not.a.symbol", Theme{});
-    CHECK(look.kind == Kind::Symbol && !look.glyph);
-    CHECK(!SymbolGlyphFor(""));
+TEST(aSymbolWindowsHasNoStandInForShowsTheDot) {
+    // The Mac draws any SF Symbol; Windows has stand-ins for the Icon tab's (and two more), so
+    // another name (from automation or a hand-edited session) shows the icon-less dot.
+    const SpaceIconLook look = SpaceIconLookOf("symbol:hare.fill", Theme{});
+    CHECK(look.kind == Kind::Dot && look.text == "hare.fill" && !look.glyph);
+    CHECK(!SymbolGlyphFor("") && !SymbolGlyphFor("star"));
 }
 
 TEST(aPictureNameIsABareFileName) {
@@ -44,7 +46,7 @@ TEST(aPictureNameIsABareFileName) {
     CHECK(look.kind == Kind::Picture && look.text.empty());
 }
 
-TEST(everySymbolTheIconTabOffersHasAGlyphInBothFonts) {
+TEST(everySymbolTheIconTabOffersHasAPrivateUseGlyphForBothFonts) {
     const auto& names = IconTabSymbols();
     CHECK(names.size() == 56);
     CHECK(names.front() == "star.fill" && names.back() == "tram.fill");
@@ -56,7 +58,33 @@ TEST(everySymbolTheIconTabOffersHasAGlyphInBothFonts) {
         const auto glyph = SymbolGlyphFor(name);
         CHECK(glyph && glyph->fluent >= 0xE700 && glyph->fluent <= 0xF8FF && glyph->mdl2 >= 0xE700 && glyph->mdl2 <= 0xF8FF);
     }
-    // Where the fonts differ (checked against each one's cmap on the PC).
-    CHECK(SymbolGlyphFor("folder.fill") == (SymbolGlyph{u'', u''}));
-    CHECK(SymbolGlyphFor("briefcase") == (SymbolGlyph{u'', u''}));
+    // That each is in its font is the PC's cmap check (the table's comment). Where the fonts differ:
+    CHECK(SymbolGlyphFor("folder.fill") == (SymbolGlyph{u'\uE8D5', u'\uF12B'}));
+    CHECK(SymbolGlyphFor("briefcase") == (SymbolGlyph{u'\uE821', u'\uE821'}));
+    // Nine have no such object in either font: the nearest stands in until W9b4 draws them.
+    size_t standIns = 0;
+    for (std::string_view name : all) standIns += SymbolGlyphFor(name)->standIn ? 1 : 0;
+    CHECK(standIns == 9);
+    CHECK(SymbolGlyphFor("pawprint.fill")->standIn && !SymbolGlyphFor("star.fill")->standIn);
+}
+
+TEST(aPictureIsTheMacsRoundedSquareOnThePixelGrid) {
+    // The bar's 12.5: 15pt, 30px at 2x, centred in its 36x34 cell; corners 3.3pt.
+    const PictureFrame bar = PictureFrameAt(18, 17, 12.5f, 2);
+    CHECK(bar.pixels == 30 && bar.side == 15 && bar.left == 10.5f && bar.top == 9.5f);
+    CHECK(std::abs(bar.radius - 3.3f) < 1e-5f);
+    // The header's 15: 18pt in its 26pt box.
+    const PictureFrame header = PictureFrameAt(26, 18, 15, 2);
+    CHECK(header.pixels == 36 && header.side == 18 && header.left == 17 && header.top == 9);
+    // At 125% the side is whole pixels (19 for 15pt) and the corner sits on a pixel.
+    const PictureFrame odd = PictureFrameAt(18, 17, 12.5f, 1.25f);
+    CHECK(odd.pixels == 19 && std::abs(odd.side * 1.25f - 19) < 1e-4f);
+    CHECK(std::abs(odd.left * 1.25f - std::round(odd.left * 1.25f)) < 1e-4f);
+}
+
+TEST(aSymbolGreysByItsTintAndTheRestThroughTheFilter) {
+    // SpaceIconImageView: a symbol's tint is labelColor at 45%; an emoji and a picture get
+    // CIColorControls (saturation 0) and an alpha of 45%.
+    CHECK(GreysByTint(Kind::Symbol));
+    CHECK(!GreysByTint(Kind::Emoji) && !GreysByTint(Kind::Picture));
 }

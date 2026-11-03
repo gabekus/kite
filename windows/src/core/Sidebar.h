@@ -78,7 +78,7 @@ struct SidebarRow {
     // Header: the space's icon (an emoji, "symbol:NAME", "image:FILE" or empty), whether it has
     // pinned items, and whether they're collapsed.
     std::string icon;
-    SpaceIconLook look;  // what the icon shows (SpaceIconLookOf)
+    SpaceIconLook look;  // what the icon shows (SpaceIconLookOf); `icon` is kept for kitecore
     bool hasPinned = false;
     bool pinnedCollapsed = false;
     // Tab.

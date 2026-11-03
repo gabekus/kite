@@ -32,8 +32,7 @@ constexpr float kHeaderIconX = 13;   // in the window
 constexpr float kHeaderTextX = 41;   // in the window
 constexpr float kHeaderFontSize = 13;
 constexpr float kHeaderTextOpacity = 0.45f;
-constexpr float kHeaderEmojiSize = 15;
-constexpr float kHeaderSymbolSize = 15;  // SpaceIconImageView's size in the header: symbols and pictures
+constexpr float kHeaderIconFontSize = 15;  // SpaceIconImageView's size in the header: emoji, symbols, pictures
 constexpr float kIconSize = 18;
 constexpr float kIconTextGap = 8;
 constexpr float kNestingIndent = 16;
@@ -134,7 +133,7 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kHeaderFontSize, view->headerFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kTabFontSize, view->tabFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kTabFontSize, view->folderFormat_)) ||
-        FAILED(hr = format(L"Segoe UI Emoji", DWRITE_FONT_WEIGHT_REGULAR, M::kHeaderEmojiSize, view->emojiFormat_)) ||
+        FAILED(hr = format(L"Segoe UI Emoji", DWRITE_FONT_WEIGHT_REGULAR, M::kHeaderIconFontSize, view->emojiFormat_)) ||
         FAILED(hr = format(installed(L"Segoe Fluent Icons") ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets", DWRITE_FONT_WEIGHT_REGULAR,
                            M::kIconSize, view->iconFormat_))) {
         error = HResultMessage(L"CreateTextFormat", hr);
@@ -279,6 +278,11 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
         it = pages_.erase(it);
     }
     model_ = std::move(next);
+    std::set<std::string> pictures;
+    for (const PageModel& page : model_.pages) {
+        if (!page.rows.empty() && page.rows.front().look.kind == SpaceIconLook::Kind::Picture) pictures.insert(page.rows.front().look.text);
+    }
+    icons_->Retain(pictures);
     PlacePages();
     ScheduleDraw();
     // Rows moved under a still pointer: it now hovers whatever is there.
@@ -441,6 +445,10 @@ std::wstring SidebarView::DrawPageSurface(const PageModel& page, Page& gpu, Pixe
     }
     gpu.width = width;
     gpu.height = height;
+    // The header's picture decoded before the page's draw begins.
+    if (!page.rows.empty() && page.rows.front().kind == SidebarRow::Kind::Header) {
+        icons_->Prepare(compositor_->D2D(), page.rows.front().look, M::kHeaderIconFontSize, scale);
+    }
     std::set<FaviconKey> icons;
     drawnIcons_ = &icons;
     std::wstring error = compositor_->DrawSurface(
@@ -669,7 +677,7 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
                 // A symbol in the theme's accent, or a picture (SpaceIconImageView, never greyed here).
                 const ThemeColor& a = row.look.accent;
                 icons_->Draw(context, brush_.Get(), row.look,
-                             D2D1::Point2F((iconBox.left + iconBox.right) / 2, (iconBox.top + iconBox.bottom) / 2), M::kHeaderSymbolSize,
+                             D2D1::Point2F((iconBox.left + iconBox.right) / 2, (iconBox.top + iconBox.bottom) / 2), M::kHeaderIconFontSize,
                              static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI, D2D1_COLOR_F{a.r, a.g, a.b, 1}, model_.dark);
             } else {
                 const std::wstring icon = Widen(row.look.text);

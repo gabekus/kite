@@ -91,7 +91,7 @@ std::optional<size_t> SpaceCellAt(const SpaceBarLayout& layout, float x, float y
 // What one space's cell shows.
 struct SpaceCell {
     std::string spaceID;
-    std::string icon;   // as Space.icon holds it
+    std::string icon;   // as Space.icon holds it (for kitecore; `look` is what draws)
     SpaceIconLook look;  // what it shows (SpaceIconLookOf)
     size_t number = 1;  // 1-based place (the tip's Alt+n for the first nine)
     double lit = 0;     // 0 greyed (or a faint dot) ... 1 in colour

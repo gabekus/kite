@@ -2,8 +2,6 @@
 
 #include "shell/SpaceIconPainter.h"
 
-#include <wincodec.h>
-
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -19,15 +17,9 @@ namespace {
 
 // The Mac's briefcase at 12.5pt semibold inks 15pt wide (30px in its 2x capture of the bar).
 constexpr float kBriefcaseInkPerPoint = 15.0f / 12.5f;
-constexpr char16_t kBriefcase = u'';  // in both fonts (the PC's cmap check)
+constexpr char16_t kBriefcase = u'\uE821';  // in both fonts (the PC's cmap check)
 // Outlines are made at this em and scaled down, so their bounds keep their precision.
 constexpr float kOutlineEm = 100;
-// SpaceIconView.imageSide and the picture's cornerRadius.
-constexpr float kPictureSide = 1.2f, kPictureCorner = 0.22f;
-// The missing picture's "photo", at 0.8 of the icon size in secondaryLabelColor (white 55% on
-// dark, black 50% on light).
-constexpr float kPlaceholderSize = 0.8f;
-constexpr float kSecondaryDark = 0.55f, kSecondaryLight = 0.5f;
 
 std::optional<ComPtr<IDWriteFontFace>> FaceNamed(IDWriteFontCollection* fonts, const wchar_t* family) {
     UINT32 index = 0;
@@ -48,20 +40,34 @@ std::optional<ComPtr<IDWriteFontFace>> FaceNamed(IDWriteFontCollection* fonts, c
 
 std::unique_ptr<SpaceIconPainter> SpaceIconPainter::Create(IDWriteFactory* dwrite, std::filesystem::path pictures, std::wstring& error) {
     std::unique_ptr<SpaceIconPainter> painter(new SpaceIconPainter());
-    painter->folder_ = std::move(pictures);
     ComPtr<IDWriteFontCollection> fonts;
     if (HRESULT hr = dwrite->GetSystemFontCollection(fonts.GetAddressOf()); FAILED(hr)) {
         error = HResultMessage(L"GetSystemFontCollection", hr);
         return nullptr;
     }
-    // Neither installed isn't a failure: symbols draw nothing, as on a Mac without the symbol.
+    // Neither installed isn't a failure: symbols draw nothing.
     for (auto [family, slot] : {std::pair{L"Segoe Fluent Icons", &painter->fluent_}, std::pair{L"Segoe MDL2 Assets", &painter->mdl2_}}) {
         if (auto face = FaceNamed(fonts.Get(), family)) {
             slot->emplace();
             (*slot)->face = *face;
         }
     }
+    // The folder by its full path with the \\?\ prefix, so a name the Mac allows that Windows
+    // reserves (CON.png, COM1.png, a trailing dot) is an ordinary file there, never a device.
+    std::error_code ignored;
+    std::filesystem::path absolute = std::filesystem::absolute(pictures, ignored).lexically_normal();
+    absolute.make_preferred();
+    painter->folder_ = absolute.native().starts_with(L"\\\\") ? absolute : std::filesystem::path(L"\\\\?\\" + absolute.native());
+    // WIC on this (the UI) thread for the painter's life; no WIC is no pictures, not a failure.
+    painter->comInitialized_ = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE));
+    CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(painter->wic_.GetAddressOf()));
     return painter;
+}
+
+SpaceIconPainter::~SpaceIconPainter() {
+    pictures_.clear();
+    wic_.Reset();
+    if (comInitialized_) CoUninitialize();
 }
 
 void SpaceIconPainter::ReleaseDevice() {
@@ -70,6 +76,18 @@ void SpaceIconPainter::ReleaseDevice() {
         if (*face) (*face)->outlines.clear();
     }
     d2d_.Reset();
+}
+
+void SpaceIconPainter::Retain(const std::set<std::string>& names) {
+    std::erase_if(pictures_, [&](const auto& entry) { return !names.contains(entry.first); });
+}
+
+void SpaceIconPainter::UseFactoryOf(ID2D1DeviceContext* context) {
+    ComPtr<ID2D1Factory> factory;
+    context->GetFactory(factory.GetAddressOf());
+    if (factory == d2d_) return;
+    ReleaseDevice();
+    d2d_ = factory;
 }
 
 const SpaceIconPainter::Outline* SpaceIconPainter::OutlineIn(Face& face, char16_t codePoint) {
@@ -95,10 +113,13 @@ std::pair<SpaceIconPainter::Face*, const SpaceIconPainter::Outline*> SpaceIconPa
         if (!*face) continue;
         Face& f = **face;
         if (!f.calibrated) {
-            // One factor per font, from its briefcase.
-            f.calibrated = true;
+            // One factor per font, from its briefcase (tried again if its outline couldn't be made).
             if (const Outline* briefcase = OutlineIn(f, kBriefcase)) {
                 f.emPerPoint = kBriefcaseInkPerPoint * kOutlineEm / (briefcase->ink.right - briefcase->ink.left);
+                f.calibrated = true;
+            } else {
+                f.outlines.erase(kBriefcase);
+                continue;
             }
         }
         if (const Outline* outline = OutlineIn(f, codePoint)) return {&f, outline};
@@ -122,92 +143,92 @@ void SpaceIconPainter::DrawSymbol(ID2D1DeviceContext* context, ID2D1SolidColorBr
     context->SetTransform(transform);
 }
 
-ID2D1Bitmap* SpaceIconPainter::Picture(ID2D1DeviceContext* context, const std::string& name, UINT pixels, float scale) {
-    const auto key = std::pair{name, pixels};
-    if (auto it = pictures_.find(key); it != pictures_.end()) return it->second.Get();
-    if (name.empty() || pixels == 0) return nullptr;
-    // A missing file isn't remembered: the cell asks again only when it draws again.
-    const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    ComPtr<ID2D1Bitmap> bitmap;
-    {
-        ComPtr<IWICImagingFactory> wic;
-        ComPtr<IWICBitmapDecoder> decoder;
-        ComPtr<IWICBitmapFrameDecode> frame;
-        ComPtr<IWICFormatConverter> converter;
-        ComPtr<IWICBitmapClipper> clipper;
-        ComPtr<IWICBitmapScaler> scaler;
-        const std::filesystem::path file = folder_ / Widen(name);
-        UINT width = 0, height = 0;
-        bool ok = SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(wic.GetAddressOf()))) &&
-                  SUCCEEDED(wic->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand,
-                                                           decoder.GetAddressOf())) &&
-                  SUCCEEDED(decoder->GetFrame(0, frame.GetAddressOf())) && SUCCEEDED(frame->GetSize(&width, &height)) && width && height &&
-                  SUCCEEDED(wic->CreateFormatConverter(converter.GetAddressOf())) &&
-                  SUCCEEDED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0,
-                                                  WICBitmapPaletteTypeMedianCut));
-        // Its centred square, filling the icon as the Mac's aspect fill does (Kite stores them
-        // square already; a file put there by hand needn't be).
-        const UINT side = std::min(width, height);
-        const WICRect square{static_cast<INT>((width - side) / 2), static_cast<INT>((height - side) / 2), static_cast<INT>(side),
-                             static_cast<INT>(side)};
-        ok = ok && SUCCEEDED(wic->CreateBitmapClipper(clipper.GetAddressOf())) && SUCCEEDED(clipper->Initialize(converter.Get(), &square)) &&
-             SUCCEEDED(wic->CreateBitmapScaler(scaler.GetAddressOf()));
-        // High-quality cubic where there is one (4 in the SDK's enum, which MinGW's headers
-        // don't have yet), Fant before, as the favicons.
-        constexpr auto kHighQualityCubic = static_cast<WICBitmapInterpolationMode>(4);
-        ok = ok && (SUCCEEDED(scaler->Initialize(clipper.Get(), pixels, pixels, kHighQualityCubic)) ||
-                    SUCCEEDED(scaler->Initialize(clipper.Get(), pixels, pixels, WICBitmapInterpolationModeFant)));
-        std::vector<BYTE> bgra(static_cast<size_t>(pixels) * pixels * 4);
-        ok = ok && SUCCEEDED(scaler->CopyPixels(nullptr, pixels * 4, static_cast<UINT>(bgra.size()), bgra.data()));
-        // Its pixels are the window's: `pixels` of them is `pixels / scale` points.
-        const float dpi = USER_DEFAULT_SCREEN_DPI * scale;
-        ok = ok && SUCCEEDED(context->CreateBitmap(D2D1::SizeU(pixels, pixels), bgra.data(), pixels * 4,
-                                                   D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
-                                                                          dpi, dpi),
-                                                   bitmap.GetAddressOf()));
-        if (!ok) bitmap.Reset();
+ComPtr<ID2D1Bitmap> SpaceIconPainter::Decode(ID2D1DeviceContext* context, const std::string& name, UINT pixels, float scale) {
+    if (!wic_ || name.empty() || pixels == 0) return nullptr;
+    ComPtr<IWICBitmapDecoder> decoder;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter> converter;
+    ComPtr<IWICBitmapClipper> clipper;
+    ComPtr<IWICBitmapScaler> scaler;
+    const std::filesystem::path file = folder_ / Widen(name);
+    UINT width = 0, height = 0;
+    if (FAILED(wic_->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf())) ||
+        FAILED(decoder->GetFrame(0, frame.GetAddressOf())) || FAILED(frame->GetSize(&width, &height)) || !width || !height ||
+        FAILED(wic_->CreateFormatConverter(converter.GetAddressOf())) ||
+        FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0,
+                                     WICBitmapPaletteTypeMedianCut))) {
+        return nullptr;
     }
-    if (SUCCEEDED(init)) CoUninitialize();
-    if (!bitmap) return nullptr;
-    return (pictures_[key] = bitmap).Get();
+    // Its centred square, filling the icon as the Mac's aspect fill does (Kite stores them square
+    // already; a file put there by hand needn't be).
+    const UINT side = std::min(width, height);
+    const WICRect square{static_cast<INT>((width - side) / 2), static_cast<INT>((height - side) / 2), static_cast<INT>(side),
+                         static_cast<INT>(side)};
+    // High-quality cubic where there is one (4 in the SDK's enum, which MinGW's headers don't have
+    // yet), Fant before, as the favicons.
+    constexpr auto kHighQualityCubic = static_cast<WICBitmapInterpolationMode>(4);
+    if (FAILED(wic_->CreateBitmapClipper(clipper.GetAddressOf())) || FAILED(clipper->Initialize(converter.Get(), &square)) ||
+        FAILED(wic_->CreateBitmapScaler(scaler.GetAddressOf())) ||
+        (FAILED(scaler->Initialize(clipper.Get(), pixels, pixels, kHighQualityCubic)) &&
+         FAILED(scaler->Initialize(clipper.Get(), pixels, pixels, WICBitmapInterpolationModeFant)))) {
+        return nullptr;
+    }
+    std::vector<BYTE> bgra(static_cast<size_t>(pixels) * pixels * 4);
+    if (FAILED(scaler->CopyPixels(nullptr, pixels * 4, static_cast<UINT>(bgra.size()), bgra.data()))) return nullptr;
+    // Its pixels are the window's: `pixels` of them is `pixels / scale` points.
+    const float dpi = USER_DEFAULT_SCREEN_DPI * scale;
+    ComPtr<ID2D1Bitmap> bitmap;
+    if (FAILED(context->CreateBitmap(D2D1::SizeU(pixels, pixels), bgra.data(), pixels * 4,
+                                     D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi,
+                                                            dpi),
+                                     bitmap.GetAddressOf()))) {
+        return nullptr;
+    }
+    return bitmap;
+}
+
+void SpaceIconPainter::Prepare(ID2D1DeviceContext* context, const SpaceIconLook& look, float size, float scale) {
+    if (look.kind != SpaceIconLook::Kind::Picture || look.text.empty()) return;
+    UseFactoryOf(context);
+    const UINT pixels = PictureFrameAt(0, 0, size, scale).pixels;
+    if (auto it = pictures_.find(look.text); it != pictures_.end() && it->second.pixels == pixels) return;
+    Picture picture;
+    picture.pixels = pixels;
+    picture.bitmap = Decode(context, look.text, pixels, scale);
+    if (picture.bitmap &&
+        FAILED(context->CreateBitmapBrush(picture.bitmap.Get(),
+                                          D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP,
+                                                                      D2D1_BITMAP_INTERPOLATION_MODE_LINEAR),
+                                          picture.brush.GetAddressOf()))) {
+        picture.bitmap.Reset();
+    }
+    pictures_[look.text] = std::move(picture);
 }
 
 void SpaceIconPainter::Draw(ID2D1DeviceContext* context, ID2D1SolidColorBrush* brush, const SpaceIconLook& look, D2D1_POINT_2F centre,
                             float size, float scale, D2D1_COLOR_F symbol, bool dark) {
-    // Outlines belong to their factory: a context from another (a new device) makes them again.
-    ComPtr<ID2D1Factory> factory;
-    context->GetFactory(factory.GetAddressOf());
-    if (factory != d2d_) {
-        ReleaseDevice();
-        d2d_ = factory;
-    }
+    UseFactoryOf(context);
     if (look.kind == SpaceIconLook::Kind::Symbol) {
         if (look.glyph) DrawSymbol(context, brush, *look.glyph, centre, size, symbol);
         return;
     }
     if (look.kind != SpaceIconLook::Kind::Picture) return;
-    // A whole number of points on a side, on the pixel grid.
-    const float side = std::round(size * kPictureSide);
-    const UINT pixels = static_cast<UINT>(std::lround(side * scale));
-    if (ID2D1Bitmap* picture = Picture(context, look.text, pixels, scale)) {
-        const float extent = pixels / scale;
-        const float left = std::round((centre.x - extent / 2) * scale) / scale, top = std::round((centre.y - extent / 2) * scale) / scale;
-        ComPtr<ID2D1BitmapBrush> fill;
-        if (FAILED(context->CreateBitmapBrush(picture, D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP,
-                                                                                    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR),
-                                              fill.GetAddressOf()))) {
-            return;
-        }
-        fill->SetTransform(D2D1::Matrix3x2F::Translation(left, top));
+    Prepare(context, look, size, scale);
+    const auto it = pictures_.find(look.text);
+    if (it != pictures_.end() && it->second.brush) {
+        const PictureFrame frame = PictureFrameAt(centre.x, centre.y, size, scale);
+        it->second.brush->SetTransform(D2D1::Matrix3x2F::Translation(frame.left, frame.top));
         // Circular corners where the Mac's are continuous (a squircle's): within a pixel at these sizes.
-        const float radius = side * kPictureCorner;
-        context->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(left, top, left + extent, top + extent), radius, radius), fill.Get());
+        context->FillRoundedRectangle(
+            D2D1::RoundedRect(D2D1::RectF(frame.left, frame.top, frame.left + frame.side, frame.top + frame.side), frame.radius, frame.radius),
+            it->second.brush.Get());
         return;
     }
-    // The file is gone: the placeholder.
+    // The file can't be read: the placeholder.
     if (const auto photo = SymbolGlyphFor("photo")) {
         const float c = dark ? 1.0f : 0.0f;
-        DrawSymbol(context, brush, *photo, centre, size * kPlaceholderSize, D2D1_COLOR_F{c, c, c, dark ? kSecondaryDark : kSecondaryLight});
+        DrawSymbol(context, brush, *photo, centre, size * kPlaceholderSize,
+                   D2D1_COLOR_F{c, c, c, dark ? kPlaceholderAlphaDark : kPlaceholderAlphaLight});
     }
 }
 

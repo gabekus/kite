@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 #include "shell/Errors.h"
 #include "shell/Text.h"
@@ -170,6 +171,11 @@ void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
     // pointer comes and goes).
     cells_ = std::move(cells);
     dark_ = dark;
+    std::set<std::string> pictures;
+    for (const SpaceCell& cell : cells_) {
+        if (cell.look.kind == SpaceIconLook::Kind::Picture) pictures.insert(cell.look.text);
+    }
+    painter_->Retain(pictures);
     if (reshaped) {
         layout_ = LayOutSpaceBar(width_, cells_.size(), layout_.scroll, Scale());
         placed_ = false;
@@ -379,8 +385,10 @@ std::wstring SpaceBarView::DrawCell(size_t index, CellGpu& gpu, bool readBack, b
         if (gpu.grey.visual) gpu.visual->RemoveVisual(gpu.grey.visual.Get());
         gpu.grey = Layer{};
     } else {
+        // A picture's decode, before the layers' draws begin.
+        painter_->Prepare(compositor_->D2D(), cell.look, M::kIconFontSize, Scale());
         error = DrawLayer(gpu.lit, width, height, [&](ID2D1DeviceContext* context) { DrawIcon(context, cell, false); }, readBack, hr, fresh);
-        if (error.empty() && cell.look.kind == SpaceIconLook::Kind::Symbol) {
+        if (error.empty() && GreysByTint(cell.look.kind)) {
             error = DrawLayer(gpu.grey, width, height, [&](ID2D1DeviceContext* context) { DrawIcon(context, cell, true); }, readBack, hr, fresh);
         } else if (error.empty()) {
             // An emoji or a picture greyed, as the Mac's CIColorControls (saturation 0), at 45%

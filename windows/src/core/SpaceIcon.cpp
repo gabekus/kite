@@ -1,5 +1,6 @@
 #include "core/SpaceIcon.h"
 
+#include <cmath>
 #include <utility>
 
 #include "core/OKLab.h"
@@ -16,11 +17,11 @@ struct SymbolEntry {
 // Each SF Symbol's stand-in, in Segoe Fluent Icons then Segoe MDL2 Assets: the Icon tab's 56 in
 // its order, then "briefcase" (the test sessions' Work space) and the picture placeholder's "photo".
 // Each code point was checked against both fonts' cmaps (Fluent 1.54, MDL2 1.86) and picked by
-// eye from every glyph they have. Where neither font has the object (marked), the nearest stands
-// in until it's drawn as geometry (W9b4).
+// eye from every glyph they have. Where neither font has the object (`true`: a stand-in), the
+// nearest stands in until it's drawn as geometry (W9b4).
 constexpr SymbolEntry kSymbols[] = {
     {"star.fill", {u'\uE735', u'\uE735'}},
-    {"bookmark.fill", {u'\uE728', u'\uE728'}},  // the nearest: neither font has one
+    {"bookmark.fill", {u'\uE728', u'\uE728', true}},
     {"heart.fill", {u'\uEB52', u'\uEB52'}},
     {"flag.fill", {u'\uEB4B', u'\uEB4B'}},
     {"bolt.fill", {u'\uE945', u'\uE945'}},
@@ -54,24 +55,24 @@ constexpr SymbolEntry kSymbols[] = {
     {"globe.americas.fill", {u'\uE909', u'\uE909'}},
     {"leaf.fill", {u'\uE8BE', u'\uE8BE'}},
     {"cloud.fill", {u'\uE753', u'\uE753'}},
-    {"pawprint.fill", {u'\uEBE8', u'\uF1AD'}},  // the nearest: neither font has one
+    {"pawprint.fill", {u'\uEBE8', u'\uF1AD', true}},
     {"basket.fill", {u'\uE7BF', u'\uE7BF'}},
     {"gift.fill", {u'\uF133', u'\uF133'}},
-    {"bed.double.fill", {u'\uE80F', u'\uE80F'}},  // the nearest: neither font has one
-    {"fork.knife", {u'\uED56', u'\uED56'}},  // the nearest: neither font has one
-    {"dumbbell.fill", {u'\uE726', u'\uE726'}},  // the nearest: neither font has one
+    {"bed.double.fill", {u'\uE80F', u'\uE80F', true}},
+    {"fork.knife", {u'\uED56', u'\uED56', true}},
+    {"dumbbell.fill", {u'\uE726', u'\uE726', true}},
     {"airplane", {u'\uE709', u'\uE709'}},
     {"music.note", {u'\uEC4F', u'\uEC4F'}},
     {"paintpalette.fill", {u'\uF354', u'\uF354'}},
     {"video.fill", {u'\uEA0C', u'\uEA0C'}},
-    {"bandage.fill", {u'\uE95E', u'\uE95E'}},  // the nearest: neither font has one
+    {"bandage.fill", {u'\uE95E', u'\uE95E', true}},
     {"chevron.left.forwardslash.chevron.right", {u'\uF54C', u'\uE943'}},
-    {"baseball.fill", {u'\uE7FC', u'\uE7FC'}},  // the nearest: neither font has one
+    {"baseball.fill", {u'\uE7FC', u'\uE7FC', true}},
     {"cloud", {u'\uE753', u'\uE753'}},
     {"map.fill", {u'\uE800', u'\uE826'}},
     {"flame.fill", {u'\uECAD', u'\uECAD'}},
-    {"takeoutbag.and.cup.and.straw.fill", {u'\uEC32', u'\uEC32'}},  // the nearest: neither font has one
-    {"theatermasks.fill", {u'\uE899', u'\uE899'}},  // the nearest: neither font has one
+    {"takeoutbag.and.cup.and.straw.fill", {u'\uEC32', u'\uEC32', true}},
+    {"theatermasks.fill", {u'\uE899', u'\uE899', true}},
     {"scroll.fill", {u'\uF000', u'\uF000'}},
     {"hand.thumbsup.fill", {u'\uF3BF', u'\uE8E1'}},
     {"tram.fill", {u'\uEB4D', u'\uEB4D'}},
@@ -84,10 +85,7 @@ constexpr size_t kIconTabCount = 56;
 
 std::optional<SymbolGlyph> SymbolGlyphFor(std::string_view name) {
     for (const SymbolEntry& entry : kSymbols) {
-        if (entry.name == name) {
-            if (entry.glyph.fluent == 0 && entry.glyph.mdl2 == 0) return std::nullopt;
-            return entry.glyph;
-        }
+        if (entry.name == name) return entry.glyph;
     }
     return std::nullopt;
 }
@@ -108,6 +106,19 @@ bool IsValidIconImageName(std::string_view name) {
     return unicode::Characters(name).size() <= 128;
 }
 
+PictureFrame PictureFrameAt(float x, float y, float size, float scale) {
+    PictureFrame frame;
+    const float side = std::round(size * 1.2f);
+    frame.radius = side * 0.22f;
+    frame.pixels = static_cast<unsigned>(std::lround(side * scale));
+    frame.side = frame.pixels / scale;
+    frame.left = std::round((x - frame.side / 2) * scale) / scale;
+    frame.top = std::round((y - frame.side / 2) * scale) / scale;
+    return frame;
+}
+
+bool GreysByTint(SpaceIconLook::Kind kind) { return kind == SpaceIconLook::Kind::Symbol; }
+
 SpaceIconLook SpaceIconLookOf(const std::string& icon, const Theme& theme) {
     SpaceIconLook look;
     if (icon.empty()) return look;
@@ -119,9 +130,10 @@ SpaceIconLook SpaceIconLookOf(const std::string& icon, const Theme& theme) {
         return look;
     }
     if (view.starts_with(kSymbolIconPrefix)) {
-        look.kind = SpaceIconLook::Kind::Symbol;
         look.text = view.substr(kSymbolIconPrefix.size());
         look.glyph = SymbolGlyphFor(look.text);
+        if (!look.glyph) return look;  // the dot
+        look.kind = SpaceIconLook::Kind::Symbol;
         look.accent = Accent(theme);
         return look;
     }

@@ -161,7 +161,7 @@ TEST(theSpaceYoureInIsLit) {
     a.icon = "🏃";
     b.id = "b";
     c.id = "c";
-    c.icon = "symbol:star";
+    c.icon = "symbol:star.fill";
     state.spaces = {a, b, c};
     state.SelectSpace("b");
     const auto cells = SpaceCells(state);
