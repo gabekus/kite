@@ -104,6 +104,8 @@ ring in-frame text "Approve"
 expect "a control in a same-origin frame, ringed where it shows" "p['frame'] and p['el'] == '#target' and p['ring'] == p['at']"
 js "document.getElementById('frame').contentWindow.scrollTo(0, 0); document.getElementById('frame').style.height = '10px'; 1" >/dev/null
 expect "a frame's control outside the frame's view isn't ringed" "p['el'] == '#target' and p['ring'] is None"
+ring frame-below text "Approve" true
+expect "the first look scrolls a frame to a control below its fold" "p['frame'] and p['el'] == '#target' and p['ring'] == p['at']"
 js "window.__kiteHandoff.clear(); draw('disabled-title'); 1" >/dev/null
 STATE=$(js "window.__ring({step: 'p', number: 1, label: 'x', text: 'Remove member', probe: true})")
 SETTLED=$(js "JSON.stringify({ drew: !!window.__kiteHandoff.host })")
@@ -116,16 +118,25 @@ if [[ -z "${RING_SOURCE:-}" ]]; then
     SETTLE="http://127.0.0.1:$PORT/settle.html"
     "$CLI" open "$SETTLE" --tab "$TAB" >/dev/null
     "$CLI" call handoff "{\"reason\":\"Test\",\"tab\":\"$TAB\",\"steps\":[{\"instruction\":\"Invite\",\"text\":\"Invite members\"}]}" >/dev/null
-    sleep 4
-    status() { "$CLI" call handoff_status '{}' | sed -n 2p; }
+    # The step's line in handoff_status, polled (up to 10s) until it has PATTERN.
+    step_has() {
+        for _ in $(seq 50); do
+            LINE=$("$CLI" call handoff_status '{}' | grep -E '^1\. \[') || true
+            grep -qE "$1" <<<"$LINE" && return 0
+            sleep 0.2
+        done
+        return 1
+    }
+    # Once the page has drawn its final button (#invite3) and the ring has had time to settle on it.
+    for _ in $(seq 50); do [[ $(js "String(!!document.getElementById('invite3'))") == true ]] && break; sleep 0.2; done
+    sleep 1
     "$CLI" click --selector ".help" --tab "$TAB" >/dev/null
     sleep 1
-    if status | grep -q '\[waiting\]'; then echo "ok   handoff: a click on text that mentions the control doesn't end the step"; passes=$((passes + 1));
-    else echo "FAIL handoff: the help line ended the step: $(status)"; failures=$((failures + 1)); fi
+    if step_has '\[waiting\]'; then echo "ok   handoff: a click on text that mentions the control doesn't end the step"; passes=$((passes + 1));
+    else echo "FAIL handoff: the help line ended the step: $LINE"; failures=$((failures + 1)); fi
     "$CLI" click --selector "#invite3" --tab "$TAB" >/dev/null
-    sleep 1
-    if status | grep -q '\[done\].*clicked'; then echo "ok   handoff: a click on the settled control ends the step"; passes=$((passes + 1));
-    else echo "FAIL handoff: the button's click wasn't heard: $(status)"; failures=$((failures + 1)); fi
+    if step_has '\[done\].*clicked'; then echo "ok   handoff: a click on the settled control ends the step"; passes=$((passes + 1));
+    else echo "FAIL handoff: the button's click wasn't heard: $LINE"; failures=$((failures + 1)); fi
 fi
 
 echo "$passes of $((passes + failures)) checks passed"

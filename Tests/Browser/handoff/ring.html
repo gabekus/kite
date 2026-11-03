@@ -17,6 +17,7 @@ const cases = {
   'enabled-twin': '<button disabled>Save</button> <button id="target">Save</button>',
   'hidden-first': '<button class="go" style="display:none">Go</button> <button class="go" id="target">Go</button>',
   'in-frame': '<iframe id="frame" srcdoc="<button id=target style=margin:20px>Approve</button>"></iframe>',
+  'frame-below': '<iframe id="frame" srcdoc="<button id=target style=margin-top:2000px>Approve</button>"></iframe>',
   // Words in separate blocks, as many sign-in buttons draw them.
   'split-words': '<button id="target"><div>Continue</div><div>with Google</div></button>',
   // A ref'd control inside a menu that closed: the ring must not jump to another control with the same words.

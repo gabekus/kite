@@ -451,15 +451,25 @@ extension UserHandoff {
           const loose = '[tabindex]:not(' + real + ',label)';
           const words = (el) => norm(el.getAttribute('aria-label') || el.innerText || el.value || el.title
             || (el.labels && el.labels[0] && el.labels[0].innerText) || '');
-          // Cheap first look, before layout: could this element say the words at all? A big block's text is skipped
-          // without reading it whole: it can't be a match (see byText).
+          // An element's text, read only up to `max` characters: null past that.
+          const textUpTo = (el, max) => {
+            const walk = el.ownerDocument.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+            let text = '';
+            for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+              text += n.data;
+              if (text.length > max) return null;
+            }
+            return text;
+          };
+          // Cheap first look, before layout: could this element say the words at all? A big block can't be a match
+          // (see byText), so its text is read only so far.
           const mentions = (el, want) => {
             const named = norm([el.getAttribute('aria-label'), el.value, el.title,
               el.labels && el.labels[0] && el.labels[0].textContent].join(' '));
             if (named.includes(want)) return true;
-            const text = el.textContent || '';
-            // Block children's words run together in textContent ("Continue" "with Google"): compare without spaces.
-            return text.length <= (want.length + 40) * 4 && norm(text).replace(/ /g, '').includes(want.replace(/ /g, ''));
+            const text = textUpTo(el, (want.length + 40) * 4);
+            // Block children's words run together in text nodes ("Continue" "with Google"): compare without spaces.
+            return text !== null && norm(text).replace(/ /g, '').includes(want.replace(/ /g, ''));
           };
           // Why a control can't be used, or null when it can: disabled, aria-disabled or inert, with the page's own
           // words about it when it gives some (a title, a description, a tooltip attribute).
@@ -482,9 +492,12 @@ extension UserHandoff {
             let best = null, score = 0;
             for (const d of docs()) {
               for (const el of d.querySelectorAll(controls)) {
-                if (el === K.host || !mentions(el, want)) continue;
-                // A focusable block only counts when it says exactly the words: skip big ones before any layout.
-                if (el.matches(loose) && (el.textContent || '').length > want.length * 2 + 10 && !el.getAttribute('aria-label')) continue;
+                if (el === K.host) continue;
+                // A focusable block only counts when it says exactly the words: skip big ones before reading their
+                // text or any layout.
+                if (el.matches(loose) && !el.getAttribute('aria-label')
+                  && (el.childElementCount > 8 || textUpTo(el, want.length * 2 + 10) === null)) continue;
+                if (!mentions(el, want)) continue;
                 if (!shown(el)) continue;
                 const t = words(el);
                 if (!t) continue;
@@ -512,10 +525,10 @@ extension UserHandoff {
           };
           // The control's own box, in the top page. A label or other block that holds a short control
           // ("☐ Super Administrator" across a whole row) is ringed around what it shows, not its full width.
-          const box = (el) => {
+          const box = (el, clipped = true) => {
             const o = offset(el), move = (r) => {
               const m = { left: r.left + o.x, top: r.top + o.y, right: r.right + o.x, bottom: r.bottom + o.y, width: r.width, height: r.height };
-              return o.clip && (m.right <= o.clip.left || m.left >= o.clip.right || m.bottom <= o.clip.top || m.top >= o.clip.bottom) ? null : m;
+              return clipped && o.clip && (m.right <= o.clip.left || m.left >= o.clip.right || m.bottom <= o.clip.top || m.top >= o.clip.bottom) ? null : m;
             };
             const r = el.getBoundingClientRect();
             if (style(el).display === 'inline' || el.matches('input,select,textarea,button')) return move(r);
@@ -565,9 +578,10 @@ extension UserHandoff {
           }
           const report = (how) => (e) => {
             if (!e.isTrusted || !K.step || K.done) return;
-            // The ringed control, or the live one about to replace it (a page that redrew it under the pointer).
+            // The ringed control, or the live one about to take its place (a page that redrew it under the pointer, or
+            // a control the user clicked before the ring settled on it).
             const path = e.composedPath ? e.composedPath() : [];
-            const hit = [K.el, K.el && !K.el.isConnected ? K.cand : null]
+            const hit = [K.el, !K.el || !K.el.isConnected ? K.cand : null]
               .find((el) => el && el.isConnected && (path.includes(el) || el.contains(e.target)));
             if (!hit || blocked(hit)) return;
             K.done = how;
@@ -582,7 +596,8 @@ extension UserHandoff {
               const click = report('click'), change = report('change');
               d.addEventListener('click', click, true);
               d.addEventListener('change', change, true);
-              const observer = new MutationObserver(() => soon(K.el ? 1000 : 150));
+              // While the control is missing, a page that never stops changing (Gmail) still gets the idle backoff.
+              const observer = new MutationObserver(() => soon(K.el ? 1000 : Math.max(150, K.idle || 150)));
               observer.observe(d, { subtree: true, childList: true, characterData: true,
                 attributes: true, attributeFilter: ['disabled', 'aria-disabled', 'inert', 'hidden', 'aria-hidden', 'aria-label'] });
               K.watching.push(() => {
@@ -646,7 +661,8 @@ extension UserHandoff {
           // every 2s once found (for changes the observer can't see). A page change brings it forward (watch).
           const tick = () => {
             K.timer = 0;
-            if (!K.cfg) return;
+            // A hidden page needs no looks; Kite's own look starts them again when it's back on screen.
+            if (!K.cfg || document.hidden) return;
             const el = look();
             K.idle = el || K.cand !== K.el ? 0 : Math.min(1000, Math.max(150, (K.idle || 75) * 2));
             soon(K.cand !== K.el ? settle / 2 : el ? 2000 : K.idle);
@@ -664,14 +680,16 @@ extension UserHandoff {
             K.raf = 0;
             if (!K.cfg || !K.host) return;
             const el = K.el && K.el.isConnected && shown(K.el) ? K.el : null;
+            // The first look scrolls the control into view, its frame's too when it's below the frame's fold.
+            if (el && K.wantScroll && !K.scrolled) {
+              K.scrolled = true;
+              const all = box(el, false), seen = box(el);
+              if (!seen || all.top < 0 || all.bottom > innerHeight || all.left < 0 || all.right > innerWidth) {
+                el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+              }
+            }
             const r = el ? box(el) : null;
             if (el && r) {
-              if (K.wantScroll && !K.scrolled) {
-                K.scrolled = true;
-                if (r.top < 0 || r.bottom > innerHeight || r.left < 0 || r.right > innerWidth) {
-                  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-                }
-              }
               const pad = 4;
               Object.assign(K.ring.style, { display: 'block', left: (r.left - pad) + 'px', top: (r.top - pad) + 'px',
                 width: (r.width + pad * 2) + 'px', height: (r.height + pad * 2) + 'px' });
