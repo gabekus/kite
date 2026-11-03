@@ -277,6 +277,12 @@ final class PasswordManagerFieldButton: NSView {
 
     private func press() {
         let model = selection.model
+        if UIDiagnostics.enabledByEnvironment {
+            // A test profile's run neither opens the password manager nor installs it; the log says which it would do.
+            let name = model.passwordManager?.name ?? PasswordManagerIntegration.current.name
+            NSLog("Kite: diagnostics: the password manager key would %@ %@", model.passwordManager == nil ? "add" : "open", name)
+            return
+        }
         guard let manager = model.passwordManager else {
             if PasswordManagerIntegration.canInstall(in: model.engine) { PasswordManagerIntegration.install(in: model.engine) }
             return
