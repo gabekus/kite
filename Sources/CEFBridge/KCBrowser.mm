@@ -519,6 +519,13 @@ class KCClient : public CefClient,
         [owner_.delegate browser:owner_ faviconDidChange:icon_urls.empty() ? nil : ToNSURL(icon_urls.front())];
     }
 
+    bool OnAutoResize(CefRefPtr<CefBrowser> browser, const CefSize& new_size) override {
+        KCBrowser* owner = owner_;
+        if (!owner.autoResizeHandler) return false;
+        owner.autoResizeHandler(NSMakeSize(new_size.width, new_size.height));
+        return true;
+    }
+
     void OnLoadingProgressChange(CefRefPtr<CefBrowser> browser, double progress) override {
         [owner_.delegate browser:owner_ progressDidChange:progress];
     }
@@ -919,6 +926,9 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
     double _zoomFactor;
     BOOL _audioMuted;
     BOOL _forceDark;
+    BOOL _autoResize;
+    NSSize _autoResizeMinSize;
+    NSSize _autoResizeMaxSize;
     BOOL _closed;
     int _nextMessageID;
     std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
@@ -1023,6 +1033,7 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
     }
     if (_zoomFactor != 1) self.zoomFactor = _zoomFactor;
     if (_audioMuted) browser->GetHost()->SetAudioMuted(true);
+    if (_autoResize) [self enableAutoResizeWithMinSize:_autoResizeMinSize maxSize:_autoResizeMaxSize];
     if (_forceDark) [self applyForceDark];
     if (_hidden) browser->GetHost()->WasHidden(true);
     if (_pendingFocus) [self focus];
@@ -1088,6 +1099,15 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 - (void)setAudioMuted:(BOOL)audioMuted {
     _audioMuted = audioMuted;
     if (_browser) _browser->GetHost()->SetAudioMuted(audioMuted);
+}
+
+- (void)enableAutoResizeWithMinSize:(NSSize)minSize maxSize:(NSSize)maxSize {
+    _autoResize = YES;
+    _autoResizeMinSize = minSize;
+    _autoResizeMaxSize = maxSize;
+    if (!_browser) return;
+    _browser->GetHost()->SetAutoResizeEnabled(true, CefSize((int)minSize.width, (int)minSize.height),
+                                              CefSize((int)maxSize.width, (int)maxSize.height));
 }
 
 - (void)showDevToolsRunningFrontendScript:(NSString*)frontendScript {
