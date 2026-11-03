@@ -428,3 +428,26 @@ So the sidebar and command bar ports took out nearly all of the main thread's UI
 here. What's left in SwiftUI (popovers, cards, internal pages, Settings, dialogs) exists only while shown, except
 those three hosts; letting them leave the window while hidden (or making them lazily) is the next cheap win
 (~1.8 ms/s during page loads), and porting the rest is about fewer layers more than CPU.
+
+## PR 9: hidden SwiftUI hosts leave the window
+
+`DetachingContainer` takes the page toolbar's, the Library's and the ⌘J bar's place (constraints, z-order,
+appearance) and holds each SwiftUI hosting view in the window only while it's shown. Hidden in the window they
+kept re-rendering on store changes.
+
+Main-thread SwiftUI frames in a 15 s `sample` while the front tab reloads every 0.5 s: 29 on main (#272) → 1.
+
+| Scenario (median of 3) | CPU ms/s main (#272) → PR 9 | Wakeups/s |
+|---|---|---|
+| Reloading the front tab every 0.5 s | 57.60 → 54.31 | 34.35 → 36.30 |
+| Idle (runs: main 2.20 / 2.20 / 11.60; PR 9 2.09 / 13.39 / 4.68) | 2.20 → 4.68 | 4.25 → 4.35 |
+
+Main's own reload cost dropped since PR 8 (68 → 58 ms/s) with other work merged in between, so this compares against
+main as of #272. Idle is dominated by Chromium-thread spikes on both builds (see "Where the main thread's time goes").
+
+Geometry (`ui tree`, both builds, a session with Show Toolbar on): the toolbar host's frame is identical
+([330,10 940×33]); the open Library's tree is identical. Pixels not captured: `ui capture` hung on both builds from
+08:10 UTC (a pending system prompt, likely Screen Recording's re-confirmation); the hosted views themselves are
+unchanged.
+
+Not verified: the ⌘J bar opening (its host is attached the same way), and pixels (see above).
