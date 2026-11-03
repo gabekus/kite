@@ -93,7 +93,7 @@ extension AutomationController {
         guard let host else { return }
         for attempt in 0..<attempts {
             // A look already under way may have started before what Claude just did: let it finish, then look.
-            while handoffPolling { try? await Task.sleep(for: .milliseconds(50)) }
+            while handoffPolling, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
             await pollHandoffs()
             guard let handoff = handoffs.first(where: { $0.id == id }) else { return }
             var missing = false
