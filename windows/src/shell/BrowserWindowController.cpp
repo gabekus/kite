@@ -708,28 +708,25 @@ std::wstring BrowserWindowController::SmokeTestSpaces() {
         const bool fades = theme_.Fading();
         if (visible && !sidebarSliding_) return std::wstring(what) + L" didn't slide the pages";
         if (!visible && (sidebarSliding_ || fades)) return std::wstring(what) + L" animated a hidden window";
-        // The clock's frames until the fade ends and the slide's timer fires (2 s at most).
+        // The clock's frames until the fade ends and the slide's timer fires (2 s at most). Only
+        // those (and the window's other timers): the rest waits for the message loop, so a page
+        // that loads meanwhile can't close the window mid-switch.
         const size_t framesBefore = frameCount_;
         const ULONGLONG deadline = GetTickCount64() + 2000;
         MSG message;
         while ((clock_->Running() || sidebarSliding_) && GetTickCount64() < deadline) {
-            if (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
-                if (message.message == WM_QUIT) {
-                    PostQuitMessage(static_cast<int>(message.wParam));
-                    return std::wstring(what) + L": the window quit mid-switch";
-                }
-                TranslateMessage(&message);
+            if (PeekMessageW(&message, window_.Handle(), kFrameMessage, kFrameMessage, PM_REMOVE) ||
+                PeekMessageW(&message, window_.Handle(), WM_TIMER, WM_TIMER, PM_REMOVE)) {
                 DispatchMessageW(&message);
             } else {
-                MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+                Sleep(1);
             }
         }
         if (clock_->Running()) return std::wstring(what) + L": the frame clock never stopped";
         if (sidebarSliding_) return std::wstring(what) + L": the pages' slide never ended";
         if (fades && frameCount_ == framesBefore) return std::wstring(what) + L": the crossfade got no frames";
-        if (sidebar_->PageOffset() != 0 || pagesAnchor_ || theme_.Fading() || theme_.from != state_.SelectedSpace().theme) {
-            return std::wstring(what) + L" didn't come to rest";
-        }
+        if (sidebar_->PageOffset() != 0 || pagesAnchor_) return std::wstring(what) + L": the pages didn't come to rest";
+        if (theme_.Fading() || theme_.from != state_.SelectedSpace().theme) return std::wstring(what) + L": the theme didn't come to rest";
         return {};
     };
     RunCommand("nextSpace");
