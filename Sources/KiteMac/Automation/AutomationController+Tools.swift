@@ -86,12 +86,16 @@ extension AutomationController {
             }
         }
 
+        let started = Date()
         let output = try await pageAction(command, tab: tab, page: page, driver: driver, actions: actions)
         // After something that can change the page, say what changed since Claude's last read
-        // (only when there is a last read, so a tab that's never been read costs nothing extra).
+        // (only when there is a last read, so a tab that's never been read costs nothing extra),
+        // and where the work went if it opened tabs.
         switch command {
         case .click, .type, .formInput, .handleDialog, .navigate, .computer(_, .click), .computer(_, .key), .computer(_, .type):
-            return await withChanges(output, tab: tab.id, driver: driver)
+            var result = await withChanges(output, tab: tab.id, driver: driver)
+            if let opened = openedReport(by: tab.id, since: started) { result.content.append(.text(opened)) }
+            return result
         default:
             return output
         }
@@ -705,16 +709,20 @@ extension AutomationController {
 
     func tabList() -> [AutomationReport.Tab] {
         let state = store.state
+        func opener(_ id: UUID) -> UUID? { openedTabs.opener(of: id).flatMap { state.tab($0) == nil ? nil : $0 } }
         let front = state.selectedTab?.id
         var tabs = state.favorites.map {
-            AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: "Favorites", section: "favorite", isFront: $0.id == front)
+            AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: "Favorites", section: "favorite", isFront: $0.id == front,
+                                 openedBy: opener($0.id))
         }
         for space in state.spaces {
             tabs += space.pinned.map {
-                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "pinned", isFront: $0.id == front)
+                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "pinned", isFront: $0.id == front,
+                                     openedBy: opener($0.id))
             }
             tabs += space.tabs.map {
-                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "tab", isFront: $0.id == front)
+                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "tab", isFront: $0.id == front,
+                                     openedBy: opener($0.id))
             }
         }
         return tabs

@@ -111,3 +111,64 @@ import Testing
         #expect(old.openedByPage == nil)
     }
 }
+
+/// What Claude's tools say about tabs an action opened (`OpenedTabs`, `AutomationReport.opened`).
+@Suite struct OpenedTabsReportTests {
+    private let wizard = UUID()
+    private let page = URL(string: "https://wwwapps.ups.com/doapp/AddExistingAccount?loc=en_US")!
+
+    @Test func remembersWhichTabOpenedWhichAndWhen() {
+        var opened = OpenedTabs()
+        let first = UUID(), second = UUID(), other = UUID()
+        let start = Date(timeIntervalSinceReferenceDate: 1000)
+        opened.record(child: first, opener: wizard, at: start)
+        opened.record(child: other, opener: UUID(), at: start.addingTimeInterval(5))
+        opened.record(child: second, opener: wizard, at: start.addingTimeInterval(10))
+        #expect(opened.opener(of: second) == wizard && opened.opener(of: wizard) == nil)
+        // An action's result names only what it opened.
+        #expect(opened.opened(by: wizard, since: start.addingTimeInterval(1)) == [second])
+        #expect(opened.opened(by: wizard, since: start) == [first, second])
+        opened.retain(live: [wizard, second])
+        #expect(opened.opened(by: wizard, since: start) == [second])
+    }
+
+    @Test func spotsTheSamePageOpenedAgain() {
+        // UPS's Add App wizard: picking "Add an existing account" again opened the same popup again.
+        var opened = OpenedTabs()
+        let first = UUID(), second = UUID(), elsewhere = UUID()
+        opened.record(child: first, opener: wizard, at: Date(timeIntervalSinceReferenceDate: 1))
+        opened.record(child: elsewhere, opener: UUID(), at: Date(timeIntervalSinceReferenceDate: 2))
+        opened.record(child: second, opener: wizard, at: Date(timeIntervalSinceReferenceDate: 3))
+        let urls: [UUID: URL] = [
+            // The site redirected the first to lower case; a fragment doesn't make another page.
+            first: URL(string: "https://wwwapps.ups.com/doapp/addexistingaccount?loc=en_US")!,
+            second: URL(string: "https://wwwapps.ups.com/doapp/AddExistingAccount?loc=en_US#top")!,
+            elsewhere: page,
+        ]
+        #expect(opened.earlierCopy(of: second) { urls[$0] } == first)
+        #expect(opened.earlierCopy(of: first) { urls[$0] } == nil)
+        // Another tab's popup isn't a copy, and neither is another page.
+        #expect(opened.earlierCopy(of: elsewhere) { urls[$0] } == nil)
+        #expect(opened.earlierCopy(of: second) { $0 == second ? URL(string: "https://wwwapps.ups.com/doapp/next") : urls[$0] } == nil)
+    }
+
+    @Test func tellsClaudeWhereTheWorkWentAndWhatToTidy() throws {
+        #expect(AutomationReport.opened([], by: wizard) == nil)
+        let earlier = UUID(), popup = UUID()
+        let text = try #require(AutomationReport.opened(
+            [AutomationReport.OpenedTab(id: popup, title: "", url: page, isFront: true, copyOf: earlier)], by: wizard))
+        #expect(text.contains("This opened a new tab (next to tab \(wizard.uuidString))"))
+        #expect(text.contains("- tab \(popup.uuidString) [front]"))
+        #expect(text.contains("pass tab \(popup.uuidString) to keep working in it"))
+        #expect(text.contains("same page as tab \(earlier.uuidString)") && text.contains("tabs_close"))
+        // The opener stays: the flow may come back to it.
+        #expect(text.contains("Keep tab \(wizard.uuidString) open"))
+        // Page titles and URLs are the page's words.
+        #expect(text.contains("<\(UntrustedContent.tag)"))
+
+        let list = AutomationReport.tabs([AutomationReport.Tab(id: popup, title: "Add", url: page, space: "Komado", section: "pinned",
+                                                               isFront: true, openedBy: wizard)])
+        #expect(list.contains("[Komado, front, pinned, opened by tab \(wizard.uuidString)]"))
+        #expect(MCPServer.instructions.contains("When an action opens new tabs"))
+    }
+}

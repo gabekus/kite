@@ -113,6 +113,8 @@ final class AutomationController {
     /// The session folder name each connection (one Claude session) last used, so its later Claude-folder
     /// tabs land in the same Claude › Session folder without repeating it.
     @ObservationIgnored var sessionFolders: [Int: String] = [:]
+    /// Which tab's page opened which, so results can say where an action's new tabs went.
+    @ObservationIgnored var openedTabs = OpenedTabs()
     @ObservationIgnored private(set) var downloads: [Int: Download] = [:]
     @ObservationIgnored private var downloadObserver: NSObjectProtocol?
     /// Each tab's last read, the baseline for change-only reads.
@@ -399,6 +401,29 @@ final class AutomationController {
         controlledTabs[id]?.connections.sorted().compactMap { sessionFolders[$0] }.first
     }
 
+    /// A tab's page opened `child`. When Claude drives the opener, it drives the child too: the border and the
+    /// sidebar's mark go with the work, and it may close the child (a copy, a popup it's done with) without asking.
+    func tabOpened(_ child: UUID, by opener: UUID) {
+        openedTabs.record(child: child, opener: opener)
+        if let entry = controlledTabs[opener] {
+            controlledTabs[child] = ControlledTab(lastActive: Date(), connections: entry.connections)
+        }
+        if claudeOpened.contains(opener) { claudeOpened.insert(child) }
+    }
+
+    /// The tabs `opener` opened since `date`, for a tool's result. Nil when there are none.
+    func openedReport(by opener: UUID, since date: Date) -> String? {
+        let state = store.state
+        let front = state.selectedTab?.id
+        let tabs = openedTabs.opened(by: opener, since: date).compactMap { id in
+            state.tab(id).map { tab in
+                AutomationReport.OpenedTab(id: id, title: tab.displayTitle, url: tab.url, isFront: id == front,
+                                           copyOf: openedTabs.earlierCopy(of: id) { state.tab($0)?.url })
+            }
+        }
+        return AutomationReport.opened(tabs, by: opener)
+    }
+
     /// Refreshes a controlled tab's idle clock without adding a connection.
     func touchControlled(_ id: UUID) {
         controlledTabs[id]?.lastActive = Date()
@@ -419,6 +444,7 @@ final class AutomationController {
             if now.timeIntervalSince(entry.lastActive) > idle || !live.contains(id) { controlledTabs[id] = nil }
         }
         // Closed tabs take their logs with them.
+        openedTabs.retain(live: live)
         for id in Array(snapshots.keys) where !live.contains(id) { snapshots[id] = nil }
         for id in Array(activities.keys) where !live.contains(id) {
             activities[id] = nil

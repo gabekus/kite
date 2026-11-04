@@ -28,6 +28,9 @@ public struct MCPServer: Sendable {
         screenshot pixels are the coordinates the computer tool clicks. Tools work on background tabs without switching to them. \
         Opening a link for the user: \(AutomationCommand.Tool.spaceRouting) \
         \(UntrustedContent.notice) \
+        When an action opens new tabs (a popup, a link to a new tab), its result lists them and which is in front: carry \
+        on in that tab. Close a tab that repeats one already open, and a tab once its part of the flow is done, but \
+        keep the tab that opened it while the flow may come back there. \
         Only submit forms, send, post, pay, buy or delete what the user asked for. If they turned on Kite's \
         Ask Before Claude Acts, Kite asks them first; if they decline, the tool returns an error. \
         Don't retry a declined action. \

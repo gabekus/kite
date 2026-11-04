@@ -36,6 +36,8 @@ final class PagePool {
 
     /// Called for every page made, including popups (before their tab exists).
     var onPageCreated: ((UUID, WebPage) -> Void)?
+    /// A tab's page opened another tab (a popup, a link to a new tab): Claude's tools follow the work there.
+    var onTabOpened: ((_ child: UUID, _ opener: UUID) -> Void)?
     /// Called when a tab's page stops loading.
     var onLoadFinished: ((UUID) -> Void)?
     /// A tab's page started (true) or finished (false) loading (the install icon checks the page).
@@ -244,6 +246,13 @@ final class PagePool {
         store.mutateWithoutUndo { state in
             if let from = opener ?? source { state.openTab(id: newID, url: url, openedBy: from) } else { state.openTab(id: newID, url: url) }
         }
+        if let from = opener ?? source { onTabOpened?(newID, from) }
+    }
+
+    /// A tab `opener`'s page opened at `url` (a link to a new tab): next to it in a Claude folder.
+    func openTab(url: URL, openedBy opener: UUID, select: Bool) {
+        let id = store.mutateWithoutUndo { $0.openTab(url: url, openedBy: opener, select: select) }
+        onTabOpened?(id, opener)
     }
 
     /// A popup and its opener talk through `window.opener` and `postMessage` (Sign in with Apple
@@ -330,7 +339,7 @@ final class PagePool {
                 extensionID: extensionID, storeURL: storeURL, engine: engine(forTab: id), source: source
             ) { [weak self] in self?.extensionInstalls[extensionID] = nil }
         case let .openInNewTab(url, foreground):
-            store.mutateWithoutUndo { $0.openTab(url: url, openedBy: id, select: foreground) }
+            openTab(url: url, openedBy: id, select: foreground)
         case .popup(let page):
             openTab(with: page, opener: id)
         case .openInLinkPeek(let url):
@@ -360,7 +369,7 @@ final class PagePool {
             }
         case let .openLink(url, target):
             // Chromium opens Open Link in New Tab in the background.
-            if target == .newTab { store.mutateWithoutUndo { $0.openTab(url: url, openedBy: id, select: false) } } else { onOpenLink?(id, url, target) }
+            if target == .newTab { openTab(url: url, openedBy: id, select: false) } else { onOpenLink?(id, url, target) }
         case .pageCommand(let command):
             onPageCommand?(id, command)
         case .linkHover(let hover):

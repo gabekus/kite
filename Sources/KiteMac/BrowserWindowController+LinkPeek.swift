@@ -250,12 +250,12 @@ extension BrowserWindowController {
         case .closeRequested:
             if linkPeek === session { closeLinkPeek(animated: true) } else { discardParkedLinkPeek(of: session.sourceTabID) }
         case .openInNewTab(let url, let foreground):
-            store.mutate { $0.openTab(url: url, openedBy: session.sourceTabID, select: foreground) }
+            pool.openTab(url: url, openedBy: session.sourceTabID, select: foreground)
         case .openInLinkPeek(let url):
-            store.mutate { $0.openTab(url: url, openedBy: session.sourceTabID) }
+            pool.openTab(url: url, openedBy: session.sourceTabID, select: true)
         case .openInSplit(let url):
             // The Peek's page isn't a pane yet: a ⌥⌘-click in it opens a background tab, like ⌘-click.
-            store.mutate { $0.openTab(url: url, openedBy: session.sourceTabID, select: false) }
+            pool.openTab(url: url, openedBy: session.sourceTabID, select: false)
         case .openInLittleKite(let url):
             DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.openLittleKiteWindow(url: url) }
         case .popup(let popup):

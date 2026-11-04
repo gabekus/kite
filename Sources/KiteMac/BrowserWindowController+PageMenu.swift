@@ -28,9 +28,7 @@ extension BrowserWindowController {
         let app = NSApp.delegate as? AppDelegate
         switch target {
         case .newTab:
-            store.mutate { state in
-                if let source { state.openTab(url: url, openedBy: source, select: false) } else { state.openTab(url: url, select: false) }
-            }
+            if let source { pool.openTab(url: url, openedBy: source, select: false) } else { store.mutate { $0.openTab(url: url, select: false) } }
         case .newWindow:
             // From an incognito page Chromium opens another incognito window.
             if isIncognito { app?.openIncognitoWindow(url: url) } else { app?.openNewWindow(url: url) }
