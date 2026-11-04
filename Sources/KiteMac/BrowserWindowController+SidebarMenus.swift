@@ -24,16 +24,10 @@ extension BrowserWindowController {
 
     /// The tab menu's Move to › space: a pinned tab goes to the end of that space's pinned items, a Today
     /// tab to the top of its Today, like Arc's "Move to Pinned in" / "Move to Today in".
+    /// Through Arc's cross-profile warning, as every user move is.
     func moveTab(_ id: UUID, toSpace spaceID: UUID) {
-        let state = store.state
-        guard let tab = state.location(of: id), let space = state.spaces.first(where: { $0.id == spaceID }) else { return }
-        let target: SidebarDropTarget = tab.section == .pinned
-            ? .pinned(space: space.id, folder: nil, before: nil)
-            : .unpinned(space: space.id, before: space.tabs.first?.id)
-        let ids = [state.sidebarDragID(for: id)]
-        var outcome: SidebarDropOutcome?
-        store.mutate { outcome = $0.dropSidebarItems(ids, on: target) }
-        if let outcome { sidebarDropped(outcome, haptic: false) }
+        guard let tab = store.state.location(of: id) else { return }
+        moveTab(id, toSpace: spaceID, pinned: tab.section == .pinned)
     }
 
     /// Archive Other Tabs / Below / Above, with the Today divider's Clear toast.
