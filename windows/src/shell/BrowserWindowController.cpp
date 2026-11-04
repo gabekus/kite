@@ -104,9 +104,7 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
       shownSpaceID_(state.SelectedSpace().id) {}
 
 BrowserWindowController::~BrowserWindowController() {
-    // Import from Arc's read (Arc's files, a moment or two) isn't waited for: the worker owns
-    // only its job and the window's handle, and posting to a window that's gone does nothing.
-    if (arcThread_.joinable()) arcThread_.detach();
+    StopArcRead();
     // The views and the compositor go before the window: it stops calling into them first.
     window_.onClose = nullptr;
     window_.onSize = nullptr;

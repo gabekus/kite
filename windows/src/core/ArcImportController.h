@@ -11,6 +11,8 @@
 // Reading takes a moment (Arc's files, the Web Data database), so the app runs Read* off its UI
 // thread. Delete with ArcImport.h once Arc has shut down.
 
+#include <atomic>
+#include <cstddef>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -43,17 +45,39 @@ struct Sidebar {
     bool isBackup = false;
     std::optional<Timestamp> backup;
 };
+// Arc's files are read whole, up to this: the Mac reads any size, and Arc can't export them
+// again after it shuts down, so the cap is far above any real file (an archive grows with every
+// auto-archive). A file past it is reported as too large, never as missing.
+inline constexpr size_t kMaxArcFileBytes = size_t{1} << 30;
+
+// How Arc's files are read: imported tabs' time, the size cap (tests make it small), and a flag
+// the app sets to stop a read whose window is closing (checked between files).
+struct ReadOptions {
+    Timestamp now = Now();
+    size_t maxFileBytes = kMaxArcFileBytes;
+    const std::atomic<bool>* cancel = nullptr;
+};
+
 // Why no sidebar imported, in the Mac's words. `failure` none: no file could be read.
 struct LoadError {
     std::optional<Failure> failure;
     std::string message;
     std::string detail;
+    bool tooLarge = false;  // the sidebar is past ReadOptions::maxFileBytes
 };
 
 // Arc's sidebar from `folder`: StorableSidebar.json, read again a moment later if it was cut
 // short (Arc writing it), then Arc's dated backups newest first. Failing that, why the current
 // file didn't import.
-std::variant<Sidebar, LoadError> LoadSidebar(const std::filesystem::path& folder, Timestamp now = Now());
+std::variant<Sidebar, LoadError> LoadSidebar(const std::filesystem::path& folder, const ReadOptions& options = {});
+
+// A file next to the sidebar that's there but didn't come over, and why ("too large: …", "Arc
+// is writing it…"; empty when it just doesn't read).
+struct FileProblem {
+    std::string file;
+    std::string reason;
+    bool operator==(const FileProblem&) const = default;
+};
 
 // Everything Import from Arc reads, from the sidebar's folder (`folder`) and the files next to it.
 struct Plan {
@@ -65,18 +89,18 @@ struct Plan {
     std::optional<LinkRouting> routes;
     std::map<std::string, std::string> profileNames;
     Settings settings;
-    // Files that are there but didn't read, by name, for the summary.
-    std::vector<std::string> unreadable;
+    // Files that are there but didn't come over, for the confirmation and the summary.
+    std::vector<FileProblem> unreadable;
 };
 
 // --auto, and the app's first try: Arc's folder. A missing folder is a LoadError too.
-std::variant<Plan, LoadError> ReadAuto(const std::optional<std::filesystem::path>& arcDirectory, Timestamp now = Now());
+std::variant<Plan, LoadError> ReadAuto(const std::optional<std::filesystem::path>& arcDirectory, const ReadOptions& options = {});
 // A picked path: Arc's folder, the folder holding it, or a sidebar file of any name (the other
 // files then come from Arc's own folder, `arcDirectory`, when the file's isn't Arc's).
 std::variant<Plan, LoadError> ReadPicked(const std::filesystem::path& picked, const std::optional<std::filesystem::path>& arcDirectory,
-                                         Timestamp now = Now());
+                                         const ReadOptions& options = {});
 // The rest of Arc's files, for a sidebar read from `folder`.
-Plan ReadPlan(Sidebar sidebar, const std::filesystem::path& folder);
+Plan ReadPlan(Sidebar sidebar, const std::filesystem::path& folder, const ReadOptions& options = {});
 
 // The unnamed spaces and their tabs, for the confirmation's choice.
 std::pair<int, int> UntitledCounts(const Plan& plan);

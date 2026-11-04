@@ -37,14 +37,65 @@ std::vector<std::string> FileNames(const fs::path& folder) {
     return names;
 }
 
-// One sidebar file: its result, or why not (none: it couldn't be read at all).
-std::variant<Result, std::optional<Failure>> ReadSidebar(const fs::path& file, Timestamp now) {
-    auto text = ReadFile(file);
-    if (!text) return std::optional<Failure>();
-    auto parsed = Parse(*text, now);
-    if (auto* failure = std::get_if<Failure>(&parsed)) return std::optional<Failure>(*failure);
-    return std::move(std::get<Result>(parsed));
+bool Cancelled(const ReadOptions& options) { return options.cancel && options.cancel->load(); }
+
+LoadError CancelledError() { return {std::nullopt, "Import from Arc stopped.", "The window closed while Arc's files were read."}; }
+
+// "1100 MB", or "20 KB" under a megabyte; rounded up.
+std::string Size(uint64_t bytes) {
+    if (bytes >= (uint64_t{1} << 20)) return std::to_string((bytes + (1 << 20) - 1) >> 20) + " MB";
+    return std::to_string((bytes + 1023) >> 10) + " KB";
 }
+
+// "too large: 1100 MB, Kite reads up to 1024 MB".
+std::string TooLarge(uint64_t size, size_t cap) { return "too large: " + Size(size) + ", Kite reads up to " + Size(cap); }
+
+// One sidebar file: its result, or why not (no failure: it couldn't be read at all; with
+// `tooLarge`, past the cap).
+struct SidebarRead {
+    std::optional<Result> result;
+    std::optional<Failure> failure;
+    std::optional<uint64_t> tooLarge;
+};
+
+SidebarRead ReadSidebar(const fs::path& file, const ReadOptions& options) {
+    auto read = ReadFileOrProblem(file, options.maxFileBytes);
+    if (auto* problem = std::get_if<ReadProblem>(&read)) {
+        SidebarRead out;
+        if (problem->kind == ReadProblem::Kind::TooLarge) out.tooLarge = problem->size;
+        return out;
+    }
+    auto parsed = Parse(std::get<std::string>(read), options.now);
+    if (auto* failure = std::get_if<Failure>(&parsed)) return {std::nullopt, *failure, std::nullopt};
+    return {std::move(std::get<Result>(parsed)), std::nullopt, std::nullopt};
+}
+
+// A file Arc keeps next to the sidebar: its text, or none, noting in `plan` why one that's
+// there didn't read.
+std::optional<std::string> ReadArcFile(const fs::path& file, const ReadOptions& options, Plan& plan) {
+    auto read = ReadFileOrProblem(file, options.maxFileBytes);
+    if (auto* text = std::get_if<std::string>(&read)) return std::move(*text);
+    const ReadProblem& problem = std::get<ReadProblem>(read);
+    if (problem.kind == ReadProblem::Kind::TooLarge) plan.unreadable.push_back({PathText(file.filename()), TooLarge(problem.size, options.maxFileBytes)});
+    else if (problem.kind == ReadProblem::Kind::Unreadable) plan.unreadable.push_back({PathText(file.filename()), ""});
+    return std::nullopt;
+}
+
+// Whether SQLite is in the middle of writing the database `journal` sits beside: a hot journal
+// (IsHotJournal, its first 8 bytes). One that's there but can't be read counts as hot, so a
+// half-written database is never trusted.
+bool JournalIsHot(const fs::path& journal) {
+    std::error_code error;
+    if (!fs::exists(journal, error)) return static_cast<bool>(error);
+    if (!fs::is_regular_file(journal, error)) return true;
+    const auto size = fs::file_size(journal, error);
+    if (error) return true;
+    if (size == 0) return false;
+    auto head = ReadFilePrefix(journal, 8);
+    return !head || sqlite::IsHotJournal(*head);
+}
+
+std::string FileProblemText(const FileProblem& p) { return p.reason.empty() ? p.file : p.file + " (" + p.reason + ")"; }
 
 // When a file was last written, as a Timestamp.
 std::optional<Timestamp> Modified(const fs::path& file) {
@@ -157,43 +208,49 @@ bool LooksLikeArc(const fs::path& folder) {
            std::any_of(names.begin(), names.end(), [](const std::string& n) { return n.starts_with("StorableSidebar"); });
 }
 
-std::variant<Sidebar, LoadError> LoadSidebar(const fs::path& folder, Timestamp now) {
+std::variant<Sidebar, LoadError> LoadSidebar(const fs::path& folder, const ReadOptions& options) {
     const auto candidates = SidebarCandidates(FileNames(folder));
-    auto current = ReadSidebar(folder / candidates[0], now);
-    for (int attempt = 0; attempt < 2; ++attempt) {
+    auto current = ReadSidebar(folder / candidates[0], options);
+    for (int attempt = 0; attempt < 2 && !Cancelled(options); ++attempt) {
         // Only a cut-short file can be different a moment later.
-        auto* failure = std::get_if<std::optional<Failure>>(&current);
-        if (!failure || *failure != Failure::NotJSON) break;
+        if (current.result || current.failure != Failure::NotJSON) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        current = ReadSidebar(folder / candidates[0], now);
+        current = ReadSidebar(folder / candidates[0], options);
     }
-    if (auto* result = std::get_if<Result>(&current)) return Sidebar{std::move(*result), candidates[0], false, std::nullopt};
-    const std::optional<Failure> failure = std::get<std::optional<Failure>>(current);
-    if (!TriesBackup(failure)) return NoSpaces();
+    if (current.result) return Sidebar{std::move(*current.result), candidates[0], false, std::nullopt};
+    if (!TriesBackup(current.failure)) return NoSpaces();
     for (size_t i = 1; i < candidates.size(); ++i) {
-        auto backup = ReadSidebar(folder / candidates[i], now);
-        if (auto* result = std::get_if<Result>(&backup)) {
+        if (Cancelled(options)) return CancelledError();
+        auto backup = ReadSidebar(folder / candidates[i], options);
+        if (backup.result) {
             // When its contents were last written, which can be well before the name's date.
             auto when = Modified(folder / candidates[i]);
             if (!when) when = BackupDate(candidates[i]);
-            return Sidebar{std::move(*result), candidates[i], true, when};
+            return Sidebar{std::move(*backup.result), candidates[i], true, when};
         }
     }
-    return LoadError{failure, "That folder has no Arc sidebar Kite can read.", kHelp};
+    if (current.tooLarge) {
+        return LoadError{std::nullopt, candidates[0] + " is too large for Kite to read (" + TooLarge(*current.tooLarge, options.maxFileBytes) + ").", kHelp,
+                         true};
+    }
+    return LoadError{current.failure, "That folder has no Arc sidebar Kite can read.", kHelp};
 }
 
-std::variant<Plan, LoadError> ReadAuto(const std::optional<fs::path>& arcDirectory, Timestamp now) {
+std::variant<Plan, LoadError> ReadAuto(const std::optional<fs::path>& arcDirectory, const ReadOptions& options) {
     std::error_code error;
     if (!arcDirectory || !fs::is_directory(*arcDirectory, error)) return LoadError{std::nullopt, "Kite couldn't find Arc's data.", kHelp};
-    auto loaded = LoadSidebar(*arcDirectory, now);
+    auto loaded = LoadSidebar(*arcDirectory, options);
     if (auto* failed = std::get_if<LoadError>(&loaded)) {
-        if (failed->failure == Failure::NoSpaces) return *failed;
+        // No spaces, too large or stopped say so; anything else is the Mac's "couldn't read".
+        if (failed->failure == Failure::NoSpaces || failed->tooLarge || Cancelled(options)) return *failed;
         return LoadError{failed->failure, "Kite couldn't read Arc's data.", kHelp};
     }
-    return ReadPlan(std::move(std::get<Sidebar>(loaded)), *arcDirectory);
+    Plan plan = ReadPlan(std::move(std::get<Sidebar>(loaded)), *arcDirectory, options);
+    if (Cancelled(options)) return CancelledError();
+    return plan;
 }
 
-std::variant<Plan, LoadError> ReadPicked(const fs::path& picked, const std::optional<fs::path>& arcDirectory, Timestamp now) {
+std::variant<Plan, LoadError> ReadPicked(const fs::path& picked, const std::optional<fs::path>& arcDirectory, const ReadOptions& options) {
     std::error_code error;
     const bool isFolder = fs::is_directory(picked, error);
     fs::path folder = isFolder ? picked : picked.parent_path();
@@ -206,57 +263,71 @@ std::variant<Plan, LoadError> ReadPicked(const fs::path& picked, const std::opti
     }
     std::variant<Sidebar, LoadError> loaded = LoadError{};
     if (isFolder) {
-        loaded = LoadSidebar(folder, now);
+        loaded = LoadSidebar(folder, options);
     } else {
-        auto read = ReadSidebar(picked, now);
-        if (auto* result = std::get_if<Result>(&read)) loaded = Sidebar{std::move(*result), PathText(picked.filename()), false, std::nullopt};
-        else loaded = LoadError{std::get<std::optional<Failure>>(read), "", ""};
+        auto read = ReadSidebar(picked, options);
+        if (read.result) {
+            loaded = Sidebar{std::move(*read.result), PathText(picked.filename()), false, std::nullopt};
+        } else if (read.tooLarge) {
+            return LoadError{std::nullopt, PathText(picked.filename()) + " is too large for Kite to read (" + TooLarge(*read.tooLarge, options.maxFileBytes) + ").",
+                             kHelp, true};
+        } else {
+            loaded = LoadError{read.failure, "", ""};
+        }
     }
     if (auto* failed = std::get_if<LoadError>(&loaded)) {
         if (failed->failure == Failure::NoSpaces) return NoSpaces();
+        if (Cancelled(options) || failed->tooLarge) return *failed;
         if (!isFolder) return LoadError{failed->failure, PathText(picked.filename()) + " isn't Arc's sidebar.", kHelp};
         return LoadError{failed->failure, "That folder has no Arc sidebar Kite can read.", kHelp};
     }
-    return ReadPlan(std::move(std::get<Sidebar>(loaded)), folder);
+    Plan plan = ReadPlan(std::move(std::get<Sidebar>(loaded)), folder, options);
+    if (Cancelled(options)) return CancelledError();
+    return plan;
 }
 
-Plan ReadPlan(Sidebar sidebar, const fs::path& folder) {
+Plan ReadPlan(Sidebar sidebar, const fs::path& folder, const ReadOptions& options) {
     Plan plan;
     plan.sidebar = std::move(sidebar);
     plan.folder = folder;
+    if (Cancelled(options)) return plan;
     // Arc keeps Site Search where Chromium does: the keywords table of the profile's Web Data.
     // A hot journal beside it means Arc is writing it, and the file may be half changed.
     const fs::path webDataFile = folder / "User Data" / "Default" / "Web Data";
     fs::path journal = webDataFile;
     journal += "-journal";
-    if (auto hot = ReadFile(journal); hot && sqlite::IsHotJournal(*hot)) {
-        plan.unreadable.push_back("Web Data (Arc is writing it: quit Arc and import again)");
-    } else if (auto webData = ReadFile(webDataFile)) {
+    if (JournalIsHot(journal)) {
+        plan.unreadable.push_back({"Web Data", "Arc is writing it: quit Arc and import again"});
+    } else if (auto webData = ReadArcFile(webDataFile, options, plan)) {
         if (auto sites = ParseSiteSearches(*webData)) plan.siteSearches = std::move(*sites);
-        else plan.unreadable.push_back("Web Data");
-    } else if (Exists(webDataFile)) {
-        plan.unreadable.push_back("Web Data");
+        else plan.unreadable.push_back({"Web Data", ""});
     }
-    if (auto text = ReadFile(folder / "StorableKeyBindings.json")) {
+    if (Cancelled(options)) return plan;
+    if (auto text = ReadArcFile(folder / "StorableKeyBindings.json", options, plan)) {
         if (auto bindings = ParseKeyBindings(*text)) plan.keyBindings = std::move(*bindings);
-        else plan.unreadable.push_back("StorableKeyBindings.json");
+        else plan.unreadable.push_back({"StorableKeyBindings.json", ""});
     }
-    if (auto text = ReadFile(folder / "StorableArchiveItems.json")) plan.archive = ParseArchive(*text);
-    if (auto text = ReadFile(folder / "StorableLinkRouting.json")) {
+    if (Cancelled(options)) return plan;
+    if (auto text = ReadArcFile(folder / "StorableArchiveItems.json", options, plan)) plan.archive = ParseArchive(*text);
+    if (Cancelled(options)) return plan;
+    if (auto text = ReadArcFile(folder / "StorableLinkRouting.json", options, plan)) {
         plan.routes = ParseLinkRouting(*text);
-        if (!plan.routes) plan.unreadable.push_back("StorableLinkRouting.json");
+        if (!plan.routes) plan.unreadable.push_back({"StorableLinkRouting.json", ""});
     }
-    if (auto text = ReadFile(folder / "User Data" / "Local State")) plan.profileNames = ParseProfileNames(*text);
+    if (Cancelled(options)) return plan;
+    if (auto text = ReadArcFile(folder / "User Data" / "Local State", options, plan)) plan.profileNames = ParseProfileNames(*text);
     // Arc for Windows' settings: Foundation's defaults for company.thebrowser.arc, an XML plist
     // next to the Arc folder. A hand-made folder (KITE_ARC_DATA_PATH) may hold it, or the Mac's
     // company.thebrowser.Browser.plist, itself.
     for (const fs::path& file : {folder.parent_path() / "company.thebrowser.arc.plist", folder / "company.thebrowser.arc.plist",
                                  folder / "company.thebrowser.Browser.plist"}) {
-        auto text = ReadFile(file);
-        if (!text) continue;
+        std::error_code error;
+        if (!fs::exists(file, error)) continue;
+        auto text = ReadArcFile(file, options, plan);
+        if (!text) break;
         auto defaults = plist::ParseXml(*text);
         if (defaults && defaults->AsObject()) plan.settings = Settings::FromDefaults(*defaults);
-        else plan.unreadable.push_back(PathText(file.filename()));
+        else plan.unreadable.push_back({PathText(file.filename()), ""});
         break;
     }
     return plan;
@@ -365,8 +436,9 @@ std::vector<std::string> ConfirmLines(const Plan& plan, const BrowserState& stat
         lines.push_back("A profile only unnamed spaces use comes over, with its favorites, only if you include them.");
     }
     if (!plan.unreadable.empty()) {
-        lines.push_back("Kite couldn't read " + List(plan.unreadable) + ", so what's in " + (plan.unreadable.size() == 1 ? "it" : "them") +
-                        " is left out.");
+        std::vector<std::string> files;
+        for (const FileProblem& p : plan.unreadable) files.push_back(FileProblemText(p));
+        lines.push_back("Kite couldn't read " + List(files) + ", so what's in " + (files.size() == 1 ? "it" : "them") + " is left out.");
     }
     if (icons > 0) lines.push_back(IconsNote(icons));
     lines.insert(lines.end(), result.notes.begin(), result.notes.end());
@@ -455,7 +527,10 @@ Imported Import(BrowserState& state, const Plan& plan, ImportOptions options) {
     if (!merged.fellBack.empty()) {
         out.skipped.push_back(Skipped("profiles", merged.fellBack.size(), "no Kite profile could be made for them, so their spaces went to Default"));
     }
-    for (const std::string& file : plan.unreadable) out.skipped.push_back(Skipped("file", std::nullopt, file + " doesn't read"));
+    for (const FileProblem& p : plan.unreadable) {
+        json::Object o{{"kind", "file"}, {"file", p.file}, {"reason", p.reason.empty() ? std::string("doesn't read") : p.reason}};
+        out.skipped.push_back(json::Value(std::move(o)));
+    }
     out.skipped.push_back(Skipped("history", std::nullopt, "Kite for Windows has no history yet"));
     out.skipped.push_back(Skipped("signIns", std::nullopt, "Arc's cookies aren't imported on Windows yet"));
     out.skipped.push_back(Skipped("extensions", std::nullopt, "Kite for Windows has no extensions yet"));

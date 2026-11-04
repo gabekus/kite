@@ -6,6 +6,7 @@
 // hand-made Arc for Windows folder in tests/fixtures (never anyone's real data).
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -793,7 +794,7 @@ TEST(ArcImportController_takesAPickedFolderOrFile) {
 
 TEST(ArcImportController_importsTheFixtureFolder) {
     TempDir profile;
-    auto read = ReadAuto(ArcFixture(), FromUnixTime(1'800'000'000));
+    auto read = ReadAuto(ArcFixture(), {.now = FromUnixTime(1'800'000'000)});
     CHECK(std::holds_alternative<Plan>(read));
     if (!std::holds_alternative<Plan>(read)) return;
     const Plan& plan = std::get<Plan>(read);
@@ -867,11 +868,64 @@ TEST(ArcImportController_aHotWebDataJournalLeavesSiteSearchOut) {
     CHECK(std::holds_alternative<Plan>(read));
     if (!std::holds_alternative<Plan>(read)) return;
     const Plan& plan = std::get<Plan>(read);
-    CHECK(plan.siteSearches.empty() && plan.unreadable.size() == 1 && plan.unreadable[0].starts_with("Web Data (Arc is writing it"));
+    CHECK(plan.siteSearches.empty() && plan.unreadable.size() == 1 && plan.unreadable[0].file == "Web Data" &&
+          plan.unreadable[0].reason.starts_with("Arc is writing it"));
+    // Only its first 8 bytes are read: a hot journal far past any read cap is still hot.
+    fs::resize_file(dir.path / "Arc" / "User Data" / "Default" / "Web Data-journal", uintmax_t{70} << 20);
+    read = ReadAuto(dir.path / "Arc");
+    CHECK(std::holds_alternative<Plan>(read) && std::get<Plan>(read).siteSearches.empty() && std::get<Plan>(read).unreadable.size() == 1);
     // An empty journal is a finished one.
+    fs::remove(dir.path / "Arc" / "User Data" / "Default" / "Web Data-journal");
     Write(dir.path / "Arc" / "User Data" / "Default" / "Web Data-journal", "");
     read = ReadAuto(dir.path / "Arc");
     CHECK(std::holds_alternative<Plan>(read) && std::get<Plan>(read).siteSearches.size() == 6);
+    // One that can't be read counts as hot: a half-written database is never trusted.
+    fs::remove(dir.path / "Arc" / "User Data" / "Default" / "Web Data-journal");
+    fs::create_directories(dir.path / "Arc" / "User Data" / "Default" / "Web Data-journal");
+    read = ReadAuto(dir.path / "Arc");
+    CHECK(std::holds_alternative<Plan>(read) && std::get<Plan>(read).siteSearches.empty() &&
+          std::get<Plan>(read).unreadable.size() == 1 && std::get<Plan>(read).unreadable[0].file == "Web Data");
+}
+
+TEST(ArcImportController_filesPastTheCapAreReportedTooLarge) {
+    TempDir dir;
+    fs::copy(ArcFixture(), dir.path / "Arc", fs::copy_options::recursive);
+    // Past the real cap (1 GiB): its size is checked before any of it is read.
+    fs::resize_file(dir.path / "Arc" / "StorableArchiveItems.json", kMaxArcFileBytes + 1);
+    auto read = ReadAuto(dir.path / "Arc");
+    CHECK(std::holds_alternative<Plan>(read));
+    if (std::holds_alternative<Plan>(read)) {
+        const Plan& plan = std::get<Plan>(read);
+        CHECK(plan.archive.empty() && plan.unreadable.size() == 1 && plan.unreadable[0].file == "StorableArchiveItems.json" &&
+              plan.unreadable[0].reason == "too large: 1025 MB, Kite reads up to 1024 MB");
+        const auto lines = ConfirmLines(plan, BrowserState::MakeDefault(std::nullopt), false);
+        CHECK(std::find(lines.begin(), lines.end(),
+                        "Kite couldn't read StorableArchiveItems.json (too large: 1025 MB, Kite reads up to 1024 MB), so what's in it is left out.") !=
+              lines.end());
+        BrowserState state = BrowserState::MakeDefault(std::nullopt);
+        const Value summary = ImportAll(state, plan, dir.path / "profile");
+        const Array& skipped = *summary.Find("skipped")->AsArray();
+        CHECK(std::any_of(skipped.begin(), skipped.end(), [](const Value& s) {
+            return *s.Find("kind") == Value("file") && *s.Find("file") == Value("StorableArchiveItems.json") &&
+                   s.Find("reason")->AsString()->starts_with("too large");
+        }));
+    }
+    fs::remove(dir.path / "Arc" / "StorableArchiveItems.json");
+    // The sidebar past a cap (here a small one): said so, after trying the backups.
+    auto big = ReadAuto(dir.path / "Arc", {.maxFileBytes = 8192});
+    auto* error = std::get_if<LoadError>(&big);
+    // (Its size in KB depends on the checkout's line endings.)
+    CHECK(error && error->tooLarge && error->message.starts_with("StorableSidebar.json is too large for Kite to read (too large: ") &&
+          error->message.ends_with(" KB, Kite reads up to 8 KB)."));
+    auto picked = ReadPicked(dir.path / "Arc" / "StorableSidebar.json", std::nullopt, {.maxFileBytes = 8192});
+    error = std::get_if<LoadError>(&picked);
+    CHECK(error && error->tooLarge);
+}
+
+TEST(ArcImportController_aCancelledReadStops) {
+    std::atomic<bool> cancel{true};
+    auto read = ReadAuto(ArcFixture(), {.cancel = &cancel});
+    CHECK(std::holds_alternative<LoadError>(read) && std::get<LoadError>(read).message == "Import from Arc stopped.");
 }
 
 TEST(ArcImportController_unnamedSpacesComeWhenArcHasNoOther) {

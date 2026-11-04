@@ -10,6 +10,9 @@
 
 #include <shobjidl.h>
 
+#include <atomic>
+#include <chrono>
+#include <future>
 #include <set>
 
 #include "core/ArcImportController.h"
@@ -20,10 +23,14 @@
 namespace kite {
 
 // What the worker read. It's written before the worker posts kArcReadMessage and read after
-// ArcRead joins it, so it needs no lock.
+// ArcRead joins it, so it needs no lock. `cancel` asks the read to stop between files, and
+// `finished` says when the worker has returned.
 struct BrowserWindowController::ArcJob {
     std::optional<std::variant<arc_import::Plan, arc_import::LoadError>> result;
     bool picked = false;
+    std::atomic<bool> cancel{false};
+    std::promise<void> done;
+    std::shared_future<void> finished = done.get_future().share();
 };
 
 namespace {
@@ -93,9 +100,23 @@ void BrowserWindowController::ReadArc(std::optional<std::filesystem::path> picke
     const HWND window = window_.Handle();
     arcThread_ = std::thread([job, picked = std::move(picked), window] {
         const auto folder = ArcFolder();
-        job->result = picked ? arc_import::ReadPicked(*picked, folder) : arc_import::ReadAuto(folder);
-        PostMessageW(window, kArcReadMessage, 0, 0);
+        arc_import::ReadOptions options;
+        options.cancel = &job->cancel;
+        job->result = picked ? arc_import::ReadPicked(*picked, folder, options) : arc_import::ReadAuto(folder, options);
+        if (!job->cancel) PostMessageW(window, kArcReadMessage, 0, 0);
+        job->done.set_value();
     });
+}
+
+void BrowserWindowController::StopArcRead() {
+    if (!arcThread_.joinable()) return;
+    // The read checks `cancel` between Arc's files, so it ends within one file's parse. Waited
+    // for, so it never runs on into the CRT's teardown of statics (Theme::Presets) after main.
+    // Only a read still inside one huge file (up to kMaxArcFileBytes) outlasts the wait; that one
+    // is let go, the one rare case left.
+    if (arcJob_) arcJob_->cancel = true;
+    if (!arcJob_ || arcJob_->finished.wait_for(std::chrono::seconds(5)) == std::future_status::ready) arcThread_.join();
+    else arcThread_.detach();
 }
 
 void BrowserWindowController::ArcRead() {

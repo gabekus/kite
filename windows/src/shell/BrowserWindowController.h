@@ -171,6 +171,8 @@ private:
     void ImportFromArc();
     void ReadArc(std::optional<std::filesystem::path> picked);
     void ArcRead();
+    // As the window goes: asks a running read to stop and waits for it (a few seconds at most).
+    void StopArcRead();
     void RunCommand(const std::string& command);
     bool PageCommand(const std::string& command);
     void DropCompositor();
