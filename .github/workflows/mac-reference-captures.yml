@@ -152,7 +152,7 @@ jobs:
           bad=0
           while IFS= read -r -d '' f; do
             name="${f#"$OUT"/}"
-            if [[ -L "$f" || ! -f "$f" || ! "$name" =~ ^[a-z0-9][a-z0-9._-]*\.(png|txt|md|json)$ ]]; then
+            if [[ -L "$f" || ! -f "$f" || ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.(png|txt|md|json)$ ]]; then
               echo "::error::unexpected $name"; bad=1
             elif [[ "$name" == *.png && "$(head -c 8 "$f" | od -An -tx1 | tr -d ' \n')" != 89504e470d0a1a0a ]]; then
               echo "::error::$name isn't a PNG"; bad=1
