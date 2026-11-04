@@ -25,6 +25,23 @@ bool LiveTabPolicy::StillHibernates(std::optional<Timestamp> pickedShownAt, std:
     return shownAt == pickedShownAt;
 }
 
+MemoryPressureLatch::Step MemoryPressureLatch::Signalled(bool lowNow) {
+    if (waitingForLow_) {
+        // Low, unless it's already over: then no spell, and low is waited for again.
+        if (!lowNow) return Step{std::nullopt, true};
+        waitingForLow_ = false;
+        return Step{MemoryPressure::Critical, false};
+    }
+    waitingForLow_ = true;
+    return Step{MemoryPressure::Normal, true};
+}
+
+bool MemoryPressureLatch::Recovered() {
+    if (waitingForLow_) return false;
+    waitingForLow_ = true;
+    return true;
+}
+
 bool DiscardsPages(MemoryPressure level) { return level == MemoryPressure::Warning || level == MemoryPressure::Critical; }
 
 std::vector<std::string> TabsToDiscardUnderPressure(const std::map<std::string, Timestamp>& live,

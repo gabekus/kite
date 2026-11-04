@@ -2,12 +2,18 @@
 
 #include "core/StoreFile.h"
 
+#include <atomic>
 #include <cstdio>
-#include <fstream>
 #include <system_error>
+#include <thread>
+
+#include "core/Uuid.h"
 
 #ifdef _WIN32
 #include <io.h>  // _commit: FlushFileBuffers through the CRT
+#else
+#include <fstream>
+#include <iterator>
 #endif
 
 namespace kite::store_file {
@@ -20,6 +26,21 @@ std::string PathText(const fs::path& path) {
 }
 
 namespace {
+
+// Drawn once per process: two processes' temps never share a name.
+const std::string& ProcessToken() {
+    static const std::string token = NewUuid().substr(0, 8);
+    return token;
+}
+
+std::atomic<unsigned long long> nextTemp{0};
+
+fs::path TempPath(const fs::path& file, unsigned long long n) {
+    const std::string suffix = "." + ProcessToken() + "-" + std::to_string(n) + ".tmp";
+    fs::path temp = file;
+    temp += fs::path(std::u8string(suffix.begin(), suffix.end()));
+    return temp;
+}
 
 // Writes and flushes the temp file. On Windows the bytes are also committed to the disk before
 // the rename, so a power cut can't leave the renamed file empty (NTFS journals the rename, not
@@ -44,16 +65,24 @@ std::string WriteTemp(const fs::path& temp, std::string_view bytes) {
 
 }  // namespace
 
+fs::path NextTempPath(const fs::path& file) { return TempPath(file, nextTemp.load()); }
+
 std::string WriteAtomically(const fs::path& file, std::string_view bytes) {
-    fs::path temp = file;
-    temp += ".tmp";
+    const fs::path temp = TempPath(file, nextTemp++);
     if (std::string problem = WriteTemp(temp, bytes); !problem.empty()) {
         std::error_code ignored;
         fs::remove(temp, ignored);
         return problem;
     }
+    // Windows refuses a replace while another writer's replace of the same file is under way
+    // (access denied), and so do virus scanners and sync clients holding the file for a moment:
+    // a few short retries, 250 ms in all, on the writer's thread.
     std::error_code error;
-    fs::rename(temp, file, error);
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        fs::rename(temp, file, error);
+        if (!error) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
     if (error) {
         std::error_code ignored;
         fs::remove(temp, ignored);
@@ -62,15 +91,58 @@ std::string WriteAtomically(const fs::path& file, std::string_view bytes) {
     return {};
 }
 
-std::optional<std::string> Read(const fs::path& file) {
+// Whether `name` is a temp WriteAtomically made: <target>.<8 hex>-<digits>.tmp.
+bool IsTempName(std::string_view name) {
+    if (!name.ends_with(".tmp")) return false;
+    name.remove_suffix(4);
+    const size_t dash = name.rfind('-');
+    if (dash == std::string_view::npos || dash + 1 == name.size() || dash < 9 || name[dash - 9] != '.') return false;
+    for (size_t i = dash + 1; i < name.size(); ++i) {
+        if (name[i] < '0' || name[i] > '9') return false;
+    }
+    for (size_t i = dash - 8; i < dash; ++i) {
+        const char c = name[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f'))) return false;
+    }
+    return dash > 9;  // a target name before it
+}
+
+size_t RemoveStaleTemps(const fs::path& directory, std::chrono::seconds age) {
+    const auto now = fs::file_time_type::clock::now();
+    size_t removed = 0;
     std::error_code error;
-    const auto size = fs::file_size(file, error);
-    if (error) return std::nullopt;
+    for (fs::directory_iterator it(directory, error), end; !error && it != end; it.increment(error)) {
+        const std::u8string name = it->path().filename().u8string();
+        if (!IsTempName(std::string_view(reinterpret_cast<const char*>(name.data()), name.size()))) continue;
+        std::error_code failed;
+        if (!fs::is_regular_file(it->path(), failed) || failed) continue;
+        const auto written = fs::last_write_time(it->path(), failed);
+        if (failed || now - written < age) continue;
+        removed += fs::remove(it->path(), failed) ? 1 : 0;
+    }
+    return removed;
+}
+
+std::optional<std::string> Read(const fs::path& file) {
+#ifdef _WIN32
+    std::FILE* in = nullptr;
+    if (_wfopen_s(&in, file.c_str(), L"rb") != 0 || !in) return std::nullopt;
+    std::string text;
+    char buffer[16384];
+    for (size_t got; (got = std::fread(buffer, 1, sizeof buffer, in)) > 0;) text.append(buffer, got);
+    const bool ok = !std::ferror(in);
+    std::fclose(in);
+    if (!ok) return std::nullopt;
+    return text;
+#else
+    std::error_code error;
+    if (!fs::is_regular_file(file, error)) return std::nullopt;
     std::ifstream in(file, std::ios::binary);
     if (!in) return std::nullopt;
-    std::string text(static_cast<size_t>(size), '\0');
-    if (!in.read(text.data(), static_cast<std::streamsize>(size))) return std::nullopt;
+    std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    if (in.bad()) return std::nullopt;
     return text;
+#endif
 }
 
 }  // namespace kite::store_file

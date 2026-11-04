@@ -29,7 +29,10 @@ bool WaitFor(std::condition_variable& cv, std::unique_lock<std::mutex>& lock, st
 }  // namespace
 
 struct SessionWriter::Shared {
-    Shared(SessionStore s, std::function<double()> n) : store(std::move(s)), now(std::move(n)) {}
+    Shared(SessionStore s, std::function<double()> n) : store(std::move(s)), now(std::move(n)) {
+        // Room for the fixed failure message, so the catch in Run sets it without allocating.
+        stats.lastError.reserve(128);
+    }
 
     const SessionStore store;
     const std::function<double()> now;
@@ -39,6 +42,7 @@ struct SessionWriter::Shared {
     std::condition_variable done;  // Flush and the destructor: the worker caught up, or ended
     std::optional<BrowserState> next;
     std::optional<BrowserState> launch;
+    bool offer = false;  // OfferBackup: the hourly backup of what was last written
     bool busy = false;
     bool stop = false;
     bool ended = false;
@@ -66,12 +70,32 @@ SessionWriter::~SessionWriter() {
     std::unique_lock lock(shared_->mutex);
     shared_->stop = true;
     shared_->wake.notify_one();
-    // Run writes what's waiting before it ends. A write that's still stuck after kStopWait is
-    // let go: the thread holds its own reference to the shared state.
-    const bool ended = shared_->done.wait_for(lock, kStopWait, [this] { return shared_->ended; });
+    // Run writes what's waiting before it ends. After a Flush that already timed out it isn't
+    // waited for again (the caller has waited its bound); otherwise for kStopWait.
+    const auto wait = flushTimedOut_ ? std::chrono::milliseconds(0) : kStopWait;
+    const bool ended = shared_->done.wait_for(lock, wait, [this] { return shared_->ended; });
     lock.unlock();
-    if (ended) worker_.join();
-    else worker_.detach();
+    if (ended) {
+        worker_.join();
+        return;
+    }
+    // Still writing: the thread holds its own reference to the shared state, so it may go on,
+    // but the process mustn't tear down its library under it. The app ends the process here.
+    if (onStuck_) onStuck_();
+    worker_.detach();
+}
+
+void SessionWriter::OnStuck(std::function<void()> stuck) { onStuck_ = std::move(stuck); }
+
+bool SessionWriter::OfferBackup() {
+    if (!maySave_) return false;
+    {
+        std::lock_guard lock(shared_->mutex);
+        if (shared_->stats.written == 0 && shared_->stats.unchanged == 0) return false;
+        shared_->offer = true;
+    }
+    shared_->wake.notify_one();
+    return true;
 }
 
 void SessionWriter::Save(BrowserState snapshot) {
@@ -99,7 +123,8 @@ void SessionWriter::BackUpLaunch(BrowserState found) {
 std::string SessionWriter::Flush(std::chrono::milliseconds timeout) {
     std::unique_lock lock(shared_->mutex);
     Shared& s = *shared_;
-    if (!WaitFor(s.done, lock, timeout, [&] { return (!s.next && !s.launch && !s.busy) || s.ended; })) {
+    if (!WaitFor(s.done, lock, timeout, [&] { return (!s.next && !s.launch && !s.offer && !s.busy) || s.ended; })) {
+        flushTimedOut_ = true;
         return "the session's write didn't finish within " + std::to_string(timeout.count()) + " ms";
     }
     return s.stats.lastError;
@@ -115,11 +140,13 @@ SessionWriter::Statistics SessionWriter::Stats() const {
 void SessionWriter::Shared::Run() {
     std::unique_lock lock(mutex);
     for (;;) {
-        wake.wait(lock, [this] { return stop || next || launch; });
-        if (!next && !launch) break;  // stopping, with nothing left to write
+        wake.wait(lock, [this] { return stop || next || launch || offer; });
+        if (!next && !launch && !offer) break;  // stopping, with nothing left to write
         // The launch backup first: it's the session as found, before any change.
         std::optional<BrowserState> found = std::exchange(launch, std::nullopt);
         std::optional<BrowserState> snapshot = std::exchange(next, std::nullopt);
+        // A save offers the backup anyway.
+        const bool offered = std::exchange(offer, false) && !snapshot;
         busy = true;
         lock.unlock();
         try {
@@ -130,16 +157,22 @@ void SessionWriter::Shared::Run() {
                 stats.lastBackupError = made.error;
             }
             if (snapshot) Write(*snapshot);
+            if (offered && !lastWritten.empty()) BackUpHourly();
         } catch (const std::exception& e) {  // out of memory, mostly
             std::lock_guard relock(mutex);
-            stats.lastError = std::string("couldn't save the session: ") + e.what();
+            // The fixed message fits the room reserved for it; what() is added if it can be.
+            stats.lastError.assign("couldn't save the session");
+            try {
+                stats.lastError.append(": ").append(e.what());
+            } catch (...) {
+            }
         } catch (...) {
             std::lock_guard relock(mutex);
-            stats.lastError = "couldn't save the session";
+            stats.lastError.assign("couldn't save the session");
         }
         lock.lock();
         busy = false;
-        stats.pending = next || launch;
+        stats.pending = next || launch || offer;
         if (!stats.pending) done.notify_all();
     }
     ended = true;
@@ -175,7 +208,7 @@ void SessionWriter::Shared::Write(const BrowserState& state) {
         stats.lastEncodeMicros = encodeMicros;
         stats.lastWriteMicros = writeMicros;
         stats.lastBytes = size;
-        stats.lastError = std::move(error);
+        stats.lastError.assign(error);  // into its reserved room (see Run's catch)
         if (stats.lastError.empty()) ++stats.written;
     }
     if (!lastWritten.empty()) BackUpHourly();

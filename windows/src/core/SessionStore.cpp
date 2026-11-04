@@ -32,6 +32,12 @@ std::optional<BrowserState> SessionStore::DecodeFile(std::string_view text, std:
 }
 
 SessionStore::LoadResult SessionStore::Load(Unreadable unreadable, std::optional<SessionBackups::Backup>* recoveredFrom) const {
+    // The app's load, at launch: temps a crash left beside the session and its backups go
+    // (none is that old while a write uses it).
+    if (unreadable == Unreadable::MoveAside) {
+        store_file::RemoveStaleTemps(file_.parent_path(), std::chrono::hours(1));
+        store_file::RemoveStaleTemps(backups_->Directory(), std::chrono::hours(1));
+    }
     std::error_code error;
     bool exists = fs::exists(file_, error);
     if (error) return Error{"couldn't check " + PathText(file_) + ": " + error.message(), std::nullopt};

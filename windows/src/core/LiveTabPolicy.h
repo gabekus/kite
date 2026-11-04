@@ -35,6 +35,29 @@ struct LiveTabPolicy {
 // signalled; it has no earlier warning to wait on.
 enum class MemoryPressure { Normal, Warning, Critical };
 
+// The low-memory watch's state machine (shell/MemoryPressure waits on what it says). Windows'
+// low and high notifications are level-triggered, so the watch waits for low, reports it, then
+// waits for high (recovered) before low again: one report a spell. Two things keep a spell from
+// going unreported: a low signal that's over by the time the callback looks is no spell (it
+// waits for low again), and when the window finds memory no longer low as it handles a report,
+// it says so (Recovered), and the watch goes back to waiting for low rather than for high, so
+// memory that hovers between the two levels and then runs low again is reported again.
+class MemoryPressureLatch {
+public:
+    struct Step {
+        std::optional<MemoryPressure> report;  // what to post to the window, if anything
+        bool waitForLow = true;                // which notification to wait on next
+    };
+    bool WaitingForLow() const { return waitingForLow_; }
+    // The awaited notification was signalled; `lowNow`: whether memory is low as it's checked.
+    Step Signalled(bool lowNow);
+    // The window found memory no longer low: true when the watch must go back to waiting for low.
+    bool Recovered();
+
+private:
+    bool waitingForLow_ = true;
+};
+
 // Whether `level` closes the background pages: the Mac's source watches [.warning, .critical]
 // and both hibernate every page that isn't on screen.
 bool DiscardsPages(MemoryPressure level);

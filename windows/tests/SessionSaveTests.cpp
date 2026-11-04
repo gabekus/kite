@@ -8,8 +8,11 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <memory>
 #include <set>
 #include <sstream>
+#include <thread>
 
 #include "Check.h"
 #include "core/Models.h"
@@ -81,6 +84,20 @@ struct Backups {
     std::optional<SessionBackups::Backup> BackUp(int tabs, double date) { return BackUp(tabs, SessionBackups::Kind::Hourly, date); }
     void Write(const std::string& text, const std::string& name) {
         WriteText(store.Backups().Directory() / fs::path(std::u8string(name.begin(), name.end())), text);
+    }
+};
+
+// A test's clock for the writer, which may outlive any one stack frame (its `now` must not
+// capture by reference): shared with the writer's copy of it.
+struct TestClock {
+    std::shared_ptr<std::atomic<double>> time;
+    explicit TestClock(double start) : time(std::make_shared<std::atomic<double>>(start)) {}
+    TestClock& operator=(double t) {
+        time->store(t);
+        return *this;
+    }
+    std::function<double()> Fn() const {
+        return [time = time] { return time->load(); };
     }
 };
 
@@ -189,16 +206,30 @@ TEST(aCrashMidWriteLeavesThePreviousFileIntact) {
     BrowserState after = before;
     after.OpenTab("https://kite.example/after");
     const std::string next = SessionStore::EncodeFile(after);
-    WriteText(dir / "session.json.tmp", next.substr(0, next.size() / 2));
+    const fs::path leftover = dir / "session.json.0badf00d-7.tmp";
+    WriteText(leftover, next.substr(0, next.size() / 2));
     auto load = store.Load();
     CHECK(std::holds_alternative<BrowserState>(load) && std::get<BrowserState>(load) == before);
     CHECK(ReadText(store.File()) == saved);
-    // The next write goes over the leftover and leaves none.
+    // The next write goes through a temp of its own and leaves none; the leftover goes once
+    // it's old enough that no write can still be using it.
     CHECK(store.Save(after).empty());
     CHECK(ReadText(store.File()) == next);
-    CHECK(!fs::exists(dir / "session.json.tmp"));
-    // A write that fails part-way (here the temp file can't be made) leaves the file as it was.
-    fs::create_directories(dir / "session.json.tmp" / "in-the-way");
+    CHECK(CountNamed(dir, ".tmp") == 1);
+    WriteText(dir / "notes.tmp", "not a temp of Kite's");
+    CHECK(store_file::RemoveStaleTemps(dir, std::chrono::hours(1)) == 0);
+    CHECK(store_file::RemoveStaleTemps(dir, std::chrono::seconds(0)) == 1);
+    CHECK(fs::exists(dir / "notes.tmp"));
+    fs::remove(dir / "notes.tmp");
+    CHECK(store_file::IsTempName("session.json.0badf00d-7.tmp") && store_file::IsTempName(Name(store_file::NextTempPath(store.File()))));
+    for (const char* other : {"session.json.tmp", "session.json.0badf00d-.tmp", "session.json.0badf0-7.tmp", "0badf00d-7.tmp",
+                              "session.json.0badf00g-7.tmp"}) {
+        CHECK(!store_file::IsTempName(other));
+    }
+    CHECK(CountNamed(dir, ".tmp") == 0 && fs::exists(store.File()));
+    // A write that fails part-way (here its temp file can't be made) leaves the file as it was.
+    const fs::path inTheWay = store_file::NextTempPath(store.File());
+    fs::create_directories(inTheWay / "in-the-way");
     CHECK(!store.Save(before).empty());
     CHECK(ReadText(store.File()) == next);
     fs::remove_all(dir);
@@ -402,8 +433,8 @@ TEST(onlyBackupNamesCountAsBackups) {
 
 TEST(theWriterWritesTheSnapshotAndAnHourlyBackup) {
     Backups b(3);
-    std::atomic<double> clock{b.start};
-    SessionWriter writer(b.store, true, [&] { return clock.load(); });
+    TestClock clock{b.start};
+    SessionWriter writer(b.store, true, clock.Fn());
     writer.Save(b.State(1));
     CHECK(writer.Flush().empty());
     auto loaded = b.store.Load();
@@ -459,8 +490,8 @@ TEST(anUnchangedSnapshotIsNotWrittenAgain) {
 
 TEST(aBackupIsRotatedAtMostOncePerHour) {
     Backups b(1);
-    std::atomic<double> clock{b.start};
-    SessionWriter writer(b.store, true, [&] { return clock.load(); });
+    TestClock clock{b.start};
+    SessionWriter writer(b.store, true, clock.Fn());
     BrowserState state = b.State(0);
     // A change a minute for 59 minutes: 59 writes, one hourly backup.
     for (int minute = 0; minute < 59; ++minute) {
@@ -479,7 +510,7 @@ TEST(aBackupIsRotatedAtMostOncePerHour) {
     CHECK(b.store.Backups().All().size() == 2);
     // A new writer (a relaunch) reads the newest date from the folder, so it doesn't add one early.
     // A fresh store, as a relaunch has: nothing cached from this run.
-    SessionWriter again(SessionStore(b.store.File()), true, [&] { return b.start + b.hour + 60; });
+    SessionWriter again(SessionStore(b.store.File()), true, [t = b.start + b.hour + 60] { return t; });
     state.OpenTab("https://kite.example/relaunch");
     again.Save(state);
     again.Flush();
@@ -488,8 +519,8 @@ TEST(aBackupIsRotatedAtMostOncePerHour) {
 
 TEST(theLaunchBackupIsTheSessionAsFound) {
     Backups b(3);
-    std::atomic<double> clock{b.start};
-    SessionWriter writer(b.store, true, [&] { return clock.load(); });
+    TestClock clock{b.start};
+    SessionWriter writer(b.store, true, clock.Fn());
     writer.BackUpLaunch(b.State(1));
     writer.Save(b.State(2));
     writer.Flush();
@@ -531,11 +562,12 @@ TEST(aFailedWriteIsReportedAndTheNextOneRetries) {
     SessionWriter writer(b.store);
     writer.Save(b.State(1));
     writer.Flush();
-    fs::create_directories(b.dir / "session.json.tmp" / "in-the-way");
+    const fs::path inTheWay = store_file::NextTempPath(b.store.File());
+    fs::create_directories(inTheWay / "in-the-way");
     writer.Save(b.State(2));
     CHECK(!writer.Flush().empty());
     CHECK(std::get<BrowserState>(b.store.Load(SessionStore::Unreadable::Leave)) == b.State(1));
-    fs::remove_all(b.dir / "session.json.tmp");
+    fs::remove_all(inTheWay);
     // The same state again is written, not taken for the last write.
     writer.Save(b.State(2));
     CHECK(writer.Flush().empty());
@@ -546,8 +578,8 @@ TEST(aFailedWriteIsReportedAndTheNextOneRetries) {
 // stopped changing inside the hour still gets its hourly backup on the next save after it.
 TEST(anUnchangedSaveStillTakesTheHourlyBackup) {
     Backups b(3);
-    std::atomic<double> clock{b.start};
-    SessionWriter writer(b.store, true, [&] { return clock.load(); });
+    TestClock clock{b.start};
+    SessionWriter writer(b.store, true, clock.Fn());
     writer.Save(b.State(1));
     writer.Flush();
     clock = b.start + 60;
@@ -575,10 +607,11 @@ TEST(anErrorThatNoLongerStandsIsNotReported) {
     SessionWriter writer(b.store);
     writer.Save(b.State(1));
     writer.Flush();
-    fs::create_directories(b.dir / "session.json.tmp" / "in-the-way");
+    const fs::path inTheWay = store_file::NextTempPath(b.store.File());
+    fs::create_directories(inTheWay / "in-the-way");
     writer.Save(b.State(2));
     CHECK(!writer.Flush().empty());
-    fs::remove_all(b.dir / "session.json.tmp");
+    fs::remove_all(inTheWay);
     // Back to what the file still holds: nothing to write, and the failed write no longer matters.
     writer.Save(b.State(1));
     CHECK(writer.Flush().empty());
@@ -593,4 +626,95 @@ TEST(aFlushIsBounded) {
     writer.Save(b.State(1));
     CHECK(writer.Flush(std::chrono::milliseconds(5000)).empty());
     CHECK(fs::exists(b.store.File()));
+}
+
+// Two writers of one file at once (a Kite quitting while the next one starts, two threads):
+// each has its own temp, so every write goes through whole, and the file is one of them.
+TEST(twoWritersOfOneFileNeverShareATemp) {
+    fs::path dir = TempDir();
+    const fs::path file = dir / "session.json";
+    const std::string a(64 * 1024, 'a'), bytes(48 * 1024, 'b');
+    std::atomic<int> failures{0};
+    auto writeMany = [&](const std::string& text) {
+        for (int i = 0; i < 100; ++i) {
+            if (!store_file::WriteAtomically(file, text).empty()) ++failures;
+        }
+    };
+    std::thread first(writeMany, std::cref(a)), second(writeMany, std::cref(bytes));
+    first.join();
+    second.join();
+    CHECK(failures == 0);
+    const std::string result = ReadText(file);
+    CHECK(result == a || result == bytes);
+    CHECK(CountNamed(dir, ".tmp") == 0);
+    // And two session writers: whichever lands last, the file is a whole session.
+    Backups b(3);
+    {
+        SessionWriter one(b.store), two(SessionStore(b.store.File()));
+        // Each alternates, so every save is a write, and the two overlap.
+        for (int i = 0; i < 20; ++i) {
+            one.Save(b.State(1 + i % 2));
+            two.Save(b.State(2 - i % 2));
+            if (i % 5 == 4) {
+                one.Flush();
+                two.Flush();
+            }
+        }
+        CHECK(one.Flush().empty() && two.Flush().empty());
+    }
+    auto loaded = b.store.Load(SessionStore::Unreadable::Leave);
+    CHECK(std::holds_alternative<BrowserState>(loaded) &&
+          (std::get<BrowserState>(loaded) == b.State(1) || std::get<BrowserState>(loaded) == b.State(2)));
+    CHECK(CountNamed(b.dir, ".tmp") == 0);
+    fs::remove_all(dir);
+}
+
+// The 15-minute auto-archive pass that archived nothing (the Mac's always mutates, so it saves
+// and backs up): the hourly backup of what was last written, with nothing copied or written.
+TEST(anOfferedBackupNeedsNoWrite) {
+    Backups b(2);
+    TestClock clock{b.start};
+    SessionWriter writer(b.store, true, clock.Fn());
+    // Nothing written yet this run: the caller saves instead.
+    CHECK(!writer.OfferBackup());
+    writer.Save(b.State(1));
+    writer.Flush();
+    CHECK(b.store.Backups().All().size() == 1);
+    clock = b.start + 60;
+    writer.Save(b.State(0));  // written, too soon for a backup
+    writer.Flush();
+    clock = b.start + b.hour + 60;
+    CHECK(writer.OfferBackup());
+    CHECK(writer.Flush().empty());
+    auto stats = writer.Stats();
+    CHECK(stats.written == 2 && stats.unchanged == 0 && stats.handedOver == 2 && stats.backups == 2);
+    auto all = b.store.Backups().All();
+    CHECK(all.size() == 2 && !all.empty() && SessionBackups::State(all[0]) == b.State(0));
+    // A writer that mustn't save offers nothing.
+    SessionWriter blocked(b.store, false);
+    CHECK(!blocked.OfferBackup());
+}
+
+TEST(aWorkerStillWritingAtTheEndIsHandedToOnStuck) {
+    // The backup's clock blocks the worker after session.json is written, as a hung disk would.
+    Backups b(2);
+    auto gate = std::make_shared<std::atomic<bool>>(false);
+    auto stuck = std::make_shared<std::atomic<int>>(0);
+    {
+        SessionWriter writer(b.store, true, [gate] {
+            while (!*gate) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return Backups::start;
+        });
+        writer.OnStuck([stuck] { ++*stuck; });
+        writer.Save(b.State(1));
+        CHECK(!writer.Flush(std::chrono::milliseconds(50)).empty());
+        // The destructor doesn't wait again after the timed-out Flush: OnStuck runs at once.
+    }
+    CHECK(*stuck == 1);
+    CHECK(std::get<BrowserState>(b.store.Load(SessionStore::Unreadable::Leave)) == b.State(1));
+    // The worker let go finishes on its own, with its own reference to the shared state.
+    *gate = true;
+    for (int i = 0; i < 500 && b.store.Backups().All().empty(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    CHECK(b.store.Backups().All().size() == 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }

@@ -762,10 +762,17 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     }
     if (message == WM_TIMER && wParam == kArchiveTimer) {
         if (auto interval = state_.ArchiveAfterSeconds()) {
-            // A pass that archived nothing changed nothing: no redraw, no save.
             const std::vector<Tab> archived = state_.ArchiveStaleTabs(*interval);
             for (const Tab& tab : archived) PageGone(tab.id);
-            if (!archived.empty()) StateChanged();
+            if (!archived.empty()) {
+                StateChanged();
+            } else if (writer_ && writer_->MaySave() && !writer_->OfferBackup()) {
+                // Nothing changed, so nothing to redraw or write; but the Mac's pass always
+                // mutates, so its session saves and its hourly backup comes with it. The writer
+                // offers that backup of what it last wrote, or, having written nothing yet this
+                // run, the session is saved as a change would be.
+                SessionChanged();
+            }
         }
         return true;
     }
@@ -787,7 +794,10 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         // which skips that check, to drive the path without running the machine out of memory.
         const auto level = static_cast<MemoryPressure>(wParam);
         const bool forced = options_.saveLog && lParam == 1;
-        const bool discards = DiscardsPages(level) && (forced || (memoryWatch_ && memoryWatch_->IsLow()));
+        const bool low = memoryWatch_ && memoryWatch_->IsLow();
+        const bool discards = DiscardsPages(level) && (forced || low);
+        // Over already: the watch waits for low again, so the next spell is reported.
+        if (DiscardsPages(level) && !low && memoryWatch_) memoryWatch_->Recovered();
         if (options_.saveLog) pressureReports_.push_back({FrameClock::Now() - createdAt_, level, discards});
 #ifdef KITE_HAS_CEF
         if (chromium_ && discards) chromium_->DiscardHiddenPages();

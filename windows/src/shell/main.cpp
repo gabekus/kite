@@ -28,6 +28,8 @@
 //                            that stays open until it's closed, then writes each session save
 //                            it made (when, and its cost on the UI thread) and the writer's
 //                            statistics to FILE as JSON: the live check of saving as it changes.
+//                            KITE_TEST_SLOW_BACKUP_MS=N makes each backup take N ms more
+//                            (the live check of a relaunch while Kite quits).
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 //                            Prints a report; exits 0 when it matches, 5 when it differs, 3
@@ -42,6 +44,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -287,7 +290,30 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // The session is written as it changes, on the writer's thread (core/SessionWriter.h); it
     // outlives the window, whose close saves once more, and Kite waits for that write once the
     // window is gone. Never when the file is still there unread.
-    kite::SessionWriter writer(session, maySave);
+    // The live check of a relaunch while Kite quits: a --save-log run (a test profile) with
+    // KITE_TEST_SLOW_BACKUP_MS set takes that long over each backup (the clock the writer dates
+    // them by), so the wait at quit lasts long enough for a relaunch to land in it.
+    std::function<double()> clock = kite::SessionBackups::Now;
+    if (const DWORD slowMs = saveLogOption.present ? GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", nullptr, 0) : 0; slowMs) {
+        std::wstring value(slowMs, L'\0');
+        value.resize(GetEnvironmentVariableW(L"KITE_TEST_SLOW_BACKUP_MS", value.data(), slowMs));
+        if (auto ms = ParseInt(value); ms && *ms <= 60'000) {
+            clock = [ms = *ms] {
+                Sleep(static_cast<DWORD>(ms));
+                return kite::SessionBackups::Now();
+            };
+        }
+    }
+    kite::SessionWriter writer(session, maySave, std::move(clock));
+    // A write still stuck as Kite ends (a disk that hangs past kQuitFlush): the process ends
+    // there, without the C++ library's teardown running under the writer's thread. The file is
+    // the old one or the new one (the write is atomic); the run is a failed save.
+    writer.OnStuck([quiet] {
+        const std::wstring message = L"Kite: the session's last write didn't finish; Kite ended without waiting for it\n";
+        OutputDebugStringW(message.c_str());
+        if (quiet) WriteUtf8(STD_ERROR_HANDLE, message);
+        TerminateProcess(GetCurrentProcess(), kSaveFailed);
+    });
     // As the Mac does once per launch, the session as found (read, recovered or a fresh one, as
     // BrowserStore.init) is kept as a launch backup: before the auto-archive, as the Mac's is
     // before its first pass, but handed over only once this launch is Kite's (not a second one
@@ -392,6 +418,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
 
     controller->RunMessageLoop();
+    // The window's close handed over the last save; wait for it now that the window is gone (no
+    // frozen window), for kQuitFlush at most (the atomic write leaves the old file or the new
+    // one). Before Chromium shuts down: until then this Kite holds the profile, so a launch in
+    // the meantime hands over to it rather than read a session.json about to be replaced.
+    const std::string saveError = writer.Flush(kQuitFlush);
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (frameLogOption.value) {
         if (problem = controller->SaveFrameLog(*frameLogOption.value); !problem.empty()) {
@@ -401,9 +432,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 #ifdef KITE_HAS_CEF
     if (problem = controller->ShutDownChromium(); !problem.empty()) return Fail(quiet, problem, kWindowFailed);
 #endif
-    // The window's close handed over the last save; wait for it now that the window is gone,
-    // for kQuitFlush at most (the atomic write leaves the old file or the new one).
-    const std::string saveError = writer.Flush(kQuitFlush);
     if (saveLogOption.value) {
         if (problem = controller->SaveSaveLog(*saveLogOption.value); !problem.empty()) {
             return Fail(quiet, L"Couldn't write the save log: " + problem, kSaveFailed);

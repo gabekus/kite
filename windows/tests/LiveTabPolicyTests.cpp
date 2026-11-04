@@ -76,3 +76,30 @@ TEST(memoryPressureDiscardsEveryPageNotOnScreen) {
     CHECK(TabsToDiscardUnderPressure({{"only", 1}}, {"only"}).empty());
     CHECK(TabsToDiscardUnderPressure({}, {}).empty());
 }
+
+// The low-memory watch (shell/MemoryPressure): one report a spell, and no spell missed.
+TEST(theMemoryWatchReportsEachSpellOnce) {
+    MemoryPressureLatch latch;
+    CHECK(latch.WaitingForLow());
+    // Low: reported, then the watch waits for high (recovered).
+    auto step = latch.Signalled(true);
+    CHECK(step.report == MemoryPressure::Critical && !step.waitForLow);
+    // High: back to normal, and to waiting for low.
+    step = latch.Signalled(true);
+    CHECK(step.report == MemoryPressure::Normal && step.waitForLow);
+    // A low signal that's over by the time it's looked at is no spell.
+    step = latch.Signalled(false);
+    CHECK(!step.report && step.waitForLow && latch.WaitingForLow());
+    CHECK(!latch.Recovered());
+}
+
+TEST(aDipOverBeforeItsHandledDoesntHideTheNextSpell) {
+    MemoryPressureLatch latch;
+    CHECK(latch.Signalled(true).report == MemoryPressure::Critical);
+    // The window finds memory no longer low as it handles the report: memory may now hover
+    // between the two levels, so the watch waits for low again, not for high.
+    CHECK(latch.Recovered() && latch.WaitingForLow());
+    // ...and memory running low again is a new report.
+    auto step = latch.Signalled(true);
+    CHECK(step.report == MemoryPressure::Critical && !step.waitForLow);
+}

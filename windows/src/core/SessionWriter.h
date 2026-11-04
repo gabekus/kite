@@ -42,9 +42,11 @@ public:
     static constexpr std::chrono::milliseconds kStopWait{5000};
 
     // `maySave` false (SessionStore::MaySave said so): nothing is ever written, not even backups.
-    // `now`: the clock backups are dated by (Unix seconds); tests pass their own.
+    // `now`: the clock backups are dated by (Unix seconds); tests pass their own. It runs on the
+    // worker, which can outlive this object (see OnStuck), so it must not capture by reference.
     explicit SessionWriter(SessionStore store, bool maySave = true, std::function<double()> now = SessionBackups::Now);
-    // Writes what's waiting (for kStopWait at most), then stops the worker.
+    // Writes what's waiting (for kStopWait at most, or not at all after a Flush timed out), then
+    // stops the worker. A worker still writing then is let go, after OnStuck's handler runs.
     ~SessionWriter();
     SessionWriter(const SessionWriter&) = delete;
     SessionWriter& operator=(const SessionWriter&) = delete;
@@ -58,6 +60,15 @@ public:
     // Waits, for `timeout` at most, until everything handed over is written. The last write's
     // error, empty when it went well (or nothing was written); a timeout is an error too.
     std::string Flush(std::chrono::milliseconds timeout = std::chrono::milliseconds::max());
+    // The session didn't change, but the Mac would save it anyway (its auto-archive pass
+    // always mutates): the hourly backup of what was last written is offered, on the worker,
+    // with nothing copied or written. False when nothing has been written this run (the caller
+    // saves instead).
+    bool OfferBackup();
+    // Runs when the destructor has to let a worker go that's still writing. The app ends the
+    // process from it (without static destruction, which would tear the C library down under
+    // the thread); without one the thread is detached.
+    void OnStuck(std::function<void()> stuck);
 
     struct Statistics {
         uint64_t handedOver = 0;  // Save calls
@@ -79,6 +90,8 @@ public:
 private:
     const bool maySave_;
     std::shared_ptr<Shared> shared_;
+    std::function<void()> onStuck_;
+    bool flushTimedOut_ = false;
     std::thread worker_;
 };
 

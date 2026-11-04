@@ -1,12 +1,11 @@
 #pragma once
 // When the session is written after a change: a port of KiteCore's SessionSaveDelay.swift
-// (SessionSaveDelay, PendingSave; its CappedDebounce is history.json's and comes with history),
-// plus SaveSchedule, the timer the Mac's
-// BrowserStore.scheduleSave arms with them. Sidebar changes and navigations save a second
-// after the last one. A page's title and favicon change all the time (a page can set
-// document.title every second), so they wait longer and don't push back a save that's
-// already waiting: a page that never stops ticking still gets saved. Quitting and closing
-// the window save at once.
+// (SessionSaveDelay, PendingSave; its CappedDebounce is history.json's and comes with
+// history), plus SaveSchedule, the timer the Mac's BrowserStore.scheduleSave arms with them.
+// Sidebar changes and navigations save a second after the last one. A page's title and
+// favicon change all the time (a page can set document.title every second), so they wait
+// longer and don't push back a save that's already waiting: a page that never stops ticking
+// still gets saved. Quitting and closing the window save at once.
 
 #include <optional>
 #include <string_view>

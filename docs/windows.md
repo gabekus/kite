@@ -363,13 +363,18 @@ copies the session (`kitecore save-bench`: a 58–93 μs median for 200 tabs) an
 hands the copy to `core/SessionWriter`, whose thread encodes it, skips the
 write if the bytes are what it last wrote, and writes it atomically
 (`core/StoreFile`: a sibling `.tmp` flushed to the disk, then renamed over the
-file). Kite waits for the last write once the window is gone, 10 s at most;
-logoff and shutdown wait in the window, 3 s at most. Giving up is safe, since
-the file is then the old one or the new one. The writer also keeps the Mac's
-rolling backups in `Backups\` (`core/SessionBackups`, the same names and
-budgets): the session as found at each launch (not a second launch that hands
-over to the running Kite), and at most one an hour while Kite runs, offered
-after every save as on the Mac. An unreadable `session.json` is moved aside
+file; each write has a temp of its own, so two writers never share one). Kite
+waits for the last write once the window is gone, before Chromium shuts down
+(so a launch meanwhile hands over to it rather than read a file about to be
+replaced), 10 s at most; logoff and shutdown wait in the window, 3 s at most.
+Giving up is safe, since the file is then the old one or the new one; a write
+still stuck then ends the process (`TerminateProcess`, exit 4) rather than let
+the C++ library tear down under the writer's thread. The writer also keeps
+the Mac's rolling backups in `Backups\` (`core/SessionBackups`, the same names
+and budgets): the session as found at each launch (not a second launch that
+hands over to the running Kite), and at most one an hour while Kite runs,
+offered after every save as on the Mac, and on each 15-minute auto-archive
+pass, which on the Mac always saves. An unreadable `session.json` is moved aside
 and the newest backup that reads takes its place; the Mac says so in a toast,
 Windows (no toasts yet) only to the debugger and a quiet run's stderr.
 `kitecore backups` lists them; `kitecore save-schedule` replays changes

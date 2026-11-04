@@ -2,8 +2,6 @@
 
 #include "shell/MemoryPressure.h"
 
-#include "core/LiveTabPolicy.h"
-
 namespace kite {
 
 MemoryPressureWatch::MemoryPressureWatch(HWND window, UINT message) : window_(window), message_(message) {
@@ -19,11 +17,15 @@ MemoryPressureWatch::MemoryPressureWatch(HWND window, UINT message) : window_(wi
 
 MemoryPressureWatch::~MemoryPressureWatch() {
     if (wait_) {
-        // A callback that read stopping_ before it was set may still re-arm the wait, and that
-        // wait may already have queued a callback: clear and drain twice. Callbacks that start
-        // after stopping_ is set return at once, so after the second drain none is left.
-        stopping_ = true;
-        SetThreadpoolWait(wait_, nullptr, nullptr);
+        {
+            // Under the lock, so a callback either re-armed the wait before this (and the clear
+            // below undoes it) or sees stopping_ and doesn't.
+            std::lock_guard lock(mutex_);
+            stopping_ = true;
+            SetThreadpoolWait(wait_, nullptr, nullptr);
+        }
+        // Cancels callbacks queued but not started, and waits for one that's running; then once
+        // more, for a wait a callback re-armed in the moment before it took the lock.
         WaitForThreadpoolWaitCallbacks(wait_, TRUE);
         SetThreadpoolWait(wait_, nullptr, nullptr);
         WaitForThreadpoolWaitCallbacks(wait_, TRUE);
@@ -39,20 +41,25 @@ bool MemoryPressureWatch::IsLow() const {
     return low_ && QueryMemoryResourceNotification(low_, &low) && low;
 }
 
+void MemoryPressureWatch::Recovered() {
+    std::lock_guard lock(mutex_);
+    if (wait_ && !stopping_ && latch_.Recovered()) SetThreadpoolWait(wait_, low_, nullptr);
+}
+
 void CALLBACK MemoryPressureWatch::Signalled(PTP_CALLBACK_INSTANCE, void* context, PTP_WAIT wait, TP_WAIT_RESULT result) {
     auto* self = static_cast<MemoryPressureWatch*>(context);
-    if (result != WAIT_OBJECT_0 || self->stopping_) return;
-    if (self->waitingForLow_) {
-        // Entered low memory: the window discards what it can, on its own thread.
-        PostMessageW(self->window_, self->message_, static_cast<WPARAM>(MemoryPressure::Critical), 0);
-        self->waitingForLow_ = false;
-        if (!self->stopping_) SetThreadpoolWait(wait, self->high_, nullptr);
-    } else {
-        // Recovered: the next spell of low memory is reported again.
-        PostMessageW(self->window_, self->message_, static_cast<WPARAM>(MemoryPressure::Normal), 0);
-        self->waitingForLow_ = true;
-        if (!self->stopping_) SetThreadpoolWait(wait, self->low_, nullptr);
+    if (result != WAIT_OBJECT_0) return;
+    std::optional<MemoryPressure> report;
+    {
+        std::lock_guard lock(self->mutex_);
+        if (self->stopping_) return;
+        // Low is checked as it's handled: a signal that's over already is no spell.
+        const MemoryPressureLatch::Step step = self->latch_.Signalled(self->IsLow());
+        report = step.report;
+        SetThreadpoolWait(wait, step.waitForLow ? self->low_ : self->high_, nullptr);
     }
+    // The window discards what it can, on its own thread.
+    if (report) PostMessageW(self->window_, self->message_, static_cast<WPARAM>(*report), 0);
 }
 
 }  // namespace kite
