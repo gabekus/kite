@@ -11,6 +11,9 @@ enum ClaudeDesktop {
 
     static var isInstalled: Bool { appURL != nil }
 
+    /// False on a test profile: it never hands requests to, opens or relaunches the user's own Claude app.
+    nonisolated static var mayDrive: Bool { !ClaudeProcessEnvironment.isTestProfile(ProcessInfo.processInfo.environment) }
+
     static var isRunning: Bool {
         !NSRunningApplication.runningApplications(withBundleIdentifier: ClaudeDesktopLink.bundleIdentifier).isEmpty
     }
@@ -60,7 +63,7 @@ enum ClaudeDesktop {
     /// Quits and reopens Desktop so it loads a changed config. Only after the user agrees:
     /// quitting ends whatever Desktop is doing.
     static func relaunch() {
-        guard let appURL else { return }
+        guard mayDrive, let appURL else { return }
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: ClaudeDesktopLink.bundleIdentifier)
         guard !running.isEmpty else {
             WindowPresenter.openApplication(at: appURL)
@@ -80,12 +83,13 @@ enum ClaudeDesktop {
     /// A new Desktop chat with `prompt` ready to send. Returns false when Desktop isn't installed.
     @discardableResult
     static func openChat(prompt: String) -> Bool {
-        guard isInstalled else { return false }
+        guard mayDrive, isInstalled else { return false }
         return WindowPresenter.open(ClaudeDesktopLink.chatURL(prompt: prompt))
     }
 
     /// Opens a Claude Code session in Desktop's Code tab. Returns what went wrong, or nil.
     static func openSession(_ sessionID: String) -> String? {
+        guard mayDrive else { return "A test profile doesn't open the Claude app." }
         guard let appURL else { return "The Claude app isn't installed. Get it at claude.ai/download." }
         let version = Bundle(url: appURL)?.infoDictionary?["CFBundleShortVersionString"] as? String
         guard ClaudeDesktopLink.supportsResume(version: version) else {

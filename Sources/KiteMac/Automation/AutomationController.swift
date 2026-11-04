@@ -851,8 +851,5 @@ final class AutomationController {
         return command + " -- \(Self.shellQuote(cliPath)) mcp"
     }
 
-    static func shellQuote(_ string: String) -> String {
-        string.allSatisfy { $0.isLetter || $0.isNumber || "/._-".contains($0) }
-            ? string : "'" + string.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
+    static func shellQuote(_ string: String) -> String { Shell.quote(string) }
 }

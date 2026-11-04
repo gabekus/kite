@@ -212,10 +212,10 @@ final class ClaudeTasksController {
 
     /// Sends a ⌘J request to a new chat in the Claude desktop app, which has Kite's tools,
     /// so it happens in the same Claude as the user's other chats. Returns false when
-    /// Desktop isn't installed (the caller runs it in Kite instead).
+    /// Desktop isn't installed or this is a test profile (the caller runs it in Kite instead).
     func handOffToDesktop(goal: String, tab: BrowserTab?) -> Bool {
         let goal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !goal.isEmpty, ClaudeDesktop.isInstalled else { return false }
+        guard !goal.isEmpty, ClaudeDesktop.mayDrive, ClaudeDesktop.isInstalled else { return false }
         // Desktop's Claude reaches the browser through Kite's MCP server.
         if !automation.isEnabled { automation.setEnabled(true) }
         if !ClaudeDesktop.isLinked {
@@ -230,7 +230,7 @@ final class ClaudeTasksController {
 
     /// A finished task that ran in Kite can carry on in Desktop's Code tab, as the same session.
     func canOpenInDesktop(_ id: UUID) -> Bool {
-        guard ClaudeDesktop.isInstalled, runs[id] == nil, let task = task(id) else { return false }
+        guard ClaudeDesktop.mayDrive, ClaudeDesktop.isInstalled, runs[id] == nil, let task = task(id) else { return false }
         // Desktop's Kite connection carries no task, so a ticket test continued there would lose the guard
         // that keeps it from posting on Linear (TicketTest.blocksPosting). Its follow-ups stay in Kite.
         return task.sessionID != nil && task.ticket == nil
@@ -357,13 +357,12 @@ final class ClaudeTasksController {
         Task.detached { [weak self] in
             // Jev sizes the goal while Claude Code is found: a quick lookup runs on the fast model.
             async let model = Self.model(for: goal, jev: jev)
-            let claude = ClaudeConnect.findClaude()
-            let environment = Self.environment()
+            let claude = await ClaudeCommand.find()
             let chosen = await model
             let arguments = ClaudeInvocation.arguments(kiteCLI: cli, profile: profile, taskID: id, resume: resume, model: chosen,
                                                        systemPrompt: systemPrompt)
             await self?.noteModel(chosen, for: id)
-            await self?.spawn(id, claude: claude, arguments: arguments, environment: environment,
+            await self?.spawn(id, claude: claude, arguments: arguments,
                               directory: directory, prompt: prompt, placeholder: placeholder)
         }
     }
@@ -381,7 +380,7 @@ final class ClaudeTasksController {
         tasks[i].append(ClaudeTask.Entry(.note, "Quick lookup, so this runs on the fast model (\(model.capitalized))."))
     }
 
-    private func spawn(_ id: UUID, claude: String?, arguments: [String], environment: [String: String],
+    private func spawn(_ id: UUID, claude: ClaudeCommand?, arguments: [String],
                        directory: URL, prompt: String, placeholder: Run) {
         guard runs[id] === placeholder, !placeholder.stopped else {
             runs[id] = nil
@@ -400,11 +399,7 @@ final class ClaudeTasksController {
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = arguments
-        process.environment = environment
-        process.currentDirectoryURL = directory
+        let process = claude.process(arguments: arguments, directory: directory)
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -483,22 +478,6 @@ final class ClaudeTasksController {
         tasks[i].status = .failed
         scheduleSave()
     }
-
-    /// The environment for every `claude` Kite starts (`ClaudeProcessEnvironment`). GUI apps get a bare
-    /// PATH and Claude Code may be a Node script, so it has the login shell's. Worked out (a login
-    /// `zsh -lc`) once per test-profile state, on the first caller's thread, which is never the main
-    /// one: every caller runs it from a detached task. On a test profile HOME and CLAUDE_CONFIG_DIR
-    /// are the test Claude home, never the user's own `~/.claude`.
-    nonisolated static func environment() -> [String: String] {
-        let base = ProcessInfo.processInfo.environment
-        let userHome = FileManager.default.homeDirectoryForCurrentUser
-        return environments.environment(for: .init(environment: base, userHome: userHome)) {
-            let (status, output) = ClaudeConnect.run("/bin/zsh", ["-lc", "printf %s \"$PATH\""])
-            return ClaudeProcessEnvironment.make(base, loginPath: status == 0 ? output : nil, userHome: userHome)
-        }
-    }
-
-    nonisolated private static let environments = ClaudeProcessEnvironment.Cache()
 
     // MARK: Awake, notifications, badge
 

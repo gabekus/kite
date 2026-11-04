@@ -65,6 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Release builds check for updates (8-hourly, installing on quit); others do nothing.
         SoftwareUpdater.shared.start()
+        // The login shell's PATH and claude, asked once in the background, so the first claude doesn't wait.
+        ClaudeConnect.loginShell.warm()
         // Before the store writes session.json, which tells a new profile from an existing install.
         let showsOnboarding = OnboardingWindow.shouldShowAtLaunch()
         store = BrowserStore(session: SessionStore(fileURL: Self.sessionURL))
@@ -194,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (`applicationShouldHandleReopen`), KITE_TEST_REOPEN_MAIN_AFTER seconds after launch; behind the user's windows.
         if UIDiagnostics.enabledByEnvironment, let delay = ProcessInfo.processInfo.environment["KITE_TEST_REOPEN_MAIN_AFTER"].flatMap(Double.init) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                if self?.windowController.window?.isVisible == false { self?.windowController.window?.orderBack(nil) }
+                if self?.windowController.window?.isVisible == false { WindowPresenter.showInBackground(self?.windowController.window) }
             }
         }
         // A test run can open the Zap picker directly (users open it from the Boost editor's Zap tool).

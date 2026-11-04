@@ -16,11 +16,17 @@ enum LinkPreviewSummarizer {
         init(_ summary: LinkPreviewSummary?) { self.summary = summary }
     }
 
-    /// Where Claude Code is, looked up once, off the main thread (nil inside: not installed).
-    private static var claude: String??
+    /// Claude Code with its environment, once found. Not found is never kept: it's looked for again
+    /// `LoginShellCache.retryInterval` later (the login shell may just have been slow).
+    private static var claude: ClaudeCommand?
+    private static var missingSince: Date?
 
-    /// False once Claude Code is known to be missing: cards then show no summary at all.
-    static var mayBeAvailable: Bool { claude.map { $0 != nil } ?? true }
+    /// False while Claude Code was just found missing: cards then show no summary at all.
+    static var mayBeAvailable: Bool { claude != nil || !recentlyMissing }
+
+    private static var recentlyMissing: Bool {
+        missingSince.map { Date().timeIntervalSince($0) < LoginShellCache.retryInterval } ?? false
+    }
 
     static func cached(_ url: URL) -> LinkPreviewSummary?? {
         cache.object(forKey: url as NSURL).map(\.summary)
@@ -30,19 +36,18 @@ enum LinkPreviewSummarizer {
     /// task stops Claude Code.
     static func summary(for url: URL, metadata: LinkPreviewMetadata?, pageText: String) async -> LinkPreviewSummary? {
         if let cached = cached(url) { return cached }
-        if claude == nil {
-            claude = await Task.detached { ClaudeConnect.findClaude() }.value
+        if claude == nil, !recentlyMissing {
+            claude = await ClaudeCommand.find()
+            missingSince = claude == nil ? Date() : nil
         }
-        guard let claude = claude ?? nil else { return nil }
+        guard let claude else { return nil }
         let prompt = LinkPreviewSummary.prompt(url: url, metadata: metadata, pageText: pageText,
                                                language: LinkPreviewSummary.languageName())
-        // The login shell's PATH comes from running zsh: off the main thread, as the run itself is.
-        let environment = await Task.detached { ClaudeTasksController.environment() }.value
         guard !Task.isCancelled else { return nil }
         // Its own process group, ended whole at the timeout or when this task is cancelled: a child left
         // holding stdout can't hang the read.
-        let process = OneShotProcess(executable: claude, arguments: LinkPreviewSummary.claudeArguments(),
-                                     environment: environment, directory: FileManager.default.temporaryDirectory)
+        let process = claude.oneShot(arguments: LinkPreviewSummary.claudeArguments(),
+                                     directory: FileManager.default.temporaryDirectory)
         let reply = await process.run(input: Data(prompt.utf8), timeout: timeout).flatMap { result -> String? in
             let text = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             return result.status == 0 && !text.isEmpty ? text : nil

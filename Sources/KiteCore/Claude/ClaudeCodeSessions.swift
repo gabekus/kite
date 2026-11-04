@@ -53,12 +53,17 @@ public enum ClaudeCodeSessions {
     }
 
     /// The home folder the bar reads Claude Code's and the Claude app's sessions from. A test
-    /// profile (`KITE_SUPPORT_PATH` set) never reads the user's own: it reads `KITE_TEST_CLAUDE_HOME`
-    /// (a fixture folder holding `.claude/projects`), or else the empty profile folder.
+    /// profile (`KITE_SUPPORT_PATH` set, even empty, as everywhere in Kite) never reads the user's
+    /// own: it reads `KITE_TEST_CLAUDE_HOME` (a fixture folder holding `.claude/projects`), or else the
+    /// empty profile folder (a folder in the temporary directory when the path is empty).
     public static func home(environment: [String: String], userHome: URL) -> URL {
-        guard let support = environment["KITE_SUPPORT_PATH"], !support.isEmpty else { return userHome }
+        guard let support = environment["KITE_SUPPORT_PATH"] else { return userHome }
         if let fixture = environment["KITE_TEST_CLAUDE_HOME"], !fixture.isEmpty {
             return URL(fileURLWithPath: fixture, isDirectory: true)
+        }
+        guard !support.isEmpty else {
+            return URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+                .appendingPathComponent("Kite Test Claude Home", isDirectory: true)
         }
         return URL(fileURLWithPath: support, isDirectory: true)
     }
@@ -67,7 +72,7 @@ public enum ClaudeCodeSessions {
     /// or the empty profile folder) as its HOME and config folder, so it never reads or writes the
     /// user's own `~/.claude`.
     public static func processEnvironment(_ base: [String: String], environment: [String: String], home: URL) -> [String: String] {
-        guard let support = environment["KITE_SUPPORT_PATH"], !support.isEmpty else { return base }
+        guard ClaudeProcessEnvironment.isTestProfile(environment) else { return base }
         var result = base
         result["HOME"] = home.path
         result["CLAUDE_CONFIG_DIR"] = home.appendingPathComponent(".claude", isDirectory: true).path

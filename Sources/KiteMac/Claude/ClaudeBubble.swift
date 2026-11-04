@@ -257,7 +257,8 @@ struct ClaudeBubble: View {
                     routeMenu(tasks, route: route, space: space)
                 }
                 if task == nil, route == .newChat, ClaudeDesktop.isInstalled {
-                    let desktop = tasks.runsIn == .desktop
+                    // A test profile never hands off (`ClaudeDesktop.mayDrive`): it says so.
+                    let desktop = tasks.runsIn == .desktop && ClaudeDesktop.mayDrive
                     barButton(desktop ? "Opens in the Claude app (click to run here in Kite)" : "Runs here in Kite (click to open in the Claude app)",
                               symbol: desktop ? "arrow.up.forward.app.fill" : "arrow.up.forward.app",
                               active: desktop) { tasks.runsIn = desktop ? .kite : .desktop }
@@ -441,7 +442,7 @@ struct ClaudeBubble: View {
             case .folder: return "Ask Claude…"
             case .newChat: break
             }
-            return model.tasks?.runsIn == .desktop && ClaudeDesktop.isInstalled
+            return model.tasks?.runsIn == .desktop && ClaudeDesktop.mayDrive && ClaudeDesktop.isInstalled
                 ? "Ask Claude… (opens in the Claude app)" : "Ask Claude to do something in your browser…"
         }
         return isRunning ? "Claude is working… (Esc to hide; it keeps going)" : "Follow up"

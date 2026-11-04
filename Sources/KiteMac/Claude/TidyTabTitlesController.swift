@@ -62,11 +62,9 @@ final class TidyTabTitlesController {
             Thread.sleep(forTimeInterval: 1)
             return stub
         }
-        guard let claude = ClaudeConnect.findClaude() else { return nil }
+        guard let claude = await ClaudeCommand.find() else { return nil }
         // Its own process group, ended whole at the timeout: a child left holding stdout can't hang the read.
-        let process = OneShotProcess(executable: claude, arguments: TidyTabTitles.arguments(),
-                                     environment: ClaudeTasksController.environment(),
-                                     directory: FileManager.default.temporaryDirectory)
+        let process = claude.oneShot(arguments: TidyTabTitles.arguments(), directory: FileManager.default.temporaryDirectory)
         guard let result = await process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
         return TidyTabTitles.title(fromReply: String(decoding: result.output, as: UTF8.self))
     }
