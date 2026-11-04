@@ -39,6 +39,8 @@ constexpr UINT kFaviconsMessage = WM_APP + 4;
 // Posted by the frame clock once a composition frame while something animates.
 constexpr UINT kFrameMessage = WM_APP + 5;
 constexpr UINT kSpaceIconsMessage = WM_APP + 6;
+// --perf-control's queued requests (QueuePerfRequest).
+constexpr UINT kPerfRequestMessage = WM_APP + 20;
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -129,6 +131,7 @@ std::wstring BrowserWindowController::Init() {
     clock_ = std::make_unique<FrameClock>(window_.Handle(), kFrameMessage);
     compositor_ = Compositor::Create(window_.Handle(), *renderer_, error);
     if (!compositor_) return L"Kite couldn't start DirectComposition: " + error;
+    if (perf::On()) perf::SetWindow(window_.Handle());
 
     // The sidebar, over the backdrop: what the session lists, with favicons fetched off the UI
     // thread (none in a capture, which mustn't depend on the network).
@@ -295,19 +298,11 @@ bool BrowserWindowController::CommandEnabled(const std::string& command) const {
     return true;
 }
 
-void BrowserWindowController::Frame(double time) {
+void BrowserWindowController::Frame(double time, double rateHz) {
     ++frameCount_;
     lastFrameTime_ = time;
-    if (perf::On()) {
-        // Before the draw, so its commit is this frame's.
-        DCOMPOSITION_FRAME_STATISTICS statistics{};
-        double rate = 0;
-        if (compositor_ && SUCCEEDED(compositor_->Device()->GetFrameStatistics(&statistics)) &&
-            statistics.currentCompositionRate.Denominator) {
-            rate = static_cast<double>(statistics.currentCompositionRate.Numerator) / statistics.currentCompositionRate.Denominator;
-        }
-        perf::Frame(time, sidebar_->PageOffset(), theme_.Progress(time), rate);
-    }
+    // Before the draw, so its commit is this frame's.
+    if (perf::On()) perf::Frame(time, sidebar_->PageOffset(), theme_.Progress(time), rateHz);
     // Minimized: nothing to draw into (OnSize draws the end of it on restore).
     if (!IsIconic(window_.Handle())) DrawAt(time, nullptr);
     else lastThemeProgress_ = theme_.Progress(time);
@@ -545,9 +540,9 @@ void BrowserWindowController::RunCommand(const std::string& command) {
     perf::Mark("command-end", command);
 }
 
-bool BrowserWindowController::PerfControl(const COPYDATASTRUCT& data) {
-    if (data.dwData != kPerfControlTag || !data.lpData) return false;
-    auto parsed = json::Parse(std::string_view(static_cast<const char*>(data.lpData), data.cbData));
+bool BrowserWindowController::QueuePerfRequest(const COPYDATASTRUCT* data) {
+    if (!data || data->dwData != perf::kControlTag || !data->lpData || !data->cbData) return false;
+    auto parsed = json::Parse(std::string_view(static_cast<const char*>(data->lpData), data->cbData));
     const json::Value* request = std::get_if<json::Value>(&parsed);
     if (!request || !request->AsObject()) return false;
     const auto text = [&](std::string_view key) -> const std::string* {
@@ -558,33 +553,63 @@ bool BrowserWindowController::PerfControl(const COPYDATASTRUCT& data) {
         const json::Value* value = request->Find(key);
         return value ? value->AsInt() : std::nullopt;
     };
+    PerfRequest queued{};
     if (const std::string* command = text("command")) {
         if (!commands_.contains(*command) || !CommandEnabled(*command)) return false;
-        if (perf::On()) perf::Input("command", number("qpc").value_or(perf::Now()));
-        RunCommand(*command);
-        return true;
-    }
-    if (const std::string* mark = text("mark")) {
-        perf::Mark(*mark);
-        return true;
-    }
-    if (const std::string* url = text("open")) {
-        state_.OpenTab(*url);
-        SelectionMoved();
-        return true;
-    }
-    if (const std::string* input = text("input")) {
+        queued = {PerfRequest::Kind::Command, *command, 0, 0, number("qpc").value_or(perf::Now())};
+    } else if (const std::string* mark = text("mark")) {
+        queued = {PerfRequest::Kind::Mark, *mark};
+    } else if (const std::string* url = text("open")) {
+        // Web pages only: nothing of the machine's (file:, view-source:, kite: or a script).
+        if (!url->starts_with("http://") && !url->starts_with("https://")) return false;
+        queued = {PerfRequest::Kind::Open, *url};
+    } else if (const std::string* input = text("input")) {
         if (*input == "leave") {
-            perfPointer_ = false;
-            return PostMessageW(window_.Handle(), WM_MOUSELEAVE, 0, 0) != FALSE;
+            queued = {PerfRequest::Kind::Leave};
+        } else {
+            const auto x = number("x"), y = number("y");
+            if (*input != "move" || !x || !y || *x < 0 || *y < 0 || *x > 0x7FFF || *y > 0x7FFF) return false;
+            queued = {PerfRequest::Kind::Move, {}, *x, *y, number("qpc").value_or(perf::Now())};
         }
-        const auto x = number("x"), y = number("y");
-        if (*input != "move" || !x || !y || *x < 0 || *y < 0 || *x > 0x7FFF || *y > 0x7FFF) return false;
-        perfPointer_ = true;
-        if (perf::On()) perf::Input("move", number("qpc").value_or(perf::Now()));
-        return PostMessageW(window_.Handle(), WM_MOUSEMOVE, 0, MAKELPARAM(*x, *y)) != FALSE;
+    } else {
+        return false;
     }
-    return false;
+    if (perfRequests_.size() >= 256) return false;  // a sender that never lets the loop run
+    perfRequests_.push_back(std::move(queued));
+    if (perfRequests_.size() == 1) PostMessageW(window_.Handle(), kPerfRequestMessage, 0, 0);
+    return true;
+}
+
+void BrowserWindowController::RunPerfRequests() {
+    std::vector<PerfRequest> requests;
+    requests.swap(perfRequests_);
+    for (PerfRequest& r : requests) {
+        switch (r.kind) {
+        case PerfRequest::Kind::Command:
+            // The state may have changed since it was queued.
+            if (!CommandEnabled(r.text)) {
+                perf::Mark("control-refused", r.text);
+                break;
+            }
+            if (perf::On()) perf::Input("command", r.qpc);
+            RunCommand(r.text);
+            break;
+        case PerfRequest::Kind::Mark: perf::Mark(r.text); break;
+        case PerfRequest::Kind::Open:
+            state_.OpenTab(r.text);
+            SelectionMoved();
+            break;
+        case PerfRequest::Kind::Move:
+            perfPointer_ = true;
+            if (perf::On()) perf::Input("move", r.qpc);
+            PostMessageW(window_.Handle(), WM_MOUSEMOVE, 0, MAKELPARAM(r.x, r.y));
+            break;
+        case PerfRequest::Kind::Leave:
+            perfPointer_ = false;
+            PostMessageW(window_.Handle(), WM_MOUSELEAVE, 0, 0);
+            break;
+        }
+    }
 }
 
 bool BrowserWindowController::PageCommand(const std::string& command) {
@@ -684,9 +709,15 @@ void BrowserWindowController::OnSize() {
 // MARK: The window's messages
 
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
-    if (message == WM_COPYDATA && options_.perfControl) {
-        result = PerfControl(*reinterpret_cast<const COPYDATASTRUCT*>(lParam)) ? 1 : 0;
-        return true;
+    if (options_.perfControl) {
+        if (message == WM_COPYDATA) {
+            result = QueuePerfRequest(reinterpret_cast<const COPYDATASTRUCT*>(lParam)) ? 1 : 0;
+            return true;
+        }
+        if (message == kPerfRequestMessage) {
+            RunPerfRequests();
+            return true;
+        }
     }
     // The real pointer isn't over the window while --perf-control moves one: TrackMouseEvent's
     // leave would take the hover straight off again.
@@ -753,7 +784,11 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     if (message == kFrameMessage) {
         // Delivered after the frame: a frame that takes longer than the next tick doesn't queue
         // another behind it.
-        if (clock_->Running()) Frame(FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr));
+        if (clock_->Running()) {
+            double rate = 0;
+            const double time = FrameClock::NextFrameTime(compositor_ ? compositor_->Device() : nullptr, &rate);
+            Frame(time, rate);
+        }
         clock_->Delivered();
         return true;
     }
