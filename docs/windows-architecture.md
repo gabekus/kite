@@ -41,6 +41,15 @@ their own PR, never as a side effect of a checkpoint.
   (`shell/FrameClock.h`), at the display's rate, only while it changes, and
   the clock stops when it ends. An offset, a scale or an opacity is always an
   `IDCompositionAnimation`.
+- Idle means drawing nothing, not never waking. Watching the system for
+  something only other apps do (a WinEvent hook on their windows, to know when
+  Kite's window is covered) wakes Kite when they act, and that's allowed when
+  it's cheap and draws nothing: off the UI thread, which hears only when the
+  outcome changes; filtered at the first check; debounced; hooked per process
+  rather than system-wide where Windows allows it, and only while it can change
+  the outcome; and with no enumeration (EnumWindows, process lists) while
+  nothing changed. The PR measures what it adds: context switches per second on
+  each Kite thread while another app moves a window, against origin/main.
 - Render at the display's refresh rate with no 60fps caps (docs/windows.md,
   Refresh rate).
 - No work on the UI thread that can block: file I/O over a few KB, network,
