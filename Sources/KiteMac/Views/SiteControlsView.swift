@@ -140,22 +140,48 @@ final class SiteControlsView: SidebarFlippedView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        // A closed popover stops following the model; shown again, it picks up from there.
+        guard window != nil else {
+            generation += 1
+            observing = false
+            return
+        }
+        if !observing { observe(generation) }
         window?.recalculateKeyViewLoop()
         restoreHover()
     }
 
+    /// What the controls show. The window re-reads every property after each change, and an assignment notifies
+    /// observers even when the value is the same, so a rebuild waits for one that differs.
+    private struct Shown: Equatable {
+        var blocksAds: Bool?
+        var isMailHandler: Bool?
+        var isInDeveloperMode: Bool
+        var permissions: [SitePermission: SitePermissionValue]?
+        var boosts: [Boost]?
+        var captureEnabled: Bool
+        var optionKeyDown: Bool
+        var extensions: [InstalledExtension]?
+        var pinnedExtensionIDs: [String]
+    }
+    private var shown: Shown?
+    private var observing = false
+
     /// Re-renders whenever something the model shows changes.
     private func observe(_ generation: Int) {
         guard generation == self.generation else { return }
+        observing = true
         withObservationTracking {
-            rebuild()
+            let now = Shown(blocksAds: model.blocksAds, isMailHandler: model.isMailHandler, isInDeveloperMode: model.isInDeveloperMode,
+                            permissions: model.permissions, boosts: model.boosts, captureEnabled: model.captureEnabled,
+                            optionKeyDown: model.optionKeyDown, extensions: model.extensions, pinnedExtensionIDs: model.pinnedExtensionIDs)
+            if now != shown {
+                shown = now
+                rebuild()
+            }
         } onChange: { [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.observe(generation) } }
         }
-    }
-
-    isolated deinit {
-        generation += 1
     }
 
     private func perform(_ action: SiteControlsAction, from view: NSView) {
@@ -189,22 +215,24 @@ final class SiteControlsView: SidebarFlippedView {
         var reusable = controls
         var built: [String: NSView] = [:]
         func reuse<V: NSView>(_ key: String, _ make: () -> V) -> V {
+            assert(built[key] == nil, "two Site Controls controls share the key \(key)")
             let view = reusable.removeValue(forKey: key) as? V ?? make()
             built[key] = view
             return view
         }
         defer {
-            reusable.values.forEach { $0.removeFromSuperview() }
+            // Whatever wasn't built this time goes, whatever the keys did.
+            let kept = Set(built.values.map(ObjectIdentifier.init))
+            subviews.filter { !kept.contains(ObjectIdentifier($0)) }.forEach { $0.removeFromSuperview() }
             controls = built
         }
-        func makeRow(symbol: String, title: String, subtitle: String, isOn: Bool, trailingPadding: CGFloat = 0) -> SiteControlsRow {
-            let row = reuse("row|\(symbol)|\(title)|\(trailingPadding)") {
+        func makeRow(key: String, symbol: String, title: String, subtitle: String, isOn: Bool, trailingPadding: CGFloat = 0) -> SiteControlsRow {
+            let row = reuse(key) {
                 SiteControlsRow(symbol: symbol, title: title, subtitle: subtitle, isOn: isOn, trailingPadding: trailingPadding)
             }
             row.subtitle = subtitle
             row.isOn = isOn
             row.contextMenu = nil
-            row.edit = nil
             return row
         }
         let model = model
@@ -231,7 +259,7 @@ final class SiteControlsView: SidebarFlippedView {
             }
             for (index, boost) in boosts.enumerated() {
                 if index > 0 { y += M.rowPitch - M.rowSize.height }
-                let row = makeRow(symbol: "wand.and.stars", title: boost.name, subtitle: SiteControls.boostSubtitle(boost.isEnabled),
+                let row = makeRow(key: "boost|\(boost.id)|\(boost.name)", symbol: "wand.and.stars", title: boost.name, subtitle: SiteControls.boostSubtitle(boost.isEnabled),
                                           isOn: boost.isEnabled, trailingPadding: 32)
                 row.action = { model.perform { model.actions.setBoostEnabled(boost.id, !boost.isEnabled) } }
                 row.edit = { model.dismiss(); model.actions.editBoost(boost.id) }
@@ -275,23 +303,23 @@ final class SiteControlsView: SidebarFlippedView {
         }
         var rows: [SiteControlsRow] = []
         if let blocksAds = model.blocksAds {
-            let row = makeRow(symbol: "shield.fill", title: SiteControls.adblockTitle, subtitle: SiteControls.onOff(blocksAds), isOn: blocksAds)
+            let row = makeRow(key: "adblock", symbol: "shield.fill", title: SiteControls.adblockTitle, subtitle: SiteControls.onOff(blocksAds), isOn: blocksAds)
             row.action = { model.perform(model.actions.toggleAdblock) }
             rows.append(row)
         }
-        let developer = makeRow(symbol: "hammer.fill", title: SiteControls.developerModeTitle,
+        let developer = makeRow(key: "developer", symbol: "hammer.fill", title: SiteControls.developerModeTitle,
                                         subtitle: SiteControls.onOff(model.isInDeveloperMode), isOn: model.isInDeveloperMode)
         developer.action = { model.perform(model.actions.toggleDeveloperMode) }
         rows.append(developer)
         if model.isMailHandler == true {
-            let row = makeRow(symbol: "envelope.fill", title: "Default Mail App", subtitle: SiteControls.onOff(true), isOn: true)
+            let row = makeRow(key: "mail", symbol: "envelope.fill", title: "Default Mail App", subtitle: SiteControls.onOff(true), isOn: true)
             row.action = { model.perform(model.actions.removeMailHandler) }
             rows.append(row)
         }
         if let permissions = model.permissions {
             for permission in SitePermission.allCases {
                 let value = permissions[permission] ?? .ask
-                let row = makeRow(symbol: permission.symbol, title: permission.title, subtitle: value.subtitle, isOn: value == .allow)
+                let row = makeRow(key: "permission|\(permission.rawValue)", symbol: permission.symbol, title: permission.title, subtitle: value.subtitle, isOn: value == .allow)
                 row.action = { model.perform { model.actions.setPermission(permission, value.toggled) } }
                 row.contextMenu = {
                     let menu = NSMenu()
@@ -327,6 +355,7 @@ final class SiteControlsView: SidebarFlippedView {
         let security = reuse("security|\(securityTitle)") { SiteControlsSecurity(title: securityTitle) }
         add(security, CGRect(x: M.inset, y: y, width: M.securitySize.width, height: M.securitySize.height))
         let more = reuse("more") { SiteControlsTile(symbol: "ellipsis", pointSize: 13, weight: .semibold, title: "More") }
+        more.deepensOnHover = false
         more.pressesOnMouseDown = true
         more.action = { [weak self, weak more] in
             guard let self, let more else { return }
@@ -402,7 +431,8 @@ final class SiteControlsView: SidebarFlippedView {
         for item in items {
             menu.add(item.title) { model.dismiss(); item.run() }
         }
-        // A pull-down below the button, as SwiftUI's button-style Menu opens.
+        // A pull-down below the button, as SwiftUI's button-style Menu opens. The 4pt gap is the draft's estimate: a menu is
+        // modal and can't be captured headlessly, so its position against main's isn't measured.
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
     }
 
@@ -487,7 +517,9 @@ private let symbolContentHeights: [SymbolKey: CGFloat] = {
     var align = symbol.alignmentRect
     if align.isEmpty { align = NSRect(origin: .zero, size: size) }
     let x = ((box.width - align.width) / 2 * 2).rounded(.up) / 2 - align.minX
-    let content = symbolContentHeights[SymbolKey(name: name, pointSize: pointSize, weight: weight)] ?? size.height
+    let measured = symbolContentHeights[SymbolKey(name: name, pointSize: pointSize, weight: weight)]
+    assert(measured != nil, "\(name) at \(pointSize)pt has no content height: measure it (see symbolContentHeights)")
+    let content = measured ?? size.height
     let top = (exactTop + (box.height - content) / 2).pixelRounded - exactTop.pixelRounded - (size.height - content)
     // Drawn once per placement: a rebuild lays every control out again.
     let key = "\(name)|\(pointSize)|\(weight.rawValue)|\(box.width)x\(box.height)|\(x),\(top)"
@@ -608,7 +640,7 @@ class SiteControlsControl: SidebarFlippedView, SiteControlsPlaced {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     // Keyboard navigation (System Settings › Keyboard navigation), as SwiftUI's buttons take it: Tab moves
-    // between the controls, Space or Return presses the focused one, and a focus ring follows its wash.
+    // between the controls, Space presses the focused one (once, not on key repeat), and a focus ring follows its wash.
     override var acceptsFirstResponder: Bool { NSApp.isFullKeyboardAccessEnabled }
     override var canBecomeKeyView: Bool { NSApp.isFullKeyboardAccessEnabled }
     override var focusRingMaskBounds: NSRect { bounds }
@@ -620,10 +652,8 @@ class SiteControlsControl: SidebarFlippedView, SiteControlsPlaced {
     }
 
     override func keyDown(with event: NSEvent) {
-        switch event.charactersIgnoringModifiers {
-        case " ", "\r": action()
-        default: super.keyDown(with: event)
-        }
+        guard event.charactersIgnoringModifiers == " " else { return super.keyDown(with: event) }
+        if !event.isARepeat { action() }
     }
 
     override func updateTrackingAreas() {
@@ -666,6 +696,19 @@ class SiteControlsControl: SidebarFlippedView, SiteControlsPlaced {
         action()
         return true
     }
+
+    /// VoiceOver's Show Menu, as SwiftUI's `.contextMenu` offered it.
+    override func accessibilityPerformShowMenu() -> Bool {
+        guard let menu = contextMenu?() else { return false }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.height), in: self)
+        return true
+    }
+
+    /// The control is one element, as a SwiftUI button is: its label and image aren't read out on their own, only the
+    /// controls inside it (a Boost's pencil, a tile's pin).
+    override func accessibilityChildren() -> [Any]? {
+        subviews.filter { $0 is SiteControlsControl }
+    }
 }
 
 /// An action button, an extension tile or the plus tile: a symbol or image on a rounded wash that
@@ -678,7 +721,11 @@ private final class SiteControlsTile: SiteControlsControl {
     private let icon = SiteControlsSymbol()
     private let symbol: (name: String, pointSize: CGFloat, weight: NSFont.Weight)?
     private let picture: NSImage?
+    /// `picture` drawn into the tile once: layout runs again on every hover that shows or hides the pin.
+    private var placedPicture: NSImage?
     private var pinButton: SiteControlsPin?
+    /// The wash deepens on hover, except on the footer's "…", whose wash main never changed.
+    var deepensOnHover = true
 
     init(symbol: String, pointSize: CGFloat, weight: NSFont.Weight, title: String) {
         self.symbol = (symbol, pointSize, weight)
@@ -707,11 +754,12 @@ private final class SiteControlsTile: SiteControlsControl {
         icon.frame = bounds
         if let symbol {
             icon.show(symbol.name, pointSize: symbol.pointSize, weight: symbol.weight, tint: .labelColor)
-        } else if let picture {
+        } else if let picture, placedPicture?.size != bounds.size {
             icon.imageScaling = .scaleNone
             // An extension's own icon keeps its colours; only the puzzle piece in its place is tinted.
             let placed = place(picture, in: bounds.size, placement: .center)
             placed.isTemplate = picture.isTemplate
+            placedPicture = placed
             icon.image = placed
             icon.contentTintColor = picture.isTemplate ? .labelColor : nil
         }
@@ -721,7 +769,7 @@ private final class SiteControlsTile: SiteControlsControl {
     }
 
     override func hoverChanged() {
-        wash.fill = primaryFill(isHovered ? 0.1 : 0.05)
+        wash.fill = primaryFill(isHovered && deepensOnHover ? 0.1 : 0.05)
         updatePin()
     }
 
@@ -731,6 +779,7 @@ private final class SiteControlsTile: SiteControlsControl {
             pinButton = nil
             return
         }
+        pinButton?.action = pin.toggle
         if pinButton == nil {
             let button = SiteControlsPin(title: SiteControls.pinButtonTitle(isPinned: pin.isPinned))
             button.action = pin.toggle
@@ -817,7 +866,13 @@ private final class SiteControlsHeader: SiteControlsControl {
 /// A Settings or Boosts row: an icon on a circle (the accent colour while on), the title, and its
 /// subtitle; a hover wash. A Boost's row also shows a pencil on hover that opens it in the editor.
 private final class SiteControlsRow: SiteControlsControl {
-    var edit: (() -> Void)? { didSet { updateEdit() } }
+    var edit: (() -> Void)? {
+        didSet {
+            updateEdit()
+            // The pencil shows only under the pointer; VoiceOver reaches it from the row.
+            setAccessibilityCustomActions(edit.map { edit in [NSAccessibilityCustomAction(name: "Edit Boost") { edit(); return true }] })
+        }
+    }
     private let wash = FillView()
     private let circle = FillView()
     private let icon = SiteControlsSymbol()
@@ -882,6 +937,8 @@ private final class SiteControlsRow: SiteControlsControl {
             editButton = nil
             return
         }
+        // A rebuild sets `edit` again: the shown pencil takes the new closure rather than being made again.
+        editButton?.action = edit
         if editButton == nil {
             let button = SiteControlsEdit(title: "Edit Boost")
             button.action = edit
