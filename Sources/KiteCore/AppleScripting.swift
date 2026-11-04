@@ -41,6 +41,19 @@ public enum AppleScripting {
         return url
     }
 
+    /// A URL that runs script in the page rather than loading one: a `javascript:` URL runs in the tab's
+    /// page, and a `data:` page can carry its own script. Sending a tab there from AppleScript would be
+    /// `execute` by another name.
+    public static func runsScript(_ url: URL) -> Bool {
+        ["javascript", "data"].contains(url.scheme?.lowercased() ?? "")
+    }
+
+    /// Whether a script may send a tab to `url` (`set URL`, `make new tab`): not to one that runs script
+    /// unless Allow JavaScript from Apple Events is on, the switch `execute` answers to.
+    public static func mayLoad(_ url: URL, allowsJavaScript: Bool) -> Bool {
+        allowsJavaScript || !runsScript(url)
+    }
+
     /// Arc's reply to `make new tab` without a usable URL (a string in its binary).
     public static let invalidNewTabURLMessage = "Please provide a valid URL property for the make new tab command."
 

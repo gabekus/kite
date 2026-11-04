@@ -52,7 +52,8 @@ final class SettingsModel: ObservableObject {
 
     var searchEngine: SearchEngine {
         get { store?.state.searchEngine ?? .google }
-        set { store?.mutate { $0.searchEngine = newValue }; refresh() }
+        // Settings stay out of the sidebar's undo.
+        set { store?.mutateWithoutUndo { $0.searchEngine = newValue }; refresh() }
     }
 
     /// Profiles › "Search Settings…": Arc opens Chromium's search engines page
@@ -79,7 +80,7 @@ final class SettingsModel: ObservableObject {
 
     func updateProfileSettings(_ change: @escaping (inout ProfileSettings) -> Void) {
         let profile = settingsProfile
-        store?.mutate { $0.updateSettings(ofProfile: profile, change) }
+        store?.mutateWithoutUndo { $0.updateSettings(ofProfile: profile, change) }
         refresh()
     }
 

@@ -50,6 +50,30 @@ import Testing
         #expect(swipe.offset == -120)
         #expect(swipe.landing == 0)
     }
+
+    @Test func neighboursAreCapturedByID() throws {
+        let ids = [UUID(), UUID(), UUID()]
+        let first = try #require(SpaceSwipe.Neighbours(spaces: ids, selected: 0))
+        #expect(first.previous == nil && first.current == ids[0] && first.next == ids[1])
+        let last = try #require(SpaceSwipe.Neighbours(spaces: ids, selected: 2))
+        #expect(last.space(towards: -1) == ids[1] && last.space(towards: 1) == nil)
+        #expect(SpaceSwipe.Neighbours(spaces: ids, selected: 3) == nil)
+        #expect(SpaceSwipe.Neighbours(spaces: [], selected: 0) == nil)
+    }
+
+    @Test func aSwipeWhoseSpacesChangedHasNoTarget() throws {
+        let ids = [UUID(), UUID(), UUID()]
+        let swipe = try #require(SpaceSwipe.Neighbours(spaces: ids, selected: 2))
+        #expect(swipe.target(towards: -1, spaces: ids, selected: ids[2]) == ids[1])
+        // The neighbour was deleted mid-swipe: the old index would now be out of range.
+        #expect(swipe.target(towards: -1, spaces: [ids[0], ids[2]], selected: ids[2]) == nil)
+        // The space it started on was deleted.
+        #expect(swipe.target(towards: 0, spaces: [ids[0], ids[1]], selected: ids[1]) == nil)
+        // Something else switched space (automation, another window).
+        #expect(swipe.target(towards: 0, spaces: ids, selected: ids[0]) == nil)
+        // Moved, not deleted: still found by id.
+        #expect(swipe.target(towards: -1, spaces: [ids[1], ids[2], ids[0]], selected: ids[2]) == ids[1])
+    }
 }
 
 @Suite struct SpaceEditingTests {

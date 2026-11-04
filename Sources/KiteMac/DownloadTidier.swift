@@ -99,25 +99,11 @@ final class DownloadTidier {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("KiteTidyDownloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = TidyDownloads.arguments()
-        process.environment = environment
-        process.currentDirectoryURL = directory
-        let input = Pipe(), output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
-        try? input.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
-        try? input.fileHandleForWriting.close()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        timer.cancel()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        // Its own process group, ended whole at the timeout: a child left holding stdout can't hang the read.
+        let process = OneShotProcess(executable: claude, arguments: TidyDownloads.arguments(),
+                                     environment: environment, directory: directory)
+        guard let result = process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
+        return String(decoding: result.output, as: UTF8.self)
     }
 
     /// GUI apps get a bare PATH and Claude Code may be a Node script: the login shell's PATH, once.

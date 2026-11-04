@@ -63,25 +63,11 @@ final class TidyTabTitlesController {
             return stub
         }
         guard let claude = ClaudeConnect.findClaude() else { return nil }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = TidyTabTitles.arguments()
-        process.environment = ClaudeTasksController.environment()
-        process.currentDirectoryURL = FileManager.default.temporaryDirectory
-        let input = Pipe(), output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let handle = input.fileHandleForWriting
-        try? handle.write(contentsOf: Data(prompt.utf8))
-        try? handle.close()
-        let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        timer.cancel()
-        guard process.terminationStatus == 0 else { return nil }
-        return TidyTabTitles.title(fromReply: String(decoding: data, as: UTF8.self))
+        // Its own process group, ended whole at the timeout: a child left holding stdout can't hang the read.
+        let process = OneShotProcess(executable: claude, arguments: TidyTabTitles.arguments(),
+                                     environment: ClaudeTasksController.environment(),
+                                     directory: FileManager.default.temporaryDirectory)
+        guard let result = process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
+        return TidyTabTitles.title(fromReply: String(decoding: result.output, as: UTF8.self))
     }
 }

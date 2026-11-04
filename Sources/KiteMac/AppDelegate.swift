@@ -314,7 +314,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showInBackground: { [weak main] page, url, title, spaceID, profile in
                 guard let main else { return page.close() }
                 let id = main.pool.adopt(page, profileDirectory: profile)
-                store.mutate { _ = $0.openTab(id: id, url: url, in: spaceID, select: false) }
+                // Kite's VPN sign-in, not the user's step to undo.
+                store.mutateWithoutUndo { _ = $0.openTab(id: id, url: url, in: spaceID, select: false) }
                 store.pageTitleChanged(id, title)
             }
         )

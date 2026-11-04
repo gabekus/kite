@@ -468,9 +468,11 @@ extension Handoff {
     public static let keptFinished = 20
 
     /// The saved handoffs still worth keeping: under a week old, and the newest finished ones.
+    /// A handoff that doesn't decode (a step from a newer build, say) is left out; a file that won't decode
+    /// at all is moved aside (`StoreFile`) so the next save doesn't write over it.
     public static func load(from url: URL, now: Date = Date()) -> [Handoff] {
-        guard let data = try? Data(contentsOf: url),
-              let saved = try? JSONDecoder.handoffs.decode([Handoff].self, from: data) else { return [] }
+        guard let lossy = StoreFile.load([Lossy<Handoff>].self, from: url, decoder: .handoffs) else { return [] }
+        let saved = lossy.compactMap(\.value)
         return pruned(saved.filter { now.timeIntervalSince($0.created) < lifetime })
     }
 

@@ -36,11 +36,13 @@ enum LinkPreviewSummarizer {
         guard let claude = claude ?? nil else { return nil }
         let prompt = LinkPreviewSummary.prompt(url: url, metadata: metadata, pageText: pageText,
                                                language: LinkPreviewSummary.languageName())
-        let process = Process()
+        let process = OneShotProcess(executable: claude, arguments: LinkPreviewSummary.claudeArguments(),
+                                     environment: ClaudeTasksController.environment(),
+                                     directory: FileManager.default.temporaryDirectory)
         let reply: String? = await withTaskCancellationHandler {
-            await Task.detached(priority: .userInitiated) { run(process, claude: claude, prompt: prompt) }.value
+            await Task.detached(priority: .userInitiated) { run(process, prompt: prompt) }.value
         } onCancel: {
-            if process.isRunning { process.terminate() }
+            process.cancel()
         }
         guard !Task.isCancelled else { return nil }
         let summary = reply.flatMap(LinkPreviewSummary.parse(reply:))
@@ -50,27 +52,11 @@ enum LinkPreviewSummarizer {
     }
 
     /// Blocks until Claude Code exits, so it runs off the main thread.
-    nonisolated private static func run(_ process: Process, claude: String, prompt: String) -> String? {
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = LinkPreviewSummary.claudeArguments()
-        process.environment = ClaudeTasksController.environment()
-        process.currentDirectoryURL = FileManager.default.temporaryDirectory
-        let input = Pipe(), output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-        let writer = input.fileHandleForWriting
-        DispatchQueue.global(qos: .userInitiated).async {
-            try? writer.write(contentsOf: Data(prompt.utf8))
-            try? writer.close()
-        }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        killer.cancel()
-        let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return process.terminationStatus == 0 && !text.isEmpty ? text : nil
+    /// Its own process group, ended whole at the timeout or on cancel: a child left holding stdout can't
+    /// hang the read.
+    nonisolated private static func run(_ process: OneShotProcess, prompt: String) -> String? {
+        guard let result = process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
+        let text = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 }

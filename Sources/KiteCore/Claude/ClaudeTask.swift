@@ -11,6 +11,11 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
         case running, done, failed, stopped
 
         public var isFinished: Bool { self != .running }
+
+        /// A status from a newer build reads as stopped, rather than failing the whole list.
+        public init(from decoder: Decoder) throws {
+            self = Status(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .stopped
+        }
     }
 
     public struct Entry: Hashable, Codable, Sendable {
@@ -26,6 +31,11 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
             /// Something about the run itself: couldn't start, Kite turned control on, stopped.
             case note
             case error
+
+            /// A kind from a newer build shows as a note, rather than failing the whole list.
+            public init(from decoder: Decoder) throws {
+                self = Kind(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .note
+            }
         }
 
         public var kind: Kind
@@ -200,12 +210,27 @@ public struct ClaudeTaskList: Codable, Sendable {
         supportDirectory.appendingPathComponent("Claude", isDirectory: true).appendingPathComponent("tasks.json")
     }
 
-    /// A list saved while a task ran comes back with that task stopped: its process is gone.
+    /// Tasks in the file that didn't decode. Not saved.
+    public private(set) var dropped = 0
+
+    private enum CodingKeys: String, CodingKey { case tasks }
+
+    /// A task that doesn't decode is left out rather than failing the list.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let saved = try container.decode([Lossy<ClaudeTask>].self, forKey: .tasks)
+        tasks = saved.compactMap(\.value)
+        dropped = saved.count - tasks.count
+    }
+
+    /// A list saved while a task ran comes back with that task stopped: its process is gone. A file that
+    /// won't decode is moved aside (`StoreFile`) so the next save doesn't write over it.
     public static func load(from url: URL) -> ClaudeTaskList {
-        guard let data = try? Data(contentsOf: url) else { return ClaudeTaskList() }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard var list = try? decoder.decode(ClaudeTaskList.self, from: data) else { return ClaudeTaskList() }
+        guard var list = StoreFile.load(ClaudeTaskList.self, from: url, decoder: decoder) else { return ClaudeTaskList() }
+        // The tasks left out would be gone at the next save: keep a copy of the file as it was.
+        if list.dropped > 0 { StoreFile.setAside(url, keepingOriginal: true) }
         for i in list.tasks.indices where list.tasks[i].status == .running {
             list.tasks[i].status = .stopped
             list.tasks[i].append(ClaudeTask.Entry(.note, "Stopped when Kite quit."))
