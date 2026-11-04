@@ -1100,6 +1100,28 @@ void SidebarView::EndRenaming(bool commit) {
     if (taken && commit && actions_.renameSpace) actions_.renameSpace(taken->first, taken->second);
 }
 
+std::optional<POINT> SidebarView::RenameDoneCentre() const {
+    if (!rename_) return std::nullopt;
+    const D2D1_RECT_F& done = rename_->DoneBox();
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return POINT{std::lround(((done.left + done.right) / 2 + PageOffset()) * scale), std::lround((done.top + done.bottom) / 2 * scale)};
+}
+
+std::optional<POINT> SidebarView::HeaderNameCentre() {
+    if (model_.rows.empty() || model_.rows.front().kind != SidebarRow::Kind::Header) return std::nullopt;
+    const SidebarRow& header = model_.rows.front();
+    const D2D1_RECT_F name = HeaderNameRect(header, M::kHeaderAreaHeight + header.top - scroll_);
+    if (name.right <= name.left) return std::nullopt;
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    return POINT{std::lround(((name.left + name.right) / 2 + PageOffset()) * scale), std::lround((name.top + name.bottom) / 2 * scale)};
+}
+
+void SidebarView::FocusRenameForCapture() {
+    if (!rename_) return;
+    rename_->SetFocused(true);
+    ScheduleDraw();
+}
+
 std::optional<std::string> SidebarView::Renaming() const {
     if (!rename_) return std::nullopt;
     return rename_->SpaceID();

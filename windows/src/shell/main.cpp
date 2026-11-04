@@ -420,7 +420,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
             commandBarOption.present ? std::optional<std::string>(Narrow(*commandBarOption.value)) : std::nullopt;
         if (swipe) captureError = controller->HoldSwipe(*swipe);
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
-        if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt);
+        if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);
         if (captureError.empty()) captureError = controller->Capture(pixels, barText, tipIndex);
         if (captureError.empty()) captureError = kite::SavePng(pixels, *capture);

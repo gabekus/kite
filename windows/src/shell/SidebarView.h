@@ -102,6 +102,13 @@ public:
     void TypeInRename(std::string_view text);
     // A drag of a space's cell that's still settling (its drop's move comes on the timer).
     bool DraggingSpace() const { return bar_->Drag().has_value(); }
+    std::optional<std::string> DraggedSpace() const { return bar_->Drag() ? std::optional(bar_->Drag()->spaceID) : std::nullopt; }
+    // For the tests: the rename's Done, its centre in client px; and the rename drawn with the
+    // keyboard (a quiet capture's window never has it), its selection in the focused colour.
+    std::optional<POINT> RenameDoneCentre() const;
+    // The middle of the selected space's name in its header, client px (a click there renames).
+    std::optional<POINT> HeaderNameCentre();
+    void FocusRenameForCapture();
     // Where space `index`'s cell is, in client px (its centre), for the tests' presses and the
     // menu's place.
     std::optional<POINT> SpaceCellCentre(size_t index) const;

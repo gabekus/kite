@@ -9,12 +9,16 @@
 
 namespace kite {
 
-void BrowserWindowController::ShowSpaceMenu(const std::string& spaceID, POINT screen) {
-    const std::vector<SpaceMenuItem> items = SpaceMenu(state_, spaceID);
-    if (items.empty()) return;
+std::vector<SpaceMenuItem> BrowserWindowController::OpenSpaceMenu(const std::string& spaceID) {
     // The menu takes the keyboard and the pointer until it closes; a rename open goes first,
     // as AppKit's menu tracking ends a field's editing.
     sidebar_->EndRenaming(true);
+    return SpaceMenu(state_, spaceID);
+}
+
+void BrowserWindowController::ShowSpaceMenu(const std::string& spaceID, POINT screen) {
+    const std::vector<SpaceMenuItem> items = OpenSpaceMenu(spaceID);
+    if (items.empty()) return;
     const std::optional<SpaceMenuItem::Command> chosen = kite::ShowSpaceMenu(window_.Handle(), items, screen, dark_.value_or(true));
     if (chosen) RunSpaceMenuItem(spaceID, *chosen);
 }
@@ -66,8 +70,7 @@ void BrowserWindowController::DeleteSpace(std::string spaceID) {
     switch (deletion.kind) {
     case SpaceDeletion::Kind::Refused: MessageBeep(MB_OK); return;
     case SpaceDeletion::Kind::Ask:
-        // Never a dialog in a test run.
-        if (options_.smokeTest || options_.capture || !AskToDeleteSpace(window_.Handle(), deletion)) return;
+        if (!askToDelete_(deletion)) return;
         break;
     case SpaceDeletion::Kind::Now: break;
     }

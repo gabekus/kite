@@ -21,6 +21,7 @@
 #endif
 #include "shell/Errors.h"
 #include "shell/Keys.h"
+#include "shell/SpaceMenu.h"
 #include "shell/Text.h"
 
 namespace kite {
@@ -204,6 +205,8 @@ std::wstring BrowserWindowController::Init() {
     actions.renameSpace = [this](const std::string& spaceID, const std::string& name) { RenameSpace(spaceID, name); };
     actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
     sidebar_->SetActions(std::move(actions));
+    if (options_.smokeTest || options_.capture) askToDelete_ = [](const SpaceDeletion&) { return false; };
+    else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
 
     MakeCommands();
     // Every command the table can name does something: a test run fails on one that doesn't.

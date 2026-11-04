@@ -111,8 +111,9 @@ public:
     // points), held there; with `drop`, let go there and settled (the space moved).
     std::wstring HoldSpaceDrag(size_t index, float x, bool drop);
     // For a capture: space `index`'s name being renamed in its header (Rename Space…), with
-    // `text` typed over it when given.
-    std::wstring HoldRename(size_t index, const std::optional<std::string>& text);
+    // `text` typed over it when given; `focused` draws it as the window with the keyboard does
+    // (a quiet capture's window never has it).
+    std::wstring HoldRename(size_t index, const std::optional<std::string>& text, bool focused = false);
     // For a capture: what Capture composes over the frame next, space `index`'s menu opened
     // over its cell in the bar (Windows' own menu, read back as it shows).
     void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
@@ -226,6 +227,8 @@ private:
     // MARK: Editing spaces (BrowserWindowController+Spaces.cpp)
     // A right-click on a space's cell or header: its menu at `screen` (px), then what it chose.
     void ShowSpaceMenu(const std::string& spaceID, POINT screen);
+    // What the menu shows for a space, as it opens (a rename open ends first).
+    std::vector<SpaceMenuItem> OpenSpaceMenu(const std::string& spaceID);
     void RunSpaceMenuItem(const std::string& spaceID, SpaceMenuItem::Command command);
     // The Mac's beginRenaming(space:): that space selected, its header's name field open with
     // the name all selected. Return or Done renames it, Escape leaves it.
@@ -317,6 +320,9 @@ private:
 
     // A capture's space menu, composed over the frame (HoldSpaceMenu).
     std::optional<size_t> heldMenu_;
+    // Delete Space's question for a space with tabs: the task dialog; never a dialog in a test
+    // run (it answers Cancel, unless the smoke test answers).
+    std::function<bool(const SpaceDeletion&)> askToDelete_;
 
     // What each shortcut's command does, by id (MainMenu.swift's items).
     std::map<std::string, std::function<void()>, std::less<>> commands_;
