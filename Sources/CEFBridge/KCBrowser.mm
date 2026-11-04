@@ -1,6 +1,8 @@
 #import "CEFBridge.h"
 #import "KCInternal.h"
 
+#import <AVFoundation/AVFoundation.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -455,6 +457,40 @@ static bool AskPermissions(KCBrowser* owner, NSArray<NSNumber*>* permissions, NS
     return true;
 }
 
+/// Whether macOS lets Kite use `type`, asking the first time (on the main thread, like `then`).
+static void RequestSystemAccess(AVMediaType type, bool wanted, void (^then)(bool allowed)) {
+    if (!wanted) return then(true);
+    AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:type];
+    if (status != AVAuthorizationStatusNotDetermined) return then(status == AVAuthorizationStatusAuthorized);
+    [AVCaptureDevice requestAccessForMediaType:type completionHandler:^(BOOL granted) {
+        dispatch_async(dispatch_get_main_queue(), ^{ then(granted); });
+    }];
+}
+
+/// The CEF media bits in `requested` that macOS lets Kite use. Chromium (Alloy) never asks macOS
+/// itself, so without this macOS never lists Kite under Privacy & Security and capture fails
+/// with no way to turn it on. Asked the first time a site is given either, as Chrome does; the
+/// owner hears which ones macOS has turned off.
+static void WithSystemMediaAccess(KCBrowser* owner, uint32_t requested, void (^done)(uint32_t allowed)) {
+    const uint32_t audio = CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE;
+    const uint32_t video = CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
+    __weak KCBrowser* weakOwner = owner;
+    RequestSystemAccess(AVMediaTypeAudio, requested & audio, ^(bool microphone) {
+        RequestSystemAccess(AVMediaTypeVideo, requested & video, ^(bool camera) {
+            uint32_t allowed = requested;
+            NSMutableArray<NSNumber*>* off = [NSMutableArray array];
+            if (!camera) { allowed &= ~video; [off addObject:@(KCSitePermissionCamera)]; }
+            if (!microphone) { allowed &= ~audio; [off addObject:@(KCSitePermissionMicrophone)]; }
+            KCBrowser* browser = weakOwner;
+            id<KCBrowserDelegate> delegate = browser.delegate;
+            if (browser && off.count && [delegate respondsToSelector:@selector(browser:systemBlocksPermissions:)]) {
+                [delegate browser:browser systemBlocksPermissions:off];
+            }
+            done(allowed);
+        });
+    });
+}
+
 /// Per-browser CEF client: forwards Chromium callbacks to the Objective-C KCBrowser.
 class KCClient : public CefClient,
                  public CefLifeSpanHandler,
@@ -512,11 +548,13 @@ class KCClient : public CefClient,
             allAllowed = allAllowed && stored == KCSitePermissionValueAllow;
         }
         if (allAllowed) {
-            callback->Continue(requested_permissions);
+            WithSystemMediaAccess(owner, requested_permissions, ^(uint32_t allowed) { callback->Continue(allowed); });
             return true;
         }
+        __weak KCBrowser* weakOwner = owner;
         return AskPermissions(owner, permissions, origin, --media_prompt_id_, ^(KCPermissionDecision decision) {
-            callback->Continue(decision == KCPermissionDecisionAllow ? requested_permissions : CEF_MEDIA_PERMISSION_NONE);
+            if (decision != KCPermissionDecisionAllow) return callback->Continue(CEF_MEDIA_PERMISSION_NONE);
+            WithSystemMediaAccess(weakOwner, requested_permissions, ^(uint32_t allowed) { callback->Continue(allowed); });
         });
     }
 
@@ -535,10 +573,18 @@ class KCClient : public CefClient,
         if (requested_permissions & mic) [permissions addObject:@(KCSitePermissionMicrophone)];
         if (requested_permissions & location) [permissions addObject:@(KCSitePermissionLocation)];
         if (requested_permissions & notifications) [permissions addObject:@(KCSitePermissionNotifications)];
+        __weak KCBrowser* weakOwner = owner_;
+        uint32_t media = (requested_permissions & camera ? CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE : 0)
+                       | (requested_permissions & mic ? CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE : 0);
         return AskPermissions(owner_, permissions, ToNSURL(requesting_origin), (NSInteger)prompt_id,
                               ^(KCPermissionDecision decision) {
             switch (decision) {
-                case KCPermissionDecisionAllow: callback->Continue(CEF_PERMISSION_RESULT_ACCEPT); break;
+                case KCPermissionDecisionAllow: {
+                    // The site's answer stands; macOS is asked here so the capture that follows works.
+                    if (!media) { callback->Continue(CEF_PERMISSION_RESULT_ACCEPT); break; }
+                    WithSystemMediaAccess(weakOwner, media, ^(uint32_t) { callback->Continue(CEF_PERMISSION_RESULT_ACCEPT); });
+                    break;
+                }
                 case KCPermissionDecisionBlock: callback->Continue(CEF_PERMISSION_RESULT_DENY); break;
                 case KCPermissionDecisionDismiss: callback->Continue(CEF_PERMISSION_RESULT_DISMISS); break;
             }

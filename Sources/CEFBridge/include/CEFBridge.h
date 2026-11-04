@@ -215,6 +215,9 @@ typedef NS_ENUM(NSInteger, KCJavaScriptDialogKind) {
 /// Chromium dropped prompt `promptID` itself (the page navigated or closed); its handler
 /// no longer does anything.
 - (void)browser:(KCBrowser *)browser permissionPromptDidCancel:(NSInteger)promptID;
+/// A site was given the camera or microphone, but macOS has Kite's own access to them turned
+/// off (`permissions` holds KCSitePermission values), so the site gets neither.
+- (void)browser:(KCBrowser *)browser systemBlocksPermissions:(NSArray<NSNumber *> *)permissions;
 /// The page wants a dialog (`origin` is the frame's page; `defaultText` is a prompt's starting
 /// text). Call `completion` once: OK or Cancel, and a prompt's text. Without this method
 /// Chromium shows its own.
