@@ -543,7 +543,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func saveSession() {
         store?.saveNow()
-        history?.saveNow()
+        history?.flush()
         DownloadsModel.shared.saveNow()
         BoostsModel.shared.flush()
     }

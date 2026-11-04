@@ -96,6 +96,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// The focused tab: the selected one, or the focused pane of its split.
     private var shownTabID: UUID?
     private var shownSpaceID: UUID?
+    /// The appearance last given to the sidebar, Library and materials.
+    private var shownAppearanceName: NSAppearance.Name?
     private(set) weak var shownPage: WebPage?
     /// Every tab on screen in pane order, and its page: one, or a split's panes.
     private var shownTabIDs: [UUID] = []
@@ -580,23 +582,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         themeView.setTheme(space.theme, animated: shownSpaceID != nil)
         glowView.setTheme(space.theme)
         pool.updateThemeCSS()
-        let appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
-        sidebarHost.appearance = appearance
-        libraryContainer.appearance = appearance
-        materialView.appearance = appearance
+        // Setting an appearance, even the same one, makes AppKit redo every subview's: only on a change.
+        let appearanceName: NSAppearance.Name = space.theme.prefersDarkForeground ? .aqua : .darkAqua
+        if appearanceName != shownAppearanceName {
+            shownAppearanceName = appearanceName
+            let appearance = NSAppearance(named: appearanceName)
+            sidebarHost.appearance = appearance
+            libraryContainer.appearance = appearance
+            materialView.appearance = appearance
+            peekCard.material.appearance = appearance
+        }
         peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil)
-        peekCard.material.appearance = appearance
         if let shownSpaceID, shownSpaceID != space.id, let old = state.spaceIndex(shownSpaceID) {
             spaceSwipe.spaceChanged(from: old, to: state.selectedSpaceIndex)
         }
         shownSpaceID = space.id
         // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
         let title = state.selectedTab?.title ?? ""
-        if isIncognito {
-            window?.title = title.isEmpty ? "Incognito" : title + " (Incognito)"
-        } else {
-            window?.title = title.isEmpty ? space.name : title
-        }
+        let windowTitle = isIncognito ? (title.isEmpty ? "Incognito" : title + " (Incognito)") : (title.isEmpty ? space.name : title)
+        if let window, window.title != windowTitle { window.title = windowTitle }
 
         let selected = state.selectedTab
         let visible = state.visibleTabs

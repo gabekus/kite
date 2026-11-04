@@ -110,6 +110,8 @@ final class BrowserStore {
     /// nil for an incognito window: nothing is written to disk.
     @ObservationIgnored private let session: SessionStore?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// The kind of change the waiting save is for; nil when none is waiting.
+    @ObservationIgnored private var pendingSave: SessionSaveDelay?
     /// Set when session.json couldn't be read or moved aside: saving would overwrite the only copy.
     @ObservationIgnored private var savesBlocked = false
     /// The backup session.json was unusable and the session came from, at launch; AppDelegate says so once.
@@ -159,9 +161,9 @@ final class BrowserStore {
     @ObservationIgnored var tidiesPinnedTabs = true
 
     /// Takes a change made in another normal window, keeping this window's selection.
-    func adopt(_ other: BrowserState) {
+    func adopt(_ other: BrowserState, delay: SessionSaveDelay = .soon) {
         state = state.adoptingContent(of: other)
-        scheduleSave()
+        scheduleSave(delay)
         onChange?()
         didChangeState?()
     }
@@ -275,6 +277,19 @@ final class BrowserStore {
             if !pinned.isEmpty { TidyTabTitlesController.shared.tabsPinned(pinned, in: self) }
         }
         return result
+    }
+
+    /// A page reporting its title, URL or favicon. Those are left out of undo and can't pin a tab
+    /// (SidebarUndo.Layout and TidyTabTitles.newlyPinnedTabs ignore them), so this skips comparing
+    /// the whole sidebar before and after, and the session save waits longer (SessionSaveDelay).
+    private func mutatePage(_ body: (inout BrowserState) -> Void) {
+        body(&state)
+        // A pinned tab that had no page yet remembers the first one it reports.
+        state.syncPinnedURLs()
+        scheduleSave(.pageEvent)
+        onChange?()
+        link?.propagate(from: self, delay: .pageEvent)
+        didChangeState?()
     }
 
     /// Archives unpinned tabs left unused longer than the user's setting.
@@ -430,7 +445,7 @@ final class BrowserStore {
         guard let title, !title.isEmpty, !showsInternalPage(id) else { return }
         if let url = recordedURLs[id] { history(forTab: id)?.updateTitle(url, title) }
         guard state.tab(id)?.title != title else { return }
-        mutate { $0.update(tab: id) { $0.title = title } }
+        mutatePage { $0.update(tab: id) { $0.title = title } }
     }
 
     func pageURLChanged(_ id: UUID, _ url: URL?) {
@@ -444,7 +459,7 @@ final class BrowserStore {
         }
         let previous = state.tab(id)?.url
         guard previous != url else { return }
-        mutate { $0.update(tab: id) { $0.url = url } }
+        mutatePage { $0.update(tab: id) { $0.url = url } }
         LiveFoldersController.shared?.tabURLChanged(id, from: previous, to: url, in: self)
     }
 
@@ -454,7 +469,7 @@ final class BrowserStore {
 
     func faviconChanged(_ id: UUID, _ url: URL?) {
         guard state.tab(id)?.faviconURL != url else { return }
-        mutate { $0.update(tab: id) { $0.faviconURL = url } }
+        mutatePage { $0.update(tab: id) { $0.faviconURL = url } }
     }
 
     func updatePage(_ id: UUID, _ body: (inout PageStatus) -> Void) {
@@ -515,12 +530,14 @@ final class BrowserStore {
 
     // MARK: Persistence
 
-    /// Saves are debounced; title and URL updates arrive in bursts while pages load.
-    private func scheduleSave() {
-        guard session != nil else { return }
+    /// Saves are debounced (SessionSaveDelay): sidebar changes by a second, page titles, URLs and
+    /// favicons by longer. Quitting and closing the window call `saveNow`.
+    private func scheduleSave(_ delay: SessionSaveDelay = .soon) {
+        guard session != nil, let seconds = delay.rearm(pending: pendingSave) else { return }
         saveTask?.cancel()
+        pendingSave = delay
         saveTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
             self?.saveNow()
         }
@@ -528,6 +545,7 @@ final class BrowserStore {
 
     func saveNow() {
         saveTask?.cancel()
+        pendingSave = nil
         guard let session, !savesBlocked else { return }
         do {
             let data = try session.save(state)
@@ -545,6 +563,7 @@ final class BrowserStore {
     func restoreSession(from backup: SessionBackups.Backup) throws {
         guard let session else { return }
         saveTask?.cancel()
+        pendingSave = nil
         let current = state
         // On the backup queue, so it never writes Backups alongside a save's backup.
         let restored = try Self.backupQueue.sync { try session.restore(backup, current: current) }
@@ -579,9 +598,9 @@ final class WindowLink {
         if store.link === self { store.link = nil }
     }
 
-    func propagate(from source: BrowserStore) {
+    func propagate(from source: BrowserStore, delay: SessionSaveDelay = .soon) {
         for other in all where other !== source {
-            other.adopt(source.state)
+            other.adopt(source.state, delay: delay)
         }
     }
 }
