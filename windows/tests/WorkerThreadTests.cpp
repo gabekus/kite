@@ -1,4 +1,4 @@
-// The store's background thread (core/BackgroundWorker.h) that the session's writer and history
+// The store's background thread (core/WorkerThread.h) that the session's writer and history
 // share: W11's thread tests (SessionSaveTests' aFlushIsBounded,
 // aWorkerStillWritingAtTheEndIsHandedToOnStuck, aWriteThatFinishedAfterATimedOutFlushIsNotStuck)
 // on the base itself, plus its exception path and WaitUntil's bound.
@@ -13,7 +13,7 @@
 #include <thread>
 
 #include "Check.h"
-#include "core/BackgroundWorker.h"
+#include "core/WorkerThread.h"
 
 using namespace kite;
 

@@ -423,17 +423,27 @@ TEST(searchRanksAsTheScoreAndFrecencySay) {
 
 // MARK: URLs as the Mac keeps them
 
+// Tests/Fixtures/history-url-keys.json: each raw URL and the key it's kept as, which the Mac's
+// suite (HistoryFixtureTests.urlKeysAreWhatNSURLWrites) checks against NSURL itself.
 TEST(urlsAreKeptAsNSURLWritesThem) {
-    // What a path, query or fragment may not hold is percent-encoded; the rest is as Chromium gave it.
-    CHECK(History::Normalized("https://a.example/a|b^c`d{e}f[g]h\\i?q=\"x\" <y>#frag#more") ==
-          "https://a.example/a%7Cb%5Ec%60d%7Be%7Df%5Bg%5Dh%5Ci?q=%22x%22%20%3Cy%3E#frag%23more");
-    CHECK(History::Normalized("https://a.example/caf%C3%A9?x=%zz&y=%4") == "https://a.example/caf%C3%A9?x=%25zz&y=%254");
-    CHECK(History::Normalized("https://a.example/caf\xC3\xA9") == "https://a.example/caf%C3%A9");
-    // The authority is left alone: an IPv6 host keeps its brackets.
-    CHECK(History::Normalized("http://[::1]:8080/a|b") == "http://[::1]:8080/a%7Cb");
-    // Already as the Mac writes it: unchanged, so a URL read from the Mac's file is its own key.
-    CHECK(History::Normalized("https://a.example/a%7Cb?q=%22x%22") == "https://a.example/a%7Cb?q=%22x%22");
-    CHECK(History::Normalized("https://a.example/") == "https://a.example/");
+    const auto text = store_file::Read(fs::path(KITE_FIXTURES_DIR) / "history-url-keys.json");
+    CHECK(text.has_value());
+    if (!text) return;
+    const auto parsed = json::Parse(*text);
+    const json::Value* cases = std::holds_alternative<json::Value>(parsed) ? std::get<json::Value>(parsed).Find("cases") : nullptr;
+    CHECK(cases && cases->AsArray() && cases->AsArray()->size() >= 8);
+    if (!cases || !cases->AsArray()) return;
+    for (const json::Value& pair : *cases->AsArray()) {
+        const json::Value* raw = pair.Find("raw");
+        const json::Value* key = pair.Find("key");
+        CHECK(raw && key && raw->AsString() && key->AsString());
+        if (!raw || !key || !raw->AsString() || !key->AsString()) continue;
+        const std::string made = History::Normalized(*raw->AsString());
+        if (made != *key->AsString()) std::fprintf(stderr, "  %s: %s, not %s\n", raw->AsString()->c_str(), made.c_str(), key->AsString()->c_str());
+        CHECK(made == *key->AsString());
+        // A key is its own key: a URL read from the Mac's file isn't encoded again.
+        CHECK(History::Normalized(*key->AsString()) == *key->AsString());
+    }
     // Recording, finding and titling all go by the Mac's form.
     History history;
     CHECK(history.RecordVisit("https://a.example/a|b", "", kNow));

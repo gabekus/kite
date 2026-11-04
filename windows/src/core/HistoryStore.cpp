@@ -12,6 +12,10 @@ namespace kite {
 
 namespace {
 
+// What a read or write that threw (out of memory, mostly) reports: set into room reserved for it.
+constexpr const char kCouldntRead[] = "history couldn't be read";
+constexpr const char kCouldntWrite[] = "history couldn't be saved";
+
 double MicrosSince(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
 }
@@ -55,7 +59,7 @@ struct HistoryStores::Worker : WorkerState {
 
 // One store's, shared with the worker (behind its mutex).
 struct HistoryStore::Slot {
-    explicit Slot(std::filesystem::path file) : file(std::move(file)) {}
+    explicit Slot(std::filesystem::path file) : file(std::move(file)) { lastError.reserve(sizeof kCouldntWrite); }
     const HistoryFile file;
     // The read: done, what it found, and whether the file may be written.
     bool loadDone = false;
@@ -181,6 +185,7 @@ void HistoryStores::PostLoad(HistoryStore& store) {
         const auto start = std::chrono::steady_clock::now();
         std::optional<History> history;
         std::string error;
+        error.reserve(sizeof kCouldntRead);
         bool maySave = true;
         try {
             HistoryFile::LoadResult result = slot->file.Load(HistoryFile::Unreadable::MoveAside);
@@ -196,7 +201,7 @@ void HistoryStores::PostLoad(HistoryStore& store) {
             // Out of memory, mostly: the file is still there, unread, so it's never written over.
             history.reset();
             maySave = false;
-            error = "history couldn't be read";
+            error.assign(kCouldntRead);
         }
         const double micros = MicrosSince(start);
         std::function<void()> wake;
@@ -295,13 +300,27 @@ void HistoryStores::Write(HistoryStore& store) {
         }
         discard.clear();
         if (!history) return;
-        const auto encodeStart = std::chrono::steady_clock::now();
-        const std::string bytes = history->EncodeFile();
-        const double encodeMicros = MicrosSince(encodeStart);
-        history.reset();  // the shards go back to the UI thread's alone
-        const auto writeStart = std::chrono::steady_clock::now();
-        std::string error = slot->file.Write(bytes);
-        const double writeMicros = MicrosSince(writeStart);
+        std::string bytes;
+        std::string error;
+        double encodeMicros = 0, writeMicros = 0;
+        try {
+            const auto encodeStart = std::chrono::steady_clock::now();
+            bytes = history->EncodeFile();
+            encodeMicros = MicrosSince(encodeStart);
+            history.reset();  // the shards go back to the UI thread's alone
+            const auto writeStart = std::chrono::steady_clock::now();
+            error = slot->file.Write(bytes);
+            writeMicros = MicrosSince(writeStart);
+        } catch (...) {
+            // Out of memory, mostly: a failed write, so Flush tries again and reports it.
+            history.reset();
+            std::lock_guard lock(worker->mutex);
+            slot->lastWriteFailed = true;
+            slot->lastError.assign(kCouldntWrite);
+            ++worker->stats.failedWrites;
+            worker->stats.lastError.assign(kCouldntWrite);
+            return;
+        }
         std::lock_guard lock(worker->mutex);
         slot->lastWriteFailed = !error.empty();
         slot->lastError = error.empty() ? std::string() : "couldn't save " + store_file::PathText(slot->file.File()) + ": " + error;

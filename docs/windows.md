@@ -406,7 +406,7 @@ History saves 3 s after the last change and at least every 30 s while changes
 keep coming (`CappedDebounce`), at once for an import, and when the window
 closes; logoff and shutdown wait for it within the same 3 s as the session,
 and quitting within the same 10 s. `core/HistoryStore` reads each profile's
-file and writes it on a worker of its own (`core/BackgroundWorker`, the
+file and writes it on a worker of its own (`core/WorkerThread`, the
 session writer's thread too), from a snapshot that costs the UI thread a few
 μs: the entries are kept in 256 shards that copies share and copy on write, a
 shard at a time. The files are read only once the launch is Kite's (after

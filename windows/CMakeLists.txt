@@ -32,7 +32,6 @@ endif()
 
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
-  src/core/BackgroundWorker.cpp
   src/core/CommandBar.cpp
   src/core/History.cpp
   src/core/HistoryStore.cpp
@@ -61,6 +60,7 @@ add_library(KiteCoreWin STATIC
   src/core/URLInput.cpp
   src/core/Url.cpp
   src/core/Uuid.cpp
+  src/core/WorkerThread.cpp
 )
 target_include_directories(KiteCoreWin PUBLIC src)
 # SessionWriter's worker is a std::thread (pthreads off Windows).
@@ -180,7 +180,6 @@ endif()
 enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
-  tests/BackgroundWorkerTests.cpp
   tests/CommandBarTests.cpp
   tests/HistoryTests.cpp
   tests/JsonTests.cpp
@@ -201,6 +200,7 @@ add_executable(KiteCoreTests
   tests/TitleBarTests.cpp
   tests/UnicodeTests.cpp
   tests/URLInputTests.cpp
+  tests/WorkerThreadTests.cpp
 )
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
 # What history costs (tests/HistoryBench.cpp): its own executable, since it counts every
