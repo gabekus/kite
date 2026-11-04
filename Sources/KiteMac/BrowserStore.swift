@@ -28,6 +28,12 @@ struct PageStatus: Equatable {
     var isAudible: Bool { media?.state.isAudible == true }
 }
 
+/// A tab's sound, as its sidebar row shows it.
+struct TabAudio: Equatable {
+    var isAudible = false
+    var isMuted = false
+}
+
 /// Tabs › Reveal Tab in Sidebar: the sidebar row to scroll into view. `serial` changes on
 /// every request, so revealing the same row twice scrolls twice.
 struct RevealRequest: Equatable {
@@ -53,6 +59,9 @@ struct LinkPeekBadge: Equatable {
 final class BrowserStore {
     private(set) var state: BrowserState
     private(set) var pages: [UUID: PageStatus] = [:]
+    /// What the sidebar's rows show of each page, kept apart from `pages`: every space's list reads it, and
+    /// `pages` changes with each progress step and blocked request of every tab.
+    private(set) var tabAudio: [UUID: TabAudio] = [:]
     private(set) var commandBar: CommandBarMode?
     /// The space whose header name is being edited in place.
     private(set) var renamingSpaceID: UUID?
@@ -444,11 +453,14 @@ final class BrowserStore {
         body(&page)
         guard page != pages[id] else { return }
         pages[id] = page
+        let audio = TabAudio(isAudible: page.isAudible, isMuted: page.isAudioMuted)
+        if tabAudio[id] != audio { tabAudio[id] = audio }
         onPageChange?(id)
     }
 
     func clearPage(_ id: UUID) {
         pages[id] = nil
+        tabAudio[id] = nil
         recordedURLs[id] = nil
         hiddenAt[id] = nil
         miniPlayerDismissed.remove(id)
