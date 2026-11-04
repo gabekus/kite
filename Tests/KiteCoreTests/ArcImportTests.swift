@@ -516,6 +516,39 @@ import Testing
         #expect(result.notes == ["Skipped 1 repeated or circular sidebar entry."])
     }
 
+    @Test func anOrphanedParentIDParentDoesNotDropTheChild() throws {
+        // Tab 100 names folder 201 as its parent, but no space reaches 201.
+        let result = try Self.sidebar([
+            Self.container(10, children: [101]),
+            Self.folder(101, children: [100]),
+            Self.folder(201, children: [100]),
+            Self.tab(100, parent: 201),
+            Self.container(11, children: []),
+        ])
+        guard case .folder(let folder)? = result.spaces[0].pinnedItems.first else {
+            Issue.record("unexpected pinned items: \(result.spaces[0].pinnedItems)")
+            return
+        }
+        #expect(folder.items.tabs.map(\.title) == ["Site 100"])
+        #expect(result.tabCount == 1)
+        #expect(result.notes.isEmpty)
+    }
+
+    @Test func aParentIDParentBelowTheChildDoesNotDropIt() throws {
+        // Folder 101 names 103 as its parent, but 103 is inside it (101 > 102 > 103 > 101).
+        let result = try Self.sidebar([
+            Self.container(10, children: [101]),
+            Self.folder(101, parent: 103, children: [102]),
+            Self.folder(102, children: [103]),
+            Self.folder(103, children: [101, 104]),
+            Self.tab(104, parent: 103),
+            Self.container(11, children: []),
+        ])
+        #expect(result.spaces[0].pinnedItems.tabs.map(\.title) == ["Site 104"])
+        #expect(result.folderCount == 3)
+        #expect(result.notes == ["Skipped 1 repeated or circular sidebar entry."])
+    }
+
     @Test func profilesSharingAFavoritesGridBothGetIt() throws {
         let favorites: [Any] = [
             ["default": true], Self.id(30),

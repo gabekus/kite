@@ -126,9 +126,9 @@ public enum ArcImport {
         /// ID seen again is a cycle or a repeat in `childrenIds`, and following it would
         /// recurse forever (or, for a repeat, multiply).
         var placedItems: Set<String> = []
-        /// Items their own `parentID` lists: listed anywhere else too (a stale or
-        /// sync-damaged file), they go under that parent. Others go where first met.
-        var listedByParent: Set<String> = []
+        /// The parent ID each item a space reaches goes under (see `assignHomes`). Nil while
+        /// favorites are walked: each grid takes what it lists.
+        var home: [String: String]?
         /// Repeated or circular entries in `childrenIds`, skipped.
         var skippedRepeats = 0
         /// Items nested past `maxDepth`, left out.
@@ -170,12 +170,12 @@ public enum ArcImport {
 
         mutating func buildSpaces() -> Result {
             placedItems.reserveCapacity(items.count)
-            for (id, item) in items {
-                let childIDs = item["childrenIds"] as? [String] ?? []
-                for childID in childIDs where items[childID]?["parentID"] as? String == id && !isAncestor(childID, of: id) {
-                    listedByParent.insert(childID)
-                }
+            var roots: [String] = []
+            for object in spaceObjects {
+                let containers = pairs(object["containerIDs"])
+                roots += [containers["pinned"], containers["unpinned"]].compactMap { $0 }
             }
+            home = assignHomes(from: roots, reserved: Set(roots).union(favoritesContainers.values))
 
             var spaces: [Space] = []
             for object in spaceObjects {
@@ -185,6 +185,7 @@ public enum ArcImport {
             // Favorites: a grid per profile, in Arc and in Kite.
             var favorites: [String: [BrowserTab]] = [:]
             // Default's too: Kite always has that profile, even with no space in it.
+            home = nil
             for profile in Result.withDefault(profiles) {
                 guard let containerID = favoritesContainers[profile] else { continue }
                 // Each grid is walked on its own: profiles that share a container all get its
@@ -262,15 +263,14 @@ public enum ArcImport {
 
         // MARK: Items
 
-        /// The children of item `id`, each placed once: an ID already placed, or listed by
-        /// its own parent elsewhere, is skipped and counted.
+        /// The children of item `id` that go here, each placed once. Any other listing (a
+        /// repeat, a cycle, or an item whose home is another parent) is skipped and counted.
         private mutating func children(of id: String) -> [[String: Any]] {
             placedItems.insert(id)
             var result: [[String: Any]] = []
             for childID in items[id]?["childrenIds"] as? [String] ?? [] {
                 guard let child = items[childID] else { continue }
-                let belongsHere = child["parentID"] as? String == id || !listedByParent.contains(childID)
-                guard belongsHere, placedItems.insert(childID).inserted else {
+                guard home.map({ $0[childID] == id }) ?? true, placedItems.insert(childID).inserted else {
                     skippedRepeats += 1
                     continue
                 }
@@ -279,16 +279,51 @@ public enum ArcImport {
             return result
         }
 
-        /// Whether `ancestor` is `id` or above it by `parentID`s (up to `maxDepth` steps). A
-        /// parent below its own child is a cycle, so it doesn't win the child.
-        private func isAncestor(_ ancestor: String, of id: String) -> Bool {
+        /// Each item's home in the spaces whose containers are `roots`: the first parent that
+        /// lists it, in the order the walk meets them, so every item a space reaches is placed.
+        /// Listed under several (a stale or sync-damaged file), it goes to the parent its
+        /// `parentID` names instead, if that parent is reached too and isn't the item or below
+        /// it. `reserved` IDs are never a child. Iterative, so no file overflows the stack here.
+        private func assignHomes(from roots: [String], reserved: Set<String>) -> [String: String] {
+            var result: [String: String] = [:]
+            var claimed = reserved
+            var order: [String] = []
+            for root in roots {
+                var pending = [root]
+                while let id = pending.popLast() {
+                    // A parent claims all its children before any is walked, as `children(of:)` does.
+                    var claimedHere: [String] = []
+                    for childID in items[id]?["childrenIds"] as? [String] ?? [] {
+                        guard items[childID] != nil, claimed.insert(childID).inserted else { continue }
+                        result[childID] = id
+                        claimedHere.append(childID)
+                    }
+                    order += claimedHere
+                    pending += claimedHere.reversed()
+                }
+            }
+            let rootSet = Set(roots)
+            for childID in order {
+                guard let parent = items[childID]?["parentID"] as? String, parent != result[childID],
+                      result[parent] != nil || rootSet.contains(parent),
+                      (items[parent]?["childrenIds"] as? [String] ?? []).contains(childID),
+                      !Self.isAtOrBelow(parent, childID, in: result)
+                else { continue }
+                result[childID] = parent
+            }
+            return result
+        }
+
+        /// Whether `id` is `ancestor` or under it in `home`. Too deep to tell (it would be cut
+        /// anyway) counts as under, so the first listing stays.
+        private static func isAtOrBelow(_ id: String, _ ancestor: String, in home: [String: String]) -> Bool {
             var current: String? = id
             for _ in 0...ArcImport.maxDepth {
                 guard let next = current else { return false }
                 if next == ancestor { return true }
-                current = items[next]?["parentID"] as? String
+                current = home[next]
             }
-            return false
+            return true
         }
 
         /// Whether an item `depth` levels down is past `maxDepth`. If so it and everything
@@ -298,8 +333,11 @@ public enum ArcImport {
             var pending = [item]
             while let next = pending.popLast() {
                 leftOut += 1
+                let id = next["id"] as? String
                 for childID in next["childrenIds"] as? [String] ?? [] {
-                    guard let child = items[childID], placedItems.insert(childID).inserted else { continue }
+                    guard let child = items[childID], home.map({ $0[childID] == id }) ?? true,
+                          placedItems.insert(childID).inserted
+                    else { continue }
                     pending.append(child)
                 }
             }
