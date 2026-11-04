@@ -530,7 +530,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// Quitting has begun: nothing makes new pages (a close chain that the quit cut short).
+    var isTerminating = false
+
     func applicationWillTerminate(_ notification: Notification) {
+        isTerminating = true
         claudeTasks?.stopAll()
         claudeTasks?.saveNow()
         claudeCode?.stopAll()

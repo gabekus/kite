@@ -303,6 +303,8 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
             host.adoptPopup(popup)
         case .closeRequested:
             close()
+        case .showForLeaveDialog:
+            break  // The window's one page is always on screen.
         case .linkHover(let hover):
             if let view = page?.view { LinkPreviewController.shared.hover(hover, in: view) }
         case .permissionRequest(let request):
@@ -515,6 +517,24 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     }
 
     // MARK: Window
+
+    /// Closing the window is closing its page: a page with unsaved changes asks "Leave site?" first.
+    private var closeConfirmed = false
+    private var isConfirmingClose = false
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard !closeConfirmed, let page else { return true }
+        guard !isConfirmingClose else { return false }
+        isConfirmingClose = true
+        page.requestClose { [weak self, weak sender] outcome in
+            guard let self else { return }
+            isConfirmingClose = false
+            guard outcome == .close, let sender else { return }
+            closeConfirmed = true
+            sender.close()
+        }
+        return false
+    }
 
     func windowWillClose(_ notification: Notification) {
         isClosed = true

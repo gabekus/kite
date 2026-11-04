@@ -42,6 +42,22 @@ extension BrowserState {
         return archiveToday(spaces[s].tabs.map(\.id).filter { $0 != selected }, inSpace: s)
     }
 
+    /// Clear Today once the pages it ends let it go (the window asks them first): archives exactly
+    /// `ids`, the tabs the person cleared, and puts back the selection they had then (`frontSpace`, and
+    /// `selected` in this space), since asking brings a background tab forward. Tabs opened meanwhile
+    /// stay. A selection that was cleared falls back as in Clear Today.
+    @discardableResult
+    public mutating func archiveToday(_ ids: [UUID], inSpace spaceID: UUID, frontSpace: UUID,
+                                      selected: UUID?) -> [BrowserTab] {
+        guard let s = spaceIndex(spaceID) else { return [] }
+        let cleared = archiveToday(ids, inSpace: s)
+        let current = spaces[s].selectedTabID
+        spaces[s].selectedTabID = [selected, current].compactMap { $0 }.first { location(of: $0) != nil }
+            ?? spaces[s].pinned.first?.id
+        if spaceIndex(frontSpace) != nil { selectedSpaceID = frontSpace }
+        return cleared
+    }
+
     /// Archives these Today tabs of space `s`, in their sidebar order, and fixes up the splits they
     /// were in. The caller picks what's selected next.
     mutating func archiveToday(_ ids: [UUID], inSpace s: Int) -> [BrowserTab] {

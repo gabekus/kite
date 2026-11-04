@@ -69,6 +69,30 @@ import Testing
         #expect(s.todayClearAction(inSpace: s.spaces[0].id) == .clearAll)
     }
 
+    /// The divider's Clear after "Leave site?": asking brought the cleared tab forward, and a tab opened
+    /// while the sheet was up. Only the asked tabs go, and the kept tab is selected again.
+    @Test func clearAfterAskingArchivesExactlyWhatWasAsked() {
+        var (s, ids) = space(tabs: 3, selected: 1)
+        let spaceID = s.spaces[0].id
+        var preview = s
+        let asked = preview.clearUnselectedToday(inSpace: spaceID).map(\.id)
+        #expect(asked == [ids[0], ids[2]])
+        s.select(tab: ids[2])
+        let opened = s.openTab(url: URL(string: "https://e.com/new"), select: false)
+        let cleared = s.archiveToday(asked, inSpace: spaceID, frontSpace: spaceID, selected: ids[1])
+        #expect(cleared.map(\.id) == [ids[0], ids[2]])
+        #expect(Set(s.spaces[0].tabs.map(\.id)) == [ids[1], opened])
+        #expect(s.spaces[0].selectedTabID == ids[1])
+    }
+
+    @Test func clearAfterAskingFallsBackWhenTheSelectionWasCleared() {
+        var (s, ids) = space(tabs: 2, selected: 0)
+        let spaceID = s.spaces[0].id
+        s.archiveToday(ids, inSpace: spaceID, frontSpace: spaceID, selected: ids[0])
+        #expect(s.spaces[0].tabs.isEmpty)
+        #expect(s.spaces[0].selectedTabID == s.spaces[0].pinned.first?.id)
+    }
+
     @Test func clearAllWhenThereIsNothingToKeep() {
         var (s, _) = space(tabs: 2, selected: nil)
         #expect(s.clearUnselectedToday(inSpace: s.spaces[0].id).count == 2)

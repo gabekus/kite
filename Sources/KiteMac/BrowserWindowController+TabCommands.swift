@@ -19,16 +19,18 @@ extension BrowserWindowController {
     }
 
     /// Clear Today for one space: ⇧⌘K, and the Clear button on that space's Today divider.
+    /// A page with unsaved changes asks "Leave site?" first, as for ⌘W (`clearAsking`).
     func clearToday(inSpace spaceID: UUID) {
-        let cleared = store.mutate { $0.clearToday(inSpace: spaceID) }
-        if cleared.isEmpty { return NSSound.beep() }
-        showToast(cleared.count == 1 ? "Archived 1 tab" : "Archived \(cleared.count) tabs")
+        clearAsking(inSpace: spaceID, { $0.clearToday(inSpace: spaceID) }) { [weak self] cleared in
+            if cleared.isEmpty { return NSSound.beep() }
+            self?.showToast(cleared.count == 1 ? "Archived 1 tab" : "Archived \(cleared.count) tabs")
+        }
     }
 
     /// The Today divider's Clear button. Arc's `clearOthers` mode (the selected tab is one of
     /// several Today tabs) keeps the selected tab; otherwise it's Clear Today.
     func clearFromTodayDivider(inSpace spaceID: UUID) {
-        showArchivedToast(store.mutate { $0.clearUnselectedToday(inSpace: spaceID) })
+        clearAsking(inSpace: spaceID, { $0.clearUnselectedToday(inSpace: spaceID) }) { [weak self] in self?.showArchivedToast($0) }
     }
 
     /// Tabs › Reveal Tab in Sidebar: shows the sidebar, opens the folders the tab is in and

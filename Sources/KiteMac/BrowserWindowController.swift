@@ -100,7 +100,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private var shownAppearanceName: NSAppearance.Name?
     private(set) weak var shownPage: WebPage?
     /// Every tab on screen in pane order, and its page: one, or a split's panes.
-    private var shownTabIDs: [UUID] = []
+    private(set) var shownTabIDs: [UUID] = []
     private var shownPages: [UUID: WebPage] = [:]
     /// The pages on screen: the shown tab's, or each pane's of its split.
     var visiblePages: [WebPage] { Array(shownPages.values) }
@@ -205,14 +205,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     /// True while closing the window should only hide it: Claude tasks are working in its tabs.
     var hidesInsteadOfClosing: (() -> Bool)?
+    /// Every page in the window let it close (`windowShouldClose`).
+    var closeConfirmed = false
+    /// The window's pages are being asked whether it may close.
+    var isConfirmingClose = false
+    /// The window has closed (the app may still hold its controller).
+    private(set) var hasClosed = false
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard !isIncognito, hidesInsteadOfClosing?() == true else { return true }
-        sender.orderOut(nil)
-        return false
+        if !isIncognito, hidesInsteadOfClosing?() == true {
+            sender.orderOut(nil)
+            return false
+        }
+        return shouldCloseAfterAsking(sender)
     }
 
     func windowWillClose(_ notification: Notification) {
+        hasClosed = true
         closeLinkPeek(animated: false)
         discardParkedLinkPeeks(keeping: nil)
         if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
@@ -264,7 +273,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             developerReload: { [weak self] setting in self?.developerReload(setting) },
             clearCookiesAndRefresh: { [weak self] in self?.clearCookiesAndRefresh(nil) },
             toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
-            closeTab: { [weak self] id in self?.close(tab: id) },
+            closeTab: { [weak self] id in self?.closeAsking(tab: id) },
+            closeTabs: { [weak self] ids in self?.closeAsking(tabs: ids) },
             addSplitView: { [weak self] in self?.addSplitView(nil) },
             editTheme: { [weak self] id in self?.editTheme(ofSpace: id) },
             changeSpaceIcon: { [weak self] id in self?.changeIcon(ofSpace: id) },
@@ -637,6 +647,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         updateToolbar()
         updateInternalPages()
         didSync?()
+    }
+
+    /// Puts the selected tabs on screen again, making their pages afresh (pages closed under them).
+    func reloadShownTabs() {
+        shownTabIDs = []
+        sync()
     }
 
     /// The edge strips for dropping a link into a split: over everything in the content card, but they
@@ -1228,6 +1244,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
     }
 
+    /// Archive Tab without asking the page: automation (Claude's tabs_close), AppleScript and the tab
+    /// switcher. The person's own closes go through `closeAsking(tab:)`.
     func close(tab id: UUID) {
         let wasSelected = store.state.selectedTab?.id == id
         // Arc's Edit menu: "Undo Archive Tab" ⌘Z, Redo ⇧⌘Z. A tab that leaves the sidebar is a
@@ -1246,7 +1264,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func undoUnload(tab id: UUID, reselect: Bool) {
         guard store.state.location(of: id) != nil else { return }
         if reselect { store.mutate { $0.select(tab: id) } }
-        window?.undoManager?.registerUndo(withTarget: self) { controller in controller.close(tab: id) }
+        window?.undoManager?.registerUndo(withTarget: self) { controller in controller.closeAsking(tab: id) }
         window?.undoManager?.setActionName("Archive Tab")
     }
 
@@ -1274,7 +1292,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         } else if store.commandBar != nil {
             store.hideCommandBar()
         } else if let id = store.state.selectedTab?.id {
-            close(tab: id)
+            closeAsking(tab: id)
         } else {
             NSSound.beep()
         }

@@ -13,6 +13,11 @@
 void KCRegisterBrowser(CefRefPtr<CefBrowser> browser);
 void KCUnregisterBrowser(CefRefPtr<CefBrowser> browser);
 bool KCRuntimeIsQuitting();
+/// Answers Leave to a "Leave site?" dialog still waiting in `browser` (every browser when null), so a
+/// forced close can finish: Chromium keeps the page until its beforeunload hears back.
+void KCAcceptPendingBeforeUnload(CefRefPtr<CefBrowser> browser);
+/// Drops the record of those dialogs before CefShutdown.
+void KCForgetPendingBeforeUnload();
 /// CefSettings.root_cache_path: every profile folder sits directly inside it.
 NSString* KCRootCachePath();
 

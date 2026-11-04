@@ -14,6 +14,8 @@ struct SidebarActions {
     var clearCookiesAndRefresh: () -> Void
     var toggleSidebar: () -> Void
     var closeTab: (UUID) -> Void
+    /// Several tabs closed together (a tab group's close, Archive Item on a split): asked as one.
+    var closeTabs: ([UUID]) -> Void = { _ in }
     var addSplitView: () -> Void
     /// A space's context menu in the strip.
     var editTheme: (UUID) -> Void
