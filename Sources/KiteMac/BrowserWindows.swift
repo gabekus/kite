@@ -60,6 +60,15 @@ final class BrowserWindows {
         return controller
     }
 
+    /// A normal window for Claude's tools when none is left open: on the main sidebar's space, with no
+    /// command bar (nobody is typing in it).
+    func openWindowForAutomation() -> BrowserWindowController {
+        makeNormal(main.state.newWindowState(on: main.state.selectedSpaceID), frame: nil)
+    }
+
+    /// A Blank window (its own sidebar), which Claude's tools don't work in.
+    func isBlank(_ controller: BrowserWindowController) -> Bool { kinds[ObjectIdentifier(controller)] == .blank }
+
     /// ⌃⌘N: a window with its own sidebar, outside the spaces, opening on the command bar.
     func openBlankWindow() {
         let controller = makeBlank(nil, frame: nil)

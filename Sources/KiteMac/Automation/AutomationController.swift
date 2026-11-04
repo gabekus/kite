@@ -9,6 +9,8 @@ import CEFBridge
 @MainActor
 protocol AutomationHost: AnyObject {
     var window: NSWindow? { get }
+    /// The window's store: its selection is the front space and tab the tools act on.
+    var store: BrowserStore { get }
     /// Pages that exist right now (shown or in the background), for recording the network.
     var livePages: [UUID: WebPage] { get }
     /// The tab's page, created in the background if it isn't live.
@@ -94,8 +96,12 @@ final class AutomationController {
     @ObservationIgnored var handoffFollowUp: Task<Void, Never>?
     @ObservationIgnored var handoffPollAgain = false
 
-    @ObservationIgnored weak var host: AutomationHost?
-    @ObservationIgnored let store: BrowserStore
+    /// The normal window the tools work in, and its store. It moves when that window closes (`attach`).
+    @ObservationIgnored private(set) weak var host: AutomationHost?
+    @ObservationIgnored private(set) var store: BrowserStore
+    /// Before a tool call that needs a window: AppDelegate moves the tools to a live normal window,
+    /// opening one if none is left, so they never drive a window that has closed.
+    @ObservationIgnored var ensureWindow: (() -> Void)?
     @ObservationIgnored let supportDirectory: URL
     @ObservationIgnored private var server: AutomationServer?
     /// Tabs the user pressed Stop on. Cleared when the setting is turned off and on again.
@@ -187,6 +193,12 @@ final class AutomationController {
         settings = AutomationSettings.load(from: AutomationSettings.fileURL(supportDirectory: supportDirectory))
         handoffs = Handoff.load(from: Handoff.fileURL(supportDirectory: supportDirectory))
         handoffCount = Handoff.lastNumber(in: handoffs)
+    }
+
+    /// Points the tools at `host`'s window and store.
+    func attach(_ host: AutomationHost) {
+        self.host = host
+        store = host.store
     }
 
     var socketURL: URL { AutomationWire.socketURL(supportDirectory: supportDirectory) }
@@ -668,6 +680,7 @@ final class AutomationController {
         }
         do {
             let command = try AutomationCommand(tool: request.tool, arguments: request.arguments)
+            if command.needsWindow { ensureWindow?() }
             let task = request.task.flatMap(UUID.init(uuidString:)).flatMap { isRunningTask?($0) == true ? $0 : nil }
             return try await Self.$agentTask.withValue(task) { try await run(command, connection: connection) }
         } catch let error as AutomationError {
