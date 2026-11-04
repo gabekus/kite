@@ -166,6 +166,15 @@ if(WIN32)
   endif()
 endif()
 
+# Measurement tools (docs/windows-architecture.md, windows/tools): never linked into Kite.exe,
+# never shipped. MSVC only, as they're Windows-only and measure the MSVC build.
+if(MSVC)
+  add_executable(kiteperf tools/perf/main.cpp tools/perf/PageServer.cpp tools/perf/Processes.cpp resources/Kite.manifest)
+  # Its session fixture and pages, read from the source tree.
+  target_compile_definitions(kiteperf PRIVATE KITEPERF_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/tools/perf")
+  target_link_libraries(kiteperf PRIVATE KiteCoreWin pdh psapi ws2_32 advapi32 user32)
+endif()
+
 enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp

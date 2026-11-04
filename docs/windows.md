@@ -52,6 +52,7 @@ windows/
                 (the window and what's in it: views, Chromium, shortcuts), composition, input
   src/cli/      kitecore: the model, headless
   tests/        unit tests (no test framework dependency)
+  tools/perf/   kiteperf: the measurement harness, its session fixture and pages (never shipped)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
   resources/    Kite.manifest (DPI, UTF-8 code page, long paths) and its MinGW .rc
   scripts/      fetch-cef.ps1, gen-unicode-tables.py
@@ -404,6 +405,37 @@ never shows a dialog, as `--smoke-test` does.
   `WM_MOUSELEAVE` is ignored, since the real pointer is somewhere else.
 - `--chromium-switches "--a --b=c"`: switches for Chromium's browser process
   (`OnBeforeCommandLineProcessing`), to measure Kite with one and without.
+
+`kiteperf` (`windows/tools/perf`, built with the app by MSVC, never shipped) drives them. Each
+run launches Kite.exe on a fresh `%TEMP%` profile holding `sessions/perf-10tabs-2spaces.json`
+(ten static tabs, eight and two, in two spaces with different themes), suspended into a job
+object; pages come from its own Winsock server on 127.0.0.1 to 127.0.0.12, port 18765, each
+address its own site. Once a second it samples every process of Kite's (the job's list and a
+parent walk, typed by `--type`): CPU, private working set and commit (never the shared working
+set), writes, context switches, handles, threads, and PDH's GPU memory and GPU engine time, with
+dwm.exe and the rest of the machine for context. A phase is `noisy` when the rest of the
+machine kept the CPUs over 25% busy; other work shares this PC, so results are medians of runs.
+
+```powershell
+windowsuild\Release\kiteperf.exe --kite windowsuild\Release\Kite.exe --runs 3 --label main --out main.json
+windowsuild\Release\kiteperf.exe --kite ...\Kite.exe --runs 3 --label mine --out mine.json
+windowsuild\Release\kiteperf.exe --compare main.json mine.json   # the markdown table for the PR
+```
+
+The standard scenario: startup's marks; open (every tab, a load each, counting processes
+started and ended); settle 30 s; idle 60 s, which fails the run (exit 4) unless Kite presented
+and committed nothing; switchSpaces (every 0.5 s for 20 s: the crossfade's frame intervals,
+p50/p99 and missed, and switch-to-present); switchTabs and reload (every 0.5 s for 10 s); hover
+(pointer moves posted at 120 Hz for 10 s over the rows: move-to-present); titleTick (a page that
+retitles itself every second, 20 s); anim (a CSS and requestAnimationFrame page shown, 10 s),
+hiddenAnim (the same in a background tab, 20 s), covered (shown under kiteperf's own black window,
+20 s) and minimized (20 s); then one `WM_CLOSE` and the time until every process is gone.
+`--scenario idle` stops after idle, `startup` after the first page, and `smoke` (CI) is a few
+seconds of each of open, idle, switchSpaces and hover. Nothing takes the focus or sends real
+input: Kite opens behind other windows, the moves are posted to it, the cover never activates and
+sits just over Kite in the z-order (not topmost), and Kite is minimized with `SW_SHOWMINNOACTIVE`.
+A foreground run (Kite in front, real input) would measure what a person sees, and needs a
+machine nobody is using; `--foreground` is refused until then.
 
 ## Plan
 
