@@ -10,6 +10,7 @@
 # STATE=dir copies the profile files it holds (session.json, "Claude Handoffs.json", automation.json)
 # into the fresh profile before launch; with a session.json, its tabs replace the ten static ones.
 # In those files http://127.0.0.1:18765 becomes PAGES, and __NOW_MINUS_<n>H__ a time n hours ago.
+# ADBLOCK=dir seeds the ad blocker with fixture lists (see below).
 # Fixtures (fake data only, never a real profile): scripts/perf/fixtures/.
 set -euo pipefail
 APP="$1"; LABEL="${2:-run}"; SECS="${3:-60}"; SETTLE="${SETTLE:-30}"
@@ -26,6 +27,16 @@ if [[ -n "${STATE:-}" ]]; then
       's#http://127\.0\.0\.1:18765#$ENV{PAGES}#g; s/__NOW_MINUS_(\d+)H__/strftime("%Y-%m-%dT%H:%M:%SZ", gmtime(time - $1 * 3600))/ge' \
       "$STATE/$f" >"$P/$f"
   done
+fi
+# ADBLOCK=dir gives the ad blocker dir's lists (<list id>.txt, e.g. fixtures/adblock/easylist.txt)
+# marked fresh, so it builds from them and downloads nothing. Serve fixtures/adblock as PAGES for
+# its ad-heavy pages.
+if [[ -n "${ADBLOCK:-}" ]]; then
+  mkdir -p "$P/Adblock/lists"
+  cp "$ADBLOCK"/*.txt "$P/Adblock/lists/"
+  echo '[]' >"$P/Adblock/resources.json"
+  NOW=$(( $(date +%s) - 978307200 ))  # Foundation's reference date
+  echo "{\"listsUpdatedAt\":$NOW,\"resourcesUpdatedAt\":$NOW,\"listsFormat\":2}" >"$P/Adblock/status.json"
 fi
 "$APP/Contents/MacOS/Kite" --disable-backgrounding-occluded-windows >"$P/kite.log" 2>&1 &
 PID=$!

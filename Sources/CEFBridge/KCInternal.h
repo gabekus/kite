@@ -41,6 +41,6 @@ CefRefPtr<CefRequestContext> KCAdblockRequestContext();
 CefRefPtr<CefRequestContextHandler> KCAdblockContextHandler();
 
 @interface KCBrowser (Internal)
-/// Called on the main thread for each blocked request.
-- (void)noteBlockedRequest;
+/// Called on the main thread with the requests blocked since the last call.
+- (void)noteBlockedRequests:(NSInteger)count;
 @end

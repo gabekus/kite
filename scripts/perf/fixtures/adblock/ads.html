@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Ad-heavy fixture</title>
+<!-- 200 requests the fixture list (easylist.txt) blocks: 120 images, 50 scripts, 30 fetches.
+     Ad slots arrive at load, at 4 s and at 15 s; a carousel swaps its items every 250 ms. -->
+<style>body { font: 14px -apple-system, sans-serif; margin: 24px; } .slot { height: 40px; background: #fc0; margin: 4px 0; }</style>
+<h1>Ad-heavy fixture</h1>
+<div class="slot kite-fixture-ad" id="early">early ad</div>
+<div id="carousel"></div>
+<div id="images"></div>
+<script>
+const images = document.getElementById('images');
+for (let i = 0; i < 120; i++) {
+  const img = new Image(1, 1);
+  img.src = '/ads/banner-' + i + '.gif?r=' + Math.random();
+  images.appendChild(img);
+}
+for (let i = 0; i < 50; i++) {
+  const s = document.createElement('script');
+  s.src = '/ads/tag-' + i + '.js?r=' + Math.random();
+  document.head.appendChild(s);
+}
+for (let i = 0; i < 30; i++) fetch('/ads/pixel-' + i + '?r=' + Math.random()).catch(() => {});
+const slot = (cls, id) => {
+  const d = document.createElement('div');
+  d.className = 'slot ' + cls; d.id = id; d.textContent = id;
+  document.body.appendChild(d);
+};
+setTimeout(() => slot('kite-fixture-late-ad', 'late'), 4000);
+setTimeout(() => slot('kite-fixture-very-late-ad', 'very-late'), 15000);
+const carousel = document.getElementById('carousel');
+let tick = 0;
+setInterval(() => {
+  tick++;
+  const items = [];
+  for (let i = 0; i < 10; i++) {
+    const d = document.createElement('div');
+    d.className = 'item item-' + ((tick + i) % 50) + (i === 0 ? ' kite-fixture-carousel-ad' : '');
+    d.innerHTML = '<span class="label">item</span><span class="price">' + tick + '</span>';
+    items.push(d);
+  }
+  carousel.replaceChildren(...items);
+}, 250);
+</script>
