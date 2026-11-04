@@ -23,6 +23,14 @@ constexpr float kDoneOpacity = 0.6f;
 // while the window doesn't have the keyboard.
 constexpr D2D1_COLOR_F kDarkSelection{63 / 255.0f, 99 / 255.0f, 139 / 255.0f, 1};
 constexpr D2D1_COLOR_F kLightSelection{179 / 255.0f, 215 / 255.0f, 1, 1};
+// While it edits, the field is AppKit's field editor: its text sits after the editor's line
+// fragment padding (2pt), over the editor's background, NSColor.textBackgroundColor (sRGB #1E1E1E
+// in a dark appearance, white in a light one, opaque, square-cornered). That background covers the
+// field's frame grown to the editor's: 3pt before it and to its end, 2pt above its line and 4pt
+// below (22pt for the header's 16pt line), as the Mac's capture of the open field draws it.
+constexpr float kTextInset = 2;
+constexpr float kBackgroundBefore = 3, kBackgroundAbove = 2, kBackgroundBelow = 4;
+constexpr float kDarkTextBackground = 30 / 255.0f;
 
 D2D1_COLOR_F Primary(bool dark, float alpha) {
     const float c = dark ? 1.0f : 0.0f;
@@ -62,7 +70,9 @@ std::unique_ptr<SpaceRenameField> SpaceRenameField::Create(HWND window, IDWriteF
         error = HResultMessage(L"the rename field's text", hr);
         return nullptr;
     }
-    field->doneWidth_ = metrics.widthIncludingTrailingWhitespace;
+    // SidebarLabel.naturalWidth: the text's width rounded up to a whole point, so Done's label sits
+    // up to a point short of the cell's end, as the Mac's does.
+    field->doneWidth_ = std::ceil(metrics.widthIncludingTrailingWhitespace);
     DWRITE_LINE_METRICS line{};
     UINT32 count = 0;
     if (SUCCEEDED(field->done_->GetLineMetrics(&line, 1, &count)) && count == 1) field->doneLayoutBaseline_ = line.baseline;
@@ -101,7 +111,7 @@ void SpaceRenameField::Place(float left, float right, float lineTop, float lineH
     doneBaseline_ = doneBaseline;
     dpi_ = dpi;
     dark_ = dark;
-    line_.SetVisibleWidth(right_ - left_);
+    line_.SetVisibleWidth(right_ - left_ - 2 * kTextInset);
     line_.KeepCaretVisible();
     dirty_ = true;
 }
@@ -141,9 +151,9 @@ std::wstring SpaceRenameField::Draw(Pixels* readBack, POINT* origin) {
         dirty_ = true;
     }
     if (dirty_ || readBack) {
-        // From the field's left (a pixel to spare for the caret) to Done's right, the row's
-        // height, its top-left on a pixel.
-        const POINT at{std::lround(std::floor((left_ - 1) * scale)), std::lround(std::floor(doneBox_.top * scale))};
+        // From the editor's background before the field to Done's right, the row's height, its
+        // top-left on a pixel.
+        const POINT at{std::lround(std::floor((left_ - kBackgroundBefore) * scale)), std::lround(std::floor(doneBox_.top * scale))};
         const UINT width = static_cast<UINT>(std::max(1L, std::lround(std::ceil(doneBox_.right * scale)) - at.x));
         const UINT height = static_cast<UINT>(std::max(1L, std::lround(std::ceil(doneBox_.bottom * scale)) - at.y));
         if (!surface_) {
@@ -169,8 +179,13 @@ std::wstring SpaceRenameField::Draw(Pixels* readBack, POINT* origin) {
                 context->GetTransform(&base);
                 // In page points from here on.
                 context->SetTransform(D2D1::Matrix3x2F::Translation(shift.x, shift.y) * base);
-                const D2D1_POINT_2F text{left_ - line_.ScrollX(), baseline_ - line_.Baseline()};
-                context->PushAxisAlignedClip(D2D1::RectF(left_ - 1, doneBox_.top, right_, doneBox_.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
+                const float shade = dark_ ? kDarkTextBackground : 1.0f;
+                brush_->SetColor(D2D1_COLOR_F{shade, shade, shade, 1});
+                context->FillRectangle(
+                    D2D1::RectF(left_ - kBackgroundBefore, lineTop_ - kBackgroundAbove, right_, lineTop_ + lineHeight_ + kBackgroundBelow),
+                    brush_.Get());
+                const D2D1_POINT_2F text{left_ + kTextInset - line_.ScrollX(), baseline_ - line_.Baseline()};
+                context->PushAxisAlignedClip(D2D1::RectF(left_, doneBox_.top, right_, doneBox_.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
                 if (line_.Edit().Text().empty()) {
                     brush_->SetColor(Primary(dark_, kLabelAlpha * kPlaceholderOpacity));
                     context->DrawTextLayout(text, placeholder_.Get(), brush_.Get());
@@ -223,13 +238,13 @@ bool SpaceRenameField::Press(float x, float y, bool shift) {
     if (pressedDone_) return true;
     if (!InField(x, y)) return false;
     selecting_ = true;
-    Apply(line_.Edit().Select(line_.IndexAt(x - left_), shift));
+    Apply(line_.Edit().Select(line_.IndexAt(x - left_ - kTextInset), shift));
     return true;
 }
 
 SpaceRenameField::Outcome SpaceRenameField::Move(float x, float) {
     if (!selecting_) return Outcome::None;
-    const size_t at = line_.IndexAt(x - left_);
+    const size_t at = line_.IndexAt(x - left_ - kTextInset);
     if (at == line_.Edit().Caret()) return Outcome::None;
     return Apply(line_.Edit().Select(at, true));
 }
@@ -262,8 +277,8 @@ bool SpaceRenameField::HandleTimer(WPARAM timer) {
 void SpaceRenameField::UpdateCaret() {
     if (!compositor_ || !visual_) return;
     const float scale = Scale();
-    const float x = left_ - line_.ScrollX() + line_.CaretX();
-    const bool wanted = focused_ && line_.CaretOn() && !line_.Edit().HasSelection() && x >= left_ - 1 && x <= right_;
+    const float x = left_ + kTextInset - line_.ScrollX() + line_.CaretX();
+    const bool wanted = focused_ && line_.CaretOn() && !line_.Edit().HasSelection() && x >= left_ && x <= right_;
     const UINT width = static_cast<UINT>(std::max(1L, std::lround(scale)));  // 1pt
     const UINT height = static_cast<UINT>(std::max(1L, std::lround(lineHeight_ * scale)));
     // Centred on the caret's position, on a pixel, in the field's visual.
@@ -280,7 +295,7 @@ void SpaceRenameField::UpdateCaret() {
 
 void SpaceRenameField::PlaceImeWindow() {
     const float scale = Scale();
-    const POINT caret{pageOrigin_.x + std::lround((left_ - line_.ScrollX() + line_.CaretX()) * scale),
+    const POINT caret{pageOrigin_.x + std::lround((left_ + kTextInset - line_.ScrollX() + line_.CaretX()) * scale),
                       pageOrigin_.y + std::lround(lineTop_ * scale)};
     line_.PlaceIme(caret, std::lround(lineHeight_ * scale));
 }

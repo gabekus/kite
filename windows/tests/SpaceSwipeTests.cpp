@@ -367,4 +367,8 @@ TEST(aSwipeWhoseSpacesChangedHasNoTarget) {
     // Moved to the other side, or away: the pages on screen are no longer its neighbours.
     CHECK(!swipe.Target(-1, {"C", "B", "A"}, "C"));
     CHECK(!swipe.Target(-1, {"B", "A", "C"}, "C"));
+    // A space inserted between them.
+    CHECK(!swipe.Target(-1, {"A", "B", "X", "C"}, "C"));
+    // Towards nothing (rubber-banding): the current space, while it's still there.
+    CHECK(swipe.Target(0, {"B", "A", "C"}, "C") == "C");
 }

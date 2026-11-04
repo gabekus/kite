@@ -1,9 +1,10 @@
 #pragma once
 // The space header's name field while the space is renamed (the Mac's SpaceRenameField and the
 // header's Done, SidebarListRows.swift): the name in the header's 13pt semibold, all selected
-// as it opens, in labelColor; "Space Name" when it's empty; Return or Done commits, Escape
-// cancels, and leaving it (a press elsewhere in the window, the page or the command bar taking
-// the keyboard, another space shown) commits. SidebarView places it over the header's name.
+// as it opens, in labelColor, 2pt into AppKit's field editor over its textBackgroundColor;
+// "Space Name" when it's empty; Return or Done commits, Escape cancels, and leaving it (a press
+// elsewhere in the window, the page or the command bar taking the keyboard, another space
+// shown) commits. SidebarView places it over the header's name.
 //
 // It's a visual of its own in the space's page (so it slides and swipes with the page, as the
 // Mac's field is a subview of its row), with its own small surface, so a keystroke draws only

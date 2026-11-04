@@ -187,13 +187,13 @@ void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
         layout_ = LayOutSpaceBar(width_, cells_.size(), layout_.scroll, Scale());
         placed_ = false;
     }
-    // A slide that's under way keeps its animation unless the spaces changed under it; so does
-    // a drag, unless its space is no longer where it was picked up.
+    // A slide that's under way keeps its animation unless the spaces changed under it, in number
+    // or order; a drag ends then too (its slots are the old order's).
     if (reordered) {
         slide_.reset();
         follow_.reset();
     }
-    if (drag_ && (reshaped || drag_->from >= cells_.size() || cells_[drag_->from].spaceID != drag_->spaceID)) EndDrag();
+    if (drag_ && reordered) EndDrag();
     if (relit) opacitiesApplied_ = false;
 }
 

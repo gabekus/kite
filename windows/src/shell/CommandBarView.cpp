@@ -284,6 +284,8 @@ void CommandBarView::ComputeGeometry() {
     g.bufferHeight = static_cast<UINT>(std::ceil(tallest * g.scale)) + 2 * static_cast<UINT>(g.marginPx);
     const bool widthChanged = g.width != geometry_.width;
     geometry_ = g;
+    // The field's visible width before any text is laid out in it (Show sets the text next).
+    line_.SetVisibleWidth(g.width - C::kIconX - C::kTextX);
     if (widthChanged) BuildRowText();
 }
 
@@ -660,10 +662,7 @@ float CommandBarView::TextTop() const {
 
 size_t CommandBarView::TextIndexAt(float x) const { return line_.IndexAt(x - C::kTextX); }
 
-void CommandBarView::KeepCaretVisible() {
-    line_.SetVisibleWidth(geometry_.width - C::kIconX - C::kTextX);
-    line_.KeepCaretVisible();
-}
+void CommandBarView::KeepCaretVisible() { line_.KeepCaretVisible(); }
 
 void CommandBarView::PlaceImeWindow() {
     if (!open_) return;

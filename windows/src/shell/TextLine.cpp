@@ -176,6 +176,7 @@ HRESULT CaretVisual::Update(IDCompositionDevice* device, ID2D1DeviceContext* con
         visual_->SetOffsetX(static_cast<float>(at.x));
         visual_->SetOffsetY(static_cast<float>(at.y));
     }
+    if (show && !parent) return E_POINTER;
     const bool shown = shownIn_ == parent && parent;
     if (show && !shown && visual_) {
         if (shownIn_) shownIn_->RemoveVisual(visual_.Get());

@@ -422,7 +422,10 @@ order and words (`SpaceMenu`): Change Space Icon…, Rename Space…, What's Thi
 Edit Theme Color…, Set Profile ▸, then New Folder and Live Folders ▸, then Delete Space
 (disabled for the last space). Rename Space…, or a click on the current space's name, opens
 the header's name field (`shell/SpaceRenameField`, the Mac's SpaceRenameField and Done): the
-name all selected in the header's 13pt semibold, "Space Name" when empty, Done at the right;
+name all selected in the header's 13pt semibold, 2pt into the field as in AppKit's field
+editor, over the editor's textBackgroundColor (#1E1E1E dark, white light, square, from 3pt
+before the field to its end and 22pt tall, as the Mac's capture draws it), "Space Name" when
+empty, Done at the right (its width rounded up to a point, as SidebarLabel's naturalWidth);
 Return or Done renames (a blank name keeps the old one), Escape doesn't, and leaving it (a
 press elsewhere in the window, the page or the command bar taking the keyboard, the menu
 opening, another space shown) keeps what was typed; another app taking the keyboard doesn't

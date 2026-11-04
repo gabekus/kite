@@ -10,8 +10,9 @@
 namespace kite {
 
 std::vector<SpaceMenuItem> BrowserWindowController::OpenSpaceMenu(const std::string& spaceID) {
-    // The menu takes the keyboard and the pointer until it closes; a rename open goes first,
-    // as AppKit's menu tracking ends a field's editing.
+    // The menu takes the keyboard and the pointer until it closes, so a rename open ends first,
+    // keeping what was typed, as any other way of leaving the field does (Kite's choice: the Mac
+    // doesn't say, and its field may keep editing under a context menu).
     sidebar_->EndRenaming(true);
     return SpaceMenu(state_, spaceID);
 }
