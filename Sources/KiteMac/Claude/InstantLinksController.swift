@@ -92,11 +92,7 @@ final class InstantLinksController {
             "--tools", "", "--strict-mcp-config", "--no-session-persistence",
             "--system-prompt", InstantLinks.systemPrompt,
         ]
-        var environment = ProcessInfo.processInfo.environment
-        let (status, path) = ClaudeConnect.run("/bin/zsh", ["-lc", "printf %s \"$PATH\""])
-        if status == 0, path.contains("/") { environment["PATH"] = path }
-        environment["KITE_DIAGNOSTICS"] = nil
-        process.environment = environment
+        process.environment = ClaudeTasksController.environment()
         process.currentDirectoryURL = directory
         let stdin = Pipe(), output = Pipe()
         process.standardInput = stdin

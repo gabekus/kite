@@ -106,16 +106,12 @@ final class DownloadTidier {
         return String(decoding: result.output, as: UTF8.self)
     }
 
-    /// GUI apps get a bare PATH and Claude Code may be a Node script: the login shell's PATH, once.
-    nonisolated private static let environment: [String: String] = {
-        var environment = ProcessInfo.processInfo.environment
-        let (status, output) = ClaudeConnect.run("/bin/zsh", ["-lc", "printf %s \"$PATH\""])
-        let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        if status == 0, path.contains("/") { environment["PATH"] = path }
-        // Kite's own test switches mustn't leak into Claude Code.
-        environment["KITE_DIAGNOSTICS"] = nil
+    /// Kite's `claude` environment (the login PATH; on a test profile, the test Claude home), without
+    /// the test switches Tidy Downloads reads.
+    nonisolated private static var environment: [String: String] {
+        var environment = ClaudeTasksController.environment()
         environment["KITE_SUPPORT_PATH"] = nil
         environment["KITE_TEST_DOWNLOADS_PATH"] = nil
         return environment
-    }()
+    }
 }

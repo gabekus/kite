@@ -341,8 +341,7 @@ final class ClaudeCodeSessionsController {
         let home = home
         Task.detached { [weak self] in
             let claude = ClaudeConnect.findClaude()
-            let environment = ClaudeCodeSessions.processEnvironment(ClaudeTasksController.environment(),
-                                                                    environment: ProcessInfo.processInfo.environment, home: home)
+            let environment = ClaudeTasksController.environment()
             await self?.spawn(id, claude: claude, arguments: arguments, environment: environment,
                               directory: folder, prompt: prompt, placeholder: placeholder)
         }
