@@ -652,6 +652,18 @@ import Testing
         #expect(policy.tabsToEvict(live: live, protected: [ids[0]]) == [ids[1], ids[2]])
         #expect(LiveTabPolicy(maxLiveTabs: 5).tabsToEvict(live: live, protected: []).isEmpty)
     }
+
+    /// Past the first `count` candidates come the ones that take a busy tab's place.
+    @Test func planListsEveryCandidateForBusyTabsToPassOn() {
+        let ids = (0..<5).map { _ in UUID() }
+        var live: [UUID: Date] = [:]
+        for (i, id) in ids.enumerated() { live[id] = Date(timeIntervalSince1970: Double(i)) }
+
+        let plan = LiveTabPolicy(maxLiveTabs: 3).evictionPlan(live: live, protected: [ids[4]])
+        #expect(plan.count == 2)
+        #expect(plan.candidates == [ids[0], ids[1], ids[2], ids[3]])
+        #expect(LiveTabPolicy(maxLiveTabs: 5).evictionPlan(live: live, protected: []).count == 0)
+    }
 }
 
 @Suite struct ThemeTests {

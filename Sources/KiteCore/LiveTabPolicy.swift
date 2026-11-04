@@ -15,12 +15,20 @@ public struct LiveTabPolicy: Sendable {
     ///   - protected: tabs that must stay alive (the visible tab, tabs playing media).
     /// - Returns: tabs to hibernate, least recently shown first.
     public func tabsToEvict(live: [UUID: Date], protected: Set<UUID>) -> [UUID] {
+        let plan = evictionPlan(live: live, protected: protected)
+        return Array(plan.candidates.prefix(plan.count))
+    }
+
+    /// How many tabs must go, and every tab that may, least recently shown first. Whether a tab is busy
+    /// (playing media, using the camera) is only known by asking its page, so the caller walks the
+    /// candidates and a busy one's place goes to the next: busy tabs count towards the limit.
+    public func evictionPlan(live: [UUID: Date], protected: Set<UUID>) -> (count: Int, candidates: [UUID]) {
         let excess = live.count - max(maxLiveTabs, 1)
-        guard excess > 0 else { return [] }
-        return live
+        guard excess > 0 else { return (0, []) }
+        let candidates = live
             .filter { !protected.contains($0.key) }
             .sorted { $0.value < $1.value }
-            .prefix(excess)
             .map(\.key)
+        return (excess, candidates)
     }
 }

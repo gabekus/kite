@@ -21,6 +21,9 @@ final class PagePool {
     private var lastShown: [UUID: Date] = [:]
     private var savedState: [UUID: Any] = [:]
     private var visibleIDs: Set<UUID> = []
+    /// An eviction pass is asking pages whether they're busy; another tab shown meanwhile runs one more after.
+    private var evicting = false
+    private var evictAgain = false
     private var memoryPressure: DispatchSourceMemoryPressure?
     /// Each open popup's tab and the tab that opened it (window.open, or a link with
     /// rel=opener). Shared by every window, since a tab's page can move between them.
@@ -218,7 +221,7 @@ final class PagePool {
             pages[id]?.setVisible(true)
             lastShown[id] = now
         }
-        hibernate(policy.tabsToEvict(live: lastShown, protected: shown))
+        evictOverLimit()
     }
 
     /// Drops pages for tabs that no longer exist, and saved history for tabs that can't come back.
@@ -399,6 +402,41 @@ final class PagePool {
             guard let script = GoogleResultsScript.label(extensionID, "Added", disabled: true) else { continue }
             page.evaluateJavaScript(script) { _ in }
         }
+    }
+
+    /// Hibernates the least recently shown tabs past the limit. A tab that's busy (media, camera, a popup's
+    /// opener) stays, and the next one goes in its place: before, it still counted, nothing else went, and
+    /// each such tab left one page more than the limit live. One pass at a time, as asking is asynchronous.
+    private func evictOverLimit() {
+        guard !evicting else { evictAgain = true; return }
+        let plan = policy.evictionPlan(live: lastShown, protected: visibleIDs)
+        guard plan.count > 0 else { return }
+        evicting = true
+        evict(plan.candidates[...], count: plan.count)
+    }
+
+    private func evict(_ candidates: ArraySlice<UUID>, count: Int) {
+        guard count > 0, let id = candidates.first else {
+            evicting = false
+            if evictAgain { evictAgain = false; evictOverLimit() }
+            return
+        }
+        let rest = candidates.dropFirst()
+        guard let page = pages[id], !visibleIDs.contains(id), !isLinkedToPopup(id) else { return evict(rest, count: count) }
+        // A page that never answers (its renderer hung) counts as busy, so the pass can't stall.
+        var answered = false
+        let answer = { [weak self] (busy: Bool) in
+            guard let self, !answered else { return }
+            answered = true
+            if !busy, self.pages[id] === page, !self.visibleIDs.contains(id), !self.isLinkedToPopup(id) {
+                self.discard(id, keepHistory: true)
+                self.evict(rest, count: count - 1)
+            } else {
+                self.evict(rest, count: count)
+            }
+        }
+        page.checkBusy { busy in answer(busy) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { answer(true) }
     }
 
     /// Hibernates tabs unless they're playing media or using the camera or mic.
