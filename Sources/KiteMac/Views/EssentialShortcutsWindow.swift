@@ -64,7 +64,7 @@ enum EssentialShortcutsWindow {
         window.titleVisibility = .hidden
         window.title = "Essential Keyboard Shortcuts"
         window.standardWindowButton(.zoomButton)?.isEnabled = false
-        window.level = .floating
+        WindowPresenter.setLevel(.floating, of: window)
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
         window.appearance = NSAppearance(named: .darkAqua)

@@ -123,7 +123,7 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
     private func setPrompting(_ prompting: Bool) {
         guard popover.isShown, let window = popover.contentViewController?.view.window else { return }
         popover.behavior = prompting ? .applicationDefined : .transient
-        if prompting { window.orderOut(nil) } else { WindowPresenter.orderFront(window) }
+        if prompting { window.orderOut(nil) } else { WindowPresenter.orderFront(window, anchor: anchor?.view.window) }
     }
 
     func popoverDidClose(_ notification: Notification) {

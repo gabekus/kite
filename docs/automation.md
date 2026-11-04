@@ -131,12 +131,29 @@ What works with Kite in the background (checked on a test build behind other win
   window behind the user's windows; capture, tree, pointer and trace all work on a covered window.
 - Test-safe windows: on a `KITE_DIAGNOSTICS=1` run every Kite window and panel (browser windows, Settings,
   onboarding, About, Essential Keyboard Shortcuts and its View All list, Little Kite, web apps, Task Manager,
-  hover cards) goes through `WindowPresenter`, which orders it behind the other apps' windows at normal level
-  (floating and modal levels are dropped, child windows go just above their parent), never makes it key and never
-  activates Kite (`WindowPresentation` in KiteCore decides). `ui windows` lists them, panels included, none key or main. Modal alerts, open
-  and save panels and the quit dialogs would come to the front, so a test-safe run skips them, answers as if
-  dismissed (no button's action runs) and writes `KITE_TEST_MODAL: alert: title | text | [buttons]` to stderr.
-  Sheets stay on their parent window and still show.
+  hover cards, popovers) goes through `WindowPresenter` (`WindowPresentation` in KiteCore decides). It never
+  makes a window key or activates Kite. A shown window goes at normal level directly above Kite's frontmost
+  window, which is behind the other apps' windows, so Kite's own stacking order matches real use (code that looks
+  for Kite's front window finds the newest); Kite's first window goes to the back, and child windows and popovers
+  go just above their parent or anchor. Floating levels (Stay On Top, the Essential Keyboard Shortcuts window)
+  aren't applied: Kite keeps the level asked for, so Stay On Top's checkmark still follows it.
+  About Kite: AppKit creates its panel and orders it front in one call, so Kite finds it as the window that
+  appeared (its class only breaks a tie) and moves it behind in the same main-thread turn; if it can't tell which
+  window is the panel, every window that appeared goes to the back.
+  `WindowPresenterGuardTests` (also `scripts/checks/window-presenter.sh`) fails on a direct window, activation,
+  modal or app-launch call anywhere else in KiteMac; a line that must make one says why after `// presenter-exempt:`.
+- `ui windows` lists them front to back in the window server's order, panels included (sheets show under their
+  parent window), none key or main.
+- Modal alerts, open and save panels (modal or not) and the quit dialogs would come to the front, so a test-safe
+  run skips them, answers as if dismissed (no button's action runs) and writes `KITE_TEST_MODAL: alert: title |
+  text | [buttons]` to stderr. "Downloads in progress" answers Close Kite instead (the downloads are cancelled), so
+  a test Kite never blocks a logout or `kite quit`. Code that shows a sheet when it has a window and a modal
+  otherwise (`if let window { beginSheet } else { runModal }`) shows the sheet in a test and waits for an answer,
+  like any sheet: sheets stay on their parent window.
+- Other apps stay where they are: opening a file or URL in another app, launching the Claude app, Show in Finder,
+  Set as Default Browser and Dock bounces are skipped with a `KITE_TEST_MODAL:` line. Pop-up menus (`menu.popUp`,
+  sidebar and Site Controls menus) and the share picker are modal menus over Kite's own window: avoid them in a
+  test (page right-click menus have `KITE_TEST_CONTEXT_MENU`).
 - `tree` gets SwiftUI's elements by asking Kite's own accessibility tree once (SwiftUI builds it only for an
   accessibility client). That needs Accessibility permission for Kite; a test build launched from a terminal or
   Claude inherits the launching app's. Without it the tree says SwiftUI's elements are missing.

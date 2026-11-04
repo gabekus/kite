@@ -23,6 +23,40 @@ struct WindowPresentationTests {
         #expect(WindowPresentation.decide(testSafe: true, level: -1).level == nil)
     }
 
+    @Test func aTestSafeWindowGoesAboveKitesFrontWindowSoKitesOwnOrderMatchesRealUse() {
+        // Behind the other apps, but in front of Kite's other windows, as a real show would put it.
+        #expect(WindowPresentation.decide(testSafe: true, kiteHasFrontWindow: true).order == .aboveKite)
+        #expect(WindowPresentation.decide(testSafe: true, isVisible: true, kiteHasFrontWindow: true).order == .aboveKite)
+        // Kite's first window has nothing of Kite's to go above: the back.
+        #expect(WindowPresentation.decide(testSafe: true).order == .behind)
+    }
+
+    @Test func aVisibleTestSafeWindowWithNothingToGoAboveStaysPut() {
+        #expect(WindowPresentation.decide(testSafe: true, isVisible: true).order == .keep)
+    }
+
+    @Test func skippedModalsAnswerAsDismissedExceptDownloadsInProgressWhichQuits() {
+        #expect(!SkippedModal.alert.proceeds)
+        #expect(!SkippedModal.openOrSavePanel.proceeds)
+        #expect(!SkippedModal.quitConfirmation.proceeds)
+        #expect(SkippedModal.downloadsInProgress.proceeds)
+    }
+
+    @Test func theAboutPanelIsTheOneWindowThatAppeared() {
+        #expect(AboutPanelLookup.decide(appeared: [7], classMatches: []) == .found(7))
+        // The class check only breaks a tie, or finds it when nothing appeared.
+        #expect(AboutPanelLookup.decide(appeared: [7, 8], classMatches: [8]) == .found(8))
+        #expect(AboutPanelLookup.decide(appeared: [Int](), classMatches: [9]) == .found(9))
+    }
+
+    @Test func anUnidentifiedAboutPanelSendsEveryNewWindowToTheBack() {
+        // 2026-11-04: a class-only lookup found nothing and left the panel in front of the user's windows.
+        #expect(AboutPanelLookup.decide(appeared: [7, 8], classMatches: []) == .orderBehind([7, 8]))
+        #expect(AboutPanelLookup.decide(appeared: [7, 8], classMatches: [1, 2]) == .orderBehind([7, 8, 1, 2]))
+        #expect(AboutPanelLookup.decide(appeared: [Int](), classMatches: [1, 2]) == .orderBehind([1, 2]))
+        #expect(AboutPanelLookup.decide(appeared: [Int](), classMatches: []) == .orderBehind([]))
+    }
+
     @Test func aTestSafeChildWindowStaysJustAboveItsParent() {
         #expect(WindowPresentation.decide(testSafe: true, key: false, hasParent: true).order == .aboveParent)
     }

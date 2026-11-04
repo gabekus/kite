@@ -1466,7 +1466,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         case #selector(renameCurrentTab(_:)):
             return store.state.selectedTab != nil
         case #selector(toggleStayOnTop(_:)):
-            item.state = window?.level == .floating ? .on : .off
+            item.state = window.map(WindowPresenter.level(of:)) == .floating ? .on : .off
         case #selector(importFromAnotherBrowser(_:)):
             // An incognito window keeps nothing, so there's nowhere to put the import.
             return !isIncognito

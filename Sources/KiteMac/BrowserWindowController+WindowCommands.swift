@@ -22,7 +22,7 @@ extension BrowserWindowController {
             if let type = UTType(filenameExtension: fileExtension) { panel.allowedContentTypes = [type] }
             panel.beginSheetModal(for: window) { response in
                 guard response == .OK, let url = panel.url else { return }
-                do { try data.write(to: url, options: .atomic) } catch { NSApp.presentError(error) }
+                do { try data.write(to: url, options: .atomic) } catch { WindowPresenter.presentError(error) }
             }
         }
     }
@@ -59,15 +59,17 @@ extension BrowserWindowController {
 
     @objc func toggleStayOnTop(_ sender: Any?) {
         guard let window else { return }
-        window.level = window.level == .floating ? .normal : .floating
+        WindowPresenter.setLevel(WindowPresenter.level(of: window) == .floating ? .normal : .floating, of: window)
     }
 
     @objc func setAsDefaultBrowser(_ sender: Any?) {
         let app = Bundle.main.bundleURL
+        // macOS's confirmation comes to the front.
+        guard !WindowPresenter.testSafe else { return WindowPresenter.logSkipped("set as default browser") }
         for scheme in ["http", "https"] {
             // macOS asks the user to confirm the change.
             NSWorkspace.shared.setDefaultApplication(at: app, toOpenURLsWithScheme: scheme) { error in
-                if let error { DispatchQueue.main.async { NSApp.presentError(error) } }
+                if let error { DispatchQueue.main.async { WindowPresenter.presentError(error) } }
             }
         }
     }
@@ -93,7 +95,7 @@ extension BrowserWindowController {
     }
 
     @objc func revealDataFolder(_ sender: Any?) {
-        NSWorkspace.shared.activateFileViewerSelecting([AppDelegate.supportDirectory])
+        WindowPresenter.revealInFinder([AppDelegate.supportDirectory])
     }
 
     /// Version, engine and macOS, for bug reports.

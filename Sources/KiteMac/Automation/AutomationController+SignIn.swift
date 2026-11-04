@@ -36,8 +36,7 @@ extension AutomationController {
             NSLog("Kite: diagnostics: sign_in would bring Kite forward%@",
                   host.canOpenPasswordManager ? " and open the password manager" : "")
         } else {
-            NSApp.activate(ignoringOtherApps: true)
-            host.window?.makeKeyAndOrderFront(nil)
+            WindowPresenter.show(host.window, activate: true)
             if host.canOpenPasswordManager {
                 try? await Task.sleep(for: .milliseconds(300))
                 _ = host.openPasswordManager()

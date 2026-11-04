@@ -1,4 +1,5 @@
 import AppKit
+import KiteCore
 import SwiftUI
 
 /// Arc 1.169's quit dialogs, both its own SwiftUI windows on a clear background (not NSAlerts).
@@ -21,7 +22,7 @@ enum QuitDialog {
             Button(title: "Quit", choice: .quit, shortcut: .defaultAction),
             Button(title: "Quit, and don’t ask again", choice: .quitAndDontAskAgain, shortcut: nil),
             Button(title: "Cancel", choice: .cancel, shortcut: .cancelAction),
-        ], over: window)
+        ], over: window, skipped: .quitConfirmation)
     }
 
     /// "Downloads in progress": true when the user picks Close Kite, false for Keep browsing.
@@ -31,7 +32,7 @@ enum QuitDialog {
                 buttons: [
                     Button(title: "Close \(appName)", choice: .quit, shortcut: .defaultAction),
                     Button(title: "Keep browsing", choice: .cancel, shortcut: .cancelAction),
-                ], over: window) == .quit
+                ], over: window, skipped: .downloadsInProgress) == .quit
     }
 
     static var appName: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Kite" }
@@ -43,11 +44,13 @@ enum QuitDialog {
         var id: String { title }
     }
 
-    private static func present(title: String, message: String?, buttons: [Button], over window: NSWindow?) -> Choice {
-        // A modal window comes to the front: a test-safe run logs it and cancels.
+    private static func present(title: String, message: String?, buttons: [Button], over window: NSWindow?,
+                                skipped: SkippedModal) -> Choice {
+        // A modal window comes to the front: a test-safe run logs it and answers without it (Downloads in progress
+        // quits, so a test Kite never blocks a logout or `kite quit`; "Quit Kite?" cancels).
         if WindowPresenter.testSafe {
             WindowPresenter.logSkipped("dialog: \(title) | [\(buttons.map(\.title).joined(separator: ", "))]")
-            return .cancel
+            return skipped.proceeds ? .quit : .cancel
         }
         let panel = DialogWindow(
             contentRect: NSRect(origin: .zero, size: NSSize(width: M.width, height: 200)),
@@ -58,7 +61,7 @@ enum QuitDialog {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.level = .modalPanel
+        WindowPresenter.setLevel(.modalPanel, of: panel)
         panel.isReleasedWhenClosed = false
         var choice = Choice.cancel
         let host = NSHostingView(rootView: QuitDialogView(title: title, message: message, buttons: buttons) { picked in
@@ -71,8 +74,7 @@ enum QuitDialog {
         panel.setContentSize(size)
         let area = window?.frame ?? NSScreen.main?.visibleFrame ?? .zero
         panel.setFrameOrigin(NSPoint(x: area.midX - size.width / 2, y: area.midY - size.height / 2))
-        panel.makeKeyAndOrderFront(nil)
-        NSApp.runModal(for: panel)
+        WindowPresenter.runModal(window: panel)
         panel.orderOut(nil)
         return choice
     }

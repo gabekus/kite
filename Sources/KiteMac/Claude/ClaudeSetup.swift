@@ -83,7 +83,7 @@ extension ClaudeTasksController {
         do {
             try body.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-            NSWorkspace.shared.open(script)
+            WindowPresenter.open(script)
         } catch {
             tell("Couldn't open Terminal", "Run this in a terminal, then click the Claude button again:\n\(claude) auth login")
         }

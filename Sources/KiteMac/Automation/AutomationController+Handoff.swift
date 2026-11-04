@@ -27,7 +27,7 @@ extension AutomationController {
         handback = nil
         // The tab in front may be one of them: show its step at once rather than on the next look.
         pollHandoffsSoon()
-        if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+        if !NSApp.isActive { WindowPresenter.requestAttention() }
         await lookAtSteps(id, attempts: UserHandoff.probeAttempts)
         // A step Claude handed over blocked is news now, not after the wait. One that turns off later, during the
         // wait, may only be the page checking what the user just did: it waits out the usual delay.
