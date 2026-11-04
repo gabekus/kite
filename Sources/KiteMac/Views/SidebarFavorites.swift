@@ -307,9 +307,7 @@ final class FavoriteTileView: SidebarFlippedView {
         defer { pressStart = nil; dragging = false }
         guard dragging else { return false }
         guard let drop = drag.end(at: sidebarPoint(event), in: store.state) else { return true }
-        var outcome: SidebarDropOutcome?
-        store.mutate { outcome = $0.dropSidebarItems(drop.ids, on: drop.target) }
-        if let outcome { actions.didDrop(outcome) }
+        actions.drop(drop.ids, drop.target)
         return true
     }
 

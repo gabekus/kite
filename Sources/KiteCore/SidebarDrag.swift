@@ -34,6 +34,36 @@ public enum SidebarDropOutcome: Equatable, Sendable {
     case movedToSpace(UUID, tabID: UUID)
 }
 
+/// Arc's confirmation for tabs moving to a space on another profile, worded as in Arc 1.169's
+/// binary (ProfilesUI): "Move tab(s) to <space>?", "<space> is using a different Profile, so you
+/// might get logged out or lose your progress in this tab / these tabs.", "This can't be undone!",
+/// with "Move it" and "Cancel", and a "Don’t ask again" suppression button.
+public struct CrossProfileMove: Equatable, Sendable {
+    public var spaceName: String
+    public var tabCount: Int
+
+    /// Where "Don’t ask again" is kept.
+    public static let suppressedKey = "crossProfileMoveWarningSuppressed"
+    public static let confirmTitle = "Move it"
+    public static let suppressionTitle = "Don\u{2019}t ask again"
+
+    public init(spaceName: String, tabCount: Int) {
+        self.spaceName = spaceName
+        self.tabCount = tabCount
+    }
+
+    public var title: String { "Move \(tabCount > 1 ? "tabs" : "tab") to \(spaceName)?" }
+
+    public var message: String {
+        "\(spaceName) is using a different Profile, so you might get logged out or lose your progress in "
+            + "\(tabCount > 1 ? "these tabs" : "this tab").\n\nThis can't be undone!"
+    }
+
+    public static func isSuppressed(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: suppressedKey)
+    }
+}
+
 extension BrowserState {
     /// A drag's unit for an item: a split's members move together, so a tab in a split stands
     /// for the split (its ID). Folders and lone tabs stand for themselves.
@@ -171,6 +201,25 @@ extension BrowserState {
         if toSection == .pinned, fromSections == [.unpinned] { return .pinned(count: units.count) }
         if toSection == .unpinned, fromSections == [.pinned] { return .unpinned(count: units.count) }
         return .moved
+    }
+
+    /// Arc's warning before a move takes tabs to a space on another profile (ProfileDialogUtils):
+    /// their pages would reopen in that profile, without its logins. Nil when the drop isn't
+    /// allowed or every moved tab already uses the destination's profile.
+    public func crossProfileMove(_ ids: [UUID], on target: SidebarDropTarget) -> CrossProfileMove? {
+        guard canDrop(ids, on: target) else { return nil }
+        let destination: Int? = switch target {
+        // Favorites are the current profile's, and only its tabs are on screen to drag there.
+        case .favorites: nil
+        case .pinned(let space, _, _), .unpinned(let space, _), .space(let space): spaceIndex(space)
+        case .folder(let folder): spaceContaining(folder: folder)
+        case .split(let anchor, _): location(of: anchor)?.space
+        }
+        guard let destination else { return nil }
+        let profile = profileDirectory(ofSpace: destination)
+        let crossing = ids.compactMap(dragUnit).flatMap(\.tabIDs).filter { profileDirectory(ofTab: $0) != profile }
+        guard !crossing.isEmpty else { return nil }
+        return CrossProfileMove(spaceName: spaces[destination].name, tabCount: crossing.count)
     }
 
     // MARK: Helpers

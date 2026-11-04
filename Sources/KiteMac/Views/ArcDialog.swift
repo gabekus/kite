@@ -47,6 +47,27 @@ final class ArcDialog {
                 width: width) { action, texts in completion(action, texts.first ?? "") }
     }
 
+    /// A message with a suppression checkbox (Arc's "Don’t ask again"), whose state comes back
+    /// with the choice.
+    @discardableResult
+    static func present(
+        on window: NSWindow,
+        title: String,
+        message: String,
+        suppression: String,
+        actions: [Action],
+        completion: @escaping (_ action: Int?, _ suppressed: Bool) -> Void
+    ) -> ArcDialog {
+        let dialog = ArcDialog(title: title, message: message, fields: [], actions: actions,
+                               width: ArcDialogMetrics.defaultWidth) { _, _ in }
+        dialog.model.suppressionTitle = suppression
+        dialog.completion = { [model = dialog.model] action, _ in completion(action, model.suppressed) }
+        dialog.parent = window
+        dialog.retainedWhileShown = dialog
+        window.beginSheet(dialog.sheet) { _ in }
+        return dialog
+    }
+
     /// The same with several fields, stacked (a form).
     @discardableResult
     static func present(
@@ -113,6 +134,8 @@ final class ArcDialog {
         let fields: [Field]
         let actions: [Action]
         var texts: [String]
+        var suppressionTitle: String?
+        var suppressed = false
         var choose: (Int) -> Void = { _ in }
 
         init(title: String, message: String?, fields: [Field], actions: [Action]) {
@@ -232,6 +255,12 @@ private struct DialogView: View {
             }
             .padding(.horizontal, M.contentInset)
             HStack(spacing: M.buttonSpacing) {
+                if let suppression = model.suppressionTitle {
+                    Toggle(suppression, isOn: $model.suppressed)
+                        .toggleStyle(.checkbox)
+                        .font(.system(size: M.detailSize))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
                 Spacer(minLength: 0)
                 ForEach(Array(model.actions.enumerated()), id: \.offset) { index, action in
                     ArcDialogButton(action.title, role: action.role, isDefault: index == model.defaultIndex) {

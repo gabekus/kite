@@ -46,8 +46,9 @@ struct SidebarActions {
     var showsProfiles = true
     /// Instant Links' loading row's close button.
     var dismissInstantLinks: (UUID) -> Void = { _ in }
-    /// After a drag drops something in the sidebar: Arc's move toasts.
-    var didDrop: (SidebarDropOutcome) -> Void = { _ in }
+    /// A drag dropped items in the sidebar: the move (after Arc's warning when it changes their
+    /// profile), then Arc's move toasts.
+    var drop: ([UUID], SidebarDropTarget) -> Void = { _, _ in }
     /// The pointer moved onto a favorite's tile (with the tile's view), or off it (nil): its preview card.
     var previewFavorite: (BrowserTab?, NSView?) -> Void = { _, _ in }
 }

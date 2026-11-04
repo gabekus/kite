@@ -283,7 +283,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             newProfile: { [weak self] id in self?.presentCreateProfile(for: id) },
             showsProfiles: !isIncognito,
             dismissInstantLinks: { [weak self] id in self?.instantLinks.dismiss(id) },
-            didDrop: { [weak self] outcome in self?.sidebarDropped(outcome) },
+            drop: { [weak self] ids, target in self?.dropSidebarItems(ids, on: target) },
             previewFavorite: { [weak self] tab, anchor in self?.previewFavorite(tab, anchor: anchor) }
         )
         spaceSwipe = SpaceSwipeController(

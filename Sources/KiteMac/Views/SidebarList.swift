@@ -447,9 +447,7 @@ final class SidebarSpaceList: NSView {
 
     func endDrag(at point: CGPoint) {
         guard let drop = drag.end(at: point, in: store.state) else { return }
-        var outcome: SidebarDropOutcome?
-        store.mutate { outcome = $0.dropSidebarItems(drop.ids, on: drop.target) }
-        if let outcome { actions.didDrop(outcome) }
+        actions.drop(drop.ids, drop.target)
     }
 }
 

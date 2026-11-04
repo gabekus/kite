@@ -29,6 +29,35 @@ extension BrowserWindowController {
         }
     }
 
+    /// A sidebar drop: the move, then its toast.
+    func dropSidebarItems(_ ids: [UUID], on target: SidebarDropTarget) {
+        confirmCrossProfileMove(ids, on: target) { [weak self] in
+            guard let self else { return }
+            var outcome: SidebarDropOutcome?
+            store.mutate { outcome = $0.dropSidebarItems(ids, on: target) }
+            if let outcome { sidebarDropped(outcome) }
+        }
+    }
+
+    /// Arc's warning when a user's move takes tabs to a space on another profile, where they might
+    /// be logged out: `move` runs at once when they stay in their profile, otherwise only on
+    /// "Move it" (or when "Don’t ask again" was ticked before). Claude's moves don't come here.
+    func confirmCrossProfileMove(_ ids: [UUID], on target: SidebarDropTarget, then move: @escaping () -> Void) {
+        guard let warning = store.state.crossProfileMove(ids, on: target), !CrossProfileMove.isSuppressed(),
+              let window else { return move() }
+        ArcDialog.present(
+            on: window,
+            title: warning.title,
+            message: warning.message,
+            suppression: CrossProfileMove.suppressionTitle,
+            actions: [.init(title: "Cancel", role: .cancel), .init(title: CrossProfileMove.confirmTitle, role: .primary)]
+        ) { action, suppressed in
+            guard action == 1 else { return }
+            if suppressed { UserDefaults.standard.set(true, forKey: CrossProfileMove.suppressedKey) }
+            move()
+        }
+    }
+
     /// Arc's command bar "Move to Today in <space>": the current tab (its split, if it's in one) to the
     /// top of that space's Today.
     @objc func moveTabToToday(_ sender: NSMenuItem) {
@@ -52,8 +81,6 @@ extension BrowserWindowController {
         let target: SidebarDropTarget = pinned
             ? .pinned(space: space.id, folder: nil, before: nil)
             : .unpinned(space: space.id, before: space.tabs.first?.id)
-        var outcome: SidebarDropOutcome?
-        store.mutate { outcome = $0.dropSidebarItems([$0.sidebarDragID(for: tab.id)], on: target) }
-        if let outcome { sidebarDropped(outcome) }
+        dropSidebarItems([state.sidebarDragID(for: tab.id)], on: target)
     }
 }
