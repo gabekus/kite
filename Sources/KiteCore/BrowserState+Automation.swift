@@ -89,6 +89,18 @@ extension BrowserState {
         return line.isEmpty ? nil : String(line.prefix(maxSessionFolderName))
     }
 
+    /// The session folder name for a Claude session that never named one (a client whose tool list predates
+    /// `session`, or one that left it out), so its tabs still sit together rather than loose in the Claude
+    /// folder: the site of its first page and the time, like "developer.ups.com · 14:05".
+    public static func automaticSessionFolderName(for url: URL?, at date: Date = Date(), timeZone: TimeZone = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "HH:mm"
+        let host = url?.host().map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 }.flatMap { $0.isEmpty ? nil : $0 }
+        return cleanSessionFolderName("\(host ?? "Claude") · \(formatter.string(from: date))") ?? claudeFolderName
+    }
+
     /// The folder for one Claude session inside the space's Claude folder (Claude › Session name), reused
     /// when a folder by that name (any case) is already there. Ephemeral like the Claude folder.
     public mutating func claudeSessionFolder(named name: String, inSpace id: UUID) -> UUID? {
@@ -170,6 +182,29 @@ extension BrowserState {
 }
 
 extension BrowserState {
+    /// A tab that tab `opener`'s page opened (a link to a new tab, a popup). As in Arc it goes to the top
+    /// of the unpinned tabs, except from a tab in a Claude folder: there it stays with Claude's work, pinned
+    /// right after its opener (after its split, when it's in one) in the same folder, the session's own
+    /// when the opener has one, so pages a task opens don't land among the user's tabs.
+    @discardableResult
+    public mutating func openTab(id: UUID = UUID(), url: URL?, openedBy opener: UUID, select: Bool = true,
+                                 now: Date = Date()) -> UUID {
+        guard isInEphemeralFolder(opener), let s = location(of: opener)?.space else {
+            return openTab(id: id, url: url, select: select, now: now)
+        }
+        var tab = BrowserTab(id: id, url: url, lastActiveAt: now)
+        tab.openedByPage = true
+        let after = split(containing: opener)?.split.tabIDs.last ?? opener
+        guard spaces[s].pinnedItems.insertTab(tab, after: after) || spaces[s].pinnedItems.insertTab(tab, after: opener) else {
+            return openTab(id: id, url: url, select: select, now: now)
+        }
+        if select {
+            spaces[s].selectedTabID = id
+            selectedSpaceID = spaces[s].id
+        }
+        return id
+    }
+
     /// Whether a tab sits in an ephemeral (Claude) folder, at any depth.
     public func isInEphemeralFolder(_ id: UUID) -> Bool {
         guard let s = location(of: id)?.space else { return false }

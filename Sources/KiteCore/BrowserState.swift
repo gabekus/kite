@@ -453,6 +453,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
             if !tab.isBlank {
                 var closed = ClosedTab(tab: tab, spaceID: spaces[s].id, index: 0)
                 closed.tab.splitPane = nil
+                closed.tab.openedByPage = nil
                 recentlyClosed.append(closed)
                 if recentlyClosed.count > Self.recentlyClosedLimit {
                     recentlyClosed.removeFirst(recentlyClosed.count - Self.recentlyClosedLimit)
@@ -491,10 +492,10 @@ public struct BrowserState: Hashable, Codable, Sendable {
     }
 
     /// A pinned tab or favorite that closing removes rather than unloads: a pane Add Split View
-    /// added next to one, or a tab that never had a page.
+    /// added next to one, a tab a page opened into a Claude folder, or a tab that never had a page.
     public func closesForGood(tab id: UUID) -> Bool {
         guard let tab = tab(id) else { return false }
-        return tab.splitPane == true || tab.isBlank
+        return tab.splitPane == true || tab.isBlank || (tab.openedByPage == true && isInEphemeralFolder(id))
     }
 
     /// Whether the sidebar row shows its close button. Tabs Claude opened in its folders don't:

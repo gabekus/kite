@@ -86,12 +86,16 @@ extension AutomationController {
             }
         }
 
+        let started = Date()
         let output = try await pageAction(command, tab: tab, page: page, driver: driver, actions: actions)
         // After something that can change the page, say what changed since Claude's last read
-        // (only when there is a last read, so a tab that's never been read costs nothing extra).
+        // (only when there is a last read, so a tab that's never been read costs nothing extra),
+        // and where the work went if it opened tabs.
         switch command {
         case .click, .type, .formInput, .handleDialog, .navigate, .computer(_, .click), .computer(_, .key), .computer(_, .type):
-            return await withChanges(output, tab: tab.id, driver: driver)
+            var result = await withChanges(output, tab: tab.id, driver: driver)
+            if let opened = openedReport(by: tab.id, since: started) { result.content.append(.text(opened)) }
+            return result
         default:
             return output
         }
@@ -438,7 +442,12 @@ extension AutomationController {
         var placement = placement
         switch placement {
         case .claudeSessionFolder(_, let session): sessionFolders[connection] = session
-        case .claudeFolder(let space): if let session = sessionFolders[connection] { placement = .claudeSessionFolder(space: space, session: session) }
+        case .claudeFolder(let space) where Self.agentTask == nil:
+            // A session that never names one still gets a folder of its own, so its tabs don't scatter.
+            let session = sessionFolders[connection]
+                ?? BrowserState.automaticSessionFolderName(for: string.flatMap { try? resolveURL($0) })
+            sessionFolders[connection] = session
+            placement = .claudeSessionFolder(space: space, session: session)
         default: break
         }
         let url = try string.map(resolveURL)
@@ -655,6 +664,7 @@ extension AutomationController {
     private func moveToClaudeFolder(_ string: String?, session: String?, connection: Int) throws -> ToolOutput {
         let tab = try resolveTab(string)
         let session = session ?? sessionFolders[connection]
+            ?? (Self.agentTask == nil ? BrowserState.automaticSessionFolderName(for: tab.url) : nil)
         if let session { sessionFolders[connection] = session }
         let moved = store.mutateWithoutUndo { state -> String? in
             guard let space = state.location(of: tab.id)?.space else { return nil }
@@ -705,16 +715,20 @@ extension AutomationController {
 
     func tabList() -> [AutomationReport.Tab] {
         let state = store.state
+        func opener(_ id: UUID) -> UUID? { openedTabs.opener(of: id).flatMap { state.tab($0) == nil ? nil : $0 } }
         let front = state.selectedTab?.id
         var tabs = state.favorites.map {
-            AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: "Favorites", section: "favorite", isFront: $0.id == front)
+            AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: "Favorites", section: "favorite", isFront: $0.id == front,
+                                 openedBy: opener($0.id))
         }
         for space in state.spaces {
             tabs += space.pinned.map {
-                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "pinned", isFront: $0.id == front)
+                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "pinned", isFront: $0.id == front,
+                                     openedBy: opener($0.id))
             }
             tabs += space.tabs.map {
-                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "tab", isFront: $0.id == front)
+                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "tab", isFront: $0.id == front,
+                                     openedBy: opener($0.id))
             }
         }
         return tabs

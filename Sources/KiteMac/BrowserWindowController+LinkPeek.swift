@@ -218,7 +218,7 @@ extension BrowserWindowController {
         guard let session = linkPeek, let url = session.url else { return }
         _ = session.view.detachPage()
         closeLinkPeek(animated: false)
-        pool.openTab(with: session.page, url: url)
+        pool.openTab(with: session.page, url: url, source: session.sourceTabID)
         if let title = session.title, let id = store.state.selectedTab?.id { store.pageTitleChanged(id, title) }
     }
 
@@ -250,18 +250,18 @@ extension BrowserWindowController {
         case .closeRequested:
             if linkPeek === session { closeLinkPeek(animated: true) } else { discardParkedLinkPeek(of: session.sourceTabID) }
         case .openInNewTab(let url, let foreground):
-            store.mutate { $0.openTab(url: url, select: foreground) }
+            pool.openTab(url: url, openedBy: session.sourceTabID, select: foreground)
         case .openInLinkPeek(let url):
-            store.mutate { $0.openTab(url: url) }
+            pool.openTab(url: url, openedBy: session.sourceTabID, select: true)
         case .openInSplit(let url):
             // The Peek's page isn't a pane yet: a ⌥⌘-click in it opens a background tab, like ⌘-click.
-            store.mutate { $0.openTab(url: url, select: false) }
+            pool.openTab(url: url, openedBy: session.sourceTabID, select: false)
         case .openInLittleKite(let url):
             DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.openLittleKiteWindow(url: url) }
         case .popup(let popup):
-            pool.openTab(with: popup)
+            pool.openTab(with: popup, source: session.sourceTabID)
         case let .openLink(url, target):
-            openLinkFromPageMenu(url, target)
+            openLinkFromPageMenu(url, target, from: session.sourceTabID)
         case .pageCommand(.viewPageSource):
             if let url = session.url, let source = URL(string: "view-source:" + url.absoluteString) {
                 store.mutate { _ = $0.openTab(url: source) }

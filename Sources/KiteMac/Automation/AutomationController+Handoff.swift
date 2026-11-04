@@ -63,8 +63,12 @@ extension AutomationController {
         }
         guard let handoff = handoffs.first(where: { $0.id == id }) else { throw AutomationError(.notFound, "Handoff \(id) is gone.") }
         reportedBlockedSteps.formUnion(handoff.blockedSteps.map(\.id))
-        let text = handoff.report(waitedOut: wait > 0 && !handoff.isFinished) { [store] tab in
+        var text = handoff.report(waitedOut: wait > 0 && !handoff.isFinished) { [store] tab in
             store.state.tab(tab).map { (url: $0.url?.absoluteString, title: $0.displayTitle) }
+        }
+        // What the user's steps opened (a popup from a button they pressed), so Claude carries on there.
+        for tab in Set(handoff.steps.compactMap(\.tab)) {
+            if let opened = openedReport(by: tab, since: handoff.created) { text += "\n\n" + opened }
         }
         return .text(text)
     }
