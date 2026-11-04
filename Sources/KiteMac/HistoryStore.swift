@@ -115,6 +115,8 @@ final class HistoryStore {
     /// Writes this store and every profile's that changed, and returns once they're on disk.
     func saveNow() {
         save(waiting: true)
+        // A debounced write already queued (the store is clean then) lands before this returns too: at quit.
+        Self.writeQueue.sync {}
     }
 
     private func save(waiting: Bool) {
