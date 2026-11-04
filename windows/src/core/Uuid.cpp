@@ -12,7 +12,13 @@ std::string NewUuid() {
     // Every byte straight from the OS's secure generator (rand_s / BCryptGenRandom on Windows,
     // /dev/urandom elsewhere). A PRNG seeded from one 32-bit word would give every launch one
     // of only 2^32 id sequences, and two launches could mint the same ids in one profile.
+#ifdef _WIN32
     std::random_device device;
+#else
+    // libstdc++'s default device prefers the CPU's RDSEED/RDRAND, which some CPUs get wrong
+    // (an AMD Ryzen 9800X3D under WSL gives 0 more often than not): the kernel's pool instead.
+    std::random_device device("/dev/urandom");
+#endif
     unsigned char bytes[16];
     for (int i = 0; i < 16; i += 4) {
         uint32_t r = static_cast<uint32_t>(device());
