@@ -67,6 +67,46 @@ for as long as it needs to. An agent can't override a gate.
 4. **Gabe.** He approves the checkpoint (usually by merging its PR). In
    autonomous mode this gate is skipped and the other three still apply.
 
+### Requesting Mac references
+
+The Mac side of the UI gate runs in CI, so it doesn't wait for Gabe to be at his Mac. Branch
+`review/<id>-mac-request` from main, add `review/<id>-mac-request/request.json` and push it.
+`.github/workflows/mac-reference-captures.yml` then runs on the Mac runner (`MACOS_RUNNER`; a run
+waits while the Mac sleeps), builds `scripts/bundle-app.sh debug` from the request's `base`
+(default origin/main), takes each state with `scripts/mac-reference-captures.sh`, and pushes the
+PNGs, `NAME.tree.txt` frames and a NOTES.md to `review/<id>-mac` (logs go to the run's artifact).
+`gh workflow run "Mac reference captures" -f request_branch=review/<id>-mac-request` reruns one.
+
+```json
+{
+  "id": "w9d", "title": "W9d Mac references: …", "base": "origin/main", "window_size": [1280, 820],
+  "session": {"ref": "origin/helix/W9d-space-editing", "path": "windows/helix/states/three-spaces.json"},
+  "tree_match": "SpaceCellView", "expect_frames": [[68, 778, 36, 34]],
+  "states": [
+    {"name": "rest", "holds": "the three spaces at rest"},
+    {"name": "drag", "steps": [{"ui": "input", "args": {"from": [86, 795], "to": [150, 795], "steps": 10, "hold": 10}}],
+     "hold": 10},
+    {"name": "rename", "env": {"KITE_TEST_CONTEXT_MENU": "Rename Space…"},
+     "steps": [{"ui": "input", "args": {"click": [86, 795], "button": "right"}}], "settle": 1}
+  ]
+}
+```
+
+Each state gets a fresh profile with its `session` (`ref` + `path` from any branch, or `inline`),
+`defaults delete dev.gabek.Kite.dev SidebarWidth`, and `KITE_DIAGNOSTICS=1 KITE_WINDOW_SIZE=W,H`
+plus its `env` (`KITE_TEST_*` hooks only) and `profile_files` (`test-*`). Its `steps` are `kite ui`
+actions (`{"ui": ACTION, "args": {…}}`) and pauses (`{"wait": s}`). The capture comes `settle`
+seconds after the last step (default 1), or straight away when `hold` says the steps hold the state
+that long. It's `kite ui capture '{"source":"in-process"}'` at 2×, with the tree's `tree_match`
+frames read before and after. `expect_frames` are the frames your points assume, and NOTES.md
+flags any the tree didn't show. `"capture": false` runs a state for its hook logs only, and
+`"unverified"` / `"skip"` say what it can't show. The full format is at the top of the script.
+
+Everything is headless: the build opens behind other windows and is never activated, input goes to
+its window only, nothing records the screen. What needs a real screen (a real right-click menu,
+`screencapture`, focus) isn't taken and is listed in NOTES.md as unverified. A right-click step is
+refused unless the state sets `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it.
+
 ## Evidence
 
 Every checkpoint's PR carries its evidence: the test run, both captures and
