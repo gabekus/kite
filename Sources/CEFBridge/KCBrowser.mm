@@ -470,7 +470,7 @@ class KCClient : public CefClient,
                  public CefJSDialogHandler,
                  public CefDevToolsMessageObserver {
  public:
-    explicit KCClient(KCBrowser* owner) : owner_(owner), requests_(new NetworkCountingHandler(owner, KCAdblockRequestHandler(owner))) {}
+    explicit KCClient(KCBrowser* owner) : owner_(owner), container_(owner.view), requests_(new NetworkCountingHandler(owner, KCAdblockRequestHandler(owner))) {}
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -640,7 +640,10 @@ class KCClient : public CefClient,
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
         KCRegisterBrowser(browser);
         devtools_registration_ = browser->GetHost()->AddDevToolsMessageObserver(this);
-        [owner_ attachBrowser:browser];
+        KCBrowser* owner = owner_;
+        // Its KCBrowser went away while Chromium was making it: nothing would ever close it.
+        if (!owner) return browser->GetHost()->CloseBrowser(true);
+        [owner attachBrowser:browser];
     }
 
     bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
@@ -665,14 +668,19 @@ class KCClient : public CefClient,
         bool linkClick = (target_disposition == CEF_WOD_NEW_FOREGROUND_TAB || target_disposition == CEF_WOD_NEW_WINDOW) &&
                          target_frame_name.empty();
         if (user_gesture && linkClick && AskLinkPeek(owner, target_url, target_disposition == CEF_WOD_NEW_WINDOW)) return true;
-        // Host the popup in a Kite tab instead of a separate native window.
+        // Host the popup in a Kite tab instead of a separate native window. Asked first: a page nobody
+        // shows (a background reader, an install or verification page) has nowhere to put one, so the
+        // popup is cancelled (window.open returns null) rather than built into a view that's going away.
         KCBrowser* popup = [[KCBrowser alloc] initPopupWithDelegate:delegate];
+        if (![delegate browser:owner didCreatePopup:popup url:ToNSURL(target_url)]) {
+            [popup close];
+            return true;
+        }
         NSRect bounds = owner.view.bounds;
         windowInfo.SetAsChild((__bridge CefWindowHandle)popup.view,
                               CefRect(0, 0, (int)NSWidth(bounds), (int)NSHeight(bounds)));
         client = new KCClient(popup);
         settings.background_color = KCPageBackdropColor;
-        [delegate browser:owner didCreatePopup:popup url:ToNSURL(target_url)];
         [popup prepareFirstPage:ToNSURL(target_url)];
         return false;
     }
@@ -694,6 +702,7 @@ class KCClient : public CefClient,
         PendingBeforeUnload().erase(browser->GetIdentifier());
         [owner_ browserDidClose];
         KCUnregisterBrowser(browser);
+        container_ = nil;
     }
 
     // CefDisplayHandler
@@ -1044,6 +1053,10 @@ class KCClient : public CefClient,
 
  private:
     __weak KCBrowser* owner_;
+    /// The view Chromium builds the browser into (`SetAsChild`), which holds Chromium's own view: kept
+    /// until the browser closes, so a KCBrowser released early (a page dropped without `close`, or
+    /// before Chromium made it) never leaves Chromium with a freed parent.
+    NSView* container_;
     /// Ids for getUserMedia prompts, counting down so they never meet Chromium's prompt ids.
     NSInteger media_prompt_id_ = 0;
     CefRefPtr<CefRegistration> devtools_registration_;
@@ -1236,6 +1249,14 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 }
 
 - (void)dealloc {
+    // Dropped without `close` (no tab took it): close it now, or its renderer keeps running, and
+    // playing, with nothing on screen. The client keeps the container view until Chromium is done.
+    if (_browser && !_closed && !KCRuntimeIsQuitting()) {
+        CefRefPtr<CefBrowser> browser = _browser;
+        _browser = nullptr;
+        KCAcceptPendingBeforeUnload(browser);
+        browser->GetHost()->CloseBrowser(true);
+    }
     delete _pendingDevTools;
 }
 
@@ -1285,7 +1306,10 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
     if (_audioMuted) browser->GetHost()->SetAudioMuted(true);
     if (_autoResize) [self enableAutoResizeWithMinSize:_autoResizeMinSize maxSize:_autoResizeMaxSize];
     if (_forceDark) [self applyForceDark];
-    if (_hidden) browser->GetHost()->WasHidden(true);
+    if (_hidden) {
+        browser->GetHost()->WasHidden(true);
+        [self applyHidden];
+    }
     if (_pendingFocus) [self focus];
 }
 
@@ -1338,7 +1362,17 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 
 - (void)setHidden:(BOOL)hidden {
     _hidden = hidden;
-    if (_browser) _browser->GetHost()->WasHidden(hidden);
+    if (!_browser) return;
+    _browser->GetHost()->WasHidden(hidden);
+    [self applyHidden];
+}
+
+/// WasHidden only counts for windowless browsers (cef_browser.h). A windowed one goes by its view:
+/// Chromium reports a hidden view (or one with a hidden ancestor) as hidden and throttles it, as it does
+/// a tab out of the window. So a page still in the window but covered (under the Library) stops drawing.
+- (void)applyHidden {
+    NSView* browserView = (__bridge NSView*)_browser->GetHost()->GetWindowHandle();
+    if (browserView && browserView.hidden != _hidden) browserView.hidden = _hidden;
 }
 
 - (double)zoomFactor {
@@ -1817,6 +1851,15 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
     if (_browser && !_closeApproved) {
         KCAcceptPendingBeforeUnload(_browser);
         _browser->GetHost()->CloseBrowser(true);
+    }
+    // Calls waiting for a browser that may never come (a cancelled popup) answer on a later turn;
+    // until then they hold this object.
+    if (!_attached && _queuedDevTools.count) {
+        NSArray<void (^)(void)>* queued = [_queuedDevTools copy];
+        [_queuedDevTools removeAllObjects];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            for (void (^call)(void) in queued) call();
+        });
     }
 }
 

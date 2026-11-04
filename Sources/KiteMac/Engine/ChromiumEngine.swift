@@ -742,8 +742,13 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         onEvent?(.openInNewTab(url, foreground: foreground))
     }
 
-    func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) {
-        onEvent?(.popup(ChromiumPage(browser: popup, adblocker: adblocker, appliesBoosts: appliesBoosts)))
+    func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) -> Bool {
+        guard let onEvent else { return false }
+        let page = ChromiumPage(browser: popup, adblocker: adblocker, appliesBoosts: appliesBoosts)
+        onEvent(.popup(page))
+        // Whatever keeps a popup gives it a handler (`PagePool.register`); a background page's handler
+        // (a reader, an install, a verification page) lets it go.
+        return page.onEvent != nil
     }
 
     func browserDidRequestClose(_ browser: KCBrowser) { onEvent?(.closeRequested) }
@@ -882,7 +887,7 @@ private final class ChromiumDelegateProxy: NSObject, KCBrowserDelegate {
     func browserLoadingStateDidChange(_ browser: KCBrowser) {}
     func browser(_ browser: KCBrowser, mediaAccessDidChange inUse: Bool) {}
     func browser(_ browser: KCBrowser, openURLInNewTab url: URL, foreground: Bool) {}
-    func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) {}
+    func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) -> Bool { false }
     func browserDidRequestClose(_ browser: KCBrowser) {}
 }
 #endif
