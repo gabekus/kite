@@ -2,13 +2,25 @@
 
 #include "shell/Chromium.h"
 
+#include <imm.h>
+// GET_X_LPARAM and GET_Y_LPARAM without windowsx.h, whose macros (GetFirstChild...) break cef_dom.h.
+#ifndef GET_X_LPARAM
+#define GET_X_LPARAM(lp) (static_cast<int>(static_cast<short>(LOWORD(lp))))
+#define GET_Y_LPARAM(lp) (static_cast<int>(static_cast<short>(HIWORD(lp))))
+#endif
+
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <deque>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <set>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -19,6 +31,7 @@
 #include "include/cef_focus_handler.h"
 #include "include/cef_keyboard_handler.h"
 #include "include/cef_request_context.h"
+#include "include/cef_render_handler.h"
 #include "include/cef_request_handler.h"
 #include "include/cef_task.h"
 #include "core/Json.h"
@@ -26,6 +39,7 @@
 #include "core/Uuid.h"
 #include "shell/Keys.h"
 #include "shell/MainWindow.h"
+#include "shell/OffscreenPage.h"
 
 namespace kite {
 
@@ -156,6 +170,66 @@ struct Chromium::Shared {
         return bounds;
     }
 
+    // W10 spike: --osr's off-screen pages (OffscreenOptions). Set before CefInitialize.
+    bool osr = false;
+    OffscreenOptions offscreen;
+    std::unique_ptr<OffscreenPresenter> presenter;
+    UINT dpi = USER_DEFAULT_SCREEN_DPI;  // under the mutex
+    std::atomic<HCURSOR> cursor{nullptr};
+    CefRefPtr<CefBrowser> selfTestBrowser;  // under the mutex: the shown page, for the self-test
+    std::string selfTestTitle;              // under the mutex: its last title
+    // Kite's UI thread only: the page's share of the window's input.
+    bool pageHasKeyboard = false;
+    bool mouseInPage = false;
+    bool pageCapture = false;
+    int clickCount = 0;
+    DWORD lastClickTime = 0;
+    POINT lastClickAt{};
+    UINT lastClickButton = 0;
+    float Scale() {
+        std::lock_guard lock(mutex);
+        return static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
+    }
+    // The card in DIPs, as the page lays out in it.
+    CefRect ViewRect() {
+        std::lock_guard lock(mutex);
+        const float scale = static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
+        return CefRect(0, 0, std::max(1, static_cast<int>(std::lround((bounds.right - bounds.left) / scale))),
+                       std::max(1, static_cast<int>(std::lround((bounds.bottom - bounds.top) / scale))));
+    }
+
+    // The shown page on the card, the rest hidden: WasHidden and WasResized instead of
+    // windows (the windowed Layout's widget-window trick isn't needed).
+    void LayoutOffscreen() {
+        const RECT card = Bounds();
+        int shownID = 0;
+        std::vector<std::pair<CefRefPtr<CefBrowser>, Placement>> changes;
+        for (auto& [id, page] : pages) {
+            if (!page.browser) continue;
+            Placement wanted;
+            wanted.visible = id == shown && !minimized;
+            wanted.rect = wanted.visible ? card : page.placed.rect;
+            if (wanted.visible) shownID = page.browser->GetIdentifier();
+            if (wanted == page.placed) continue;
+            page.placed = wanted;
+            changes.emplace_back(page.browser, wanted);
+        }
+        if (presenter) presenter->Place(card, 6.0f * Scale(), shownID != 0);
+        RunOnCefUIThread([presenter = presenter.get(), shownID, changes = std::move(changes)] {
+            if (presenter) presenter->SetShown(shownID);
+            for (const auto& [browser, placement] : changes) {
+                CefRefPtr<CefBrowserHost> host = browser->GetHost();
+                host->WasHidden(!placement.visible);
+                if (presenter && !placement.visible) ++presenter->Stats()->hides;
+                if (placement.visible) {
+                    host->WasResized();
+                    host->Invalidate(PET_VIEW);  // a frame now, not on the page's next change
+                    if (presenter) ++presenter->Stats()->resizes;
+                }
+            }
+        });
+    }
+
     // Puts the shown tab's window on the card and hides the rest, on CEF's thread, which owns
     // them, and only for windows whose placement changed. The page's widget window
     // (Chromium's Chrome_WidgetWin_N, the host window's child; FindPageWidget) is hidden and
@@ -168,6 +242,7 @@ struct Chromium::Shared {
     // is reported (widgetMissing, which fails --smoke-test); W10's off-screen pages replace it
     // with WasHidden.
     void Layout() {
+        if (osr) return LayoutOffscreen();
         const RECT card = Bounds();
         std::vector<std::pair<HWND, Placement>> changes;
         for (auto& [id, page] : pages) {
@@ -201,7 +276,10 @@ struct Chromium::Shared {
     void FocusShown() {
         if (inputBlocked) return;
         auto it = pages.find(shown);
-        if (it != pages.end() && it->second.browser) it->second.browser->GetHost()->SetFocus(true);
+        if (it != pages.end() && it->second.browser) {
+            it->second.browser->GetHost()->SetFocus(true);
+            pageHasKeyboard = true;
+        }
     }
 
     Page* PageFor(const std::string& tabID, const CefRefPtr<CefBrowser>& browser) {
@@ -277,7 +355,7 @@ struct Chromium::Shared {
             return;
         }
         Layout();
-        if (inputBlocked) RunOnCefUIThread([hwnd] { EnableWindow(hwnd, FALSE); });
+        if (inputBlocked && hwnd) RunOnCefUIThread([hwnd] { EnableWindow(hwnd, FALSE); });
         if (!page.pendingURL.empty()) {
             browser->GetMainFrame()->LoadURL(page.pendingURL);
             page.pendingURL.clear();
@@ -296,6 +374,19 @@ class KiteApp : public CefApp, public CefBrowserProcessHandler {
 public:
     explicit KiteApp(std::shared_ptr<Chromium::Shared> shared) : shared_(std::move(shared)) {}
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+
+    // W10 spike: which adapter Chromium's GPU process renders on. It has to be the presenter's
+    // (Kite's renderer's) for the shared texture to open without crossing GPUs, and this PC
+    // has two. Chromium's own choice already matches (both on the RX 9070 XT, by PDH), so
+    // nothing is passed by default. KITE_OSR_LUID=0xHIGH,0xLOW passes --use-adapter-luid,
+    // the form Chromium reads (decimal, or one part, is ignored); in CEF 156 here it makes
+    // ANGLE's EGL display fail on either adapter, the GPU process crashes three times and
+    // Chromium ends the browser process, Kite with it (docs/windows-osr-spike.md).
+    void OnBeforeCommandLineProcessing(const CefString& processType, CefRefPtr<CefCommandLine> commandLine) override {
+        if (!shared_->osr || !processType.empty()) return;
+        char luid[64] = {};
+        if (GetEnvironmentVariableA("KITE_OSR_LUID", luid, sizeof luid) > 0) commandLine->AppendSwitchWithValue("use-adapter-luid", luid);
+    }
 
     bool OnAlreadyRunningAppRelaunch(CefRefPtr<CefCommandLine>, const CefString&) override {
         shared_->Post([shared = shared_] {
@@ -331,6 +422,7 @@ class PageClient : public CefClient,
                    public CefKeyboardHandler,
                    public CefLoadHandler,
                    public CefRequestHandler,
+                   public CefRenderHandler,
                    public CefDevToolsMessageObserver {
 public:
     // `firstURL` is loaded once the browser exists, after the white-background override.
@@ -343,6 +435,7 @@ public:
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+    CefRefPtr<CefRenderHandler> GetRenderHandler() override { return shared_->osr ? this : nullptr; }
 
     // CefLifeSpanHandler
 
@@ -358,8 +451,9 @@ public:
         params->SetDictionary("color", color);
         browser->GetHost()->ExecuteDevToolsMethod(0, "Emulation.setDefaultBackgroundColorOverride", params);
         devTools_ = browser->GetHost()->AddDevToolsMessageObserver(this);  // for CheckBusy's answers
-        const HWND hwnd = browser->GetHost()->GetWindowHandle();
-        if (!FindPageWidget(hwnd)) {
+        // Off-screen (--osr), a page has no window of its own.
+        const HWND hwnd = shared_->osr ? nullptr : browser->GetHost()->GetWindowHandle();
+        if (!shared_->osr && !FindPageWidget(hwnd)) {
             shared_->widgetMissing = true;
             OutputDebugStringW(L"Kite: no Chromium widget window in the page's host window; background tabs won't be hidden\n");
         }
@@ -392,7 +486,13 @@ public:
             bounds = shared_->bounds;
             shared_->popupTabs[{browser->GetIdentifier(), popupID}] = id;
         }
-        windowInfo.SetAsChild(shared_->window, ToCefRect(bounds));
+        if (shared_->osr) {
+            windowInfo.SetAsWindowless(shared_->window);
+            windowInfo.shared_texture_enabled = true;
+            settings.windowless_frame_rate = shared_->offscreen.frameRate;
+        } else {
+            windowInfo.SetAsChild(shared_->window, ToCefRect(bounds));
+        }
         windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
         client = new PageClient(id, shared_);
         settings.background_color = kPageBackdrop;
@@ -419,8 +519,9 @@ public:
     bool DoClose(CefRefPtr<CefBrowser> browser) override {
         if (!shared_->closing) {
             // Only its own window goes, as the Mac's KCBrowser tears down just its view.
-            // Returning false would send WM_CLOSE to Kite's window and quit.
-            RunOnCefUIThread([hwnd = browser->GetHost()->GetWindowHandle()] { DestroyWindow(hwnd); });
+            // Returning false would send WM_CLOSE to Kite's window and quit. An off-screen page
+            // has no window: false lets CEF close it at once.
+            if (!shared_->osr) RunOnCefUIThread([hwnd = browser->GetHost()->GetWindowHandle()] { DestroyWindow(hwnd); });
             shared_->Post([shared = shared_, id = tabID_, browser] {
                 // Still its tab's page: it closed itself (window.close(), as a sign-in popup
                 // does when it's done), and Kite hears of it. Otherwise Kite closed it.
@@ -432,7 +533,7 @@ public:
                     shared->Retired(browser);
                 }
             });
-            return true;
+            return !shared_->osr;
         }
         // Kite is closing: ask the window again, which closes once every browser is through
         // here or gone (MayCloseWindow). CEF would send that WM_CLOSE itself when this returns
@@ -520,6 +621,12 @@ public:
     }
 
     void OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString& title) override {
+        if (shared_->osr) {
+            // The first page's (a popup it opens reports nothing here).
+            std::lock_guard lock(shared_->mutex);
+            if (!shared_->selfTestBrowser) shared_->selfTestBrowser = browser;
+            if (shared_->selfTestBrowser->IsSame(browser)) shared_->selfTestTitle = title.ToString();
+        }
         shared_->Post([shared = shared_, id = tabID_, browser, text = title.ToString()] {
             if (shared->PageFor(id, browser) && shared->events.titleChanged) shared->events.titleChanged(id, text);
         });
@@ -528,6 +635,87 @@ public:
     void OnFaviconURLChange(CefRefPtr<CefBrowser> browser, const std::vector<CefString>& urls) override {
         shared_->Post([shared = shared_, id = tabID_, browser, url = urls.empty() ? std::string() : urls.front().ToString()] {
             if (shared->PageFor(id, browser) && shared->events.faviconChanged) shared->events.faviconChanged(id, url);
+        });
+    }
+
+    // CefDisplayHandler, off-screen: the page's cursor is Kite's to set (W10 spike).
+    bool OnCursorChange(CefRefPtr<CefBrowser>, CefCursorHandle cursor, cef_cursor_type_t type, const CefCursorInfo&) override {
+        if (!shared_->osr) return false;
+        shared_->cursor = cursor;
+        if (shared_->presenter) {
+            ++shared_->presenter->Stats()->cursorChanges;
+            shared_->presenter->Stats()->lastCursorType = static_cast<uint64_t>(type);
+        }
+        shared_->Post([shared = shared_] {
+            if (shared->mouseInPage) SetCursor(shared->cursor.load());
+        });
+        return true;
+    }
+
+    // CefRenderHandler (W10 spike, --osr only): the card's size and scale, and its frames.
+
+    void GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) override { rect = shared_->ViewRect(); }
+
+    bool GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) override {
+        const CefRect view = shared_->ViewRect();
+        info.device_scale_factor = shared_->Scale();
+        info.depth = 24;
+        info.depth_per_component = 8;
+        info.rect = view;
+        info.available_rect = view;
+        return true;
+    }
+
+    bool GetScreenPoint(CefRefPtr<CefBrowser>, int viewX, int viewY, int& screenX, int& screenY) override {
+        const RECT card = shared_->Bounds();
+        const float scale = shared_->Scale();
+        POINT p{card.left + static_cast<LONG>(std::lround(viewX * scale)), card.top + static_cast<LONG>(std::lround(viewY * scale))};
+        if (!ClientToScreen(shared_->window, &p)) return false;
+        screenX = p.x;
+        screenY = p.y;
+        return true;
+    }
+
+    void OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) override {
+        if (!shared_->presenter || browser->GetIdentifier() != shared_->presenter->Shown()) return;
+        shared_->presenter->PopupShown(show);
+        if (shared_->presenter->NeedsViewRepaint()) browser->GetHost()->Invalidate(PET_VIEW);
+    }
+
+    void OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect) override {
+        if (!shared_->presenter || browser->GetIdentifier() != shared_->presenter->Shown()) return;
+        const float scale = shared_->Scale();
+        shared_->presenter->PopupRect(RECT{static_cast<LONG>(std::lround(rect.x * scale)), static_cast<LONG>(std::lround(rect.y * scale)),
+                                           static_cast<LONG>(std::lround((rect.x + rect.width) * scale)),
+                                           static_cast<LONG>(std::lround((rect.y + rect.height) * scale))});
+    }
+
+    void OnPaint(CefRefPtr<CefBrowser>, PaintElementType, const RectList&, const void*, int, int) override {}
+
+    void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser, PaintElementType type, const RectList&,
+                            const CefAcceleratedPaintInfo& info) override {
+        if (!shared_->presenter) return;
+        shared_->presenter->Paint(browser->GetIdentifier(), type == PET_POPUP, info.shared_texture_handle);
+        if (shared_->presenter->NeedsViewRepaint()) browser->GetHost()->Invalidate(PET_VIEW);
+    }
+
+    // The IME's caret: where the candidate window goes (Kite's own IMM glue isn't written
+    // yet; the spike counts the calls).
+    void OnImeCompositionRangeChanged(CefRefPtr<CefBrowser>, const CefRange&, const RectList& bounds) override {
+        if (!shared_->presenter) return;
+        ++shared_->presenter->Stats()->imeRangeChanges;
+        if (bounds.empty()) return;
+        const RECT card = shared_->Bounds();
+        const float scale = shared_->Scale();
+        const CefRect& last = bounds.back();
+        const POINT caret{card.left + static_cast<LONG>(std::lround(last.x * scale)),
+                          card.top + static_cast<LONG>(std::lround((last.y + last.height) * scale))};
+        shared_->Post([shared = shared_, caret] {
+            if (HIMC imc = ImmGetContext(shared->window)) {
+                CANDIDATEFORM form{0, CFS_CANDIDATEPOS, caret, {}};
+                ImmSetCandidateWindow(imc, &form);
+                ImmReleaseContext(shared->window, imc);
+            }
         });
     }
 
@@ -694,7 +882,7 @@ int RunChromiumSubprocess(HINSTANCE instance) {
 }
 
 Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
-                                      std::unique_ptr<Chromium>& out, std::wstring& error) {
+                                      std::unique_ptr<Chromium>& out, std::wstring& error, OffscreenOptions offscreen) {
     // Chromium wants root_cache_path absolute and every cache_path inside it, else it keeps
     // that profile in memory only; built from the resolved path, like the Mac (realpath).
     std::error_code ec;
@@ -712,6 +900,15 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
         error = L"CreateEvent failed";
         return StartResult::Failed;
     }
+    if (offscreen.enabled) {
+        shared->osr = true;
+        shared->offscreen = offscreen;
+        shared->presenter = OffscreenPresenter::Create(offscreen.adapter, error);
+        if (!shared->presenter) {
+            CloseHandle(shared->allClosed);
+            return StartResult::Failed;
+        }
+    }
 
     CefSettings settings;
     // CEF's own UI thread, so Kite's message loop (DirectComposition, the device-lost wait)
@@ -723,6 +920,7 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
     settings.log_severity = LOGSEVERITY_WARNING;
     settings.persist_session_cookies = true;
     settings.background_color = kPageBackdrop;
+    settings.windowless_rendering_enabled = shared->osr;
     CefString(&settings.root_cache_path) = resolved.wstring();
     CefString(&settings.cache_path) = (resolved / L"Default").wstring();
     CefString(&settings.log_file) = (resolved / L"chromium.log").wstring();
@@ -775,8 +973,10 @@ bool Chromium::Shutdown() {
     {
         std::lock_guard lock(shared_->mutex);
         shared_->pending.clear();  // their lambdas hold `shared_`
+        shared_->selfTestBrowser = nullptr;
     }
     CefShutdown();
+    shared_->presenter.reset();  // on Kite's thread, which owns its visual
     CloseHandle(shared_->allClosed);
     cleanShutdown_ = allClosed && !shared_->closeForced;
     return cleanShutdown_;
@@ -819,9 +1019,16 @@ void Chromium::Show(const std::string& tabID, const std::string& profileDirector
             context = cached;
         }
         CefWindowInfo windowInfo;
-        windowInfo.SetAsChild(shared_->window, ToCefRect(bounds));
-        windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
         CefBrowserSettings browserSettings;
+        if (shared_->osr) {
+            // W10 spike: rendered off-screen into a shared D3D11 texture (OnAcceleratedPaint).
+            windowInfo.SetAsWindowless(shared_->window);
+            windowInfo.shared_texture_enabled = true;
+            browserSettings.windowless_frame_rate = shared_->offscreen.frameRate;
+        } else {
+            windowInfo.SetAsChild(shared_->window, ToCefRect(bounds));
+        }
+        windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
         browserSettings.background_color = kPageBackdrop;
         shared_->pages.try_emplace(tabID).first->second.profile = profileDirectory;
         shared_->Count(+1, 0);
@@ -889,6 +1096,7 @@ void Chromium::BlockInput(bool blocked) {
     for (const auto& [id, page] : shared_->pages) {
         if (page.hwnd) hosts.push_back(page.hwnd);
     }
+    // Off-screen, Kite simply stops forwarding input (ForwardInput); no windows to disable.
     // Disabled, the page windows are skipped when Windows looks for the window under the
     // pointer, so clicks reach Kite's window. On CEF's thread, which owns them.
     if (!hosts.empty()) {
@@ -982,6 +1190,335 @@ bool Chromium::MayCloseWindow() {
 }
 
 bool Chromium::PagesCanBeHidden() const { return !shared_->widgetMissing; }
+
+// MARK: W10 spike: off-screen pages (--osr)
+
+namespace {
+
+uint32_t MouseModifiers(WPARAM wParam) {
+    uint32_t m = 0;
+    if (wParam & MK_CONTROL) m |= EVENTFLAG_CONTROL_DOWN;
+    if (wParam & MK_SHIFT) m |= EVENTFLAG_SHIFT_DOWN;
+    if (GetKeyState(VK_MENU) < 0) m |= EVENTFLAG_ALT_DOWN;
+    if (wParam & MK_LBUTTON) m |= EVENTFLAG_LEFT_MOUSE_BUTTON;
+    if (wParam & MK_MBUTTON) m |= EVENTFLAG_MIDDLE_MOUSE_BUTTON;
+    if (wParam & MK_RBUTTON) m |= EVENTFLAG_RIGHT_MOUSE_BUTTON;
+    if (GetKeyState(VK_CAPITAL) & 1) m |= EVENTFLAG_CAPS_LOCK_ON;
+    if (GetKeyState(VK_NUMLOCK) & 1) m |= EVENTFLAG_NUM_LOCK_ON;
+    return m;
+}
+
+// As CEF's cefclient (osr_window_win.cc) builds a key event's modifiers.
+uint32_t KeyModifiers(WPARAM wParam, LPARAM lParam) {
+    uint32_t m = 0;
+    if (GetKeyState(VK_SHIFT) < 0) m |= EVENTFLAG_SHIFT_DOWN;
+    if (GetKeyState(VK_CONTROL) < 0) m |= EVENTFLAG_CONTROL_DOWN;
+    if (GetKeyState(VK_MENU) < 0) m |= EVENTFLAG_ALT_DOWN;
+    if (GetKeyState(VK_NUMLOCK) & 1) m |= EVENTFLAG_NUM_LOCK_ON;
+    if (GetKeyState(VK_CAPITAL) & 1) m |= EVENTFLAG_CAPS_LOCK_ON;
+    switch (wParam) {
+    case VK_RETURN:
+        if ((lParam >> 16) & KF_EXTENDED) m |= EVENTFLAG_IS_KEY_PAD;
+        break;
+    case VK_INSERT: case VK_DELETE: case VK_HOME: case VK_END: case VK_PRIOR: case VK_NEXT:
+    case VK_UP: case VK_DOWN: case VK_LEFT: case VK_RIGHT:
+        if (!((lParam >> 16) & KF_EXTENDED)) m |= EVENTFLAG_IS_KEY_PAD;
+        break;
+    case VK_NUMLOCK: case VK_NUMPAD0: case VK_NUMPAD1: case VK_NUMPAD2: case VK_NUMPAD3: case VK_NUMPAD4:
+    case VK_NUMPAD5: case VK_NUMPAD6: case VK_NUMPAD7: case VK_NUMPAD8: case VK_NUMPAD9:
+    case VK_DIVIDE: case VK_MULTIPLY: case VK_SUBTRACT: case VK_ADD: case VK_DECIMAL: case VK_CLEAR:
+        m |= EVENTFLAG_IS_KEY_PAD;
+        break;
+    case VK_SHIFT:
+        if (GetKeyState(VK_LSHIFT) < 0) m |= EVENTFLAG_IS_LEFT;
+        else if (GetKeyState(VK_RSHIFT) < 0) m |= EVENTFLAG_IS_RIGHT;
+        break;
+    case VK_CONTROL:
+        if (GetKeyState(VK_LCONTROL) < 0) m |= EVENTFLAG_IS_LEFT;
+        else if (GetKeyState(VK_RCONTROL) < 0) m |= EVENTFLAG_IS_RIGHT;
+        break;
+    case VK_MENU:
+        if (GetKeyState(VK_LMENU) < 0) m |= EVENTFLAG_IS_LEFT;
+        else if (GetKeyState(VK_RMENU) < 0) m |= EVENTFLAG_IS_RIGHT;
+        break;
+    default: break;
+    }
+    if (lParam & (1 << 30)) m |= EVENTFLAG_IS_REPEAT;
+    return m;
+}
+
+}  // namespace
+
+bool Chromium::Offscreen() const { return shared_->osr; }
+
+void Chromium::UseCompositor(IDCompositionDevice* device, IDCompositionVisual* pageLayer) {
+    if (!shared_->presenter) return;
+    shared_->presenter->Attach(device, pageLayer);
+    for (auto& [id, page] : shared_->pages) page.placed.rect = RECT{-1, -1, -1, -1};  // placed again
+    shared_->Layout();
+}
+
+void Chromium::SetDpi(UINT dpi) {
+    std::lock_guard lock(shared_->mutex);
+    shared_->dpi = dpi;
+}
+
+HCURSOR Chromium::PageCursor() const { return shared_->mouseInPage ? shared_->cursor.load() : nullptr; }
+
+bool Chromium::PagePresented() const { return shared_->presenter && shared_->presenter->HasPresented(); }
+
+bool Chromium::PageMasksCorners() const { return shared_->presenter && shared_->presenter->MasksCorners(); }
+
+bool Chromium::ForwardInput(UINT message, WPARAM wParam, LPARAM lParam) {
+    Shared& s = *shared_;
+    if (!s.osr || s.inputBlocked || s.closing) return false;
+    auto it = s.pages.find(s.shown);
+    if (it == s.pages.end() || !it->second.browser) return false;
+    CefRefPtr<CefBrowserHost> host = it->second.browser->GetHost();
+    const RECT card = s.Bounds();
+    const float scale = s.Scale();
+    auto toView = [&](POINT p) {
+        CefMouseEvent event;
+        // DIPs, as the page lays out: at a fractional scale this rounds to a whole DIP.
+        event.x = static_cast<int>(std::floor((p.x - card.left) / scale));
+        event.y = static_cast<int>(std::floor((p.y - card.top) / scale));
+        event.modifiers = MouseModifiers(wParam);
+        return event;
+    };
+    auto forwarded = [&] {
+        if (s.presenter) s.presenter->InputForwarded();
+        return true;
+    };
+    switch (message) {
+    case WM_MOUSEMOVE:
+    case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
+    case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK: {
+        const POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        const bool inCard = PtInRect(&card, p) != FALSE;
+        const bool down = message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN ||
+                          message == WM_LBUTTONDBLCLK || message == WM_RBUTTONDBLCLK || message == WM_MBUTTONDBLCLK;
+        if (!inCard && !s.pageCapture) {
+            if (s.mouseInPage) {
+                s.mouseInPage = false;
+                host->SendMouseMoveEvent(toView(p), true);
+            }
+            // A press elsewhere in Kite's window takes the keyboard from the page.
+            if (down && s.pageHasKeyboard) {
+                s.pageHasKeyboard = false;
+                host->SetFocus(false);
+            }
+            return false;
+        }
+        CefMouseEvent event = toView(p);
+        if (message == WM_MOUSEMOVE) {
+            if (!s.mouseInPage) {
+                s.mouseInPage = true;
+                TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, s.window, 0};
+                TrackMouseEvent(&track);
+            }
+            host->SendMouseMoveEvent(event, false);
+            return forwarded();
+        }
+        cef_mouse_button_type_t button = MBT_LEFT;
+        UINT buttonMessage = WM_LBUTTONDOWN;
+        if (message == WM_RBUTTONDOWN || message == WM_RBUTTONUP || message == WM_RBUTTONDBLCLK) {
+            button = MBT_RIGHT;
+            buttonMessage = WM_RBUTTONDOWN;
+        } else if (message == WM_MBUTTONDOWN || message == WM_MBUTTONUP || message == WM_MBUTTONDBLCLK) {
+            button = MBT_MIDDLE;
+            buttonMessage = WM_MBUTTONDOWN;
+        }
+        if (down) {
+            // Off-screen, Chromium doesn't count clicks: double and triple clicks by time and
+            // distance, as Windows does.
+            const DWORD time = static_cast<DWORD>(GetMessageTime());
+            const bool again = s.clickCount > 0 && s.lastClickButton == buttonMessage && time - s.lastClickTime <= GetDoubleClickTime() &&
+                               std::abs(p.x - s.lastClickAt.x) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
+                               std::abs(p.y - s.lastClickAt.y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+            s.clickCount = again ? s.clickCount + 1 : 1;
+            s.lastClickTime = time;
+            s.lastClickAt = p;
+            s.lastClickButton = buttonMessage;
+            SetCapture(s.window);
+            s.pageCapture = true;
+            if (!s.pageHasKeyboard) {
+                s.pageHasKeyboard = true;
+                host->SetFocus(true);
+            }
+        } else if (!(wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON))) {
+            s.pageCapture = false;
+            if (GetCapture() == s.window) ReleaseCapture();
+        }
+        host->SendMouseClickEvent(event, button, !down, std::max(1, s.clickCount));
+        return forwarded();
+    }
+    case WM_MOUSELEAVE:
+        if (s.mouseInPage && !s.pageCapture) {
+            s.mouseInPage = false;
+            CefMouseEvent event;
+            host->SendMouseMoveEvent(event, true);
+        }
+        return false;  // the sidebar's hover ends too
+    case WM_CAPTURECHANGED:
+        s.pageCapture = false;
+        return false;
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL: {
+        POINT p{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};  // screen px
+        ScreenToClient(s.window, &p);
+        if (!PtInRect(&card, p)) return false;
+        CefMouseEvent event = toView(p);
+        event.modifiers = MouseModifiers(GET_KEYSTATE_WPARAM(wParam));
+        const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+        const bool shifted = (GET_KEYSTATE_WPARAM(wParam) & MK_SHIFT) != 0;
+        // WM_MOUSEHWHEEL's positive is right, CEF's is left; Shift turns a wheel sideways.
+        int dx = 0, dy = 0;
+        if (message == WM_MOUSEHWHEEL) dx = -delta;
+        else if (shifted) dx = delta;
+        else dy = delta;
+        host->SendMouseWheelEvent(event, dx, dy);
+        return forwarded();
+    }
+    case WM_KEYDOWN: case WM_KEYUP: case WM_SYSKEYDOWN: case WM_SYSKEYUP:
+    case WM_CHAR: case WM_SYSCHAR: {
+        if (!s.pageHasKeyboard) return false;
+        // Alt+F4 still closes the window.
+        if ((message == WM_SYSKEYDOWN || message == WM_SYSKEYUP) && wParam == VK_F4) return false;
+        CefKeyEvent event;
+        event.windows_key_code = static_cast<int>(wParam);
+        event.native_key_code = static_cast<int>(lParam);
+        event.is_system_key = message == WM_SYSCHAR || message == WM_SYSKEYDOWN || message == WM_SYSKEYUP;
+        if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) event.type = KEYEVENT_RAWKEYDOWN;
+        else if (message == WM_KEYUP || message == WM_SYSKEYUP) event.type = KEYEVENT_KEYUP;
+        else event.type = KEYEVENT_CHAR;
+        event.modifiers = KeyModifiers(wParam, lParam);
+        host->SendKeyEvent(event);
+        return forwarded();
+    }
+    case WM_KILLFOCUS:
+        if (s.pageHasKeyboard) host->SetFocus(false);
+        s.pageHasKeyboard = false;
+        return false;
+    default:
+        return false;
+    }
+}
+
+std::wstring Chromium::ReadBackShownPage(Pixels& pixels) {
+    if (!shared_->presenter) return L"no off-screen pages (--osr)";
+    auto it = shared_->pages.find(shared_->shown);
+    if (it == shared_->pages.end() || !it->second.browser) return L"no page is shown";
+    shared_->presenter->RequestReadBack();
+    RunOnCefUIThread([browser = it->second.browser] { browser->GetHost()->Invalidate(PET_VIEW); });
+    std::wstring error;
+    auto frame = shared_->presenter->TakeReadBack(5'000, error);
+    if (!frame) return error;
+    pixels = std::move(*frame);
+    return {};
+}
+
+void Chromium::RunSelfTest(const std::filesystem::path& logPath) {
+    // On a thread of its own, so it can wait between steps: it posts Win32 messages to Kite's
+    // window (the path a real mouse and keyboard take, through ForwardInput) and calls CEF's
+    // IME methods directly, since no IME can be driven without real input (and switching
+    // this window's input method would switch the user's). The page
+    // (windows/helix/pages/osr-selftest.html) reports in its title.
+    std::thread([shared = shared_, logPath] {
+        std::ofstream log(logPath, std::ios::binary | std::ios::trunc);
+        auto wait = [](int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); };
+        auto browser = [&]() -> CefRefPtr<CefBrowser> {
+            std::lock_guard lock(shared->mutex);
+            return shared->selfTestBrowser;
+        };
+        auto at = [&](int x, int y) {
+            const RECT card = shared->Bounds();
+            const float scale = shared->Scale();
+            return MAKELPARAM(card.left + static_cast<int>(std::lround(x * scale)), card.top + static_cast<int>(std::lround(y * scale)));
+        };
+        auto post = [&](UINT message, WPARAM wParam, LPARAM lParam) { PostMessageW(shared->window, message, wParam, lParam); };
+        auto click = [&](int x, int y) {
+            post(WM_MOUSEMOVE, 0, at(x, y));
+            post(WM_LBUTTONDOWN, MK_LBUTTON, at(x, y));
+            post(WM_LBUTTONUP, 0, at(x, y));
+        };
+        auto key = [&](UINT vk) {
+            const LPARAM scan = static_cast<LPARAM>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)) << 16;
+            post(WM_KEYDOWN, vk, 1 | scan);
+            post(WM_KEYUP, vk, 1 | scan | (LPARAM{1} << 30) | (LPARAM{1} << 31));
+        };
+        auto report = [&](const char* step) {
+            wait(500);
+            std::string title;
+            {
+                std::lock_guard lock(shared->mutex);
+                title = shared->selfTestTitle;
+            }
+            const OffscreenStats& st = *shared->presenter->Stats();
+            log << step << "\t" << title << "\tpopupShows=" << st.popupShows << " popupPaints=" << st.popupPaints
+                << " cursorChanges=" << st.cursorChanges << " lastCursorType=" << st.lastCursorType
+                << " imeRangeChanges=" << st.imeRangeChanges << " presents=" << st.presents << " hides=" << st.hides
+                << " ignoredPaints=" << st.ignoredPaints << "\n";
+            log.flush();
+        };
+        for (int i = 0; i < 300 && !shared->presenter->HasPresented(); ++i) wait(100);
+        wait(1000);
+        report("loaded");
+        // A click in the text field, then typed characters (WM_CHAR, as TranslateMessage makes).
+        click(170, 35);
+        report("clicked input");
+        post(WM_CHAR, L'a', 1);
+        post(WM_CHAR, L'b', 1);
+        report("typed ab");
+        // Committed IME text as DefWindowProc delivers it without Kite's IMM glue: WM_IME_CHAR,
+        // which it turns into WM_CHAR.
+        post(WM_IME_CHAR, 0x6F22, 1);  // 漢
+        report("WM_IME_CHAR");
+        // CEF's IME API, as Kite's IMM glue would call it from WM_IME_COMPOSITION.
+        if (CefRefPtr<CefBrowser> b = browser()) {
+            std::vector<CefCompositionUnderline> underlines(1);
+            underlines[0].range = CefRange(0, 2);
+            underlines[0].color = 0xFF000000;
+            underlines[0].thick = false;
+            b->GetHost()->ImeSetComposition(L"かな", underlines, CefRange(UINT32_MAX, UINT32_MAX), CefRange(2, 2));
+            report("ImeSetComposition");
+            b->GetHost()->ImeCommitText(L"字", CefRange(UINT32_MAX, UINT32_MAX), 0);
+            report("ImeCommitText");
+        }
+        // The cursor over a link.
+        post(WM_MOUSEMOVE, 0, at(100, 155));
+        report("hover link");
+        // A <select>: its popup opens, then Down and Enter pick the second option.
+        click(120, 95);
+        report("clicked select");
+        key(VK_DOWN);
+        report("down in popup");
+        key(VK_RETURN);
+        report("picked option");
+        // The wheel scrolls the page (WM_MOUSEWHEEL has screen coordinates).
+        {
+            const LPARAM c = at(300, 300);
+            POINT p{GET_X_LPARAM(c), GET_Y_LPARAM(c)};
+            ClientToScreen(shared->window, &p);
+            post(WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA * 3)), MAKELPARAM(p.x, p.y));
+        }
+        report("wheel");
+        // A double click selects a word.
+        post(WM_LBUTTONDOWN, MK_LBUTTON, at(60, 260));
+        post(WM_LBUTTONUP, 0, at(60, 260));
+        post(WM_LBUTTONDOWN, MK_LBUTTON, at(60, 260));
+        post(WM_LBUTTONUP, 0, at(60, 260));
+        report("double click");
+        // A popup opens as a tab in front, so this page is hidden (WasHidden): its
+        // visibilityState says so, and it stops painting.
+        click(80, 335);
+        wait(1500);
+        report("popup tab shown, opener hidden");
+        log << "done\n";
+        log.flush();
+        PostMessageW(shared->window, WM_CLOSE, 0, 0);
+    }).detach();
+}
 
 void Chromium::RunPending() {
     std::deque<std::function<void()>> work;

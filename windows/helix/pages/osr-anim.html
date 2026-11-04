@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- W10 spike (docs/windows-osr-spike.md), windows/tools/osrperf: a CSS animation that runs on
+     Chromium's compositor thread (transform only), so every frame changes. The grey block
+     (under a green marker the tool finds) changes colour on each mousemove, for the
+     input-latency check. -->
+<meta charset="utf-8">
+<title>osr anim</title>
+<style>
+  body { margin: 0; font: 16px system-ui; background: #fff; overflow: hidden; }
+  #marker { position: fixed; left: 40px; top: 20px; width: 120px; height: 10px; background: #00ff00; z-index: 1; }
+  #block { position: fixed; left: 40px; top: 40px; width: 120px; height: 120px; background: #808080; }
+  .bar { position: absolute; left: 0; width: 200px; height: 60px; background: #3060c0; border-radius: 12px;
+         animation: slide 2s linear infinite alternate; will-change: transform; }
+  @keyframes slide { from { transform: translateX(220px) rotate(0deg); } to { transform: translateX(800px) rotate(180deg); } }
+</style>
+<div id="marker"></div><div id="block"></div>
+<div class="bar" style="top: 220px"></div>
+<div class="bar" style="top: 320px; animation-delay: -0.5s"></div>
+<div class="bar" style="top: 420px; animation-delay: -1s"></div>
+<script>
+  const colours = ['#ff0000', '#0000ff', '#ff00ff', '#ffff00', '#00ffff', '#000000'];
+  let n = 0;
+  addEventListener('mousemove', () => { document.getElementById('block').style.background = colours[n++ % colours.length]; });
+</script>

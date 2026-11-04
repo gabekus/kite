@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- W10 spike (docs/windows-osr-spike.md): what KITE_OSR_SELFTEST drives in an off-screen
+     page. Everything is fixed in place (CSS px from the card's top-left), so the wheel's scroll
+     doesn't move the targets. The title reports the page's state after each step. -->
+<meta charset="utf-8">
+<title>osr selftest</title>
+<style>
+  body { margin: 0; height: 5000px; font: 16px system-ui; background: #fff; }
+  .at { position: fixed; left: 20px; box-sizing: border-box; }
+  #field { top: 20px; width: 300px; height: 30px; font-size: 16px; }
+  #pick { top: 80px; width: 200px; height: 30px; }
+  #link { top: 140px; width: 200px; height: 30px; display: block; line-height: 30px; cursor: pointer; color: #06c; }
+  #words { top: 250px; margin: 0; }
+  #popup { top: 320px; width: 120px; height: 30px; }
+</style>
+<input id="field" class="at" autocomplete="off">
+<select id="pick" class="at"><option value="one">one</option><option value="two">two</option><option value="three">three</option></select>
+<a id="link" class="at" href="#">a link (hand cursor)</a>
+<p id="words" class="at">doubleclick selects one word</p>
+<button id="popup" class="at" onclick="window.open('about:blank', '_blank', 'popup')">open a popup</button>
+<script>
+  const ime = [];
+  const field = document.getElementById('field');
+  for (const type of ['compositionstart', 'compositionupdate', 'compositionend']) {
+    field.addEventListener(type, e => { ime.push(type.slice(11) + ':' + e.data); report(); });
+  }
+  function report() {
+    document.title = JSON.stringify({
+      in: field.value, ime, sel: document.getElementById('pick').value, sy: Math.round(scrollY),
+      ws: String(getSelection()), f: document.activeElement ? document.activeElement.id || document.activeElement.tagName : '',
+      vis: document.visibilityState,
+    });
+  }
+  for (const type of ['input', 'change', 'scroll', 'selectionchange', 'focusin', 'visibilitychange']) {
+    (type === 'scroll' || type === 'selectionchange' || type === 'visibilitychange' ? document : document.body)
+      .addEventListener(type, report, true);
+  }
+  report();
+</script>

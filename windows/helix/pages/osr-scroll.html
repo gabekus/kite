@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- W10 spike (docs/windows-osr-spike.md), windows/tools/osrperf: a long page that scrolls itself
+     from requestAnimationFrame (main thread, every frame a new scroll offset and new text in
+     view), wrapping at the end. The fixed grey block (under a green marker the tool finds)
+     changes colour on each mousemove. -->
+<meta charset="utf-8">
+<title>osr scroll</title>
+<style>
+  body { margin: 0; font: 16px/1.6 system-ui; background: #fff; color: #222; }
+  #marker { position: fixed; left: 40px; top: 20px; width: 120px; height: 10px; background: #00ff00; z-index: 1; }
+  #block { position: fixed; left: 40px; top: 40px; width: 120px; height: 120px; background: #808080; z-index: 1; }
+  main { margin: 0 40px 0 200px; }
+  p:nth-child(3n) { color: #604020; } p:nth-child(5n) { font-weight: 600; }
+</style>
+<div id="marker"></div><div id="block"></div>
+<main id="text"></main>
+<script>
+  const words = 'kite browser off screen texture composition frame present latency scroll page corner clip window chromium'.split(' ');
+  const main = document.getElementById('text');
+  for (let i = 0; i < 1500; i++) {
+    const p = document.createElement('p');
+    p.textContent = i + ': ' + Array.from({ length: 40 }, (_, j) => words[(i * 7 + j * 3) % words.length]).join(' ');
+    main.appendChild(p);
+  }
+  function step() {
+    if (scrollY + innerHeight >= document.body.scrollHeight - 4) scrollTo(0, 0); else scrollBy(0, 3);
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+  const colours = ['#ff0000', '#0000ff', '#ff00ff', '#ffff00', '#00ffff', '#000000'];
+  let n = 0;
+  addEventListener('mousemove', () => { document.getElementById('block').style.background = colours[n++ % colours.length]; });
+</script>

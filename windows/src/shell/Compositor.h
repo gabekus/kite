@@ -42,6 +42,9 @@ public:
 
     // Where the chrome's visuals go: over the backdrop, behind the page.
     IDCompositionVisual* Chrome() const { return chrome_.Get(); }
+    // Where an off-screen page's visual goes (W10 spike, --osr): over the chrome, under the
+    // overlay. Empty, and so free, with windowed pages.
+    IDCompositionVisual* PageLayer() const { return page_.Get(); }
     // Where the overlay's visuals go: over everything in the window, the page included.
     IDCompositionVisual* Overlay() const { return overlay_.Get(); }
     IDCompositionDevice* Device() const { return device_.Get(); }
@@ -70,7 +73,7 @@ private:
     Microsoft::WRL::ComPtr<IDXGISwapChain2> swapChain_;
     Microsoft::WRL::ComPtr<IDCompositionDevice> device_;
     Microsoft::WRL::ComPtr<IDCompositionTarget> target_, overlayTarget_;
-    Microsoft::WRL::ComPtr<IDCompositionVisual> root_, backdrop_, chrome_, overlay_;
+    Microsoft::WRL::ComPtr<IDCompositionVisual> root_, backdrop_, chrome_, page_, overlay_;
     Microsoft::WRL::ComPtr<ID2D1Factory1> d2dFactory_;
     Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> d2dContext_;

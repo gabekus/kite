@@ -52,6 +52,9 @@ public:
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
         // decodes them in place, the rest on a worker).
         std::filesystem::path spaceIcons;
+        // --osr (W10 spike, docs/windows-osr-spike.md): pages off-screen, in the composition
+        // tree with the card's 6pt corners; a capture includes the page.
+        bool osr = false;
     };
 
     // The window and everything in it, laid out and wired, not yet shown or drawn. Null with
@@ -100,6 +103,11 @@ public:
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
+#ifdef KITE_HAS_CEF
+    // --osr: runs messages until the shown page has presented a frame (at most `timeoutMs`).
+    bool WaitForPageFrame(DWORD timeoutMs);
+    Chromium* Pages() { return chromium_.get(); }
+#endif
 
 private:
     // The content card, in points: right of the sidebar, inset on the other three sides

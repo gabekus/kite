@@ -28,8 +28,20 @@
 #include <string>
 
 #include "core/KeyBindings.h"
+#include "shell/Capture.h"
+
+struct IDCompositionDevice;
+struct IDCompositionVisual;
 
 namespace kite {
+
+// W10 spike (docs/windows-osr-spike.md): --osr renders pages off-screen into a
+// DirectComposition visual on the card instead of child windows. Test profiles only.
+struct OffscreenOptions {
+    bool enabled = false;
+    LUID adapter{};     // Kite's renderer's adapter, the presenter's (Chromium's GPU process picks the same)
+    int frameRate = 60;  // windowless_frame_rate: the display's refresh rate
+};
 
 // When Chromium started this process as one of its helpers (renderer, GPU, utility), runs it
 // and returns its exit code; returns -1 in the browser process. First thing in wWinMain,
@@ -85,7 +97,25 @@ public:
     // default profile in root\Default, a space's other profile in root\<directory>.
     // AlreadyRunning: another Kite has this profile and has been told to come forward.
     static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
-                             std::unique_ptr<Chromium>& out, std::wstring& error);
+                             std::unique_ptr<Chromium>& out, std::wstring& error, OffscreenOptions offscreen = {});
+
+    // W10 spike, --osr only (each does nothing, or returns false, with windowed pages).
+    bool Offscreen() const;
+    // The composition tree the page's visual goes in (again after a lost GPU's rebuild).
+    void UseCompositor(IDCompositionDevice* device, IDCompositionVisual* pageLayer);
+    // The window's DPI, for the page's scale (call before Show and SetBounds).
+    void SetDpi(UINT dpi);
+    // A window message for the shown page: mouse and wheel over the card (`card`, client px),
+    // keys while the page has the keyboard. True when the page took it.
+    bool ForwardInput(UINT message, WPARAM wParam, LPARAM lParam);
+    // The cursor the page asked for (OnCursorChange), while the pointer is over the card.
+    HCURSOR PageCursor() const;
+    bool PagePresented() const;
+    bool PageMasksCorners() const;
+    // The shown page's next frame, as presented (for --capture). Empty on success.
+    std::wstring ReadBackShownPage(Pixels& pixels);
+    // KITE_OSR_SELFTEST: the IME, <select>, cursor, wheel and key checks, logged to `log`.
+    void RunSelfTest(const std::filesystem::path& log);
     // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();
     Chromium(const Chromium&) = delete;

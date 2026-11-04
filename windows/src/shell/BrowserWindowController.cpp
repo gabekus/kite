@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <utility>
@@ -17,6 +18,7 @@
 #include "shell/Capture.h"
 #ifdef KITE_HAS_CEF
 #include "shell/Chromium.h"
+#include "shell/OffscreenPage.h"
 #endif
 #include "shell/Errors.h"
 #include "shell/Keys.h"
@@ -556,6 +558,9 @@ void BrowserWindowController::DropCompositor() {
     sidebar_->UseCompositor(nullptr);
     caption_->UseCompositor(nullptr);
     if (commandBar_) commandBar_->UseCompositor(nullptr);
+#ifdef KITE_HAS_CEF
+    if (chromium_) chromium_->UseCompositor(nullptr, nullptr);
+#endif
     compositor_.reset();
 }
 
@@ -569,6 +574,9 @@ std::wstring BrowserWindowController::Rebuild() {
         sidebar_->UseCompositor(compositor_.get());
         caption_->UseCompositor(compositor_.get());
         if (commandBar_) commandBar_->UseCompositor(compositor_.get());
+#ifdef KITE_HAS_CEF
+        if (chromium_) chromium_->UseCompositor(compositor_->Device(), compositor_->PageLayer());
+#endif
     }
     return problem;
 }
@@ -608,7 +616,10 @@ void BrowserWindowController::OnSize() {
     sidebar_->HideTip();
 #ifdef KITE_HAS_CEF
     // The page first, so CEF's thread moves it while Kite draws.
-    if (chromium_) chromium_->SetBounds(ContentBounds());
+    if (chromium_) {
+        chromium_->SetDpi(window_.Dpi());
+        chromium_->SetBounds(ContentBounds());
+    }
 #endif
     sidebar_->Layout(static_cast<float>(kSidebarWidth), window_.Dpi());
     caption_->Layout(window_.Dpi());
@@ -663,6 +674,22 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         return true;
     }
     if (sidebar_->HandleMouse(message, wParam, lParam)) return true;
+#ifdef KITE_HAS_CEF
+    // --osr: the page has no window, so its input comes through Kite's (W10 spike).
+    if (chromium_ && chromium_->Offscreen()) {
+        if (message == WM_SETCURSOR && LOWORD(lParam) == HTCLIENT) {
+            if (HCURSOR cursor = chromium_->PageCursor()) {
+                SetCursor(cursor);
+                result = TRUE;
+                return true;
+            }
+        }
+        if (chromium_->ForwardInput(message, wParam, lParam)) {
+            result = 0;
+            return true;
+        }
+    }
+#endif
     // The caption buttons' appearance changes with the sidebar's, at its commit.
     if (message == SidebarView::kRedrawMessage) {
         if (std::wstring problem = caption_->Draw(); !problem.empty()) {
@@ -818,6 +845,20 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
         problem = caption_->Draw(&buttons, &origin);
         if (problem.empty()) ComposeOver(pixels, buttons, origin);
     }
+#ifdef KITE_HAS_CEF
+    if (problem.empty() && chromium_ && chromium_->Offscreen()) {
+        // --osr: the page is in the composition tree, so the capture has it, clipped to the
+        // card's 6pt corners as DirectComposition's rounded clip shows it.
+        Pixels page;
+        problem = chromium_->ReadBackShownPage(page);
+        if (problem.empty()) {
+            // Cut out as it was presented; with DirectComposition's clip, the clip's corners.
+            if (!chromium_->PageMasksCorners()) RoundCorners(page, 6.0f * static_cast<float>(window_.Dpi()) / USER_DEFAULT_SCREEN_DPI);
+            const RECT card = ContentBounds();
+            ComposeOver(pixels, page, POINT{card.left, card.top}, 1, &card);
+        }
+    }
+#endif
     if (problem.empty() && tip) {
         // A space's tip at rest over its cell, as the pointer leaves it there (its window over
         // the browser window's, clipped to it as the Mac's capture of the window is).
@@ -910,6 +951,7 @@ void BrowserWindowController::ShowSelectedTab() {
     // own pages (kite://, which come later).
     std::string url = tab->url.value_or("");
     if (url.starts_with("kite:")) url.clear();
+    chromium_->SetDpi(window_.Dpi());
     chromium_->Show(tab->id, state_.SelectedProfileDirectory(), url, ContentBounds());
 }
 
@@ -1002,10 +1044,35 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
-    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), chromium_, error);
+    OffscreenOptions offscreen;
+    if (options_.osr) {
+        // W10 spike: Chromium's GPU process on Kite's renderer's adapter, and frames at the
+        // display's refresh rate (no 60 fps cap; KITE_OSR_FPS overrides it for experiments).
+        offscreen.enabled = true;
+        Microsoft::WRL::ComPtr<IDXGIDevice> dxgi;
+        Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+        DXGI_ADAPTER_DESC desc{};
+        if (SUCCEEDED(renderer_->Device()->QueryInterface(IID_PPV_ARGS(dxgi.GetAddressOf()))) &&
+            SUCCEEDED(dxgi->GetAdapter(adapter.GetAddressOf())) && SUCCEEDED(adapter->GetDesc(&desc))) {
+            offscreen.adapter = desc.AdapterLuid;
+        }
+        MONITORINFOEXW monitor{};
+        monitor.cbSize = sizeof(monitor);
+        DEVMODEW mode{};
+        mode.dmSize = sizeof(mode);
+        if (GetMonitorInfoW(MonitorFromWindow(window_.Handle(), MONITOR_DEFAULTTONEAREST), &monitor) &&
+            EnumDisplaySettingsW(monitor.szDevice, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1) {
+            offscreen.frameRate = static_cast<int>(mode.dmDisplayFrequency);
+        }
+        char fps[16] = {};
+        if (GetEnvironmentVariableA("KITE_OSR_FPS", fps, sizeof fps) > 0 && std::atoi(fps) > 0) offscreen.frameRate = std::atoi(fps);
+    }
+    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), chromium_, error, offscreen);
         started != Chromium::StartResult::Started) {
         return started;
     }
+    if (options_.osr && compositor_) chromium_->UseCompositor(compositor_->Device(), compositor_->PageLayer());
+    chromium_->SetDpi(window_.Dpi());
     window_.onWake = [this] { chromium_->RunPending(); };
     window_.onMinimize = [this] {
         sidebar_->HideTip();
@@ -1038,6 +1105,21 @@ std::wstring BrowserWindowController::ShutDownChromium() {
         return L"the window took " + std::to_wstring((GetTickCount64() - closeAskedAt_) / 1000) + L" s to close";
     }
     return {};
+}
+
+bool BrowserWindowController::WaitForPageFrame(DWORD timeoutMs) {
+    const ULONGLONG deadline = GetTickCount64() + timeoutMs;
+    while (chromium_ && !chromium_->PagePresented()) {
+        const ULONGLONG now = GetTickCount64();
+        if (now >= deadline) return false;
+        MsgWaitForMultipleObjectsEx(0, nullptr, static_cast<DWORD>(std::min<ULONGLONG>(deadline - now, 50)), QS_ALLINPUT, 0);
+        MSG message;
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    return chromium_ != nullptr;
 }
 
 #endif  // KITE_HAS_CEF

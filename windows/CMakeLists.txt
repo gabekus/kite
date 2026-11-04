@@ -75,8 +75,15 @@ if(WIN32)
   endif()
   find_program(KITE_FXC fxc HINTS ${KITE_FXC_HINTS} "$ENV{WindowsSdkVerBinPath}/x64")
   set(KITE_THEME_HLSL "${CMAKE_CURRENT_SOURCE_DIR}/src/shell/shaders/Theme.hlsl")
+  set(KITE_OFFSCREEN_HLSL "${CMAKE_CURRENT_SOURCE_DIR}/src/shell/shaders/OffscreenPage.hlsl")
   if(KITE_FXC)
-    set(KITE_SHADER_HEADERS "${KITE_SHADER_DIR}/FullscreenVertex.h" "${KITE_SHADER_DIR}/ThemePixel.h")
+    set(KITE_SHADER_HEADERS "${KITE_SHADER_DIR}/FullscreenVertex.h" "${KITE_SHADER_DIR}/ThemePixel.h"
+        "${KITE_SHADER_DIR}/OffscreenPagePixel.h")
+    # W10 spike (--osr): the page's frame with the card's corners cut out.
+    add_custom_command(OUTPUT "${KITE_SHADER_DIR}/OffscreenPagePixel.h"
+      COMMAND "${KITE_FXC}" /nologo /T ps_4_0 /E RoundedPage /O3 /WX /Vn kOffscreenPagePixelShader
+              /Fh "${KITE_SHADER_DIR}/OffscreenPagePixel.h" "${KITE_OFFSCREEN_HLSL}"
+      DEPENDS "${KITE_OFFSCREEN_HLSL}" VERBATIM)
     add_custom_command(OUTPUT "${KITE_SHADER_DIR}/FullscreenVertex.h"
       COMMAND "${KITE_FXC}" /nologo /T vs_4_0 /E FullscreenVertex /O3 /Gis /WX /Vn kFullscreenVertexShader
               /Fh "${KITE_SHADER_DIR}/FullscreenVertex.h" "${KITE_THEME_HLSL}"
@@ -124,7 +131,7 @@ if(WIN32)
   set(KITE_CEF_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/cef" CACHE PATH "CEF binary distribution (fetch-cef.ps1)")
   if(MSVC AND EXISTS "${KITE_CEF_ROOT}/include/cef_version.h")
     message(STATUS "Chromium: CEF at ${KITE_CEF_ROOT}")
-    target_sources(Kite PRIVATE src/shell/Chromium.cpp)
+    target_sources(Kite PRIVATE src/shell/Chromium.cpp src/shell/OffscreenPage.cpp)
     target_compile_definitions(Kite PRIVATE KITE_HAS_CEF)
     target_include_directories(Kite SYSTEM PRIVATE "${KITE_CEF_ROOT}")
     # The minimal distribution has Release binaries only; libcef.dll's C ABI serves either
@@ -132,12 +139,12 @@ if(WIN32)
     target_link_libraries(Kite PRIVATE
       "${KITE_CEF_ROOT}/Release/libcef.lib"
       "${KITE_CEF_ROOT}/build-$<IF:$<CONFIG:Debug>,debug,release>/libcef_dll_wrapper/libcef_dll_wrapper.lib"
-      comctl32 rpcrt4 shlwapi ws2_32 delayimp)
+      comctl32 rpcrt4 shlwapi ws2_32 delayimp dxgi)
     # Kite.exe is also Chromium's renderer, GPU and utility process. Like chrome.exe (and
     # CEF's own CEF_EXE_LINKER_FLAGS) it gets an 8 MiB main-thread stack, which deep pages
     # need, and loads the window's graphics DLLs only in the process that draws the window.
     target_link_options(Kite PRIVATE /STACK:0x800000
-      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll)
+      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll /DELAYLOAD:dxgi.dll)
     # libcef.dll and its resources go next to Kite.exe, where Chromium looks for them.
     add_custom_command(TARGET Kite POST_BUILD
       COMMAND ${CMAKE_COMMAND} -DCEF_ROOT=${KITE_CEF_ROOT} -DDEST=$<TARGET_FILE_DIR:Kite>
