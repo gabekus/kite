@@ -16,6 +16,19 @@ import Testing
         return (tool.path, folder)
     }
 
+    /// Waits until the tool has written `pid`, so a cancel lands on a running tool rather than one not
+    /// started yet (which run answers without starting). Up to 10 s, for a busy machine.
+    private func waitForPID(in folder: URL) -> Bool {
+        let file = folder.appendingPathComponent("pid")
+        for _ in 0..<200 {
+            if let text = try? String(contentsOf: file, encoding: .utf8), Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) != nil {
+                return true
+            }
+            usleep(50_000)
+        }
+        return false
+    }
+
     /// Whether the background job the tool wrote to `pid` is still alive.
     private func childAlive(in folder: URL) throws -> Bool {
         let text = try String(contentsOf: folder.appendingPathComponent("pid"), encoding: .utf8)
@@ -94,12 +107,12 @@ import Testing
         let (tool, folder) = try makeTool("sleep 999 &\necho $! > pid\nsleep 999")
         defer { try? FileManager.default.removeItem(at: folder) }
         let process = OneShotProcess(executable: tool, arguments: [], directory: folder)
-        let start = Date()
         let task = Task { await process.run(input: Data(), timeout: 30) }
-        try await Task.sleep(for: .milliseconds(500))
+        #expect(waitForPID(in: folder))
+        let cancelled = Date()
         task.cancel()
         #expect(await task.value == nil)
-        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(Date().timeIntervalSince(cancelled) < 5)
         #expect(try !childAlive(in: folder))
     }
 
@@ -107,11 +120,24 @@ import Testing
         let (tool, folder) = try makeTool("sleep 999 &\necho $! > pid\nsleep 999")
         defer { try? FileManager.default.removeItem(at: folder) }
         let process = OneShotProcess(executable: tool, arguments: [], directory: folder)
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { process.cancel() }
-        let start = Date()
+        let cancelled = LockedDate()
+        DispatchQueue.global().async { [self] in
+            guard waitForPID(in: folder) else { return }
+            cancelled.set(Date())
+            process.cancel()
+        }
         #expect(process.run(input: Data(), timeout: 30) == nil)
-        #expect(Date().timeIntervalSince(start) < 5)
+        let at = try #require(cancelled.value, "the tool never started")
+        #expect(Date().timeIntervalSince(at) < 5)
         #expect(try !childAlive(in: folder))
+    }
+
+    /// A date set on one thread and read on another.
+    private final class LockedDate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var date: Date?
+        var value: Date? { lock.withLock { date } }
+        func set(_ newValue: Date) { lock.withLock { date = newValue } }
     }
 
     @Test func aMissingToolIsNil() {
