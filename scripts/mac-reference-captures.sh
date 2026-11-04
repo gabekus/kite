@@ -286,6 +286,11 @@ PATHKEY = re.compile(r"(path|directory|folder|file|dir|profile)$", re.I)
 def check_session(node, key, where, problems):
     if isinstance(node, dict):
         for k, v in node.items():
+            # Keys can be URLs too (history.json's entries are keyed by URL).
+            if URLISH.match(str(k)):
+                why = public_url(str(k))
+                if why:
+                    problems.append(f"{where} key {str(k)[:80]!r} {why}")
             check_session(v, str(k), f"{where}.{k}", problems)
     elif isinstance(node, list):
         for i, v in enumerate(node):
