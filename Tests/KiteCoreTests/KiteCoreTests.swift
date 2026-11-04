@@ -699,6 +699,33 @@ import Testing
         #expect(policy.tabsToEvict(live: live, protected: [ids[0]]) == [ids[1], ids[2]])
         #expect(LiveTabPolicy(maxLiveTabs: 5).tabsToEvict(live: live, protected: []).isEmpty)
     }
+
+    @Test func busyTabsAreSkippedSoTheNextOldestGoes() {
+        let ids = (0..<5).map { _ in UUID() }
+        var live: [UUID: Date] = [:]
+        for (i, id) in ids.enumerated() { live[id] = Date(timeIntervalSince1970: Double(i)) }
+        let policy = LiveTabPolicy(maxLiveTabs: 3)
+        // ids[0] plays music and ids[4] is on screen: the two oldest others go, so the live count meets the cap.
+        let evicted = policy.tabsToEvict(live: live, protected: [ids[4], ids[0]])
+        #expect(evicted == [ids[1], ids[2]])
+        #expect(live.count - evicted.count == 3)
+        // More busy tabs than the cap allows: only the idle ones go, never a busy one.
+        #expect(policy.tabsToEvict(live: live, protected: [ids[0], ids[1], ids[2], ids[4]]) == [ids[3]])
+    }
+
+    @Test func hibernationIsDroppedWhenTheTabChangedDuringItsBusyCheck() {
+        let picked = Date(timeIntervalSince1970: 10)
+        #expect(LiveTabPolicy.stillHibernates(pickedShownAt: picked, shownAt: picked, samePage: true, visible: false))
+        // Shown again (and maybe hidden again) while the check ran.
+        #expect(!LiveTabPolicy.stillHibernates(pickedShownAt: picked, shownAt: Date(timeIntervalSince1970: 11),
+                                               samePage: true, visible: false))
+        #expect(!LiveTabPolicy.stillHibernates(pickedShownAt: picked, shownAt: picked, samePage: true, visible: true))
+        // Another page under the tab id (claimed from another window, or made again).
+        #expect(!LiveTabPolicy.stillHibernates(pickedShownAt: picked, shownAt: picked, samePage: false, visible: false))
+        // Already gone.
+        #expect(!LiveTabPolicy.stillHibernates(pickedShownAt: picked, shownAt: nil, samePage: true, visible: false))
+        #expect(!LiveTabPolicy.stillHibernates(pickedShownAt: nil, shownAt: nil, samePage: true, visible: false))
+    }
 }
 
 @Suite struct ThemeTests {

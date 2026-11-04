@@ -227,9 +227,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
         paneClickMonitor = nil
         store.saveNow()
-        if isIncognito { pool.retain(live: [], restorable: []) }
-        // Windows showing a placeholder for one of this window's pages take it back.
-        pool.leaveShared()
+        // Windows showing a placeholder for one of this window's pages take it back; the rest close.
+        pool.closeForWindow()
     }
 
     /// `ui input` is about to send this background window keys: what becoming key would do first.
@@ -696,6 +695,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return
         }
         pool.didShow(ids)
+        // Under the Library (its first tab opened while it's up): on screen once it closes.
+        if library.isOpen { for page in shownPages.values where page.view.window === window { page.setVisible(false) } }
         restoreAskConversation(focused)
         // A new split pane's command bar is about to open and takes the focus.
         if store.commandBar == nil, store.pendingSplitPane == nil {
@@ -971,6 +972,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         for view in [sidebarHost!, contentFrame, glowView, resizeHandle, peekCard] as [NSView] {
             view.alphaValue = open ? 0 : 1
         }
+        // Faded out, the pages are still in the window and would keep drawing at full rate.
+        for page in shownPages.values where page.view.window === window { page.setVisible(!open) }
+        linkPeek?.page.setVisible(!open)
         if open {
             window?.makeFirstResponder(libraryHost)
         } else {

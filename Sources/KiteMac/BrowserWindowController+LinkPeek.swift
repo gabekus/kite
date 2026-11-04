@@ -11,6 +11,8 @@ import KiteCore
 final class LinkPeekSession {
     let sourceTabID: UUID
     let page: WebPage
+    /// The profile folder the page was made in: its source tab's.
+    let profileDirectory: String?
     let view: LinkPeekView
     var url: URL?
     var title: String?
@@ -18,9 +20,10 @@ final class LinkPeekSession {
     var keyMonitor: Any?
     var swipe: LinkPeekSwipeController?
 
-    init(sourceTabID: UUID, page: WebPage, url: URL, splitTitle: String?) {
+    init(sourceTabID: UUID, page: WebPage, profileDirectory: String?, url: URL, splitTitle: String?) {
         self.sourceTabID = sourceTabID
         self.page = page
+        self.profileDirectory = profileDirectory
         self.url = url
         self.view = LinkPeekView(page: page.view, splitTitle: splitTitle)
     }
@@ -38,8 +41,11 @@ extension BrowserWindowController {
         let split = store.state.selectedSplit
         let splitTitle: String? = (split?.tabIDs.count ?? 1) < SplitView.maxPanes
             ? (split == nil ? "Create Split View" : "Add to Split View") : nil
-        let page = pool.engine.makePage(url: url, restoring: nil)
-        let session = LinkPeekSession(sourceTabID: tabID, page: page, url: url, splitTitle: splitTitle)
+        // In the source tab's profile, so the Peek has its space's cookies and sign-ins.
+        let engine = pool.engine(forTab: tabID)
+        let page = engine.makePage(url: url, restoring: nil)
+        let session = LinkPeekSession(sourceTabID: tabID, page: page, profileDirectory: engine.profileDirectory,
+                                      url: url, splitTitle: splitTitle)
         linkPeek = session
         updateLinkPeekBadge(session)
         page.onEvent = { [weak self, weak session] event in
@@ -233,7 +239,7 @@ extension BrowserWindowController {
         guard let session = linkPeek, let url = session.url else { return }
         _ = session.view.detachPage()
         closeLinkPeek(animated: false)
-        pool.openTab(with: session.page, url: url, source: session.sourceTabID)
+        pool.openTab(with: session.page, url: url, source: session.sourceTabID, profileDirectory: session.profileDirectory)
         if let title = session.title, let id = store.state.selectedTab?.id { store.pageTitleChanged(id, title) }
     }
 
@@ -243,7 +249,7 @@ extension BrowserWindowController {
         _ = session.view.detachPage()
         closeLinkPeek(animated: false)
         let id = UUID()
-        pool.register(existing: session.page, id: id)
+        pool.register(existing: session.page, id: id, profileDirectory: session.profileDirectory)
         guard store.mutate({ $0.addSplitPane(id: id) }) == .added(id) else {
             pool.discard(id, keepHistory: false)
             return
@@ -277,7 +283,7 @@ extension BrowserWindowController {
         case .openInLittleKite(let url):
             DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.openLittleKiteWindow(url: url) }
         case .popup(let popup):
-            pool.openTab(with: popup, source: session.sourceTabID)
+            pool.openTab(with: popup, source: session.sourceTabID, profileDirectory: session.profileDirectory)
         case let .openLink(url, target):
             openLinkFromPageMenu(url, target, from: session.sourceTabID)
         case .pageCommand(.viewPageSource):
