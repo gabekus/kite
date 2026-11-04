@@ -271,7 +271,7 @@ bool CommandBarView::CreateGpu(std::wstring& error) {
     composition_ = compositor_->Device();
     if (FAILED(hr = composition_->CreateVisual(visual_.ReleaseAndGetAddressOf())) ||
         FAILED(hr = composition_->CreateVisual(caretVisual_.ReleaseAndGetAddressOf())) ||
-        FAILED(hr = compositor_->Overlay()->AddVisual(visual_.Get(), FALSE, nullptr)) || FAILED(hr = composition_->Commit())) {
+        FAILED(hr = compositor_->Overlay()->AddVisual(visual_.Get(), FALSE, nullptr)) || FAILED(hr = compositor_->Commit())) {
         error = HResultMessage(L"building the command bar's composition tree", hr);
         ReleaseGpu();
         return false;
@@ -293,7 +293,7 @@ void CommandBarView::ReleaseGpu() {
     caretAdded_ = false;
     if (visual_ && compositor_) {
         compositor_->Overlay()->RemoveVisual(visual_.Get());
-        composition_->Commit();
+        compositor_->Commit();
     }
     visual_.Reset();
     composition_.Reset();
@@ -512,7 +512,7 @@ void CommandBarView::Hide() {
     ReleaseBuffers();
     if (caretAdded_ && visual_) visual_->RemoveVisual(caretVisual_.Get());
     caretAdded_ = false;
-    if (composition_) composition_->Commit();
+    if (composition_ && compositor_) compositor_->Commit();
     text_.clear();
     characterStarts_.assign(1, true);
     caret_ = anchor_ = 0;
@@ -1013,7 +1013,7 @@ void CommandBarView::UpdateCaret() {
         else visual_->RemoveVisual(caretVisual_.Get());
         caretAdded_ = wanted;
     }
-    composition_->Commit();
+    compositor_->Commit();
 }
 
 // Messages -------------------------------------------------------------------------------
@@ -1224,6 +1224,8 @@ std::wstring CommandBarView::Draw(Pixels* readBack, POINT* origin) {
         *readBack = std::move(*pixels);
         if (origin) *origin = {g.leftPx - g.marginPx, g.topPx - g.marginPx};
     }
+    perf::CountSurfaceDraw(perf::View::CommandBar);
+    perf::CountPresent();
     if (FAILED(hr = swapChain_->Present(1, 0))) {
         deviceLost_ = IsDeviceLost(hr);
         return HResultMessage(L"presenting the command bar", hr);

@@ -359,7 +359,7 @@ std::wstring SpaceBarView::DrawLayer(Layer& layer, UINT width, UINT height, cons
         return HResultMessage(L"resizing a space cell's surface", hr);
     }
     layer.pixels = Pixels{};
-    return compositor_->DrawSurface(layer.surface.Get(), width, height, dpi_, content, readBack ? &layer.pixels : nullptr, hr);
+    return compositor_->DrawSurface(perf::View::SpaceBar, layer.surface.Get(), width, height, dpi_, content, readBack ? &layer.pixels : nullptr, hr);
 }
 
 std::wstring SpaceBarView::DrawCell(size_t index, CellGpu& gpu, bool readBack, bool& fresh) {
@@ -556,7 +556,7 @@ std::wstring SpaceBarView::Draw(UINT clientHeight, Pixels* readBack) {
         surfaceHeight_ = height;
         barPixels_ = Pixels{};
         error = compositor_->DrawSurface(
-            surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawBar(context); }, readBack ? &barPixels_ : nullptr, hr);
+            perf::View::SpaceBar, surface_.Get(), width, height, dpi_, [&](ID2D1DeviceContext* context) { DrawBar(context); }, readBack ? &barPixels_ : nullptr, hr);
         if (!error.empty()) {
             deviceLost_ = IsDeviceLost(hr);
             return L"the space bar: " + error;

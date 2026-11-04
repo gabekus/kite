@@ -24,6 +24,13 @@
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
 //                            closes: one JSON object a line, `t`, `offset` and `theme`.
+//   Kite.exe --perf-log FILE [--perf-control] [--chromium-switches "--a --b=c"]
+//                            a normal window on a test profile, for windows/tools/perf/kiteperf:
+//                            FILE gets JSON lines of QPC marks, present/commit/surface-draw
+//                            counters, long dispatches, input→present and frame timings
+//                            (shell/PerfLog.h); --perf-control takes requests by WM_COPYDATA
+//                            (BrowserWindowController::PerfControl); --chromium-switches go on
+//                            Chromium's command line. Opens behind other windows, without focus.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 //                            Prints a report; exits 0 when it matches, 5 when it differs, 3
@@ -56,6 +63,7 @@
 #endif
 #include "shell/Capture.h"
 #include "shell/MainWindow.h"
+#include "shell/PerfLog.h"
 #include "shell/Text.h"
 
 namespace {
@@ -163,9 +171,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // normal launch on the real profile.
     for (size_t i = 0; i < args.size(); ++i) {
         const std::wstring& a = args[i];
-        if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
+        if (a == L"--smoke-test" || a == L"--backdrop-test" || a == L"--perf-control") continue;
         if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
-            a == L"--space-tip") {
+            a == L"--space-tip" || a == L"--perf-log" || a == L"--chromium-switches") {
             ++i;
             continue;
         }
@@ -188,7 +196,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const OptionValue captureOption = Option(args, L"--capture");
     const OptionValue sizeOption = Option(args, L"--window-size");
     const std::optional<std::wstring>& capture = captureOption.value;
-    const bool quiet = smokeTest || captureOption.present;
+    const OptionValue perfLogOption = Option(args, L"--perf-log");
+    const bool perfControl = HasFlag(args, L"--perf-control");
+    const OptionValue switchesOption = Option(args, L"--chromium-switches");
+    // A measured run never shows a dialog or takes the focus (kiteperf runs beside other work).
+    const bool quiet = smokeTest || captureOption.present || perfLogOption.present || perfControl || switchesOption.present;
     if (captureOption.present && !capture) return Fail(quiet, L"--capture takes a PNG path", kUsage);
     const OptionValue scaleOption = Option(args, L"--capture-scale");
     int captureScale = 0;
@@ -220,14 +232,47 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (tipOption.present && !captureOption.present) return Fail(quiet, L"--space-tip only goes with --capture", kUsage);
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
+    if (perfLogOption.present && !perfLogOption.value) return Fail(quiet, L"--perf-log takes a file", kUsage);
+    // "--name" or "--name=value", split on spaces.
+    std::vector<std::string> chromiumSwitches;
+    if (switchesOption.present) {
+        if (!switchesOption.value) return Fail(quiet, L"--chromium-switches takes Chromium's switches", kUsage);
+        const std::wstring& text = *switchesOption.value;
+        for (size_t start = 0; start < text.size();) {
+            if (text[start] == L' ') {
+                ++start;
+                continue;
+            }
+            const size_t end = std::min(text.find(L' ', start), text.size());
+            const std::wstring_view token(text.data() + start, end - start);
+            if (token.size() < 3 || !token.starts_with(L"--") || token[2] == L'=') {
+                return Fail(quiet, L"--chromium-switches takes switches like --name or --name=value, not " + std::wstring(token), kUsage);
+            }
+            chromiumSwitches.push_back(Narrow(std::wstring(token.substr(2))));
+            start = end;
+        }
+    }
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
     // capture loads and re-saves the session, which must never be the user's own.
-    if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present || frameLogOption.present) && !supportOverride) {
+    if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present || frameLogOption.present ||
+         perfLogOption.present || perfControl || switchesOption.present) &&
+        !supportOverride) {
         return Fail(quiet,
-                    L"--smoke-test, --capture, --window-size, --capture-scale and --frame-log need KITE_SUPPORT_PATH set to a test profile",
+                    L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log, --perf-log, --perf-control and "
+                    L"--chromium-switches need KITE_SUPPORT_PATH set to a test profile",
                     kUsage);
+    }
+    // The perf log is open for the rest of the run, whichever way it ends (its last line, "exit").
+    struct PerfLogClose {
+        ~PerfLogClose() { kite::perf::Close(); }
+    } perfLogClose;
+    if (perfLogOption.value) {
+        if (std::wstring problem = kite::perf::Open(*perfLogOption.value); !problem.empty()) {
+            return Fail(quiet, L"--perf-log: " + problem, kUsage);
+        }
+        kite::perf::Mark("started");
     }
     auto resolved = kite::ResolveSupportDirectory(supportOverride, kite::EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<kite::SupportDirectoryError>(&resolved)) {
@@ -279,6 +324,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.capture = capture.has_value();
     options.smokeTest = smokeTest;
     options.frameLog = frameLogOption.present;
+    options.perfControl = perfControl;
+    options.chromiumSwitches = std::move(chromiumSwitches);
     options.spaceIcons = supportDirectory / L"SpaceIcons";
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
     auto save = [&] {
@@ -286,6 +333,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     };
     auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, save, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
+    kite::perf::Mark("window-created");
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
     kite::MainWindow& window = controller->Window();
 
@@ -308,6 +356,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
     if (size) window.SetClientSize(size->first, size->second);
     if (problem = controller->Draw(); !problem.empty()) return Fail(quiet, L"Kite couldn't draw its window: " + problem, kWindowFailed);
+    kite::perf::Mark("first-commit");
 
     if (smokeTest) {
         // Checked before Chromium starts, so a failure here leaves no browser half-created.
@@ -337,6 +386,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 #endif
 
     controller->Show(showCommand, quiet);
+    kite::perf::Mark("shown");
     if (capture && !window.HasClientSize(size->first, size->second)) {
         // A capture is compared pixel for pixel with the Mac's, so a window Windows resized
         // (maximized by the launcher, clamped to 32767 px) would compare the wrong thing.
@@ -358,6 +408,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
 
     controller->RunMessageLoop();
+    kite::perf::Mark("loop-end");
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (frameLogOption.value) {
         if (problem = controller->SaveFrameLog(*frameLogOption.value); !problem.empty()) {

@@ -26,6 +26,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "core/KeyBindings.h"
 
@@ -84,8 +85,10 @@ public:
     // Starts Chromium with its profiles under `root` (the Mac's <support>/Chromium): the
     // default profile in root\Default, a space's other profile in root\<directory>.
     // AlreadyRunning: another Kite has this profile and has been told to come forward.
+    // `switches` ("name" or "name=value", no leading dashes) go on the browser process's
+    // command line (--chromium-switches, test profiles only).
     static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
-                             std::unique_ptr<Chromium>& out, std::wstring& error);
+                             std::vector<std::string> switches, std::unique_ptr<Chromium>& out, std::wstring& error);
     // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();
     Chromium(const Chromium&) = delete;

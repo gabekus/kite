@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "core/CommandBar.h"
+#include "core/Json.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/Sidebar.h"
@@ -20,6 +21,7 @@
 #endif
 #include "shell/Errors.h"
 #include "shell/Keys.h"
+#include "shell/PerfLog.h"
 #include "shell/Text.h"
 
 namespace kite {
@@ -296,6 +298,16 @@ bool BrowserWindowController::CommandEnabled(const std::string& command) const {
 void BrowserWindowController::Frame(double time) {
     ++frameCount_;
     lastFrameTime_ = time;
+    if (perf::On()) {
+        // Before the draw, so its commit is this frame's.
+        DCOMPOSITION_FRAME_STATISTICS statistics{};
+        double rate = 0;
+        if (compositor_ && SUCCEEDED(compositor_->Device()->GetFrameStatistics(&statistics)) &&
+            statistics.currentCompositionRate.Denominator) {
+            rate = static_cast<double>(statistics.currentCompositionRate.Numerator) / statistics.currentCompositionRate.Denominator;
+        }
+        perf::Frame(time, sidebar_->PageOffset(), theme_.Progress(time), rate);
+    }
     // Minimized: nothing to draw into (OnSize draws the end of it on restore).
     if (!IsIconic(window_.Handle())) DrawAt(time, nullptr);
     else lastThemeProgress_ = theme_.Progress(time);
@@ -525,7 +537,54 @@ void BrowserWindowController::MakeCommands() {
 }
 
 void BrowserWindowController::RunCommand(const std::string& command) {
-    if (auto it = commands_.find(command); it != commands_.end()) it->second();
+    auto it = commands_.find(command);
+    if (it == commands_.end()) return;
+    if (!perf::On()) return it->second();
+    perf::Mark("command-begin", command);
+    it->second();
+    perf::Mark("command-end", command);
+}
+
+bool BrowserWindowController::PerfControl(const COPYDATASTRUCT& data) {
+    if (data.dwData != kPerfControlTag || !data.lpData) return false;
+    auto parsed = json::Parse(std::string_view(static_cast<const char*>(data.lpData), data.cbData));
+    const json::Value* request = std::get_if<json::Value>(&parsed);
+    if (!request || !request->AsObject()) return false;
+    const auto text = [&](std::string_view key) -> const std::string* {
+        const json::Value* value = request->Find(key);
+        return value ? value->AsString() : nullptr;
+    };
+    const auto number = [&](std::string_view key) -> std::optional<int64_t> {
+        const json::Value* value = request->Find(key);
+        return value ? value->AsInt() : std::nullopt;
+    };
+    if (const std::string* command = text("command")) {
+        if (!commands_.contains(*command) || !CommandEnabled(*command)) return false;
+        if (perf::On()) perf::Input("command", number("qpc").value_or(perf::Now()));
+        RunCommand(*command);
+        return true;
+    }
+    if (const std::string* mark = text("mark")) {
+        perf::Mark(*mark);
+        return true;
+    }
+    if (const std::string* url = text("open")) {
+        state_.OpenTab(*url);
+        SelectionMoved();
+        return true;
+    }
+    if (const std::string* input = text("input")) {
+        if (*input == "leave") {
+            perfPointer_ = false;
+            return PostMessageW(window_.Handle(), WM_MOUSELEAVE, 0, 0) != FALSE;
+        }
+        const auto x = number("x"), y = number("y");
+        if (*input != "move" || !x || !y || *x < 0 || *y < 0 || *x > 0x7FFF || *y > 0x7FFF) return false;
+        perfPointer_ = true;
+        if (perf::On()) perf::Input("move", number("qpc").value_or(perf::Now()));
+        return PostMessageW(window_.Handle(), WM_MOUSEMOVE, 0, MAKELPARAM(*x, *y)) != FALSE;
+    }
+    return false;
 }
 
 bool BrowserWindowController::PageCommand(const std::string& command) {
@@ -625,6 +684,16 @@ void BrowserWindowController::OnSize() {
 // MARK: The window's messages
 
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+    if (message == WM_COPYDATA && options_.perfControl) {
+        result = PerfControl(*reinterpret_cast<const COPYDATASTRUCT*>(lParam)) ? 1 : 0;
+        return true;
+    }
+    // The real pointer isn't over the window while --perf-control moves one: TrackMouseEvent's
+    // leave would take the hover straight off again.
+    if (message == WM_MOUSELEAVE && perfPointer_) {
+        result = 0;
+        return true;
+    }
     // The caption buttons' presses, whatever else is open.
     if (caption_->HandleMessage(message, wParam, lParam, result)) return true;
 #ifdef KITE_HAS_CEF
@@ -862,9 +931,13 @@ void BrowserWindowController::RunMessageLoop() {
         } else {
             retryUntil = 0;
         }
+        // --perf-log looks up when committed frames reached the screen, every 16 ms while any wait.
+        const bool polling = perf::On() && perf::Pending();
+        if (polling && timeout == INFINITE) timeout = 16;
         const DWORD woke =
             MsgWaitForMultipleObjectsEx(removed ? 1 : 0, removed ? &removed : nullptr, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        if ((removed && woke == WAIT_OBJECT_0) || woke == WAIT_TIMEOUT) {
+        if (polling) perf::Poll();
+        if ((removed && woke == WAIT_OBJECT_0) || (woke == WAIT_TIMEOUT && !compositor_)) {
             if (renderer_ && compositor_) {
                 const HRESULT reason = renderer_->Device()->GetDeviceRemovedReason();
                 OutputDebugStringW(HResultMessage(L"Kite: the GPU device was removed", reason).append(L"\n").c_str());
@@ -880,7 +953,13 @@ void BrowserWindowController::RunMessageLoop() {
                 break;
             }
             TranslateMessage(&message);
-            DispatchMessageW(&message);
+            if (perf::On()) {
+                const int64_t began = perf::Now();
+                DispatchMessageW(&message);
+                perf::Dispatched(message.message, began);
+            } else {
+                DispatchMessageW(&message);
+            }
         }
     }
 }
@@ -1002,7 +1081,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
-    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), chromium_, error);
+    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), options_.chromiumSwitches, chromium_, error);
         started != Chromium::StartResult::Started) {
         return started;
     }

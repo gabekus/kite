@@ -49,6 +49,11 @@ public:
         // --frame-log: each frame the clock delivered (when it was handled, the time it was
         // drawn for, the pages' offset and the theme's crossfade) is kept for SaveFrameLog.
         bool frameLog = false;
+        // --perf-control: WM_COPYDATA tagged kPerfControlTag runs a shortcut's command, logs a
+        // mark, opens a tab or posts a pointer move (PerfControl). Test profiles only.
+        bool perfControl = false;
+        // --chromium-switches: added to Chromium's command line (test profiles only).
+        std::vector<std::string> chromiumSwitches;
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
         // decodes them in place, the rest on a worker).
         std::filesystem::path spaceIcons;
@@ -100,6 +105,9 @@ public:
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
+
+    // WM_COPYDATA's dwData for --perf-control ('KPRF').
+    static constexpr ULONG_PTR kPerfControlTag = 0x4B505246;
 
 private:
     // The content card, in points: right of the sidebar, inset on the other three sides
@@ -160,6 +168,13 @@ private:
     std::wstring Rebuild();
     void OnSize();
     bool Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result);
+    // One --perf-control request, a UTF-8 JSON object: {"command":ID[,"qpc":Q]} runs a shortcut's
+    // command (the input→present clock starting at Q, the harness's send), {"mark":NAME} logs a
+    // mark, {"open":URL} opens a tab and shows it (the command bar's Open), {"input":"move",
+    // "x":X,"y":Y,"qpc":Q} posts a pointer move to the window at client px (X, Y), and
+    // {"input":"leave"} the pointer's leaving. False when it isn't one, or the command does
+    // nothing now.
+    bool PerfControl(const COPYDATASTRUCT& data);
 #ifdef KITE_HAS_CEF
     RECT ContentBounds() const;
     void ShowSelectedTab();
@@ -210,6 +225,9 @@ private:
         double handled, target, offset, theme;
     };
     std::vector<LoggedFrame> frames_;
+    // --perf-control's pointer is over the window: the system's WM_MOUSELEAVE (the real pointer
+    // is elsewhere) doesn't take its hover away.
+    bool perfPointer_ = false;
     size_t frameCount_ = 0;  // frames delivered, logged or not (the smoke test checks them)
 
     // What each shortcut's command does, by id (MainMenu.swift's items).
