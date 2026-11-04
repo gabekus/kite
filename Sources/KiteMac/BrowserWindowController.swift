@@ -148,6 +148,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         self.isIncognito = incognito
         self.pool = PagePool(engine: engine, store: store)
         if let sharedPages { pool.join(sharedPages) }
+        // Incognito tabs leave no history on disk.
+        if !incognito { pool.historyFiles = AppDelegate.tabHistory }
         let savedWidth = UserDefaults.standard.double(forKey: Self.sidebarWidthKey)
         self.sidebarWidth = savedWidth > 0 ? Self.clampedSidebarWidth(savedWidth) : Layout.defaultSidebarWidth
         let window = BrowserWindow(
