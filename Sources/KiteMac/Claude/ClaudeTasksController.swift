@@ -111,7 +111,8 @@ final class ClaudeTasksController {
         routes = ClaudeRoutes.load(from: routesURL)
         workDirectory = supportDirectory.appendingPathComponent("Claude", isDirectory: true)
             .appendingPathComponent("Work", isDirectory: true)
-        tasks = ClaudeTaskList.load(from: fileURL).tasks
+        // A file StoreFile couldn't move aside stays unwritten: its saves are refused.
+        tasks = ClaudeTaskList.load(from: fileURL).value?.tasks ?? []
         automation.isRunningTask = { [weak self] id in self?.runs[id] != nil }
         automation.taskOpenedTab = { [weak self] task, tab, session in self?.file(tab, under: task, named: session) }
         automation.isTicketTest = { [weak self] id in self?.task(id)?.ticket != nil }
@@ -481,8 +482,12 @@ final class ClaudeTasksController {
         scheduleSave()
     }
 
-    /// GUI apps get a bare PATH. Claude Code may be a Node script, so give it the login shell's.
-    nonisolated static func environment() -> [String: String] {
+    /// GUI apps get a bare PATH. Claude Code may be a Node script, so give it the login shell's. Worked out
+    /// once (a login `zsh -lc`) on the first caller's thread, which is never the main one: every caller
+    /// runs it from a detached task.
+    nonisolated static func environment() -> [String: String] { loginEnvironment }
+
+    nonisolated private static let loginEnvironment: [String: String] = {
         var environment = ProcessInfo.processInfo.environment
         let (status, output) = ClaudeConnect.run("/bin/zsh", ["-lc", "printf %s \"$PATH\""])
         let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -490,7 +495,7 @@ final class ClaudeTasksController {
         // Kite's own test switches mustn't leak into Claude Code.
         environment["KITE_DIAGNOSTICS"] = nil
         return environment
-    }
+    }()
 
     // MARK: Awake, notifications, badge
 

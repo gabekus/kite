@@ -36,41 +36,21 @@ enum LinkPreviewSummarizer {
         guard let claude = claude ?? nil else { return nil }
         let prompt = LinkPreviewSummary.prompt(url: url, metadata: metadata, pageText: pageText,
                                                language: LinkPreviewSummary.languageName())
-        let process = Process()
-        let reply: String? = await withTaskCancellationHandler {
-            await Task.detached(priority: .userInitiated) { run(process, claude: claude, prompt: prompt) }.value
-        } onCancel: {
-            if process.isRunning { process.terminate() }
+        // The login shell's PATH comes from running zsh: off the main thread, as the run itself is.
+        let environment = await Task.detached { ClaudeTasksController.environment() }.value
+        guard !Task.isCancelled else { return nil }
+        // Its own process group, ended whole at the timeout or when this task is cancelled: a child left
+        // holding stdout can't hang the read.
+        let process = OneShotProcess(executable: claude, arguments: LinkPreviewSummary.claudeArguments(),
+                                     environment: environment, directory: FileManager.default.temporaryDirectory)
+        let reply = await process.run(input: Data(prompt.utf8), timeout: timeout).flatMap { result -> String? in
+            let text = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            return result.status == 0 && !text.isEmpty ? text : nil
         }
         guard !Task.isCancelled else { return nil }
         let summary = reply.flatMap(LinkPreviewSummary.parse(reply:))
         // A failed run isn't kept, so the next hover asks again.
         if reply != nil { cache.setObject(Box(summary), forKey: url as NSURL) }
         return summary
-    }
-
-    /// Blocks until Claude Code exits, so it runs off the main thread.
-    nonisolated private static func run(_ process: Process, claude: String, prompt: String) -> String? {
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = LinkPreviewSummary.claudeArguments()
-        process.environment = ClaudeTasksController.environment()
-        process.currentDirectoryURL = FileManager.default.temporaryDirectory
-        let input = Pipe(), output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-        let writer = input.fileHandleForWriting
-        DispatchQueue.global(qos: .userInitiated).async {
-            try? writer.write(contentsOf: Data(prompt.utf8))
-            try? writer.close()
-        }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        killer.cancel()
-        let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return process.terminationStatus == 0 && !text.isEmpty ? text : nil
     }
 }

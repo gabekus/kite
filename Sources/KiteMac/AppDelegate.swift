@@ -264,6 +264,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let spaceIDs = Set(store.state.spaces.map(\.id))
         var openedTab = false
         for url in urls {
+            // A javascript: or data: URL from another app (`open location`) would be AppleScript's `execute`
+            // by another name: refused, as the scripting dictionary refuses it, unless Allow JavaScript from
+            // Apple Events is on.
+            guard AppleScripting.mayLoad(url, allowsJavaScript: allowsJavaScriptFromAppleEvents) else {
+                NSLog("Kite: refused a \(url.scheme ?? "") URL from another app: Allow JavaScript from Apple Events is off")
+                continue
+            }
             // A web app's launcher (~/Applications/Kite Apps/<Name>.app) opens kite-app://<id>.
             if webApps.handleLaunchURL(url) { continue }
             if MailHandler.isMailto(url) {
@@ -314,7 +321,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showInBackground: { [weak main] page, url, title, spaceID, profile in
                 guard let main else { return page.close() }
                 let id = main.pool.adopt(page, profileDirectory: profile)
-                store.mutate { _ = $0.openTab(id: id, url: url, in: spaceID, select: false) }
+                // Kite's VPN sign-in, not the user's step to undo.
+                store.mutateWithoutUndo { _ = $0.openTab(id: id, url: url, in: spaceID, select: false) }
                 store.pageTitleChanged(id, title)
             }
         )

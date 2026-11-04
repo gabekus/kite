@@ -34,7 +34,8 @@ enum DownloadLocation {
     }
 
     static func setFolder(_ url: URL, profile directory: String?) {
-        store?.mutate { state in
+        // A setting, not a sidebar change to undo.
+        store?.mutateWithoutUndo { state in
             state.updateSettings(ofProfile: directory) {
                 $0.downloadDirectory = url.standardizedFileURL.path == defaultFolder.standardizedFileURL.path ? nil : url.path
                 $0.promptsForDownload = false
@@ -43,7 +44,7 @@ enum DownloadLocation {
     }
 
     static func setPrompts(_ prompts: Bool, profile directory: String?) {
-        store?.mutate { state in state.updateSettings(ofProfile: directory) { $0.promptsForDownload = prompts } }
+        store?.mutateWithoutUndo { state in state.updateSettings(ofProfile: directory) { $0.promptsForDownload = prompts } }
     }
 
     /// Arc's Other…: a folder panel opened in the current folder, with "Select" to confirm.

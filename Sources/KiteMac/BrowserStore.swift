@@ -201,6 +201,8 @@ final class BrowserStore {
     @ObservationIgnored private var undoSuppression = 0
     /// The name for the next undo step, when the caller knows better than the guess from the change.
     @ObservationIgnored private var pendingUndoName: String?
+    /// True while Undo or Redo puts the sidebar back (`registerStep`).
+    @ObservationIgnored private var restoringUndoStep = false
 
     /// Runs `body` with its changes left out of the user's undo.
     @discardableResult
@@ -243,7 +245,9 @@ final class BrowserStore {
     private func registerStep(_ undoManager: UndoManager, restoring target: SidebarSnapshot, other: SidebarSnapshot, name: String) {
         undoManager.registerUndo(withTarget: self) { store in
             guard let manager = store.undoManager?() else { return }
+            store.restoringUndoStep = true
             store.withoutUndo { _ = store.mutate { $0.restoreSidebar(target, other: other) } }
+            store.restoringUndoStep = false
             // Registered while undoing, this lands on the redo stack, and while redoing back on the undo stack.
             store.registerStep(manager, restoring: other, other: target, name: name)
         }
@@ -264,8 +268,9 @@ final class BrowserStore {
         onChange?()
         link?.propagate(from: self)
         didChangeState?()
-        // Tidy Tab Titles: a tab pinned by any path gets a short name from Claude.
-        if tidiesPinnedTabs, TidyTabTitles.isEnabled() {
+        // Tidy Tab Titles: a tab pinned by any path gets a short name from Claude, but not one that Undo
+        // of an unpin (or Redo of a pin) puts back: it was named, or not, when it was first pinned.
+        if tidiesPinnedTabs, !restoringUndoStep, TidyTabTitles.isEnabled() {
             let pinned = TidyTabTitles.newlyPinnedTabs(before: before, after: state)
             if !pinned.isEmpty { TidyTabTitlesController.shared.tabsPinned(pinned, in: self) }
         }
@@ -366,10 +371,9 @@ final class BrowserStore {
         // Closed without picking a page for the new pane: cancel the split.
         if let pane = pendingSplitPane {
             pendingSplitPane = nil
-            state.cancelSplitPane(pane)
-            scheduleSave()
-            link?.propagate(from: self)
-            didChangeState?()
+            // Through mutate, for its bookkeeping (pinned URLs, tab groups, saving, other windows); it's
+            // Kite tidying up, not a step to undo.
+            mutateWithoutUndo { $0.cancelSplitPane(pane) }
         }
         onChange?()
     }

@@ -25,6 +25,8 @@ final class BrowserWindows {
     let sharedPages = SharedPages()
     private(set) var controllers: [BrowserWindowController] = []
     private var kinds: [ObjectIdentifier: SavedWindow.Kind] = [:]
+    /// Each window's will-close observer, removed when it fires.
+    private var closeObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
     private var saveTask: Task<Void, Never>?
     /// While the app quits, windows closing don't drop out of the saved list.
     private var isTerminating = false
@@ -124,12 +126,15 @@ final class BrowserWindows {
                                                  sharedPages: sharedPages)
         controllers.append(controller)
         didMakeController?(controller)
-        kinds[ObjectIdentifier(controller)] = kind
-        NotificationCenter.default.addObserver(
+        let key = ObjectIdentifier(controller)
+        kinds[key] = kind
+        closeObservers[key] = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: controller.window, queue: .main
         ) { [weak self, weak controller] _ in
             MainActor.assumeIsolated {
-                guard let self, let controller, !self.isTerminating else { return }
+                guard let self else { return }
+                if let token = self.closeObservers.removeValue(forKey: key) { NotificationCenter.default.removeObserver(token) }
+                guard let controller, !self.isTerminating else { return }
                 self.controllers.removeAll { $0 === controller }
                 self.kinds[ObjectIdentifier(controller)] = nil
                 self.link.remove(controller.store)

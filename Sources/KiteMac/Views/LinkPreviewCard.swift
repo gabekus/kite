@@ -33,7 +33,7 @@ final class LinkPreviewController {
         guard let hover else {
             hovered = nil
             cancelShow()
-            if shownURL != nil { scheduleLeaveCheck() }
+            if shownURL != nil { scheduleLeaveCheck() } else { removeMonitorIfIdle() }
             return
         }
         hovered = (hover, view)
@@ -56,6 +56,11 @@ final class LinkPreviewController {
         fetch = nil
         shownURL = nil
         shownLink = nil
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+            self.resignObserver = nil
+        }
+        removeMonitorIfIdle()
         guard let window else { return }
         self.window = nil
         window.close(animated: animated)
@@ -182,6 +187,14 @@ final class LinkPreviewController {
             self?.handle(event)
             return event
         }
+    }
+
+    /// The monitor only watches while a link is under the pointer or a card is up: otherwise every key and
+    /// scroll in Kite would pass through it for good once a link had been hovered.
+    private func removeMonitorIfIdle() {
+        guard hovered == nil, shownURL == nil, let monitor else { return }
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
     }
 
     private func handle(_ event: NSEvent) {

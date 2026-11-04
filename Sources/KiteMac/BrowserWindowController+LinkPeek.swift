@@ -249,6 +249,7 @@ extension BrowserWindowController {
             session.title = title
         case .closeRequested:
             if linkPeek === session { closeLinkPeek(animated: true) } else { discardParkedLinkPeek(of: session.sourceTabID) }
+        // The page opening tabs, as PagePool's do: not a step in the user's undo.
         case .openInNewTab(let url, let foreground):
             pool.openTab(url: url, openedBy: session.sourceTabID, select: foreground)
         case .openInLinkPeek(let url):

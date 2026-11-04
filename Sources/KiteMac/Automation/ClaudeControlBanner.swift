@@ -113,9 +113,11 @@ extension BrowserWindowController: AutomationHost {
         claudeButton.onFrameChange = { [weak self] in self?.schedulePlaceClaudeBanner() }
         for view in [sidebarHostView, contentFrame] as [NSView] {
             view.postsFrameChangedNotifications = true
-            NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: view, queue: .main) { [weak self] _ in
+            claudeBannerPlacement.frameObservers.append(NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: view, queue: .main
+            ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.schedulePlaceClaudeBanner() }
-            }
+            })
         }
         schedulePlaceClaudeBanner()
     }
@@ -231,6 +233,13 @@ final class ClaudeControlBorderView: NSView {
 final class ClaudeBannerPlacement {
     var anchorX: CGFloat = 0
     @ObservationIgnored var pending = false
+    /// The sidebar's and page area's frame observers that re-place the banner, removed with the window's
+    /// controller (which owns this).
+    @ObservationIgnored nonisolated(unsafe) var frameObservers: [NSObjectProtocol] = []
+
+    deinit {
+        for observer in frameObservers { NotificationCenter.default.removeObserver(observer) }
+    }
 }
 
 /// Centres the banner on `placement.anchorX`, kept 8pt inside the window's edges.
