@@ -266,6 +266,11 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) BOOL focusBlocked;
 /// Tells Chromium the tab is offscreen so it throttles rendering and timers.
 - (void)setHidden:(BOOL)hidden;
+/// Lays the page out at its content's size, between `minSize` and `maxSize`, as Chrome sizes
+/// extension popups; each new size goes to `autoResizeHandler`. Takes effect once the browser exists.
+- (void)enableAutoResizeWithMinSize:(NSSize)minSize maxSize:(NSSize)maxSize;
+/// The page's size in points under auto-resize; the view's owner resizes the view to it.
+@property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^autoResizeHandler)(NSSize size);
 /// Opens (or brings forward) Chrome DevTools in its own window, then runs `frontendScript` in the DevTools
 /// frontend page: on its load event when it opens, right away when it's already open.
 - (void)showDevToolsRunningFrontendScript:(nullable NSString *)frontendScript;

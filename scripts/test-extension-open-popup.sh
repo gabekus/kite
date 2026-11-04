@@ -3,9 +3,11 @@
 # it in Kite (Kite's tabs are in no window, so there's no toolbar to hang it from), which is why
 # 1Password's "Unlock 1Password" button did nothing. The extension is
 # Tests/Browser/extension-open-popup; its worker keeps Chromium's own openPopup, taken before
-# Kite's script replaces it, so this also shows the failure Kite works around.
+# Kite's script replaces it, so this also shows the failure Kite works around. It also checks the
+# popup is sized to its page (220×80), as Chrome sizes popups, not left at the 800×600 most.
 # Usage: scripts/test-extension-open-popup.sh [APP]   (default build/Kite.app; never /Applications/Kite.app)
-# Launches APP on a fresh test profile in the background and exits non-zero if the popup doesn't open.
+# Launches APP on a fresh test profile in the background and exits non-zero if the popup doesn't
+# open or isn't sized to its page.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${1:-$ROOT/build/Kite.app}"
@@ -26,7 +28,8 @@ python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$EXT" >/dev/null 2>
 SERVER=$!
 "$APP/Contents/MacOS/Kite" --disable-backgrounding-occluded-windows --load-extension="$EXT" >"$P/kite.log" 2>&1 &
 PID=$!
-cleanup() { kill $PID $SERVER 2>/dev/null; wait $PID 2>/dev/null; [[ -n "${KEEP:-}" ]] || rm -rf "$P"; }
+# Chromium's helpers can still be writing to the profile as Kite exits.
+cleanup() { kill $PID $SERVER 2>/dev/null; wait $PID 2>/dev/null; [[ -n "${KEEP:-}" ]] || rm -rf "$P" 2>/dev/null || true; }
 trap cleanup EXIT
 for _ in $(seq 60); do "$CLI" ui windows >/dev/null 2>&1 && break; sleep 0.5; done
 if grep -q "CefInitialize failed" "$P/kite.log"; then echo "Chromium didn't start, and WebKit has no extensions" >&2; exit 1; fi
@@ -85,6 +88,22 @@ if [[ "$replaced" != *'"replaced":true'* ]]; then
 fi
 
 run_case kite popup.html "openPopup: it resolved and the popup page loaded"
+
+# The open popup's viewport: popup.html's body is 220×80 with no margin.
+size=""
+for _ in $(seq 20); do
+  size=$("$CLI" js "JSON.stringify(chrome.extension.getViews().filter((w) => w.location.pathname === '/popup.html').map((w) => [w.innerWidth, w.innerHeight]))" --tab "$TAB" 2>/dev/null |
+    grep -E '^\[' | head -1)
+  [[ "$size" == '[[220,80]]' ]] && break
+  sleep 0.25
+done
+if [[ "$size" == '[[220,80]]' ]]; then
+  echo "PASS popup size: the popover fits its page (220×80)"
+else
+  echo "FAIL popup size: the popup's viewport is ${size:-unknown}, not [[220,80]]"
+  failures=$((failures + 1))
+fi
+
 # Last: the tab's own popup stays set for the rest of the run.
 run_case tab tab-popup.html "tab popup: it opened the popup set for the active tab"
 exit $((failures > 0))

@@ -183,6 +183,10 @@ swaps the shown page, theme, command bar and sidebar. Page events flow from the 
 - **`chrome.action.openPopup` fails with "Could not find an active browser window."** for the same reason, so 1Password's
   "Unlock 1Password" did nothing. `ExtensionTabsScript` replaces it, and Kite shows the popup in its own popover
   (`scripts/test-extension-open-popup.sh`).
+- **Extension popups size themselves with Chromium's auto-resize**, as Chrome's do: `KCBrowser`'s
+  `enableAutoResizeWithMinSize:maxSize:` (CEF's `SetAutoResizeEnabled`) between Chrome's 25×25 and 800×600, and
+  `OnAutoResize` reports each size. Measuring `documentElement.scrollWidth/Height` can't work: it never drops below the
+  viewport, and a new `KCBrowser` view starts at 800×600, so every popup opened at the maximum.
 - **Chrome's install dialog can't be hidden or replaced** without patching CEF: its NSWindow title is empty (the "Add …?" text is
   only its accessibility title), Chrome fades it in itself (alpha steps 0.29 → 1, bypassing `-setAlphaValue:`), and
   "Add extension" stays disabled while the dialog isn't really visible (its anti-clickjacking delay). So Kite attaches Chrome's
