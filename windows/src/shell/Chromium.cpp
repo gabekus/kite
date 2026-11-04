@@ -43,7 +43,9 @@ constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; BrowserWindowControll
 // Tells the browser process which renderer hosts each tab's main frame. CEF has no
 // browser-side accessor for a browser's render process id, so the renderer sends its own, from
 // each new main-frame script context (a navigation that moves the tab to another renderer
-// sends again). The Mac's KiteHelper/main.mm and KCBrowser.mm share the name.
+// sends again). The Mac's KiteHelper/main.mm and KCBrowser.mm share the name. Sent in every
+// run, as on the Mac, whose Task Manager reads it (Windows' will); today only --smoke-test
+// uses it, and a message per new main-frame context costs nothing that shows.
 constexpr char kRendererPIDMessage[] = "kite.rendererPID";
 
 CefRect ToCefRect(const RECT& r) { return CefRect(r.left, r.top, r.right - r.left, r.bottom - r.top); }
@@ -751,13 +753,7 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
 
     CefSettings settings;
     // CEF's own UI thread, so Kite's message loop (DirectComposition, the device-lost wait)
-    // stays its own. The Chromium sandbox is on, as on the Mac: Kite.exe is CEF's bootstrap,
-    // which puts each helper in it before Kite.dll loads there (main.cpp's RunWinMain).
-    if (!sandboxInfo) {
-        CloseHandle(shared->allClosed);
-        error = L"Kite.exe gave Kite.dll no sandbox (it isn't CEF's bootstrap)";
-        return StartResult::Failed;
-    }
+    // stays its own. The Chromium sandbox is on, as on the Mac (main.cpp's RunWinMain).
     settings.multi_threaded_message_loop = true;
     settings.log_severity = LOGSEVERITY_WARNING;
     settings.persist_session_cookies = true;

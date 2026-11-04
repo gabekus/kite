@@ -964,7 +964,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         std::wstring error;
         if (const auto sandbox = InspectSandbox(pid, error)) {
             rendererProblem_ = RendererSandboxProblem(*sandbox);
-            rendererReport_ = Describe(*sandbox);
+            sandboxReport_ = L"Kite: the first page's renderer: " + Describe(*sandbox) + L"\n";
         } else {
             rendererProblem_ = L"couldn't read the renderer's token: " + error;
         }
@@ -1040,6 +1040,14 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
 // context, which a page loading has but may report after the load).
 void BrowserWindowController::CloseWhenSmokeTestIsDone() {
     if (!options_.smokeTest || !pageLoaded_ || !rendererChecked_ || closeAskedAt_) return;
+    // Every helper by now (GPU, network, storage, renderers): none but the network service
+    // may run at medium integrity.
+    std::wstring error;
+    const std::vector<Helper> helpers = Helpers(error);
+    helperProblem_ = !error.empty()    ? L"couldn't read Kite's helpers: " + error
+                     : helpers.empty() ? L"Kite found none of its helper processes"
+                                       : HelperSandboxProblem(helpers);
+    for (const Helper& helper : helpers) sandboxReport_ += L"Kite: helper " + helper.type + L": " + Describe(helper.sandbox) + L"\n";
     closeAskedAt_ = GetTickCount64();
     PostMessageW(window_.Handle(), WM_CLOSE, 0, 0);
 }
@@ -1054,6 +1062,7 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     if (!pageLoaded_) return L"the first page didn't finish loading within 30 s";
     if (!rendererChecked_) return L"the first page's renderer never reported its process";
     if (!rendererProblem_.empty()) return L"the first page's renderer isn't sandboxed: " + rendererProblem_;
+    if (!helperProblem_.empty()) return L"a helper isn't sandboxed: " + helperProblem_;
     if (!chromium_->PagesCanBeHidden()) return L"a page had no Chromium widget window to hide: background tabs would keep drawing";
     // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
     // would otherwise hide a close that hangs.

@@ -155,10 +155,31 @@ int Fail(bool quiet, const std::wstring& message, int code) {
     return code;
 }
 
-// Kite.exe runs from its own folder (CEF's bootstrap makes it the working directory, so no
-// helper holds a handle to wherever Kite was started), so a relative path would land there
-// rather than where it was typed: test flags and KITE_SUPPORT_PATH take absolute ones.
-bool IsAbsolute(const std::wstring& path) { return std::filesystem::path(path).is_absolute(); }
+// Every path Kite is given (a file option, KITE_SUPPORT_PATH) must be absolute: Kite.exe runs
+// from its own folder (CEF's bootstrap makes it the working directory, docs/windows.md
+// "Chromium's sandbox"), so a relative one would land there rather than where it was typed.
+// The refusal for `what`, or empty when `path` is absolute.
+std::wstring RelativePathProblem(std::wstring_view what, const std::filesystem::path& path) {
+    if (path.is_absolute()) return {};
+    return std::wstring(what) + L" takes an absolute path (Kite.exe runs from its own folder)";
+}
+
+// A file option (--capture, --frame-log): its value, and the usage error when it's given
+// without one (`takes` says what it wants) or with a relative path. Every option naming a file
+// goes through here.
+struct PathOptionValue {
+    bool present = false;
+    std::optional<std::wstring> value;
+    std::wstring problem;
+};
+
+PathOptionValue PathOption(const std::vector<std::wstring>& args, std::wstring_view name, std::wstring_view takes) {
+    const OptionValue option = Option(args, name);
+    PathOptionValue out{option.present, option.value, {}};
+    if (option.present && !option.value) out.problem = std::wstring(name) + L" takes " + std::wstring(takes);
+    else if (option.value) out.problem = RelativePathProblem(name, *option.value);
+    return out;
+}
 
 int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxInfo) {
 #ifdef KITE_HAS_CEF
@@ -193,12 +214,11 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         return kWindowFailed;
     }
     const bool smokeTest = HasFlag(args, L"--smoke-test");
-    const OptionValue captureOption = Option(args, L"--capture");
+    const PathOptionValue captureOption = PathOption(args, L"--capture", L"a PNG path");
     const OptionValue sizeOption = Option(args, L"--window-size");
     const std::optional<std::wstring>& capture = captureOption.value;
     const bool quiet = smokeTest || captureOption.present;
-    if (captureOption.present && !capture) return Fail(quiet, L"--capture takes a PNG path", kUsage);
-    if (capture && !IsAbsolute(*capture)) return Fail(quiet, L"--capture takes an absolute path (Kite.exe runs from its own folder)", kUsage);
+    if (!captureOption.problem.empty()) return Fail(quiet, captureOption.problem, kUsage);
     const OptionValue scaleOption = Option(args, L"--capture-scale");
     int captureScale = 0;
     if (scaleOption.present) {
@@ -227,11 +247,8 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         tipIndex = static_cast<size_t>(std::stoi(*tipOption.value) - 1);
     }
     if (tipOption.present && !captureOption.present) return Fail(quiet, L"--space-tip only goes with --capture", kUsage);
-    const OptionValue frameLogOption = Option(args, L"--frame-log");
-    if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
-    if (frameLogOption.value && !IsAbsolute(*frameLogOption.value)) {
-        return Fail(quiet, L"--frame-log takes an absolute path (Kite.exe runs from its own folder)", kUsage);
-    }
+    const PathOptionValue frameLogOption = PathOption(args, L"--frame-log", L"a file");
+    if (!frameLogOption.problem.empty()) return Fail(quiet, frameLogOption.problem, kUsage);
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
@@ -241,8 +258,10 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
                     L"--smoke-test, --capture, --window-size, --capture-scale and --frame-log need KITE_SUPPORT_PATH set to a test profile",
                     kUsage);
     }
-    if (supportOverride && !supportOverride->empty() && !supportOverride->is_absolute()) {
-        return Fail(quiet, L"KITE_SUPPORT_PATH must be an absolute path (Kite.exe runs from its own folder)", kBadSupportDirectory);
+    if (supportOverride && !supportOverride->empty()) {
+        if (const std::wstring problem = RelativePathProblem(L"KITE_SUPPORT_PATH", *supportOverride); !problem.empty()) {
+            return Fail(quiet, problem, kBadSupportDirectory);
+        }
     }
     auto resolved = kite::ResolveSupportDirectory(supportOverride, kite::EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<kite::SupportDirectoryError>(&resolved)) {
@@ -380,10 +399,8 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
         }
     }
 #ifdef KITE_HAS_CEF
-    // CI's log shows what the smoke test found of the first page's renderer.
-    if (smokeTest && !controller->RendererSandbox().empty()) {
-        WriteUtf8(STD_OUTPUT_HANDLE, L"Kite: the first page's renderer: " + controller->RendererSandbox() + L"\n");
-    }
+    // CI's log shows what the smoke test found of the renderer's and the helpers' sandbox.
+    if (smokeTest) WriteUtf8(STD_OUTPUT_HANDLE, controller->SandboxReport());
     if (problem = controller->ShutDownChromium(); !problem.empty()) return Fail(quiet, problem, kWindowFailed);
 #endif
     if (!maySave) {
@@ -397,17 +414,28 @@ int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxI
 }  // namespace
 
 #ifdef KITE_HAS_CEF
-// Kite.exe is CEF's bootstrap.exe (cmake/StampBootstrap.cpp), which calls this in every process
-// Kite runs: the browser process, and each helper inside Chromium's sandbox, which
-// `sandboxInfo` carries to CefExecuteProcess and CefInitialize. The bootstrap comes from the
-// same CEF distribution as libcef.dll; a different one means a broken build, so Kite stops.
+// Kite.exe is CEF's bootstrap.exe (docs/windows.md, "Chromium's sandbox"), which calls this in
+// every process: the browser, and each helper already in the sandbox, whose `sandboxInfo`
+// goes to CefExecuteProcess and CefInitialize. A bootstrap from another CEF, or none at all,
+// is a broken build, so Kite stops. In a helper (Chromium gives it --type) that's only the exit
+// code: it may be under win32k lockdown, where a dialog (user32) can't load. The browser
+// process shows it as any other failure, unless it's a test run.
 CEF_BOOTSTRAP_EXPORT int RunWinMain(HINSTANCE instance, LPWSTR, int showCommand, void* sandboxInfo, cef_version_info_t* version) {
+    std::wstring problem;
     if (!version || version->cef_version_major != CEF_VERSION_MAJOR || version->cef_version_minor != CEF_VERSION_MINOR ||
         version->cef_version_patch != CEF_VERSION_PATCH || version->cef_commit_number != CEF_COMMIT_NUMBER) {
-        const wchar_t* message = L"Kite: Kite.exe isn't the bootstrap of the CEF Kite.dll was built with\n";
-        OutputDebugStringW(message);
-        WriteUtf8(STD_ERROR_HANDLE, message);
-        return kWindowFailed;
+        problem = L"Kite.exe isn't the bootstrap of the CEF Kite.dll was built with: reinstall Kite";
+    } else if (!sandboxInfo) {
+        problem = L"Kite.exe gave Kite.dll no sandbox (it isn't CEF's bootstrap): reinstall Kite";
+    }
+    if (!problem.empty()) {
+        const bool helper = std::wstring_view(GetCommandLineW()).find(L"--type=") != std::wstring_view::npos;
+        bool quiet = helper;
+        if (!helper) {
+            const std::vector<std::wstring> args = Arguments();
+            quiet = HasFlag(args, L"--smoke-test") || HasFlag(args, L"--backdrop-test") || Option(args, L"--capture").present;
+        }
+        return Fail(quiet, problem, kWindowFailed);
     }
     return RunKite(instance, showCommand, sandboxInfo);
 }

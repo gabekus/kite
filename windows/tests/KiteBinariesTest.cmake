@@ -1,10 +1,20 @@
-# Checks Kite.dll and Kite.exe as the Chromium build makes them (W6b, docs/windows.md):
-# - Kite.dll imports only kernel32 and libcef.dll at load, the rest delay-loaded: every helper
-#   loads it, renderers under win32k lockdown, where user32 (or anything that brings it in)
-#   fails the process, and every other DLL is private memory in each helper;
-# - Kite.exe is the bootstrap, importing what bootstrap.exe does and nothing of Kite's, with
-#   the 8 MiB main-thread stack cmake/StampBootstrap.cpp gives it.
-#   cmake -DLINKER=link.exe -DDLL=Kite.dll -DEXE=Kite.exe -DBOOTSTRAP=bootstrap.exe -P KiteBinariesTest.cmake
+# Checks Kite.dll and Kite.exe as the Chromium build makes them (docs/windows.md, "Chromium's
+# sandbox"):
+# - Kite.dll imports only kernel32 and libcef.dll at load, the rest delay-loaded (renderers map
+#   it under win32k lockdown, where user32 fails the process);
+# - Kite.exe is the bootstrap, importing exactly what bootstrap.exe does;
+# - both have Control Flow Guard and are CET compatible (they're mapped into every sandboxed
+#   helper);
+# - Kite.exe carries Kite's manifest, version, icon (ICON, when the build has one) and 8 MiB
+#   stack (stamp-bootstrap --check).
+#   cmake -DLINKER=link.exe -DDLL=Kite.dll -DEXE=Kite.exe -DBOOTSTRAP=bootstrap.exe
+#         -DSTAMP=stamp-bootstrap.exe -DMANIFEST=Kite.manifest [-DICON=Kite.ico] -P KiteBinariesTest.cmake
+
+foreach(file IN ITEMS "${DLL}" "${EXE}")
+  if(NOT EXISTS "${file}")
+    message(FATAL_ERROR "${file} isn't there: build the KiteExe target")
+  endif()
+endforeach()
 
 # The load-time imports `dump /dependents` lists, lowercased, without the delay-loaded ones.
 function(load_time_imports binary out)
@@ -31,19 +41,34 @@ function(load_time_imports binary out)
   set(${out} "${imports}" PARENT_SCOPE)
 endfunction()
 
+# Control Flow Guard (a DLL characteristic) and CET compatibility (an extended one).
+function(check_hardening binary name)
+  execute_process(COMMAND "${LINKER}" /dump /nologo /headers "${binary}" OUTPUT_VARIABLE headers RESULT_VARIABLE code)
+  if(NOT code EQUAL 0)
+    message(FATAL_ERROR "link /dump /headers ${binary} failed (${code})")
+  endif()
+  if(NOT headers MATCHES "Control Flow Guard")
+    message(FATAL_ERROR "${name} has no Control Flow Guard (/guard:cf)")
+  endif()
+  if(NOT headers MATCHES "CET compatible")
+    message(FATAL_ERROR "${name} isn't CET compatible (/CETCOMPAT)")
+  endif()
+endfunction()
+
 load_time_imports("${DLL}" dll)
 if(NOT dll STREQUAL "kernel32.dll;libcef.dll")
   message(FATAL_ERROR "Kite.dll loads ${dll} with it; everything but kernel32.dll and libcef.dll must be delay-loaded (windows/CMakeLists.txt)")
 endif()
-
 load_time_imports("${EXE}" exe)
 load_time_imports("${BOOTSTRAP}" bootstrap)
 if(NOT exe STREQUAL bootstrap)
   message(FATAL_ERROR "Kite.exe imports ${exe}, CEF's bootstrap.exe ${bootstrap}: Kite.exe isn't the bootstrap")
 endif()
+check_hardening("${DLL}" Kite.dll)
+check_hardening("${EXE}" Kite.exe)
 
-execute_process(COMMAND "${LINKER}" /dump /nologo /headers "${EXE}" OUTPUT_VARIABLE headers RESULT_VARIABLE code)
-if(NOT code EQUAL 0 OR NOT headers MATCHES "[ \t]800000 size of stack reserve")
-  message(FATAL_ERROR "Kite.exe doesn't reserve the 8 MiB main-thread stack (cmake/StampBootstrap.cpp)")
+execute_process(COMMAND "${STAMP}" --check "${EXE}" "${MANIFEST}" ${ICON} ERROR_VARIABLE problems RESULT_VARIABLE code)
+if(NOT code EQUAL 0)
+  message(FATAL_ERROR "Kite.exe isn't stamped as Kite: ${problems}")
 endif()
-message(STATUS "Kite.dll loads ${dll}; Kite.exe is the bootstrap (${exe}) with an 8 MiB stack")
+message(STATUS "Kite.dll loads ${dll}; Kite.exe is the bootstrap (${exe}), stamped (icon: ${ICON}); both have CFG and CET")

@@ -1,6 +1,6 @@
 # Downloads the pinned CEF (Chromium Embedded Framework) build for Windows x64 into
 # windows\ThirdParty\cef and builds its static C++ wrapper (libcef_dll_wrapper.lib) for
-# the sandbox's bootstrap (USE_SANDBOX: Kite.exe is CEF's bootstrap.exe, docs/windows.md).
+# the sandbox's bootstrap (docs/windows.md, "Chromium's sandbox").
 # The Windows twin of scripts/fetch-cef.sh: same CEF version, so both shells run
 # the same Chromium. The minimal distribution is a large download (a few hundred MB
 # unpacked); run it only when you mean to.
@@ -71,19 +71,17 @@ if ((Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $CefVersion)) 
     Remove-Item $Archive
 }
 
-# libcef_dll_wrapper: CEF's C++ API on top of its C ABI. Built for Release (/MT) and Debug
-# (/MTd), so either configuration of Kite links against a wrapper with the same CRT
-# (otherwise LNK2038). They land in build-release and build-debug; Kite picks by $<CONFIG>.
+# libcef_dll_wrapper: CEF's C++ API on top of its C ABI, built for the sandbox's bootstrap
+# (USE_SANDBOX, which pins it to CEF_API_VERSION_LAST; Kite.dll is built for the same). Built
+# for Release (/MT) and Debug (/MTd), so either configuration of Kite links against a wrapper
+# with the same CRT (otherwise LNK2038), in build-sandbox-release and build-sandbox-debug; Kite
+# picks by $<CONFIG>. The folders are new with W6b, so a checkout from before it, sharing this
+# CEF folder, keeps its build-release and build-debug (built without the sandbox) beside them.
 foreach ($config in $Configs) {
-    $buildDir = Join-Path $Dest ("build-" + $config.ToLower())
+    $buildDir = Join-Path $Dest ("build-sandbox-" + $config.ToLower())
     $wrapper = Join-Path $buildDir 'libcef_dll_wrapper\libcef_dll_wrapper.lib'
-    # Built with the sandbox (W6b): a wrapper from before, built without it, is rebuilt, since
-    # Kite.dll is compiled for its CEF_API_VERSION (windows/CMakeLists.txt checks the same).
-    $cache = Join-Path $buildDir 'CMakeCache.txt'
-    if ((Test-Path $wrapper) -and (Test-Path $cache) -and (Select-String -Path $cache -SimpleMatch 'USE_SANDBOX:BOOL=ON' -Quiet)) { continue }
-    if (Test-Path $buildDir) { Remove-Item -Recurse -Force $buildDir }
-    # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot. With USE_SANDBOX the wrapper
-    # is built for CEF_API_VERSION_LAST (cef_variables.cmake), which Kite.dll is built for too.
+    if (Test-Path $wrapper) { continue }
+    # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot.
     cmake -S $Dest -B $buildDir -G Ninja `
         "-DCMAKE_BUILD_TYPE=$config" `
         '-DPROJECT_ARCH=x86_64' `

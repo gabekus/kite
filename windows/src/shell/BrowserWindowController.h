@@ -78,9 +78,9 @@ public:
     // After the message loop: Chromium's shutdown, then what a smoke test checks of it. Empty
     // when it all went well (or there was no Chromium).
     std::wstring ShutDownChromium();
-    // A smoke test's reading of the first page's renderer sandbox (shell/Sandbox.h's Describe),
-    // or empty before one reported.
-    const std::wstring& RendererSandbox() const { return rendererReport_; }
+    // What a smoke test read of the sandbox (shell/Sandbox.h): the first page's renderer and
+    // every helper, a line each; empty before the renderer reported.
+    const std::wstring& SandboxReport() const { return sandboxReport_; }
 #endif
     // Shows the window (behind other windows for a quiet run) and, with Chromium, the first page,
     // and starts the auto-archive's timer.
@@ -226,9 +226,10 @@ private:
     bool firstPageMade_ = false;
     bool pageLoading_ = false, pageLoaded_ = false;
     // A smoke test's check of the first page's renderer (shell/Sandbox.h): whether one reported
-    // in, what was wrong with its sandbox (empty when nothing was), and what it was.
+    // in, what was wrong with its sandbox and the helpers' (empty when nothing was), and what
+    // they were.
     bool rendererChecked_ = false;
-    std::wstring rendererProblem_, rendererReport_;
+    std::wstring rendererProblem_, helperProblem_, sandboxReport_;
     void CloseWhenSmokeTestIsDone();
     ULONGLONG closeAskedAt_ = 0;  // when the smoke test asked the window to close
 #endif

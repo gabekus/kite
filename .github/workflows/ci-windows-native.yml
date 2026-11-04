@@ -109,7 +109,8 @@ jobs:
           & windows/build/Release/kitecore.exe --profile $profileDir open $smokePage | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "kitecore open exited with $LASTEXITCODE" }
 
-          # It also fails unless the first page's renderer is in Chromium's sandbox (W6b).
+          # It also fails unless the first page's renderer is in Chromium's sandbox and no helper
+          # but the network service runs at medium integrity (W6b); it prints each one's sandbox.
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 0) { throw "--smoke-test exited with $code" }
           if (-not (Test-Path (Join-Path $profileDir 'session.json'))) { throw 'Kite.exe wrote no session.json' }
@@ -132,6 +133,8 @@ jobs:
           # Kite.exe runs from its own folder (CEF's bootstrap), so paths must be absolute.
           $code = Run-Kite @('--capture', 'relative.png')
           if ($code -ne 1) { throw "--capture with a relative path: expected exit 1, got $code" }
+          $code = Run-Kite @('--smoke-test', '--frame-log', 'relative.jsonl')
+          if ($code -ne 1) { throw "--frame-log with a relative path: expected exit 1, got $code" }
 
           # A KITE_SUPPORT_PATH that isn't a directory is refused (exit 2), never fallen back from.
           $file = Join-Path $profileDir 'not-a-dir'
@@ -139,6 +142,9 @@ jobs:
           $env:KITE_SUPPORT_PATH = $file
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 2) { throw "a file as KITE_SUPPORT_PATH: expected exit 2, got $code" }
+          $env:KITE_SUPPORT_PATH = 'relative\profile'
+          $code = Run-Kite @('--smoke-test')
+          if ($code -ne 2) { throw "a relative KITE_SUPPORT_PATH: expected exit 2, got $code" }
 
           # Test flags never run on the real profile.
           Remove-Item Env:KITE_SUPPORT_PATH
@@ -217,7 +223,6 @@ jobs:
             !windows/build/Release/**/*.pdb
             !windows/build/Release/**/*.exp
             !windows/build/Release/KiteCoreTests.exe
-            !windows/build/Release/stamp-bootstrap.exe
           if-no-files-found: error
       - name: Upload the capture
         if: always()

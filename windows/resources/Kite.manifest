@@ -8,7 +8,7 @@
       </requestedPrivileges>
     </security>
   </trustInfo>
-  <!-- As CEF's bootstrap.exe, which Kite.exe is made from (cmake/StampBootstrap.cpp), has it:
+  <!-- As CEF's bootstrap.exe, which Kite.exe is made from (tools/build/StampBootstrap.cpp), has it:
        version 6 of the common controls, for Chromium's and the bootstrap's own dialogs. -->
   <dependency>
     <dependentAssembly>

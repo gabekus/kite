@@ -55,6 +55,10 @@ add_library(KiteCoreWin STATIC
   src/core/Uuid.cpp
 )
 target_include_directories(KiteCoreWin PUBLIC src)
+if(MSVC)
+  # Control Flow Guard: the model is linked into Kite.dll, which every sandboxed helper maps.
+  target_compile_options(KiteCoreWin PRIVATE /guard:cf)
+endif()
 
 # Headless model CLI (the behaviour gate in docs/helix.md).
 add_executable(kitecore src/cli/main.cpp)
@@ -124,56 +128,78 @@ if(WIN32)
   set(KITE_CEF_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/cef" CACHE PATH "CEF binary distribution (fetch-cef.ps1)")
   if(MSVC AND EXISTS "${KITE_CEF_ROOT}/include/cef_version.h")
     message(STATUS "Chromium: CEF at ${KITE_CEF_ROOT}")
-    # Chromium's sandbox (W6b): Kite.exe is CEF's bootstrap.exe, which enters the sandbox in
-    # each helper before any of Kite's code runs and then calls RunWinMain in Kite.dll (main.cpp),
-    # in the browser process too. The wrapper must be built for the bootstrap (USE_SANDBOX, which
-    # pins it to CEF_API_VERSION_LAST, as Kite.dll is below), or the API hashes won't match.
-    foreach(config release debug)
-      set(cache "${KITE_CEF_ROOT}/build-${config}/CMakeCache.txt")
-      if(EXISTS "${cache}")
-        file(STRINGS "${cache}" sandbox REGEX "^USE_SANDBOX:BOOL=")
-        file(STRINGS "${cache}" apiVersion REGEX "^api_version:")
-        if(NOT sandbox STREQUAL "USE_SANDBOX:BOOL=ON" OR apiVersion)
-          message(FATAL_ERROR "CEF's wrapper in ${KITE_CEF_ROOT}/build-${config} wasn't built for the sandbox: run windows/scripts/fetch-cef.ps1 again")
-        endif()
-      endif()
-    endforeach()
+    # Chromium's sandbox (docs/windows.md, "Chromium's sandbox"): Kite's code is Kite.dll, and
+    # Kite.exe is CEF's bootstrap.exe stamped with Kite's manifest, version and stack. The
+    # wrapper comes from fetch-cef.ps1's build-sandbox-* folders, built for CEF_API_VERSION_LAST,
+    # as Kite.dll is here; a checkout from before W6b shares this CEF folder with its own
+    # build-release and build-debug, which are left alone.
+    set(KITE_CEF_WRAPPER "${KITE_CEF_ROOT}/build-sandbox-$<IF:$<CONFIG:Debug>,debug,release>/libcef_dll_wrapper/libcef_dll_wrapper.lib")
+    if(NOT EXISTS "${KITE_CEF_ROOT}/build-sandbox-release/libcef_dll_wrapper/libcef_dll_wrapper.lib")
+      message(FATAL_ERROR "No sandboxed CEF wrapper in ${KITE_CEF_ROOT}/build-sandbox-release: run windows/scripts/fetch-cef.ps1")
+    endif()
     if(NOT EXISTS "${KITE_CEF_ROOT}/Release/bootstrap.exe")
       message(FATAL_ERROR "No bootstrap.exe in ${KITE_CEF_ROOT}/Release: Kite.exe is made from it")
     endif()
+    # Kite.exe, Kite.dll and Chromium's runtime go in one folder; the import library and the
+    # build tools go elsewhere, so the folder is what ships.
+    set(KITE_OUT "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>")
+    set(KITE_TOOLS_OUT "${CMAKE_CURRENT_BINARY_DIR}/tools/$<CONFIG>")
     add_library(Kite SHARED ${KITE_SHELL_SOURCES} src/shell/Chromium.cpp src/shell/Sandbox.cpp)
-    target_compile_definitions(Kite PRIVATE KITE_HAS_CEF CEF_API_VERSION=CEF_API_VERSION_LAST)
+    # KITE_VERSION_DLL: Version.rc describes Kite.dll.
+    target_compile_definitions(Kite PRIVATE KITE_HAS_CEF CEF_API_VERSION=CEF_API_VERSION_LAST KITE_VERSION_DLL)
     target_include_directories(Kite SYSTEM PRIVATE "${KITE_CEF_ROOT}")
     # The minimal distribution has Release binaries only; libcef.dll's C ABI serves either
     # configuration. The C++ wrapper is built per configuration for the matching static CRT.
-    target_link_libraries(Kite PRIVATE ${KITE_SHELL_LIBRARIES}
-      "${KITE_CEF_ROOT}/Release/libcef.lib"
-      "${KITE_CEF_ROOT}/build-$<IF:$<CONFIG:Debug>,debug,release>/libcef_dll_wrapper/libcef_dll_wrapper.lib"
+    target_link_libraries(Kite PRIVATE ${KITE_SHELL_LIBRARIES} "${KITE_CEF_ROOT}/Release/libcef.lib" "${KITE_CEF_WRAPPER}"
       comctl32 rpcrt4 shlwapi ws2_32 delayimp)
-    # Every helper (renderer, GPU, utility) loads Kite.dll, renderers under win32k lockdown,
-    # where loading user32.dll (or anything that loads it) fails the process. So everything but
-    # kernel32 and libcef.dll is delay-loaded: only the browser process, which draws the window,
-    # loads it, and each helper keeps less private memory. tests/KiteBinariesTest.cmake checks it.
-    target_link_options(Kite PRIVATE
+    # Every helper maps Kite.dll, renderers under win32k lockdown, where user32 (or anything that
+    # loads it) fails the process: everything but kernel32 and libcef.dll is delay-loaded, so only
+    # the browser process loads it. Control Flow Guard and CET shadow stacks, as Chromium's own
+    # binaries have. tests/KiteBinariesTest.cmake checks all three.
+    target_compile_options(Kite PRIVATE /guard:cf)
+    target_link_options(Kite PRIVATE /guard:cf /CETCOMPAT
       /DELAYLOAD:user32.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:shell32.dll /DELAYLOAD:ole32.dll /DELAYLOAD:advapi32.dll
       /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll)
-    set_target_properties(Kite PROPERTIES VS_DEBUGGER_COMMAND "$<TARGET_FILE_DIR:Kite>/Kite.exe")
-    # Kite.exe: the bootstrap with Kite's manifest (per-monitor DPI v2, the UTF-8 code page,
-    # long paths), version and stack (cmake/StampBootstrap.cpp).
-    add_executable(stamp-bootstrap cmake/StampBootstrap.cpp)
-    target_link_libraries(stamp-bootstrap PRIVATE imagehlp)
-    add_dependencies(Kite stamp-bootstrap)
-    # libcef.dll and its resources go next to Kite.exe, where Chromium looks for them. The
-    # folder grants read and execute to ALL RESTRICTED APPLICATION PACKAGES (S-1-15-2-2), as
-    # CEF's SET_LPAC_ACLS does: the helpers Chromium runs in a less privileged AppContainer
-    # (LPAC) can't load Kite.dll or libcef.dll from it otherwise.
-    add_custom_command(TARGET Kite POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -DCEF_ROOT=${KITE_CEF_ROOT} -DDEST=$<TARGET_FILE_DIR:Kite>
-              -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyCef.cmake
-      COMMAND $<TARGET_FILE:stamp-bootstrap> "${KITE_CEF_ROOT}/Release/bootstrap.exe" "$<TARGET_FILE_DIR:Kite>/Kite.exe"
-              "${CMAKE_CURRENT_SOURCE_DIR}/resources/Kite.manifest" "$<TARGET_FILE:Kite>"
-      COMMAND icacls "$<TARGET_FILE_DIR:Kite>" /grant "*S-1-15-2-2:(OI)(CI)(RX)" /q
+    set_target_properties(Kite PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${KITE_OUT}"
+      ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib/$<CONFIG>"
+      VS_DEBUGGER_COMMAND "${KITE_OUT}/Kite.exe")
+
+    # The build tools (windows/tools/build): the stamp, and the version Kite.exe gets
+    # (Version.rc describing Kite.exe, in a resource-only module).
+    add_executable(stamp-bootstrap tools/build/StampBootstrap.cpp)
+    target_link_libraries(stamp-bootstrap PRIVATE version)
+    add_library(kite-exe-version MODULE resources/Version.rc)
+    set_target_properties(kite-exe-version PROPERTIES LINKER_LANGUAGE CXX)
+    target_link_options(kite-exe-version PRIVATE /NOENTRY)
+    set_target_properties(stamp-bootstrap kite-exe-version PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${KITE_TOOLS_OUT}" LIBRARY_OUTPUT_DIRECTORY "${KITE_TOOLS_OUT}")
+
+    # Kite.exe, made again only when one of its inputs changes. Chromium's runtime goes beside
+    # it, where Chromium looks for it. The folder grants read and execute to ALL RESTRICTED
+    # APPLICATION PACKAGES (S-1-15-2-2), as CEF's SET_LPAC_ACLS does, for helpers Chromium runs
+    # as a less privileged AppContainer.
+    set(KITE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Kite.manifest")
+    # Kite's app icon, as Kite.exe's first icon group, which Explorer, the taskbar and Alt+Tab
+    # show. Without one, Kite.exe has no icon (never CEF's).
+    set(KITE_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/Kite.ico" CACHE FILEPATH "The .ico stamped into Kite.exe")
+    set(KITE_ICON_ARGUMENT)
+    if(EXISTS "${KITE_ICON}")
+      message(STATUS "Kite.exe's icon: ${KITE_ICON}")
+      set(KITE_ICON_ARGUMENT "${KITE_ICON}")
+    else()
+      message(STATUS "Kite.exe's icon: none (no ${KITE_ICON})")
+    endif()
+    add_custom_command(OUTPUT "${KITE_OUT}/Kite.exe"
+      COMMAND ${CMAKE_COMMAND} -DCEF_ROOT=${KITE_CEF_ROOT} -DDEST=${KITE_OUT} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyCef.cmake
+      COMMAND stamp-bootstrap "${KITE_CEF_ROOT}/Release/bootstrap.exe" "${KITE_OUT}/Kite.exe" "${KITE_MANIFEST}"
+              "$<TARGET_FILE:kite-exe-version>" ${KITE_ICON_ARGUMENT}
+      COMMAND icacls "${KITE_OUT}" /grant "*S-1-15-2-2:(OI)(CI)(RX)" /q
+      DEPENDS Kite stamp-bootstrap kite-exe-version "${KITE_CEF_ROOT}/Release/bootstrap.exe" "${KITE_MANIFEST}" ${KITE_ICON_ARGUMENT}
+              ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyCef.cmake
+      COMMENT "Making Kite.exe from CEF's bootstrap"
       VERBATIM)
+    add_custom_target(KiteExe ALL DEPENDS "${KITE_OUT}/Kite.exe")
     set(KITE_BOOTSTRAPPED ON)
   else()
     message(STATUS "Chromium: no CEF at ${KITE_CEF_ROOT}, building without pages")
@@ -182,6 +208,8 @@ if(WIN32)
     # Kite.manifest: per-monitor DPI v2, the UTF-8 code page, long paths.
     if(MSVC)
       target_sources(Kite PRIVATE resources/Kite.manifest)
+      target_compile_options(Kite PRIVATE /guard:cf)
+      target_link_options(Kite PRIVATE /guard:cf /CETCOMPAT)
     else()
       target_sources(Kite PRIVATE resources/Kite.rc)
       target_link_options(Kite PRIVATE -municode)
@@ -191,6 +219,8 @@ if(WIN32)
   if(KITE_FXC)
     message(STATUS "Shaders: precompiled with ${KITE_FXC}")
   else()
+    # Only without MSVC (an MSVC build stops above without fxc), so never in Kite.dll, whose
+    # helpers would otherwise load d3dcompiler with it.
     message(STATUS "Shaders: no fxc, compiled at startup (KITE_RUNTIME_SHADERS)")
     target_compile_definitions(Kite PRIVATE KITE_RUNTIME_SHADERS)
     target_link_libraries(Kite PRIVATE d3dcompiler)
@@ -238,8 +268,11 @@ add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
           -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KitecoreCliTest.cmake)
 if(KITE_BOOTSTRAPPED)
-  # Kite.dll's load-time imports and Kite.exe's make-up (tests/KiteBinariesTest.cmake).
+  # Kite.dll's load-time imports, both binaries' CFG and CET, and Kite.exe's manifest, version
+  # and stack (tests/KiteBinariesTest.cmake), read from what the KiteExe target made.
   add_test(NAME kite-binaries
-    COMMAND ${CMAKE_COMMAND} -DLINKER=${CMAKE_LINKER} -DDLL=$<TARGET_FILE:Kite> -DEXE=$<TARGET_FILE_DIR:Kite>/Kite.exe
-            -DBOOTSTRAP=${KITE_CEF_ROOT}/Release/bootstrap.exe -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KiteBinariesTest.cmake)
+    COMMAND ${CMAKE_COMMAND} -DLINKER=${CMAKE_LINKER} -DDLL=$<TARGET_FILE:Kite> -DEXE=${KITE_OUT}/Kite.exe
+            -DBOOTSTRAP=${KITE_CEF_ROOT}/Release/bootstrap.exe -DSTAMP=$<TARGET_FILE:stamp-bootstrap> -DMANIFEST=${KITE_MANIFEST}
+            "-DICON=${KITE_ICON_ARGUMENT}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KiteBinariesTest.cmake)
 endif()
