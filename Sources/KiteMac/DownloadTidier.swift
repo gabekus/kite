@@ -95,23 +95,14 @@ final class DownloadTidier {
 
     /// One `claude -p` run with no tools or MCP servers, in an empty folder. Nil on any failure.
     nonisolated private static func askClaude(_ prompt: String, timeout: TimeInterval) async -> String? {
-        guard let claude = ClaudeConnect.findClaude() else { return nil }
+        // Without the test switches Tidy Downloads itself reads.
+        guard let claude = ClaudeCommand.find()?.removing(["KITE_SUPPORT_PATH", "KITE_TEST_DOWNLOADS_PATH"]) else { return nil }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("KiteTidyDownloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
         // Its own process group, ended whole at the timeout: a child left holding stdout can't hang the read.
-        let process = OneShotProcess(executable: claude, arguments: TidyDownloads.arguments(),
-                                     environment: environment, directory: directory)
+        let process = claude.oneShot(arguments: TidyDownloads.arguments(), directory: directory)
         guard let result = await process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
         return String(decoding: result.output, as: UTF8.self)
-    }
-
-    /// Kite's `claude` environment (the login PATH; on a test profile, the test Claude home), without
-    /// the test switches Tidy Downloads reads.
-    nonisolated private static var environment: [String: String] {
-        var environment = ClaudeTasksController.environment()
-        environment["KITE_SUPPORT_PATH"] = nil
-        environment["KITE_TEST_DOWNLOADS_PATH"] = nil
-        return environment
     }
 }

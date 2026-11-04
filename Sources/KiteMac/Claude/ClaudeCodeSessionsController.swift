@@ -338,16 +338,14 @@ final class ClaudeCodeSessionsController {
         let placeholder = Run(process: Process())
         runs[id] = placeholder
         updateRunning()
-        let home = home
         Task.detached { [weak self] in
-            let claude = ClaudeConnect.findClaude()
-            let environment = ClaudeTasksController.environment()
-            await self?.spawn(id, claude: claude, arguments: arguments, environment: environment,
+            let claude = ClaudeCommand.find()
+            await self?.spawn(id, claude: claude, arguments: arguments,
                               directory: folder, prompt: prompt, placeholder: placeholder)
         }
     }
 
-    private func spawn(_ id: String, claude: String?, arguments: [String], environment: [String: String],
+    private func spawn(_ id: String, claude: ClaudeCommand?, arguments: [String],
                        directory: URL, prompt: String, placeholder: Run) {
         guard runs[id] === placeholder, !placeholder.stopped else {
             runs[id] = nil
@@ -360,11 +358,7 @@ final class ClaudeCodeSessionsController {
             updateRunning()
             return fail(id, "Couldn't find Claude Code. Install it, or check that `claude` runs in Terminal.")
         }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = arguments
-        process.environment = environment
-        process.currentDirectoryURL = directory
+        let process = claude.process(arguments: arguments, directory: directory)
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
         process.standardOutput = output

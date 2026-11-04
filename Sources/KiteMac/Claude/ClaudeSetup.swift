@@ -15,14 +15,19 @@ extension ClaudeTasksController {
         if !automation.isEnabled { automation.setEnabled(true) }
         guard automation.isEnabled else { return false }
 
-        var claude = await Task.detached { ClaudeConnect.findClaude() }.value
+        var claude = await Task.detached { ClaudeCommand.find() }.value
         if claude == nil {
+            // The installer writes to the real home (~/.local, the shell's PATH): never from a test profile.
+            guard !ClaudeConnect.isTestProfile else {
+                tell("Claude Code isn't installed", "A test profile doesn't install Claude Code. Set KITE_CLAUDE_BIN to a claude to run.")
+                return false
+            }
             guard ask("Set up Claude in Kite",
                       "Kite runs Claude with Claude Code, on your own Claude plan. Claude Code isn't installed yet.\n\n"
                       + "Install it now? Kite runs Anthropic's installer:\n\(Self.installCommand)",
                       confirm: "Install Claude Code") else { return false }
             let (_, output) = await Task.detached { ClaudeConnect.run("/bin/zsh", ["-lc", Self.installCommand]) }.value
-            claude = await Task.detached { ClaudeConnect.findClaude() }.value
+            claude = await Task.detached { ClaudeCommand.find() }.value
             guard claude != nil else {
                 tell("Claude Code didn't install", String(output.trimmingCharacters(in: .whitespacesAndNewlines).suffix(600)))
                 return false
@@ -48,7 +53,8 @@ extension ClaudeTasksController {
             // The Claude app gets Kite's tools too, so ⌘J can hand requests to it.
             return desktop ? ClaudeDesktop.link(cli: cli, profile: profile) : nil
         }.value
-        if linked == .added, ClaudeDesktop.isRunning {
+        // A test profile linked its own test config: the user's Claude app has nothing new to load.
+        if linked == .added, ClaudeDesktop.mayDrive, ClaudeDesktop.isRunning {
             // Quitting Claude would cut off whatever it's doing, so ask.
             if ask("Reopen the Claude app?",
                    "Kite added its tools to the Claude desktop app, so ⌘J can hand requests to it and its chats can use "
@@ -64,28 +70,25 @@ extension ClaudeTasksController {
     static let installCommand = "curl -fsSL https://claude.ai/install.sh | bash"
 
     /// `claude auth status` prints JSON with `loggedIn`. An older Claude Code without it counts as signed in.
-    nonisolated static func isSignedIn(_ claude: String) -> Bool {
-        let (status, output) = ClaudeConnect.run(claude, ["auth", "status"], environment: ClaudeConnect.claudeEnvironment)
+    nonisolated static func isSignedIn(_ claude: ClaudeCommand) -> Bool {
+        let (status, output) = claude.run(["auth", "status"])
         guard status == 0, let start = output.firstIndex(of: "{"),
               let json = try? JSONValue.decode(Data(output[start...].utf8)) else { return status == 0 }
         return json["loggedIn"]?.boolValue ?? true
     }
 
     /// `claude auth login` needs a terminal (it opens the browser and waits).
-    private func openSignIn(_ claude: String) {
+    private func openSignIn(_ claude: ClaudeCommand) {
         let script = FileManager.default.temporaryDirectory.appendingPathComponent("Kite Claude Sign In.command")
         // A test profile signs in to its test Claude home, never the user's own ~/.claude.
-        let environment = ClaudeConnect.claudeEnvironment
-        let exports = ["HOME", "CLAUDE_CONFIG_DIR"].compactMap { key in
-            environment[key].flatMap { $0 == ProcessInfo.processInfo.environment[key] ? nil : "export \(key)=\(AutomationController.shellQuote($0))\n" }
-        }.joined()
-        let body = "#!/bin/zsh -l\n\(exports)\(AutomationController.shellQuote(claude)) auth login\n"
+        let exports = ClaudeProcessEnvironment.exports(claude.environment, base: ProcessInfo.processInfo.environment)
+        let body = "#!/bin/zsh -l\n\(exports)\(AutomationController.shellQuote(claude.executable)) auth login\n"
         do {
             try body.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
             NSWorkspace.shared.open(script)
         } catch {
-            tell("Couldn't open Terminal", "Run this in a terminal, then click the Claude button again:\n\(claude) auth login")
+            tell("Couldn't open Terminal", "Run this in a terminal, then click the Claude button again:\n\(exports)\(claude.executable) auth login")
         }
     }
 

@@ -13,19 +13,37 @@ public enum ClaudeProcessEnvironment {
         public let home: String
 
         public init(environment: [String: String], userHome: URL) {
-            let support = environment["KITE_SUPPORT_PATH"]
-            supportPath = support?.isEmpty == false ? support : nil
+            supportPath = environment["KITE_SUPPORT_PATH"]
             home = ClaudeCodeSessions.home(environment: environment, userHome: userHome).path
         }
 
         public var isTestProfile: Bool { supportPath != nil }
     }
 
-    /// `base` with HOME and CLAUDE_CONFIG_DIR moved to the test Claude home on a test profile;
-    /// `base` unchanged on a real one. For a quick `claude` call that doesn't need the login PATH.
-    public static func isolated(_ base: [String: String], userHome: URL) -> [String: String] {
-        ClaudeCodeSessions.processEnvironment(base, environment: base,
-                                              home: ClaudeCodeSessions.home(environment: base, userHome: userHome))
+    /// Kite's one rule for a test profile: `KITE_SUPPORT_PATH` is set, even to an empty string
+    /// (main.swift, `AppDelegate.supportDirectory`). A test profile never drives the user's own
+    /// Claude: their `~/.claude`, their Claude app, their installs.
+    public static func isTestProfile(_ environment: [String: String]) -> Bool {
+        environment["KITE_SUPPORT_PATH"] != nil
+    }
+
+    /// The variables a test profile moves to its Claude home.
+    public static let isolatedKeys = ["HOME", "CLAUDE_CONFIG_DIR"]
+
+    /// `export` lines for a shell script (the Terminal sign-in) that put it in `environment`'s Claude
+    /// home: one per `isolatedKeys` variable that differs from Kite's own `base`, so a real profile
+    /// gets none.
+    public static func exports(_ environment: [String: String], base: [String: String]) -> String {
+        isolatedKeys.compactMap { key in
+            guard let value = environment[key], value != base[key] else { return nil }
+            return "export \(key)=\(shellQuote(value))\n"
+        }.joined()
+    }
+
+    /// `string` as one shell word: as is when it's plainly safe, else single-quoted.
+    public static func shellQuote(_ string: String) -> String {
+        !string.isEmpty && string.allSatisfy { $0.isLetter || $0.isNumber || "/._-".contains($0) }
+            ? string : "'" + string.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Kite's environment `base` with the login shell's PATH (when it gave one), without Kite's

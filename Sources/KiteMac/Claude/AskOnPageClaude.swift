@@ -18,9 +18,8 @@ final class AskOnPageClaude {
         let mine = generation
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("KiteAskOnPage", isDirectory: true)
         Task.detached { [weak self] in
-            let claude = ClaudeConnect.findClaude()
-            let environment = ClaudeTasksController.environment()
-            await self?.run(claude: claude, environment: environment, directory: directory, prompt: prompt,
+            let claude = ClaudeCommand.find()
+            await self?.run(claude: claude, directory: directory, prompt: prompt,
                             generation: mine, completion: completion)
         }
     }
@@ -31,17 +30,13 @@ final class AskOnPageClaude {
         process = nil
     }
 
-    private func run(claude: String?, environment: [String: String], directory: URL, prompt: String,
+    private func run(claude: ClaudeCommand?, directory: URL, prompt: String,
                      generation mine: Int, completion: @escaping (String?) -> Void) {
         guard mine == generation else { return }
         guard let claude else { return completion(nil) }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = AskOnPage.claudeArguments()
-        process.environment = environment
-        process.currentDirectoryURL = directory
+        let process = claude.process(arguments: AskOnPage.claudeArguments(), directory: directory)
         let input = Pipe(), output = Pipe()
         process.standardInput = input
         process.standardOutput = output

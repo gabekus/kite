@@ -205,6 +205,9 @@ import Testing
         #expect(ClaudeCodeSessions.home(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1", "KITE_TEST_CLAUDE_HOME": "/tmp/fixture"],
                                         userHome: user).path == "/tmp/fixture")
         #expect(ClaudeCodeSessions.home(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1"], userHome: user).path == "/tmp/k.1")
+        // Set but empty is a test profile too: a fresh folder, never the user's home.
+        let empty = ClaudeCodeSessions.home(environment: ["KITE_SUPPORT_PATH": ""], userHome: user)
+        #expect(empty != user && empty.lastPathComponent == "Kite Test Claude Home")
     }
 
     @Test func watchesTranscriptsAndTheAppsSessions() {

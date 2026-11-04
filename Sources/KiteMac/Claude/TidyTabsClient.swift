@@ -17,12 +17,8 @@ enum TidyTabsClient {
 
     /// Blocks until Claude Code exits, so it runs off the main thread.
     private static func run(_ prompt: String, timeout: TimeInterval) throws -> String {
-        guard let claude = ClaudeConnect.findClaude() else { throw Failure.noClaude }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = TidyTabs.claudeArguments
-        process.environment = ClaudeTasksController.environment()
-        process.currentDirectoryURL = FileManager.default.temporaryDirectory
+        guard let claude = ClaudeCommand.find() else { throw Failure.noClaude }
+        let process = claude.process(arguments: TidyTabs.claudeArguments, directory: FileManager.default.temporaryDirectory)
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
         process.standardOutput = output

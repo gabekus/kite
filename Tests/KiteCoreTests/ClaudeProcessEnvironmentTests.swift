@@ -10,7 +10,7 @@ struct ClaudeProcessEnvironmentTests {
         let environment = ClaudeProcessEnvironment.make(base, loginPath: "/opt/homebrew/bin:/usr/bin\n", userHome: user)
         #expect(environment == ["HOME": "/Users/me", "PATH": "/opt/homebrew/bin:/usr/bin"])
         #expect(environment["CLAUDE_CONFIG_DIR"] == nil)
-        #expect(ClaudeProcessEnvironment.isolated(base, userHome: user) == base)
+        #expect(!ClaudeProcessEnvironment.isTestProfile(base))
     }
 
     @Test func aMissingLoginPathKeepsKitesOwn() {
@@ -22,11 +22,21 @@ struct ClaudeProcessEnvironmentTests {
     @Test func aTestProfileRunsClaudeInTheFixtureHome() {
         let base = ["HOME": "/Users/me", "PATH": "/usr/bin", "KITE_SUPPORT_PATH": "/tmp/k.1",
                     "KITE_TEST_CLAUDE_HOME": "/tmp/fixture"]
-        for environment in [ClaudeProcessEnvironment.make(base, loginPath: "/bin", userHome: user),
-                            ClaudeProcessEnvironment.isolated(base, userHome: user)] {
-            #expect(environment["HOME"] == "/tmp/fixture")
-            #expect(environment["CLAUDE_CONFIG_DIR"] == "/tmp/fixture/.claude")
-        }
+        let environment = ClaudeProcessEnvironment.make(base, loginPath: "/bin", userHome: user)
+        #expect(environment["HOME"] == "/tmp/fixture")
+        #expect(environment["CLAUDE_CONFIG_DIR"] == "/tmp/fixture/.claude")
+        #expect(environment["PATH"] == "/bin")
+    }
+
+    @Test func anEmptySupportPathIsATestProfileToo() {
+        // As in main.swift and AppDelegate.supportDirectory: set, even empty, is a test profile.
+        let base = ["HOME": "/Users/me", "KITE_SUPPORT_PATH": ""]
+        #expect(ClaudeProcessEnvironment.isTestProfile(base))
+        let environment = ClaudeProcessEnvironment.make(base, loginPath: nil, userHome: user)
+        let home = environment["HOME"] ?? ""
+        #expect(home.hasSuffix("/Kite Test Claude Home"))
+        #expect(!home.hasPrefix("/Users/me"))
+        #expect(environment["CLAUDE_CONFIG_DIR"] == home + "/.claude")
     }
 
     @Test func aTestProfileWithoutAFixtureUsesTheProfileFolder() {
@@ -43,8 +53,9 @@ struct ClaudeProcessEnvironmentTests {
         let test = ClaudeProcessEnvironment.Key(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1"], userHome: user)
         let fixture = ClaudeProcessEnvironment.Key(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1",
                                                                  "KITE_TEST_CLAUDE_HOME": "/tmp/fixture"], userHome: user)
-        #expect(!real.isTestProfile && real == empty)
-        #expect(test.isTestProfile && test != real)
+        #expect(!real.isTestProfile)
+        #expect(empty.isTestProfile && empty != real)
+        #expect(test.isTestProfile && test != real && test != empty)
         #expect(fixture != test)
         #expect(fixture.home == "/tmp/fixture")
     }
@@ -61,4 +72,26 @@ struct ClaudeProcessEnvironmentTests {
         #expect(other["HOME"] == "/tmp/k.1")
         #expect(made == 2)
     }
+
+    @Test func theSignInScriptExportsOnlyWhatDiffers() {
+        let base = ["HOME": "/Users/me", "PATH": "/usr/bin"]
+        #expect(ClaudeProcessEnvironment.exports(base, base: base) == "")
+        #expect(ClaudeProcessEnvironment.exports(ClaudeProcessEnvironment.make(base, loginPath: nil, userHome: user), base: base) == "")
+        let test = ["HOME": "/tmp/k.1", "CLAUDE_CONFIG_DIR": "/tmp/k.1/.claude", "PATH": "/opt/bin"]
+        #expect(ClaudeProcessEnvironment.exports(test, base: base)
+                == "export HOME=/tmp/k.1\nexport CLAUDE_CONFIG_DIR=/tmp/k.1/.claude\n")
+        let spaced = ["HOME": "/tmp/it's here", "CLAUDE_CONFIG_DIR": "/Users/me/.claude"]
+        #expect(ClaudeProcessEnvironment.exports(spaced, base: base + ["CLAUDE_CONFIG_DIR": "/Users/me/.claude"])
+                == "export HOME='/tmp/it'\\''s here'\n")
+    }
+
+    @Test func shellQuoting() {
+        #expect(ClaudeProcessEnvironment.shellQuote("/usr/local/bin/claude") == "/usr/local/bin/claude")
+        #expect(ClaudeProcessEnvironment.shellQuote("/Applications/My App") == "'/Applications/My App'")
+        #expect(ClaudeProcessEnvironment.shellQuote("") == "''")
+    }
+}
+
+private func + (lhs: [String: String], rhs: [String: String]) -> [String: String] {
+    lhs.merging(rhs) { _, new in new }
 }
