@@ -68,7 +68,7 @@ final class SettingsModel: ObservableObject {
             let id = state.openTab(url: InternalPage.searchEngines.url)
             state.update(tab: id) { $0.title = InternalPage.searchEngines.title }
         }
-        if !UIDiagnostics.enabledByEnvironment { front?.window?.makeKeyAndOrderFront(nil) }
+        WindowPresenter.show(front?.window)
     }
 
     var archiveAfter: ArchiveInterval { store?.state.archiveAfter ?? .twelveHours }

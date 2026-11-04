@@ -204,7 +204,7 @@ final class WebKitPage: NSObject, WebPage {
             let alert = NSAlert()
             alert.messageText = "Web Inspector"
             alert.informativeText = "On the WebKit engine, right-click the page and choose Inspect Element."
-            alert.runModal()
+            _ = WindowPresenter.runModal(alert)
             return
         }
         func call(_ name: String) {
@@ -693,7 +693,7 @@ extension WebKitPage: WKUIDelegate {
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseDirectories = parameters.allowsDirectories
         panel.canChooseFiles = true
-        completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+        completionHandler(WindowPresenter.runModal(panel) == .OK ? panel.urls : nil)
     }
 }
 

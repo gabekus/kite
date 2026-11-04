@@ -80,7 +80,7 @@ final class ScriptWindow: NSObject {
     @objc var isResizable: Bool { window?.styleMask.contains(.resizable) ?? false }
     @objc var isVisible: Bool {
         get { window?.isVisible ?? false }
-        set { newValue ? window?.orderFront(nil) : window?.orderOut(nil) }
+        set { newValue ? WindowPresenter.orderFront(window) : window?.orderOut(nil) }
     }
     @objc var isZoomable: Bool { window?.styleMask.contains(.resizable) ?? false }
     @objc var isZoomed: Bool {

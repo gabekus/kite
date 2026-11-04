@@ -90,13 +90,13 @@ extension ClaudeTasksController {
         alert.informativeText = text
         alert.addButton(withTitle: confirm)
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+        return WindowPresenter.runModal(alert) == .alertFirstButtonReturn
     }
 
     private func tell(_ title: String, _ text: String) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = text
-        alert.runModal()
+        _ = WindowPresenter.runModal(alert)
     }
 }

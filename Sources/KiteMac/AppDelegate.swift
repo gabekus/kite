@@ -98,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Registered after the menu bar is set so AppKit adds Help search and the window list.
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
         NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
-        windowController.showWindow(nil)
+        WindowPresenter.show(windowController)
         windows = BrowserWindows(
             main: store, mainController: windowController, engine: engine, adblocker: adblocker,
             history: history, fileURL: Self.supportDirectory.appendingPathComponent("windows.json")
@@ -126,10 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A notification clicked: the bubble, on that task.
         claudeTasks.showPanel = { [weak self] id in
             // A diagnostics run stays behind the user's windows (kite test-ticket opens the bar too).
-            if !UIDiagnostics.enabledByEnvironment {
-                NSApp.activate(ignoringOtherApps: true)
-                self?.windowController.window?.makeKeyAndOrderFront(nil)
-            }
+            WindowPresenter.show(self?.windowController.window, activate: true)
             self?.windowController.claudeBubble.open(task: id)
         }
         claudeTasks.isPanelVisible = { [weak self] in self?.windowController.claudeBubble.isOpen == true }
@@ -150,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .url(let url): controller.store.mutateWithoutUndo { _ = $0.openTab(url: url) }
             case .page(let page): controller.pool.openTab(with: page)
             }
-            controller.window?.makeKeyAndOrderFront(nil)
+            WindowPresenter.show(controller.window)
         }
         NotificationCenter.default.addObserver(forName: .KCRuntimeOpenURL, object: nil, queue: .main) { [weak self] note in
             guard let url = note.userInfo?["url"] as? URL else { return }
@@ -300,7 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openedTab = true
             }
         }
-        if openedTab { windowController.window?.makeKeyAndOrderFront(nil) }
+        if openedTab { WindowPresenter.show(windowController.window) }
     }
 
     /// Quiet VPN sign-in loads in the destination space's profile, and shows a page that needs
@@ -334,7 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             engine: { [weak main] in main?.pool.engine ?? self.engine },
             openTab: { [weak main] url in
                 store.mutateWithoutUndo { _ = $0.openTab(url: url) }
-                if !UIDiagnostics.enabledByEnvironment { main?.window?.makeKeyAndOrderFront(nil) }
+                WindowPresenter.show(main?.window)
             },
             adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) },
             move: { [weak main] page, url, title in main?.adopt(page, url: url, title: title, in: nil) },
@@ -382,13 +379,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let previous = littleControllers.dropLast().last?.window, let window = controller.window {
             window.setFrameTopLeftPoint(NSPoint(x: previous.frame.minX + 28, y: previous.frame.maxY - 28))
         }
-        if UIDiagnostics.enabledByEnvironment {
-            // Test runs stay behind the user's windows.
-            controller.window?.orderBack(nil)
-        } else {
-            controller.showWindow(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        // A test-safe run keeps it behind the user's windows.
+        WindowPresenter.show(controller, activate: true)
     }
 
     /// Settings › Links › "Archive Little Kites after:": closes Little Kite windows left unused that long. Each
@@ -493,7 +485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // before showWindow, which makes the new window main.
         let front = NSApp.mainWindow ?? windowController.window
         // Test runs stay behind the user's windows.
-        if UIDiagnostics.enabledByEnvironment { controller.window?.orderBack(nil) } else { controller.showWindow(nil) }
+        WindowPresenter.show(controller)
         if let front, front !== controller.window {
             controller.window?.setFrameTopLeftPoint(NSPoint(x: front.frame.minX + 28, y: front.frame.maxY - 28))
         }
@@ -526,7 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The Dock icon brings back the window hidden while Claude tasks ran.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows { windowController?.window?.makeKeyAndOrderFront(nil) }
+        if !hasVisibleWindows { WindowPresenter.show(windowController?.window) }
         return true
     }
 
@@ -549,6 +541,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DownloadsModel.shared.saveNow()
         BoostsModel.shared.flush()
     }
+
+    /// Kite → About Kite: AppKit's standard panel (WindowPresenter keeps a test-safe run's behind).
+    @objc func showAbout(_ sender: Any?) { WindowPresenter.showAboutPanel() }
 
     // MARK: Settings
 
@@ -684,7 +679,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             """
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Connect Claude…")
-        if alert.runModal() == .alertSecondButtonReturn {
+        if WindowPresenter.runModal(alert) == .alertSecondButtonReturn {
             ClaudeConnect.present(automation)
         }
     }

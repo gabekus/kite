@@ -56,7 +56,7 @@ enum DownloadLocation {
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Select"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard WindowPresenter.runModal(panel) == .OK, let url = panel.url else { return }
         setFolder(url, profile: directory)
     }
 

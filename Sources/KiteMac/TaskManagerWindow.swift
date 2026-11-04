@@ -20,12 +20,8 @@ final class TaskManagerWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         manager.refresh()
         manager.startTimer()
         manager.select(tab: activeTab)
-        if UIDiagnostics.enabledByEnvironment {
-            // Test runs stay behind the user's windows.
-            manager.window.orderBack(nil)
-        } else {
-            manager.window.makeKeyAndOrderFront(nil)
-        }
+        // A test-safe run keeps it behind the user's windows.
+        WindowPresenter.show(manager.window)
     }
 
     private let controllers: () -> [BrowserWindowController]
@@ -475,7 +471,7 @@ final class TaskManagerWindow: NSObject, NSTableViewDataSource, NSTableViewDeleg
         guard rows.indices.contains(row), let id = rows[row].task.tabID else { return }
         guard let controller = controllers().first(where: { $0.pool.livePages[id] != nil }) else { return }
         controller.store.mutate { $0.select(tab: id) }
-        controller.window?.makeKeyAndOrderFront(nil)
+        WindowPresenter.show(controller.window)
     }
 
     // MARK: Table

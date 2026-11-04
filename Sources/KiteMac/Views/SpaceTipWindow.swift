@@ -29,7 +29,7 @@ final class SpaceTipWindow {
         }
         owner = id
         panel.alphaValue = 0
-        panel.orderFront(nil)
+        WindowPresenter.orderFront(panel)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.15
             panel.animator().alphaValue = 1

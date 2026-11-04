@@ -44,6 +44,11 @@ enum QuitDialog {
     }
 
     private static func present(title: String, message: String?, buttons: [Button], over window: NSWindow?) -> Choice {
+        // A modal window comes to the front: a test-safe run logs it and cancels.
+        if WindowPresenter.testSafe {
+            WindowPresenter.logSkipped("dialog: \(title) | [\(buttons.map(\.title).joined(separator: ", "))]")
+            return .cancel
+        }
         let panel = DialogWindow(
             contentRect: NSRect(origin: .zero, size: NSSize(width: M.width, height: 200)),
             styleMask: [.borderless],

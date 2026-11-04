@@ -16,12 +16,8 @@ final class RestoreDataWindow: NSObject, NSWindowDelegate {
         shared = restore
         restore.failure = nil
         restore.reload()
-        if UIDiagnostics.enabledByEnvironment {
-            // Test runs stay behind the user's windows.
-            restore.window.orderBack(nil)
-        } else {
-            restore.window.makeKeyAndOrderFront(nil)
-        }
+        // A test-safe run keeps it behind the user's windows.
+        WindowPresenter.show(restore.window)
     }
 
     private let window: NSWindow

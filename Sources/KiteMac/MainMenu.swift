@@ -91,7 +91,7 @@ enum MainMenu {
         }
 
         submenu("Kite", [
-            item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false, id: "aboutKite"),
+            item("About Kite", #selector(AppDelegate.showAbout(_:)), toTarget: false, id: "aboutKite"),
             .separator(),
             // Arc's app menu: Settings… ⌘, right after About and its separator (read from Arc's menu bar);
             // "viewPreferences" is the item's arcKeyBindingID in Arc's MainMenu.nib.

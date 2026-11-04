@@ -22,7 +22,7 @@ final class UpdaterWindow {
         let window = window ?? makeWindow()
         self.window = window
         window.center()
-        window.makeKeyAndOrderFront(nil)
+        WindowPresenter.show(window)
         check()
     }
 

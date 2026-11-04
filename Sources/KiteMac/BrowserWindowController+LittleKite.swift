@@ -12,6 +12,6 @@ extension BrowserWindowController {
         store.pageTitleChanged(id, title)
         if profileDirectory != nil { pool.discardPagesInWrongProfile() }
         // A background test run stays behind the user's windows.
-        if !UIDiagnostics.enabledByEnvironment { window?.makeKeyAndOrderFront(nil) }
+        WindowPresenter.show(window)
     }
 }
