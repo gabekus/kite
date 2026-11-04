@@ -49,6 +49,9 @@ public:
         // --frame-log: each frame the clock delivered (when it was handled, the time it was
         // drawn for, the pages' offset and the theme's crossfade) is kept for SaveFrameLog.
         bool frameLog = false;
+        // A quiet test run (--smoke-test, --capture): nothing of Kite's comes to the front or
+        // takes the focus (Chromium::Start's `quiet`), and Show puts the window behind others.
+        bool quiet = false;
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
         // decodes them in place, the rest on a worker).
         std::filesystem::path spaceIcons;

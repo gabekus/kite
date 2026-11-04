@@ -78,7 +78,9 @@ void MainWindow::Show(int showCommand) {
 }
 
 void MainWindow::ShowBehindOtherWindows() {
-    SetWindowPos(hwnd_, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    neverActivates_ = true;
+    SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, GetWindowLongPtrW(hwnd_, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_APPWINDOW);
+    SetWindowPos(hwnd_, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
     UpdateWindow(hwnd_);
 }
 
@@ -293,6 +295,11 @@ LRESULT MainWindow::Handle(UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_SETFOCUS:
         if (onFocus) onFocus();
         return 0;
+    case WM_MOUSEACTIVATE:
+        // A quiet run's window takes clicks without coming to the front; so do its pages,
+        // whose windows ask this one.
+        if (neverActivates_) return MA_NOACTIVATE;
+        break;
     case WM_ENDSESSION:
         if (wParam && onClose) onClose();
         return 0;

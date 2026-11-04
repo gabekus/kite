@@ -16,7 +16,9 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_devtools_message_observer.h"
+#include "include/cef_dialog_handler.h"
 #include "include/cef_focus_handler.h"
+#include "include/cef_jsdialog_handler.h"
 #include "include/cef_keyboard_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_handler.h"
@@ -40,6 +42,21 @@ constexpr UINT kCloseDeadlineMs = 5'000;
 constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; BrowserWindowController's timers are small numbers
 
 CefRect ToCefRect(const RECT& r) { return CefRect(r.left, r.top, r.right - r.left, r.bottom - r.top); }
+
+// A page's window: Alloy style, a child of Kite's window over the card, made without
+// activating anything. CEF shows the page's Chromium widget (Chrome_WidgetWin_1, its host
+// window's child) with views' Widget::Show, which ends in HWNDMessageHandler::Activate: a
+// SetForegroundWindow on that widget. A page made while Kite wasn't the window in front (a
+// quiet run's first page, a popup a background page opened) brought Kite in front of what the
+// user was doing whenever Windows let Kite take the foreground (a process launched while the
+// PC is idle may). With WS_EX_NOACTIVATE on the host window CEF shows the widget inactive and
+// takes the style off the widget again, so clicks still activate the page; OnAfterCreated
+// takes it off the host window.
+void SetAsPage(CefWindowInfo& info, HWND parent, const RECT& bounds) {
+    info.SetAsChild(parent, ToCefRect(bounds));
+    info.ex_style |= WS_EX_NOACTIVATE;
+    info.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+}
 
 std::filesystem::path Utf8Path(const std::string& text) {
     return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(text.data()), text.size()));
@@ -71,6 +88,9 @@ HWND FindPageWidget(HWND host) {
 
 struct Chromium::Shared {
     HWND window = nullptr;
+    // A quiet test run (Start's `quiet`): no page takes the focus or shows a dialog, and the
+    // pages' windows never activate. Set before CEF starts, then only read.
+    bool quiet = false;
     // Where Post's wakes go: the window until it's about to be destroyed, then null, so CEF's
     // late callbacks never post to a handle Windows may have reused.
     std::atomic<HWND> wakeTarget{nullptr};
@@ -327,7 +347,9 @@ private:
 class PageClient : public CefClient,
                    public CefLifeSpanHandler,
                    public CefDisplayHandler,
+                   public CefDialogHandler,
                    public CefFocusHandler,
+                   public CefJSDialogHandler,
                    public CefKeyboardHandler,
                    public CefLoadHandler,
                    public CefRequestHandler,
@@ -340,6 +362,9 @@ public:
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+    // Only in a quiet run, which shows no dialog: otherwise Chromium's own.
+    CefRefPtr<CefDialogHandler> GetDialogHandler() override { return shared_->quiet ? this : nullptr; }
+    CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return shared_->quiet ? this : nullptr; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
@@ -359,6 +384,9 @@ public:
         browser->GetHost()->ExecuteDevToolsMethod(0, "Emulation.setDefaultBackgroundColorOverride", params);
         devTools_ = browser->GetHost()->AddDevToolsMessageObserver(this);  // for CheckBusy's answers
         const HWND hwnd = browser->GetHost()->GetWindowHandle();
+        // Made without activating (SetAsPage); from now on a click activates it as before.
+        // A quiet run's pages keep the style: they never activate.
+        if (!shared_->quiet) SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & ~WS_EX_NOACTIVATE);
         if (!FindPageWidget(hwnd)) {
             shared_->widgetMissing = true;
             OutputDebugStringW(L"Kite: no Chromium widget window in the page's host window; background tabs won't be hidden\n");
@@ -392,8 +420,7 @@ public:
             bounds = shared_->bounds;
             shared_->popupTabs[{browser->GetIdentifier(), popupID}] = id;
         }
-        windowInfo.SetAsChild(shared_->window, ToCefRect(bounds));
-        windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+        SetAsPage(windowInfo, shared_->window, bounds);
         client = new PageClient(id, shared_);
         settings.background_color = kPageBackdrop;
         shared_->Count(+1, 0);
@@ -531,11 +558,37 @@ public:
         });
     }
 
+    // CefDialogHandler, CefJSDialogHandler: a quiet run's pages only
+
+    // No file chooser: cancelled, as if dismissed.
+    bool OnFileDialog(CefRefPtr<CefBrowser>, FileDialogMode, const CefString&, const CefString&, const std::vector<CefString>&,
+                      const std::vector<CefString>&, const std::vector<CefString>&, CefRefPtr<CefFileDialogCallback> callback) override {
+        OutputDebugStringW(L"Kite: KITE_TEST_MODAL a page's file chooser, cancelled (quiet run)\n");
+        callback->Cancel();
+        return true;
+    }
+
+    // alert, confirm and prompt are suppressed (they return at once, as a dismissed one does).
+    bool OnJSDialog(CefRefPtr<CefBrowser>, const CefString&, JSDialogType, const CefString&, const CefString&,
+                    CefRefPtr<CefJSDialogCallback>, bool& suppressMessage) override {
+        OutputDebugStringW(L"Kite: KITE_TEST_MODAL a page's JavaScript dialog, suppressed (quiet run)\n");
+        suppressMessage = true;
+        return false;
+    }
+
+    // Leave Page? Left.
+    bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString&, bool, CefRefPtr<CefJSDialogCallback> callback) override {
+        OutputDebugStringW(L"Kite: KITE_TEST_MODAL a page's Leave Page dialog, left (quiet run)\n");
+        callback->Continue(true, CefString());
+        return true;
+    }
+
     // CefFocusHandler
 
     // While Kite's command bar is open, a page never takes the keyboard back (Chromium
-    // focuses a page as it navigates), as the Mac blurs its pages while the bar is open.
-    bool OnSetFocus(CefRefPtr<CefBrowser>, FocusSource) override { return shared_->inputBlocked; }
+    // focuses a page as it navigates), as the Mac blurs its pages while the bar is open. A
+    // quiet run's pages never take it: focusing a page's window activates Kite's.
+    bool OnSetFocus(CefRefPtr<CefBrowser>, FocusSource) override { return shared_->inputBlocked || shared_->quiet; }
 
     // CefKeyboardHandler
 
@@ -562,8 +615,8 @@ public:
                 if (shared->events.newTab) shared->events.newTab();
             });
             // After the wake is posted; a key Kite still takes first opens the bar itself
-            // (KeysComeToKite).
-            SetFocus(shared_->window);
+            // (KeysComeToKite). Never in a quiet run, whose windows don't take the focus.
+            if (!shared_->quiet) SetFocus(shared_->window);
             return;
         }
         shared_->Post([shared = shared_, command = target.command] {
@@ -694,7 +747,7 @@ int RunChromiumSubprocess(HINSTANCE instance) {
 }
 
 Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
-                                      std::unique_ptr<Chromium>& out, std::wstring& error) {
+                                      bool quiet, std::unique_ptr<Chromium>& out, std::wstring& error) {
     // Chromium wants root_cache_path absolute and every cache_path inside it, else it keeps
     // that profile in memory only; built from the resolved path, like the Mac (realpath).
     std::error_code ec;
@@ -704,6 +757,7 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
 
     auto shared = std::make_shared<Shared>();
     shared->window = window;
+    shared->quiet = quiet;
     shared->wakeTarget = window;
     shared->events = std::move(events);
     shared->root = resolved;
@@ -819,8 +873,7 @@ void Chromium::Show(const std::string& tabID, const std::string& profileDirector
             context = cached;
         }
         CefWindowInfo windowInfo;
-        windowInfo.SetAsChild(shared_->window, ToCefRect(bounds));
-        windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+        SetAsPage(windowInfo, shared_->window, bounds);
         CefBrowserSettings browserSettings;
         browserSettings.background_color = kPageBackdrop;
         shared_->pages.try_emplace(tabID).first->second.profile = profileDirectory;
@@ -926,6 +979,11 @@ bool Chromium::Act(PageAction action) {
         case PageAction::DevTools: {
             // The page is closing (Kite quit after asking): no window that would hold it up.
             if (shared->closing) break;
+            // Chrome style's own window, which comes to the front: never in a quiet run.
+            if (shared->quiet) {
+                OutputDebugStringW(L"Kite: KITE_TEST_MODAL Developer Tools, not opened (quiet run)\n");
+                break;
+            }
             // Already open: CEF brings that window forward and makes no browser.
             if (host->HasDevTools()) {
                 host->ShowDevTools(CefWindowInfo(), nullptr, CefBrowserSettings(), CefPoint());

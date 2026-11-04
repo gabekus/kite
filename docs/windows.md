@@ -407,6 +407,22 @@ windows\build\Release\Kite.exe
 Without `KITE_SUPPORT_PATH` the profile is `%LOCALAPPDATA%\Kite`. A
 `KITE_SUPPORT_PATH` that isn't an existing directory is refused.
 
+Quiet test runs (`--smoke-test`, `--capture`) never come to the front, as the
+Mac's `KITE_DIAGNOSTICS=1` runs (KiteCore's `WindowPresentation`): the window
+opens behind the others without activating, keeps `WS_EX_NOACTIVATE` (Windows
+doesn't hand it the foreground when the window in front closes) and answers
+`WM_MOUSEACTIVATE` with `MA_NOACTIVATE`; pages never take the focus, file
+choosers are cancelled, JavaScript dialogs suppressed and Developer Tools not
+opened (`KITE_TEST_MODAL` in the debug output); a relaunch doesn't bring it
+forward. Every run, quiet or not, makes its pages with `WS_EX_NOACTIVATE`:
+CEF otherwise shows a page's Chromium widget with views' `Widget::Show`, whose
+`HWNDMessageHandler::Activate` calls `SetForegroundWindow` on it, and a page
+made while Kite was behind (a quiet run's first page, a popup a background
+page opened) brought Kite in front of the user's window whenever Windows let it
+(a process launched on an idle PC may). `--smoke-test` watches
+`EVENT_SYSTEM_FOREGROUND` for Kite's process (`shell/ForegroundWatch.h`) and
+fails if any of its windows became the foreground window.
+
 Off Windows, the model and its tests build natively, and MinGW cross-compiles the app:
 
 ```bash
