@@ -134,8 +134,6 @@ public:
     // unless it's playing sound, using the camera or microphone, tied to a popup, or shown
     // again before it answers. Their tabs stay and load again when next shown (pageDiscarded).
     void DiscardHiddenPages();
-    // Pages that exist (made, or being made).
-    size_t LivePageCount() const;
     // Runs what CEF's thread handed over. MainWindow::kWakeMessage calls it.
     void RunPending();
     // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden

@@ -1,6 +1,7 @@
 #pragma once
 // When the session is written after a change: a port of KiteCore's SessionSaveDelay.swift
-// (SessionSaveDelay, PendingSave, CappedDebounce), plus SaveSchedule, the timer the Mac's
+// (SessionSaveDelay, PendingSave; its CappedDebounce is history.json's and comes with history),
+// plus SaveSchedule, the timer the Mac's
 // BrowserStore.scheduleSave arms with them. Sidebar changes and navigations save a second
 // after the last one. A page's title and favicon change all the time (a page can set
 // document.title every second), so they wait longer and don't push back a save that's
@@ -38,19 +39,6 @@ struct PendingSave {
     bool operator==(const PendingSave&) const = default;
 };
 
-// A trailing debounce that still saves at least every `maxWait` seconds while changes keep
-// coming (the Mac's history.json while a page's title ticks).
-struct CappedDebounce {
-    double quiet = 0;
-    double maxWait = 0;
-    // When the first change not yet saved came in; none when everything is saved.
-    std::optional<double> pendingSince;
-
-    // A change at `now` (seconds on any steady clock): how long to arm the save timer for.
-    double Changed(double now);
-    void Saved() { pendingSince.reset(); }
-};
-
 // The session's save timer as BrowserStore drives it: PendingSave's rules with the time the
 // waiting save is due, so the shell arms one one-shot timer (no polling) and a headless run
 // (kitecore save-schedule, the tests) replays the same decisions.
@@ -62,7 +50,6 @@ public:
     // The waiting save's kind and when it's due; none when nothing is waiting.
     std::optional<SessionSaveDelay> Pending() const { return pending_.pending; }
     std::optional<double> DueAt() const { return dueAt_; }
-    bool IsDue(double now) const { return dueAt_ && now >= *dueAt_; }
     // The save ran (the timer fired, or the window closed and saved at once).
     void Saved();
 

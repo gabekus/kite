@@ -19,15 +19,24 @@ MemoryPressureWatch::MemoryPressureWatch(HWND window, UINT message) : window_(wi
 
 MemoryPressureWatch::~MemoryPressureWatch() {
     if (wait_) {
+        // A callback that read stopping_ before it was set may still re-arm the wait, and that
+        // wait may already have queued a callback: clear and drain twice. Callbacks that start
+        // after stopping_ is set return at once, so after the second drain none is left.
         stopping_ = true;
         SetThreadpoolWait(wait_, nullptr, nullptr);
         WaitForThreadpoolWaitCallbacks(wait_, TRUE);
-        SetThreadpoolWait(wait_, nullptr, nullptr);  // in case a callback re-armed it before it saw stopping_
+        SetThreadpoolWait(wait_, nullptr, nullptr);
+        WaitForThreadpoolWaitCallbacks(wait_, TRUE);
         CloseThreadpoolWait(wait_);
     }
     // The memory manager's events: not to be closed while a wait is registered on them.
     if (low_) CloseHandle(low_);
     if (high_) CloseHandle(high_);
+}
+
+bool MemoryPressureWatch::IsLow() const {
+    BOOL low = FALSE;
+    return low_ && QueryMemoryResourceNotification(low_, &low) && low;
 }
 
 void CALLBACK MemoryPressureWatch::Signalled(PTP_CALLBACK_INSTANCE, void* context, PTP_WAIT wait, TP_WAIT_RESULT result) {

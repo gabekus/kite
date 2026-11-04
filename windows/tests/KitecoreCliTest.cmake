@@ -389,6 +389,8 @@ if(NOT waiting STREQUAL [=[{"dueAt":10,"pending":"pageEvent","saves":[]}]=])
 endif()
 expect_exit_early(1 save-schedule later@1)
 expect_exit_early(1 save-schedule soon@2 soon@1)
+# save-bench never touches a profile: given one, it refuses.
+expect_exit_early(1 save-bench 3)
 # kitecore's own saves make no backups (the app's writer keeps them); a backup put there is
 # listed with what it holds, newest first, and so is one that doesn't read.
 kitecore(listed backups)
@@ -431,6 +433,8 @@ expect_exit(2 open evil.example --profile "${WORK}/missing")
 set(second "${WORK}/second")
 file(MAKE_DIRECTORY "${second}")
 expect_exit(0 open trailing.example --profile "${second}")
+# ...and without one it benches in a temp folder of its own, never the real profile.
+expect_exit(0 save-bench 3)
 if(EXISTS "${real}/Kite")
   message(FATAL_ERROR "kitecore wrote to the real profile")
 endif()

@@ -228,16 +228,20 @@ std::wstring BrowserWindowController::Init() {
         return Filter(message, wParam, lParam, result);
     };
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
-    // reported runs first (titles, addresses), then the session is saved at once, and Kite
-    // waits for the write (the one wait on the disk the UI thread may make), so a quit or a
-    // shutdown never loses it.
-    window_.onClose = [this] {
+    // reported runs first (titles, addresses), then the session is saved at once. Closing
+    // doesn't wait for the write (main.cpp does, once the window is gone); logoff and shutdown
+    // can end the process as soon as WM_ENDSESSION returns, so that waits, for a bounded time.
+    window_.onClose = [this](bool endingSession) {
         clock_->Stop();
         memoryWatch_.reset();
         RunPending();
         closing_ = true;
         SaveNow();
-        if (writer_) writer_->Flush();
+        if (endingSession && writer_) {
+            if (std::string problem = writer_->Flush(kEndSessionFlush); !problem.empty()) {
+                OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
+            }
+        }
     };
     return {};
 }
@@ -350,9 +354,9 @@ std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& f
     }
     const double mean = saveCost_.saves ? saveCost_.totalMicros / static_cast<double>(saveCost_.saves) : 0.0;
     json::Array reports;
-    for (const auto& [at, level] : pressureReports_) {
-        const char* name = level == MemoryPressure::Critical ? "critical" : level == MemoryPressure::Warning ? "warning" : "normal";
-        reports.push_back(json::Object{{"t", std::round(at * 1000) / 1000}, {"level", name}});
+    for (const PressureReport& report : pressureReports_) {
+        const char* name = report.level == MemoryPressure::Critical ? "critical" : report.level == MemoryPressure::Warning ? "warning" : "normal";
+        reports.push_back(json::Object{{"t", std::round(report.at * 1000) / 1000}, {"level", name}, {"discarded", report.discarded}});
     }
     json::Object log{{"saves", json::Value(std::move(saves))},
                      {"frames", frameCount_},
@@ -368,7 +372,8 @@ std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& f
                                            {"lastBytes", stats.lastBytes},
                                            {"lastEncodeMicros", stats.lastEncodeMicros},
                                            {"lastWriteMicros", stats.lastWriteMicros},
-                                           {"lastError", stats.lastError}});
+                                           {"lastError", stats.lastError},
+                                           {"lastBackupError", stats.lastBackupError}});
     }
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
     if (!out) return L"couldn't open " + file.wstring();
@@ -381,8 +386,9 @@ std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& f
 
 void BrowserWindowController::SessionChanged(SessionSaveDelay delay) {
     // A second after the last sidebar change; a page's title or favicon never pushes a waiting
-    // save back (SaveSchedule). SetTimer with the same id replaces the waiting one.
-    if (!writer_) return;
+    // save back (SaveSchedule). SetTimer with the same id replaces the waiting one. Nothing
+    // when the session mustn't be saved (MaySave).
+    if (!writer_ || !writer_->MaySave()) return;
     if (auto seconds = saveSchedule_.Changed(delay, FrameClock::Now())) {
         SetTimer(window_.Handle(), kSaveTimer, static_cast<UINT>(std::ceil(*seconds * 1000)), nullptr);
         ++saveArms_;
@@ -392,14 +398,13 @@ void BrowserWindowController::SessionChanged(SessionSaveDelay delay) {
 void BrowserWindowController::SaveNow() {
     KillTimer(window_.Handle(), kSaveTimer);
     saveSchedule_.Saved();
-    if (!writer_) return;
+    if (!writer_ || !writer_->MaySave()) return;
     // A copy for the writer's thread (the session is the UI thread's to change): the only cost
     // here. Encoding and the disk are the writer's.
     const auto start = std::chrono::steady_clock::now();
     writer_->Save(state_);
     const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
     ++saveCost_.saves;
-    saveCost_.lastMicros = micros;
     saveCost_.maxMicros = std::max(saveCost_.maxMicros, micros);
     saveCost_.totalMicros += micros;
     if (options_.saveLog) saves_.push_back(LoggedSave{FrameClock::Now() - createdAt_, micros, closing_});
@@ -757,8 +762,10 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     }
     if (message == WM_TIMER && wParam == kArchiveTimer) {
         if (auto interval = state_.ArchiveAfterSeconds()) {
-            for (const Tab& tab : state_.ArchiveStaleTabs(*interval)) PageGone(tab.id);
-            StateChanged();
+            // A pass that archived nothing changed nothing: no redraw, no save.
+            const std::vector<Tab> archived = state_.ArchiveStaleTabs(*interval);
+            for (const Tab& tab : archived) PageGone(tab.id);
+            if (!archived.empty()) StateChanged();
         }
         return true;
     }
@@ -774,11 +781,16 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         return true;
     }
     if (message == kMemoryPressureMessage) {
+        // The Mac's watchMemoryPressure: the pages that aren't on screen close, if memory is
+        // still low as the report is handled (a dip already over, seen at launch on a busy PC,
+        // closes nothing). A test profile's --save-log run can post a report with lParam 1,
+        // which skips that check, to drive the path without running the machine out of memory.
         const auto level = static_cast<MemoryPressure>(wParam);
-        if (options_.saveLog) pressureReports_.push_back({FrameClock::Now() - createdAt_, level});
-        // The Mac's watchMemoryPressure: the pages that aren't on screen close.
+        const bool forced = options_.saveLog && lParam == 1;
+        const bool discards = DiscardsPages(level) && (forced || (memoryWatch_ && memoryWatch_->IsLow()));
+        if (options_.saveLog) pressureReports_.push_back({FrameClock::Now() - createdAt_, level, discards});
 #ifdef KITE_HAS_CEF
-        if (chromium_ && DiscardsPages(level)) chromium_->DiscardHiddenPages();
+        if (chromium_ && discards) chromium_->DiscardHiddenPages();
 #endif
         return true;
     }

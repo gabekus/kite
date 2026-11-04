@@ -126,21 +126,6 @@ TEST(pendingSaveWiresTheRearmRules) {
     CHECK(save.Arm(SessionSaveDelay::PageEvent) == 10.0);
 }
 
-// PageEventSaveTests.cappedDebounceNeverWaitsPastItsMaximum
-TEST(cappedDebounceNeverWaitsPastItsMaximum) {
-    CappedDebounce debounce{3, 30, std::nullopt};
-    CHECK(debounce.Changed(100) == 3);
-    // A title every second: the quiet wait, until the cap closes in.
-    CHECK(debounce.Changed(101) == 3);
-    CHECK(debounce.Changed(128) == 2);
-    CHECK(debounce.Changed(129.5) == 0.5);
-    CHECK(debounce.Changed(131) == 0);
-    debounce.Saved();
-    CHECK(!debounce.pendingSince);
-    CHECK(debounce.Changed(140) == 3);
-    CHECK(debounce.pendingSince == 140.0);
-}
-
 TEST(manyChangesWithinTheDelayCoalesceIntoOneSave) {
     // A hundred sidebar changes 10 ms apart: one save, a second after the last.
     std::vector<SaveChange> changes;
@@ -159,7 +144,7 @@ TEST(aTitleChangeUsesTheLongerDelay) {
     CHECK(schedule.DueAt() == 110.0);
     // The page keeps ticking: the save it armed stays due at 110, never pushed back.
     for (int t = 101; t < 110; ++t) CHECK(!schedule.Changed(SessionSaveDelay::PageEvent, t));
-    CHECK(schedule.DueAt() == 110.0 && !schedule.IsDue(109.9) && schedule.IsDue(110));
+    CHECK(schedule.DueAt() == 110.0 && schedule.Pending() == SessionSaveDelay::PageEvent);
     // A title every second for a minute still saves every ten seconds.
     std::vector<SaveChange> ticks;
     for (int t = 0; t < 60; ++t) ticks.push_back({static_cast<double>(t), SessionSaveDelay::PageEvent});
@@ -394,6 +379,9 @@ TEST(stampsKeepTheCalendarHonest) {
     CHECK(!SessionBackups::DateFromStamp("1900-02-29-12-00-00-000"));
     CHECK(SessionBackups::DateFromStamp("2000-02-29-12-00-00-000"));
     CHECK(!SessionBackups::DateFromStamp("2023-11-14-24-00-00-000"));
+    // Floored, so half a second before 1970 is 1969's last second. The Mac's stamp truncates
+    // (quotientAndRemainder) and writes 1970-01-01-00-00-00-500 there: a known difference, for
+    // a clock set before 1970 only.
     CHECK(SessionBackups::Stamp(-0.5) == "1969-12-31-23-59-59-500");
     CHECK(SessionBackups::DateFromStamp(SessionBackups::Stamp(951825600)) == 951825600.0);  // 2000-02-29
 }
@@ -490,7 +478,8 @@ TEST(aBackupIsRotatedAtMostOncePerHour) {
     writer.Flush();
     CHECK(b.store.Backups().All().size() == 2);
     // A new writer (a relaunch) reads the newest date from the folder, so it doesn't add one early.
-    SessionWriter again(b.store, true, [&] { return b.start + b.hour + 60; });
+    // A fresh store, as a relaunch has: nothing cached from this run.
+    SessionWriter again(SessionStore(b.store.File()), true, [&] { return b.start + b.hour + 60; });
     state.OpenTab("https://kite.example/relaunch");
     again.Save(state);
     again.Flush();
@@ -551,4 +540,57 @@ TEST(aFailedWriteIsReportedAndTheNextOneRetries) {
     writer.Save(b.State(2));
     CHECK(writer.Flush().empty());
     CHECK(std::get<BrowserState>(b.store.Load(SessionStore::Unreadable::Leave)) == b.State(2));
+}
+
+// BrowserStore.saveNow backs up after every save, an unchanged one included: a session that
+// stopped changing inside the hour still gets its hourly backup on the next save after it.
+TEST(anUnchangedSaveStillTakesTheHourlyBackup) {
+    Backups b(3);
+    std::atomic<double> clock{b.start};
+    SessionWriter writer(b.store, true, [&] { return clock.load(); });
+    writer.Save(b.State(1));
+    writer.Flush();
+    clock = b.start + 60;
+    writer.Save(b.State(2));  // written; too soon for a backup
+    writer.Flush();
+    CHECK(b.store.Backups().All().size() == 1);
+    clock = b.start + b.hour + 1;
+    writer.Save(b.State(2));  // unchanged: no write, but the backup is due
+    writer.Flush();
+    auto stats = writer.Stats();
+    CHECK(stats.written == 2 && stats.unchanged == 1 && stats.backups == 2);
+    auto all = b.store.Backups().All();
+    CHECK(all.size() == 2 && !all.empty() && SessionBackups::State(all[0]) == b.State(2));
+    // Bytes the newest backup already holds aren't offered again.
+    clock = b.start + 3 * b.hour;
+    writer.Save(b.State(2));
+    writer.Flush();
+    CHECK(b.store.Backups().All().size() == 2);
+    auto same = b.store.Backups().BackUp(SessionStore::EncodeFile(b.State(2)), SessionBackups::Kind::Hourly, b.start + 3 * b.hour);
+    CHECK(!same.made && same.sameAsNewest && same.error.empty());
+}
+
+TEST(anErrorThatNoLongerStandsIsNotReported) {
+    Backups b(3);
+    SessionWriter writer(b.store);
+    writer.Save(b.State(1));
+    writer.Flush();
+    fs::create_directories(b.dir / "session.json.tmp" / "in-the-way");
+    writer.Save(b.State(2));
+    CHECK(!writer.Flush().empty());
+    fs::remove_all(b.dir / "session.json.tmp");
+    // Back to what the file still holds: nothing to write, and the failed write no longer matters.
+    writer.Save(b.State(1));
+    CHECK(writer.Flush().empty());
+    CHECK(std::get<BrowserState>(b.store.Load(SessionStore::Unreadable::Leave)) == b.State(1));
+}
+
+TEST(aFlushIsBounded) {
+    Backups b(2);
+    SessionWriter writer(b.store);
+    // Nothing waiting: at once, whatever the bound.
+    CHECK(writer.Flush(std::chrono::milliseconds(0)).empty());
+    writer.Save(b.State(1));
+    CHECK(writer.Flush(std::chrono::milliseconds(5000)).empty());
+    CHECK(fs::exists(b.store.File()));
 }

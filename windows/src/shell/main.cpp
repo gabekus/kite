@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -67,6 +68,9 @@ namespace {
 
 using kite::Narrow;
 using kite::Widen;
+
+// How long Kite waits, once its window is gone, for the session's last write.
+constexpr std::chrono::milliseconds kQuitFlush{10'000};
 
 enum ExitCode : int { kOk = 0, kUsage = 1, kBadSupportDirectory = 2, kWindowFailed = 3, kSaveFailed = 4, kCaptureFailed = 5 };
 
@@ -255,8 +259,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     std::optional<kite::SessionBackups::Backup> recoveredFrom;
     auto loaded = session.Load(kite::SessionStore::Unreadable::MoveAside, &recoveredFrom);
     if (recoveredFrom) {
-        auto name = recoveredFrom->file.filename().wstring();
-        OutputDebugStringW((L"Kite: session.json was unreadable and was moved aside; restored the session from backup " + name + L"\n").c_str());
+        // The Mac says so in a toast ("Kite restored your tabs from a backup made <date>"); until
+        // Windows has toasts, the debugger hears it, and so does a quiet run's stderr.
+        const std::string stamp = kite::SessionBackups::Stamp(recoveredFrom->date);
+        const std::wstring message = L"Kite restored your tabs from a backup made " + Widen(stamp.substr(0, 10)) + L" " +
+                                     Widen(stamp.substr(11, 2)) + L":" + Widen(stamp.substr(14, 2)) + L" UTC (" +
+                                     recoveredFrom->file.filename().wstring() + L"): session.json couldn't be read and was moved aside\n";
+        OutputDebugStringW((L"Kite: " + message).c_str());
+        if (quiet) WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + message);
     }
     // Kite's shortcuts (core/KeyBindings.h): each command's default, after the user's
     // keybindings.json, read with the session before the window exists. Read once, as nothing
@@ -275,11 +285,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         state = kite::BrowserState::MakeDefault();
     }
     // The session is written as it changes, on the writer's thread (core/SessionWriter.h); it
-    // outlives the window, whose close saves once more and waits for the write. Never when the
-    // file is still there unread. As the Mac does once per launch, the session as found is kept
-    // as a launch backup (before the auto-archive, as the Mac's is before its first pass).
+    // outlives the window, whose close saves once more, and Kite waits for that write once the
+    // window is gone. Never when the file is still there unread.
     kite::SessionWriter writer(session, maySave);
-    if (!std::holds_alternative<kite::SessionStore::Error>(loaded)) writer.BackUpLaunch(state);
+    // As the Mac does once per launch, the session as found (read, recovered or a fresh one, as
+    // BrowserStore.init) is kept as a launch backup: before the auto-archive, as the Mac's is
+    // before its first pass, but handed over only once this launch is Kite's (not a second one
+    // that hands over to the running Kite, which the Mac never even starts).
+    std::optional<kite::BrowserState> found;
+    if (!std::holds_alternative<kite::SessionStore::Error>(loaded)) found = state;
     // A test run must show the session it was given, never a default in its place.
     if (quiet && std::holds_alternative<kite::SessionStore::Error>(loaded)) {
         return Fail(quiet, L"couldn't read the session: " + Widen(std::get<kite::SessionStore::Error>(loaded).message), kSaveFailed);
@@ -354,6 +368,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
     }
 #endif
+    if (found) writer.BackUpLaunch(std::move(*found));
 
     controller->Show(showCommand, quiet);
     if (capture && !window.HasClientSize(size->first, size->second)) {
@@ -386,8 +401,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 #ifdef KITE_HAS_CEF
     if (problem = controller->ShutDownChromium(); !problem.empty()) return Fail(quiet, problem, kWindowFailed);
 #endif
+    // The window's close handed over the last save; wait for it now that the window is gone,
+    // for kQuitFlush at most (the atomic write leaves the old file or the new one).
+    const std::string saveError = writer.Flush(kQuitFlush);
     if (saveLogOption.value) {
-        writer.Flush();
         if (problem = controller->SaveSaveLog(*saveLogOption.value); !problem.empty()) {
             return Fail(quiet, L"Couldn't write the save log: " + problem, kSaveFailed);
         }
@@ -396,7 +413,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return Fail(quiet, L"Kite couldn't read your session (" + loadError + L"), so it left the file as it was and didn't save this run's tabs.",
                     kSaveFailed);
     }
-    if (const std::string saveError = writer.Flush(); !saveError.empty()) {
+    if (!saveError.empty()) {
         return Fail(quiet, L"Couldn't save the session: " + Widen(saveError), kSaveFailed);
     }
     return kOk;

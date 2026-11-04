@@ -168,10 +168,16 @@ std::vector<SessionBackups::Backup> SessionBackups::Ordered(double now) const {
 
 SessionBackups::BackUpResult SessionBackups::BackUp(std::string_view bytes, Kind kind, double now) {
     std::lock_guard lock(mutex_);
+    // The folder is listed once at most, for both checks below.
+    std::optional<std::vector<Backup>> listed;
+    auto all = [&]() -> const std::vector<Backup>& {
+        if (!listed) listed = All();
+        return *listed;
+    };
     if (kind == Kind::Hourly) {
         if (!newestHourly_) {
             std::optional<double> newest;
-            for (const Backup& backup : All()) {
+            for (const Backup& backup : all()) {
                 if (backup.kind == Kind::Hourly && backup.date <= now) {
                     newest = backup.date;
                     break;
@@ -181,21 +187,34 @@ SessionBackups::BackUpResult SessionBackups::BackUp(std::string_view bytes, Kind
         }
         if (const auto& last = *newestHourly_; last && *last <= now && now - *last < kInterval) return {};
     }
-    for (const Backup& backup : Ordered(now)) {
+    // The newest of this kind, as Ordered has it: stamped no later than now first, else the
+    // newest of those stamped in the future.
+    const Backup* newest = nullptr;
+    for (const Backup& backup : all()) {
         if (backup.kind != kind) continue;
-        if (store_file::Read(backup.file) == std::optional<std::string>(std::string(bytes))) return {};
-        break;
+        if (backup.date <= now) {
+            newest = &backup;
+            break;
+        }
+        if (!newest) newest = &backup;
+    }
+    if (newest) {
+        if (auto text = store_file::Read(newest->file); text && std::string_view(*text) == bytes) {
+            BackUpResult same;
+            same.sameAsNewest = true;
+            return same;
+        }
     }
     std::error_code error;
     fs::create_directories(directory_, error);
-    if (error) return {std::nullopt, "couldn't create " + store_file::PathText(directory_) + ": " + error.message()};
+    if (error) return {std::nullopt, "couldn't create " + store_file::PathText(directory_) + ": " + error.message(), false};
     const std::string name = "session." + Stamp(now) + (kind == Kind::Hourly ? "" : "." + std::string(RawValue(kind))) + ".json";
     const fs::path file = directory_ / fs::path(std::u8string(name.begin(), name.end()));
-    if (std::string problem = store_file::WriteAtomically(file, bytes); !problem.empty()) return {std::nullopt, problem};
+    if (std::string problem = store_file::WriteAtomically(file, bytes); !problem.empty()) return {std::nullopt, problem, false};
     if (kind == Kind::Hourly) newestHourly_ = std::optional<double>(now);
     Backup made{file, now, kind};
     Prune(now, made);
-    return {made, {}};
+    return {made, {}, false};
 }
 
 void SessionBackups::Prune(double now, const std::optional<Backup>& protecting) const {

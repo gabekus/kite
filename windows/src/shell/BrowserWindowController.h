@@ -8,14 +8,16 @@
 // window's life. The window changes it and saves it as it changes, as the Mac's BrowserStore
 // does: each change arms a one-shot timer (core/SessionSaveDelay.h's SaveSchedule: a second,
 // ten for a page's title or favicon), and when it fires a copy of the session goes to the
-// caller's SessionWriter, which writes it on its own thread. Closing the window (and logoff or
-// shutdown) saves at once and waits for the write.
+// caller's SessionWriter, which writes it on its own thread. Closing the window saves at once
+// (main.cpp waits for that write once the window is gone); logoff and shutdown save at once and
+// wait here, for kEndSessionFlush at most.
 
 #include <windows.h>
 
+#include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
-#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -121,14 +123,11 @@ public:
     // The session changed outside the window's own handlers (main.cpp's auto-archive at
     // launch): it's saved after `delay`, as the window's own changes are.
     void SessionChanged(SessionSaveDelay delay = SessionSaveDelay::Soon);
-    // What saving cost Kite's UI thread: the copy handed to the writer, per save (μs).
-    struct SaveCost {
-        uint64_t saves = 0;
-        double lastMicros = 0;
-        double maxMicros = 0;
-        double totalMicros = 0;
-    };
-    const SaveCost& SaveCosts() const { return saveCost_; }
+
+    // How long the window waits for the session's last write when Windows ends the session
+    // (WM_ENDSESSION: the process may end as soon as it returns). Giving up is safe: the
+    // atomic write leaves the old file or the new one.
+    static constexpr std::chrono::milliseconds kEndSessionFlush{3000};
 
 private:
     // The content card, in points: right of the sidebar, inset on the other three sides
@@ -205,6 +204,12 @@ private:
     const Options options_;
     SessionWriter* const writer_;
     SaveSchedule saveSchedule_;
+    // What saving cost Kite's UI thread (the copy handed to the writer), for the save log.
+    struct SaveCost {
+        uint64_t saves = 0;
+        double maxMicros = 0;
+        double totalMicros = 0;
+    };
     SaveCost saveCost_;
     struct LoggedSave {
         double at, micros;
@@ -252,7 +257,12 @@ private:
     std::unique_ptr<MemoryPressureWatch> memoryWatch_;
     bool watchingMemory_ = false;
     // The memory watch's reports, for the save log: when, and the level.
-    std::vector<std::pair<double, MemoryPressure>> pressureReports_;
+    struct PressureReport {
+        double at;
+        MemoryPressure level;
+        bool discarded;  // the background pages were asked to close
+    };
+    std::vector<PressureReport> pressureReports_;
     struct LoggedFrame {
         double handled, target, offset, theme;
     };

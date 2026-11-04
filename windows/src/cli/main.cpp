@@ -13,7 +13,7 @@
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //   kitecore [--profile DIR] backups
 //   kitecore save-schedule KIND@SECONDS... [--at SECONDS]
-//   kitecore [--profile DIR] save-bench [TABS]
+//   kitecore save-bench [TABS]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
@@ -32,9 +32,9 @@
 // read. `save-schedule` replays changes (soon@0 pageEvent@0.5 ...: a sidebar change or a page's
 // title or favicon, at a time in seconds) through Kite's save timer and prints the saves it
 // makes, and with --at what's still waiting then (the pending save's kind and when it's due).
-// `save-bench` writes a session of TABS tabs (default 200) the way the app does and prints what
-// it cost: the copy on the UI thread (μs), the encoding and the atomic write on the writer's
-// thread, medians of 25 runs. It replaces the profile's session.json: use a test profile.
+// `save-bench` writes a session of TABS tabs (default 200) the way the app does, in a temp
+// folder of its own (never a profile), and prints what it cost: the copy on the UI thread (μs),
+// the encoding and the atomic write on the writer's thread, medians of 25 runs.
 
 #include <algorithm>
 #include <charconv>
@@ -95,7 +95,7 @@ int Usage() {
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n"
         "       kitecore [--profile DIR] backups\n"
         "       kitecore save-schedule KIND@SECONDS... [--at SECONDS]\n"
-        "       kitecore [--profile DIR] save-bench [TABS]\n",
+        "       kitecore save-bench [TABS]\n",
         stderr);
     return kUsage;
 }
@@ -280,8 +280,18 @@ int SaveScheduleCommand(const std::vector<std::string>& args) {
     return kOk;
 }
 
-// What saving a session of `tabs` tabs costs, measured on the app's own path.
-int SaveBenchCommand(const SessionStore& store, int tabs) {
+// What saving a session of `tabs` tabs costs, measured on the app's own path, in a temp folder.
+int SaveBenchCommand(int tabs) {
+    std::error_code ignored;
+    const std::filesystem::path folder = std::filesystem::temp_directory_path(ignored) / ("kite-save-bench-" + NewUuid());
+    struct Cleanup {
+        std::filesystem::path folder;
+        ~Cleanup() {
+            std::error_code ignored;
+            std::filesystem::remove_all(folder, ignored);
+        }
+    } cleanup{folder};
+    const SessionStore store(folder / "session.json");
     BrowserState state = BrowserState::MakeDefault(std::nullopt);
     for (int i = 0; i < tabs; ++i) {
         const std::string n = std::to_string(i);
@@ -299,7 +309,8 @@ int SaveBenchCommand(const SessionStore& store, int tabs) {
     };
     std::vector<double> copies, encodes, writes;
     size_t bytes = 0;
-    SessionWriter writer(store);
+    // Backups dated in 1970, so each run's hourly check is one in-memory comparison, as in the app.
+    SessionWriter writer(store, true, [] { return 0.0; });
     for (int run = 0; run < kRuns; ++run) {
         // A change between runs, so each one is written (an unchanged one is skipped).
         state.spaces[0].tabs[0].title = "run " + std::to_string(run);
@@ -353,6 +364,15 @@ int main(int argc, char** argv) {
     if (args.empty()) return Usage();
     // The save timer's rules alone: no profile involved.
     if (args[0] == "save-schedule") return SaveScheduleCommand(args);
+    if (args[0] == "save-bench" && args.size() <= 2) {
+        if (profile) return Usage();  // it never touches a profile
+        int tabs = 200;
+        if (args.size() == 2) {
+            auto [end, error] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), tabs);
+            if (error != std::errc() || end != args[1].data() + args[1].size() || tabs < 0 || tabs > 100000) return Usage();
+        }
+        return SaveBenchCommand(tabs);
+    }
 
     auto resolved = ResolveSupportDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"), EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<SupportDirectoryError>(&resolved)) {
@@ -365,14 +385,6 @@ int main(int argc, char** argv) {
     if (args[0] == "backups" && args.size() == 1) {
         std::puts(json::Write(BackupsSummary(store.Backups())).c_str());
         return kOk;
-    }
-    if (args[0] == "save-bench" && args.size() <= 2) {
-        int tabs = 200;
-        if (args.size() == 2) {
-            auto [end, error] = std::from_chars(args[1].data(), args[1].data() + args[1].size(), tabs);
-            if (error != std::errc() || end != args[1].data() + args[1].size() || tabs < 0 || tabs > 100000) return Usage();
-        }
-        return SaveBenchCommand(store, tabs);
     }
 
     BrowserState state;

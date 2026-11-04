@@ -66,6 +66,7 @@ public:
     struct BackUpResult {
         std::optional<Backup> made;  // none: nothing was due (or it failed: see error)
         std::string error;
+        bool sameAsNewest = false;   // not made: the newest backup of the kind holds these bytes
     };
     // Keeps `bytes` (a whole session file) as a new backup of `kind` unless it holds the same
     // bytes as the newest backup of that kind, or, for an hourly one, the newest hourly backup is

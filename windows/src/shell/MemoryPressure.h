@@ -9,7 +9,10 @@
 // Critical, then waits for high before it waits for low again, so one spell of low memory is
 // reported once (as the Mac's source fires on entering a level), and the watch costs nothing
 // between: each wait is a thread-pool wait on a kernel event, with no thread of its own and no
-// timer. Windows has no earlier signal to report Warning with.
+// timer. Windows has no earlier signal to report Warning with, and the low one comes late: by
+// default at about 32 MB free per 4 GB of memory (64 MB at most), when paging has begun, where
+// the Mac's warning comes well before. The window asks again (IsLow) as it handles a report,
+// so a dip that's over by then closes nothing.
 
 #include <windows.h>
 
@@ -28,6 +31,8 @@ public:
     MemoryPressureWatch& operator=(const MemoryPressureWatch&) = delete;
 
     bool IsWatching() const { return wait_ != nullptr; }
+    // Whether memory is low right now (the notification's state, queried, not waited for).
+    bool IsLow() const;
 
 private:
     static void CALLBACK Signalled(PTP_CALLBACK_INSTANCE, void* context, PTP_WAIT wait, TP_WAIT_RESULT result);

@@ -718,8 +718,6 @@ void Chromium::Shared::DiscardUnderPressure() {
     }
 }
 
-size_t Chromium::LivePageCount() const { return shared_->pages.size(); }
-
 void Chromium::DiscardHiddenPages() { shared_->DiscardUnderPressure(); }
 
 int RunChromiumSubprocess(HINSTANCE instance) {
