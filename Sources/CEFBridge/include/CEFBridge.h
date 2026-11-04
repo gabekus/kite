@@ -69,7 +69,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Posted on the main thread as a download progresses. `object` is the KCBrowser; userInfo has
 /// id, url, path, state (in-progress, complete, canceled, interrupted), receivedBytes, totalBytes,
-/// speed (bytes per second).
+/// speed (bytes per second), and where it came from: context (the browser context the id is
+/// unique within, as Chromium counts each profile's and incognito window's downloads from 1:
+/// "" for the default profile, the folder name for another, "incognito-N"), incognito (NSNumber
+/// BOOL) and profileDirectory (only for a non-default profile).
 extern NSString * const KCDownloadDidUpdateNotification;
 
 /// Posted on the main thread when Chromium opened a page outside Kite's tabs (an
@@ -322,9 +325,9 @@ NS_SWIFT_UI_ACTOR
 /// Sends a raw DevTools message, such as one to an attached session.
 - (void)sendDevToolsMessage:(NSDictionary<NSString *, id> *)message;
 - (void)close;
-/// Cancels a live download by the id in KCDownloadDidUpdateNotification. Returns NO when
-/// Chromium no longer has it.
-+ (BOOL)cancelDownloadWithID:(NSInteger)downloadID;
+/// Cancels a live download by the id and context in KCDownloadDidUpdateNotification. Returns NO
+/// when Chromium no longer has it.
++ (BOOL)cancelDownloadWithID:(NSInteger)downloadID context:(NSString *)context;
 /// Where downloads go, asked as each one starts: the folder for the profile in
 /// `profileDirectory` (nil for the default profile's own context or an incognito one), and
 /// whether to show Chromium's Save panel there (`prompt`). Unset, downloads go to Downloads.

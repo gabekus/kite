@@ -761,7 +761,9 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
         let start = { (destination: URL?) in
             // No destination cancels the download.
             if let destination {
-                DownloadsModel.shared.track(download, destination: destination, sourceTitle: download.webView?.title)
+                // Only the incognito engine has no profile.
+                DownloadsModel.shared.track(download, destination: destination, sourceTitle: download.webView?.title,
+                                            incognito: self.profileDirectory == nil)
             }
             completionHandler(destination)
         }

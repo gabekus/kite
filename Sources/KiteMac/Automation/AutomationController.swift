@@ -38,7 +38,14 @@ final class AutomationController {
     }
 
     struct Download: Equatable {
+        /// Chromium's id, unique only within `context`: each profile and incognito window counts from 1.
         var id: Int
+        var context: String
+        /// The profile folder for a non-default profile; nil for the default profile and incognito.
+        var profileDirectory: String?
+        var isIncognito: Bool
+        /// Order seen, for the report.
+        var sequence: Int
         var url: String
         var path: String
         var state: String
@@ -123,7 +130,8 @@ final class AutomationController {
     @ObservationIgnored var sessionFolders: [Int: String] = [:]
     /// Which tab's page opened which, so results can say where an action's new tabs went.
     @ObservationIgnored var openedTabs = OpenedTabs()
-    @ObservationIgnored private(set) var downloads: [Int: Download] = [:]
+    /// By "context#id".
+    @ObservationIgnored private(set) var downloads: [String: Download] = [:]
     @ObservationIgnored private var downloadObserver: NSObjectProtocol?
     /// Each tab's last read, the baseline for change-only reads.
     @ObservationIgnored var snapshots: [UUID: PageDiff.Snapshot] = [:]
@@ -387,10 +395,18 @@ final class AutomationController {
         downloadObserver = NotificationCenter.default.addObserver(forName: .KCDownloadDidUpdate, object: nil, queue: .main) {
             [weak self] note in
             guard let info = note.userInfo, let id = (info["id"] as? NSNumber)?.intValue else { return }
-            let download = Download(
-                id: id, url: info["url"] as? String ?? "", path: info["path"] as? String ?? "", state: info["state"] as? String ?? "",
+            let context = info["context"] as? String ?? ""
+            let key = "\(context)#\(id)"
+            var download = Download(
+                id: id, context: context, profileDirectory: info["profileDirectory"] as? String,
+                isIncognito: (info["incognito"] as? NSNumber)?.boolValue ?? false, sequence: 0,
+                url: info["url"] as? String ?? "", path: info["path"] as? String ?? "", state: info["state"] as? String ?? "",
                 receivedBytes: (info["receivedBytes"] as? NSNumber)?.int64Value ?? 0, totalBytes: (info["totalBytes"] as? NSNumber)?.int64Value ?? -1)
-            MainActor.assumeIsolated { self?.downloads[id] = download }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                download.sequence = self.downloads[key]?.sequence ?? self.downloads.count
+                self.downloads[key] = download
+            }
         }
         #endif
     }
