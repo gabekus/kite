@@ -1,0 +1,49 @@
+{
+  "history": {
+    "entries": {
+      "https://docs.example.com/page": {
+        "lastVisit": 789000050.0,
+        "title": "Docs",
+        "url": "https://docs.example.com/page",
+        "visitCount": 9
+      },
+      "https://example.com/": {
+        "lastVisit": 789000000.0,
+        "title": "Example Domain",
+        "url": "https://example.com/",
+        "visitCount": 4
+      },
+      "https://news.example/weekly-recipes-roundup": {
+        "lastVisit": 789000200.0,
+        "title": "Weekly Recipes Roundup",
+        "url": "https://news.example/weekly-recipes-roundup",
+        "visitCount": 1
+      },
+      "https://recipes.example/": {
+        "lastVisit": 789000400.0,
+        "title": "",
+        "url": "https://recipes.example/",
+        "visitCount": 1
+      },
+      "https://recipes.example/pasta-carbonara": {
+        "lastVisit": 789000500.0,
+        "title": "Pasta Carbonara Recipe",
+        "url": "https://recipes.example/pasta-carbonara",
+        "visitCount": 5
+      },
+      "https://www.blog.example/2026/01/recipe-index": {
+        "lastVisit": 789000300.0,
+        "title": "Recipe Index: Weeknight Dinners",
+        "url": "https://www.blog.example/2026/01/recipe-index",
+        "visitCount": 3
+      },
+      "https://www.cooking.example/recipes/risotto": {
+        "lastVisit": 789000100.0,
+        "title": "Mushroom Risotto",
+        "url": "https://www.cooking.example/recipes/risotto",
+        "visitCount": 2
+      }
+    }
+  },
+  "version": 1
+}

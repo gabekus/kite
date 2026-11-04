@@ -315,6 +315,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         TerminateProcess(GetCurrentProcess(), kSaveFailed);
     };
     writer.OnStuck(endStuck);
+    // Browsing history (core/HistoryStore.h): every profile's file read and written on history's
+    // own worker. The default profile's read starts now, while the window and Chromium start;
+    // until it's in, visits are kept and replayed over it. Like the session's writer, it outlives
+    // the window, and a write still stuck as Kite ends ends the process.
+    kite::HistoryStores history(supportDirectory);
+    const auto historyStuck = [quiet] {
+        const std::wstring message = L"Kite: history's last write didn't finish; Kite ended without waiting for it\n";
+        OutputDebugStringW(message.c_str());
+        if (quiet) WriteUtf8(STD_ERROR_HANDLE, message);
+        TerminateProcess(GetCurrentProcess(), kSaveFailed);
+    };
+    history.OnStuck(historyStuck);
     // As the Mac does once per launch, the session as found (read, recovered or a fresh one, as
     // BrowserStore.init) is kept as a launch backup: before the auto-archive, as the Mac's is
     // before its first pass, but handed over only once this launch is Kite's (not a second one
@@ -343,7 +355,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.frameLog = frameLogOption.present;
     options.saveLog = saveLogOption.present;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
-    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, problem);
+    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, &history, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
     if (archivedAtLaunch) controller->SessionChanged();
@@ -427,6 +439,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // Still writing after that: end here, before Chromium's shutdown or a dialog, while the
     // stuck write may yet rename (no other Kite can have the profile until this one is gone).
     if (writer.Writing()) endStuck();
+    // History's last writes, the same way (the window's close handed them over).
+    const std::string historyError = history.Flush(kQuitFlush);
+    if (history.Writing()) historyStuck();
+    if (!historyError.empty()) OutputDebugStringW((L"Kite: " + Widen(historyError) + L"\n").c_str());
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (frameLogOption.value) {
         if (problem = controller->SaveFrameLog(*frameLogOption.value); !problem.empty()) {
@@ -448,5 +464,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (!saveError.empty()) {
         return Fail(quiet, L"Couldn't save the session: " + Widen(saveError), kSaveFailed);
     }
+    // A test run fails on it; otherwise the next change or launch tries again, as on the Mac.
+    if (quiet && !historyError.empty()) return Fail(quiet, L"Couldn't save history: " + Widen(historyError), kSaveFailed);
     return kOk;
 }

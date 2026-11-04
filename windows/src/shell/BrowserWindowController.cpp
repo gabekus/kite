@@ -44,6 +44,10 @@ constexpr UINT kFrameMessage = WM_APP + 5;
 constexpr UINT kSpaceIconsMessage = WM_APP + 6;
 // Posted by the memory watch (MemoryPressure.h), wParam the MemoryPressure level.
 constexpr UINT kMemoryPressureMessage = WM_APP + 7;
+// Posted by history's worker when a profile's file has been read (HistoryStores::SetWake).
+constexpr UINT kHistoryMessage = WM_APP + 8;
+// History's save (HistoryStores::NextSaveIn), armed by a change and gone once it fires.
+constexpr UINT_PTR kHistoryTimer = 5;
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -76,7 +80,7 @@ bool Inked(const Pixels& pixels, UINT fromRow = 0) {
 
 std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
                                                                           Options options, SessionWriter* writer,
-                                                                          std::wstring& error) {
+                                                                          HistoryStores* history, std::wstring& error) {
     // The GPU first: everything is set up before the window shows, so it never appears empty
     // or with the wrong title bar.
     std::unique_ptr<Renderer> renderer = Renderer::Create(error);
@@ -89,7 +93,7 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
         return nullptr;
     }
     std::unique_ptr<BrowserWindowController> controller(
-        new BrowserWindowController(instance, state, std::move(shortcuts), options, writer, std::move(renderer)));
+        new BrowserWindowController(instance, state, std::move(shortcuts), options, writer, history, std::move(renderer)));
     if (!controller->window_.IsValid()) {
         error = L"CreateWindowExW failed";
         return nullptr;
@@ -99,12 +103,13 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
 }
 
 BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                                                 SessionWriter* writer, std::unique_ptr<Renderer> renderer)
+                                                 SessionWriter* writer, HistoryStores* history, std::unique_ptr<Renderer> renderer)
     : instance_(instance),
       state_(state),
       shortcuts_(std::move(shortcuts)),
       options_(options),
       writer_(writer),
+      history_(history),
       renderer_(std::move(renderer)),
       window_(instance),
       theme_(state.SelectedSpace().theme),
@@ -113,6 +118,8 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
 }
 
 BrowserWindowController::~BrowserWindowController() {
+    // History's worker outlives the window: it stops posting to it.
+    if (history_) history_->SetWake(nullptr);
     // The views and the compositor go before the window: it stops calling into them first.
     window_.onClose = nullptr;
     window_.onSize = nullptr;
@@ -138,6 +145,13 @@ std::wstring BrowserWindowController::Init() {
     if (!options_.capture) {
         memoryWatch_ = std::make_unique<MemoryPressureWatch>(window_.Handle(), kMemoryPressureMessage);
         watchingMemory_ = memoryWatch_->IsWatching();
+    }
+    if (history_) {
+        // Each profile's file is read on history's worker; its wake comes here. One read before
+        // the window existed is taken in now.
+        HWND hwnd = window_.Handle();
+        history_->SetWake([hwnd] { PostMessageW(hwnd, kHistoryMessage, 0, 0); });
+        history_->Adopt();
     }
     compositor_ = Compositor::Create(window_.Handle(), *renderer_, error);
     if (!compositor_) return L"Kite couldn't start DirectComposition: " + error;
@@ -168,7 +182,11 @@ std::wstring BrowserWindowController::Init() {
 
     // The command bar (Ctrl+T), over everything in the window.
     CommandBarView::Callbacks bar;
-    bar.suggestions = [this](std::string_view text, CommandBarMode mode) { return CommandBarSuggestions(text, state_, mode); };
+    bar.suggestions = [this](std::string_view text, CommandBarMode mode) {
+        // The current space's profile's history (the Mac's store.history).
+        const History* history = history_ ? &history_->ForProfile(state_.SelectedProfileDirectory()).Get() : nullptr;
+        return CommandBarSuggestions(text, state_, mode, history, Now());
+    };
     bar.commit = [this](const CommandSuggestion& row, CommandBarMode mode) { Commit(row, mode); };
     bar.opened = [this] {
         BlockPages(true);
@@ -237,6 +255,11 @@ std::wstring BrowserWindowController::Init() {
         RunPending();
         closing_ = true;
         SaveNow();
+        // History too, as the Mac's flush at quit; main.cpp waits for its writes.
+        if (history_) {
+            KillTimer(window_.Handle(), kHistoryTimer);
+            history_->SaveNow();
+        }
         if (endingSession && writer_) {
             if (std::string problem = writer_->Flush(kEndSessionFlush); !problem.empty()) {
                 OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
@@ -375,6 +398,23 @@ std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& f
                                            {"lastError", stats.lastError},
                                            {"lastBackupError", stats.lastBackupError}});
     }
+    if (history_) {
+        const HistoryStores::Statistics stats = history_->Stats();
+        const double visitMean = historyCost_.visits ? historyCost_.totalMicros / static_cast<double>(historyCost_.visits) : 0.0;
+        const HistoryStore& store = history_->ForProfile(BrowserState::kDefaultProfile);
+        log.emplace("history", json::Object{{"visits", historyCost_.visits},
+                                            {"visitMicros", json::Object{{"max", historyCost_.maxMicros}, {"mean", visitMean}}},
+                                            {"entries", store.Get().Count()},
+                                            {"loaded", store.IsLoaded()},
+                                            {"loads", stats.loads},
+                                            {"writes", stats.writes},
+                                            {"failedWrites", stats.failedWrites},
+                                            {"lastBytes", stats.lastBytes},
+                                            {"lastLoadMicros", stats.lastLoadMicros},
+                                            {"lastEncodeMicros", stats.lastEncodeMicros},
+                                            {"lastWriteMicros", stats.lastWriteMicros},
+                                            {"lastError", stats.lastError}});
+    }
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
     if (!out) return L"couldn't open " + file.wstring();
     out << json::Write(json::Value(std::move(log))) << '\n';
@@ -408,6 +448,59 @@ void BrowserWindowController::SaveNow() {
     saveCost_.maxMicros = std::max(saveCost_.maxMicros, micros);
     saveCost_.totalMicros += micros;
     if (options_.saveLog) saves_.push_back(LoggedSave{FrameClock::Now() - createdAt_, micros, closing_});
+}
+
+void BrowserWindowController::ArmHistorySave() {
+    if (!history_) return;
+    // One timer for every profile's store: the soonest save; none when nothing waits.
+    if (auto seconds = history_->NextSaveIn()) {
+        SetTimer(window_.Handle(), kHistoryTimer, static_cast<UINT>(std::ceil(*seconds * 1000)), nullptr);
+    } else {
+        KillTimer(window_.Handle(), kHistoryTimer);
+    }
+}
+
+HistoryStore* BrowserWindowController::HistoryForTab(const std::string& tabID) {
+    if (!history_) return nullptr;
+    // Profiles.swift's profileDirectory(ofTab:): the tab's space's profile, a favorite's grid's,
+    // else the selected space's.
+    std::string directory = state_.SelectedProfileDirectory();
+    if (auto location = state_.Location(tabID)) {
+        if (location->space) {
+            directory = state_.ProfileDirectory(*location->space);
+        } else {
+            for (const auto& [profile, tabs] : state_.favoritesByProfile) {
+                if (std::any_of(tabs.begin(), tabs.end(), [&](const Tab& tab) { return tab.id == tabID; })) directory = profile;
+            }
+        }
+    }
+    return &history_->ForProfile(directory);
+}
+
+void BrowserWindowController::RecordAddress(const std::string& tabID, const std::string& url) {
+    // The Mac's pageURLChanged, before its tab check (a typed URL is already on the tab when the
+    // page reports it). A tab showing one of Kite's own pages keeps it out of history.
+    if (url.empty() || !history_) return;
+    if (const Tab* tab = state_.FindTabByID(tabID); tab && tab->url && tab->url->starts_with("kite:") && !History::Records(url)) return;
+    auto [it, inserted] = recordedURLs_.try_emplace(tabID, url);
+    if (!inserted && it->second == url) return;
+    it->second = url;
+    if (HistoryStore* store = HistoryForTab(tabID)) {
+        const auto start = std::chrono::steady_clock::now();
+        store->RecordVisit(url, "", Now());
+        historyCost_.Add(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count());
+    }
+    ArmHistorySave();
+}
+
+void BrowserWindowController::RecordTitle(const std::string& tabID, const std::string& title) {
+    // The Mac's pageTitleChanged: for the address the tab last recorded; a repeat saves nothing.
+    if (title.empty() || !history_) return;
+    if (const Tab* tab = state_.FindTabByID(tabID); tab && tab->url && tab->url->starts_with("kite:")) return;
+    auto it = recordedURLs_.find(tabID);
+    if (it == recordedURLs_.end()) return;
+    if (HistoryStore* store = HistoryForTab(tabID)) store->UpdateTitle(it->second, title);
+    ArmHistorySave();
 }
 
 void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save) {
@@ -454,6 +547,7 @@ void BrowserWindowController::PageGone(const std::string& tabID) {
 #ifdef KITE_HAS_CEF
     if (!chromium_) return;
     chromium_->Close(tabID);
+    ForgetRecorded(tabID);
     // A closed page can't be anyone's opener or popup again.
     std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.first == tabID || entry.second == tabID; });
 #else
@@ -490,6 +584,7 @@ void BrowserWindowController::Commit(const CommandSuggestion& row, CommandBarMod
     switch (row.kind) {
     case CommandSuggestion::Kind::Open:
     case CommandSuggestion::Kind::Search:
+    case CommandSuggestion::Kind::History:
         if (mode == CommandBarMode::EditCurrent && state_.SelectedTab()) {
             const std::string id = state_.SelectedTab()->id;
             if (auto at = state_.Location(id)) {
@@ -787,6 +882,21 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         SaveNow();
         return true;
     }
+    if (message == WM_TIMER && wParam == kHistoryTimer) {
+        KillTimer(window_.Handle(), kHistoryTimer);
+        if (history_) history_->SaveDue();
+        ArmHistorySave();
+        return true;
+    }
+    if (message == kHistoryMessage) {
+        // A profile's history.json has been read: it takes the place of what this run had (its
+        // visits replayed over it), and an open bar shows its rows.
+        if (history_ && history_->Adopt()) {
+            if (commandBar_ && commandBar_->IsOpen()) commandBar_->Refresh();
+            ArmHistorySave();
+        }
+        return true;
+    }
     if (message == kMemoryPressureMessage) {
         // The Mac's watchMemoryPressure: the pages that aren't on screen close, if memory is
         // still low as the report is handled (a dip already over, seen at launch on a busy PC,
@@ -948,6 +1058,12 @@ std::wstring BrowserWindowController::Capture(Pixels& pixels, const std::optiona
     if (problem.empty() && barText) {
         // The bar as Ctrl+T opens it, with the text typed in.
         if (!commandBar_) return L"Kite couldn't make the command bar";
+        // Its history rows are the profile's file's: read on history's worker, waited for here
+        // (a test run, before the first frame it saves).
+        if (history_) {
+            history_->ForProfile(state_.SelectedProfileDirectory());
+            if (!history_->WaitForLoads(std::chrono::seconds(10))) return L"history wasn't read within 10 s";
+        }
         commandBar_->Show(CommandBarMode::NewTab, "", BarLook());
         commandBar_->Type(*barText);
         Pixels bar;
@@ -1052,12 +1168,14 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     // The Mac's mutatePage: a navigation saves as soon as a sidebar change, a title or favicon
     // later (SessionSaveDelay::PageEvent); a report that changes nothing saves nothing.
     events.addressChanged = [this](const std::string& id, const std::string& url) {
+        RecordAddress(id, url);
         Tab* tab = TabNamed(id);
         const bool changed = tab && !url.empty() && tab->url != url;
         if (changed) tab->url = url;
         StateChanged(changed ? std::optional(SessionSaveDelay::Soon) : std::nullopt);
     };
     events.titleChanged = [this](const std::string& id, const std::string& title) {
+        RecordTitle(id, title);
         // An empty title keeps the last one, as the Mac's BrowserStore does.
         Tab* tab = TabNamed(id);
         const bool changed = tab && !title.empty() && tab->title != title;
@@ -1102,6 +1220,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         const auto opener = popupOpeners_.extract(id);
         state_.PageClosedItself(id, opener ? std::optional<std::string>(opener.mapped()) : std::nullopt);
         std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.second == id; });
+        ForgetRecorded(id);
         SelectionMoved();
     };
     // A popup and its opener keep their pages while both tabs exist; a page closed for the
@@ -1109,6 +1228,9 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
     events.keepAlive = [this](const std::string& id) { return IsLinkedToPopup(popupOpeners_, state_, id); };
     events.pageDiscarded = [this](const std::string& id) {
         std::erase_if(popupOpeners_, [&](const auto& entry) { return entry.first == id || entry.second == id; });
+        // The Mac's clearPage: the page that loads again when the tab is next shown records its
+        // address as a new visit.
+        ForgetRecorded(id);
     };
     events.shortcuts = shortcuts_;
     events.command = [this](const std::string& command) { RunCommand(command); };

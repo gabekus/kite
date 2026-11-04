@@ -33,6 +33,8 @@ endif()
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
   src/core/CommandBar.cpp
+  src/core/History.cpp
+  src/core/HistoryStore.cpp
   src/core/Json.cpp
   src/core/KeyBindings.cpp
   src/core/Models.cpp
@@ -45,6 +47,7 @@ add_library(KiteCoreWin STATIC
   src/core/SpaceBar.cpp
   src/core/SpaceIcon.cpp
   src/core/SymbolShape.cpp
+  src/core/TextMatch.cpp
   src/core/PictureLoads.cpp
   src/core/SpaceSwipe.cpp
   src/core/LiveTabPolicy.cpp
@@ -177,6 +180,7 @@ enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
   tests/CommandBarTests.cpp
+  tests/HistoryTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp

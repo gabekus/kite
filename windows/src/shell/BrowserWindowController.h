@@ -11,9 +11,18 @@
 // caller's SessionWriter, which writes it on its own thread. Closing the window saves at once
 // (main.cpp waits for that write once the window is gone); logoff and shutdown save at once and
 // wait here, for kEndSessionFlush at most.
+//
+// Browsing history goes to the caller's HistoryStores (core/HistoryStore.h) as the Mac's
+// BrowserStore records it: a visit when a page reports a main-frame address its tab hasn't
+// recorded yet (CEF's OnAddressChange, as the Mac's addressDidChange: the URL a navigation
+// commits, after its redirects, and a same-document change to a new URL, such as pushState or
+// a fragment, as a visit of its own; a reload records nothing), and the page's title for the
+// last address recorded. The stores' one save timer is armed after each change (3 s, at most
+// 30), and closing the window saves them too.
 
 #include <windows.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -24,6 +33,7 @@
 #include <string>
 #include <vector>
 
+#include "core/HistoryStore.h"
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/Models.h"
@@ -71,9 +81,11 @@ public:
     // `error` when the GPU, the window or a view couldn't be made. No command bar isn't a
     // failure (CommandBar() is null then). `writer` (the caller's, outliving the window) gets
     // the session as it changes, and once more as the window closes, and at logoff or shutdown,
-    // after the pages' last reports; null saves nothing.
+    // after the pages' last reports; null saves nothing. `history` (the caller's too) gets the
+    // pages' visits and gives the command bar its history rows; null records nothing.
     static std::unique_ptr<BrowserWindowController> Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
-                                                           Options options, SessionWriter* writer, std::wstring& error);
+                                                           Options options, SessionWriter* writer, HistoryStores* history,
+                                                           std::wstring& error);
     ~BrowserWindowController();
     BrowserWindowController(const BrowserWindowController&) = delete;
     BrowserWindowController& operator=(const BrowserWindowController&) = delete;
@@ -136,7 +148,7 @@ private:
     static constexpr int kContentInset = 10;
 
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                            SessionWriter* writer, std::unique_ptr<Renderer> renderer);
+                            SessionWriter* writer, HistoryStores* history, std::unique_ptr<Renderer> renderer);
     std::wstring Init();
     // What follows from the selected space's theme at once: the title bar's dark mode, the
     // material under the backdrop, the caption buttons' glyphs (the Mac's NSAppearance).
@@ -168,6 +180,15 @@ private:
     void StateChanged(std::optional<SessionSaveDelay> save = SessionSaveDelay::Soon);
     // The save timer fired, or the window is closing: a copy of the session to the writer.
     void SaveNow();
+    // History changed (a visit, a title): its save timer, armed for the store due first.
+    void ArmHistorySave();
+    // The history a tab's visits go to: its own profile's (the Mac's history(forTab:)).
+    HistoryStore* HistoryForTab(const std::string& tabID);
+    // A page reported an address or a title: the Mac's pageURLChanged and pageTitleChanged.
+    void RecordAddress(const std::string& tabID, const std::string& url);
+    void RecordTitle(const std::string& tabID, const std::string& title);
+    // The tab's page is gone (closed, discarded): its next address is a visit again.
+    void ForgetRecorded(const std::string& tabID) { recordedURLs_.erase(tabID); }
     // The selected tab's page shows, and the sidebar with it, after the selection moved.
     void SelectionMoved();
     void ShowPage();
@@ -203,6 +224,9 @@ private:
     const ShortcutMap shortcuts_;
     const Options options_;
     SessionWriter* const writer_;
+    HistoryStores* const history_;
+    // The address each tab's page last recorded in history (the Mac's recordedURLs).
+    std::map<std::string, std::string> recordedURLs_;
     SaveSchedule saveSchedule_;
     // What saving cost Kite's UI thread (the copy handed to the writer), for the save log.
     struct SaveCost {
@@ -211,6 +235,18 @@ private:
         double totalMicros = 0;
     };
     SaveCost saveCost_;
+    // What recording a visit cost the UI thread, for the save log.
+    struct HistoryCost {
+        uint64_t visits = 0;
+        double maxMicros = 0;
+        double totalMicros = 0;
+        void Add(double micros) {
+            ++visits;
+            maxMicros = std::max(maxMicros, micros);
+            totalMicros += micros;
+        }
+    };
+    HistoryCost historyCost_;
     struct LoggedSave {
         double at, micros;
         bool closing;

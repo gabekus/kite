@@ -108,8 +108,11 @@ private:
     CommandBarView(HWND window, Callbacks callbacks) : window_(window), callbacks_(std::move(callbacks)) {}
 
     struct RowText {
-        Microsoft::WRL::ComPtr<IDWriteTextLayout> title, detail;
+        // A history row's " — host/path" is its own layout after the title's, dimmer, in what
+        // room the title leaves (the Mac's one attributed string, truncated at its tail).
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> title, subtitle, detail;
         float detailWidth = 0;
+        float titleWidth = 0;
     };
     struct Geometry {
         UINT dpi = USER_DEFAULT_SCREEN_DPI;

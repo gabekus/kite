@@ -385,6 +385,34 @@ logs each save and its UI-thread cost. Not yet: the Mac's `syncPinnedURLs` in
 its page-event path (a pinned tab that had no page adopting the first address
 it reports), which comes with pinning.
 
+## History
+
+Browsing history (W25a) is the Mac's: one entry per page (`url`, `title`,
+`lastVisit`, `visitCount`), web pages only, at most 20,000 (the oldest tenth
+goes past the cap), in `history.json` for the default profile and
+`Chromium\<dir>\Kite History.json` for another, in the Mac's format
+(`core/History`, `Tests/Fixtures/history-v1.json`, which both suites read). A
+page's main-frame address (CEF's `OnAddressChange`, as the Mac's
+`addressDidChange`: the URL a navigation commits, after its redirects, and a
+same-document change to a new URL, such as pushState or a fragment) is a visit
+when it isn't the address that tab's page last recorded, so a reload isn't one
+and a page closed for the live-page limit records again when it loads; the
+page's title goes to the address last recorded, and a repeat changes nothing.
+History saves 3 s after the last change and at least every 30 s while changes
+keep coming (`CappedDebounce`), at once for clearing and importing, and when
+the window closes. `core/HistoryStore` reads each profile's file and writes it
+on a worker of its own, from a snapshot that costs the UI thread a few μs: the
+entries are kept in 256 shards that copies share and copy on write, a shard at
+a time. Until a file has been read, its store keeps this run's visits and
+replays them over it. The command bar shows up to three pages from the current
+space's profile's history after the tabs, never one already shown as a tab,
+the page you're on or the Open row's URL; each entry keeps its title, URL and
+host lowercased and decomposed, so a keystroke's search is a byte search with
+Swift's Character rules checked only where it hits. `kitecore history`
+lists, searches, adds and clears; `kitecore history-bench` measures it. Not
+yet: the history page (`kite://history`), Delete browsing data, Import from
+Arc (W25b), and the bar's favicons.
+
 ## Refresh rate
 
 Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to

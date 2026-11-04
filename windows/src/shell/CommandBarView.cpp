@@ -73,8 +73,8 @@ constexpr float kShadowBlur = 30;
 constexpr float kShadowOpacity = 0.5f;
 constexpr float kShadowY = 16;
 constexpr float kShadowMargin = 112;  // room for it around the panel: 3σ and the offset
-// Open, five tabs, search: the most rows CommandBarSuggestions makes.
-constexpr size_t kMaxRows = 7;
+// Open, five tabs, three pages from history, search: the most rows CommandBarSuggestions makes.
+constexpr size_t kMaxRows = 10;
 // The Mac's default text selection colours (NSColor.selectedTextBackgroundColor), not
 // checked against Arc's bar.
 constexpr D2D1_COLOR_F kDarkSelection{63 / 255.0f, 99 / 255.0f, 139 / 255.0f, 1};
@@ -591,8 +591,19 @@ void CommandBarView::BuildRowText() {
             titleRight = boxLeft - C::kActionGap - text.detailWidth - C::kActionGap;
         }
         const std::wstring title = Widen(row.title);
-        dwrite_->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()), rowEllipsisFormat_.Get(),
-                                  std::max(titleRight - C::kRowTitleX, 1.0f), C::kRowFillHeight, text.title.GetAddressOf());
+        const float room = std::max(titleRight - C::kRowTitleX, 1.0f);
+        dwrite_->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()), rowEllipsisFormat_.Get(), room, C::kRowFillHeight,
+                                  text.title.GetAddressOf());
+        if (text.title && !row.subtitle.empty()) {
+            DWRITE_TEXT_METRICS metrics{};
+            if (SUCCEEDED(text.title->GetMetrics(&metrics))) text.titleWidth = metrics.widthIncludingTrailingWhitespace;
+            // The subtitle only where the whole title fits; the rest of the line, cut at its end.
+            if (text.titleWidth < room - 1) {
+                const std::wstring subtitle = L" \u2014 " + Widen(row.subtitle);
+                dwrite_->CreateTextLayout(subtitle.c_str(), static_cast<UINT32>(subtitle.size()), rowEllipsisFormat_.Get(),
+                                          room - text.titleWidth, C::kRowFillHeight, text.subtitle.GetAddressOf());
+            }
+        }
         rowText_.push_back(std::move(text));
     }
 }
@@ -1332,7 +1343,9 @@ void CommandBarView::DrawRow(ID2D1DeviceContext* context, size_t index, float to
     case CommandSuggestion::Kind::Open: icon = kGlobeGlyph; break;
     case CommandSuggestion::Kind::Search: icon = kSearchGlyph; break;
     case CommandSuggestion::Kind::SwitchTab:
-        // Favicons come with the sidebar (W4); until then the Mac's no-favicon globe.
+    case CommandSuggestion::Kind::History:
+        // The bar's favicons come later (the sidebar's are W4's); until then the Mac's
+        // no-favicon globe, for a tab and for a page from history (FaviconView.show(page:)).
         icon = kGlobeGlyph;
         iconOpacity = kNoFaviconOpacity;
         break;
@@ -1358,6 +1371,13 @@ void CommandBarView::DrawRow(ID2D1DeviceContext* context, size_t index, float to
     if (text.title) {
         brush_->SetColor(highlighted ? white : WithAlpha(Primary(), C::kRowTextOpacity));
         context->DrawTextLayout(D2D1::Point2F(fill.left + C::kRowTitleX, fill.top), text.title.Get(), brush_.Get(),
+                                D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+    if (text.subtitle) {
+        // The Mac's dim part: white at 0.7 on the accent, else the label colour at 0.5, both
+        // under the title's own 0.8 when not highlighted.
+        brush_->SetColor(highlighted ? WithAlpha(white, 0.7f) : WithAlpha(Primary(), 0.5f * C::kRowTextOpacity));
+        context->DrawTextLayout(D2D1::Point2F(fill.left + C::kRowTitleX + text.titleWidth, fill.top), text.subtitle.Get(), brush_.Get(),
                                 D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
 }
