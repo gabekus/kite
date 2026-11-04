@@ -1,15 +1,16 @@
 #pragma once
-// Browsing history, one entry per URL, for the command bar's history rows (and the history page
-// and Import from Arc, which come later). A port of KiteCore's History.swift (HistoryEntry,
-// HistoryDay, History, and the History extensions in BrowsingData.swift and BrowserImport.swift)
-// and HistoryFile.swift: history.json, and each other profile's Chromium/<dir>/Kite History.json,
-// in the Mac's format, so either app reads the other's.
+// Browsing history, one entry per URL, for the command bar's history rows (and Import from Arc,
+// W33a). A port of KiteCore's History.swift (HistoryEntry, History, and the History extension in
+// BrowsingData.swift) and HistoryFile.swift: history.json, and each other profile's
+// Chromium/<dir>/Kite History.json, in the Mac's format, so either app reads the other's.
 //
 //   {"version": 1, "history": {"entries": {"<url>": {"url": "<url>", "title": "...",
 //                                                     "lastVisit": <Date>, "visitCount": 3}}}}
 //
 // Dates are Foundation's (seconds since 2001, core/Models.h's Timestamp). Only web pages are
-// kept, and at most kMaxEntries of them (the oldest go first).
+// kept, and at most kMaxEntries of them (the oldest go first). A URL is kept as the Mac keeps it,
+// its absoluteString after NSURL has read it (Normalized). The history page's days and headings
+// (History.days, HistoryDay) come with the history page.
 //
 // History is a value, as the Mac's struct is, and copying one is cheap: the entries live in
 // kShards shards shared between copies and copied on write, one shard at a time. That's how the
@@ -49,32 +50,6 @@ struct HistoryEntry {
     bool operator==(const HistoryEntry&) const = default;
 };
 
-// The calendar the history page groups days by: the start of the day a moment falls in, and
-// that day's date. Local() is the system's time zone; Utc() is for tests.
-struct HistoryCalendar {
-    struct Date {
-        int year, month, day;  // month 1–12
-        int weekday;           // 0 Sunday … 6 Saturday
-    };
-    std::function<Timestamp(Timestamp)> startOfDay;
-    std::function<Date(Timestamp)> date;
-
-    static HistoryCalendar Utc();
-    static HistoryCalendar Local();
-};
-
-// One day of the history page, newest entry first.
-struct HistoryDay {
-    Timestamp start = 0;
-    std::vector<HistoryEntry> entries;
-
-    // Chromium's history page headings: "Today - Saturday, October 31, 2026", "Yesterday - Friday,
-    // October 30, 2026", then the date alone. In English: the Mac's formats in the user's locale,
-    // which the history page (a later checkpoint) gets from Windows.
-    std::string Heading(Timestamp now, const HistoryCalendar& calendar) const;
-    bool operator==(const HistoryDay&) const = default;
-};
-
 class History {
 public:
     static constexpr int kCurrentVersion = 1;
@@ -85,8 +60,14 @@ public:
     // Web pages only, as the Mac's records(_:): http and https. Also a URL the Mac can read back
     // (url::HasValidAuthority): one Foundation rejects would make the Mac drop the whole file.
     static bool Records(std::string_view url);
+    // `url` as the Mac keeps it: NSURL (RFC 3986, macOS 14) percent-encodes what a path, query
+    // or fragment may not hold (space, " < > \ ^ ` { | } [ ], a second #, a % that starts no
+    // escape, controls and anything past ASCII), and Chromium leaves some of those as typed. The
+    // authority is left alone. Every method here that takes a URL takes it through this.
+    static std::string Normalized(std::string_view url);
 
-    void RecordVisit(std::string_view url, std::string_view title, Timestamp at);
+    // False when the URL isn't one history keeps (Records): nothing changed.
+    bool RecordVisit(std::string_view url, std::string_view title, Timestamp at);
     // A page's title usually arrives after its URL. Returns whether the entry changed: pages that
     // set document.title on a timer mostly repeat it, and a repeat needn't be saved.
     bool UpdateTitle(std::string_view url, std::string_view title);
@@ -99,18 +80,13 @@ public:
     size_t Merge(const std::vector<HistoryEntry>& imported);
     // Chromium's history timestamps: microseconds since 1601-01-01 UTC.
     static Timestamp ChromiumDate(int64_t microseconds);
-    // Firefox's (microseconds since 1970) and Safari's (seconds since 2001).
-    static Timestamp FirefoxDate(int64_t microseconds);
-    static Timestamp SafariDate(double seconds) { return seconds; }
     // The history page's Remove from History.
     void Remove(const std::vector<std::string>& urls);
     // Delete browsing data's history: pages last visited at or after `since` (none: all). Kite
     // keeps one last visit per page, so a page visited in the range goes entirely.
     void RemoveVisits(std::optional<Timestamp> since);
-
-    // The history page's list: newest first, grouped by the day of the last visit, keeping
-    // entries whose title or URL contains `query` (case-insensitive), as Chromium's search does.
-    std::vector<HistoryDay> Days(std::string_view query, const HistoryCalendar& calendar) const;
+    // Past kMaxEntries, the oldest go, as Merge does (a file over the cap, as it's read).
+    void TrimToCap();
 
     // Best matches first: how well the title, host or URL matches, then how often and how
     // recently the page was visited. Ties: the later visit, then the URL (the Mac leaves those
@@ -135,11 +111,10 @@ public:
     std::string EncodeFile() const;
     static std::variant<History, std::string> DecodeFile(std::string_view text);
 
-public:
+private:
     // What's typed, ready for Search: lowercased, decomposed, and where its Characters start.
     struct Needle;
 
-private:
     struct Item {
         std::string title;
         Timestamp lastVisit = 0;
@@ -159,18 +134,28 @@ private:
         uint16_t hostLength = 0;
     };
     static constexpr uint16_t kNoHost = 0xFFFF;
-    using Shard = std::unordered_map<std::string, Item>;
+    // Looked up by string_view, so a visit to a page already here allocates nothing.
+    struct KeyHash {
+        using is_transparent = void;
+        size_t operator()(std::string_view key) const noexcept { return std::hash<std::string_view>{}(key); }
+    };
+    using Shard = std::unordered_map<std::string, Item, KeyHash, std::equal_to<>>;
 
+    // Normalized, into `scratch` only when something changes: `url` itself otherwise.
+    static std::string_view Key(std::string_view url, std::string& scratch);
     static size_t ShardOf(std::string_view url);
     static void Index(std::string_view url, Item& item);
     static HistoryEntry EntryOf(const std::string& url, const Item& item);
     static std::optional<int> ScoreItem(const Needle& needle, std::string_view url, const Item& item);
+    // `url` already Normalized.
     const Item* FindItem(std::string_view url) const;
     // The shard for writing: unshared first.
     Shard& Writable(size_t shard);
     Item* FindWritable(std::string_view url);
     void Insert(const HistoryEntry& entry);
     void Prune(size_t count);
+    // Whether a copy (a snapshot the writer holds) still shares a shard with this one.
+    bool SharesShards() const;
 
     std::array<std::shared_ptr<Shard>, kShards> shards_{};
     size_t count_ = 0;
@@ -187,13 +172,14 @@ public:
     struct Error {
         std::string message;
         // Where the unreadable file went; none when it's still in place (it couldn't be read or
-        // moved), so saving would overwrite it.
+        // moved, or is past store_file::kMaxHistoryReadBytes), so saving would overwrite it.
         std::optional<std::filesystem::path> quarantinedTo;
     };
     using LoadResult = std::variant<History, Missing, Error>;
     enum class Unreadable { MoveAside, Leave };
     // An unreadable file is moved aside (<name>.corrupt-<unix time>.json) for a bug report rather
-    // than overwritten, as the Mac's; kitecore leaves it where it is.
+    // than overwritten, as the Mac's; kitecore leaves it where it is. A file past 64 MB isn't
+    // read at all (and is left where it is).
     LoadResult Load(Unreadable unreadable = Unreadable::MoveAside) const;
     // Whether saving after this load can't destroy history the user has: false when the file is
     // still there unread. (The Mac's try? reads it as no file and overwrites it.)

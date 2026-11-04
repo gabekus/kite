@@ -14,14 +14,15 @@
 //   kitecore [--profile DIR] backups
 //   kitecore save-schedule KIND@SECONDS... [--at SECONDS]
 //   kitecore save-bench [TABS]
-//   kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]|clear [--chromium PROFILE]
-//   kitecore history-bench [ENTRIES]
+//   kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]
+//            |merge FILE|remove URL...|remove-since SECONDS|all|clear [--chromium PROFILE]
+//   kitecore history chromium-date MICROSECONDS
 //   kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]
 //   kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
-// isn't running on: both write session.json. `theme` prints the space's theme maths
+// isn't running on: both write session.json and history.json. `theme` prints the space's theme maths
 // (lightness, foreground, glow, accent) and its window backdrop (material, and the corner and
 // centre pixels at WIDTH×HEIGHT px, default 1280×820) as sRGB hex. `suggest` prints the command
 // bar's rows for TEXT, top first (--current: editing the current tab's address, Ctrl+L).
@@ -42,11 +43,13 @@
 // `history` reads and changes a profile's browsing history (history.json, or with --chromium a
 // Chromium profile folder's Kite History.json, as the Mac's HistoryStore keeps them): `list` is
 // every page, last visited first; `search` the command bar's ranking (--limit, default 4); `add`
-// records a visit (now, or --at Foundation seconds since 2001); `clear` forgets every page. Each
-// prints JSON. `suggest` includes history's rows, from the selected space's profile, as the bar.
-// `history-bench` measures history on the app's own path with ENTRIES pages (default 20000, the
-// Mac's cap) in a temp folder of its own: a visit's cost on the UI thread, the snapshot a save
-// hands over, the command bar's search, reading and writing the file, and the memory it takes.
+// records a visit (now, or --at Foundation seconds since 2001); `merge` adds a history.json's
+// pages as Import from Arc does (a later visit and the higher count win); `remove` is Remove from
+// History, `remove-since` Delete browsing data's (pages last visited at or after SECONDS, or all);
+// `clear` forgets every page. Each prints JSON. `history chromium-date` turns Chromium's
+// microseconds since 1601 into Foundation seconds, as the Arc import reads them. `suggest`
+// includes history's rows, from the selected space's profile, as the bar. The history-bench
+// executable (windows/tests/HistoryBench.cpp) measures history on the app's own path.
 // `import-arc` is Import from Arc (core/ArcImportController.h): from Arc for Windows' folder
 // (--auto, the default), or PATH (Arc's folder, the folder holding it, or a sidebar file). It
 // prints what came over, per kind, and what was skipped and why: counts only, never Arc's
@@ -61,13 +64,10 @@
 // folder name is free again once its Chromium folder is gone, which kitecore never deletes.
 
 #include <algorithm>
-#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
-#include <new>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -89,8 +89,8 @@
 #include "core/SessionWriter.h"
 #include "core/Sidebar.h"
 #include "core/SpaceBar.h"
+#include "core/StoreFile.h"
 #include "core/SupportDirectory.h"
-#include "core/TextMatch.h"
 #include "core/ThemeBackdrop.h"
 #include "core/URLInput.h"
 #include "core/Unicode.h"
@@ -102,30 +102,6 @@
 #endif
 
 using namespace kite;
-
-// Every allocation counted, so history-bench can say what history holds in memory. Each block
-// carries its size in front; alignment stays malloc's (16 bytes).
-namespace {
-std::atomic<long long> gLiveBytes{0};
-constexpr size_t kAllocationHeader = 16;
-}  // namespace
-
-void* operator new(std::size_t size) {
-    void* block = std::malloc(size + kAllocationHeader);
-    if (!block) throw std::bad_alloc();
-    *static_cast<std::size_t*>(block) = size;
-    gLiveBytes += static_cast<long long>(size);
-    return static_cast<char*>(block) + kAllocationHeader;
-}
-
-void operator delete(void* pointer) noexcept {
-    if (!pointer) return;
-    char* block = static_cast<char*>(pointer) - kAllocationHeader;
-    gLiveBytes -= static_cast<long long>(*reinterpret_cast<std::size_t*>(block));
-    std::free(block);
-}
-
-void operator delete(void* pointer, std::size_t) noexcept { operator delete(pointer); }
 
 namespace {
 
@@ -152,9 +128,9 @@ int Usage() {
         "       kitecore [--profile DIR] backups\n"
         "       kitecore save-schedule KIND@SECONDS... [--at SECONDS]\n"
         "       kitecore save-bench [TABS]\n"
-        "       kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]|clear\n"
-        "                [--chromium PROFILE]\n"
-        "       kitecore history-bench [ENTRIES]\n"
+        "       kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]\n"
+        "                |merge FILE|remove URL...|remove-since SECONDS|all|clear [--chromium PROFILE]\n"
+        "       kitecore history chromium-date MICROSECONDS\n"
         "       kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]\n"
         "       kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY\n",
         stderr);
@@ -446,6 +422,14 @@ int HistoryCommand(std::vector<std::string> args, const std::filesystem::path& s
         return Usage();
     }
     const std::string& action = args[1];
+    if (action == "chromium-date") {
+        if (args.size() != 3) return Usage();
+        int64_t micros = 0;
+        auto [end, error] = std::from_chars(args[2].data(), args[2].data() + args[2].size(), micros);
+        if (error != std::errc() || end != args[2].data() + args[2].size()) return Usage();
+        std::puts(json::Write(json::Value(History::ChromiumDate(micros))).c_str());
+        return kOk;
+    }
     const HistoryFile file(HistoryStores::FileFor(support, chromium));
     auto loaded = file.Load(HistoryFile::Unreadable::Leave);
     if (auto* error = std::get_if<HistoryFile::Error>(&loaded)) {
@@ -483,202 +467,44 @@ int HistoryCommand(std::vector<std::string> args, const std::filesystem::path& s
         std::puts(json::Write(EntrySummary(*history.Find(url))).c_str());
         return kOk;
     }
+    if (action == "merge" && args.size() == 3) {
+        const auto text = store_file::Read(std::filesystem::path(std::u8string(args[2].begin(), args[2].end())),
+                                           store_file::kMaxHistoryReadBytes);
+        if (!text) {
+            std::fprintf(stderr, "kitecore: couldn't read %s\n", args[2].c_str());
+            return kLoadFailed;
+        }
+        auto imported = History::DecodeFile(*text);
+        if (auto* error = std::get_if<std::string>(&imported)) {
+            std::fprintf(stderr, "kitecore: not a history file: %s\n", error->c_str());
+            return kLoadFailed;
+        }
+        const size_t added = history.Merge(std::get<History>(imported).Entries());
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(json::Value(json::Object{{"added", added}, {"entries", history.Count()}})).c_str());
+        return kOk;
+    }
+    if (action == "remove" && args.size() >= 3) {
+        const size_t before = history.Count();
+        history.Remove(std::vector<std::string>(args.begin() + 2, args.end()));
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(json::Value(json::Object{{"removed", before - history.Count()}})).c_str());
+        return kOk;
+    }
+    if (action == "remove-since" && args.size() == 3) {
+        std::optional<Timestamp> since;
+        if (args[2] != "all" && !(since = ParseSeconds(args[2]))) return Usage();
+        const size_t before = history.Count();
+        history.RemoveVisits(since);
+        if (int code = save(); code != kOk) return code;
+        std::puts(json::Write(json::Value(json::Object{{"removed", before - history.Count()}})).c_str());
+        return kOk;
+    }
     if (action == "clear" && args.size() == 2) {
         history.RemoveAll();
         return save();
     }
     return Usage();
-}
-
-// Pages that look like a year of browsing: a few hundred sites, paths and titles of ordinary
-// words, a fifth of the words not ASCII (accents, CJK, a dash), visit counts falling off.
-struct BenchPages {
-    uint64_t seed = 0x4B495445;  // 'KITE'
-    uint64_t Next() {
-        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
-        return seed >> 33;
-    }
-    std::string Word() {
-        static constexpr const char* kWords[] = {
-            "recipe", "kite",     "windows", "github",  "issue", "pull",  "review", "music",   "piano",  "chord", "weather",
-            "news",   "market",   "board",   "design",  "swift", "chromium", "build", "release", "notes", "travel", "train",
-            "map",    "rice",     "pasta",   "seafood", "beef",  "garden", "photo",  "video",   "docs",   "guide", "how",
-            "to",     "best",     "2026",    "index",   "home",  "about",  "account", "orders", "cart",   "search"};
-        static constexpr const char* kUnicode[] = {"café", "über", "東京", "—", "naïve", "crème", "日本語", "Ñandú"};
-        if (Next() % 10 < 2) return kUnicode[Next() % std::size(kUnicode)];
-        return kWords[Next() % std::size(kWords)];
-    }
-    HistoryEntry Page(size_t i, Timestamp now) {
-        const size_t site = Next() % 400;
-        std::string url = "https://" + std::string(site % 3 ? "www." : "") + "site" + std::to_string(site) + ".example/";
-        const size_t depth = 1 + Next() % 3;
-        for (size_t d = 0; d < depth; ++d) {
-            // Paths percent-encode, as Chromium's do: ASCII words only.
-            std::string a = Word(), b = Word();
-            if (!text_match::IsAscii(a)) a = "page";
-            if (!text_match::IsAscii(b)) b = "item";
-            url += (d ? "/" : "") + a + "-" + b;
-        }
-        url += "-" + std::to_string(i);
-        if (Next() % 3 == 0) url += "?ref=" + Word() + "&id=" + std::to_string(Next() % 100000);
-        if (!text_match::IsAscii(url)) url = "https://site" + std::to_string(site) + ".example/q-" + std::to_string(i);
-        std::string title;
-        const size_t words = 3 + Next() % 7;
-        for (size_t w = 0; w < words; ++w) title += (w ? " " : "") + Word();
-        if (title[0] >= 'a' && title[0] <= 'z') title[0] = static_cast<char>(title[0] - 32);
-        if (Next() % 12 == 0) title.clear();
-        const int64_t visits = 1 + static_cast<int64_t>(Next() % 100 < 70 ? 0 : Next() % 40);
-        return {std::move(url), std::move(title), now - static_cast<double>(Next() % (365 * 86'400)), visits};
-    }
-};
-
-struct Timings {
-    std::vector<double> micros;
-    void Add(double value) { micros.push_back(value); }
-    json::Value Summary() {
-        if (micros.empty()) return json::Value(nullptr);
-        std::sort(micros.begin(), micros.end());
-        const auto at = [&](double q) { return micros[std::min(micros.size() - 1, static_cast<size_t>(q * static_cast<double>(micros.size())))]; };
-        return json::Value(json::Object{{"median", std::round(at(0.5) * 100) / 100},
-                                        {"p99", std::round(at(0.99) * 100) / 100},
-                                        {"max", std::round(micros.back() * 100) / 100},
-                                        {"runs", static_cast<double>(micros.size())}});
-    }
-};
-
-template <class F>
-double MicrosOf(F&& f) {
-    const auto start = std::chrono::steady_clock::now();
-    f();
-    return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
-}
-
-int HistoryBenchCommand(size_t count) {
-    std::error_code ignored;
-    const std::filesystem::path folder = std::filesystem::temp_directory_path(ignored) / ("kite-history-bench-" + NewUuid());
-    struct Cleanup {
-        std::filesystem::path folder;
-        ~Cleanup() {
-            std::error_code ignored;
-            std::filesystem::remove_all(folder, ignored);
-        }
-    } cleanup{folder};
-    std::filesystem::create_directories(folder, ignored);
-    const Timestamp now = Now();
-
-    // The file, written as the Mac's JSONEncoder would. Reading has no cap: a file can hold more
-    // than kMaxEntries, which only recording and importing prune.
-    BenchPages pages;
-    std::string text = R"({"version":1,"history":{"entries":{)";
-    std::vector<std::string> urls;
-    for (size_t i = 0; i < count; ++i) {
-        HistoryEntry page = pages.Page(i, now);
-        if (i) text += ',';
-        json::AppendString(text, page.url);
-        text += R"(:{"url":)";
-        json::AppendString(text, page.url);
-        text += R"(,"title":)";
-        json::AppendString(text, page.title);
-        text += R"(,"lastVisit":)" + json::Write(json::Value(page.lastVisit)) + R"(,"visitCount":)" + std::to_string(page.visitCount) + "}";
-        urls.push_back(std::move(page.url));
-    }
-    text += "}}}";
-    const HistoryFile file(folder / "history.json");
-    if (std::string error = file.Write(text); !error.empty()) {
-        std::fprintf(stderr, "kitecore: %s\n", error.c_str());
-        return kSaveFailed;
-    }
-    const size_t fileBytes = text.size();
-    text.clear();
-    text.shrink_to_fit();
-
-    // Memory: what one History of these pages holds, once the file's text and parse are gone.
-    const long long before = gLiveBytes.load();
-    std::optional<History> held;
-    const double loadMicros = MicrosOf([&] {
-        auto loaded = file.Load(HistoryFile::Unreadable::Leave);
-        if (auto* history = std::get_if<History>(&loaded)) held = std::move(*history);
-    });
-    if (!held) {
-        std::fputs("kitecore: the bench's file didn't read\n", stderr);
-        return kLoadFailed;
-    }
-    const long long heldBytes = gLiveBytes.load() - before;
-
-    // The command bar's rows for what's typed: the whole computation (tabs, search, history), as
-    // each keystroke runs it, over the default session's tabs.
-    const BrowserState state = BrowserState::MakeDefault();
-    json::Object searches;
-    for (const char* query : {"r", "re", "rec", "recipe", "github", "site12", "café", "zzzz", "kite windows"}) {
-        Timings timings;
-        size_t rows = 0;
-        for (int run = 0; run < 30; ++run) {
-            timings.Add(MicrosOf([&] { rows = CommandBarSuggestions(query, state, CommandBarMode::NewTab, &*held, now).size(); }));
-        }
-        json::Value summary = timings.Summary();
-        if (auto* o = summary.AsObject()) o->emplace("rows", static_cast<double>(rows));
-        searches.emplace(query, std::move(summary));
-    }
-    held.reset();
-
-    // The app's store over that file: visits on the UI thread, the snapshot a save hands over,
-    // and the worker's encode and write.
-    double steady = 0;
-    HistoryStores stores(folder, [&] { return steady; });
-    HistoryStore& store = stores.ForProfile(BrowserState::kDefaultProfile);
-    if (std::string error = stores.Flush(); !error.empty()) {
-        std::fprintf(stderr, "kitecore: %s\n", error.c_str());
-        return kLoadFailed;
-    }
-    const double entries = static_cast<double>(store.Get().Count());
-    // Browsing: visits and titles with no save under way (the app saves 3 s after the last one,
-    // and the writer has let its snapshot go long before the next).
-    Timings repeatVisits, newVisits, titles, afterSave, snapshots;
-    for (int i = 0; i < 2000; ++i) {
-        steady += 0.5;
-        const std::string& url = urls[pages.Next() % urls.size()];
-        repeatVisits.Add(MicrosOf([&] { store.RecordVisit(url, "", now + i); }));
-        const std::string title = "A page title, number " + std::to_string(i);
-        titles.Add(MicrosOf([&] { store.UpdateTitle(url, title); }));
-        const std::string fresh = "https://new" + std::to_string(i % 97) + ".example/page/" + std::to_string(i);
-        newVisits.Add(MicrosOf([&] { store.RecordVisit(fresh, "", now + i); }));
-    }
-    // Saves: the snapshot handed over, then the first visit after it while the writer still holds
-    // the snapshot, which unshares that visit's shard (about 80 pages).
-    for (int i = 0; i < 50; ++i) {
-        if (std::string error = stores.Flush(); !error.empty()) {
-            std::fprintf(stderr, "kitecore: %s\n", error.c_str());
-            return kSaveFailed;
-        }
-        steady += 5;
-        store.RecordVisit(urls[pages.Next() % urls.size()], "", now + i);
-        snapshots.Add(MicrosOf([&] { stores.SaveNow(); }));
-        const std::string& again = urls[pages.Next() % urls.size()];
-        afterSave.Add(MicrosOf([&] { store.RecordVisit(again, "", now + i); }));
-    }
-    if (std::string error = stores.Flush(); !error.empty()) {
-        std::fprintf(stderr, "kitecore: %s\n", error.c_str());
-        return kSaveFailed;
-    }
-    const HistoryStores::Statistics stats = stores.Stats();
-    std::puts(json::Write(json::Value(json::Object{
-                              {"entries", entries},
-                              {"fileBytes", static_cast<double>(fileBytes)},
-                              {"memoryBytes", static_cast<double>(heldBytes)},
-                              {"memoryBytesPerEntry", std::round(static_cast<double>(heldBytes) / std::max(1.0, entries))},
-                              {"loadMicros", std::round(loadMicros)},
-                              {"commandBarMicros", json::Value(std::move(searches))},
-                              {"uiThread", json::Object{{"repeatVisitMicros", repeatVisits.Summary()},
-                                                        {"newVisitMicros", newVisits.Summary()},
-                                                        {"titleMicros", titles.Summary()},
-                                                        {"snapshotMicros", snapshots.Summary()},
-                                                        {"firstVisitAfterSaveMicros", afterSave.Summary()}}},
-                              {"worker", json::Object{{"encodeMicros", std::round(stats.lastEncodeMicros)},
-                                                      {"writeMicros", std::round(stats.lastWriteMicros)},
-                                                      {"bytes", static_cast<double>(stats.lastBytes)},
-                                                      {"writes", static_cast<double>(stats.writes)}}}}))
-                  .c_str());
-    return kOk;
 }
 
 }  // namespace
@@ -716,17 +542,6 @@ int main(int argc, char** argv) {
             if (error != std::errc() || end != args[1].data() + args[1].size() || tabs < 0 || tabs > 100000) return Usage();
         }
         return SaveBenchCommand(tabs);
-    }
-
-    if (args[0] == "history-bench" && args.size() <= 2) {
-        if (profile) return Usage();  // it never touches a profile
-        size_t entries = History::kMaxEntries;
-        if (args.size() == 2) {
-            auto parsed = ParseCount(args[1]);
-            if (!parsed || *parsed == 0 || *parsed > 1'000'000) return Usage();
-            entries = *parsed;
-        }
-        return HistoryBenchCommand(entries);
     }
 
     auto resolved = ResolveSupportDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"), EnvironmentPath("LOCALAPPDATA"));
@@ -1092,9 +907,10 @@ int main(int argc, char** argv) {
         // Then each Arc profile's history, into the stores the app keeps (history.json, and
         // Chromium/<dir>/Kite History.json for another profile), written before the summary.
         HistoryStores stores(std::get<std::filesystem::path>(resolved));
+        stores.Start();
         arc_import::MergeHistories(imported, stores, std::chrono::seconds(60));
         stores.SaveNow();
-        if (std::string error = stores.Flush(std::chrono::seconds(60)); !error.empty()) {
+        if (std::string error = stores.Flush(DeadlineAfter(std::chrono::seconds(60))); !error.empty()) {
             std::fprintf(stderr, "kitecore: history: %s\n", error.c_str());
             return kSaveFailed;
         }

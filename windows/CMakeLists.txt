@@ -40,6 +40,7 @@ add_library(KiteCoreWin STATIC
   src/core/ArcImport.cpp
   src/core/ArcImportController.cpp
   src/core/ArcImportFiles.cpp
+  src/core/BackgroundWorker.cpp
   src/core/CommandBar.cpp
   src/core/Files.cpp
   src/core/History.cpp
@@ -196,6 +197,7 @@ add_executable(KiteCoreTests
   tests/ArcHistoryImportTests.cpp
   tests/ArcImportTests.cpp
   tests/ArcImportFilesTests.cpp
+  tests/BackgroundWorkerTests.cpp
   tests/CommandBarTests.cpp
   tests/HistoryTests.cpp
   tests/JsonTests.cpp
@@ -224,8 +226,16 @@ if(NOT MSVC)
   target_compile_options(KiteCoreTests PRIVATE -Wno-maybe-uninitialized)
 endif()
 # The hand-made Arc for Windows folder Import from Arc's tests read (scripts/make-web-data.py
-# writes its Web Data, scripts/make-history.py its History files), at the place Arc's package keeps it under %LOCALAPPDATA%.
+# writes its Web Data, scripts/make-history.py its History files), at the place Arc's package
+# keeps it under %LOCALAPPDATA%.
 set(KITE_ARC_FIXTURE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/arc-windows/Packages/TheBrowserCompany.Arc_kitetest0001/LocalCache/Local/Arc")
+# What history costs (tests/HistoryBench.cpp): its own executable, since it counts every
+# allocation with its own operator new. CTest runs a small one so it keeps building and running.
+add_executable(history-bench tests/HistoryBench.cpp)
+target_link_libraries(history-bench PRIVATE KiteCoreWin)
+if(WIN32)
+  target_link_libraries(history-bench PRIVATE psapi)
+endif()
 # Writes Tests/Fixtures/theme-backdrop.json (see the file); not run by the tests.
 add_executable(gen-theme-golden EXCLUDE_FROM_ALL tests/GenThemeGolden.cpp)
 target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
@@ -235,6 +245,7 @@ target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURR
                                                KITE_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
                                                KITE_ARC_FIXTURE_DIR="${KITE_ARC_FIXTURE_DIR}")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
+add_test(NAME history-bench COMMAND history-bench 300)
 add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
           -DARC_LOCAL_APP_DATA=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/arc-windows

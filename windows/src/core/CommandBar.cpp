@@ -3,6 +3,7 @@
 #include "core/CommandBar.h"
 
 #include <algorithm>
+#include <iterator>
 
 #include "core/TextMatch.h"
 #include "core/URLInput.h"
@@ -173,41 +174,41 @@ std::vector<CommandSuggestion> CommandBarSuggestions(std::string_view input, con
     // neither): the Mac asks for six and keeps three.
     std::vector<HistoryEntry> visited;
     if (history) {
-        std::vector<const std::string*> open;
+        // Compared as history keeps URLs (History::Normalized: a tab's address is Chromium's).
+        std::vector<std::string> open;
         for (const tab_search::Match& match : matches) {
-            if (match.tab->url) open.push_back(&*match.tab->url);
+            if (match.tab->url) open.push_back(History::Normalized(*match.tab->url));
         }
-        if (selected && selected->url) open.push_back(&*selected->url);
+        if (selected && selected->url) open.push_back(History::Normalized(*selected->url));
         for (HistoryEntry& entry : history->Search(text, 6, now)) {
             if (visited.size() == 3) break;
-            const bool shown = std::any_of(open.begin(), open.end(), [&](const std::string* url) { return *url == entry.url; });
-            if (!shown) visited.push_back(std::move(entry));
+            if (std::find(open.begin(), open.end(), entry.url) == open.end()) visited.push_back(std::move(entry));
         }
     }
-    const auto historyRows = [&](const std::optional<std::string>& except) {
-        std::vector<CommandSuggestion> rows;
-        for (const HistoryEntry& entry : visited) {
+    const auto appendHistory = [&](std::vector<CommandSuggestion>& rows, const std::optional<std::string>& except) {
+        for (HistoryEntry& entry : visited) {
             if (except && entry.url == *except) continue;
-            rows.push_back({CommandSuggestion::Kind::History, entry.url, entry.DisplayTitle(), {}, {}, std::nullopt, HistorySubtitle(entry)});
+            std::string title = entry.DisplayTitle();
+            std::string subtitle = HistorySubtitle(entry);
+            rows.push_back({CommandSuggestion::Kind::History, std::move(entry.url), std::move(title), {}, {}, std::nullopt, std::move(subtitle)});
         }
-        return rows;
     };
 
     std::vector<CommandSuggestion> out;
+    out.reserve(tabs.size() + visited.size() + 2);
     if (url_input::LooksLikeURL(text)) {
         if (auto url = url_input::Resolve(text, engine)) {
+            const std::string opens = History::Normalized(*url);
             out.push_back({CommandSuggestion::Kind::Open, *url, *url, "Open", {}, std::nullopt, {}});
-            out.insert(out.end(), tabs.begin(), tabs.end());
-            const auto rows = historyRows(*url);
-            out.insert(out.end(), rows.begin(), rows.end());
+            out.insert(out.end(), std::make_move_iterator(tabs.begin()), std::make_move_iterator(tabs.end()));
+            appendHistory(out, opens);
             out.push_back(search);
             return out;
         }
     }
     out.push_back(search);
-    out.insert(out.end(), tabs.begin(), tabs.end());
-    const auto rows = historyRows(std::nullopt);
-    out.insert(out.end(), rows.begin(), rows.end());
+    out.insert(out.end(), std::make_move_iterator(tabs.begin()), std::make_move_iterator(tabs.end()));
+    appendHistory(out, std::nullopt);
     return out;
 }
 

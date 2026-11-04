@@ -309,9 +309,10 @@ TEST(ArcImportController_historyGoesToTheKiteProfileItsSpacesWentTo) {
     CHECK(imported.histories.size() == 2);
     {
         HistoryStores stores(dir.path);
+        stores.Start();
         MergeHistories(imported, stores, std::chrono::seconds(10));
         stores.SaveNow();
-        CHECK(stores.Flush(std::chrono::seconds(10)).empty());
+        CHECK(stores.Flush(DeadlineAfter(std::chrono::seconds(10))).empty());
     }
     // 86 + 2 merged; the docs page was in Default's history already (Profile 1's is new there).
     CHECK(ImportedCount(imported, "historyPages") == 88 && ImportedCount(imported, "historyPagesNew") == 87);
@@ -340,9 +341,10 @@ TEST(ArcImportController_historyGoesToTheKiteProfileItsSpacesWentTo) {
     Imported again = Import(state, p, everything);
     {
         HistoryStores stores(dir.path);
+        stores.Start();
         MergeHistories(again, stores, std::chrono::seconds(10));
         stores.SaveNow();
-        CHECK(stores.Flush(std::chrono::seconds(10)).empty());
+        CHECK(stores.Flush(DeadlineAfter(std::chrono::seconds(10))).empty());
     }
     CHECK(ImportedCount(again, "historyPages") == 88 && ImportedCount(again, "historyPagesNew") == 0);
 }
@@ -364,9 +366,10 @@ TEST(ArcImportController_historyLeftOutWithItsProfileAndPrunedPastTheCap) {
     Imported imported = Import(state, std::get<Plan>(plan));  // the unnamed space (Profile 1's) stays out
     CHECK(imported.histories.size() == 1);
     HistoryStores stores(dir.path);
+    stores.Start();
     MergeHistories(imported, stores, std::chrono::seconds(10));
     stores.SaveNow();
-    CHECK(stores.Flush(std::chrono::seconds(10)).empty());
+    CHECK(stores.Flush(DeadlineAfter(std::chrono::seconds(10))).empty());
     const json::Value summary = Summary(imported);
     CHECK(SkippedCount(summary, "historyProfilesLeftOut") == 2);
     // 19,950 + 86 is past 20,000: the oldest 36 go.
@@ -386,9 +389,10 @@ TEST(ArcImportController_kitesOwnUnreadableHistoryIsMovedAsideFirst) {
     Imported imported = Import(state, std::get<Plan>(plan));
     {
         HistoryStores stores(dir.path);
+        stores.Start();
         MergeHistories(imported, stores, std::chrono::seconds(10));
         stores.SaveNow();
-        CHECK(stores.Flush(std::chrono::seconds(10)).empty());
+        CHECK(stores.Flush(DeadlineAfter(std::chrono::seconds(10))).empty());
     }
     CHECK(ImportedCount(imported, "historyPagesNew") == 86);
     size_t aside = 0;

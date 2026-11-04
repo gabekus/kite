@@ -1,4 +1,6 @@
-// Browsing history (W25a): ports of KiteCore's HistoryTests (HistoryTests.swift),
+// Browsing history (W25a): ports of KiteCore's HistoryTests (HistoryTests.swift; its two history
+// page cases, pageGroupsByDayNewestFirstAndSearches and dayHeadingsMatchChromium, come with the
+// history page),
 // BrowsingDataTests.historyLosesOnlyPagesVisitedInTheRange, ArcArchiveSettingsImportTests'
 // historyMergeKeepsLaterVisitsAndDoesNotDoubleCount and chromiumTimestamps, and
 // PageEventSaveTests.cappedDebounceNeverWaitsPastItsMaximum, each named after the Swift test it
@@ -42,12 +44,6 @@ std::string ReadText(const fs::path& path) { return store_file::Read(path).value
 void WriteText(const fs::path& path, const std::string& text) {
     fs::create_directories(path.parent_path());
     std::ofstream(path, std::ios::binary | std::ios::trunc) << text;
-}
-
-std::vector<std::string> Titles(const std::vector<HistoryEntry>& entries) {
-    std::vector<std::string> out;
-    for (const auto& e : entries) out.push_back(e.title);
-    return out;
 }
 
 std::vector<std::string> Urls(const std::vector<HistoryEntry>& entries) {
@@ -111,40 +107,12 @@ TEST(roundTripsThroughJSON) {
     CHECK(std::holds_alternative<History>(decoded) && std::get<History>(decoded) == history);
 }
 
-TEST(pageGroupsByDayNewestFirstAndSearches) {
-    const HistoryCalendar utc = HistoryCalendar::Utc();
-    History history;
-    history.RecordVisit("https://a.com/", "Alpha", kNow);
-    history.RecordVisit("https://b.com/", "Beta", kNow + 3600);
-    history.RecordVisit("https://c.com/x", "Gamma", kNow - 86'400);
-    auto days = history.Days("", utc);
-    CHECK(days.size() == 2);
-    CHECK(days.size() == 2 && Titles(days[0].entries) == (std::vector<std::string>{"Beta", "Alpha"}));
-    CHECK(days.size() == 2 && Titles(days[1].entries) == std::vector<std::string>{"Gamma"});
-    CHECK(days.size() == 2 && days[1].start == utc.startOfDay(kNow - 86'400));
-    // Title or URL, any case.
-    auto gamma = history.Days("GAM", utc);
-    CHECK(gamma.size() == 1 && Titles(gamma[0].entries) == std::vector<std::string>{"Gamma"});
-    CHECK(history.Days("c.com/x", utc).size() == 1);
-    CHECK(history.Days("zzz", utc).empty());
-}
-
 TEST(pageRemovesEntries) {
     History history;
     history.RecordVisit("https://a.com/", "A", kNow);
     history.RecordVisit("https://b.com/", "B", kNow);
     history.Remove({"https://a.com/"});
     CHECK(Keys(history) == std::vector<std::string>{"https://b.com/"});
-}
-
-TEST(dayHeadingsMatchChromium) {
-    const HistoryCalendar utc = HistoryCalendar::Utc();
-    const HistoryDay today{utc.startOfDay(kNow), {}};
-    const HistoryDay yesterday{utc.startOfDay(kNow - 86'400), {}};
-    const HistoryDay older{utc.startOfDay(kNow - 3 * 86'400), {}};
-    CHECK(today.Heading(kNow, utc) == "Today - Friday, January 15, 2027");
-    CHECK(yesterday.Heading(kNow, utc) == "Yesterday - Thursday, January 14, 2027");
-    CHECK(older.Heading(kNow, utc) == "Tuesday, January 12, 2027");
 }
 
 // The Swift test's InternalPage half waits for the history page; history never records it.
@@ -452,6 +420,91 @@ TEST(searchRanksAsTheScoreAndFrecencySay) {
     }
 }
 
+
+// MARK: URLs as the Mac keeps them
+
+TEST(urlsAreKeptAsNSURLWritesThem) {
+    // What a path, query or fragment may not hold is percent-encoded; the rest is as Chromium gave it.
+    CHECK(History::Normalized("https://a.example/a|b^c`d{e}f[g]h\\i?q=\"x\" <y>#frag#more") ==
+          "https://a.example/a%7Cb%5Ec%60d%7Be%7Df%5Bg%5Dh%5Ci?q=%22x%22%20%3Cy%3E#frag%23more");
+    CHECK(History::Normalized("https://a.example/caf%C3%A9?x=%zz&y=%4") == "https://a.example/caf%C3%A9?x=%25zz&y=%254");
+    CHECK(History::Normalized("https://a.example/caf\xC3\xA9") == "https://a.example/caf%C3%A9");
+    // The authority is left alone: an IPv6 host keeps its brackets.
+    CHECK(History::Normalized("http://[::1]:8080/a|b") == "http://[::1]:8080/a%7Cb");
+    // Already as the Mac writes it: unchanged, so a URL read from the Mac's file is its own key.
+    CHECK(History::Normalized("https://a.example/a%7Cb?q=%22x%22") == "https://a.example/a%7Cb?q=%22x%22");
+    CHECK(History::Normalized("https://a.example/") == "https://a.example/");
+    // Recording, finding and titling all go by the Mac's form.
+    History history;
+    CHECK(history.RecordVisit("https://a.example/a|b", "", kNow));
+    CHECK(Keys(history) == std::vector<std::string>{"https://a.example/a%7Cb"});
+    CHECK(history.Find("https://a.example/a|b") && history.Find("https://a.example/a%7Cb"));
+    CHECK(history.UpdateTitle("https://a.example/a|b", "Pipe"));
+    CHECK(history.Find("https://a.example/a%7Cb")->title == "Pipe");
+    history.RecordVisit("https://a.example/a%7Cb", "", kNow + 1);
+    CHECK(history.Count() == 1 && history.Find("https://a.example/a|b")->visitCount == 2);
+    CHECK(history.Merge({{"https://a.example/a|b", "", kNow, 9}}) == 0);
+    history.Remove({"https://a.example/a|b"});
+    CHECK(history.Empty());
+    CHECK(!history.RecordVisit("about:blank", "", kNow));
+}
+
+// MARK: The prune and the frecency's edges
+
+// A visit that pushes the history past the cap while the writer holds a snapshot doesn't prune
+// (that would copy every shard on the UI thread); the next one after it's let go does.
+TEST(thePruneWaitsForTheWriterToLetGo) {
+    History history;
+    for (size_t i = 0; i < History::kMaxEntries; ++i) history.RecordVisit("https://e.example/" + std::to_string(i), "", static_cast<double>(i));
+    {
+        const History snapshot = history;
+        history.RecordVisit("https://e.example/new", "", 1e9);
+        CHECK(history.Count() == History::kMaxEntries + 1);
+        CHECK(snapshot.Count() == History::kMaxEntries);
+    }
+    history.RecordVisit("https://e.example/new", "", 1e9 + 1);
+    CHECK(history.Count() == History::kMaxEntries * 9 / 10);
+    CHECK(history.Find("https://e.example/new") && !history.Find("https://e.example/0"));
+}
+
+TEST(aNegativeVisitCountRanksAsNone) {
+    // A hand-edited file: log2 of a negative count would be NaN, and NaN in the sort is undefined.
+    auto decoded = History::DecodeFile(
+        R"({"history":{"entries":{"https://a.example/":{"lastVisit":0,"title":"Kite a","url":"https://a.example/","visitCount":-5},)"
+        R"("https://b.example/":{"lastVisit":0,"title":"Kite b","url":"https://b.example/","visitCount":0}}},"version":1})");
+    CHECK(std::holds_alternative<History>(decoded));
+    if (!std::holds_alternative<History>(decoded)) return;
+    const auto results = std::get<History>(decoded).Search("kite", 4, 0);
+    CHECK(Urls(results) == (std::vector<std::string>{"https://a.example/", "https://b.example/"}));
+}
+
+TEST(aSearchKeepsOnlyTheBestLimit) {
+    History history;
+    for (int i = 0; i < 200; ++i) {
+        for (int v = 0; v < i % 7; ++v) history.RecordVisit("https://kite" + std::to_string(i) + ".example/", "Kite", kNow - i);
+    }
+    const auto all = history.Search("kite", 200, kNow);
+    for (size_t limit : {size_t{1}, size_t{3}, size_t{6}, size_t{50}}) {
+        const auto top = history.Search("kite", limit, kNow);
+        CHECK(top.size() == std::min(limit, all.size()));
+        CHECK(std::equal(top.begin(), top.end(), all.begin()));
+    }
+}
+
+// MARK: Reading a file
+
+TEST(aStoreFileReadStopsPastItsLimit) {
+    const fs::path dir = TempDir();
+    WriteText(dir / "f", std::string(40'000, 'x'));
+    bool tooLarge = false;
+    CHECK(!store_file::Read(dir / "f", 39'999, &tooLarge) && tooLarge);
+    auto whole = store_file::Read(dir / "f", 40'000, &tooLarge);
+    CHECK(whole && whole->size() == 40'000 && !tooLarge);
+    CHECK(store_file::Read(dir / "f") && store_file::Read(dir / "f")->size() == 40'000);
+    CHECK(store_file::kMaxHistoryReadBytes == size_t{64} << 20);
+    fs::remove_all(dir);
+}
+
 // MARK: The store
 
 namespace {
@@ -473,6 +526,7 @@ TEST(theStoreReplaysWhatHappenedBeforeItsFileWasRead) {
     CHECK(HistoryFile(dir / "history.json").Save(saved).empty());
     FakeClock clock;
     HistoryStores stores(dir, clock.Function());
+    stores.Start();
     HistoryStore& store = stores.ForProfile(BrowserState::kDefaultProfile);
     // Whether or not the worker has read the file yet, a visit now lands on top of it.
     store.RecordVisit("https://both.example/", "", kNow);
@@ -491,6 +545,7 @@ TEST(theStoreSavesThreeSecondsAfterTheLastChangeAndAtLeastEveryThirty) {
     const fs::path dir = TempDir();
     FakeClock clock;
     HistoryStores stores(dir, clock.Function());
+    stores.Start();
     HistoryStore& store = stores.ForProfile(BrowserState::kDefaultProfile);
     CHECK(stores.Flush().empty());  // the (missing) file read, and nothing to write
     CHECK(!stores.NextSaveIn());
@@ -513,13 +568,14 @@ TEST(theStoreSavesThreeSecondsAfterTheLastChangeAndAtLeastEveryThirty) {
     store.UpdateTitle("https://a.example/", "Tick 28");
     store.RecordVisit("about:blank", "", kNow);
     CHECK(!stores.NextSaveIn());
-    // Clearing saves at once.
+    // An import saves at once.
     const auto writes = stores.Stats().writes;
-    store.RemoveAll();
+    CHECK(store.Merge({{"https://imported.example/", "Imported", kNow, 3}}) == 1);
     CHECK(!stores.NextSaveIn());
     CHECK(stores.Flush().empty());
     CHECK(stores.Stats().writes == writes + 1);
-    CHECK(ReadText(dir / "history.json") == History().EncodeFile());
+    auto imported = HistoryFile(dir / "history.json").Load();
+    CHECK(std::holds_alternative<History>(imported) && std::get<History>(imported).Find("https://imported.example/"));
     fs::remove_all(dir);
 }
 
@@ -527,19 +583,17 @@ TEST(eachProfileHasItsOwnFile) {
     const fs::path dir = TempDir();
     FakeClock clock;
     HistoryStores stores(dir, clock.Function());
+    stores.Start();
     CHECK(HistoryStores::FileFor(dir, "Default") == dir / "history.json");
     CHECK(HistoryStores::FileFor(dir, "Profile 2") == dir / "Chromium" / "Profile 2" / "Kite History.json");
     stores.ForProfile("Default").RecordVisit("https://default.example/", "", kNow);
     stores.ForProfile("Profile 2").RecordVisit("https://work.example/", "", kNow);
     CHECK(&stores.ForProfile("Profile 2") == &stores.ForProfile("Profile 2"));
-    stores.ForProfile("Gone").RecordVisit("https://gone.example/", "", kNow);
-    stores.ForgetProfile("Gone");
     CHECK(stores.Flush().empty());
     auto defaults = HistoryFile(dir / "history.json").Load();
     auto work = HistoryFile(dir / "Chromium" / "Profile 2" / "Kite History.json").Load();
     CHECK(std::holds_alternative<History>(defaults) && Keys(std::get<History>(defaults)) == std::vector<std::string>{"https://default.example/"});
     CHECK(std::holds_alternative<History>(work) && Keys(std::get<History>(work)) == std::vector<std::string>{"https://work.example/"});
-    CHECK(!fs::exists(dir / "Chromium" / "Gone"));
     fs::remove_all(dir);
 }
 
@@ -549,6 +603,7 @@ TEST(aFileThatWontReadIsNeverWrittenOver) {
     fs::create_directories(dir / "history.json" / "inside");
     FakeClock clock;
     HistoryStores stores(dir, clock.Function());
+    stores.Start();
     HistoryStore& store = stores.ForProfile("Default");
     store.RecordVisit("https://a.example/", "", kNow);
     CHECK(stores.Flush().empty());
@@ -565,6 +620,7 @@ TEST(aCorruptFileIsMovedAsideAndHistoryStartsFresh) {
     WriteText(dir / "history.json", "{ broken");
     FakeClock clock;
     HistoryStores stores(dir, clock.Function());
+    stores.Start();
     HistoryStore& store = stores.ForProfile("Default");
     store.RecordVisit("https://a.example/", "", kNow);
     CHECK(stores.Flush().empty());
@@ -581,6 +637,7 @@ TEST(aFailedWriteIsTriedAgainAtTheFlush) {
     const fs::path dir = TempDir();
     FakeClock clock;
     HistoryStores stores(dir, clock.Function());
+    stores.Start();
     // A file where the profile's Chromium folder should be: its history can't be written.
     WriteText(dir / "Chromium", "in the way");
     HistoryStore& store = stores.ForProfile("Profile 2");
@@ -597,17 +654,64 @@ TEST(aFailedWriteIsTriedAgainAtTheFlush) {
     fs::remove_all(dir);
 }
 
-TEST(clearingBeforeTheFileIsReadClearsWhatItHeld) {
+TEST(anImportBeforeTheFileIsReadLandsOnWhatItHeld) {
     const fs::path dir = TempDir();
     History saved;
-    saved.RecordVisit("https://old.example/", "Old", kNow);
+    saved.RecordVisit("https://old.example/", "Old", kNow - 10);
     CHECK(HistoryFile(dir / "history.json").Save(saved).empty());
     FakeClock clock;
     HistoryStores stores(dir, clock.Function());
-    stores.ForProfile("Default").RemoveAll();
+    // Before Start nothing is read: the import goes on what's in memory, and is replayed.
+    stores.ForProfile("Default").Merge({{"https://old.example/", "Newer", kNow, 4}, {"https://new.example/", "New", kNow, 1}});
+    CHECK(!stores.WaitForLoads(std::chrono::milliseconds(20)));
+    CHECK(!stores.ForProfile("Default").IsLoaded());
+    stores.Start();
+    CHECK(stores.WaitForLoads(std::chrono::seconds(10)));
     CHECK(stores.Flush().empty());
-    CHECK(stores.ForProfile("Default").Get().Empty());
-    CHECK(ReadText(dir / "history.json") == History().EncodeFile());
+    const History& history = stores.ForProfile("Default").Get();
+    CHECK(history.Count() == 2 && history.Find("https://old.example/")->title == "Newer" && history.Find("https://old.example/")->visitCount == 4);
+    auto file = HistoryFile(dir / "history.json").Load();
+    CHECK(std::holds_alternative<History>(file) && std::get<History>(file) == history);
+    fs::remove_all(dir);
+}
+
+// Before Start (a second launch, which hands over to the running Kite) the files aren't touched:
+// not read, not moved aside, not held open.
+TEST(nothingIsReadBeforeStart) {
+    const fs::path dir = TempDir();
+    WriteText(dir / "history.json", "{ broken");
+    FakeClock clock;
+    {
+        HistoryStores stores(dir, clock.Function());
+        stores.ForProfile("Profile 2");
+        CHECK(!stores.WaitForLoads(std::chrono::milliseconds(20)));
+        CHECK(stores.Flush().empty());
+        CHECK(stores.Stats().loads == 0);
+    }
+    CHECK(ReadText(dir / "history.json") == "{ broken");
+    fs::remove_all(dir);
+}
+
+// A file over the cap (written by hand, or elsewhere) is trimmed as it's read, on the worker.
+TEST(aFileOverTheCapIsTrimmedAsItsRead) {
+    const fs::path dir = TempDir();
+    std::vector<HistoryEntry> pages;
+    for (size_t i = 0; i < History::kMaxEntries + 500; ++i) pages.push_back({"https://e.example/" + std::to_string(i), "", static_cast<double>(i), 1});
+    // Merge trims to the cap, so the file is written by hand.
+    std::string text = R"({"history":{"entries":{)";
+    for (size_t i = 0; i < pages.size(); ++i) {
+        text += (i ? "," : "") + std::string("\"") + pages[i].url + R"(":{"lastVisit":)" + std::to_string(i) + R"(,"title":"","url":")" + pages[i].url +
+                R"(","visitCount":1})";
+    }
+    text += R"(}},"version":1})";
+    WriteText(dir / "history.json", text);
+    FakeClock clock;
+    HistoryStores stores(dir, clock.Function());
+    stores.Start();
+    CHECK(stores.WaitForLoads(std::chrono::seconds(10)));
+    const History& history = stores.ForProfile("Default").Get();
+    CHECK(history.Count() == History::kMaxEntries);
+    CHECK(!history.Find("https://e.example/499") && history.Find("https://e.example/500"));
     fs::remove_all(dir);
 }
 

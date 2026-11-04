@@ -158,6 +158,7 @@ void WriteProfileFiles(Imported& imported, const std::filesystem::path& profileD
 // 20,000-page cap then dropped, into the summary; the stores save at once. `waitForLoads`: how
 // long to wait for the stores' files to be read first, so the counts are against what they hold
 // (a store merges correctly either way: an import before its file is read is replayed over it).
+// The stores must have been started (HistoryStores::Start).
 void MergeHistories(Imported& imported, HistoryStores& stores,
                     std::chrono::milliseconds waitForLoads = std::chrono::milliseconds::zero());
 // Counts per kind of what came over, what was skipped and why, and the notes. Never Arc's
