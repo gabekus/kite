@@ -151,8 +151,8 @@ final class SiteControlsView: SidebarFlippedView {
         restoreHover()
     }
 
-    /// What the controls show. The window re-reads every property after each change, and an assignment notifies
-    /// observers even when the value is the same, so a rebuild waits for one that differs.
+    /// What the controls show. The window re-reads every property after each change, so a rebuild waits for a change
+    /// to what the controls show.
     private struct Shown: Equatable {
         var blocksAds: Bool?
         var isMailHandler: Bool?
@@ -988,6 +988,7 @@ private final class SiteControlsSecurity: SidebarFlippedView, SiteControlsPlaced
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func accessibilityChildren() -> [Any]? { [] }
 
     override func layout() {
         super.layout()
