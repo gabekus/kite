@@ -64,6 +64,45 @@ import Testing
         #expect(try !childAlive(in: folder))
     }
 
+    /// A descendant that left the group (setsid) can't be ended with it; a tool that exited 0 still
+    /// answers with what it wrote, once the grace is up.
+    @Test func anEscapedChildOnTheOutputDoesNotLoseTheReply() throws {
+        let (tool, folder) = try makeTool(
+            "perl -MPOSIX -e 'POSIX::setsid(); open(F, \">pid\"); print F $$; close(F); exec(\"sleep\", \"999\")' &\n"
+                + "while [ ! -s pid ]; do sleep 0.05; done\necho answer")
+        defer {
+            if let text = try? String(contentsOf: folder.appendingPathComponent("pid"), encoding: .utf8),
+               let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) { kill(pid, SIGKILL) }
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let start = Date()
+        let result = OneShotProcess(executable: tool, arguments: [], directory: folder).run(input: Data(), timeout: 30)
+        #expect(result == OneShotProcess.Result(status: 0, output: Data("answer\n".utf8)))
+        #expect(Date().timeIntervalSince(start) < 5)
+    }
+
+    @Test func aBigInputAndOutputDoNotDeadlock() throws {
+        let (tool, folder) = try makeTool("cat")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let input = Data((0..<2_000_000).map { UInt8($0 % 251) })
+        let result = OneShotProcess(executable: tool, arguments: [], directory: folder).run(input: input, timeout: 30)
+        #expect(result?.status == 0)
+        #expect(result?.output == input)
+    }
+
+    @Test func cancellingTheTaskEndsAnAsyncRun() async throws {
+        let (tool, folder) = try makeTool("sleep 999 &\necho $! > pid\nsleep 999")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let process = OneShotProcess(executable: tool, arguments: [], directory: folder)
+        let start = Date()
+        let task = Task { await process.run(input: Data(), timeout: 30) }
+        try await Task.sleep(for: .milliseconds(500))
+        task.cancel()
+        #expect(await task.value == nil)
+        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(try !childAlive(in: folder))
+    }
+
     @Test func cancelEndsTheRun() throws {
         let (tool, folder) = try makeTool("sleep 999 &\necho $! > pid\nsleep 999")
         defer { try? FileManager.default.removeItem(at: folder) }

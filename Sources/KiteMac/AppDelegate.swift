@@ -264,6 +264,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let spaceIDs = Set(store.state.spaces.map(\.id))
         var openedTab = false
         for url in urls {
+            // A javascript: or data: URL from another app (`open location`) would be AppleScript's `execute`
+            // by another name: refused, as the scripting dictionary refuses it, unless Allow JavaScript from
+            // Apple Events is on.
+            guard AppleScripting.mayLoad(url, allowsJavaScript: allowsJavaScriptFromAppleEvents) else {
+                NSLog("Kite: refused a \(url.scheme ?? "") URL from another app: Allow JavaScript from Apple Events is off")
+                continue
+            }
             // A web app's launcher (~/Applications/Kite Apps/<Name>.app) opens kite-app://<id>.
             if webApps.handleLaunchURL(url) { continue }
             if MailHandler.isMailto(url) {

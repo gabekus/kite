@@ -36,27 +36,21 @@ enum LinkPreviewSummarizer {
         guard let claude = claude ?? nil else { return nil }
         let prompt = LinkPreviewSummary.prompt(url: url, metadata: metadata, pageText: pageText,
                                                language: LinkPreviewSummary.languageName())
+        // The login shell's PATH comes from running zsh: off the main thread, as the run itself is.
+        let environment = await Task.detached { ClaudeTasksController.environment() }.value
+        guard !Task.isCancelled else { return nil }
+        // Its own process group, ended whole at the timeout or when this task is cancelled: a child left
+        // holding stdout can't hang the read.
         let process = OneShotProcess(executable: claude, arguments: LinkPreviewSummary.claudeArguments(),
-                                     environment: ClaudeTasksController.environment(),
-                                     directory: FileManager.default.temporaryDirectory)
-        let reply: String? = await withTaskCancellationHandler {
-            await Task.detached(priority: .userInitiated) { run(process, prompt: prompt) }.value
-        } onCancel: {
-            process.cancel()
+                                     environment: environment, directory: FileManager.default.temporaryDirectory)
+        let reply = await process.run(input: Data(prompt.utf8), timeout: timeout).flatMap { result -> String? in
+            let text = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            return result.status == 0 && !text.isEmpty ? text : nil
         }
         guard !Task.isCancelled else { return nil }
         let summary = reply.flatMap(LinkPreviewSummary.parse(reply:))
         // A failed run isn't kept, so the next hover asks again.
         if reply != nil { cache.setObject(Box(summary), forKey: url as NSURL) }
         return summary
-    }
-
-    /// Blocks until Claude Code exits, so it runs off the main thread.
-    /// Its own process group, ended whole at the timeout or on cancel: a child left holding stdout can't
-    /// hang the read.
-    nonisolated private static func run(_ process: OneShotProcess, prompt: String) -> String? {
-        guard let result = process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
-        let text = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
     }
 }

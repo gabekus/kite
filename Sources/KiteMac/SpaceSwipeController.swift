@@ -25,6 +25,9 @@ final class SpaceSwipeController {
     private var neighbours: SpaceSwipe.Neighbours?
     /// After the fingers lift, the trackpad's momentum events still belong to the swipe.
     private var swallowingMomentum = false
+    /// A swipe cancelled mid-gesture (`cancel`): the rest of that gesture is swallowed, rather than
+    /// starting a new swipe from whatever space is selected now.
+    private var abandonedGesture = false
     /// A gesture that started vertically scrolls the tab list for its whole length.
     private var verticalGesture = false
     /// The settle under way: where it started, where it ends and when.
@@ -57,6 +60,16 @@ final class SpaceSwipeController {
         // Only trackpad gestures page; a mouse wheel's sideways clicks don't.
         guard event.hasPreciseScrollingDeltas else { return false }
         let phase = event.phase
+        if abandonedGesture {
+            if phase.contains(.ended) || phase.contains(.cancelled) {
+                abandonedGesture = false
+                swallowingMomentum = true
+                return true
+            }
+            // A new gesture (the end of the old one never came) is a swipe of its own.
+            guard phase.contains(.began) || phase.contains(.mayBegin) else { return true }
+            abandonedGesture = false
+        }
 
         if swipe == nil {
             if phase.contains(.mayBegin) || phase.contains(.began) { verticalGesture = false }
@@ -82,6 +95,7 @@ final class SpaceSwipeController {
         if phase.contains(.ended) || phase.contains(.cancelled) {
             finish(cancelled: phase.contains(.cancelled))
             swallowingMomentum = true
+            abandonedGesture = false
         }
         return true
     }
@@ -117,7 +131,10 @@ final class SpaceSwipeController {
 
     private func show() {
         guard let swipe else { return }
-        guard let current = space(towards: 0), let neighbour = space(towards: swipe.direction) else { return cancel() }
+        guard let current = space(towards: 0), let neighbour = space(towards: swipe.direction) else {
+            abandonedGesture = true
+            return cancel()
+        }
         set { $0.offset = CGFloat(swipe.offset) }
         showTheme(current.theme, neighbour.theme, Float(swipe.progress))
     }

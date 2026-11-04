@@ -160,13 +160,15 @@ public struct ClaudeRoutes: Codable, Equatable, Sendable {
         projects = try container.decode([Lossy<Project>].self, forKey: .projects).compactMap(\.value)
     }
 
-    /// A file that won't decode is moved aside (`StoreFile`) so the next save doesn't write over it.
+    /// Through `StoreFile`: a file that won't decode is moved aside (or, when it can't be, never saved
+    /// over), and one read leniently is copied aside.
     public static func load(from url: URL) -> ClaudeRoutes {
-        guard let routes = StoreFile.load(ClaudeRoutes.self, from: url) else { return ClaudeRoutes() }
+        guard let routes = StoreFile.load(ClaudeRoutes.self, from: url).value else { return ClaudeRoutes() }
         return routes
     }
 
     public func save(to url: URL) throws {
+        try StoreFile.checkWritable(url)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,

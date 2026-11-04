@@ -49,8 +49,9 @@ final class MediaLibraryModel {
         let support = AppDelegate.supportDirectory
         captures = CaptureStore(folder: support.appendingPathComponent("Captures", isDirectory: true))
         settingsURL = support.appendingPathComponent("Media.json")
-        // A file that won't decode is moved aside, so saving doesn't write over the hidden files' list.
-        if let settings = StoreFile.load(Settings.self, from: settingsURL) {
+        // A file that won't decode is moved aside (or never saved over, when it can't be), so saving doesn't
+        // write over the hidden files' list; one read leniently is copied aside.
+        if let settings = StoreFile.load(Settings.self, from: settingsURL).value {
             isOnboarded = settings.onboarded
             hidden = Set(settings.hiddenPaths)
             if let sources = settings.sources { self.sources = Set(sources) }
@@ -203,6 +204,7 @@ final class MediaLibraryModel {
     private func save() {
         let settings = Settings(onboarded: isOnboarded, hiddenPaths: hidden.sorted(),
                                 sources: MediaLibrary.Source.allCases.filter(sources.contains))
+        guard (try? StoreFile.checkWritable(settingsURL)) != nil else { return }
         try? FileManager.default.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? JSONEncoder().encode(settings).write(to: settingsURL, options: .atomic)
     }

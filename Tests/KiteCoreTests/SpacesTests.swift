@@ -71,8 +71,15 @@ import Testing
         #expect(swipe.target(towards: 0, spaces: [ids[0], ids[1]], selected: ids[1]) == nil)
         // Something else switched space (automation, another window).
         #expect(swipe.target(towards: 0, spaces: ids, selected: ids[0]) == nil)
-        // Moved, not deleted: still found by id.
+        // Moved but still its neighbour on that side: found by id.
         #expect(swipe.target(towards: -1, spaces: [ids[1], ids[2], ids[0]], selected: ids[2]) == ids[1])
+        // Moved to the other side, or away: the pages on screen are no longer its neighbours.
+        #expect(swipe.target(towards: -1, spaces: [ids[2], ids[1], ids[0]], selected: ids[2]) == nil)
+        #expect(swipe.target(towards: -1, spaces: [ids[1], ids[0], ids[2]], selected: ids[2]) == nil)
+        // A space inserted between them.
+        #expect(swipe.target(towards: -1, spaces: [ids[0], ids[1], UUID(), ids[2]], selected: ids[2]) == nil)
+        // Towards nothing (rubber-banding): the current space, while it's still there.
+        #expect(swipe.target(towards: 0, spaces: [ids[1], ids[0], ids[2]], selected: ids[2]) == ids[2])
     }
 }
 

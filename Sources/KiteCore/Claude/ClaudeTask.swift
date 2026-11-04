@@ -14,7 +14,11 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
 
         /// A status from a newer build reads as stopped, rather than failing the whole list.
         public init(from decoder: Decoder) throws {
-            self = Status(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .stopped
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            if let status = Status(rawValue: raw) { self = status } else {
+                self = .stopped
+                decoder.noteLenient()
+            }
         }
     }
 
@@ -34,7 +38,11 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
 
             /// A kind from a newer build shows as a note, rather than failing the whole list.
             public init(from decoder: Decoder) throws {
-                self = Kind(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .note
+                let raw = try decoder.singleValueContainer().decode(String.self)
+                if let kind = Kind(rawValue: raw) { self = kind } else {
+                    self = .note
+                    decoder.noteLenient()
+                }
             }
         }
 
@@ -210,32 +218,27 @@ public struct ClaudeTaskList: Codable, Sendable {
         supportDirectory.appendingPathComponent("Claude", isDirectory: true).appendingPathComponent("tasks.json")
     }
 
-    /// Tasks in the file that didn't decode. Not saved.
-    public private(set) var dropped = 0
-
     private enum CodingKeys: String, CodingKey { case tasks }
 
     /// A task that doesn't decode is left out rather than failing the list.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let saved = try container.decode([Lossy<ClaudeTask>].self, forKey: .tasks)
-        tasks = saved.compactMap(\.value)
-        dropped = saved.count - tasks.count
+        tasks = try container.decode([Lossy<ClaudeTask>].self, forKey: .tasks).compactMap(\.value)
     }
 
-    /// A list saved while a task ran comes back with that task stopped: its process is gone. A file that
-    /// won't decode is moved aside (`StoreFile`) so the next save doesn't write over it.
-    public static func load(from url: URL) -> ClaudeTaskList {
+    /// A list saved while a task ran comes back with that task stopped: its process is gone. Through
+    /// `StoreFile`: a file that won't decode is moved aside, one read leniently (tasks dropped, kinds
+    /// coerced) is copied aside, and `.unmovable` means don't save.
+    public static func load(from url: URL, now: Date = Date()) -> StoreFile.Load<ClaudeTaskList> {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard var list = StoreFile.load(ClaudeTaskList.self, from: url, decoder: decoder) else { return ClaudeTaskList() }
-        // The tasks left out would be gone at the next save: keep a copy of the file as it was.
-        if list.dropped > 0 { StoreFile.setAside(url, keepingOriginal: true) }
+        let result = StoreFile.load(ClaudeTaskList.self, from: url, decoder: decoder, now: now)
+        guard case .loaded(var list, let lenient) = result else { return result }
         for i in list.tasks.indices where list.tasks[i].status == .running {
             list.tasks[i].status = .stopped
             list.tasks[i].append(ClaudeTask.Entry(.note, "Stopped when Kite quit."))
         }
-        return list
+        return .loaded(list, lenient: lenient)
     }
 
     /// Only the user can read it: it holds what they asked Claude to do.
@@ -243,6 +246,7 @@ public struct ClaudeTaskList: Codable, Sendable {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
+        try StoreFile.checkWritable(url)
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])

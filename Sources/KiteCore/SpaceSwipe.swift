@@ -107,10 +107,12 @@ public struct SpaceSwipe: Equatable, Sendable {
         }
 
         /// The space towards `direction` while the swipe still holds: nil once the selection has moved off
-        /// the space it began on or the space it points at has gone, when the swipe is cancelled.
+        /// the space it began on, or the space it points at has gone or no longer sits next to it on that
+        /// side (the pages on screen would be the wrong ones), when the swipe is cancelled.
         public func target(towards direction: Int, spaces: [UUID], selected: UUID?) -> UUID? {
-            guard selected == current, spaces.contains(current),
-                  let id = space(towards: direction), spaces.contains(id) else { return nil }
+            guard selected == current, let here = spaces.firstIndex(of: current),
+                  let id = space(towards: direction), spaces.firstIndex(of: id) == here + direction.signum()
+            else { return nil }
             return id
         }
     }

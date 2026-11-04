@@ -111,7 +111,8 @@ final class ClaudeTasksController {
         routes = ClaudeRoutes.load(from: routesURL)
         workDirectory = supportDirectory.appendingPathComponent("Claude", isDirectory: true)
             .appendingPathComponent("Work", isDirectory: true)
-        tasks = ClaudeTaskList.load(from: fileURL).tasks
+        // A file StoreFile couldn't move aside stays unwritten: its saves are refused.
+        tasks = ClaudeTaskList.load(from: fileURL).value?.tasks ?? []
         automation.isRunningTask = { [weak self] id in self?.runs[id] != nil }
         automation.taskOpenedTab = { [weak self] task, tab, session in self?.file(tab, under: task, named: session) }
         automation.isTicketTest = { [weak self] id in self?.task(id)?.ticket != nil }
