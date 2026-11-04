@@ -24,6 +24,10 @@ bool KCHasChromiumCreatedBrowsers();
 // Chrome's extension windows: install dialog, "added" bubble (KCExtensionWindows.mm).
 void KCInstallExtensionWindowHooks();
 
+/// Drops the downloads KCBrowser follows (KCBrowser.mm), and the CEF references they hold.
+/// KCRuntime calls it before CefShutdown.
+void KCClearLiveDownloads();
+
 // The ad blocker (KCAdblock.mm). Both return null when Kite is built without it.
 CefRefPtr<CefResourceRequestHandler> KCAdblockRequestHandler(KCBrowser* owner);
 /// The context every tab uses, so requests no tab makes are checked too.

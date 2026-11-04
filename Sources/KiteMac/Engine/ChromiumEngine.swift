@@ -17,6 +17,7 @@ final class ChromiumEngine: WebEngine {
     /// Incognito pages don't run Boosts.
     private var appliesBoosts = true
     let profileDirectory: String?
+    var downloadContextKey: String { context?.downloadContextKey ?? "" }
     /// The default profile's engine keeps the others, so every window gets the same one.
     private var profileEngines: [String: ChromiumEngine] = [:]
     private weak var defaultEngine: ChromiumEngine?

@@ -706,9 +706,11 @@ extension AutomationController {
 
     private func downloadsReport() -> String {
         guard !downloads.isEmpty else { return "No downloads since Claude was allowed to control Kite." }
-        let lines = downloads.values.sorted { $0.id < $1.id }.map { download -> String in
+        let lines = downloads.values.sorted { $0.sequence < $1.sequence }.map { entry -> String in
+            let download = entry.update
             let size = download.totalBytes > 0 ? "\(download.receivedBytes)/\(download.totalBytes) bytes" : "\(download.receivedBytes) bytes"
-            return "- \(download.state), \(size): \(download.path) (from \(download.url))"
+            let profile = download.profileDirectory.map { ", profile \($0)" } ?? ""
+            return "- \(DownloadUpdate.name(of: download.state)), \(size)\(profile): \(download.path) (from \(download.url))"
         }
         return UntrustedContent.wrap(lines.joined(separator: "\n"), source: "downloads")
     }

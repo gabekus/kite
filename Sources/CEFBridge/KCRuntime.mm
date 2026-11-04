@@ -209,6 +209,7 @@ NSString* KCRootCachePath() {
 
 + (void)shutdown {
     if (!gInitialized) return;
+    KCClearLiveDownloads();
     CefShutdown();
     gInitialized = false;
     gLibraryLoader.reset();

@@ -19,7 +19,8 @@ final class DownloadTidier {
     private var originals: [UUID: (original: String, renamed: String)] = [:]
 
     func tidy(_ item: DownloadItem, sourceTitle: String?) {
-        guard TidyDownloads.isEnabled(), !item.path.isEmpty,
+        // An incognito download's name and tab title never go to Claude.
+        guard !item.isIncognito, TidyDownloads.isEnabled(), !item.path.isEmpty,
               FileManager.default.fileExists(atPath: item.path) else { return }
         let fileName = (item.path as NSString).lastPathComponent
         let prompt = TidyDownloads.prompt(fileName: fileName, tabTitle: sourceTitle, domain: item.sourceHost,

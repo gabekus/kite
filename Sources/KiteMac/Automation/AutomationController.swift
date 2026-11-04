@@ -38,12 +38,10 @@ final class AutomationController {
     }
 
     struct Download: Equatable {
-        var id: Int
-        var url: String
-        var path: String
-        var state: String
-        var receivedBytes: Int64
-        var totalBytes: Int64
+        /// Its latest update: Chromium's id is unique only within `update.engineContext`.
+        var update: DownloadUpdate
+        /// Order seen, for the report.
+        var sequence: Int
     }
 
     private(set) var settings: AutomationSettings
@@ -123,7 +121,8 @@ final class AutomationController {
     @ObservationIgnored var sessionFolders: [Int: String] = [:]
     /// Which tab's page opened which, so results can say where an action's new tabs went.
     @ObservationIgnored var openedTabs = OpenedTabs()
-    @ObservationIgnored private(set) var downloads: [Int: Download] = [:]
+    /// By "context#id".
+    @ObservationIgnored private(set) var downloads: [String: Download] = [:]
     @ObservationIgnored private var downloadObserver: NSObjectProtocol?
     /// Each tab's last read, the baseline for change-only reads.
     @ObservationIgnored var snapshots: [UUID: PageDiff.Snapshot] = [:]
@@ -386,11 +385,13 @@ final class AutomationController {
         guard downloadObserver == nil else { return }
         downloadObserver = NotificationCenter.default.addObserver(forName: .KCDownloadDidUpdate, object: nil, queue: .main) {
             [weak self] note in
-            guard let info = note.userInfo, let id = (info["id"] as? NSNumber)?.intValue else { return }
-            let download = Download(
-                id: id, url: info["url"] as? String ?? "", path: info["path"] as? String ?? "", state: info["state"] as? String ?? "",
-                receivedBytes: (info["receivedBytes"] as? NSNumber)?.int64Value ?? 0, totalBytes: (info["totalBytes"] as? NSNumber)?.int64Value ?? -1)
-            MainActor.assumeIsolated { self?.downloads[id] = download }
+            // Claude stays out of incognito: its downloads (URLs, paths) are never listed.
+            guard let info = note.userInfo, let update = DownloadUpdate(notificationInfo: info), !update.isIncognito else { return }
+            let key = "\(update.engineContext)#\(update.engineID)"
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.downloads[key] = Download(update: update, sequence: self.downloads[key]?.sequence ?? self.downloads.count)
+            }
         }
         #endif
     }
