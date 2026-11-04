@@ -53,8 +53,9 @@ windows/
   src/cli/      kitecore: the model, headless
   tests/        unit tests (no test framework dependency)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
-  resources/    Kite.manifest (DPI, UTF-8 code page, long paths) and its MinGW .rc
-  scripts/      fetch-cef.ps1, gen-unicode-tables.py
+  resources/    Kite.manifest (DPI, UTF-8 code page, long paths), Kite.ico (the Mac's
+                AppIcon.icns, from make-icon.py) and Kite.rc, which embeds them
+  scripts/      fetch-cef.ps1, gen-unicode-tables.py, make-icon.py
   cmake/        mingw-w64.cmake (cross-compile check off Windows)
 ```
 

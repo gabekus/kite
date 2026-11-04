@@ -1,3 +1,12 @@
-// MinGW only: embeds Kite.manifest (per-monitor DPI v2, UTF-8 code page, long paths) as the
-// process manifest (resource 1, type RT_MANIFEST = 24). MSVC builds take the .manifest directly.
+// Kite.exe's and kitecore.exe's resources (both toolchains).
+
+// The app icon, from windows/scripts/make-icon.py. The lowest-numbered icon is the one Explorer
+// shows for the exe; MainWindow loads it for the window (kAppIcon in MainWindow.cpp).
+1 ICON "Kite.ico"
+
+// MinGW only: Kite.manifest (per-monitor DPI v2, UTF-8 code page, long paths) as the process
+// manifest (resource 1, type RT_MANIFEST = 24). MSVC's linker embeds the .manifest itself, and
+// a second one here would collide with it.
+#ifdef KITE_RC_MANIFEST
 1 24 "Kite.manifest"
+#endif

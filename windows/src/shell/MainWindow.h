@@ -93,6 +93,8 @@ private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
     LRESULT Handle(UINT message, WPARAM wParam, LPARAM lParam);
     void ResizeClient(int width, int height);
+    // The window's big and small icons (taskbar, Alt+Tab) at `dpi`, replacing the last ones.
+    void SetIcons(UINT dpi);
     // The window rect around a client area `width` × `height` px: the frame's borders but no
     // caption (WM_NCCALCSIZE takes it off).
     RECT FrameAround(int width, int height) const;
@@ -109,6 +111,8 @@ private:
     bool allowLargerThanScreen_ = false;
     bool fixedScale_ = false;
     HMONITOR autoHideMonitor_ = nullptr;
+    HICON bigIcon_ = nullptr;  // WM_SETICON's, owned
+    HICON smallIcon_ = nullptr;
     std::array<bool, 4> autoHide_{};
 };
 
