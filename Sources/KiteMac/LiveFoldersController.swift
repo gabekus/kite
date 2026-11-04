@@ -20,8 +20,10 @@ final class LiveFoldersController {
     /// Where the hidden pages live: Chromium's browsers want a window.
     private let host: () -> NSView?
     private var fetches: [UUID: GitHubPullRequestFetch] = [:]
-    /// When each folder's last successful refresh started; a failed one leaves it, so the next event retries.
-    private var lastSucceeded: [UUID: Date] = [:]
+    /// Each folder's attempts and successes, for the refresh floors (`LiveFolder.RefreshRecord`).
+    private var records: [UUID: LiveFolder.RefreshRecord] = [:]
+    /// Folders whose forced refresh came while one was running: they refresh again once it ends.
+    private var rerun: Set<UUID> = []
     private var lastFocus = BrowserState.Focus()
     private var activeObserver: NSObjectProtocol?
 
@@ -53,6 +55,8 @@ final class LiveFoldersController {
 
     func delete(_ id: UUID) {
         fetches.removeValue(forKey: id)?.cancel()
+        rerun.remove(id)
+        records[id] = nil
         store.mutateWithoutUndo { $0.deleteLiveFolder(id) }
     }
 
@@ -100,12 +104,17 @@ final class LiveFoldersController {
         refresh(id, reason: force ? .forced : .background)
     }
 
-    /// Starts a refresh unless one is running, or the last successful one was too recent for `reason`.
+    /// Starts a refresh unless `reason`'s floor says not yet (`LiveFolder.RefreshRecord`). A forced one
+    /// that comes while one is running runs once that one ends, since what changed may postdate it.
     func refresh(_ id: UUID, reason: LiveFolder.RefreshReason) {
-        guard fetches[id] == nil, let found = store.state.liveFolders.first(where: { $0.folder.id == id }),
-              let live = found.folder.live else { return }
-        guard LiveFolder.mayRefresh(lastSucceeded: lastSucceeded[id], reason: reason) else { return }
+        guard let found = store.state.liveFolders.first(where: { $0.folder.id == id }), let live = found.folder.live else { return }
+        guard fetches[id] == nil else {
+            if case .forced = reason { rerun.insert(id) }
+            return
+        }
+        guard records[id, default: .init()].allows(reason) else { return }
         let started = Date()
+        records[id, default: .init()].started(at: started)
         if UIDiagnostics.enabledByEnvironment { NSLog("Kite: live folder refresh (\(reason))") }
         let state = store.state
         let profileEngine = engine.profileDirectory == nil
@@ -117,10 +126,13 @@ final class LiveFoldersController {
                 self.fetches[id] = nil
                 switch result {
                 case .success(let items):
-                    self.lastSucceeded[id] = started
+                    self.records[id, default: .init()].succeeded(startedAt: started)
                     self.store.mutateWithoutUndo { $0.applyLiveFolderResult(id, items: items) }
-                case .failure(let error): self.store.mutateWithoutUndo { $0.failLiveFolder(id, error: error.message) }
+                case .failure(let error):
+                    self.records[id, default: .init()].failed(signedOut: error.isSignedOut)
+                    self.store.mutateWithoutUndo { $0.failLiveFolder(id, error: error.message) }
                 }
+                if self.rerun.remove(id) != nil { self.refresh(id, reason: .forced) }
             }
             fetches[id] = fetch
             fetch.start()
@@ -163,6 +175,7 @@ final class GitHubPullRequestFetch {
         let message: String
         static let signedOut = Failure(message: "Not signed in to GitHub")
         static let unreachable = Failure(message: "We're having trouble connecting to GitHub")
+        var isSignedOut: Bool { message == Self.signedOut.message }
     }
 
     private var queries: [String]

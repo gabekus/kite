@@ -3194,8 +3194,9 @@ doing it: a live folder needs a signed-in GitHub session, which an incognito win
   filter change, manual, sign-in). Automatic ones are throttled by `automatic-live-folders-min-refresh-interval-in-seconds`,
   10. No periodic timer was found. Kite **[differs]**: launch, coming to the front and switching spaces wait 5 minutes
   after the last successful refresh (each loads github.com in a hidden 1280×2000 page); opening or leaving a folder's
-  tab keeps Arc's 10 seconds; Refresh, a filter change and a pull request made or reviewed refresh at once; a failed
-  refresh doesn't hold the next one back. New items arrive unread (`showNewItemsAsUnread`; items carry `isRead`).
+  tab keeps Arc's 10 seconds; Refresh, a filter change and a pull request made or reviewed refresh at once (one that comes
+  mid-refresh runs again after it); after a failure the next automatic try waits only Arc's 10 seconds, except
+  signed out, which waits for a forced refresh. New items arrive unread (`showNewItemsAsUnread`; items carry `isRead`).
 - **Removed rows.** A row the user deletes goes into `hiddenItems` and later refreshes leave it out.
 - **Folder menu.** "Refresh"; a status line "Initializing...", "Last fetch: …" or "Failed to update"; a "Repositories"
   submenu of per-repo toggles ending "This list is generated based on your currently active pull requests."; the three

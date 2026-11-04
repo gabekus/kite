@@ -353,10 +353,39 @@ extension LiveFolder {
         }
     }
 
-    /// Whether a refresh may start, given when the last one that succeeded started. A failed one
-    /// doesn't count, so the next event tries again.
-    public static func mayRefresh(lastSucceeded: Date?, now: Date = Date(), reason: RefreshReason) -> Bool {
-        guard let lastSucceeded else { return true }
-        return now.timeIntervalSince(lastSucceeded) >= reason.minimumInterval
+    /// Arc's floor between any two automatic attempts, failed ones included.
+    public static let minimumAttemptInterval: TimeInterval = 10
+
+    /// One folder's refresh history, for throttling (in memory, not saved).
+    public struct RefreshRecord: Equatable, Sendable {
+        /// When the last refresh, whatever came of it, started.
+        public var lastAttempt: Date?
+        /// When the last successful refresh started: the reasons' floors count from here, so a
+        /// failure doesn't hold the next try back for minutes.
+        public var lastSuccess: Date?
+        /// The last refresh found GitHub signed out: only a forced one tries again.
+        public var signedOut = false
+
+        public init() {}
+
+        public mutating func started(at date: Date) { lastAttempt = date }
+
+        public mutating func succeeded(startedAt date: Date) {
+            lastSuccess = date
+            signedOut = false
+        }
+
+        public mutating func failed(signedOut: Bool) { self.signedOut = signedOut }
+
+        /// Whether a refresh may start now. A forced one always may. Any other waits Arc's 10 seconds
+        /// after the last attempt (failed or not), its reason's floor after the last success, and for a
+        /// forced refresh once GitHub was found signed out.
+        public func allows(_ reason: RefreshReason, now: Date = Date()) -> Bool {
+            if case .forced = reason { return true }
+            if signedOut { return false }
+            if let lastAttempt, now.timeIntervalSince(lastAttempt) < LiveFolder.minimumAttemptInterval { return false }
+            guard let lastSuccess else { return true }
+            return now.timeIntervalSince(lastSuccess) >= reason.minimumInterval
+        }
     }
 }

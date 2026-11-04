@@ -5,29 +5,37 @@ import Foundation
 /// subfolders included), from one FSEvents stream: nothing is polled, and changes that come close
 /// together arrive as one call `latency` seconds after the first. Paths that don't exist yet are
 /// watched for when they appear. Reported paths have symlinks resolved (/tmp is /private/tmp).
+/// `rescan` is true when FSEvents lost track (events dropped, a folder to rescan, a watched root
+/// moved): the paths then don't say everything that changed.
 @MainActor
 final class DirectoryWatcher {
     private final class Handler: Sendable {
-        let onChange: @MainActor @Sendable ([String]) -> Void
-        init(_ onChange: @escaping @MainActor @Sendable ([String]) -> Void) { self.onChange = onChange }
+        let onChange: @MainActor @Sendable (_ paths: [String], _ rescan: Bool) -> Void
+        init(_ onChange: @escaping @MainActor @Sendable ([String], Bool) -> Void) { self.onChange = onChange }
     }
 
     private var stream: FSEventStreamRef?
     private let handler: Handler
 
-    init?(paths: [URL], latency: TimeInterval, onChange: @escaping @MainActor @Sendable ([String]) -> Void) {
+    /// The flags that mean the reported paths aren't the whole story.
+    nonisolated static let rescanFlags = FSEventStreamEventFlags(kFSEventStreamEventFlagMustScanSubDirs
+        | kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped | kFSEventStreamEventFlagRootChanged)
+
+    init?(paths: [URL], latency: TimeInterval, onChange: @escaping @MainActor @Sendable (_ paths: [String], _ rescan: Bool) -> Void) {
         handler = Handler(onChange)
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(handler).toOpaque(),
                                            retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, _, eventPaths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, eventPaths, eventFlags, _ in
             guard let info else { return }
             let handler = Unmanaged<Handler>.fromOpaque(info).takeUnretainedValue()
             // With kFSEventStreamCreateFlagUseCFTypes the paths come as a CFArray of CFStrings.
             let array = Unmanaged<CFArray>.fromOpaque(eventPaths).takeUnretainedValue() as NSArray
             let changed = (array as? [String]) ?? []
-            MainActor.assumeIsolated { handler.onChange(changed) }
+            let rescan = UnsafeBufferPointer(start: eventFlags, count: count).contains { $0 & DirectoryWatcher.rescanFlags != 0 }
+            MainActor.assumeIsolated { handler.onChange(changed, rescan) }
         }
-        let flags = kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes
+        // WatchRoot: a watched folder moved or deleted comes as RootChanged (a rescan).
+        let flags = kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagWatchRoot
         guard let stream = FSEventStreamCreate(nil, callback, &context, paths.map(Self.resolved) as CFArray,
                                                FSEventStreamEventId(kFSEventStreamEventIdSinceNow), latency,
                                                FSEventStreamCreateFlags(flags)) else { return nil }

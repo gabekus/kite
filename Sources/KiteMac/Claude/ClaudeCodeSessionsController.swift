@@ -158,9 +158,11 @@ final class ClaudeCodeSessionsController {
         let projects = DirectoryWatcher.resolved(ClaudeCodeSessions.projectsDirectory(home: home))
         let desktop = DirectoryWatcher.resolved(ClaudeDesktopSessions.directory(home: home))
         let excluding = kiteDirectories.map { DirectoryWatcher.resolved(URL(fileURLWithPath: $0)) } + kiteDirectories
-        watcher = DirectoryWatcher(paths: ClaudeCodeSessions.watchedDirectories(home: home), latency: Self.watchLatency) { [weak self] paths in
-            guard paths.contains(where: { ClaudeCodeSessions.isListingChange($0, projects: projects, desktop: desktop, excluding: excluding) })
-            else { return }
+        watcher = DirectoryWatcher(paths: ClaudeCodeSessions.watchedDirectories(home: home), latency: Self.watchLatency) { [weak self] paths, rescan in
+            // Dropped or coalesced events don't name every file: list rather than guess.
+            guard rescan || paths.contains(where: {
+                ClaudeCodeSessions.isListingChange($0, projects: projects, desktop: desktop, excluding: excluding)
+            }) else { return }
             self?.listSoon()
         }
         refresh()
