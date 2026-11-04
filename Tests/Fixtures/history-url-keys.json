@@ -52,6 +52,14 @@
     {
       "raw": "https://a.example/?x=%41&y=a b",
       "key": "https://a.example/?x=%2541&y=a%20b"
+    },
+    {
+      "raw": "https://a.example/p#f%41 b|c",
+      "key": "https://a.example/p#f%2541%20b%7Cc"
+    },
+    {
+      "raw": "https://a.example/a|b?x=1#f%41",
+      "key": "https://a.example/a%7Cb?x=1#f%41"
     }
   ]
 }
