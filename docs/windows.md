@@ -53,7 +53,7 @@ windows/
   src/cli/      kitecore: the model, headless
   tests/        unit tests (no test framework dependency)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
-  resources/    Kite.manifest (DPI, UTF-8 code page, long paths) and its MinGW .rc
+  resources/    Kite.manifest (DPI, UTF-8 code page, long paths, Common Controls 6) and its MinGW .rc
   scripts/      fetch-cef.ps1, gen-unicode-tables.py
   cmake/        mingw-w64.cmake (cross-compile check off Windows)
 ```
@@ -397,9 +397,50 @@ and whether a released contact's rest comes back as wheel messages.
 Known differences from the Mac: during the 0.2 s slide only the selected page
 takes clicks and shows hover (the Mac's outgoing page is a live list too), and
 Space n for a missing space is passed on from Kite's own window but still kept
-from a page (Chromium's key thread doesn't know the spaces). Not yet:
-reordering spaces and the space menu (W9d). `Kite.exe --frame-log FILE` writes each frame the clock delivered in a
-test run.
+from a page (Chromium's key thread doesn't know the spaces). `Kite.exe --frame-log FILE`
+writes each frame the clock delivered in a test run.
+
+Editing spaces (W9d) is the Mac's SidebarSpaceBar cellDragged and menu(for:) with
+KiteCore's space edits (`core/SpaceEditing.h`, `BrowserState::RenameSpace`, `InsertSpace`,
+`SetSpaceIcon`, `DeleteSpace`, `MoveSpace`, `CreateFolder`). A press on a cell that moves 4pt
+picks its icon up: the cell it left shows nothing, a ghost (a visual sharing that cell's
+surfaces and the hover backing's) follows the pointer, and the other cells slide aside to open
+the slot it aims at, each an `IDCompositionAnimation` of its offset over 0.2 s on Core
+Animation's ease-in-ease-out, so a drag draws nothing (`core/SpaceBar.h`'s `SpaceDrag`). A drop
+over the strip lands in that slot, anywhere else back where it came from, the ghost settling
+there over the same 0.2 s; then the space moves, keeping the selection where it was. A drop
+still landing refuses a new drag, as the Mac's. A right-click on a cell or the space's header
+opens the space's menu with the Mac's items, order and words (`SpaceMenu`): Change Space
+Icon…, Rename Space…, What's This Space For?…, Edit Theme Color…, Set Profile ▸, then New
+Folder and Live Folders ▸, then Delete Space (disabled for the last space). Rename Space…
+opens the header's name field (`shell/SpaceRenameField`, the Mac's SpaceRenameField and Done):
+the name all selected in the header's 13pt semibold, "Space Name" when empty, Done at the
+right; Return or Done renames (a blank name keeps the old one), Escape doesn't, and leaving it
+(a press elsewhere in the window, the page or the command bar taking the keyboard, another
+space selected) keeps what was typed. Its editing is the command bar's (`shell/TextEditing`,
+moved out of the bar for both). Delete Space deletes a space with no tabs at once and asks
+first about one with tabs, in the Mac's words ("Delete “Name”?", "Its pinned and unpinned tabs
+are closed.", Delete and Cancel), its pages closing with it. `kitecore space menu`, `rename`,
+`icon`, `folder`, `delete`, `new`, `move` and `drag` do the same headless.
+
+Known differences: the menu is Windows' own (TrackPopupMenuEx), as the Mac's is AppKit's: it
+looks like Windows' and opens on the right button's release, as Windows' context menus do,
+where the Mac's opens on the press. It's dark in a dark space through uxtheme's unnamed
+SetPreferredAppMode and FlushMenuThemes (ordinals 135 and 136, Windows 10 1903 on, as
+Explorer and Notepad use them); without them it's light. The question before Delete Space is a
+task dialog (Common Controls 6, which the manifest now asks for), always light, where the Mac
+has a sheet. Disabled until their checkpoints: Change Space Icon… (the icon picker, W9e),
+What's This Space For?… and Edit Theme Color… (their dialogs, and the theme editor), Set
+Profile and Live Folders (Windows can't move a space's pages to another profile or keep live
+folders yet). Not yet: the + button's menu and Arc's Create a Space page, which New Space
+opens (W9f; `kitecore space new` makes the space they'd leave), a click on the current space's
+name to rename it, Undo, and the rename's caret in `--capture` (its own visual, as the command
+bar's). `--capture FILE --space-drag N,X` holds space N's cell dragged to X points along the
+bar, `--space-drop N,X` lets it go there and settle, `--space-menu N` reads back space N's menu
+(PrintWindow of Windows' menu, without DWM's rounded corners and shadow, resampled from its
+monitor's scale to the capture's) and puts its bottom-left on the cell's centre, and
+`--rename-space N` opens space N's name field.
+
 
 ## Refresh rate
 
