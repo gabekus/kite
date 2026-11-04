@@ -37,6 +37,16 @@ struct SidebarActions {
     /// The Today divider's Clear button: Clear Today for that space.
     var clearToday: (UUID) -> Void = { _ in }
     var removeTabGroupHeader: (UUID) -> Void = { _ in }
+    /// A tab row's menu: Add Split View (selects the tab first), Open in Split View, Move to (tab, space),
+    /// and Archive Other Tabs / Below / Above.
+    var addSplitViewWith: (UUID) -> Void = { _ in }
+    var openInSplitView: (UUID) -> Void = { _ in }
+    var moveTab: (UUID, UUID) -> Void = { _, _ in }
+    var archiveTabs: (UUID, ArchiveTabsRelative) -> Void = { _, _ in }
+    /// A folder's menu: Duplicate, New Nested Folder… and Turn "<folder>" into Space.
+    var duplicateFolder: (UUID) -> Void = { _ in }
+    var newNestedFolder: (UUID) -> Void = { _ in }
+    var turnFolderIntoSpace: (UUID) -> Void = { _ in }
     /// A tab row's speaker button and Mute / Unmute menu item.
     var toggleMute: (UUID) -> Void = { _ in }
     /// A space's Set Profile (space id, profile folder) and its New Profile….
