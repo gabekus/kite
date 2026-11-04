@@ -26,7 +26,11 @@ std::wstring Describe(HWND window) {
 }  // namespace
 
 void LogSkippedModal(std::wstring_view what) {
-    const std::wstring line = L"KITE_TEST_MODAL: " + std::wstring(what) + L"\n";
+    std::wstring line = L"KITE_TEST_MODAL: " + std::wstring(what);
+    for (wchar_t& c : line) {
+        if (c == L'\r' || c == L'\n') c = L' ';
+    }
+    line += L'\n';
     OutputDebugStringW(line.c_str());
     WriteUtf8(STD_ERROR_HANDLE, line);
 }
@@ -54,9 +58,10 @@ void CALLBACK ForegroundWatch::OnForeground(HWINEVENTHOOK, DWORD, HWND window, L
 }
 
 std::wstring ForegroundWatch::Problem() {
-    // Out-of-context events wait in this thread's queue until it next pumps.
+    // Out-of-context events wait for this thread to next look at its queue; looking delivers
+    // them, and leaves the posted messages where they are.
     MSG message;
-    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+    PeekMessageW(&message, nullptr, 0, 0, PM_NOREMOVE);
     if (!hook_) return L"couldn't watch the foreground window (SetWinEventHook failed)";
     const HWND front = GetForegroundWindow();
     DWORD process = 0;

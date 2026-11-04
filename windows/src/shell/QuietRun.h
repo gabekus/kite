@@ -12,7 +12,8 @@
 namespace kite {
 
 // A dialog or window a quiet run didn't show: "KITE_TEST_MODAL: <what>" on stderr, the Mac's
-// WindowPresenter.logSkipped line (docs/automation.md), and in the debug output. Any thread.
+// WindowPresenter.logSkipped line (docs/automation.md), and in the debug output. One line: line
+// breaks in `what` (a page's dialog text) become spaces. Any thread.
 void LogSkippedModal(std::wstring_view what);
 
 // Watches for a window of Kite's process (Chromium's included) becoming the foreground window:
@@ -30,8 +31,8 @@ public:
     ForegroundWatch& operator=(const ForegroundWatch&) = delete;
 
     // Empty while no window of Kite's has been in front; otherwise which came first (its
-    // class) and how many times one did. Takes the events still queued for this thread first,
-    // and looks at the window in front now as well. Asking again gives the same answer, plus
+    // class) and how many times one did. Takes the events still queued for this thread first
+    // (leaving its posted messages queued), and looks at the window in front now as well. Asking again gives the same answer, plus
     // anything that happened since.
     std::wstring Problem();
 

@@ -308,13 +308,13 @@ struct Chromium::Shared {
 
 namespace {
 
+// On a quiet run's renderers' command lines: the renderer skips window.print() (QuietRenderer)
+// and sends this process message instead.
+constexpr char kQuietSwitch[] = "kite-quiet-run";
+constexpr char kPrintSkipped[] = "kite.printSkipped";
+
 // Kite's CefApp in the browser process: one Kite per profile, as Chromium allows. A second
 // launch hands over to this one instead of opening a Chrome window of its own.
-// On Chromium's helper processes' command lines in a quiet run: the renderer skips
-// window.print() (QuietRenderer). The process message it sends instead.
-constexpr char kQuietSwitch[] = "kite-quiet-run";
-constexpr char kPrintSkipped[] = "kite-print-skipped";
-
 class KiteApp : public CefApp, public CefBrowserProcessHandler {
 public:
     explicit KiteApp(std::shared_ptr<Chromium::Shared> shared) : shared_(std::move(shared)) {}
@@ -328,7 +328,7 @@ public:
     }
 
     void OnBeforeChildProcessLaunch(CefRefPtr<CefCommandLine> commandLine) override {
-        if (shared_->quiet) commandLine->AppendSwitch(kQuietSwitch);
+        if (shared_->quiet && commandLine->GetSwitchValue("type") == "renderer") commandLine->AppendSwitch(kQuietSwitch);
     }
 
 private:
@@ -794,7 +794,8 @@ private:
 
 int RunChromiumSubprocess(HINSTANCE instance) {
     CefMainArgs args(instance);
-    // A quiet run's renderer (KiteApp::OnBeforeChildProcessLaunch's switch) skips window.print().
+    // A quiet run's renderer (KiteApp::OnBeforeChildProcessLaunch's switch, on renderers only)
+    // skips window.print().
     CefRefPtr<CefCommandLine> commandLine = CefCommandLine::CreateCommandLine();
     commandLine->InitFromString(GetCommandLineW());
     CefRefPtr<CefApp> app;
