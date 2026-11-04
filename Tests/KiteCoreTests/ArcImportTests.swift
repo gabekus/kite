@@ -489,7 +489,8 @@ import Testing
         #expect(space.tabs.map(\.title) == ["Site 110", "Site 240"])
         #expect(Set(space.allTabs.map(\.id)).count == space.allTabs.count)
         #expect(result.tabCount == 4)
-        #expect(result.notes == ["Skipped 44 repeated or circular sidebar entries."])
+        // Tab 100 under folder 101 isn't counted: it went to its home, losing nothing.
+        #expect(result.notes == ["Skipped 43 repeated or circular sidebar entries."])
     }
 
     @Test func aChildListedUnderTwoParentsGoesToItsParentID() throws {
@@ -513,7 +514,7 @@ import Testing
         #expect(old.items.isEmpty)
         #expect(current.items.tabs.map(\.title) == ["Site 100"])
         #expect(result.tabCount == 1)
-        #expect(result.notes == ["Skipped 1 repeated or circular sidebar entry."])
+        #expect(result.notes.isEmpty)
     }
 
     @Test func anOrphanedParentIDParentDoesNotDropTheChild() throws {
@@ -547,6 +548,36 @@ import Testing
         #expect(result.spaces[0].pinnedItems.tabs.map(\.title) == ["Site 104"])
         #expect(result.folderCount == 3)
         #expect(result.notes == ["Skipped 1 repeated or circular sidebar entry."])
+    }
+
+    @Test func aChildOfAnItemThatDoesntNestImportsUnderTheFolder() throws {
+        // Easel 500 lists tabs 502 and 503 ahead of folder 501, and 502 names it as its parent,
+        // but the import never goes into an easel.
+        var unparented = Self.tab(503, parent: 0)
+        unparented.removeValue(forKey: "parentID")
+        let result = try Self.sidebar([
+            Self.container(10, children: []),
+            Self.container(11, children: [500, 501]),
+            Self.node(500, kind: ["easel": [:]], children: [502, 503]),
+            Self.folder(501, children: [502, 503]),
+            Self.tab(502, parent: 500),
+            unparented,
+        ])
+        #expect(result.spaces[0].tabs.map(\.title) == ["Site 502", "Site 503"])
+        #expect(result.notes == ["Skipped unsupported sidebar items: easel."])
+    }
+
+    @Test func aFavoriteAlsoInASpaceIsInBoth() throws {
+        // Tab 300 names the favorites grid as its parent; the space still keeps it.
+        let result = try Self.sidebar([
+            Self.container(10, children: [300]),
+            Self.container(11, children: []),
+            Self.container(30, children: [300]),
+            Self.tab(300, parent: 30),
+        ], favorites: [["default": true], Self.id(30)])
+        #expect(result.spaces[0].pinnedItems.tabs.map(\.title) == ["Site 300"])
+        #expect(result.favoritesByProfile["Default"]?.map(\.title) == ["Site 300"])
+        #expect(result.notes.isEmpty)
     }
 
     @Test func profilesSharingAFavoritesGridBothGetIt() throws {
