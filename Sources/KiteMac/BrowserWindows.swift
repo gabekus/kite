@@ -162,7 +162,6 @@ final class BrowserWindows {
             controller.window?.setFrame(front.frame, display: false)
             controller.window?.setFrameTopLeftPoint(NSPoint(x: front.frame.minX + 28, y: front.frame.maxY - 28))
         }
-        if UIDiagnostics.enabledByEnvironment { controller.window?.orderBack(nil) }
         scheduleSave()
         return controller
     }

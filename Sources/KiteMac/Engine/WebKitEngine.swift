@@ -427,7 +427,7 @@ extension WebKitPage: WKNavigationDelegate {
         }
         if let scheme = url.scheme?.lowercased(), !Self.inPageSchemes.contains(scheme) {
             // zoommtg:, etc. belong to other apps.
-            NSWorkspace.shared.open(url)
+            WindowPresenter.open(url)
             return decisionHandler(.cancel)
         }
 
@@ -792,12 +792,12 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
         if let window = download.webView?.window {
             panel.beginSheetModal(for: window, completionHandler: finish)
         } else {
-            panel.begin(completionHandler: finish)
+            WindowPresenter.begin(panel, completion: finish)
         }
     }
 
     func downloadDidFinish(_ download: WKDownload) {
-        NSApp.requestUserAttention(.informationalRequest)
+        WindowPresenter.requestAttention()
         DownloadsModel.shared.webKitDownload(download, finished: .complete)
     }
 

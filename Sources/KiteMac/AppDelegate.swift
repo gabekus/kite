@@ -188,12 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         // A diagnostics run stays in the background and behind the user's windows, so testing never takes their
         // focus or covers their work (capture reads covered windows).
-        if UIDiagnostics.enabledByEnvironment {
-            windowController.window?.orderBack(nil)
-            NSApp.setActivationPolicy(.regular)
-        } else {
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        if WindowPresenter.testSafe { NSApp.setActivationPolicy(.regular) } else { WindowPresenter.activateApp() }
         // A test run (KITE_DIAGNOSTICS=1 on a throwaway profile) can open a link the way another
         // app would, without going through Launch Services and the user's default browser.
         if UIDiagnostics.enabledByEnvironment, let test = ProcessInfo.processInfo.environment["KITE_TEST_OPEN_URL"],

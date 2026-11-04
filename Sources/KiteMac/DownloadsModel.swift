@@ -128,12 +128,12 @@ final class DownloadsModel {
 
     func open(_ item: DownloadItem) {
         guard item.state == .complete, fileExists(item) else { return reveal(item) }
-        NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
+        WindowPresenter.open(URL(fileURLWithPath: item.path))
     }
 
     func reveal(_ item: DownloadItem) {
         guard fileExists(item) else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
+        WindowPresenter.revealInFinder([URL(fileURLWithPath: item.path)])
     }
 
     /// The file itself on the pasteboard, as Finder's Copy puts it.

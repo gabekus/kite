@@ -60,7 +60,7 @@ enum ClaudeDesktop {
         guard let appURL else { return }
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: ClaudeDesktopLink.bundleIdentifier)
         guard !running.isEmpty else {
-            NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+            WindowPresenter.openApplication(at: appURL)
             return
         }
         running.forEach { $0.terminate() }
@@ -70,7 +70,7 @@ enum ClaudeDesktop {
                 try? await Task.sleep(for: .milliseconds(100))
                 waited += 1
             }
-            NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+            WindowPresenter.openApplication(at: appURL)
         }
     }
 
@@ -78,7 +78,7 @@ enum ClaudeDesktop {
     @discardableResult
     static func openChat(prompt: String) -> Bool {
         guard isInstalled else { return false }
-        return NSWorkspace.shared.open(ClaudeDesktopLink.chatURL(prompt: prompt))
+        return WindowPresenter.open(ClaudeDesktopLink.chatURL(prompt: prompt))
     }
 
     /// Opens a Claude Code session in Desktop's Code tab. Returns what went wrong, or nil.
@@ -91,7 +91,7 @@ enum ClaudeDesktop {
         guard let url = ClaudeDesktopLink.resumeURL(sessionID: sessionID) else {
             return "This task's session id (\(sessionID)) isn't one Claude can open."
         }
-        return NSWorkspace.shared.open(url) ? nil : "macOS couldn't open the Claude app."
+        return WindowPresenter.open(url) ? nil : "macOS couldn't open the Claude app."
     }
 }
 

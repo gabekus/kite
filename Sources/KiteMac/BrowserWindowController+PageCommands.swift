@@ -199,7 +199,7 @@ extension BrowserWindowController {
             operation.showsProgressPanel = true
             operation.printPanel.options.formUnion([.showsPreview, .showsCopies, .showsPageRange,
                                                     .showsPaperSize, .showsOrientation, .showsScaling])
-            operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+            operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil) // presenter-exempt: a sheet on the window
         }
     }
 

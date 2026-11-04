@@ -193,7 +193,7 @@ struct DownloadsList: View {
                         .foregroundStyle(.secondary)
                 }
                 Button {
-                    NSWorkspace.shared.open(FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0])
+                    WindowPresenter.open(FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0])
                 } label: {
                     Image(systemName: "folder")
                 }

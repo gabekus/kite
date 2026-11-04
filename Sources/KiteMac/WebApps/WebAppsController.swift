@@ -154,7 +154,7 @@ final class WebAppsController: NSObject, NSMenuItemValidation {
         flow.onShowInFinder = { [weak self] in
             close()
             guard let shim = self?.state.app(id: app.id)?.shimName else { return }
-            NSWorkspace.shared.activateFileViewerSelecting([WebAppShimWriter.appsDirectory.appendingPathComponent(shim)])
+            WindowPresenter.revealInFinder([WebAppShimWriter.appsDirectory.appendingPathComponent(shim)])
         }
         // Chrome moves the tab into the new app window; Kite opens the app at the tab's page and closes the tab.
         flow.onOpenApp = { [weak self, weak browser] in
@@ -339,7 +339,7 @@ final class WebAppsController: NSObject, NSMenuItemValidation {
 
     @objc func revealAppsFolder(_ sender: Any?) {
         let directory = WebAppShimWriter.appsDirectory
-        NSWorkspace.shared.activateFileViewerSelecting([directory])
+        WindowPresenter.revealInFinder([directory])
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {

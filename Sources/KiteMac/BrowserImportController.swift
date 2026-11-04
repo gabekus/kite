@@ -176,7 +176,7 @@ enum BrowserImportController {
             guard response == .alertFirstButtonReturn else { return }
             MainActor.assumeIsolated {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-                    NSWorkspace.shared.open(url)
+                    WindowPresenter.open(url)
                 }
                 askToRestart(store: store, window: window, toast: toast)
             }
