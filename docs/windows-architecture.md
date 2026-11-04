@@ -18,11 +18,13 @@ their own PR, never as a side effect of a checkpoint.
 - `windows/resources`: the process manifest both executables embed.
 - `windows/tools`: test and measurement executables only (`tools/perf`'s
   `kiteperf`). They are never linked into Kite.exe and never shipped. They may
-  use `core`, Win32 and first-party measurement APIs: PDH, psapi, Toolhelp,
-  job objects, `NtQuerySystemInformation` and `NtQueryInformationProcess`
-  (looked up with `GetProcAddress`, never linked), Winsock (`ws2_32`, for a
-  loopback page server) and, if a check needs the screen, DXGI desktop
-  duplication. They're Windows-only; `core` never uses them.
+  use `core`, the header-only protocol they share with Kite.exe
+  (`shell/PerfProtocol.h`, `shell/Text.h`), Win32, and these first-party
+  measurement APIs: PDH, psapi, job objects, `NtQuerySystemInformation` and
+  `NtQueryInformationProcess` (looked up with `GetProcAddress`, never linked),
+  and Winsock (`ws2_32`, for a loopback page server). A new API is added here
+  first. They're Windows-only and MSVC-only: the MinGW-w64 build below doesn't
+  cover them. `core` and the shell never use them.
 - No third-party code except CEF. No WinUI or Windows App SDK, no .NET, no
   Swift runtime, no Boost, no JSON or test libraries. First-party Windows APIs
   (WIC, DirectWrite, UI Automation, WinHTTP) are fine.
@@ -61,18 +63,27 @@ their own PR, never as a side effect of a checkpoint.
   phase (60 s on a settled ten-tab session) fails unless Kite presented
   nothing and committed nothing (`Kite.exe --perf-log`'s counters).
 - Every checkpoint PR that could change performance attaches a
-  `kiteperf --compare before.json after.json` table against main: medians of
-  3 runs of the idle scenario plus the scenario that exercises the change.
+  `kiteperf --compare main.json branch.json` table. Build main and the branch
+  (Release), then run, back to back on the same machine,
+  `kiteperf --kite <exe> --phases idle,<phase> --runs 3 --out <name>.json`
+  for each, where `<phase>` is the phase that exercises the change (several
+  are comma-separated; open and settle always run first). The table is
+  medians of those 3 runs. Main is re-run for every comparison, never read
+  from a saved file: the machine and main both move.
 - Kite.exe's measurement hooks (`--perf-log`, `--perf-control`,
-  `--chromium-switches`) run only on a test profile (`KITE_SUPPORT_PATH`), like
-  `--frame-log`. Off, they cost at most one predictable bool check on a hot
-  path and allocate nothing.
+  `--chromium-switches`) run only with `KITE_SUPPORT_PATH` set to a test
+  profile, never the default one (`%LOCALAPPDATA%\Kite`), like `--frame-log`.
+  Off, they cost at most one predictable bool check on a hot path and
+  allocate nothing. `--chromium-switches` takes only the switches on its
+  allow-list (`shell/PerfProtocol.h`): nothing that weakens the sandbox or web
+  security, opens a debugging port, or changes a path or a launched process.
 
 ## Code
 
 - C++20, MSVC `/W4 /WX /permissive-`, static CRT. It must also build with
   MinGW-w64 GCC (`-Wall -Wextra -Werror`, `windows/cmake/mingw-w64.cmake`),
-  which is how a non-Windows machine checks it.
+  which is how a non-Windows machine checks it. `windows/tools` is exempt
+  (MSVC only).
 - Text from people (URL input, names) is classified by Unicode character
   (`core/Unicode.h`), not by byte or ASCII, the way Swift's `Character` does.
 - JSON read and written is valid UTF-8 (Foundation rejects anything else).
