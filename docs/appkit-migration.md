@@ -675,3 +675,78 @@ already playing.
 call made while it parses. An element that played and paused before then isn't picked up. Not checked: the code
 world on a first document (it's made the same way as the media world), and FrameAdblock's `Target.setAutoAttach`,
 also sent at init, for iframes in a first document.
+
+## Helix M3: Site Controls in AppKit
+
+The popover's content (`SiteControlsView`) was a SwiftUI view in an `NSHostingController`; it's a plain view now,
+laid out as SwiftUI did: each frame from the running total of the sizes and gaps above it, rounded to the pixel grid
+as SwiftUI rounds each piece from its exact position. It started from a draft in the AppKit thread's worktree and was
+finished here. `SiteControlsModel` and `SiteControlsPopover` are unchanged.
+
+How it matches SwiftUI:
+- **Symbols in rows, the pencil, the pin and the lock** are centred by their glyph's content height, which SwiftUI
+  uses and NSImage rounds up to the whole point (hammer.fill is 15.5pt high, its image 16pt). The heights are a
+  measured table (`symbolContentHeights`, read from CoreUI's vector glyphs on macOS 15.6, offline: nothing private
+  runs in Kite); a symbol missing from it asserts in debug. With this one rule every row matches in both the default
+  layout and below Boosts and extensions; a per-symbol half-point nudge fitted to one layout didn't.
+- The tiles' symbols use `SymbolOrigins` (Share and New Boost measured).
+- The "More" hint is trailing-aligned from the text's exact width, rounded down to the pixel.
+- The pin's circle resolves `windowBackgroundColor` in plain dark/light (#323232), not the popover's vibrant
+  appearance (#212121).
+- An extension's own icon keeps its colours (`place` returns a template image; only the puzzle piece is tinted).
+
+**Rebuilds:** a change rebuilds the controls only when a snapshot of what they show changes (the window re-reads every
+property after each change, and an assignment notifies even when equal). Each control is reused by its identity
+(a Boost's id, a permission, an action's slot) and its closures set again; whatever wasn't built in a pass is
+removed. The observation stops while the popover is closed.
+
+**Keyboard:** with Keyboard navigation on, Tab moves through the actions, headers, rows, tiles and the footer, Space
+presses the focused control (once, not on key repeat), a focus ring follows its wash, and a rebuild keeps the focus
+on the control in the same place. VoiceOver: each control is one element (its label and image aren't read on their
+own), Show Menu opens a row's or tile's menu, and a Boost row has an "Edit Boost" action.
+
+UI match (2x captures of the popover window, main 020e97f vs M3, debug bundles, the region below the action row; max
+channel delta):
+
+| State | dark | light |
+|---|---|---|
+| default layout: idle, hovered action, row, header, "…" | 40 | 40 |
+| Boosts and an extension: idle, hovered Boost row, hovered tile (pin) | 44 | |
+| an extension and no Boosts: idle, hovered tile | 40 / 44 | |
+
+40 is text anti-aliasing (SwiftUI's fractional text widths). The action row itself: max 34 apart from main's focus ring
+(below). Geometry isn't compared through `ui tree`: main's SwiftUI tree has no views to pair with M3's, so the pixel
+diffs stand in for it.
+
+CPU, main process, release builds with the test bundle ID, ms/s (main → M3):
+
+| Scenario | main | M3 |
+|---|---|---|
+| toggling a permission row every 0.5 s, three 20 s runs | 33.7 / 40.5 / 34.2 | 17.1 / 15.2 / 18.1 |
+| popover open, resting, two 30 s runs | 4.9 / 3.6 | 4.3 / 7.7 |
+
+Interrupt wakeups while toggling are higher (about 17.8/s against 12.7/s) at similar billed energy. The popover's view
+tree has 71 views against main's 86.
+
+Behaviour, with posted events on background test Kites, the same script on both: the footer menu (same items, through
+`KITE_TEST_CONTEXT_MENU`), toggling a Boost and a permission, the Boost pencil and the Settings header (both dismiss;
+the header opens Site Settings), New Boost (creates one for the site), and the address field's button closing an open
+popover all do the same on main and M3. Two Boosts with the same name (Kite's default name is the domain) keep 8 rows
+over three toggles. M3's ⌃-click menus read "Allow | Block | Ask (Default)" and "Pin to Toolbar | Turn Off | --- |
+Remove…", the items and order main declares.
+
+Differences from main:
+- At open, keyboard focus starts on the first control (Share). Main's SwiftUI popover started on the second (New
+  Boost), visible as a focus ring for anyone with Keyboard navigation on.
+- Hover follows the pointer: under synthetic pointer moves main's SwiftUI rows and tiles sometimes stayed hovered
+  after the pointer left.
+- No pressed-state dimming: SwiftUI's plain buttons dim while pressed; the amount isn't measured.
+- The Boost pencil is in the view only while its row is hovered, so the keyboard reaches it only then (VoiceOver has
+  the row's action). Whether main's hidden SwiftUI pencil took focus isn't verified.
+
+Not verified: a real pointer and the focus ring as drawn (a background test window isn't key, so AppKit doesn't draw
+it); where the "…" menu opens (a menu is modal and can't be captured; the 4pt gap is the draft's); Copy URL (no
+Boosts), Portrait Mode (⌥ held), the WebKit note and Default Mail App rows, which weren't captured.
+
+Follow-up: `SiteControlsLabel` overlaps `SidebarLabel`, and the exact-top symbol placement sits beside SidebarKit's;
+both can move into SidebarKit when M4–M6 need them.
