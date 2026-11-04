@@ -115,8 +115,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setUpVPNSignIn()
 
         automation = AutomationController(store: store, supportDirectory: Self.supportDirectory)
-        automation.host = windowController
-        windowController.installAutomationBanner(automation)
+        attachAutomation(to: windowController)
+        automation.ensureWindow = { [weak self] in self?.retargetAutomation(opening: true) }
+        // The window Claude's tools work in closed (the main one too, with a ⌘N window open): they move on.
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] note in
+            let window = note.object as? NSWindow
+            MainActor.assumeIsolated {
+                guard let self, let window, window === self.automation?.host?.window else { return }
+                // After the window's own windowWillClose has marked its controller closed.
+                DispatchQueue.main.async { self.retargetAutomation(opening: false) }
+            }
+        }
         automation.start()
         // A test build on a throwaway profile with KITE_DIAGNOSTICS=1 comes up ready for Claude.
         if UIDiagnostics.enabledByEnvironment && !automation.isEnabled { automation.setEnabled(true) }
@@ -505,6 +514,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `make new window`: File › New Window, or New Incognito Window.
     func openScriptWindow(incognito: Bool) -> BrowserWindowController {
         incognito ? openIncognitoWindow() : windows.openNewWindow()
+    }
+
+    // MARK: Claude's window
+
+    /// Windows whose pool already reports pages to automation and shows its banner, border and card.
+    private var automationWindows: Set<ObjectIdentifier> = []
+
+    private func attachAutomation(to controller: BrowserWindowController) {
+        automation.attach(controller)
+        if automationWindows.insert(ObjectIdentifier(controller)).inserted { controller.installAutomationBanner(automation) }
+    }
+
+    /// Keeps Claude's tools on a live normal window: the frontmost one once theirs has closed, or, when
+    /// `opening` and none is left (only incognito or Blank windows), a new one. Never the closed window.
+    func retargetAutomation(opening: Bool) {
+        guard let automation, let windows, !isTerminating else { return }
+        let ordered = NSApp.orderedWindows
+        // Front to back; a window hidden while Claude works isn't ordered in, and goes last.
+        func rank(_ controller: BrowserWindowController) -> Int { ordered.firstIndex { $0 === controller.window } ?? .max }
+        let controllers = browserControllers.sorted { rank($0) < rank($1) }
+        let candidates = controllers.map {
+            AutomationWindowChoice.Window(id: ObjectIdentifier($0), isNormal: !$0.isIncognito && !windows.isBlank($0),
+                                          isOpen: !$0.hasClosed)
+        }
+        let current = (automation.host as? BrowserWindowController).map(ObjectIdentifier.init)
+        switch AutomationWindowChoice.pick(current: current, windows: candidates) {
+        case .keep:
+            break
+        case .use(let id):
+            if let controller = controllers.first(where: { ObjectIdentifier($0) == id }) { attachAutomation(to: controller) }
+        case .openNew:
+            if opening { attachAutomation(to: windows.openWindowForAutomation()) }
+        }
     }
 
     var allowsJavaScriptFromAppleEvents: Bool { store?.state.allowsJavaScriptFromAppleEvents ?? false }
