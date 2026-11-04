@@ -1181,7 +1181,6 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
     int _nextMessageID;
     std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
     NSInteger _blockedCount;
-    BOOL _blockedCountPending;
     /// Network bytes so far (NetworkCountingHandler adds to it on Chromium's IO thread).
     std::atomic<uint64_t> _networkBytes;
     /// Page.addScriptToEvaluateOnNewDocument identifiers to remove when the script changes.
@@ -1692,17 +1691,12 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
     return _blockedCount;
 }
 
-- (void)noteBlockedRequest {
-    _blockedCount++;
-    // Pages block in bursts; tell the delegate once per run loop turn.
-    if (_blockedCountPending) return;
-    _blockedCountPending = YES;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        self->_blockedCountPending = NO;
-        if ([self.delegate respondsToSelector:@selector(browser:blockedCountDidChange:)]) {
-            [self.delegate browser:self blockedCountDidChange:self->_blockedCount];
-        }
-    });
+- (void)noteBlockedRequests:(NSInteger)count {
+    // The ad blocker already batches these per burst (KCAdblock.mm).
+    _blockedCount += count;
+    if ([self.delegate respondsToSelector:@selector(browser:blockedCountDidChange:)]) {
+        [self.delegate browser:self blockedCountDidChange:_blockedCount];
+    }
 }
 
 /// Popups load their first page as soon as Chromium creates them, possibly before

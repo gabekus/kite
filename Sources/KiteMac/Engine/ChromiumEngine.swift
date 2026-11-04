@@ -645,7 +645,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         for delay in Self.cosmeticPolls {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self, self.cosmeticGeneration == generation else { return }
-                self.browser.evaluateJavaScript(adblocker.drainScript) { [weak self] result in
+                self.browser.evaluateJavaScript(adblocker.drainScript(last: delay == Self.cosmeticPolls.last)) { [weak self] result in
                     guard let self, self.cosmeticGeneration == generation, let payload = result as? String,
                           let script = adblocker.genericHidingScript(payload: payload, pageURL: self.address) else { return }
                     self.browser.evaluateJavaScript(script) { _ in }

@@ -239,6 +239,41 @@ import JavaScriptCore
         let result = context.evaluateScript("try { new Function(source); 'ok' } catch (e) { String(e) }")
         #expect(result?.toString() == "ok")
         #expect(context.evaluateScript("try { new Function(\(Self.quoted(CosmeticResources.drainScript("__kite_q")))); 'ok' } catch (e) { String(e) }")?.toString() == "ok")
+        #expect(context.evaluateScript("try { new Function(\(Self.quoted(CosmeticResources.drainScript("__kite_q", last: true)))); 'ok' } catch (e) { String(e) }")?.toString() == "ok")
+    }
+
+    /// The class/id queue against a stand-in DOM: added nodes are scanned at idle,
+    /// the last drain disconnects the observer, and a later drain reconnects it.
+    @Test func lastDrainDisconnectsTheObserver() throws {
+        let context = try #require(JSContext())
+        context.evaluateScript("""
+            const el = (cls, id) => ({ nodeType: 1, isConnected: true, id: id || '', classList: cls ? [cls] : [], querySelectorAll: () => [] });
+            var observers = 0, callback = null, idleQueue = [];
+            var window = { requestIdleCallback: (f) => { idleQueue.push(f); return 1; } };
+            var document = { readyState: 'complete', documentElement: el('root'), addEventListener() {},
+                             createElement: () => ({ isConnected: false, setAttribute() {} }) };
+            document.documentElement.appendChild = (child) => { child.isConnected = true; };
+            function MutationObserver(cb) { callback = cb; }
+            MutationObserver.prototype.observe = function () { observers++; };
+            MutationObserver.prototype.disconnect = function () { observers--; callback = null; };
+            var addEventListener = () => {};
+            var location = { hostname: 'a.example' };
+            var drain = (last) => eval(last ? \(Self.quoted(CosmeticResources.drainScript("__kite_q", last: true))) : \(Self.quoted(CosmeticResources.drainScript("__kite_q"))));
+            """)
+        let script = CosmeticResources().documentStartScript(host: "a.example", styleID: "k1", drain: "__kite_q")
+        context.setObject(script, forKeyedSubscript: "source" as NSString)
+        // The script reads `window[...]` and globals; run it with the stand-ins in scope.
+        context.evaluateScript("new Function('window', 'document', 'MutationObserver', 'location', 'addEventListener', source)(window, document, MutationObserver, location, addEventListener)")
+        #expect(context.evaluateScript("observers")?.toInt32() == 1)
+        #expect(context.evaluateScript("drain(false)")?.toString() == #"{"classes":["root"],"ids":[]}"#)
+        // A mutation is only queued; the drain flushes what idle time hasn't.
+        context.evaluateScript("callback([{ type: 'childList', addedNodes: [el('ad-slot', 'top')] }])")
+        #expect(context.evaluateScript("idleQueue.length")?.toInt32() == 1)
+        #expect(context.evaluateScript("drain(true)")?.toString() == #"{"classes":["ad-slot"],"ids":["top"]}"#)
+        #expect(context.evaluateScript("observers")?.toInt32() == 0)
+        // Another load's drains reconnect and rescan.
+        #expect(context.evaluateScript("drain(false)")?.isNull == true)
+        #expect(context.evaluateScript("observers")?.toInt32() == 1)
     }
 
     private static func quoted(_ s: String) -> String {

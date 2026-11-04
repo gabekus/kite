@@ -144,7 +144,8 @@ final class Adblocker {
     }
 
     /// Script that hands back the classes and ids a page queued (`genericHidingScript`'s input).
-    var drainScript: String { CosmeticResources.drainScript(drainName) }
+    /// `last` disconnects the page's observer until the next drain.
+    func drainScript(last: Bool) -> String { CosmeticResources.drainScript(drainName, last: last) }
 
     /// The page reported classes and ids it uses; returns a script adding the
     /// generic rules that hide any of them, or nil when none apply.
