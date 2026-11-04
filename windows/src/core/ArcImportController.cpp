@@ -217,7 +217,7 @@ std::variant<Sidebar, LoadError> LoadSidebar(const fs::path& folder, const ReadO
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         current = ReadSidebar(folder / candidates[0], options);
     }
-    if (current.result) return Sidebar{std::move(*current.result), candidates[0], false, std::nullopt};
+    if (current.result) return Sidebar{std::move(*current.result), candidates[0], false, std::nullopt, {}};
     if (!TriesBackup(current.failure)) return NoSpaces();
     for (size_t i = 1; i < candidates.size(); ++i) {
         if (Cancelled(options)) return CancelledError();
@@ -268,7 +268,7 @@ std::variant<Plan, LoadError> ReadPicked(const fs::path& picked, const std::opti
     } else {
         auto read = ReadSidebar(picked, options);
         if (read.result) {
-            loaded = Sidebar{std::move(*read.result), PathText(picked.filename()), false, std::nullopt};
+            loaded = Sidebar{std::move(*read.result), PathText(picked.filename()), false, std::nullopt, {}};
         } else if (read.tooLarge) {
             return LoadError{std::nullopt, PathText(picked.filename()) + " is too large for Kite to read (" + TooLarge(*read.tooLarge, options.maxFileBytes) + ").",
                              kHelp, true};
