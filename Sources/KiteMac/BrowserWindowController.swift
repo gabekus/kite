@@ -801,8 +801,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
-        // Shown again after closing (nothing should, but a closed window can be ordered back in).
-        hasClosed = false
         reclaimPages()
         // Another window's bar may have taken the field editor all windows share.
         keepCommandBarFocused(after: .becameKey)
