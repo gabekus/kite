@@ -21,10 +21,14 @@ extension BrowserWindowController: SidebarDragContentTarget {
         splitDropZones.showTabPlaceholder(nil)
         guard let proposal else { return false }
         store.hideCommandBar()
-        var outcome: SidebarDropOutcome?
-        store.mutate { outcome = $0.dropSidebarItems(ids, besidePane: proposal.pane, before: proposal.before) }
-        guard let outcome else { return false }
-        sidebarDropped(outcome)
+        let target = SidebarDropTarget.split(with: proposal.pane, side: proposal.before ? .left : .right)
+        guard store.state.canDropSidebarItems(ids, besidePane: proposal.pane) else { return false }
+        confirmCrossProfileMove(ids, on: target) { [weak self] in
+            guard let self else { return }
+            var outcome: SidebarDropOutcome?
+            store.mutate { outcome = $0.dropSidebarItems(ids, besidePane: proposal.pane, before: proposal.before) }
+            if let outcome { sidebarDropped(outcome) }
+        }
         return true
     }
 

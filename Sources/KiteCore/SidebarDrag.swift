@@ -34,6 +34,41 @@ public enum SidebarDropOutcome: Equatable, Sendable {
     case movedToSpace(UUID, tabID: UUID)
 }
 
+/// Arc's confirmation for tabs moving to a space on another profile, worded as in Arc 1.169's
+/// binary (ProfilesUI): "Move tab(s) to <space>?", "<space> is using a different Profile, so you
+/// might get logged out or lose your progress in this tab / these tabs.", "This can't be undone!",
+/// with "Move it" and "Cancel", and a "Don’t ask again" suppression button.
+public struct CrossProfileMove: Equatable, Sendable {
+    public var spaceName: String
+    public var tabCount: Int
+
+    /// Where "Don’t ask again" is kept.
+    public static let suppressedKey = "crossProfileMoveWarningSuppressed"
+    public static let confirmTitle = "Move it"
+    public static let suppressionTitle = "Don\u{2019}t ask again"
+
+    public init(spaceName: String, tabCount: Int) {
+        self.spaceName = spaceName
+        self.tabCount = tabCount
+    }
+
+    public var title: String { "Move \(tabCount > 1 ? "tabs" : "tab") to \(spaceName)?" }
+
+    public var message: String {
+        "\(spaceName) is using a different Profile, so you might get logged out or lose your progress in "
+            + "\(tabCount > 1 ? "these tabs" : "this tab").\n\nThis can't be undone!"
+    }
+
+    public static func isSuppressed(in defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: suppressedKey)
+    }
+
+    /// "Don’t ask again", ticked when the move was confirmed.
+    public static func setSuppressed(in defaults: UserDefaults = .standard) {
+        defaults.set(true, forKey: suppressedKey)
+    }
+}
+
 extension BrowserState {
     /// A drag's unit for an item: a split's members move together, so a tab in a split stands
     /// for the split (its ID). Folders and lone tabs stand for themselves.
@@ -51,9 +86,9 @@ extension BrowserState {
         case .favorites:
             // Favorites hold tabs and split views (Arc's tray items can be a split's panes), not folders.
             return !hasFolder
-        case .unpinned, .space:
+        case .unpinned(let space, _), .space(let space):
             // Folders live in the pinned section only.
-            return !hasFolder
+            return !hasFolder && spaceIndex(space) != nil
         case .pinned(let space, let folder, _):
             guard spaceIndex(space) != nil else { return false }
             if let folder, !folderExists(folder, inSpace: space) { return false }
@@ -76,7 +111,7 @@ extension BrowserState {
     /// panes together. Nil when the drop isn't allowed.
     @discardableResult
     public mutating func dropSidebarItems(_ ids: [UUID], on target: SidebarDropTarget) -> SidebarDropOutcome? {
-        guard canDrop(ids, on: target) else { return nil }
+        guard canDrop(ids, on: target), let destinationSpace = dropDestination(target) else { return nil }
         let units = ids.compactMap(dragUnit)
         let movedTabIDs = units.flatMap(\.tabIDs)
         let fromSections = Set(movedTabIDs.compactMap { location(of: $0)?.section })
@@ -109,38 +144,27 @@ extension BrowserState {
         }
         favoriteSplits.removeAll { split in extracted.contains { $0.split?.id == split.id } }
 
-        let destinationSpace: Int
+        let s = destinationSpace
         switch target {
         case .favorites(let before):
             let tabs = extracted.flatMap(\.tabs).compactMap { if case .tab(let tab) = $0 { tab } else { nil } }
             favorites.insert(contentsOf: tabs, at: before.flatMap { id in favorites.firstIndex { $0.id == id } } ?? favorites.count)
             favoriteSplits += extracted.compactMap(\.split)
-            destinationSpace = selectedSpaceIndex
-        case .unpinned(let space, let before):
-            let s = spaceIndex(space)!
+        case .unpinned(_, let before):
             let tabs = extracted.flatMap(\.tabs).compactMap { if case .tab(let tab) = $0 { tab } else { nil } }
             spaces[s].tabs.insert(contentsOf: tabs, at: before.flatMap { id in spaces[s].tabs.firstIndex { $0.id == id } } ?? spaces[s].tabs.count)
             spaces[s].splits += extracted.compactMap(\.split)
-            destinationSpace = s
-        case .space(let space):
-            let s = spaceIndex(space)!
+        case .space:
             let tabs = extracted.flatMap(\.tabs).compactMap { if case .tab(let tab) = $0 { tab } else { nil } }
             spaces[s].tabs.insert(contentsOf: tabs, at: 0)
             spaces[s].splits += extracted.compactMap(\.split)
-            destinationSpace = s
-        case .pinned(let space, let folder, let before):
-            let s = spaceIndex(space)!
+        case .pinned(_, let folder, let before):
             spaces[s].pinnedItems.insert(extracted.flatMap(\.tabs), inFolder: folder, before: before)
             spaces[s].splits += extracted.compactMap(\.split)
-            destinationSpace = s
         case .folder(let folder):
-            let s = spaceContaining(folder: folder)!
             spaces[s].pinnedItems.insert(extracted.flatMap(\.tabs), inFolder: folder, before: nil)
             spaces[s].splits += extracted.compactMap(\.split)
-            destinationSpace = s
         case .split(let anchor, let side):
-            let s = location(of: anchor)!.space!
-            destinationSpace = s
             join(extracted.flatMap(\.tabs), to: anchor, side: side, inSpace: s)
         }
 
@@ -173,7 +197,31 @@ extension BrowserState {
         return .moved
     }
 
+    /// Arc's warning before a move takes tabs to a space on another profile (ProfileDialogUtils):
+    /// their pages would reopen in that profile, without its logins. Nil when the drop isn't
+    /// allowed or every moved tab already uses the destination's profile.
+    public func crossProfileMove(_ ids: [UUID], on target: SidebarDropTarget) -> CrossProfileMove? {
+        guard canDrop(ids, on: target), let destination = dropDestination(target) else { return nil }
+        // Favorites are the space on screen's profile's. A drag can bring another profile's tab
+        // there: the sidebar switches spaces when the drag rests at its edge.
+        let profile = profileDirectory(ofSpace: destination)
+        let crossing = ids.compactMap(dragUnit).flatMap(\.tabIDs).filter { profileDirectory(ofTab: $0) != profile }
+        guard !crossing.isEmpty else { return nil }
+        return CrossProfileMove(spaceName: spaces[destination].name, tabCount: crossing.count)
+    }
+
     // MARK: Helpers
+
+    /// The space a drop on `target` lands in; for favorites, the space on screen (whose profile's
+    /// favorites they are). Nil when it's gone.
+    private func dropDestination(_ target: SidebarDropTarget) -> Int? {
+        switch target {
+        case .favorites: selectedSpaceIndex
+        case .pinned(let space, _, _), .unpinned(let space, _), .space(let space): spaceIndex(space)
+        case .folder(let folder): spaceContaining(folder: folder)
+        case .split(let anchor, _): location(of: anchor)?.space
+        }
+    }
 
     private func isFavoriteTarget(_ target: SidebarDropTarget) -> Bool {
         if case .favorites = target { true } else { false }
