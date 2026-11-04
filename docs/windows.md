@@ -51,10 +51,11 @@ windows/
   src/shell/    Kite.exe: main.cpp (the command line, the session), BrowserWindowController
                 (the window and what's in it: views, Chromium, shortcuts), composition, input
   src/cli/      kitecore: the model, headless
-  tests/        unit tests (no test framework dependency)
+  tests/        unit tests (no test framework dependency); fixtures/ holds hand-made inputs
+                (an Arc for Windows folder, Chromium Web Data databases)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
   resources/    Kite.manifest (DPI, UTF-8 code page, long paths) and its MinGW .rc
-  scripts/      fetch-cef.ps1, gen-unicode-tables.py
+  scripts/      fetch-cef.ps1, gen-unicode-tables.py, make-web-data.py (the Web Data fixtures)
   cmake/        mingw-w64.cmake (cross-compile check off Windows)
 ```
 
@@ -412,6 +413,41 @@ Swift's Character rules checked only where it hits. `kitecore history`
 lists, searches, adds and clears; `kitecore history-bench` measures it. Not
 yet: the history page (`kite://history`), Delete browsing data, Import from
 Arc (W25b), and the bar's favicons.
+## Import from Arc
+
+Arc stops working on 2026-12-22, so Kite for Windows imports Arc for Windows'
+data the way the Mac imports Mac Arc's (W15; `core/ArcImport*`, ported from
+KiteCore's `ArcImport*.swift` and KiteMac's `ArcImportController.swift`). Arc
+for Windows keeps it in its package,
+`%LOCALAPPDATA%\Packages\TheBrowserCompany.Arc_*\LocalCache\Local\Arc`:
+`StorableSidebar.json` (with dated backups, tried newest first when the current
+file doesn't read), `StorableArchiveItems.json`, `StorableKeyBindings.json` and
+`StorableLinkRouting.json` when there are any, Site Search in
+`User Data\Default\Web Data` (read with Kite's own SQLite reader) and profile
+names in `User Data\Local State`. Its settings aren't macOS defaults but an
+XML plist beside that folder, `LocalCache\Local\company.thebrowser.arc.plist`.
+Its sidebar is Mac Arc's shape with two differences Kite reads too: a space's
+containers may come as `newContainerIDs` (enum-keyed), and its icon as
+`customInfo.iconType.icon`, a name from Arc's own icon set (one of Kite's
+symbols when it matches, else a stand-in).
+
+Spaces, pinned tabs, folders, splits, favorites, profiles, the archive, Site
+Search and Arc's settings go into `session.json`, in the Mac's format;
+shortcut changes into `keybindings.json` (read at launch) and Air Traffic
+Control routes into `LinkRouting.json`, as the Mac's stores keep them.
+The session is saved first, then the other two files. Arc's unnamed spaces stay
+out, as the Mac's dialog starts, unless Arc has no named space at all (Arc for
+Windows often has one unnamed space holding everything): then they come over, a
+deliberate difference from the Mac. A sidebar item listed twice or in a loop
+is placed once, and nothing nests past 64 levels (the Mac's #362). Site Search
+is left out while Arc is writing Web Data (a hot journal beside it).
+`kitecore --profile P import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]`
+runs it headless and prints the counts per kind and what was skipped and why;
+`kitecore profile list|add|rename|delete` manages the profiles it makes. In the
+app it's the `importFromArc` command, also in the window's system menu
+(Alt+Space): the system folder picker stands in for the Mac's open panel, and
+a message box with the Mac's text for its dialog. Not yet: history, sign-ins
+(cookies) and extensions, and the Little Kite setting (no Little Kite).
 
 ## Refresh rate
 
@@ -480,5 +516,7 @@ Off Windows, the model and its tests build natively, and MinGW cross-compiles th
 
 ```bash
 cmake -S windows -B /tmp/kite-core && cmake --build /tmp/kite-core -j && ctest --test-dir /tmp/kite-core
+# The same tests under ASan and UBSan, as CI runs them (KITE_WERROR=OFF: the build above gates warnings):
+cmake -S windows -B /tmp/kite-asan -DCMAKE_BUILD_TYPE=Debug -DKITE_WERROR=OFF -DCMAKE_CXX_FLAGS="-O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" && cmake --build /tmp/kite-asan --target KiteCoreTests -j && ctest --test-dir /tmp/kite-asan -R KiteCoreTests
 cmake -S windows -B /tmp/kite-mingw -DCMAKE_TOOLCHAIN_FILE="$PWD/windows/cmake/mingw-w64.cmake" && cmake --build /tmp/kite-mingw -j
 ```

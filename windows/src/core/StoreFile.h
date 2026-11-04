@@ -22,6 +22,8 @@
 #include <string>
 #include <string_view>
 
+#include "core/Files.h"
+
 namespace kite::store_file {
 
 // Empty on success, otherwise what went wrong (the target is then untouched).
@@ -42,7 +44,7 @@ size_t RemoveStaleTemps(const std::filesystem::path& directory, std::chrono::sec
 // The whole file, or none when it can't be read.
 std::optional<std::string> Read(const std::filesystem::path& file);
 
-// UTF-8 for messages; path::string() throws on Windows for names outside the ANSI code page.
-std::string PathText(const std::filesystem::path& path);
+// UTF-8 for messages (core/Files.h's).
+using kite::PathText;
 
 }  // namespace kite::store_file

@@ -118,6 +118,7 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
 }
 
 BrowserWindowController::~BrowserWindowController() {
+    StopArcRead();
     // History's worker outlives the window: it stops posting to it.
     if (history_) history_->SetWake(nullptr);
     // The views and the compositor go before the window: it stops calling into them first.
@@ -236,6 +237,12 @@ std::wstring BrowserWindowController::Init() {
     sidebar_->SetActions(std::move(actions));
 
     MakeCommands();
+    // The Mac's File › Import from Arc…: in the window's system menu (Alt+Space) until Windows
+    // has a menu of Kite's own.
+    if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kImportFromArcMenuID, L"Import from Arc…");
+    }
     // Every command the table can name does something: a test run fails on one that doesn't.
     if (options_.smokeTest || options_.capture) {
         for (const ShortcutCommand& command : ShortcutCommands()) {
@@ -250,10 +257,11 @@ std::wstring BrowserWindowController::Init() {
     // doesn't wait for the write (main.cpp does, once the window is gone); logoff and shutdown
     // can end the process as soon as WM_ENDSESSION returns, so that waits, for a bounded time.
     window_.onClose = [this](bool endingSession) {
+        // First, so an Import from Arc whose dialog is still up does nothing more.
+        closing_ = true;
         clock_->Stop();
         memoryWatch_.reset();
         RunPending();
-        closing_ = true;
         SaveNow();
         // History too, as the Mac's flush at quit; main.cpp waits for its writes.
         if (history_) {
@@ -635,6 +643,7 @@ void BrowserWindowController::MakeCommands() {
         {"openLocation", [this] { OpenCommandBar(CommandBarMode::EditCurrent); }},
         {"archiveTab", [this] { ArchiveTab(); }},
         {"reopenClosedTab", [this] { ReopenClosedTab(); }},
+        {"importFromArc", [this] { ImportFromArc(); }},
         // One window, so closing it quits, as the Mac's last window does with Kite set so.
         {"closeWindow", [this] { PostMessageW(window_.Handle(), WM_CLOSE, 0, 0); }},
         {"quitKite", [this] { PostMessageW(window_.Handle(), WM_CLOSE, 0, 0); }},
@@ -921,6 +930,15 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     }
     if (message == kSpaceIconsMessage) {
         sidebar_->PicturesArrived();
+        return true;
+    }
+    if (message == kArcReadMessage) {
+        ArcRead();
+        return true;
+    }
+    if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == kImportFromArcMenuID) {
+        RunCommand("importFromArc");
+        result = 0;
         return true;
     }
     if (message == kFaviconsMessage) {

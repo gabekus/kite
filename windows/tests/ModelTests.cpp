@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 
 #include "Check.h"
@@ -121,6 +122,21 @@ TEST(makeDefaultHasPersonalAndWork) {
     CHECK(state.SelectedTab() && state.SelectedTab()->url == std::optional<std::string>("https://www.wikipedia.org"));
     CHECK(IsUuid(state.spaces[0].id) && state.spaces[0].id != state.spaces[1].id);
     CHECK(BrowserState::MakeDefault(std::nullopt).SelectedTab() == nullptr);
+}
+
+// Ids are the model's identity, so a generator that repeats (Zen 5's RDSEED handing back zeros)
+// breaks everything that looks a tab up. Every id stays a valid v4 UUID and none repeats; this
+// is the regression guard on affected hardware, where sanitizers see nothing wrong.
+TEST(newUuidsAreDistinct) {
+    std::set<std::string> ids;
+    bool allValid = true;
+    for (int i = 0; i < 1000; ++i) {
+        std::string id = NewUuid();
+        allValid = allValid && IsUuid(id) && id[14] == '4' && std::string("89abAB").find(id[19]) != std::string::npos;
+        ids.insert(id);
+    }
+    CHECK(allValid);
+    CHECK(ids.size() == 1000);
 }
 
 // KiteCoreTests.swift BrowserStateTests.openTabSelectsAndGoesOnTop

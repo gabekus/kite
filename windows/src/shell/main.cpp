@@ -355,6 +355,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.frameLog = frameLogOption.present;
     options.saveLog = saveLogOption.present;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
+    options.supportDirectory = supportDirectory;
     auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, &history, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);

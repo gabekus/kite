@@ -16,6 +16,8 @@
 //   kitecore save-bench [TABS]
 //   kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]|clear [--chromium PROFILE]
 //   kitecore history-bench [ENTRIES]
+//   kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]
+//   kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
@@ -45,6 +47,16 @@
 // `history-bench` measures history on the app's own path with ENTRIES pages (default 20000, the
 // Mac's cap) in a temp folder of its own: a visit's cost on the UI thread, the snapshot a save
 // hands over, the command bar's search, reading and writing the file, and the memory it takes.
+// `import-arc` is Import from Arc (core/ArcImportController.h): from Arc for Windows' folder
+// (--auto, the default), or PATH (Arc's folder, the folder holding it, or a sidebar file). It
+// prints what came over, per kind, and what was skipped and why: counts only, never Arc's
+// titles or addresses. Arc's unnamed spaces stay out, as the Mac's dialog starts, unless Arc
+// has no named space (then they're all there is) or --include-unnamed; --leave-out-unnamed
+// leaves them out either way. The session is saved first, then keybindings.json and
+// LinkRouting.json; the summary prints once all of it is written. With --profile or
+// KITE_SUPPORT_PATH, KITE_ARC_DATA_PATH stands in for Arc's folder, as in the Mac's test runs.
+// `profile` lists, makes, renames and deletes Kite profiles (core/Profiles.h). A deleted one's
+// folder name is free again once its Chromium folder is gone, which kitecore never deletes.
 
 #include <algorithm>
 #include <atomic>
@@ -62,6 +74,7 @@
 #include <string>
 #include <vector>
 
+#include "core/ArcImportController.h"
 #include "core/CommandBar.h"
 #include "core/History.h"
 #include "core/HistoryStore.h"
@@ -69,6 +82,7 @@
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/SessionSaveDelay.h"
+#include "core/Profiles.h"
 #include "core/SessionStore.h"
 #include "core/SessionWriter.h"
 #include "core/Sidebar.h"
@@ -138,7 +152,9 @@ int Usage() {
         "       kitecore save-bench [TABS]\n"
         "       kitecore [--profile DIR] history list|search TEXT... [--limit N]|add URL [TITLE...] [--at SECONDS]|clear\n"
         "                [--chromium PROFILE]\n"
-        "       kitecore history-bench [ENTRIES]\n",
+        "       kitecore history-bench [ENTRIES]\n"
+        "       kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]\n"
+        "       kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY\n",
         stderr);
     return kUsage;
 }
@@ -1042,6 +1058,71 @@ int main(int argc, char** argv) {
             const auto& presets = Theme::Presets();
             std::puts(state.AddSpace(std::string(unicode::Trim(args[2])), args.size() == 4 ? args[3] : "",
                                      presets[state.spaces.size() % presets.size()]).c_str());
+        } else {
+            return Usage();
+        }
+        changed = true;
+    } else if (command == "import-arc") {
+        arc_import::ImportOptions options;
+        std::optional<std::filesystem::path> picked;
+        bool automatic = false;
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--include-unnamed" && !options.includeUntitled) options.includeUntitled = true;
+            else if (args[i] == "--leave-out-unnamed" && !options.includeUntitled) options.includeUntitled = false;
+            else if (args[i] == "--auto" && !picked) automatic = true;
+            else if (!automatic && !picked && !args[i].starts_with("--")) picked = std::filesystem::path(std::u8string(args[i].begin(), args[i].end()));
+            else return Usage();
+        }
+        const auto arcDirectory = arc_import::ArcDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"),
+                                                           EnvironmentPath("KITE_ARC_DATA_PATH"), EnvironmentPath("LOCALAPPDATA"));
+        auto plan = picked ? arc_import::ReadPicked(*picked, arcDirectory) : arc_import::ReadAuto(arcDirectory);
+        if (auto* error = std::get_if<arc_import::LoadError>(&plan)) {
+            std::fprintf(stderr, "kitecore: %s %s\n", error->message.c_str(), error->detail.c_str());
+            return kNotFound;
+        }
+        arc_import::Imported imported = arc_import::Import(state, std::get<arc_import::Plan>(plan), options);
+        // The session first: shortcut changes and routes to spaces it doesn't have would be no use.
+        if (std::string error = store.Save(state); !error.empty()) {
+            std::fprintf(stderr, "kitecore: %s\n", error.c_str());
+            return kSaveFailed;
+        }
+        arc_import::WriteProfileFiles(imported, std::get<std::filesystem::path>(resolved));
+        std::puts(json::Write(arc_import::Summary(imported)).c_str());
+        return kOk;
+    } else if (command == "profile" && args.size() >= 2) {
+        const std::string& action = args[1];
+        if (action == "list" && args.size() == 2) {
+            json::Array rows;
+            for (const Profile& p : AllProfiles(state)) {
+                json::Object o{{"directory", p.directory}, {"name", p.name}, {"dataStoreID", p.dataStoreID}};
+                o.emplace("deletable", CanDeleteProfile(state, p.directory));
+                rows.push_back(json::Value(std::move(o)));
+            }
+            std::puts(json::Write(json::Value(std::move(rows))).c_str());
+            return kOk;
+        } else if (action == "add" && args.size() == 3) {
+            auto made = CreateProfile(state, args[2]);
+            if (auto* error = std::get_if<ProfileNameError>(&made)) {
+                std::fprintf(stderr, "kitecore: %s\n", Message(*error));
+                return kUsage;
+            }
+            std::puts(std::get<Profile>(made).directory.c_str());
+        } else if (action == "rename" && args.size() == 4) {
+            if (ProfileFor(state, args[2]).directory != args[2] || args[2] == Profile::kDefaultDirectory) return kNotFound;
+            if (auto error = RenameProfile(state, args[2], args[3])) {
+                std::fprintf(stderr, "kitecore: %s\n", Message(*error));
+                return kUsage;
+            }
+        } else if (action == "delete" && args.size() == 3) {
+            // Arc's rule: only a profile no space uses, never the default one.
+            if (!DeleteProfile(state, args[2])) return kNotFound;
+            // The shell deletes a profile's Chromium folder; with none, its name is free at once.
+            std::error_code error;
+            if (!std::filesystem::exists(std::get<std::filesystem::path>(resolved) / "Chromium" /
+                                             std::filesystem::path(std::u8string(args[2].begin(), args[2].end())),
+                                         error)) {
+                ForgetRetiredProfiles(state, {args[2]});
+            }
         } else {
             return Usage();
         }

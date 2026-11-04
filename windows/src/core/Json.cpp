@@ -57,6 +57,24 @@ const Value* Value::Find(std::string_view key) const {
     return it == object->end() ? nullptr : &it->second;
 }
 
+const Value* Member(const Value* object, std::string_view key) { return object ? object->Find(key) : nullptr; }
+
+const Value* ObjectMember(const Value* object, std::string_view key) {
+    const Value* v = Member(object, key);
+    return v && v->AsObject() ? v : nullptr;
+}
+
+const std::string* StringMember(const Value* object, std::string_view key) {
+    const Value* v = Member(object, key);
+    return v ? v->AsString() : nullptr;
+}
+
+std::optional<Value> ParseValue(std::string_view text) {
+    auto parsed = Parse(text);
+    if (auto* value = std::get_if<Value>(&parsed)) return std::move(*value);
+    return std::nullopt;
+}
+
 bool Value::operator==(const Value& other) const {
     if (data_.index() != other.data_.index()) return false;
     if (auto* a = AsArray()) return *a == *other.AsArray();
