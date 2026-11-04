@@ -22,6 +22,7 @@
 
 #include "core/KeyBindings.h"
 #include "core/Models.h"
+#include "core/SidebarTopRow.h"
 #include "core/SpaceEditing.h"
 #include "core/SpaceSwipe.h"
 #include "core/SpaceSwipeGesture.h"
@@ -117,6 +118,14 @@ public:
     // For a capture: what Capture composes over the frame next, space `index`'s menu opened
     // over its cell in the bar (Windows' own menu, read back as it shows).
     void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
+    // For a capture (which has no pages): the selected tab's page reporting `page`, as Chromium
+    // would (back and forward, loading).
+    void HoldPageStatus(const PageStatus& page);
+    // For a capture: Toggle Sidebar run `times` times, each slide run to its end.
+    std::wstring HoldSidebarToggles(int times);
+    // For a capture: the pointer resting on a top-row button (a mouse move there, as the pointer
+    // sends it).
+    std::wstring HoldTopRowHover(TopRowButton button);
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
@@ -133,6 +142,8 @@ private:
     static constexpr UINT kArchiveIntervalMs = 15 * 60 * 1000;
     // When the pages' slide on the compositor has ended (its duration and a frame, rounded up).
     static constexpr UINT_PTR kSettleTimer = 3;
+    // When the sidebar's hide or show has ended on the compositor (the same allowance).
+    static constexpr UINT_PTR kToggleTimer = 4;
     // Posted by the favicon worker when icons arrive (Favicons.h).
     static constexpr UINT kFaviconsMessage = WM_APP + 4;
     // Posted by the frame clock once a composition frame while something animates.
@@ -241,6 +252,23 @@ private:
     void MoveSpace(const std::string& spaceID, size_t index);
     void ArchiveTab();
     void ReopenClosedTab();
+    // View › Hide Sidebar and Show Sidebar (the Mac's toggleSidebar and updateSidebar): the sidebar
+    // slides off the window's left edge (or back) on the compositor and the card's leading edge goes
+    // from the sidebar's edge to the inset (or back). The page is a child window, which no compositor
+    // property moves until W10's off-screen pages, so it moves once, while the sidebar isn't under
+    // it: as a show begins, and as a hide ends. A rename in the header ends first, keeping what was
+    // typed.
+    void ToggleSidebar();
+    void SetSidebarShown(bool shown);
+    void FinishToggle();
+    // The width the sidebar takes from the window: none while it's hidden.
+    float SidebarShownWidth() const { return sidebarShown_ ? static_cast<float>(kSidebarWidth) : 0.0f; }
+    void MovePage();
+    // The selected tab's page's status, to the top row (none for a tab with no page).
+    void ShowPageStatus();
+    // The smoke test's top row: its buttons, the page's states, a hover that draws nothing, a press
+    // on a disabled button, and hiding and showing the sidebar from the toggle and Ctrl+S's command.
+    std::wstring SmokeTestTopRow();
     void MakeCommands();
     void RunCommand(const std::string& command);
     bool PageCommand(const std::string& command);
@@ -301,6 +329,12 @@ private:
     std::unique_ptr<Compositor> compositor_;
     std::unique_ptr<Favicons> favicons_;
     std::unique_ptr<SidebarView> sidebar_;
+    // View › Hide Sidebar's state (the Mac's BrowserStore.isSidebarVisible, not saved: a launch
+    // shows it), and its slide under way.
+    bool sidebarShown_ = true;
+    bool toggling_ = false;
+    // What each tab's page last reported (the Mac's BrowserStore.pages), gone with its page.
+    std::map<std::string, PageStatus> pageStatus_;
     std::unique_ptr<CaptionButtonsView> caption_;
     std::unique_ptr<CommandBarView> commandBar_;
     std::wstring barError_;

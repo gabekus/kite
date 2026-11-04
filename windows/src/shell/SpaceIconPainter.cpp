@@ -317,14 +317,10 @@ constexpr float kShapeTolerance = 0.04f;
 
 }  // namespace
 
-ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const SymbolShape& shape) {
-    if (auto it = shapes_.find(&shape); it != shapes_.end()) return it->second.Get();
-    if (!d2d_) return nullptr;
-    // Kept even when it fails, so a failure isn't retried every frame (the next factory tries).
-    ComPtr<ID2D1Geometry>& made = shapes_[&shape];
+ComPtr<ID2D1Geometry> MakeShapeGeometry(ID2D1Factory* d2d, const SymbolShape& shape) {
     ComPtr<ID2D1Geometry> joined;
     for (const ShapeLayer& layer : shape.layers) {
-        ComPtr<ID2D1PathGeometry> path = LayerPath(d2d_.Get(), layer);
+        ComPtr<ID2D1PathGeometry> path = LayerPath(d2d, layer);
         if (!path) return nullptr;
         if (!joined) {
             if (layer.cut) continue;  // nothing to cut yet
@@ -334,13 +330,21 @@ ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const SymbolShape& shape) {
         ComPtr<ID2D1PathGeometry> combined;
         ComPtr<ID2D1GeometrySink> sink;
         const D2D1_COMBINE_MODE mode = layer.cut ? D2D1_COMBINE_MODE_EXCLUDE : D2D1_COMBINE_MODE_UNION;
-        if (FAILED(d2d_->CreatePathGeometry(combined.GetAddressOf())) || FAILED(combined->Open(sink.GetAddressOf())) ||
+        if (FAILED(d2d->CreatePathGeometry(combined.GetAddressOf())) || FAILED(combined->Open(sink.GetAddressOf())) ||
             FAILED(joined->CombineWithGeometry(path.Get(), mode, nullptr, kShapeTolerance, sink.Get())) || FAILED(sink->Close())) {
             return nullptr;
         }
         joined = combined;
     }
-    made = std::move(joined);
+    return joined;
+}
+
+ID2D1Geometry* SpaceIconPainter::ShapeGeometry(const SymbolShape& shape) {
+    if (auto it = shapes_.find(&shape); it != shapes_.end()) return it->second.Get();
+    if (!d2d_) return nullptr;
+    // Kept even when it fails, so a failure isn't retried every frame (the next factory tries).
+    ComPtr<ID2D1Geometry>& made = shapes_[&shape];
+    made = MakeShapeGeometry(d2d_.Get(), shape);
     return made.Get();
 }
 

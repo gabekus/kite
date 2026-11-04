@@ -14,7 +14,10 @@
 // clicks and the wheel (HandleMouse); what a click does goes to Actions. Under the pages, the
 // space bar (shell/SpaceBarView), whose cells drag to new places, and the space's menu on a
 // right-click on a cell or the header (Actions::spaceMenu). While a space is renamed its header
-// shows the name field (shell/SpaceRenameField). Not yet: the top row or favorites.
+// shows the name field (shell/SpaceRenameField). Over the address field, the top row: the toggle,
+// back, forward and reload, each its own visual (shell/SidebarTopRowView). Everything sits in one
+// root visual, which hiding and showing the sidebar slides on the compositor (SetShown, the Mac's
+// updateSidebar). Not yet: favorites.
 
 #include <windows.h>  // first: the DirectX headers need its types
 
@@ -36,12 +39,14 @@
 
 #include "core/Models.h"
 #include "core/Sidebar.h"
+#include "core/SidebarTopRow.h"
 #include "core/SpaceSwipe.h"
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
 #include "shell/Favicons.h"
 #include "shell/SpaceBarView.h"
 #include "shell/SpaceIconPainter.h"
+#include "shell/SidebarTopRowView.h"
 #include "shell/SpaceRenameField.h"
 #include "shell/SpaceTipView.h"
 
@@ -50,7 +55,8 @@ namespace kite {
 class SidebarView {
 public:
     // `favicons` may be null (a capture): every tab shows the globe. `pictures` is where the
-    // spaces' pictures come from (SpaceIconPainter).
+    // spaces' pictures come from (SpaceIconPainter); a synchronous one's (a capture's) sidebar
+    // has no tooltips.
     static std::unique_ptr<SidebarView> Create(HWND window, Favicons* favicons, const SpaceIconPainter::Pictures& pictures,
                                                std::wstring& error);
     ~SidebarView();
@@ -75,6 +81,8 @@ public:
         std::function<void(const std::string& spaceID, const std::string& name)> renameSpace;
         // A click on the current space's name: its rename field (the Mac's beginRenaming).
         std::function<void(const std::string& spaceID)> beginRenaming;
+        // A click on an enabled top-row button (the toggle, back, forward, reload).
+        std::function<void(TopRowButton button)> topRow;
     };
     void SetActions(Actions actions) { actions_ = std::move(actions); }
 
@@ -120,6 +128,25 @@ public:
     // the compositor is rebuilt after a lost device).
     void UseCompositor(Compositor* compositor);
 
+    // Hiding and showing the sidebar (the Mac's updateSidebar): it slides off the window's left
+    // edge, or back, on ArcMetrics.Motion's curve on the compositor from the next commit, from
+    // wherever it is (a toggle caught mid-slide turns back). How long that takes, in seconds; 0
+    // when it's there at once (`animate` false, or no GPU yet). Hidden, it takes no pointer, its
+    // tooltips and tip go, and any press or hover with them.
+    double SetShown(bool shown, bool animate);
+    // The slide has ended (the caller's timer): at rest.
+    void SettleToggle();
+    bool Shown() const { return shown_; }
+    // Where its leading edge is now, in points (mid-slide too).
+    float Left() const;
+    // The selected tab's page as the top row shows it (back, forward, the X while it loads).
+    void SetPageStatus(const PageStatus& page);
+    // The top row's buttons, for kitecore's and the tests' sake, and where one's centre is in
+    // client px; how many of its surfaces have drawn.
+    const std::vector<TopRowItem>& TopRowItems() const { return topRow_->Items(); }
+    std::optional<POINT> TopRowCentre(TopRowButton button) const;
+    size_t TopRowSurfaceDraws() const { return topRow_->SurfaceDraws(); }
+
     // What it shows: the address, and the selected space's page with its neighbours' (or,
     // while the pages settle after a switch, those of `anchor`, the space it left:
     // SpaceSwipe::BuiltPages), all in the selected space's appearance. When anything changed,
@@ -152,7 +179,7 @@ public:
     // copying the sidebar (premultiplied BGRA, at the window's top-left) there for --capture.
     // The caller commits the compositor. Empty on success.
     std::wstring Draw(Pixels* readBack = nullptr);
-    bool DeviceLost() const { return deviceLost_ || (bar_ && bar_->DeviceLost()); }
+    bool DeviceLost() const { return deviceLost_ || (bar_ && bar_->DeviceLost()) || (topRow_ && topRow_->DeviceLost()); }
 
     // The window's messages: its posted redraw, and the space tip's timer. True when it handled
     // `message`; if the GPU was lost meanwhile, DeviceLost says so and the window rebuilds.
@@ -192,6 +219,7 @@ private:
         std::string spaceID;
         size_t index = 0;  // the selected space's
         std::vector<PageModel> pages;  // in the session's order, the selected one among them
+        bool hasTab = false;  // the top row's reload
         bool operator==(const Model&) const = default;
     };
     using FaviconKey = std::pair<std::string, UINT>;
@@ -205,6 +233,10 @@ private:
 
     bool CreateGpu(std::wstring& error);
     void ReleaseGpu();
+    // The root visual everything sits in (made with the compositor, so the bar and the top row have
+    // their parent), and where it's placed (at rest, or on the toggle's slide).
+    void ReleaseRoot();
+    void PlaceRoot();
     void DrawHeader(ID2D1DeviceContext* context);
     void DrawPage(ID2D1DeviceContext* context, const PageModel& page, float scroll, float bottom, bool selected);
     // The scroll a page draws at: the selected one's, or where another was left.
@@ -254,9 +286,10 @@ private:
 
     // GPU (drawn with the compositor's context).
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush_;
-    // The address field's visual and surface, then over it the pages: a container that clips
-    // them to the sidebar, the strip in it that the slide moves, and each page in the strip.
-    Microsoft::WRL::ComPtr<IDCompositionVisual> visual_, pagesClip_, strip_;
+    // The root (what hiding slides), in it the address field's visual and surface, then over it
+    // the pages: a container that clips them to the sidebar, the strip in it that the slide
+    // moves, and each page in the strip.
+    Microsoft::WRL::ComPtr<IDCompositionVisual> root_, visual_, pagesClip_, strip_;
     Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface_;
     std::map<std::string, Page> pages_;  // by space id: the built pages' GPU side
     std::map<FaviconKey, Microsoft::WRL::ComPtr<ID2D1Bitmap1>> faviconBitmaps_;
@@ -284,6 +317,16 @@ private:
     bool barSlidePending_ = false;  // the bar relights with the slide once it has the new cells
     bool redrawPosted_ = false;
     std::unique_ptr<SpaceBarView> bar_;
+    std::unique_ptr<SidebarTopRowView> topRow_;
+    PageStatus page_;
+    // Hidden or shown, and the slide there: from and to (points, the leading edge), since when.
+    bool shown_ = true;
+    struct Toggle {
+        float from, to;
+        double start;  // FrameClock seconds
+        Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
+    };
+    std::optional<Toggle> toggle_;
     std::unique_ptr<SpaceTipView> tip_;
     std::unique_ptr<SpaceRenameField> rename_;  // while a space is renamed
     Microsoft::WRL::ComPtr<IDWriteTextFormat> doneFormat_;  // the rename's Done
@@ -302,6 +345,7 @@ private:
     std::optional<std::pair<SidebarRow::Kind, std::string>> hover_;  // the hovered row's kind and id
     std::optional<SidebarPress> press_;
     std::optional<SpaceBarPress> barPress_;  // a press on a space's cell (core's)
+    std::optional<TopRowButton> topPress_;   // a press on an enabled top-row button
     bool activating_ = false;         // the next press brings the window forward
     int clicks_ = 0;
     DWORD lastClickTime_ = 0;

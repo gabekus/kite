@@ -34,6 +34,16 @@
 //   Kite.exe --capture FILE.png --rename-space N
 //                            the same with space N's header renaming it (Rename Space…), its name
 //                            all selected.
+//   Kite.exe --capture FILE.png --page-status STATES
+//                            the same with the selected tab's page reporting STATES, a comma list of
+//                            back, forward and loading (or none), as Chromium would: the top row's
+//                            back and forward enabled, reload the X.
+//   Kite.exe --capture FILE.png --toggle-sidebar N
+//                            the same after Toggle Sidebar (Ctrl+S) ran N times, each slide run to
+//                            its end (1: hidden, 2: shown again).
+//   Kite.exe --capture FILE.png --hover-top-row BUTTON
+//                            the same with the pointer moved onto a top-row button (toggleSidebar,
+//                            back, forward or reload), as the pointer sends it.
 //   Kite.exe --frame-log FILE
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
@@ -181,7 +191,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
         if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
             a == L"--space-tip" || a == L"--swipe" || a == L"--space-drag" || a == L"--space-drop" || a == L"--space-menu" ||
-            a == L"--rename-space") {
+            a == L"--rename-space" || a == L"--page-status" || a == L"--toggle-sidebar" || a == L"--hover-top-row") {
             ++i;
             continue;
         }
@@ -283,6 +293,40 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         *out = option.value ? place(*option.value) : std::nullopt;
         if (!*out) return Fail(quiet, std::wstring(flag) + L" takes a space's place, from 1", kUsage);
         if (!captureOption.present) return Fail(quiet, std::wstring(flag) + L" only goes with --capture", kUsage);
+    }
+    // The top row's states, for a capture.
+    std::optional<kite::PageStatus> heldPage;
+    if (const OptionValue option = Option(args, L"--page-status"); option.present) {
+        if (!captureOption.present) return Fail(quiet, L"--page-status only goes with --capture", kUsage);
+        kite::PageStatus page;
+        bool valid = option.value.has_value();
+        const std::wstring states = option.value.value_or(L"");
+        for (std::wstring_view rest = states; valid && !rest.empty();) {
+            const size_t comma = rest.find(L',');
+            const std::wstring_view word = rest.substr(0, comma);
+            if (word == L"back") page.canGoBack = true;
+            else if (word == L"forward") page.canGoForward = true;
+            else if (word == L"loading") page.isLoading = true;
+            else if (word != L"none") valid = false;
+            rest = comma == std::wstring_view::npos ? std::wstring_view{} : rest.substr(comma + 1);
+        }
+        if (!valid) return Fail(quiet, L"--page-status takes back, forward and loading, comma-separated, or none", kUsage);
+        heldPage = page;
+    }
+    std::optional<int> heldToggles;
+    if (const OptionValue option = Option(args, L"--toggle-sidebar"); option.present) {
+        heldToggles = option.value ? ParseInt(*option.value) : std::nullopt;
+        if (!heldToggles || *heldToggles < 1 || *heldToggles > 9) return Fail(quiet, L"--toggle-sidebar takes how many times, 1 to 9", kUsage);
+        if (!captureOption.present) return Fail(quiet, L"--toggle-sidebar only goes with --capture", kUsage);
+    }
+    std::optional<kite::TopRowButton> heldHover;
+    if (const OptionValue option = Option(args, L"--hover-top-row"); option.present) {
+        for (const kite::TopRowButton button : {kite::TopRowButton::ToggleSidebar, kite::TopRowButton::Back, kite::TopRowButton::Forward,
+                                                kite::TopRowButton::Reload}) {
+            if (option.value && Narrow(*option.value) == kite::TopRowButtonName(button)) heldHover = button;
+        }
+        if (!heldHover) return Fail(quiet, L"--hover-top-row takes toggleSidebar, back, forward or reload", kUsage);
+        if (!captureOption.present) return Fail(quiet, L"--hover-top-row only goes with --capture", kUsage);
     }
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
@@ -418,7 +462,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         kite::Pixels pixels;
         const std::optional<std::string> barText =
             commandBarOption.present ? std::optional<std::string>(Narrow(*commandBarOption.value)) : std::nullopt;
-        if (swipe) captureError = controller->HoldSwipe(*swipe);
+        if (heldPage) controller->HoldPageStatus(*heldPage);
+        if (heldToggles) captureError = controller->HoldSidebarToggles(*heldToggles);
+        if (captureError.empty() && heldHover) captureError = controller->HoldTopRowHover(*heldHover);
+        if (captureError.empty() && swipe) captureError = controller->HoldSwipe(*swipe);
         if (captureError.empty() && heldDrag) captureError = controller->HoldSpaceDrag(heldDrag->index, heldDrag->x, heldDrag->drop);
         if (captureError.empty() && heldRename) captureError = controller->HoldRename(*heldRename, std::nullopt, true);
         if (heldMenu) controller->HoldSpaceMenu(*heldMenu);

@@ -48,6 +48,7 @@ add_library(KiteCoreWin STATIC
   src/core/TouchpadPhases.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
+  src/core/SidebarTopRow.cpp
   src/core/TabClosing.cpp
   src/core/SupportDirectory.cpp
   src/core/ThemeBackdrop.cpp
@@ -116,6 +117,7 @@ if(WIN32)
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
     src/shell/Renderer.cpp
+    src/shell/SidebarTopRowView.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
@@ -190,6 +192,7 @@ add_executable(KiteCoreTests
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
   tests/SidebarTests.cpp
+  tests/SidebarTopRowTests.cpp
   tests/SpaceBarTests.cpp
   tests/SpaceEditingTests.cpp
   tests/SpaceIconTests.cpp

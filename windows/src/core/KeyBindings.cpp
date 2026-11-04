@@ -310,6 +310,8 @@ const std::vector<ShortcutCommand>& ShortcutCommands() {
             // print dialog is dismissed, CEF 156 never prints again and Chromium's shutdown hangs.
             {"copyCurrentURL", "Copy URL", CtrlShift("c")},
             {"collapsePinnedSection", "Collapse Pinned Tabs", std::nullopt},
+            // The Mac's View › Hide Sidebar (Show Sidebar while it's hidden).
+            {"toggleSidebar", "Hide Sidebar", Ctrl("s")},
             {"stopLoading", "Stop Loading", Ctrl(".")},
             {"reloadPage", "Refresh the Page", Ctrl("r"), {Bare("f5")}},
             {"forceReloadPage", "Force Refresh the Page", CtrlShift("r"), {Ctrl("f5"), KeyShortcut("f5", {Modifier::Shift})}},
