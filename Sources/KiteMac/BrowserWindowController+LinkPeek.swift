@@ -177,8 +177,23 @@ extension BrowserWindowController {
     /// Closes the Peek. `undoable` is for the user's own dismissals (Esc, ⌘W, the close button, a click outside,
     /// the swipe, Redo): like Arc, they register "Close Peek" on the window's undo manager, so Edit › Undo Close
     /// Peek (⌘Z) reopens it. Replacing it or turning it into a tab or pane doesn't.
+    /// The user's own dismissals ask the page first: a page with unsaved changes asks "Leave site?" (Arc's
+    /// `awaitingDismissConfirmation`), and the Peek stays if they cancel.
     func closeLinkPeek(animated: Bool, undoable: Bool = false) {
         guard let session = linkPeek else { return }
+        guard undoable else { return finishClosingLinkPeek(session, animated: animated, undoable: false) }
+        session.page.requestClose { [weak self, weak session] outcome in
+            guard let self, let session, linkPeek === session else { return }
+            switch outcome {
+            case .close: finishClosingLinkPeek(session, animated: animated, undoable: true)
+            // A swipe that let go to dismiss leaves the card tugged aside.
+            case .stay: session.view.springTugBack(velocity: .zero)
+            case .superseded: break
+            }
+        }
+    }
+
+    private func finishClosingLinkPeek(_ session: LinkPeekSession, animated: Bool, undoable: Bool) {
         linkPeek = nil
         if store.linkPeekBadges[session.sourceTabID] != nil { store.linkPeekBadges[session.sourceTabID] = nil }
         if undoable, let url = session.url, let undoManager = window?.undoManager {
@@ -249,6 +264,8 @@ extension BrowserWindowController {
             session.title = title
         case .closeRequested:
             if linkPeek === session { closeLinkPeek(animated: true) } else { discardParkedLinkPeek(of: session.sourceTabID) }
+        case .showForLeaveDialog:
+            break  // Only the Peek on screen is ever asked to close.
         // The page opening tabs, as PagePool's do: not a step in the user's undo.
         case .openInNewTab(let url, let foreground):
             pool.openTab(url: url, openedBy: session.sourceTabID, select: foreground)

@@ -87,6 +87,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     let browser: KCBrowser
     /// The page's alert, confirm or prompt on screen (`PageDialogs`).
     private var pageDialog: ArcDialog?
+    /// A close the person asked for, as the page's beforeunload decides it (`requestClose`).
+    private var closeFlow = PageClose()
+    /// Each pending request's answer, by generation.
+    private var closeAnswers: [Int: (PageClose.Outcome) -> Void] = [:]
+    private var closeTimer: DispatchWorkItem?
     var onEvent: ((PageEvent) -> Void)?
     var linkPeekPolicy: ((URL, Bool) -> Bool)?
     var contextMenuHost: (() -> PageContextMenu.Host)?
@@ -434,7 +439,88 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         browser.evaluateJavaScript(Self.playingMediaScript) { completion(($0 as? Bool) ?? false) }
     }
 
+    func requestClose(_ completion: @escaping (PageClose.Outcome) -> Void) {
+        let (generation, effects) = closeFlow.request()
+        closeAnswers[generation] = completion
+        perform(effects)
+    }
+
+    /// Whether the page registered beforeunload: the main frame's listeners (DOMDebugger lists `onbeforeunload`
+    /// too). A page with iframes counts as having one, since a frame can ask as well; so does a page that
+    /// doesn't answer within the close deadline. Those get asked (and timed out).
+    func hasBeforeUnloadHandler(_ completion: @escaping (Bool) -> Void) {
+        var answered = false
+        let answer = { (has: Bool) in
+            guard !answered else { return }
+            answered = true
+            completion(has)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + PageClose.unresponsiveTimeout) { answer(true) }
+        let group = "kite-close-check"
+        browser.callDevToolsMethod("Runtime.evaluate", params: ["expression": "window.frames.length", "returnByValue": true]) {
+            [weak self] result, _ in
+            guard let self else { return answer(false) }
+            if let frames = (result?["result"] as? [String: Any])?["value"] as? Int, frames > 0 { return answer(true) }
+            browser.callDevToolsMethod("Runtime.evaluate", params: ["expression": "window", "objectGroup": group]) {
+                [weak self] result, _ in
+                guard let self, let objectID = (result?["result"] as? [String: Any])?["objectId"] as? String else {
+                    return answer(false)
+                }
+                browser.callDevToolsMethod("DOMDebugger.getEventListeners", params: ["objectId": objectID]) { [weak self] result, _ in
+                    self?.browser.executeDevToolsMethod("Runtime.releaseObjectGroup", params: ["objectGroup": group], completion: nil)
+                    let listeners = result?["listeners"] as? [[String: Any]] ?? []
+                    answer(listeners.contains { $0["type"] as? String == "beforeunload" })
+                }
+            }
+        }
+    }
+
+    private func perform(_ effects: [PageClose.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .startUnload:
+                // A page that doesn't exist yet (or is closing) has nothing to ask.
+                if !browser.beginUnloadClose() { perform(closeFlow.pageLetGo()) }
+            case .armTimer(let generation):
+                closeTimer?.cancel()
+                let timer = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    perform(closeFlow.timerFired(generation: generation))
+                }
+                closeTimer = timer
+                DispatchQueue.main.asyncAfter(deadline: .now() + PageClose.unresponsiveTimeout, execute: timer)
+            case .cancelTimer:
+                closeTimer?.cancel()
+                closeTimer = nil
+            case .forceClose:
+                // The page didn't answer in time: close it without asking, as Chrome does a hung tab. A slow
+                // background renderer that only now gets to its beforeunload loses its "Leave site?" (the
+                // forced close answers it Leave): deliberate, so a busy page can't hold a close up.
+                pageDialog?.dismiss()
+                pageDialog = nil
+                browser.close()
+                // Its script is stopped only if it's still running well after that (a page truly stuck in
+                // beforeunload or unload), so a slow page's save gets its chance.
+                let closing = browser
+                DispatchQueue.main.asyncAfter(deadline: .now() + PageClose.stuckScriptTimeout) {
+                    closing.stopScriptOfClosingPage()
+                }
+            case let .finish(outcome, generation):
+                if outcome != .close, closeFlow.pending == nil { browser.cancelUnloadClose() }
+                guard let answer = closeAnswers.removeValue(forKey: generation) else { continue }
+                // Never inside the engine's callback. Not while quitting: closing the tab would change the
+                // saved session and show another tab, making a page the quit then waits for.
+                DispatchQueue.main.async {
+                    if (NSApp.delegate as? AppDelegate)?.isTerminating == true { return }
+                    answer(outcome)
+                }
+            }
+        }
+    }
+
     func close() {
+        // The request goes first, so dismissing its dialog can't answer it as Cancel.
+        perform(closeFlow.forced())
         pageDialog?.dismiss()
         browser.close()
         browser.view.removeFromSuperview()
@@ -589,14 +675,50 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         let kinds: [JavaScriptDialogKind: PageDialogs.Kind] = [
             .alert: .alert, .confirm: .confirm, .prompt: .prompt, .leave: .leave, .reload: .reload,
         ]
-        pageDialog = PageDialogs.present(kinds[kind] ?? .alert, message: message, defaultText: defaultText,
-                                         origin: origin, in: browser.view) { [weak self] ok, text in
-            self?.pageDialog = nil
-            completion(ok, text)
+        let request = kind == .leave ? closeFlow.pending : nil
+        if request != nil { perform(closeFlow.dialogShown()) }
+        let present = { [weak self] in
+            guard let self else { return completion(false, nil) }
+            pageDialog = PageDialogs.present(kinds[kind] ?? .alert, message: message, defaultText: defaultText,
+                                             origin: origin, in: browser.view) { [weak self] ok, text in
+                guard let self else { return completion(ok, text) }
+                pageDialog = nil
+                // Before the engine hears it: answering resets the page's dialog state on the way.
+                if request != nil { perform(closeFlow.answered(leave: ok)) }
+                completion(ok, text)
+            }
+        }
+        guard request != nil, !isOnScreen else { return present() }
+        // Closing a background tab: its tab comes forward first, then the dialog shows on it.
+        onEvent?(.showForLeaveDialog)
+        presentWhenOnScreen(attempts: 20, present: present, cancel: { completion(false, nil) })
+    }
+
+    /// A background tab's page can sit in the window as a hidden view.
+    private var isOnScreen: Bool { browser.view.window != nil && !browser.view.isHiddenOrHasHiddenAncestor }
+
+    /// Runs `present` once the page's view is on screen, checking every 50 ms, while a close is still waiting
+    /// for it (a newer request, a second click on the close button, takes the same dialog's answer); it gets
+    /// Cancel (PageDialogs, without a window) when the view never arrives.
+    private func presentWhenOnScreen(attempts: Int, present: @escaping () -> Void, cancel: @escaping () -> Void) {
+        guard closeFlow.pending != nil else { return cancel() }
+        guard !isOnScreen, attempts > 0 else { return present() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self else { return cancel() }
+            presentWhenOnScreen(attempts: attempts - 1, present: present, cancel: cancel)
         }
     }
 
+    func browserDidLetGo(_ browser: KCBrowser) {
+        perform(closeFlow.pageLetGo())
+    }
+
+    func browserWillCloseWithoutAsking(_ browser: KCBrowser) {
+        perform(closeFlow.forced())
+    }
+
     func browserDismissJavaScriptDialogs(_ browser: KCBrowser) {
+        perform(closeFlow.dialogReset())
         pageDialog?.dismiss()
         pageDialog = nil
     }

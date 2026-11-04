@@ -23,7 +23,7 @@ extension BrowserWindowController {
     /// Arc's Close this Split Pane: closes the focused pane's tab.
     @objc func closeSplitPane(_ sender: Any?) {
         guard let id = store.state.selectedTab?.id, store.state.selectedSplit != nil else { return NSSound.beep() }
-        close(tab: id)
+        closeAsking(tab: id)
     }
 
     @objc func separateFromSplitView(_ sender: Any?) {

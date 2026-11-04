@@ -225,6 +225,11 @@ typedef NS_ENUM(NSInteger, KCJavaScriptDialogKind) {
              completion:(void (NS_SWIFT_UI_ACTOR ^)(BOOL ok, NSString *_Nullable text))completion;
 /// Chromium dropped the page's dialog (it navigated or closed); its completion does nothing now.
 - (void)browserDismissJavaScriptDialogs:(KCBrowser *)browser;
+/// The page let a close started with `beginUnloadClose` go ahead; Chromium is closing it.
+- (void)browserDidLetGo:(KCBrowser *)browser;
+/// The page is being closed without asking (quitting answers its "Leave site?" itself): a close the
+/// person asked for is over, as superseded, not as Cancel.
+- (void)browserWillCloseWithoutAsking:(KCBrowser *)browser;
 @end
 
 /// One Chromium browser (one tab), hosted in `view`.
@@ -327,6 +332,16 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^sessionMessageHandler)(NSDictionary *message);
 /// Sends a raw DevTools message, such as one to an attached session.
 - (void)sendDevToolsMessage:(NSDictionary<NSString *, id> *)message;
+/// Starts the close a person asks for: not forced, so Chromium runs the page's beforeunload first and
+/// the page may ask "Leave site?" (the delegate's KCJavaScriptDialogKindLeave dialog), as Chrome does
+/// when you close a tab. If the page lets go, the delegate hears `browserDidLetGo:` on a later turn and
+/// then calls `close`; if it stays, call `cancelUnloadClose`. Kite's `PageClose` (KiteCore) drives it.
+/// NO when there's nothing to ask (the browser doesn't exist yet, or is closing): close it at once.
+- (BOOL)beginUnloadClose;
+- (void)cancelUnloadClose;
+/// Stops the page's running script (CDP Runtime.terminateExecution) if the browser still hasn't
+/// closed: for a page still stuck in beforeunload or unload well after it was closed.
+- (void)stopScriptOfClosingPage;
 - (void)close;
 /// Cancels a live download by the id and context in KCDownloadDidUpdateNotification. Returns NO
 /// when Chromium no longer has it.

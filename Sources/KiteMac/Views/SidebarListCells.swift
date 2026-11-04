@@ -530,7 +530,7 @@ final class TabRowCell: SidebarRowCell {
 
         if let group = t.groupHeader {
             header.isHidden = false
-            header.show(group, onClose: { group.tabIDs.forEach(actions.closeTab) },
+            header.show(group, onClose: { actions.closeTabs(group.tabIDs) },
                         onRemove: { actions.removeTabGroupHeader(group.id) })
         } else {
             header.isHidden = true
@@ -1107,7 +1107,7 @@ final class SplitRowCell: SidebarRowCell {
         }
         if let group = s.groupHeader {
             header.isHidden = false
-            header.show(group, onClose: { group.tabIDs.forEach(actions.closeTab) }, onRemove: { actions.removeTabGroupHeader(group.id) })
+            header.show(group, onClose: { actions.closeTabs(group.tabIDs) }, onRemove: { actions.removeTabGroupHeader(group.id) })
         } else {
             header.isHidden = true
         }
@@ -1205,7 +1205,7 @@ final class SplitRowCell: SidebarRowCell {
             }
         }
         menu.addSeparator()
-        menu.add("Archive Item") { s.tabs.forEach { actions.closeTab($0.id) } }
+        menu.add("Archive Item") { actions.closeTabs(s.tabs.map(\.id)) }
         if let first = split.tabIDs.first { menu.addArchiveTabsItems(state: store.state, relativeTo: first, actions: actions) }
         return menu
     }

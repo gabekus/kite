@@ -66,6 +66,8 @@ final class PagePool {
     }
 
     func loadedPage(_ id: UUID) -> WebPage? { pages[id] }
+    /// While true, nothing hibernates: the window is asking its pages whether it may close.
+    var holdsPages = false
     var livePages: [UUID: WebPage] { pages }
 
     /// The engine for tab `id`'s page: its space's profile (or, for a favorite, the current space's).
@@ -398,6 +400,8 @@ final class PagePool {
                 state.close(tab: id)
                 if wasSelected, let opener, state.tab(opener) != nil { state.select(tab: opener) }
             }
+        case .showForLeaveDialog:
+            if store.state.tab(id) != nil { store.mutateWithoutUndo { $0.select(tab: id) } }
         case let .openLink(url, target):
             // Chromium opens Open Link in New Tab in the background.
             if target == .newTab { openTab(url: url, openedBy: id, select: false) } else { onOpenLink?(id, url, target) }
@@ -446,6 +450,8 @@ final class PagePool {
 
     /// Hibernates tabs unless they're playing media or using the camera or mic.
     private func hibernate(_ ids: [UUID]) {
+        // A window is asking its pages whether it may close: none may go unasked meanwhile.
+        guard !holdsPages else { return }
         for id in ids where !isLinkedToPopup(id) {
             pages[id]?.checkBusy { [weak self] busy in
                 guard let self, !busy, !self.visibleIDs.contains(id), !self.isLinkedToPopup(id) else { return }

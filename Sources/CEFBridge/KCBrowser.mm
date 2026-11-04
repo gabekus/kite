@@ -27,6 +27,9 @@
 - (instancetype)initPopupWithDelegate:(id<KCBrowserDelegate>)delegate NS_DESIGNATED_INITIALIZER;
 - (void)attachBrowser:(CefRefPtr<CefBrowser>)browser;
 - (void)browserDidClose;
+- (void)pageDidLetGo;
+/// `close` was called: nothing may ask the person any more.
+@property (nonatomic, readonly) BOOL isForceClosing;
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData *)data;
 - (void)willNavigateMainFrame:(CefRefPtr<CefRequest>)request;
 - (void)mainFrameDidStartLoading;
@@ -46,6 +49,50 @@
 @end
 
 NSString* const KCDownloadDidUpdateNotification = @"KCDownloadDidUpdateNotification";
+
+namespace {
+
+/// A beforeunload dialog Kite is showing, waiting for Leave or Cancel.
+struct PendingUnloadDialog {
+    CefRefPtr<CefJSDialogCallback> callback;
+    __weak KCBrowser* owner;
+};
+
+/// Each browser's unanswered beforeunload dialog, by browser identifier.
+std::map<int, PendingUnloadDialog>& PendingBeforeUnload() {
+    static auto* pending = new std::map<int, PendingUnloadDialog>();
+    return *pending;
+}
+
+}  // namespace
+
+void KCAcceptPendingBeforeUnload(CefRefPtr<CefBrowser> browser) {
+    // Collected first: answering runs Chromium code that may touch the map.
+    std::vector<PendingUnloadDialog> answered;
+    auto& pending = PendingBeforeUnload();
+    for (auto it = pending.begin(); it != pending.end();) {
+        if (browser && it->first != browser->GetIdentifier()) { ++it; continue; }
+        answered.push_back(it->second);
+        it = pending.erase(it);
+    }
+    for (auto& dialog : answered) {
+        // First, so the reset Continue brings doesn't read as the person staying.
+        KCBrowser* closing = dialog.owner;
+        if ([closing.delegate respondsToSelector:@selector(browserWillCloseWithoutAsking:)]) {
+            [closing.delegate browserWillCloseWithoutAsking:closing];
+        }
+        dialog.callback->Continue(true, CefString());
+        // Then take Kite's sheet down; its late Cancel reaches a callback that has already run.
+        KCBrowser* owner = dialog.owner;
+        if ([owner.delegate respondsToSelector:@selector(browserDismissJavaScriptDialogs:)]) {
+            [owner.delegate browserDismissJavaScriptDialogs:owner];
+        }
+    }
+}
+
+void KCForgetPendingBeforeUnload() {
+    PendingBeforeUnload().clear();
+}
 
 namespace {
 
@@ -517,19 +564,34 @@ class KCClient : public CefClient,
                               const CefString& message_text,
                               bool is_reload,
                               CefRefPtr<CefJSDialogCallback> callback) override {
+        KCBrowser* owner = owner_;
+        // A forced close (quitting, hibernation) still asks: the page leaves without a dialog,
+        // which would hold up the quit. Answered on a later turn: answering inside this call
+        // slowed Chromium's teardown.
+        if (KCRuntimeIsQuitting() || !owner || owner.isForceClosing) {
+            dispatch_async(dispatch_get_main_queue(), ^{ callback->Continue(true, CefString()); });
+            return true;
+        }
         NSURL* origin = ToNSURL(browser->GetMainFrame()->GetURL());
-        return RunDialog(is_reload ? KCJavaScriptDialogKindReload : KCJavaScriptDialogKindLeave, @"", @"", origin, callback);
+        int identifier = browser->GetIdentifier();
+        // Recorded before the dialog shows, so quitting can answer it.
+        PendingBeforeUnload()[identifier] = {callback, owner};
+        bool shown = RunDialog(is_reload ? KCJavaScriptDialogKindReload : KCJavaScriptDialogKindLeave, @"", @"", origin, callback,
+                               ^(bool) { PendingBeforeUnload().erase(identifier); });
+        if (!shown) PendingBeforeUnload().erase(identifier);
+        return shown;
     }
 
     void OnResetDialogState(CefRefPtr<CefBrowser> browser) override {
         KCBrowser* owner = owner_;
+        PendingBeforeUnload().erase(browser->GetIdentifier());
         if ([owner.delegate respondsToSelector:@selector(browserDismissJavaScriptDialogs:)]) {
             [owner.delegate browserDismissJavaScriptDialogs:owner];
         }
     }
 
     bool RunDialog(KCJavaScriptDialogKind kind, NSString* message, NSString* defaultText, NSURL* origin,
-                   CefRefPtr<CefJSDialogCallback> callback) {
+                   CefRefPtr<CefJSDialogCallback> callback, void (^answered_)(bool ok) = nil) {
         KCBrowser* owner = owner_;
         id<KCBrowserDelegate> delegate = owner.delegate;
         SEL run = @selector(browser:runJavaScriptDialog:message:defaultText:origin:completion:);
@@ -539,6 +601,7 @@ class KCClient : public CefClient,
                    origin:origin completion:^(BOOL ok, NSString* text) {
             if (answered) return;
             answered = true;
+            if (answered_) answered_(ok);
             callback->Continue(ok, CefString(text.UTF8String ?: ""));
         }];
         return true;
@@ -595,7 +658,7 @@ class KCClient : public CefClient,
                        bool* no_javascript_access) override {
         KCBrowser* owner = owner_;
         id<KCBrowserDelegate> delegate = owner.delegate;
-        if (!delegate) return true;
+        if (!delegate || KCRuntimeIsQuitting()) return true;
         // A target=_blank link (or ⇧-click) the delegate opens in Arc's Peek card: no popup. Not a named
         // window (window.open(url, "AppleAuthentication")): a Peek has no window.opener, so the result of
         // a sign-in popup would never reach the page.
@@ -615,6 +678,8 @@ class KCClient : public CefClient,
     }
 
     bool DoClose(CefRefPtr<CefBrowser> browser) override {
+        // The page's beforeunload let a close the person asked for go ahead.
+        [owner_ pageDidLetGo];
         // Returning false would send performClose: to the whole window. Tear down
         // just this tab's view instead, which completes the close.
         NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
@@ -626,6 +691,7 @@ class KCClient : public CefClient,
 
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
         devtools_registration_ = nullptr;
+        PendingBeforeUnload().erase(browser->GetIdentifier());
         [owner_ browserDidClose];
         KCUnregisterBrowser(browser);
     }
@@ -1106,6 +1172,12 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
     NSSize _autoResizeMinSize;
     NSSize _autoResizeMaxSize;
     BOOL _closed;
+    /// beginUnloadClose started a close the page hasn't answered yet.
+    BOOL _unloadClosing;
+    /// The page let that close go ahead and Chromium is closing it already.
+    BOOL _closeApproved;
+    /// `close` was called.
+    BOOL _forceClosed;
     int _nextMessageID;
     std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
     NSInteger _blockedCount;
@@ -1141,6 +1213,8 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
         // Start empty and load once attached: DevTools calls (dark pages, the ad
         // blocker's document-start script) need the browser before the first navigation.
         _pendingURL = url ?: [NSURL URLWithString:@"about:blank"];
+        // Quitting waits for every browser to close: a new one would hold it up for good.
+        if (KCRuntimeIsQuitting()) return self;
         CefBrowserHost::CreateBrowser(windowInfo, new KCClient(self), "", settings, nullptr,
                                       context ? context.cefContext : KCAdblockRequestContext());
     }
@@ -1217,6 +1291,15 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 
 - (void)browserDidClose {
     _browser = nullptr;
+    // Nothing answers DevTools calls any more. Answered on a later turn, out of OnBeforeClose.
+    NSMutableArray<void (^)(NSDictionary*, NSString*)>* unanswered = [NSMutableArray array];
+    for (auto& [messageID, completion] : *_pendingDevTools) [unanswered addObject:completion];
+    _pendingDevTools->clear();
+    if (unanswered.count) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            for (void (^completion)(NSDictionary*, NSString*) in unanswered) completion(nil, @"closed");
+        });
+    }
     // Not closed by us, so the page closed itself (window.close()).
     // Quitting closes every browser; that mustn't close the tabs in the saved session.
     if (!_closed && !KCRuntimeIsQuitting()) [_delegate browserDidRequestClose:self];
@@ -1546,6 +1629,7 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
 - (void)callDevToolsMethod:(NSString*)method
                     params:(NSDictionary<NSString*, id>*)params
                 completion:(void (^)(NSDictionary*, NSString*))completion {
+    if (_closed && _attached) return completion(nil, @"closed");
     if (!_browser) {
         if (_attached || _closed) {
             completion(nil, @"not-ready");
@@ -1692,10 +1776,48 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
     if (self.devToolsEventHandler) self.devToolsEventHandler(method, params);
 }
 
+- (BOOL)beginUnloadClose {
+    if (!_browser || _closed) return NO;
+    _unloadClosing = YES;
+    // Not forced: Chromium runs beforeunload (OnBeforeUnloadDialog) and calls DoClose only if the
+    // page lets go. Without a handler that's right away, inside this call. A second call while one
+    // is pending is ignored by CEF.
+    _browser->GetHost()->CloseBrowser(false);
+    return YES;
+}
+
+- (void)stopScriptOfClosingPage {
+    if (!_browser) return;
+    _browser->GetHost()->ExecuteDevToolsMethod(_nextMessageID++, "Runtime.terminateExecution", nullptr);
+}
+
+- (void)cancelUnloadClose {
+    if (!_closeApproved) _unloadClosing = NO;
+}
+
+- (void)pageDidLetGo {
+    if (!_unloadClosing || _closed) return;
+    // Closed by us: OnBeforeClose mustn't report the page closing itself.
+    _closed = YES;
+    _closeApproved = YES;
+    // Out of DoClose before Kite tears the tab down.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ([self->_delegate respondsToSelector:@selector(browserDidLetGo:)]) [self->_delegate browserDidLetGo:self];
+    });
+}
+
+- (BOOL)isForceClosing {
+    return _forceClosed && !_closeApproved;
+}
+
 - (void)close {
     _closed = YES;
+    _forceClosed = YES;
     _delegate = nil;
-    if (_browser) _browser->GetHost()->CloseBrowser(true);
+    if (_browser && !_closeApproved) {
+        KCAcceptPendingBeforeUnload(_browser);
+        _browser->GetHost()->CloseBrowser(true);
+    }
 }
 
 + (NSURL* _Nullable (^)(NSString* _Nullable, BOOL*))downloadFolderProvider {
