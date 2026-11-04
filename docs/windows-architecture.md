@@ -47,8 +47,9 @@ their own PR, never as a side effect of a checkpoint.
   or anything that waits on Chromium goes elsewhere. The session is saved on
   a background writer (`core/SessionWriter`): the UI thread only copies it.
   Two exceptions: loading the session before the first window exists, and
-  waiting for the writer's last write as the window closes or Windows ends
-  the session.
+  waiting at quit for the writer's last write (once the window is gone, or
+  in the window when Windows ends the session), always for a bounded time:
+  the atomic write makes giving up safe.
 - Never save over a session that couldn't be read (`SessionStore::MaySave`).
 - Measure before claiming a speedup, and put the numbers in the PR.
 
