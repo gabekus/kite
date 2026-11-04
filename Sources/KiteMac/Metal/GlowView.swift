@@ -75,6 +75,27 @@ final class GlowView: MTKView, MTKViewDelegate {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    /// Pixels further than this inside the content edge come out 0 anyway: there the glow's
+    /// rim + bloom is at most 1.2 · (e^−12.8 + 0.2 · e^−8) ≈ 8e−5, under half an 8-bit step.
+    static let zeroDepth: Float = 16
+
+    /// The band the glow can reach, as scissor rects in drawable pixels: everything but a box `inset` in
+    /// from each side. Inside that box the rounded-rect distance is at most −`zeroDepth` (the corner radius
+    /// is part of `inset`), so the pass's clear already holds the right pixels and shading them is skipped:
+    /// most of the page area. A drawable too small for a box gets one full rect.
+    static func strips(size: CGSize, inset: Float) -> [MTLScissorRect] {
+        let width = Int(size.width), height = Int(size.height)
+        let x0 = Int(inset.rounded(.up)), y0 = x0
+        let x1 = width - x0, y1 = height - y0
+        guard x1 > x0, y1 > y0 else { return [MTLScissorRect(x: 0, y: 0, width: width, height: height)] }
+        return [
+            MTLScissorRect(x: 0, y: 0, width: width, height: y0),
+            MTLScissorRect(x: 0, y: y1, width: width, height: height - y1),
+            MTLScissorRect(x: 0, y: y0, width: x0, height: y1 - y0),
+            MTLScissorRect(x: x1, y: y0, width: width - x1, height: y1 - y0),
+        ]
+    }
+
     func draw(in view: MTKView) {
         let now = clock.targetTimestamp ?? CACurrentMediaTime()
         let dt = Float(min(now - lastFrame, 0.1))
@@ -108,7 +129,10 @@ final class GlowView: MTKView, MTKViewDelegate {
         )
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<GlowUniforms>.stride, index: 0)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        for strip in Self.strips(size: drawableSize, inset: m + Self.zeroDepth + uniforms.radius) {
+            encoder.setScissorRect(strip)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        }
         encoder.endEncoding()
         commands.present(drawable)
         commands.commit()
