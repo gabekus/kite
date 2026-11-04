@@ -41,7 +41,7 @@ KITE_TEST_CONTEXT_MENU: Change Space Icon… | Rename Space… | What's This Spa
 rest (after the capture; `rest.tree.txt` has launch, before and after):
 
 ```
-Window 17800, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17829, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [68,778 36×34]
 0.3.2.2.0.0.1 SpaceCellView [102,778 36×34]
@@ -53,7 +53,7 @@ Window 17800, 1280×820 pt at 2×. Points from the window's top-left.
 drag (after the capture; `drag.tree.txt` has launch, before and after):
 
 ```
-Window 17802, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17831, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [136,778 36×34] alpha=0 opacity=0
 0.3.2.2.0.0.1 SpaceCellView [68,778 36×34]
@@ -65,7 +65,7 @@ Window 17802, 1280×820 pt at 2×. Points from the window's top-left.
 dropped (after the capture; `dropped.tree.txt` has launch, before and after):
 
 ```
-Window 17804, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17833, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [136,778 36×34]
 0.3.2.2.0.0.1 SpaceCellView [68,778 36×34]
@@ -77,7 +77,7 @@ Window 17804, 1280×820 pt at 2×. Points from the window's top-left.
 menu (after the steps; `menu.tree.txt` has launch, before and after):
 
 ```
-Window 17806, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17835, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [68,778 36×34]
 0.3.2.2.0.0.1 SpaceCellView [102,778 36×34]
@@ -89,7 +89,7 @@ Window 17806, 1280×820 pt at 2×. Points from the window's top-left.
 rename (after the capture; `rename.tree.txt` has launch, before and after):
 
 ```
-Window 17808, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17837, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [68,778 36×34]
 0.3.2.2.0.0.1 SpaceCellView [102,778 36×34]
@@ -101,7 +101,7 @@ Window 17808, 1280×820 pt at 2×. Points from the window's top-left.
 new-space (after the capture; `new-space.tree.txt` has launch, before and after):
 
 ```
-Window 17810, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17839, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [51,778 36×34]
 0.3.2.2.0.0.1 SpaceCellView [85,778 36×34]
