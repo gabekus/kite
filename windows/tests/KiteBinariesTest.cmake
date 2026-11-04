@@ -4,11 +4,13 @@
 #   it under win32k lockdown, where user32 fails the process);
 # - Kite.exe is the bootstrap, importing exactly what bootstrap.exe does;
 # - both have Control Flow Guard and are CET compatible (they're mapped into every sandboxed
-#   helper);
+#   helper), and so was every object of CEF's wrapper linked into Kite.dll compiled (the linker
+#   marks the DLL as guarded either way, so the DLL's headers can't tell);
 # - Kite.exe carries Kite's manifest, version, icon (ICON, when the build has one) and 8 MiB
 #   stack (stamp-bootstrap --check).
 #   cmake -DLINKER=link.exe -DDLL=Kite.dll -DEXE=Kite.exe -DBOOTSTRAP=bootstrap.exe
-#         -DSTAMP=stamp-bootstrap.exe -DMANIFEST=Kite.manifest [-DICON=Kite.ico] -P KiteBinariesTest.cmake
+#         -DSTAMP=stamp-bootstrap.exe -DMANIFEST=Kite.manifest -DWRAPPER=libcef_dll_wrapper.lib
+#         [-DICON=Kite.ico] -P KiteBinariesTest.cmake
 
 foreach(file IN ITEMS "${DLL}" "${EXE}")
   if(NOT EXISTS "${file}")
@@ -67,8 +69,36 @@ endif()
 check_hardening("${DLL}" Kite.dll)
 check_hardening("${EXE}" Kite.exe)
 
+# Every object in the wrapper was compiled with /guard:cf: its @feat.00 symbol has bit 0x800
+# (and the objects have .gfids$y sections, the guarded functions' table).
+execute_process(COMMAND "${LINKER}" /dump /nologo /symbols "${WRAPPER}" OUTPUT_VARIABLE symbols RESULT_VARIABLE code)
+if(NOT code EQUAL 0)
+  message(FATAL_ERROR "link /dump /symbols ${WRAPPER} failed (${code})")
+endif()
+string(REGEX MATCHALL "[ \t]([0-9A-Fa-f]+) ABS[^\n]*@feat\.00" features "${symbols}")
+set(objects 0)
+set(unguarded 0)
+foreach(feature IN LISTS features)
+  string(REGEX REPLACE "^[ \t]([0-9A-Fa-f]+) .*" "\\1" value "${feature}")
+  math(EXPR guarded "0x${value} & 0x800")
+  math(EXPR objects "${objects} + 1")
+  if(guarded EQUAL 0)
+    math(EXPR unguarded "${unguarded} + 1")
+  endif()
+endforeach()
+if(objects EQUAL 0)
+  message(FATAL_ERROR "found no objects in ${WRAPPER}")
+endif()
+if(NOT unguarded EQUAL 0)
+  message(FATAL_ERROR "${unguarded} of the wrapper's ${objects} objects weren't compiled with /guard:cf (fetch-cef.ps1)")
+endif()
+execute_process(COMMAND "${LINKER}" /dump /nologo /headers "${WRAPPER}" OUTPUT_VARIABLE wrapperHeaders)
+if(NOT wrapperHeaders MATCHES "\\.gfids")
+  message(FATAL_ERROR "${WRAPPER} has no .gfids sections: it wasn't built with /guard:cf")
+endif()
+
 execute_process(COMMAND "${STAMP}" --check "${EXE}" "${MANIFEST}" ${ICON} ERROR_VARIABLE problems RESULT_VARIABLE code)
 if(NOT code EQUAL 0)
   message(FATAL_ERROR "Kite.exe isn't stamped as Kite: ${problems}")
 endif()
-message(STATUS "Kite.dll loads ${dll}; Kite.exe is the bootstrap (${exe}), stamped (icon: ${ICON}); both have CFG and CET")
+message(STATUS "Kite.dll loads ${dll}; Kite.exe is the bootstrap (${exe}), stamped (icon: ${ICON}); both have CFG and CET; all ${objects} wrapper objects are guarded")

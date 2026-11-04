@@ -130,18 +130,19 @@ if(WIN32)
     message(STATUS "Chromium: CEF at ${KITE_CEF_ROOT}")
     # Chromium's sandbox (docs/windows.md, "Chromium's sandbox"): Kite's code is Kite.dll, and
     # Kite.exe is CEF's bootstrap.exe stamped with Kite's manifest, version and stack. The
-    # wrapper comes from fetch-cef.ps1's build-sandbox-* folders, built for CEF_API_VERSION_LAST,
-    # as Kite.dll is here; a checkout from before W6b shares this CEF folder with its own
-    # build-release and build-debug, which are left alone.
-    set(KITE_CEF_WRAPPER "${KITE_CEF_ROOT}/build-sandbox-$<IF:$<CONFIG:Debug>,debug,release>/libcef_dll_wrapper/libcef_dll_wrapper.lib")
-    if(NOT EXISTS "${KITE_CEF_ROOT}/build-sandbox-release/libcef_dll_wrapper/libcef_dll_wrapper.lib")
-      message(FATAL_ERROR "No sandboxed CEF wrapper in ${KITE_CEF_ROOT}/build-sandbox-release: run windows/scripts/fetch-cef.ps1")
+    # wrapper comes from fetch-cef.ps1's build-sandbox-cfg-* folders, built for
+    # CEF_API_VERSION_LAST and with /guard:cf, as Kite.dll is here; other checkouts sharing this
+    # CEF folder keep their own wrapper folders, which are left alone.
+    set(KITE_CEF_WRAPPER_DIR "${KITE_CEF_ROOT}/build-sandbox-cfg-$<IF:$<CONFIG:Debug>,debug,release>/libcef_dll_wrapper")
+    set(KITE_CEF_WRAPPER "${KITE_CEF_WRAPPER_DIR}/libcef_dll_wrapper.lib")
+    if(NOT EXISTS "${KITE_CEF_ROOT}/build-sandbox-cfg-release/libcef_dll_wrapper/libcef_dll_wrapper.lib")
+      message(FATAL_ERROR "No sandboxed CEF wrapper in ${KITE_CEF_ROOT}/build-sandbox-cfg-release: run windows/scripts/fetch-cef.ps1")
     endif()
     if(NOT EXISTS "${KITE_CEF_ROOT}/Release/bootstrap.exe")
       message(FATAL_ERROR "No bootstrap.exe in ${KITE_CEF_ROOT}/Release: Kite.exe is made from it")
     endif()
-    # Kite.exe, Kite.dll and Chromium's runtime go in one folder; the import library and the
-    # build tools go elsewhere, so the folder is what ships.
+    # Kite.exe, Kite.dll and Chromium's runtime go in one folder with kitecore.exe; the import
+    # libraries, the tests and the build tools go elsewhere, so the folder is what ships.
     set(KITE_OUT "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>")
     set(KITE_TOOLS_OUT "${CMAKE_CURRENT_BINARY_DIR}/tools/$<CONFIG>")
     add_library(Kite SHARED ${KITE_SHELL_SOURCES} src/shell/Chromium.cpp src/shell/Sandbox.cpp)
@@ -181,21 +182,33 @@ if(WIN32)
     # as a less privileged AppContainer.
     set(KITE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Kite.manifest")
     # Kite's app icon, as Kite.exe's first icon group, which Explorer, the taskbar and Alt+Tab
-    # show. Without one, Kite.exe has no icon (never CEF's).
-    set(KITE_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/Kite.ico" CACHE FILEPATH "The .ico stamped into Kite.exe")
+    # show (never CEF's). resources/Kite.ico comes with #372; until it's in the tree Kite.exe has
+    # no icon. The glob is checked again on every build (CONFIGURE_DEPENDS), so an icon that lands
+    # or goes re-configures the build. An icon asked for by path (-DKITE_ICON) must exist.
+    set(KITE_DEFAULT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/Kite.ico")
+    file(GLOB KITE_ICONS_IN_TREE CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/*.ico")
+    set(KITE_ICON "${KITE_DEFAULT_ICON}" CACHE FILEPATH "The .ico stamped into Kite.exe")
     set(KITE_ICON_ARGUMENT)
     if(EXISTS "${KITE_ICON}")
       message(STATUS "Kite.exe's icon: ${KITE_ICON}")
       set(KITE_ICON_ARGUMENT "${KITE_ICON}")
+    elseif(KITE_ICON STREQUAL KITE_DEFAULT_ICON)
+      message(STATUS "Kite.exe's icon: none yet (no ${KITE_ICON})")
     else()
-      message(STATUS "Kite.exe's icon: none (no ${KITE_ICON})")
+      message(FATAL_ERROR "KITE_ICON is ${KITE_ICON}, which doesn't exist")
     endif()
+    # The stamp reads the icon's path from this file rather than its command line: Visual Studio
+    # builds with the commands it loaded before a re-configure, so an icon that just landed (or
+    # went) would otherwise be stamped with the old command. The file changes only when the path
+    # does, which makes Kite.exe again.
+    file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/kite-exe-icon.txt" CONTENT "${KITE_ICON_ARGUMENT}" @ONLY)
     add_custom_command(OUTPUT "${KITE_OUT}/Kite.exe"
       COMMAND ${CMAKE_COMMAND} -DCEF_ROOT=${KITE_CEF_ROOT} -DDEST=${KITE_OUT} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyCef.cmake
       COMMAND stamp-bootstrap "${KITE_CEF_ROOT}/Release/bootstrap.exe" "${KITE_OUT}/Kite.exe" "${KITE_MANIFEST}"
-              "$<TARGET_FILE:kite-exe-version>" ${KITE_ICON_ARGUMENT}
+              "$<TARGET_FILE:kite-exe-version>" "@${CMAKE_CURRENT_BINARY_DIR}/kite-exe-icon.txt"
       COMMAND icacls "${KITE_OUT}" /grant "*S-1-15-2-2:(OI)(CI)(RX)" /q
-      DEPENDS Kite stamp-bootstrap kite-exe-version "${KITE_CEF_ROOT}/Release/bootstrap.exe" "${KITE_MANIFEST}" ${KITE_ICON_ARGUMENT}
+      DEPENDS Kite stamp-bootstrap kite-exe-version "${KITE_CEF_ROOT}/Release/bootstrap.exe" "${KITE_MANIFEST}"
+              "${CMAKE_CURRENT_BINARY_DIR}/kite-exe-icon.txt" ${KITE_ICON_ARGUMENT}
               ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyCef.cmake
       COMMENT "Making Kite.exe from CEF's bootstrap"
       VERBATIM)
@@ -257,6 +270,11 @@ add_executable(KiteCoreTests
   tests/URLInputTests.cpp
 )
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
+if(MSVC)
+  # Out of the folder that ships (windows/build/<config>), as the build tools are.
+  set_target_properties(KiteCoreTests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tests/$<CONFIG>")
+  set_target_properties(KiteCoreWin PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib/$<CONFIG>")
+endif()
 # Writes Tests/Fixtures/theme-backdrop.json (see the file); not run by the tests.
 add_executable(gen-theme-golden EXCLUDE_FROM_ALL tests/GenThemeGolden.cpp)
 target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
@@ -273,6 +291,7 @@ if(KITE_BOOTSTRAPPED)
   add_test(NAME kite-binaries
     COMMAND ${CMAKE_COMMAND} -DLINKER=${CMAKE_LINKER} -DDLL=$<TARGET_FILE:Kite> -DEXE=${KITE_OUT}/Kite.exe
             -DBOOTSTRAP=${KITE_CEF_ROOT}/Release/bootstrap.exe -DSTAMP=$<TARGET_FILE:stamp-bootstrap> -DMANIFEST=${KITE_MANIFEST}
+            -DWRAPPER=${KITE_CEF_WRAPPER}
             "-DICON=${KITE_ICON_ARGUMENT}"
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KiteBinariesTest.cmake)
 endif()

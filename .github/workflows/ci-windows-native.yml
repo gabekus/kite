@@ -222,7 +222,6 @@ jobs:
             !windows/build/Release/**/*.lib
             !windows/build/Release/**/*.pdb
             !windows/build/Release/**/*.exp
-            !windows/build/Release/KiteCoreTests.exe
           if-no-files-found: error
       - name: Upload the capture
         if: always()

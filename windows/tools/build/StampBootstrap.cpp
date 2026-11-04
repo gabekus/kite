@@ -1,10 +1,11 @@
 // Makes Kite.exe from CEF's bootstrap.exe, and checks a Kite.exe it made (docs/windows.md,
 // "Chromium's sandbox"). A build tool (windows/tools/build): run after Kite.dll links.
 //
-//   stamp-bootstrap BOOTSTRAP.exe OUT.exe MANIFEST VERSION_MODULE [ICON.ico]
+//   stamp-bootstrap BOOTSTRAP.exe OUT.exe MANIFEST VERSION_MODULE [ICON.ico | @ICON_FILE]
 //       copies the bootstrap with MANIFEST as its process manifest, VERSION_MODULE's version
 //       resource in place of CEF's, CEF's icon replaced by ICON (Kite's, as its first and only
-//       icon group; no icon without it), and an 8 MiB main-thread stack.
+//       icon group; no icon without it), and an 8 MiB main-thread stack. @ICON_FILE names a
+//       file holding the icon's path, or nothing for no icon (the build's kite-exe-icon.txt).
 //   stamp-bootstrap --check KITE.exe MANIFEST [ICON.ico]
 //       exits 0 when KITE.exe is such a copy: MANIFEST embedded as is, with per-monitor DPI v2,
 //       the UTF-8 code page, long paths and common controls v6; Kite's version naming
@@ -373,7 +374,21 @@ int wmain(int argc, wchar_t** argv) {
     if ((argc == 4 || argc == 5) && std::wstring_view(argv[1]) == L"--check") {
         problem = Check(argv[2], argv[3], argc == 5 ? argv[4] : L"");
     } else if (argc == 5 || argc == 6) {
-        problem = Stamp(argv[1], argv[2], argv[3], argv[4], argc == 6 ? argv[5] : L"");
+        std::wstring icon = argc == 6 ? argv[5] : L"";
+        if (icon.starts_with(L"@")) {
+            const std::optional<std::string> named = ReadFileBytes(icon.substr(1));
+            if (!named) {
+                fwprintf(stderr, L"stamp-bootstrap: can't read %ls\n", icon.c_str() + 1);
+                return 1;
+            }
+            icon.clear();
+            if (!named->empty()) {
+                const int length = MultiByteToWideChar(CP_UTF8, 0, named->data(), static_cast<int>(named->size()), nullptr, 0);
+                icon.resize(static_cast<size_t>(length > 0 ? length : 0));
+                if (length > 0) MultiByteToWideChar(CP_UTF8, 0, named->data(), static_cast<int>(named->size()), icon.data(), length);
+            }
+        }
+        problem = Stamp(argv[1], argv[2], argv[3], argv[4], icon);
     } else {
         fwprintf(stderr, L"usage: stamp-bootstrap BOOTSTRAP.exe OUT.exe MANIFEST VERSION_MODULE [ICON.ico]\n"
                          L"       stamp-bootstrap --check KITE.exe MANIFEST [ICON.ico]\n");

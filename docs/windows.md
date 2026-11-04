@@ -199,14 +199,17 @@ checks the bootstrap's CEF version and hands its sandbox info to
   chrome.exe's 8 MiB main-thread stack (the bootstrap reserves 1 MiB; Kite.exe
   had 8). `stamp-bootstrap --check` verifies all of it in ctest's `kite-binaries`.
 - **The wrapper** is built for `CEF_API_VERSION_LAST` (`fetch-cef.ps1`'s
-  `USE_SANDBOX`), as Kite.dll is, into `build-sandbox-release` and
-  `build-sandbox-debug`. They're new folders, so a checkout from before W6b that
-  shares the CEF folder keeps its `build-release` and `build-debug`.
+  `USE_SANDBOX`), as Kite.dll is, and with Control Flow Guard (`/guard:cf`, which
+  CMake's defaults leave out), into `build-sandbox-cfg-release` and
+  `build-sandbox-cfg-debug`. The names change with how it's built, so a checkout
+  from before that shares the CEF folder keeps its own wrapper folders.
 - **Kite.dll** loads with only kernel32 and libcef.dll and delay-loads the rest:
   every helper maps it, renderers under win32k lockdown, where user32 can't load.
   A renderer now loads 21 DLLs where it loaded 28, none of user32, gdi32,
   shell32, ole32 and imm32. Kite.dll and Kite.exe both have Control Flow Guard and
-  are CET compatible, as Chromium's binaries are. `kite-binaries` checks both.
+  are CET compatible, as Chromium's binaries are, and every object of the
+  wrapper linked into Kite.dll is compiled with `/guard:cf`. `kite-binaries`
+  checks all of it.
 - **What runs where.** As in Chrome on Windows (Chrome 155 on the same PC shows
   the same), renderers run at untrusted integrity with a restricted token and no
   win32k, the GPU process at low integrity, the storage service untrusted, and
@@ -474,14 +477,17 @@ Without `KITE_SUPPORT_PATH` the profile is `%LOCALAPPDATA%\Kite`. A
 `KITE_SUPPORT_PATH` that isn't an existing directory, or isn't an absolute path,
 is refused. With Chromium the build makes `Kite.dll` and `Kite.exe` (CEF's
 bootstrap, see "Chromium's sandbox") in `windows/build/<config>`, the folder
-that ships; the import library goes to `lib/<config>` and the build tools to
-`tools/<config>`. CMake stops until `fetch-cef.ps1` has built the sandboxed
+that ships, with kitecore.exe and Chromium's runtime; the import libraries go to
+`lib/<config>`, the tests to `tests/<config>` and the build tools to
+`tools/<config>`. The runtime is copied when Kite.exe is made again (Kite.dll,
+the manifest, the icon or the bootstrap changed); a runtime file deleted from
+the folder by hand comes back only with that, or a clean build. CMake stops until `fetch-cef.ps1` has built the sandboxed
 wrapper (`build-sandbox-*`).
 
 ## Installing
 
-What ships is `windows/build/Release` without `*.lib`, `*.pdb`, `*.exp` and
-`KiteCoreTests.exe` (CI's `kite-windows-x64` artifact). Two things a copy of it
+What ships is `windows/build/Release` without `*.lib`, `*.pdb` and `*.exp`
+(CI's `kite-windows-x64` artifact). Two things a copy of it
 needs that a plain copy doesn't give:
 
 - **The LPAC grant**, once, on the install folder, inheritable so that files

@@ -38,7 +38,9 @@ struct Helper {
 std::vector<Helper> Helpers(std::wstring& error);
 
 // A helper at medium integrity or above, other than the network service, which Chromium runs
-// unsandboxed on Windows (as Chrome does). Empty when there's none.
+// unsandboxed on Windows (as Chrome does). Empty when there's none. Chromium's crashpad
+// handler also runs at medium; Kite doesn't enable crash reporting, so it never starts, and
+// would be flagged here if it ever did (exempt it then, as Chrome runs it unsandboxed too).
 std::wstring HelperSandboxProblem(const std::vector<Helper>& helpers);
 
 // "integrity untrusted, restricted, win32k off", for logs.

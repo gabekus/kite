@@ -74,11 +74,13 @@ if ((Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $CefVersion)) 
 # libcef_dll_wrapper: CEF's C++ API on top of its C ABI, built for the sandbox's bootstrap
 # (USE_SANDBOX, which pins it to CEF_API_VERSION_LAST; Kite.dll is built for the same). Built
 # for Release (/MT) and Debug (/MTd), so either configuration of Kite links against a wrapper
-# with the same CRT (otherwise LNK2038), in build-sandbox-release and build-sandbox-debug; Kite
-# picks by $<CONFIG>. The folders are new with W6b, so a checkout from before it, sharing this
-# CEF folder, keeps its build-release and build-debug (built without the sandbox) beside them.
+# with the same CRT (otherwise LNK2038), and with Control Flow Guard (/guard:cf), as Kite.dll
+# is, since every call between Kite.dll and libcef.dll goes through it. They land in
+# build-sandbox-cfg-release and build-sandbox-cfg-debug; Kite picks by $<CONFIG>. The names
+# change with how the wrapper is built, so a checkout from before, sharing this CEF folder,
+# keeps its own (build-release, build-debug, build-sandbox-*) beside them.
 foreach ($config in $Configs) {
-    $buildDir = Join-Path $Dest ("build-sandbox-" + $config.ToLower())
+    $buildDir = Join-Path $Dest ("build-sandbox-cfg-" + $config.ToLower())
     $wrapper = Join-Path $buildDir 'libcef_dll_wrapper\libcef_dll_wrapper.lib'
     if (Test-Path $wrapper) { continue }
     # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot.
@@ -88,7 +90,16 @@ foreach ($config in $Configs) {
         '-DUSE_SANDBOX=ON' `
         '-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
     if ($LASTEXITCODE -ne 0) { throw "cmake configure ($config) failed" }
-    cmake --build $buildDir --target libcef_dll_wrapper
-    if ($LASTEXITCODE -ne 0) { throw "cmake build ($config) failed" }
+    # /guard:cf through cl.exe's CL variable: CEF's CMake empties CMAKE_CXX_FLAGS under Ninja
+    # (cef_variables.cmake) and has no option of its own for it. tests/KiteBinariesTest.cmake
+    # checks every object got it.
+    $savedCL = $env:CL
+    $env:CL = '/guard:cf'
+    try {
+        cmake --build $buildDir --target libcef_dll_wrapper
+        if ($LASTEXITCODE -ne 0) { throw "cmake build ($config) failed" }
+    } finally {
+        $env:CL = $savedCL
+    }
 }
 Write-Host "CEF ready at $Dest"
