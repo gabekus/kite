@@ -18,6 +18,7 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_focus_handler.h"
 #include "include/cef_keyboard_handler.h"
+#include "include/cef_render_process_handler.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_handler.h"
 #include "include/cef_task.h"
@@ -38,6 +39,12 @@ constexpr cef_color_t kPageBackdrop = 0xFF323232;
 // How long closing the window waits for the browsers before it goes ahead anyway.
 constexpr UINT kCloseDeadlineMs = 5'000;
 constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; BrowserWindowController's timers are small numbers
+
+// Tells the browser process which renderer hosts each tab's main frame. CEF has no
+// browser-side accessor for a browser's render process id, so the renderer sends its own, from
+// each new main-frame script context (a navigation that moves the tab to another renderer
+// sends again). The Mac's KiteHelper/main.mm and KCBrowser.mm share the name.
+constexpr char kRendererPIDMessage[] = "kite.rendererPID";
 
 CefRect ToCefRect(const RECT& r) { return CefRect(r.left, r.top, r.right - r.left, r.bottom - r.top); }
 
@@ -309,6 +316,23 @@ private:
     IMPLEMENT_REFCOUNTING(KiteApp);
 };
 
+// Kite's CefApp in the helpers (the Mac's KiteHelperApp, KiteHelper/main.mm): in a renderer,
+// each tab's main frame reports the process it runs in.
+class KiteHelperApp : public CefApp, public CefRenderProcessHandler {
+public:
+    CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return this; }
+
+    void OnContextCreated(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, CefRefPtr<CefV8Context>) override {
+        if (!frame->IsMain()) return;
+        CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create(kRendererPIDMessage);
+        message->GetArgumentList()->SetInt(0, static_cast<int>(GetCurrentProcessId()));
+        frame->SendProcessMessage(PID_BROWSER, message);
+    }
+
+private:
+    IMPLEMENT_REFCOUNTING(KiteHelperApp);
+};
+
 // One per tab: CEF's handlers for that tab's browser, on CEF's UI thread.
 // A page's Developer Tools window: only counted in and out (Shared::Count), so Chromium
 // isn't shut down under it when Kite quits with it open.
@@ -343,6 +367,18 @@ public:
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
     CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+
+    // A renderer's kite.rendererPID (KiteHelperApp): the process now hosting this tab's page.
+    bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefProcessId source,
+                                  CefRefPtr<CefProcessMessage> message) override {
+        if (source != PID_RENDERER || message->GetName() != kRendererPIDMessage || !frame || !frame->IsMain()) return false;
+        const int pid = message->GetArgumentList()->GetInt(0);
+        if (pid <= 0) return true;
+        shared_->Post([shared = shared_, id = tabID_, browser, pid] {
+            if (shared->PageFor(id, browser) && shared->events.rendererStarted) shared->events.rendererStarted(id, static_cast<DWORD>(pid));
+        });
+        return true;
+    }
 
     // CefLifeSpanHandler
 
@@ -688,13 +724,13 @@ void Chromium::Shared::Evict() {
     }
 }
 
-int RunChromiumSubprocess(HINSTANCE instance) {
+int RunChromiumSubprocess(HINSTANCE instance, void* sandboxInfo) {
     CefMainArgs args(instance);
-    return CefExecuteProcess(args, nullptr, nullptr);
+    return CefExecuteProcess(args, new KiteHelperApp(), sandboxInfo);
 }
 
-Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
-                                      std::unique_ptr<Chromium>& out, std::wstring& error) {
+Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, void* sandboxInfo,
+                                      PageEvents events, std::unique_ptr<Chromium>& out, std::wstring& error) {
     // Chromium wants root_cache_path absolute and every cache_path inside it, else it keeps
     // that profile in memory only; built from the resolved path, like the Mac (realpath).
     std::error_code ec;
@@ -715,11 +751,14 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
 
     CefSettings settings;
     // CEF's own UI thread, so Kite's message loop (DirectComposition, the device-lost wait)
-    // stays its own. The sandbox needs CEF's bootstrap executable and is its own checkpoint
-    // (W6b in windows/helix/checkpoints.md); until then pages run unsandboxed, as in any
-    // CEF app built without the sandbox.
+    // stays its own. The Chromium sandbox is on, as on the Mac: Kite.exe is CEF's bootstrap,
+    // which puts each helper in it before Kite.dll loads there (main.cpp's RunWinMain).
+    if (!sandboxInfo) {
+        CloseHandle(shared->allClosed);
+        error = L"Kite.exe gave Kite.dll no sandbox (it isn't CEF's bootstrap)";
+        return StartResult::Failed;
+    }
     settings.multi_threaded_message_loop = true;
-    settings.no_sandbox = true;
     settings.log_severity = LOGSEVERITY_WARNING;
     settings.persist_session_cookies = true;
     settings.background_color = kPageBackdrop;
@@ -727,7 +766,7 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
     CefString(&settings.cache_path) = (resolved / L"Default").wstring();
     CefString(&settings.log_file) = (resolved / L"chromium.log").wstring();
     CefMainArgs args(instance);
-    if (!CefInitialize(args, settings, new KiteApp(shared), nullptr)) {
+    if (!CefInitialize(args, settings, new KiteApp(shared), sandboxInfo)) {
         const int code = CefGetExitCode();
         CloseHandle(shared->allClosed);
         if (code == CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED) return StartResult::AlreadyRunning;

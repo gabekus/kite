@@ -8,6 +8,13 @@
       </requestedPrivileges>
     </security>
   </trustInfo>
+  <!-- As CEF's bootstrap.exe, which Kite.exe is made from (cmake/StampBootstrap.cpp), has it:
+       version 6 of the common controls, for Chromium's and the bootstrap's own dialogs. -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
       <!-- Windows 10 and 11 -->

@@ -32,9 +32,10 @@
 namespace kite {
 
 // When Chromium started this process as one of its helpers (renderer, GPU, utility), runs it
-// and returns its exit code; returns -1 in the browser process. First thing in wWinMain,
-// before Kite parses the command line (helpers get Chromium's own switches).
-int RunChromiumSubprocess(HINSTANCE instance);
+// and returns its exit code; returns -1 in the browser process. First thing in RunWinMain,
+// before Kite parses the command line (helpers get Chromium's own switches). `sandboxInfo` is
+// what CEF's bootstrap (Kite.exe) set the sandbox up with; the helper is already in it.
+int RunChromiumSubprocess(HINSTANCE instance, void* sandboxInfo);
 
 // What the pages report, on Kite's UI thread.
 struct PageEvents {
@@ -75,6 +76,10 @@ struct PageEvents {
     std::function<bool(const std::string& tabID)> keepAlive;
     // A page closed for the limit; its tab stays and loads again when it's next shown.
     std::function<void(const std::string& tabID)> pageDiscarded;
+    // The renderer process now hosting the tab's main frame, as it reports itself from each new
+    // script context there (the Mac's kite.rendererPID, for its Task Manager; here
+    // --smoke-test checks that renderer's sandbox).
+    std::function<void(const std::string& tabID, DWORD pid)> rendererStarted;
 };
 
 class Chromium {
@@ -84,8 +89,9 @@ public:
     // Starts Chromium with its profiles under `root` (the Mac's <support>/Chromium): the
     // default profile in root\Default, a space's other profile in root\<directory>.
     // AlreadyRunning: another Kite has this profile and has been told to come forward.
-    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
-                             std::unique_ptr<Chromium>& out, std::wstring& error);
+    // `sandboxInfo` is the bootstrap's (RunWinMain): every helper runs in Chromium's sandbox.
+    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, void* sandboxInfo,
+                             PageEvents events, std::unique_ptr<Chromium>& out, std::wstring& error);
     // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();
     Chromium(const Chromium&) = delete;

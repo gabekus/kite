@@ -1,4 +1,6 @@
-// Kite for Windows. See docs/windows.md.
+// Kite for Windows. See docs/windows.md. With Chromium this is Kite.dll, and Kite.exe is CEF's
+// bootstrap, which puts Chromium's helpers in the sandbox and calls RunWinMain below (the Mac's
+// KiteHelper/main.mm enters the sandbox the same way, before the framework loads).
 //
 //   Kite.exe                 normal launch
 //   Kite.exe --smoke-test    opens the window, runs the message loop for a second (with
@@ -6,7 +8,7 @@
 //                            30 s, then one WM_CLOSE must close every browser in time),
 //                            saves the session and exits 0 (CI). Errors go to the exit
 //                            code, never a dialog.
-//   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]
+//   Kite.exe --capture FILE.png [--window-size W,H] [--capture-scale N]   (absolute paths)
 //                            opens the window at W×H points (client area), saves the frame
 //                            it presents as a PNG and exits: the Helix UI gate
 //                            (docs/helix.md). The window is laid out at N× (default: the
@@ -52,6 +54,8 @@
 #include "shell/BackdropTest.h"
 #include "shell/BrowserWindowController.h"
 #ifdef KITE_HAS_CEF
+#include "include/cef_sandbox_win.h"
+#include "include/cef_version.h"
 #include "shell/Chromium.h"
 #endif
 #include "shell/Capture.h"
@@ -151,12 +155,16 @@ int Fail(bool quiet, const std::wstring& message, int code) {
     return code;
 }
 
-}  // namespace
+// Kite.exe runs from its own folder (CEF's bootstrap makes it the working directory, so no
+// helper holds a handle to wherever Kite was started), so a relative path would land there
+// rather than where it was typed: test flags and KITE_SUPPORT_PATH take absolute ones.
+bool IsAbsolute(const std::wstring& path) { return std::filesystem::path(path).is_absolute(); }
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+int RunKite(HINSTANCE instance, int showCommand, [[maybe_unused]] void* sandboxInfo) {
 #ifdef KITE_HAS_CEF
-    // Chromium starts Kite.exe again for its renderer, GPU and utility processes.
-    if (const int code = kite::RunChromiumSubprocess(instance); code >= 0) return code;
+    // Chromium starts Kite.exe again for its renderer, GPU and utility processes; the bootstrap
+    // has already put each in its sandbox, and Kite.dll does nothing else in them.
+    if (const int code = kite::RunChromiumSubprocess(instance, sandboxInfo); code >= 0) return code;
 #endif
     const std::vector<std::wstring> args = Arguments();
     // An unknown flag (a typo like --smoketest or --capture-scale=2) is an error, never a
@@ -190,6 +198,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const std::optional<std::wstring>& capture = captureOption.value;
     const bool quiet = smokeTest || captureOption.present;
     if (captureOption.present && !capture) return Fail(quiet, L"--capture takes a PNG path", kUsage);
+    if (capture && !IsAbsolute(*capture)) return Fail(quiet, L"--capture takes an absolute path (Kite.exe runs from its own folder)", kUsage);
     const OptionValue scaleOption = Option(args, L"--capture-scale");
     int captureScale = 0;
     if (scaleOption.present) {
@@ -220,6 +229,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (tipOption.present && !captureOption.present) return Fail(quiet, L"--space-tip only goes with --capture", kUsage);
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
+    if (frameLogOption.value && !IsAbsolute(*frameLogOption.value)) {
+        return Fail(quiet, L"--frame-log takes an absolute path (Kite.exe runs from its own folder)", kUsage);
+    }
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
@@ -228,6 +240,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return Fail(quiet,
                     L"--smoke-test, --capture, --window-size, --capture-scale and --frame-log need KITE_SUPPORT_PATH set to a test profile",
                     kUsage);
+    }
+    if (supportOverride && !supportOverride->empty() && !supportOverride->is_absolute()) {
+        return Fail(quiet, L"KITE_SUPPORT_PATH must be an absolute path (Kite.exe runs from its own folder)", kBadSupportDirectory);
     }
     auto resolved = kite::ResolveSupportDirectory(supportOverride, kite::EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<kite::SupportDirectoryError>(&resolved)) {
@@ -323,7 +338,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // The selected tab's page on the content card. A capture leaves Chromium out: a child
     // window isn't in the composition tree it reads back (until W10 makes pages textures).
     if (!capture) {
-        switch (controller->StartChromium(supportDirectory / L"Chromium", problem)) {
+        switch (controller->StartChromium(supportDirectory / L"Chromium", sandboxInfo, problem)) {
         case kite::Chromium::StartResult::Started: break;
         // Another Kite has this profile and was told to come forward; this one leaves quietly,
         // before its window shows or it saves anything. A test run that found one tested
@@ -365,6 +380,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
     }
 #ifdef KITE_HAS_CEF
+    // CI's log shows what the smoke test found of the first page's renderer.
+    if (smokeTest && !controller->RendererSandbox().empty()) {
+        WriteUtf8(STD_OUTPUT_HANDLE, L"Kite: the first page's renderer: " + controller->RendererSandbox() + L"\n");
+    }
     if (problem = controller->ShutDownChromium(); !problem.empty()) return Fail(quiet, problem, kWindowFailed);
 #endif
     if (!maySave) {
@@ -374,3 +393,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (!saveError.empty()) return Fail(quiet, L"Couldn't save the session: " + Widen(saveError), kSaveFailed);
     return kOk;
 }
+
+}  // namespace
+
+#ifdef KITE_HAS_CEF
+// Kite.exe is CEF's bootstrap.exe (cmake/StampBootstrap.cpp), which calls this in every process
+// Kite runs: the browser process, and each helper inside Chromium's sandbox, which
+// `sandboxInfo` carries to CefExecuteProcess and CefInitialize. The bootstrap comes from the
+// same CEF distribution as libcef.dll; a different one means a broken build, so Kite stops.
+CEF_BOOTSTRAP_EXPORT int RunWinMain(HINSTANCE instance, LPWSTR, int showCommand, void* sandboxInfo, cef_version_info_t* version) {
+    if (!version || version->cef_version_major != CEF_VERSION_MAJOR || version->cef_version_minor != CEF_VERSION_MINOR ||
+        version->cef_version_patch != CEF_VERSION_PATCH || version->cef_commit_number != CEF_COMMIT_NUMBER) {
+        const wchar_t* message = L"Kite: Kite.exe isn't the bootstrap of the CEF Kite.dll was built with\n";
+        OutputDebugStringW(message);
+        WriteUtf8(STD_ERROR_HANDLE, message);
+        return kWindowFailed;
+    }
+    return RunKite(instance, showCommand, sandboxInfo);
+}
+#else
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) { return RunKite(instance, showCommand, nullptr); }
+#endif

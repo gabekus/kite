@@ -1,5 +1,6 @@
 # Downloads the pinned CEF (Chromium Embedded Framework) build for Windows x64 into
-# windows\ThirdParty\cef and builds its static C++ wrapper (libcef_dll_wrapper.lib).
+# windows\ThirdParty\cef and builds its static C++ wrapper (libcef_dll_wrapper.lib) for
+# the sandbox's bootstrap (USE_SANDBOX: Kite.exe is CEF's bootstrap.exe, docs/windows.md).
 # The Windows twin of scripts/fetch-cef.sh: same CEF version, so both shells run
 # the same Chromium. The minimal distribution is a large download (a few hundred MB
 # unpacked); run it only when you mean to.
@@ -76,14 +77,17 @@ if ((Test-Path $Stamp) -and ((Get-Content $Stamp -Raw).Trim() -eq $CefVersion)) 
 foreach ($config in $Configs) {
     $buildDir = Join-Path $Dest ("build-" + $config.ToLower())
     $wrapper = Join-Path $buildDir 'libcef_dll_wrapper\libcef_dll_wrapper.lib'
-    if (Test-Path $wrapper) { continue }
-    # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot. USE_SANDBOX off until W6b
-    # (bootstrap.exe): with it on, the wrapper is built against a fixed CEF API version while
-    # Kite.exe isn't, and the two must match.
+    # Built with the sandbox (W6b): a wrapper from before, built without it, is rebuilt, since
+    # Kite.dll is compiled for its CEF_API_VERSION (windows/CMakeLists.txt checks the same).
+    $cache = Join-Path $buildDir 'CMakeCache.txt'
+    if ((Test-Path $wrapper) -and (Test-Path $cache) -and (Select-String -Path $cache -SimpleMatch 'USE_SANDBOX:BOOL=ON' -Quiet)) { continue }
+    if (Test-Path $buildDir) { Remove-Item -Recurse -Force $buildDir }
+    # Quoted: PowerShell splits an unquoted -DNAME=3.5 at the dot. With USE_SANDBOX the wrapper
+    # is built for CEF_API_VERSION_LAST (cef_variables.cmake), which Kite.dll is built for too.
     cmake -S $Dest -B $buildDir -G Ninja `
         "-DCMAKE_BUILD_TYPE=$config" `
         '-DPROJECT_ARCH=x86_64' `
-        '-DUSE_SANDBOX=OFF' `
+        '-DUSE_SANDBOX=ON' `
         '-DCMAKE_POLICY_VERSION_MINIMUM=3.5'
     if ($LASTEXITCODE -ne 0) { throw "cmake configure ($config) failed" }
     cmake --build $buildDir --target libcef_dll_wrapper

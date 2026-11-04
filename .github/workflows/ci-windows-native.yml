@@ -84,17 +84,21 @@ jobs:
         run: |
           # Runs Kite.exe and returns its exit code, killing it after a minute so a run that
           # never quits fails the step instead of hanging the job.
-          # Kite.exe writes why it failed to stderr, shown here.
+          # Kite.exe writes why it failed to stderr, and what the smoke test found of the first
+          # page's renderer sandbox (W6b) to stdout, both shown here.
           function Run-Kite([string[]] $arguments) {
+            $stdoutFile = Join-Path $env:RUNNER_TEMP "kite-stdout-$([guid]::NewGuid()).txt"
             $stderrFile = Join-Path $env:RUNNER_TEMP "kite-stderr-$([guid]::NewGuid()).txt"
             $process = Start-Process -FilePath (Resolve-Path windows/build/Release/Kite.exe) -ArgumentList $arguments `
-              -RedirectStandardError $stderrFile -PassThru
+              -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile -PassThru
             $null = $process.Handle  # keep the handle, or ExitCode reads empty after WaitForExit(timeout)
             if (-not $process.WaitForExit(60000)) {
               $process.Kill()
               throw "Kite.exe $arguments didn't exit within 60 s"
             }
-            if ((Test-Path $stderrFile) -and (Get-Item $stderrFile).Length -gt 0) { Write-Host (Get-Content $stderrFile -Raw) }
+            foreach ($file in $stdoutFile, $stderrFile) {
+              if ((Test-Path $file) -and (Get-Item $file).Length -gt 0) { Write-Host (Get-Content $file -Raw) }
+            }
             return $process.ExitCode
           }
           $profileDir = Join-Path $env:RUNNER_TEMP "kite-smoke-$([guid]::NewGuid())"
@@ -105,6 +109,7 @@ jobs:
           & windows/build/Release/kitecore.exe --profile $profileDir open $smokePage | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "kitecore open exited with $LASTEXITCODE" }
 
+          # It also fails unless the first page's renderer is in Chromium's sandbox (W6b).
           $code = Run-Kite @('--smoke-test')
           if ($code -ne 0) { throw "--smoke-test exited with $code" }
           if (-not (Test-Path (Join-Path $profileDir 'session.json'))) { throw 'Kite.exe wrote no session.json' }
@@ -124,6 +129,9 @@ jobs:
           # A flag without its value is a usage error (exit 1), never a normal launch.
           $code = Run-Kite @('--capture')
           if ($code -ne 1) { throw "--capture without a path: expected exit 1, got $code" }
+          # Kite.exe runs from its own folder (CEF's bootstrap), so paths must be absolute.
+          $code = Run-Kite @('--capture', 'relative.png')
+          if ($code -ne 1) { throw "--capture with a relative path: expected exit 1, got $code" }
 
           # A KITE_SUPPORT_PATH that isn't a directory is refused (exit 2), never fallen back from.
           $file = Join-Path $profileDir 'not-a-dir'
@@ -209,6 +217,7 @@ jobs:
             !windows/build/Release/**/*.pdb
             !windows/build/Release/**/*.exp
             !windows/build/Release/KiteCoreTests.exe
+            !windows/build/Release/stamp-bootstrap.exe
           if-no-files-found: error
       - name: Upload the capture
         if: always()
