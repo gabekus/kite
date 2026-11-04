@@ -247,6 +247,30 @@ static bool RouteMailto(KCBrowser* owner, CefRefPtr<CefFrame> frame, const CefSt
     return true;
 }
 
+/// Chromium's own schemes, which load in the page; anything else may belong to another app.
+static bool IsInPageScheme(NSString* scheme) {
+    static NSSet<NSString*>* schemes = [NSSet setWithArray:@[
+        @"http", @"https", @"about", @"blob", @"data", @"file", @"javascript", @"chrome", @"chrome-extension",
+        @"devtools", @"view-source", @"ws", @"wss", @"filesystem"
+    ]];
+    return [schemes containsObject:scheme.lowercaseString];
+}
+
+/// t3code:, zoommtg:, etc. go to the app that claims them, as in WebKitEngine (an OAuth callback
+/// is a redirect to one). Chromium would show ERR_UNKNOWN_URL_SCHEME instead.
+static bool RouteExternalScheme(const CefString& target) {
+    NSURL* url = ToNSURL(target);
+    if (!url.scheme || IsInPageScheme(url.scheme)) return false;
+    NSURL* app = [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:url];
+    if (!app || [[NSBundle bundleWithURL:app].bundleIdentifier isEqualToString:NSBundle.mainBundle.bundleIdentifier]) {
+        return false;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSWorkspace.sharedWorkspace openURL:url];
+    });
+    return true;
+}
+
 /// Whether the delegate opens a clicked link in Arc's Peek card instead (it reports the link itself).
 static bool AskLinkPeek(KCBrowser* owner, const CefString& target, bool shift) {
     id<KCBrowserDelegate> delegate = owner.delegate;
@@ -557,6 +581,7 @@ class KCClient : public CefClient,
                         bool user_gesture,
                         bool is_redirect) override {
         if (RouteMailto(owner_, frame, request->GetURL())) return true;
+        if (RouteExternalScheme(request->GetURL())) return true;
         if (frame->IsMain() && user_gesture && !is_redirect &&
             (request->GetTransitionType() & TT_SOURCE_MASK) == TT_LINK &&
             AskLinkPeek(owner_, request->GetURL(), false)) {
