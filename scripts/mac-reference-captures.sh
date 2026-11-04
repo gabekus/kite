@@ -50,7 +50,8 @@
 #   profile's WebKit dataStoreID replaced with a fresh one whose store is deleted afterwards.
 # - STEPS: clicks and drag starts must land on a visible view in SAFE_TARGETS (from the tree, just before the step);
 #   right- and ⌃-clicks also need a non-empty KITE_TEST_CONTEXT_MENU. No keys or modifier flags. Text only as
-#   [A-Za-z0-9 ._-]{1,40}, straight after a click on a COMMAND_BAR_OPENERS view, into a visible CommandBarField
+#   [A-Za-z0-9 ._-]{1,40}, straight after ⌘T (the only key chord allowed) or a click on a COMMAND_BAR_OPENERS view,
+#   into a visible CommandBarField
 #   (Kite's own command bar, which acts only on Return, and Return can't be sent), and only on a base that has
 #   TEXT_FLOOR (the build inserts test-safe text without key events, so no input method).
 # - Every test Kite is quit; the build's bundles are unregistered from Launch Services and deleted (never through a
@@ -411,7 +412,14 @@ def point(value, where):
     return [value[0], value[1]]
 
 # No "window": the target check reads the front browser window's tree, so input goes there too.
-INPUT_KEYS = {"click", "button", "count", "modifiers", "from", "to", "steps", "hold", "scroll", "dx", "dy", "phase", "text"}
+INPUT_KEYS = {"click", "button", "count", "modifiers", "from", "to", "steps", "hold", "scroll", "dx", "dy", "phase", "text",
+              "keys"}
+# The one key chord allowed: ⌘T, which opens Kite's own command bar (New Tab…). In a background test-safe window it
+# goes down UIInputSender's key-equivalent path to the menu item, and the bar is a view inside the window that's
+# only given the first responder: nothing is posted to the window server, made key, fronted or activated
+# (fix/test-safe-text-input 9261122: UIInputSender.swift:216-221, 226-266; MainMenu.swift:166;
+# BrowserWindowController.swift:265-272, 387-390, 1048-1065, 1089-1105, 1303-1305; WindowPresenter.swift:7-13).
+OPENER_KEYS = "cmd+t"
 TEXT = re.compile(r"[A-Za-z0-9 ._-]{1,40}")
 _text_fix = []
 def has_text_fix():
@@ -427,15 +435,23 @@ def check_step(action, args, menu_hook, where, previous):
     extra = set(args) - INPUT_KEYS
     if extra:
         fail(f"{where}: input {sorted(extra)[0]!r} isn't allowed (keys, flags and window aren't reviewed for headless safety)")
-    kinds = [k for k in ("click", "from", "scroll", "text") if k in args]
+    kinds = [k for k in ("click", "from", "scroll", "text", "keys") if k in args]
     if len(kinds) != 1:
-        fail(f"{where}: an input step is one click, one drag (from/to), one scroll or one text")
+        fail(f"{where}: an input step is one click, one drag (from/to), one scroll, one text or ⌘T")
+    if "keys" in args:
+        if args != {"keys": OPENER_KEYS}:
+            fail(f"{where}: the only keys allowed are {OPENER_KEYS!r} on their own (opening the command bar)")
+        if not has_text_fix():
+            fail(f"{where}: {OPENER_KEYS} needs a base with fix/test-safe-text-input ({text_floor[:7]})")
+        return [{"what": OPENER_KEYS, "opens": "command bar"}]
     if "text" in args:
         if set(args) != {"text"} or not isinstance(args["text"], str) or not TEXT.fullmatch(args["text"]):
             fail(f"{where}: text is 1–40 of A-Z a-z 0-9 space . _ - (no keys, no Return), on its own")
-        if not (previous and previous[0] == "input" and "click" in previous[1]
-                and previous[1].get("button", "left") == "left" and not previous[1].get("modifiers")):
-            fail(f"{where}: text must come straight after a plain left click on a command-bar opener")
+        after_click = (previous and previous[0] == "input" and "click" in previous[1]
+                       and previous[1].get("button", "left") == "left" and not previous[1].get("modifiers"))
+        after_keys = previous and previous[0] == "input" and previous[1] == {"keys": OPENER_KEYS}
+        if not (after_click or after_keys):
+            fail(f"{where}: text must come straight after {OPENER_KEYS} or a plain left click on a command-bar opener")
         # Text needs the build to insert it without key events (TEXT_FLOOR): checked once, on the checkout's HEAD.
         if not has_text_fix():
             fail(f"{where}: text steps need a base with fix/test-safe-text-input ({text_floor[:7]}), which this "
@@ -731,7 +747,7 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
         if [[ "$kind" == wait ]]; then sleep "$action"; last_hit=""; continue; fi
         if [[ "$checks" == *'"needs":"command bar"'* ]]; then
             # Text only straight after a click on a command-bar opener, and only into Kite's own open command bar.
-            if [[ -z "$last_hit" || " $COMMAND_BAR_OPENERS " != *" $last_hit "* ]]; then
+            if [[ -z "$last_hit" || ( "$last_hit" != "cmd+t" && " $COMMAND_BAR_OPENERS " != *" $last_hit "* ) ]]; then
                 refused="the text step doesn't follow a click on a command-bar opener (${last_hit:-no safe click})"
             else
                 # The bar opens a moment after the click: 15 looks 0.2 s apart, each tree read capped at 5 s.
@@ -744,6 +760,8 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
                 if [[ "$result" != "hit "* ]]; then refused="$result"; fi
             fi
             last_hit=""
+        elif [[ "$checks" == *'"opens":"command bar"'* ]]; then
+            last_hit="cmd+t"   # the planner allowed exactly {"keys":"cmd+t"} here, on a base with TEXT_FLOOR
         elif [[ -n "$checks" ]]; then
             : >"$folder/targets.txt"
             for target in $SAFE_TARGETS; do

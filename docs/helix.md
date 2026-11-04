@@ -115,11 +115,13 @@ request that could reach past that, before anything runs:
   numeric, like `127.1` or `0x7f.1`, counts as an address), or a path-like value. `profileSettings`
   keeps only its `includesSearchSuggestions` booleans (download folders and the save-panel choice
   go), and every profile gets a fresh WebKit store that's deleted afterwards;
-- keys or modifier flags; a click or drag that doesn't start on a visible view in `SAFE_TARGETS`
-  (checked against the tree just before the step); a right- or ⌃-click without a non-empty
-  `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it;
-- text, except 1–40 of `A-Z a-z 0-9 space . _ -` straight after a plain click on a command-bar
-  opener (`NewTabRowCell`), into a visible `CommandBarField`: Kite's own command bar, which acts
+- keys (except exactly `{"keys":"cmd+t"}`, which opens Kite's own command bar, on a base with
+  `TEXT_FLOOR`) or modifier flags; a click or drag that doesn't start on a visible view in
+  `SAFE_TARGETS` (checked against the tree just before the step); a right- or ⌃-click without a
+  non-empty `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it;
+- text, except 1–40 of `A-Z a-z 0-9 space . _ -` straight after `cmd+t` or a plain click on a
+  command-bar opener (`NewTabRowCell`; a background window drops that click, as the row doesn't take
+  first mouse, so `cmd+t` is the one that works headless), into a visible `CommandBarField`: Kite's own command bar, which acts
   only on Return, and Return can't be sent. Text also needs a base with the script's `TEXT_FLOOR`
   (fix/test-safe-text-input), where a test-safe run inserts it into the bar's field editor without
   key events, so the input method (and a Japanese input source's candidate window) never sees it.
