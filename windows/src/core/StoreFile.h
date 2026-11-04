@@ -9,7 +9,7 @@
 // target changes: a crash or power cut before it leaves the previous file as it was, after it
 // the new one. Each write has its own temp, `<name>.<process>-<n>.tmp` (a token drawn once per
 // process, and a count), so two writers of one file (a Kite quitting and one starting, two
-// threads) never write into the same temp; each rename is whole (retried for up to 250 ms
+// threads) never write into the same temp; each rename is whole (retried for 250 ms at most
 // while Windows refuses to replace a file another rename is replacing), and the last one wins.
 // A crash can leave a temp behind: RemoveStaleTemps clears those, at launch.
 //
@@ -31,7 +31,8 @@ std::string WriteAtomically(const std::filesystem::path& file, std::string_view 
 // taking it (the tests use it to put something in a write's way).
 std::filesystem::path NextTempPath(const std::filesystem::path& file);
 
-// Whether `name` is a temp WriteAtomically made (<target>.<8 hex>-<n>.tmp).
+// Whether `name` is a temp WriteAtomically made (<target>.<8 hex>-<n>.tmp, or the
+// <target>.json.tmp it used before W11).
 bool IsTempName(std::string_view name);
 
 // Removes the temps in `directory` (any process's) last written over `age` ago: left by a

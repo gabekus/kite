@@ -308,12 +308,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // A write still stuck as Kite ends (a disk that hangs past kQuitFlush): the process ends
     // there, without the C++ library's teardown running under the writer's thread. The file is
     // the old one or the new one (the write is atomic); the run is a failed save.
-    writer.OnStuck([quiet] {
+    const auto endStuck = [quiet] {
         const std::wstring message = L"Kite: the session's last write didn't finish; Kite ended without waiting for it\n";
         OutputDebugStringW(message.c_str());
         if (quiet) WriteUtf8(STD_ERROR_HANDLE, message);
         TerminateProcess(GetCurrentProcess(), kSaveFailed);
-    });
+    };
+    writer.OnStuck(endStuck);
     // As the Mac does once per launch, the session as found (read, recovered or a fresh one, as
     // BrowserStore.init) is kept as a launch backup: before the auto-archive, as the Mac's is
     // before its first pass, but handed over only once this launch is Kite's (not a second one
@@ -423,6 +424,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // one). Before Chromium shuts down: until then this Kite holds the profile, so a launch in
     // the meantime hands over to it rather than read a session.json about to be replaced.
     const std::string saveError = writer.Flush(kQuitFlush);
+    // Still writing after that: end here, before Chromium's shutdown or a dialog, while the
+    // stuck write may yet rename (no other Kite can have the profile until this one is gone).
+    if (writer.Writing()) endStuck();
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (frameLogOption.value) {
         if (problem = controller->SaveFrameLog(*frameLogOption.value); !problem.empty()) {

@@ -54,6 +54,8 @@ struct SessionWriter::Shared {
     std::string lastWritten;
     bool lastWrittenBackedUp = false;
 
+    // Nothing handed over waits or is being written (under the lock).
+    bool Idle() const { return !next && !launch && !offer && !busy; }
     void Run();
     void Write(const BrowserState& state);
     void BackUpHourly();
@@ -72,8 +74,10 @@ SessionWriter::~SessionWriter() {
     shared_->wake.notify_one();
     // Run writes what's waiting before it ends. After a Flush that already timed out it isn't
     // waited for again (the caller has waited its bound); otherwise for kStopWait.
+    // A worker with nothing left to do counts as done: told to stop, it ends at once, so the
+    // join can't hang (a Flush that timed out may have been just short of the write's end).
     const auto wait = flushTimedOut_ ? std::chrono::milliseconds(0) : kStopWait;
-    const bool ended = shared_->done.wait_for(lock, wait, [this] { return shared_->ended; });
+    const bool ended = shared_->done.wait_for(lock, wait, [this] { return shared_->ended || shared_->Idle(); });
     lock.unlock();
     if (ended) {
         worker_.join();
@@ -123,11 +127,17 @@ void SessionWriter::BackUpLaunch(BrowserState found) {
 std::string SessionWriter::Flush(std::chrono::milliseconds timeout) {
     std::unique_lock lock(shared_->mutex);
     Shared& s = *shared_;
-    if (!WaitFor(s.done, lock, timeout, [&] { return (!s.next && !s.launch && !s.offer && !s.busy) || s.ended; })) {
+    if (!WaitFor(s.done, lock, timeout, [&] { return s.Idle() || s.ended; })) {
         flushTimedOut_ = true;
         return "the session's write didn't finish within " + std::to_string(timeout.count()) + " ms";
     }
     return s.stats.lastError;
+}
+
+bool SessionWriter::Writing() const {
+    if (!maySave_) return false;
+    std::lock_guard lock(shared_->mutex);
+    return !shared_->Idle() && !shared_->ended;
 }
 
 SessionWriter::Statistics SessionWriter::Stats() const {

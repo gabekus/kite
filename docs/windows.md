@@ -366,7 +366,8 @@ write if the bytes are what it last wrote, and writes it atomically
 file; each write has a temp of its own, so two writers never share one). Kite
 waits for the last write once the window is gone, before Chromium shuts down
 (so a launch meanwhile hands over to it rather than read a file about to be
-replaced), 10 s at most; logoff and shutdown wait in the window, 3 s at most.
+replaced; with the window gone, that launch is dropped, and the user launches
+again), 10 s at most; logoff and shutdown wait in the window, 3 s at most.
 Giving up is safe, since the file is then the old one or the new one; a write
 still stuck then ends the process (`TerminateProcess`, exit 4) rather than let
 the C++ library tear down under the writer's thread. The writer also keeps

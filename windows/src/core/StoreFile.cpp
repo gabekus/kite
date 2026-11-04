@@ -27,16 +27,26 @@ std::string PathText(const fs::path& path) {
 
 namespace {
 
-// Drawn once per process: two processes' temps never share a name.
-const std::string& ProcessToken() {
-    static const std::string token = NewUuid().substr(0, 8);
-    return token;
+// Drawn once per process: two processes' temps never share a name. Plain chars (trivially
+// destructible), so a writer thread still running as the process ends never reads a destroyed
+// string.
+struct Token {
+    char text[9];
+};
+const char* ProcessToken() {
+    static const Token token = [] {
+        Token t{};
+        const std::string uuid = NewUuid();
+        for (size_t i = 0; i < 8; ++i) t.text[i] = uuid[i];
+        return t;
+    }();
+    return token.text;
 }
 
 std::atomic<unsigned long long> nextTemp{0};
 
 fs::path TempPath(const fs::path& file, unsigned long long n) {
-    const std::string suffix = "." + ProcessToken() + "-" + std::to_string(n) + ".tmp";
+    const std::string suffix = std::string(".") + ProcessToken() + "-" + std::to_string(n) + ".tmp";
     fs::path temp = file;
     temp += fs::path(std::u8string(suffix.begin(), suffix.end()));
     return temp;
@@ -74,13 +84,17 @@ std::string WriteAtomically(const fs::path& file, std::string_view bytes) {
         fs::remove(temp, ignored);
         return problem;
     }
-    // Windows refuses a replace while another writer's replace of the same file is under way
-    // (access denied), and so do virus scanners and sync clients holding the file for a moment:
-    // a few short retries, 250 ms in all, on the writer's thread.
+    // Windows refuses a replace while another writer's replace of the same file is under way,
+    // and so do virus scanners and sync clients holding the file for a moment: access denied or
+    // a sharing violation (both permission_denied in MSVC's mapping), or a lock violation. Those
+    // are retried, for 250 ms at most by the clock (a sleep lasts a timer tick, 15.6 ms, not the
+    // 5 asked for); any other failure is final at once.
     std::error_code error;
-    for (int attempt = 0; attempt < 50; ++attempt) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    for (;;) {
         fs::rename(temp, file, error);
-        if (!error) break;
+        const bool passing = error == std::errc::permission_denied || error == std::errc::no_lock_available;
+        if (!error || !passing || std::chrono::steady_clock::now() >= deadline) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     if (error) {
@@ -91,9 +105,11 @@ std::string WriteAtomically(const fs::path& file, std::string_view bytes) {
     return {};
 }
 
-// Whether `name` is a temp WriteAtomically made: <target>.<8 hex>-<digits>.tmp.
+// Whether `name` is a temp WriteAtomically made: <target>.<8 hex>-<digits>.tmp, or the one name
+// it used before W11, <target>.json.tmp.
 bool IsTempName(std::string_view name) {
     if (!name.ends_with(".tmp")) return false;
+    if (name.ends_with(".json.tmp") && name.size() > 9) return true;
     name.remove_suffix(4);
     const size_t dash = name.rfind('-');
     if (dash == std::string_view::npos || dash + 1 == name.size() || dash < 9 || name[dash - 9] != '.') return false;

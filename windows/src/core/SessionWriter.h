@@ -65,6 +65,9 @@ public:
     // with nothing copied or written. False when nothing has been written this run (the caller
     // saves instead).
     bool OfferBackup();
+    // Whether the worker still has something to write, right now (after a Flush timed out,
+    // whether it really is stuck).
+    bool Writing() const;
     // Runs when the destructor has to let a worker go that's still writing. The app ends the
     // process from it (without static destruction, which would tear the C library down under
     // the thread); without one the thread is detached.

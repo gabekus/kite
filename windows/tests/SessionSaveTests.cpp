@@ -222,7 +222,9 @@ TEST(aCrashMidWriteLeavesThePreviousFileIntact) {
     CHECK(fs::exists(dir / "notes.tmp"));
     fs::remove(dir / "notes.tmp");
     CHECK(store_file::IsTempName("session.json.0badf00d-7.tmp") && store_file::IsTempName(Name(store_file::NextTempPath(store.File()))));
-    for (const char* other : {"session.json.tmp", "session.json.0badf00d-.tmp", "session.json.0badf0-7.tmp", "0badf00d-7.tmp",
+    // The one name writes used before W11 is a temp too, so a leftover of it goes as well.
+    CHECK(store_file::IsTempName("session.json.tmp"));
+    for (const char* other : {".json.tmp", "notes.tmp", "session.json.0badf00d-.tmp", "session.json.0badf0-7.tmp", "0badf00d-7.tmp",
                               "session.json.0badf00g-7.tmp"}) {
         CHECK(!store_file::IsTempName(other));
     }
@@ -717,4 +719,27 @@ TEST(aWorkerStillWritingAtTheEndIsHandedToOnStuck) {
     for (int i = 0; i < 500 && b.store.Backups().All().empty(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
     CHECK(b.store.Backups().All().size() == 1);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+// A Flush that timed out just short of the write's end: once the worker has nothing left, the
+// destructor joins it, and OnStuck (which ends the app's process) doesn't run.
+TEST(aWriteThatFinishedAfterATimedOutFlushIsNotStuck) {
+    Backups b(2);
+    auto gate = std::make_shared<std::atomic<bool>>(false);
+    auto stuck = std::make_shared<std::atomic<int>>(0);
+    {
+        SessionWriter writer(b.store, true, [gate] {
+            while (!*gate) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return Backups::start;
+        });
+        writer.OnStuck([stuck] { ++*stuck; });
+        writer.Save(b.State(1));
+        CHECK(!writer.Flush(std::chrono::milliseconds(50)).empty());
+        CHECK(writer.Writing());
+        *gate = true;
+        for (int i = 0; i < 500 && writer.Writing(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        CHECK(!writer.Writing());
+    }
+    CHECK(*stuck == 0);
+    CHECK(b.store.Backups().All().size() == 1);
 }
