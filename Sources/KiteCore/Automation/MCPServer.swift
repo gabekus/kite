@@ -22,6 +22,17 @@ public struct MCPServer: Sendable {
         self.version = version
     }
 
+    /// Forms for an account the user opens (a bank, a carrier, a supplier): what Claude fills in and what it leaves the
+    /// user. Gabe's standing rule (4 Nov 2026); Kite's own Claude prompt and the setup guide carry it too.
+    public static let accountForms = """
+        Forms for an account the user opens (a bank, a carrier, a supplier): fill in the ordinary details they \
+        approve (business or personal name, owner, title, addresses, phone and email, plain choices such as the \
+        account type or "no EIN") in one pass, and don't guess them: ask, or use what the site has on file. Leave \
+        the user every click that creates the account, agrees to terms, authorizes a credit check, verifies \
+        identity or pays, and every field for an SSN, EIN or other ID number, a card or bank number, a password or \
+        a one-time code: hand the account-making click over with handoff and wait on it, then fill the next page.
+        """
+
     public static let instructions = """
         Kite is the user's own web browser. These tools act in their real tabs, signed in as them. \
         Call tabs_context first for tab ids, and read_page or find before click, type or form_input to get element refs; \
@@ -34,6 +45,7 @@ public struct MCPServer: Sendable {
         Only submit forms, send, post, pay, buy or delete what the user asked for. If they turned on Kite's \
         Ask Before Claude Acts, Kite asks them first; if they decline, the tool returns an error. \
         Don't retry a declined action. \
+        \(accountForms) \
         When a page needs the user signed in, call sign_in: the user signs in (with their password manager) while you wait, and \
         you never see the password. Never ask for a password or type one yourself. \
         When you stop because the user must do something themselves (your safety check or their rules won't let you, \

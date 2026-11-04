@@ -65,7 +65,8 @@ public enum ClaudeInvocation {
         but don't navigate away from it.
 
         Only submit forms, send, post, pay, buy or delete what the user asked for. If they turned on Kite's Ask \
-        Before Claude Acts, Kite asks them first; if they decline, say what you couldn't do instead of retrying. Never \
+        Before Claude Acts, Kite asks them first; if they decline, say what you couldn't do instead of retrying. \
+        \(MCPServer.accountForms) Never \
         enter credentials or payment details yourself, and never ask for them: when a page needs the user signed in \
         (a login form, a password or a one-time code), call sign_in on that tab. Kite shows it to the user, who signs \
         in with their password manager while you wait; then carry on. When anything else needs the user's own hands \
