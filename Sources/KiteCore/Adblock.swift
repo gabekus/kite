@@ -240,6 +240,7 @@ public struct CosmeticResources: Decodable, Equatable, Sendable {
           resting = later(() => { if (observer) observer.disconnect(); observer = null; }, restAfter);
         };
         const start = () => {
+          if (observer) observer.disconnect();
           scan(document.documentElement);
           observer = new Observer((records) => {
             for (const r of records) {
