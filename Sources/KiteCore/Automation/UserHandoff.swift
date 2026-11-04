@@ -471,7 +471,7 @@ extension Handoff {
     /// A handoff that doesn't decode (a step from a newer build, say) is left out and the file copied
     /// aside; a file that won't decode at all is moved aside, or never saved over when it can't be (`StoreFile`).
     public static func load(from url: URL, now: Date = Date()) -> [Handoff] {
-        guard let lossy = StoreFile.load([Lossy<Handoff>].self, from: url, decoder: .handoffs, now: now).value
+        guard let lossy = StoreFile.load([Lossy<Handoff>].self, from: url, makeDecoder: { .handoffs }, now: now).value
         else { return [] }
         let saved = lossy.compactMap(\.value)
         return pruned(saved.filter { now.timeIntervalSince($0.created) < lifetime })

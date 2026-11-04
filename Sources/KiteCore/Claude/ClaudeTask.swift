@@ -230,9 +230,11 @@ public struct ClaudeTaskList: Codable, Sendable {
     /// `StoreFile`: a file that won't decode is moved aside, one read leniently (tasks dropped, kinds
     /// coerced) is copied aside, and `.unmovable` means don't save.
     public static func load(from url: URL, now: Date = Date()) -> StoreFile.Load<ClaudeTaskList> {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let result = StoreFile.load(ClaudeTaskList.self, from: url, decoder: decoder, now: now)
+        let result = StoreFile.load(ClaudeTaskList.self, from: url, makeDecoder: {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return decoder
+        }, now: now)
         guard case .loaded(var list, let lenient) = result else { return result }
         for i in list.tasks.indices where list.tasks[i].status == .running {
             list.tasks[i].status = .stopped

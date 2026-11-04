@@ -29,16 +29,18 @@ public enum StoreFile {
         }
     }
 
-    public static func load<T: Decodable>(_ type: T.Type, from url: URL, decoder: JSONDecoder = JSONDecoder(),
+    /// `makeDecoder` makes a fresh decoder for this load (its date strategy and so on): the lenient count
+    /// goes in its `userInfo`, so a decoder shared with other code is never touched.
+    public static func load<T: Decodable>(_ type: T.Type, from url: URL, makeDecoder: () -> JSONDecoder = { JSONDecoder() },
                                           now: Date = Date()) -> Load<T> {
         guard FileManager.default.fileExists(atPath: url.path) else { return .missing }
         let count = LenientCount()
-        let saved = decoder.userInfo[.kiteLenient]
+        let decoder = makeDecoder()
         decoder.userInfo[.kiteLenient] = count
-        defer { decoder.userInfo[.kiteLenient] = saved }
         do {
             let value = try decoder.decode(T.self, from: Data(contentsOf: url))
-            if count.value > 0 { setAside(url, keepingOriginal: true, now: now) }
+            // Saving writes the lenient reading back: without a copy of the full file, don't save over it.
+            if count.value > 0, setAside(url, keepingOriginal: true, now: now) == nil { protect(url) }
             return .loaded(value, lenient: count.value)
         } catch {
             if let backup = setAside(url, now: now) { return .setAside(backup) }

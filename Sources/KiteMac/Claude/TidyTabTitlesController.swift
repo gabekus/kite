@@ -26,7 +26,7 @@ final class TidyTabTitlesController {
                     self?.pending.remove(id)
                     return
                 }
-                let name = await Task.detached { Self.ask(prompt) }.value
+                let name = await Task.detached { await Self.ask(prompt) }.value
                 self?.finish(id, name: name, store: store)
             }
         }
@@ -57,7 +57,7 @@ final class TidyTabTitlesController {
 
     /// Runs Claude Code once and reads the name from its reply. Nil if it isn't set up, fails or
     /// takes too long.
-    nonisolated private static func ask(_ prompt: String) -> String? {
+    nonisolated private static func ask(_ prompt: String) async -> String? {
         if let stub = testReply() {
             Thread.sleep(forTimeInterval: 1)
             return stub
@@ -67,7 +67,7 @@ final class TidyTabTitlesController {
         let process = OneShotProcess(executable: claude, arguments: TidyTabTitles.arguments(),
                                      environment: ClaudeTasksController.environment(),
                                      directory: FileManager.default.temporaryDirectory)
-        guard let result = process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
+        guard let result = await process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
         return TidyTabTitles.title(fromReply: String(decoding: result.output, as: UTF8.self))
     }
 }

@@ -86,6 +86,7 @@ public final class OneShotProcess: @unchecked Sendable {
 
     #if canImport(Darwin)
     private func runSpawned(input: Data, timeout: TimeInterval) -> Result? {
+        guard !isCancelled else { return nil }
         let deadline = Date().addingTimeInterval(timeout)
         var inPipe: [Int32] = [-1, -1], outPipe: [Int32] = [-1, -1]
         guard pipe(&inPipe) == 0 else { return nil }
@@ -208,7 +209,10 @@ public final class OneShotProcess: @unchecked Sendable {
     /// reserved for the final `killpg`.
     private static func hasExited(_ pid: pid_t) -> Bool {
         var info = siginfo_t()
-        guard waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0 else { return true }
+        while waitid(P_PID, id_t(pid), &info, WEXITED | WNOHANG | WNOWAIT) != 0 {
+            // ECHILD and the like: there's nothing left to wait for.
+            if errno != EINTR { return true }
+        }
         return info.si_pid == pid
     }
     #else

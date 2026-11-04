@@ -92,6 +92,27 @@ import Testing
         #expect(try backups(in: folder).count == 1)
     }
 
+    @Test func aLenientReadThatCannotBeCopiedIsNeverSavedOver() throws {
+        let folder = try makeFolder()
+        let url = folder.appendingPathComponent("routes.json")
+        let text = "{\"spaces\": {\"\(UUID().uuidString)\": {\"agent\": {}}}, \"projects\": []}"
+        try Data(text.utf8).write(to: url)
+        // A folder Kite can't write in: no copy of the newer build's file can be kept.
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: folder.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path)
+            try? FileManager.default.removeItem(at: folder)
+        }
+
+        let load = StoreFile.load(ClaudeRoutes.self, from: url)
+        guard case .loaded(_, let lenient) = load else { Issue.record("expected .loaded, got \(load)"); return }
+        #expect(lenient == 1)
+        #expect(StoreFile.isProtected(url))
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path)
+        #expect(throws: (any Error).self) { try ClaudeRoutes().save(to: url) }
+        #expect(try String(contentsOf: url, encoding: .utf8) == text)
+    }
+
     @Test func aCleanFileMakesNoCopy() throws {
         let folder = try makeFolder()
         defer { try? FileManager.default.removeItem(at: folder) }

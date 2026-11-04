@@ -30,7 +30,7 @@ final class DownloadTidier {
         Task.detached(priority: .utility) { [weak self] in
             // A name that already says what the file is stays, without a Claude run.
             if let jev = JevClient.shared, await Jev.skipsTidy(check, ask: jev.ask) { return }
-            guard let output = Self.askClaude(prompt, timeout: timeout),
+            guard let output = await Self.askClaude(prompt, timeout: timeout),
                   let proposed = TidyDownloads.name(fromClaudeOutput: output),
                   let name = TidyDownloads.tidiedName(proposed, original: fileName) else { return }
             await self?.rename(item.id, from: item.path, to: name)
@@ -94,7 +94,7 @@ final class DownloadTidier {
     // MARK: Claude
 
     /// One `claude -p` run with no tools or MCP servers, in an empty folder. Nil on any failure.
-    nonisolated private static func askClaude(_ prompt: String, timeout: TimeInterval) -> String? {
+    nonisolated private static func askClaude(_ prompt: String, timeout: TimeInterval) async -> String? {
         guard let claude = ClaudeConnect.findClaude() else { return nil }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("KiteTidyDownloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
@@ -102,7 +102,7 @@ final class DownloadTidier {
         // Its own process group, ended whole at the timeout: a child left holding stdout can't hang the read.
         let process = OneShotProcess(executable: claude, arguments: TidyDownloads.arguments(),
                                      environment: environment, directory: directory)
-        guard let result = process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
+        guard let result = await process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
         return String(decoding: result.output, as: UTF8.self)
     }
 
