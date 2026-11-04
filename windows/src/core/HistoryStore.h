@@ -5,7 +5,7 @@
 // deleting the profile deletes it.
 //
 // Threads. Everything public is for one thread (Kite's UI thread). One worker thread
-// (core/BackgroundWorker.h, shared with the session's writer) does every store's disk work, in
+// (core/WorkerThread.h, shared with the session's writer) does every store's disk work, in
 // order, as the Mac's "history-writes" queue: it reads each file once Kite knows it's the one
 // running (Start; another profile's the first time it's asked for after that), and it encodes and
 // writes the snapshots the UI thread hands it. A snapshot is a copy of the History, which costs a
@@ -34,7 +34,7 @@
 #include <string_view>
 #include <vector>
 
-#include "core/BackgroundWorker.h"
+#include "core/WorkerThread.h"
 #include "core/History.h"
 #include "core/SessionSaveDelay.h"
 

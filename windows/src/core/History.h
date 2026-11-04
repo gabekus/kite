@@ -60,10 +60,12 @@ public:
     // Web pages only, as the Mac's records(_:): http and https. Also a URL the Mac can read back
     // (url::HasValidAuthority): one Foundation rejects would make the Mac drop the whole file.
     static bool Records(std::string_view url);
-    // `url` as the Mac keeps it: NSURL (RFC 3986, macOS 14) percent-encodes what a path, query
-    // or fragment may not hold (space, " < > \ ^ ` { | } [ ], a second #, a % that starts no
-    // escape, controls and anything past ASCII), and Chromium leaves some of those as typed. The
-    // authority is left alone. Every method here that takes a URL takes it through this.
+    // `url` as the Mac keeps it: NSURL (RFC 3986, macOS 14 and later) takes a path, query or
+    // fragment that holds what it may not (space, " < > \ ^ ` { | } [ ], a second #, a % that
+    // starts no escape, controls, anything past ASCII; Chromium leaves some of those as typed)
+    // as unescaped, and percent-encodes that part whole, its % signs too. A valid part, and the
+    // authority, are left alone. Every method here that takes a URL takes it through this.
+    // Tests/Fixtures/history-url-keys.json holds the pairs both suites check.
     static std::string Normalized(std::string_view url);
 
     // False when the URL isn't one history keeps (Records): nothing changed.

@@ -40,7 +40,6 @@ add_library(KiteCoreWin STATIC
   src/core/ArcImport.cpp
   src/core/ArcImportController.cpp
   src/core/ArcImportFiles.cpp
-  src/core/BackgroundWorker.cpp
   src/core/CommandBar.cpp
   src/core/Files.cpp
   src/core/History.cpp
@@ -74,6 +73,7 @@ add_library(KiteCoreWin STATIC
   src/core/URLInput.cpp
   src/core/Url.cpp
   src/core/Uuid.cpp
+  src/core/WorkerThread.cpp
 )
 target_include_directories(KiteCoreWin PUBLIC src)
 # SessionWriter's worker is a std::thread (pthreads off Windows).
@@ -197,7 +197,6 @@ add_executable(KiteCoreTests
   tests/ArcHistoryImportTests.cpp
   tests/ArcImportTests.cpp
   tests/ArcImportFilesTests.cpp
-  tests/BackgroundWorkerTests.cpp
   tests/CommandBarTests.cpp
   tests/HistoryTests.cpp
   tests/JsonTests.cpp
@@ -218,6 +217,7 @@ add_executable(KiteCoreTests
   tests/TitleBarTests.cpp
   tests/UnicodeTests.cpp
   tests/URLInputTests.cpp
+  tests/WorkerThreadTests.cpp
 )
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
 if(NOT MSVC)

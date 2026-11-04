@@ -89,13 +89,7 @@ void SessionWriter::BackUpLaunch(BrowserState found) {
     shared_->wake.notify_one();
 }
 
-std::string SessionWriter::Flush(std::chrono::milliseconds timeout) {
-    if (!worker_.WaitIdle(DeadlineAfter(timeout))) {
-        return "the session's write didn't finish within " + std::to_string(timeout.count()) + " ms";
-    }
-    std::lock_guard lock(shared_->mutex);
-    return shared_->stats.lastError;
-}
+std::string SessionWriter::Flush(std::chrono::milliseconds timeout) { return Flush(DeadlineAfter(timeout)); }
 
 std::string SessionWriter::Flush(Deadline deadline) {
     if (!worker_.WaitIdle(deadline)) return "the session's write didn't finish in time";

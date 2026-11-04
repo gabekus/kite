@@ -86,32 +86,54 @@ std::string History::Normalized(std::string_view url) {
 
 std::string_view History::Key(std::string_view url, std::string& out) {
     static constexpr char kHexDigits[] = "0123456789ABCDEF";
+    // The path, the query and the fragment, each on its own, as NSURL (macOS 14 and later) reads
+    // them: a part that holds anything it may not is percent-encoded whole, its % signs too, as
+    // if nothing in it had been escaped (macOS 15.7.4 makes "caf%C3%A9/café" into
+    // "caf%25C3%25A9/caf%C3%A9"); a part that's valid is left as it is.
+    struct Part {
+        size_t begin, end;
+        bool fragment;
+    };
     const size_t from = AfterAuthority(url);
-    bool changed = false;  // `out` holds the URL up to i only once something was encoded
-    bool fragment = false;
-    for (size_t i = from; i < url.size(); ++i) {
-        const unsigned char c = static_cast<unsigned char>(url[i]);
-        bool encode = false;
-        if (c == '#') {
-            encode = fragment;  // the first # starts the fragment; another is part of it
-            fragment = true;
+    const size_t hash = url.find('#', from);
+    const size_t beforeFragment = hash == std::string_view::npos ? url.size() : hash;
+    const size_t question = url.substr(0, beforeFragment).find('?', from);
+    const size_t pathEnd = question == std::string_view::npos ? beforeFragment : question;
+    Part parts[3];
+    size_t count = 0;
+    parts[count++] = {from, pathEnd, false};
+    if (question != std::string_view::npos) parts[count++] = {question + 1, beforeFragment, false};
+    if (hash != std::string_view::npos) parts[count++] = {hash + 1, url.size(), true};
+    const auto invalid = [&](const Part& part) {
+        for (size_t i = part.begin; i < part.end; ++i) {
+            if ((part.fragment && url[i] == '#') || !Allowed(url.substr(0, part.end), i)) return true;
+        }
+        return false;
+    };
+    bool any = false;
+    bool encode[3] = {false, false, false};
+    for (size_t k = 0; k < count; ++k) any |= (encode[k] = invalid(parts[k]));
+    if (!any) return url;
+    out.assign(url.substr(0, from));
+    size_t at = from;
+    for (size_t k = 0; k < count; ++k) {
+        out.append(url.substr(at, parts[k].begin - at));  // the ? or # before it
+        if (!encode[k]) {
+            out.append(url.substr(parts[k].begin, parts[k].end - parts[k].begin));
         } else {
-            encode = !Allowed(url, i);
+            for (size_t i = parts[k].begin; i < parts[k].end; ++i) {
+                const unsigned char c = static_cast<unsigned char>(url[i]);
+                if (c == '%' || c == '#' || !Allowed(url, i)) {
+                    out += '%';
+                    out += kHexDigits[c >> 4];
+                    out += kHexDigits[c & 0xF];
+                } else {
+                    out += static_cast<char>(c);
+                }
+            }
         }
-        if (encode && !changed) {
-            out.assign(url.substr(0, i));
-            changed = true;
-        }
-        if (!changed) continue;
-        if (encode) {
-            out += '%';
-            out += kHexDigits[c >> 4];
-            out += kHexDigits[c & 0xF];
-        } else {
-            out += static_cast<char>(c);
-        }
+        at = parts[k].end;
     }
-    if (!changed) return url;
     return out;
 }
 

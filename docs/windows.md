@@ -399,15 +399,17 @@ same-document change to a new URL, such as pushState or a fragment) is a visit
 when it isn't the address that tab's page last recorded, so a reload isn't one
 and a page closed for the live-page limit records again when it loads; the
 page's title goes to the address last recorded, and a repeat changes nothing.
-A URL is kept as the Mac's NSURL keeps it (`History::Normalized`): what a path,
-query or fragment may not hold, which Chromium sometimes leaves as typed (`|`,
-`^`, `` ` ``, `{`, `}`, `[`, `]`, `\`, a stray `%`), is percent-encoded.
+A URL is kept as the Mac's NSURL keeps it (`History::Normalized`): a path,
+query or fragment that holds what it may not, which Chromium sometimes leaves
+as typed (`|`, `^`, `` ` ``, `{`, `}`, `[`, `]`, `\`, a stray `%`), is taken as
+unescaped and percent-encoded whole, its `%` signs too; a valid part is left
+as it is.
 
 History saves 3 s after the last change and at least every 30 s while changes
 keep coming (`CappedDebounce`), at once for an import, and when the window
 closes; logoff and shutdown wait for it within the same 3 s as the session,
 and quitting within the same 10 s. `core/HistoryStore` reads each profile's
-file and writes it on a worker of its own (`core/BackgroundWorker`, the
+file and writes it on a worker of its own (`core/WorkerThread`, the
 session writer's thread too), from a snapshot that costs the UI thread a few
 μs: the entries are kept in 256 shards that copies share and copy on write, a
 shard at a time. The files are read only once the launch is Kite's (after
@@ -443,6 +445,24 @@ Known differences from the Mac:
   Mac fetches `host/favicon.ico`.
 - The tab rows above the history rows are still W7a's; the Mac's Arc order is
   W7c.
+- An unreadable file moved aside when `<name>.corrupt-<unix time>.json` is
+  already there gets a `-N` suffix (up to 99); the Mac's `try? moveItem` fails
+  then, and its next save writes over the unreadable file.
+- `HistoryStore::Merge` before the profile's file has been read counts the new
+  pages against this run's history only (the import is replayed over the file
+  once it's in, so nothing is lost or doubled); the Mac's read is done first.
+- A file over 20,000 pages is trimmed to 20,000 as it's read; the Mac keeps it
+  as it is until the next new page, then cuts it to 18,000 (Windows' next new
+  page past the cap cuts to 18,000 too).
+- A raw Unicode host would be kept as typed, where NSURL IDNA-encodes it
+  (`xn--…`). Chromium reports hosts in punycode, so a visit never has one; a
+  hand-written or imported file could.
+
+URL keys (`History::Normalized`) follow NSURL's RFC 3986 parsing, which is
+macOS 14's and later (Kite for Mac's minimum). Both suites read the same
+raw-to-key pairs (`Tests/Fixtures/history-url-keys.json`); the Mac's checks
+them against NSURL itself, last on macOS 15.7.4 (24G517), Gabe's runner. macOS
+14 itself hasn't been checked.
 
 Not yet: the history page (`kite://history`, with the Mac's days and
 headings), Delete browsing data, Import from Arc (W33a), and the bar's

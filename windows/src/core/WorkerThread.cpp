@@ -1,6 +1,6 @@
-// See BackgroundWorker.h.
+// See WorkerThread.h.
 
-#include "core/BackgroundWorker.h"
+#include "core/WorkerThread.h"
 
 #include <exception>
 

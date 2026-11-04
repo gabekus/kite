@@ -22,7 +22,7 @@
 // worker's state is shared with it (not owned by this object), so a worker still writing when
 // the writer goes is let go and finishes, or dies with the process, on its own.
 //
-// The thread itself, its bounded waits and OnStuck, are core/BackgroundWorker.h's, which
+// The thread itself, its bounded waits and OnStuck, are core/WorkerThread.h's, which
 // history's store (core/HistoryStore.h) shares.
 //
 // Everything public is for one thread (Kite's UI thread), except Stats.
@@ -33,7 +33,7 @@
 #include <memory>
 #include <string>
 
-#include "core/BackgroundWorker.h"
+#include "core/WorkerThread.h"
 #include "core/Models.h"
 #include "core/SessionStore.h"
 
