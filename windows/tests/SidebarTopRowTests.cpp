@@ -137,6 +137,22 @@ TEST(validateMenuItemTitlesTheToggleForWhatItWillDo) {
     CHECK(std::string(ToggleSidebarTitle(false)) == "Show Sidebar");
 }
 
+TEST(theSystemMenusItemShowsTheShortcutAsBound) {
+    // Its key equivalent: Ctrl+S by default, a user's key once rebound, none once removed.
+    const auto ctrlS = MenuShortcut(ShortcutTable(KeyBindings{}), "toggleSidebar");
+    CHECK(ctrlS && ctrlS->DisplayString() == "Ctrl+S");
+    KeyBindings rebound;
+    rebound.SetShortcut(KeyShortcut("b", {KeyShortcut::Modifier::Control, KeyShortcut::Modifier::Shift}), "toggleSidebar");
+    const auto user = MenuShortcut(ShortcutTable(rebound), "toggleSidebar");
+    CHECK(user && user->DisplayString() == "Ctrl+Shift+B");
+    KeyBindings removed;
+    removed.SetShortcut(std::nullopt, "toggleSidebar");
+    CHECK(!MenuShortcut(ShortcutTable(removed), "toggleSidebar"));
+    // A command with extra keys shows its own shortcut, not an extra (Refresh: Ctrl+R, not F5).
+    const auto reload = MenuShortcut(ShortcutTable(KeyBindings{}), "reloadPage");
+    CHECK(reload && reload->DisplayString() == "Ctrl+R");
+}
+
 TEST(hideSidebarIsCtrlS) {
     // The Mac's View › Hide Sidebar, ⌘S (MainMenu.swift), with Arc's Use Both priority.
     const auto table = ShortcutTable(KeyBindings{});

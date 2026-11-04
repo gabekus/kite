@@ -268,6 +268,8 @@ private:
     // The width the sidebar takes from the window: none while it's hidden.
     float SidebarShownWidth() const { return sidebarShown_ ? static_cast<float>(kSidebarWidth) : 0.0f; }
     void MovePage();
+    // The system menu's item: Hide Sidebar or Show Sidebar, a tab, and its shortcut as bound.
+    std::wstring ToggleSidebarMenuText() const;
     // The selected tab's page's status, to the top row (none for a tab with no page).
     void ShowPageStatus();
     // The smoke test's top row: its buttons, the page's states, a hover that draws nothing, a press

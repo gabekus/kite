@@ -218,7 +218,7 @@ std::wstring BrowserWindowController::Init() {
     // yet).
     if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kToggleSidebarMenuID, Widen(ToggleSidebarTitle(sidebarShown_)).c_str());
+        AppendMenuW(menu, MF_STRING, kToggleSidebarMenuID, ToggleSidebarMenuText().c_str());
     }
     // Every command the table can name does something: a test run fails on one that doesn't.
     if (options_.smokeTest || options_.capture) {
@@ -658,7 +658,7 @@ void BrowserWindowController::SetSidebarShown(bool shown) {
     if (toggling_ != wasToggling) FrameClock::BoostWithoutFrames(toggling_);
     // The system menu's item says what it will do next (validateMenuItem's retitling).
     if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
-        ModifyMenuW(menu, kToggleSidebarMenuID, MF_BYCOMMAND | MF_STRING, kToggleSidebarMenuID, Widen(ToggleSidebarTitle(shown)).c_str());
+        ModifyMenuW(menu, kToggleSidebarMenuID, MF_BYCOMMAND | MF_STRING, kToggleSidebarMenuID, ToggleSidebarMenuText().c_str());
     }
     // The page clear of the sidebar: a show moves it first, a hide at the end.
     if (shown || !toggling_) MovePage();
@@ -673,6 +673,13 @@ void BrowserWindowController::SetSidebarShown(bool shown) {
     // The compositor starts it at the commit's frame, up to a frame after now: a frame at 60 Hz to
     // spare, as the pages' settle.
     if (toggling_) SetTimer(window_.Handle(), kToggleTimer, static_cast<UINT>(std::ceil(duration * 1000)) + 17, nullptr);
+}
+
+std::wstring BrowserWindowController::ToggleSidebarMenuText() const {
+    std::wstring text = Widen(ToggleSidebarTitle(sidebarShown_));
+    // A menu's key equivalent after a tab, as Windows' menus right-align it.
+    if (const std::optional<KeyShortcut> shortcut = MenuShortcut(shortcuts_, "toggleSidebar")) text += L"\t" + Widen(shortcut->DisplayString());
+    return text;
 }
 
 void BrowserWindowController::FinishToggle() {

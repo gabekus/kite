@@ -529,7 +529,6 @@ std::wstring BrowserWindowController::SmokeTestTopRow() {
         return TopRowItem{};
     };
     const std::wstring failure = [&]() -> std::wstring {
-        // Back turning on is an opacity: nothing draws.
         // Back turning on is an opacity: the sidebar's next pass commits it, drawing nothing.
         size_t draws = sidebar_->TopRowSurfaceDraws();
         const size_t commits = sidebar_->Commits();
@@ -590,11 +589,25 @@ std::wstring BrowserWindowController::SmokeTestTopRow() {
             if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) GetMenuStringW(menu, kToggleSidebarMenuID, title, 64, MF_BYCOMMAND);
             return std::wstring(title);
         };
-        if (menuTitle() != L"Show Sidebar") return L"the system menu doesn't offer Show Sidebar";
+        if (!menuTitle().starts_with(L"Show Sidebar\t") || menuTitle() != ToggleSidebarMenuText()) {
+            return L"the system menu doesn't offer Show Sidebar with its shortcut";
+        }
+        // Hidden at rest it draws and commits nothing: reload's arrow coming back (the page stopped
+        // loading) and back turning off wait for the show, which draws reload alone.
+        const size_t hiddenCommits = sidebar_->Commits(), hiddenDraws = sidebar_->TopRowSurfaceDraws();
+        HoldPageStatus(PageStatus{false, false, true});
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (std::wstring problem = Draw(); !problem.empty()) return L"the window couldn't draw: " + problem;
+        if (sidebar_->Commits() != hiddenCommits || sidebar_->TopRowSurfaceDraws() != hiddenDraws) return L"the hidden sidebar drew";
         SendMessageW(window_.Handle(), WM_SYSCOMMAND, kToggleSidebarMenuID, 0);
         if (!sidebarShown_ || !toggling_) return L"the system menu's Show Sidebar didn't show the sidebar";
+        if (sidebar_->TopRowSurfaceDraws() != hiddenDraws + 1 || item(TopRowButton::Reload).symbol != "arrow.clockwise") {
+            return L"the sidebar didn't draw what changed while it was hidden as it showed";
+        }
         if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
-        if (menuTitle() != L"Hide Sidebar") return L"the system menu doesn't offer Hide Sidebar";
+        if (!menuTitle().starts_with(L"Hide Sidebar\t") || menuTitle() != ToggleSidebarMenuText()) {
+            return L"the system menu doesn't offer Hide Sidebar with its shortcut";
+        }
         // Ctrl+S's command hides it, and one caught 30 ms into the slide turns back from where it is.
         RunCommand("toggleSidebar");
         if (sidebarShown_ || !toggling_) return L"Toggle Sidebar didn't hide the sidebar";
