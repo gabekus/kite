@@ -6,14 +6,16 @@
 # Pages come from a local server (PAGES, default http://127.0.0.1:18765) serving p1–p10.html (static) and
 # b1–b5.html (timers, requestAnimationFrame and a CSS animation). TABS picks them (default "p1 … p10");
 # the last one opened is the selected tab. SETTLE (default 30) is the wait before sampling.
-# MINIMIZE=1 minimizes the window first; HIDE=1 hides Kite (⌘H) first.
+# MINIMIZE=1 minimizes the window first; HIDE=1 hides Kite (⌘H) first. ARGS are passed to Kite (Chromium
+# switches, e.g. ARGS=--disable-features=SpareRendererForSitePerProcess), to measure one before building it in.
 set -euo pipefail
 APP="$1"; LABEL="${2:-run}"; SECS="${3:-60}"; SETTLE="${SETTLE:-30}"
 TABS="${TABS:-p1 p2 p3 p4 p5 p6 p7 p8 p9 p10}"
 P=$(mktemp -d /tmp/k.XXXX)
 [[ -d "$P" ]] || { echo "profile not a directory" >&2; exit 1; }
 export KITE_SUPPORT_PATH=$P KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=x KITE_DIAGNOSTICS=1
-"$APP/Contents/MacOS/Kite" >"$P/kite.log" 2>&1 &
+# shellcheck disable=SC2086
+"$APP/Contents/MacOS/Kite" ${ARGS:-} >"$P/kite.log" 2>&1 &
 PID=$!
 trap 'kill $PID 2>/dev/null; wait $PID 2>/dev/null; rm -rf "$P"' EXIT
 CLI="$APP/Contents/Helpers/kite"
