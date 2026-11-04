@@ -46,7 +46,7 @@
 #   keychain prompts on Gabe's screen.
 # - HOOKS: a request's env may only set the KITE_TEST_* hooks classified as safe below. The test paths are always
 #   inside the profile.
-# - Sessions: URLs must be public http(s) (or about:), no path-like values, profileSettings stripped, and every
+# - Sessions: URLs must be public http(s) (or about:), no path-like values, profileSettings cut to its includesSearchSuggestions booleans, and every
 #   profile's WebKit dataStoreID replaced with a fresh one whose store is deleted afterwards.
 # - STEPS: clicks and drag starts must land on a visible view in SAFE_TARGETS (from the tree, just before the step);
 #   right- and ⌃-clicks also need a non-empty KITE_TEST_CONTEXT_MENU. No keys or modifier flags. Text only as
@@ -304,15 +304,29 @@ def check_session(node, key, where, problems):
             problems.append(f"{where} = {node[:80]!r} looks like a path")
 
 def sanitize(data, where):
-    """Checks a session and returns (copy with fresh dataStoreIDs and no profileSettings, the new IDs, notes)."""
+    """Checks a session and returns (copy with fresh dataStoreIDs and profileSettings cut down, the new IDs, notes)."""
     if not isinstance(data, dict):
         fail(f"{where}: the session isn't a JSON object")
     data = copy.deepcopy(data)
     notes = []
     for holder in (data, data.get("state") if isinstance(data.get("state"), dict) else {}):
         if "profileSettings" in holder:
-            del holder["profileSettings"]      # per-profile download folders
-            notes.append("profileSettings stripped")
+            # ProfileSettings holds downloadDirectory and promptsForDownload (a save panel), which go; only the
+            # includesSearchSuggestions booleans stay (a fixture turns them off so no network rows appear).
+            settings = holder["profileSettings"]
+            kept = {}
+            if isinstance(settings, dict):
+                for store, values in settings.items():
+                    if isinstance(values, dict) and isinstance(values.get("includesSearchSuggestions"), bool):
+                        kept[str(store)] = {"includesSearchSuggestions": values["includesSearchSuggestions"]}
+            dropped = not isinstance(settings, dict) or any(
+                not isinstance(v, dict) or set(v) - {"includesSearchSuggestions"} for v in settings.values())
+            if kept:
+                holder["profileSettings"] = kept
+            else:
+                del holder["profileSettings"]
+            if dropped:
+                notes.append("profileSettings cut to includesSearchSuggestions")
     problems = []
     check_session(data, "", "session", problems)
     if problems:
