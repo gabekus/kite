@@ -11,6 +11,7 @@
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
+//   kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
@@ -24,6 +25,12 @@
 // its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
 // bottom selects the space whose cell it hits.
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space.
+// `import-arc` is Import from Arc (core/ArcImportController.h): from Arc for Windows' folder
+// (--auto, the default), or PATH (Arc's folder, the folder holding it, or a sidebar file). It
+// prints what came over, per kind, and what was skipped and why: counts only, never Arc's
+// titles or addresses. Arc's unnamed spaces stay out unless --include-unnamed, as the Mac's
+// dialog starts. With --profile or KITE_SUPPORT_PATH, KITE_ARC_DATA_PATH stands in for Arc's
+// folder, as in the Mac's test runs.
 
 #include <algorithm>
 #include <charconv>
@@ -37,6 +44,7 @@
 #include <string>
 #include <vector>
 
+#include "core/ArcImportController.h"
 #include "core/CommandBar.h"
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
@@ -78,7 +86,8 @@ int Usage() {
         "       kitecore [--profile DIR] archive-stale [NOW]\n"
         "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
         "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
-        "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n",
+        "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n"
+        "       kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed]\n",
         stderr);
     return kUsage;
 }
@@ -545,6 +554,26 @@ int main(int argc, char** argv) {
         } else {
             return Usage();
         }
+        changed = true;
+    } else if (command == "import-arc") {
+        arc_import::ImportOptions options;
+        std::optional<std::filesystem::path> picked;
+        bool automatic = false;
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--include-unnamed") options.includeUntitled = true;
+            else if (args[i] == "--auto" && !picked) automatic = true;
+            else if (!automatic && !picked && !args[i].starts_with("--")) picked = std::filesystem::path(std::u8string(args[i].begin(), args[i].end()));
+            else return Usage();
+        }
+        const auto arcDirectory = arc_import::ArcDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"),
+                                                           EnvironmentPath("KITE_ARC_DATA_PATH"), EnvironmentPath("LOCALAPPDATA"));
+        auto plan = picked ? arc_import::ReadPicked(*picked, arcDirectory) : arc_import::ReadAuto(arcDirectory);
+        if (auto* error = std::get_if<arc_import::LoadError>(&plan)) {
+            std::fprintf(stderr, "kitecore: %s %s\n", error->message.c_str(), error->detail.c_str());
+            return kNotFound;
+        }
+        const json::Value summary = arc_import::Import(state, std::get<arc_import::Plan>(plan), std::get<std::filesystem::path>(resolved), options);
+        std::puts(json::Write(summary).c_str());
         changed = true;
     } else {
         return Usage();

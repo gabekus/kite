@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "core/KeyBindings.h"
@@ -52,6 +53,8 @@ public:
         // The profile's SpaceIcons folder: the pictures chosen as space icons (a capture
         // decodes them in place, the rest on a worker).
         std::filesystem::path spaceIcons;
+        // The profile's folder, where Import from Arc puts its shortcut changes and routes.
+        std::filesystem::path supportDirectory;
     };
 
     // The window and everything in it, laid out and wired, not yet shown or drawn. Null with
@@ -154,6 +157,15 @@ private:
     void ArchiveTab();
     void ReopenClosedTab();
     void MakeCommands();
+    // Import from Arc (BrowserWindowControllerArcImport.cpp, the Mac's ArcImportController):
+    // Arc's files are read on a worker, which posts kArcReadMessage when they're in.
+    static constexpr UINT kArcReadMessage = WM_APP + 7;
+    // The window's system menu item for it (Alt+Space): a WM_SYSCOMMAND id, under 0xF000.
+    static constexpr UINT kImportFromArcMenuID = 0x0A10;
+    struct ArcJob;
+    void ImportFromArc();
+    void ReadArc(std::optional<std::filesystem::path> picked);
+    void ArcRead();
     void RunCommand(const std::string& command);
     bool PageCommand(const std::string& command);
     void DropCompositor();
@@ -216,6 +228,10 @@ private:
     std::map<std::string, std::function<void()>, std::less<>> commands_;
     // A shortcut ran from a key: the character Windows makes of that key isn't typed.
     bool dropCharacter_ = false;
+    // Import from Arc's read: the worker (joined before the window goes) and what it hands back.
+    std::thread arcThread_;
+    std::shared_ptr<ArcJob> arcJob_;
+    bool arcReading_ = false;  // from the command until the confirmation's answer
 #ifdef KITE_HAS_CEF
     // Each open popup's tab and the tab that opened it (the Mac's PagePool.popupOpeners).
     std::map<std::string, std::string> popupOpeners_;

@@ -344,6 +344,35 @@ bar (W9b), a touchpad's swipe (W9c), reordering spaces and the space menu
 (W9d). `Kite.exe --frame-log FILE` writes each frame the clock delivered in a
 test run.
 
+## Import from Arc
+
+Arc stops working on 2026-12-22, so Kite for Windows imports Arc for Windows'
+data the way the Mac imports Mac Arc's (W15; `core/ArcImport*`, ported from
+KiteCore's `ArcImport*.swift` and KiteMac's `ArcImportController.swift`). Arc
+for Windows keeps it in its package,
+`%LOCALAPPDATA%\Packages\TheBrowserCompany.Arc_*\LocalCache\Local\Arc`:
+`StorableSidebar.json` (with dated backups, tried newest first when the current
+file doesn't read), `StorableArchiveItems.json`, `StorableKeyBindings.json` and
+`StorableLinkRouting.json` when there are any, Site Search in
+`User Data\Default\Web Data` (read with Kite's own SQLite reader) and profile
+names in `User Data\Local State`. Its settings aren't macOS defaults but an
+XML plist beside that folder, `LocalCache\Local\company.thebrowser.arc.plist`.
+Its sidebar is Mac Arc's shape with two differences Kite reads too: a space's
+containers may come as `newContainerIDs` (enum-keyed), and its icon as
+`customInfo.iconType.icon`, a name from Arc's own icon set (one of Kite's
+symbols when it matches, else a stand-in).
+
+Spaces, pinned tabs, folders, splits, favorites, profiles, the archive, Site
+Search and Arc's settings go into `session.json`, in the Mac's format;
+shortcut changes into `keybindings.json` (read at launch) and Air Traffic
+Control routes into `LinkRouting.json`, as the Mac's stores keep them.
+`kitecore --profile P import-arc [PATH|--auto] [--include-unnamed]` runs it
+headless and prints the counts per kind and what was skipped and why. In the
+app it's the `importFromArc` command, also in the window's system menu
+(Alt+Space): the system folder picker stands in for the Mac's open panel, and
+a message box with the Mac's text for its dialog. Not yet: history, sign-ins
+(cookies) and extensions, and the Little Kite setting (no Little Kite).
+
 ## Refresh rate
 
 Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to

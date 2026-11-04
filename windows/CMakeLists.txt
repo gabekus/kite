@@ -32,6 +32,10 @@ endif()
 
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
+  src/core/AirTrafficControl.cpp
+  src/core/ArcImport.cpp
+  src/core/ArcImportController.cpp
+  src/core/ArcImportFiles.cpp
   src/core/CommandBar.cpp
   src/core/Json.cpp
   src/core/KeyBindings.cpp
@@ -42,6 +46,10 @@ add_library(KiteCoreWin STATIC
   src/core/SpaceIcon.cpp
   src/core/SymbolShape.cpp
   src/core/PictureLoads.cpp
+  src/core/Plist.cpp
+  src/core/Profiles.cpp
+  src/core/SiteSearch.cpp
+  src/core/SQLiteReader.cpp
   src/core/SpaceSwipe.cpp
   src/core/LiveTabPolicy.cpp
   src/core/Sidebar.cpp
@@ -101,6 +109,7 @@ if(WIN32)
     src/shell/main.cpp
     src/shell/BackdropTest.cpp
     src/shell/BrowserWindowController.cpp
+    src/shell/BrowserWindowControllerArcImport.cpp
     src/shell/CaptionButtonsView.cpp
     src/shell/Capture.cpp
     src/shell/CommandBarView.cpp
@@ -117,7 +126,7 @@ if(WIN32)
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
-  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp)
+  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 uuid windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -168,6 +177,8 @@ endif()
 enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
+  tests/ArcImportTests.cpp
+  tests/ArcImportFilesTests.cpp
   tests/CommandBarTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp
@@ -188,13 +199,19 @@ add_executable(KiteCoreTests
   tests/URLInputTests.cpp
 )
 target_link_libraries(KiteCoreTests PRIVATE KiteCoreWin)
+# The hand-made Arc for Windows folder Import from Arc's tests read (tests/fixtures/make-web-data.py
+# writes its Web Data), at the place Arc's package keeps it under %LOCALAPPDATA%.
+set(KITE_ARC_FIXTURE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/arc-windows/Packages/TheBrowserCompany.Arc_kitetest0001/LocalCache/Local/Arc")
 # Writes Tests/Fixtures/theme-backdrop.json (see the file); not run by the tests.
 add_executable(gen-theme-golden EXCLUDE_FROM_ALL tests/GenThemeGolden.cpp)
 target_link_libraries(gen-theme-golden PRIVATE KiteCoreWin)
 # The session fixture shared with the Mac test suite.
 target_compile_definitions(KiteCoreTests PRIVATE KITE_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../Tests/Fixtures"
-                                               KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states")
+                                               KITE_STATES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/helix/states"
+                                               KITE_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+                                               KITE_ARC_FIXTURE_DIR="${KITE_ARC_FIXTURE_DIR}")
 add_test(NAME KiteCoreTests COMMAND KiteCoreTests)
 add_test(NAME kitecore-cli
   COMMAND ${CMAKE_COMMAND} -DKITECORE=$<TARGET_FILE:kitecore> -DWORK=${CMAKE_CURRENT_BINARY_DIR}/kitecore-cli-test
+          -DARC_LOCAL_APP_DATA=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/arc-windows
           -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/KitecoreCliTest.cmake)

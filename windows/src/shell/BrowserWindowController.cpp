@@ -104,6 +104,8 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
       shownSpaceID_(state.SelectedSpace().id) {}
 
 BrowserWindowController::~BrowserWindowController() {
+    // Import from Arc's read is short (Arc's files): it ends before the window it posts to.
+    if (arcThread_.joinable()) arcThread_.join();
     // The views and the compositor go before the window: it stops calling into them first.
     window_.onClose = nullptr;
     window_.onSize = nullptr;
@@ -204,6 +206,12 @@ std::wstring BrowserWindowController::Init() {
     sidebar_->SetActions(std::move(actions));
 
     MakeCommands();
+    // The Mac's File › Import from Arc…: in the window's system menu (Alt+Space) until Windows
+    // has a menu of Kite's own.
+    if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kImportFromArcMenuID, L"Import from Arc…");
+    }
     // Every command the table can name does something: a test run fails on one that doesn't.
     if (options_.smokeTest || options_.capture) {
         for (const ShortcutCommand& command : ShortcutCommands()) {
@@ -454,6 +462,7 @@ void BrowserWindowController::MakeCommands() {
         {"openLocation", [this] { OpenCommandBar(CommandBarMode::EditCurrent); }},
         {"archiveTab", [this] { ArchiveTab(); }},
         {"reopenClosedTab", [this] { ReopenClosedTab(); }},
+        {"importFromArc", [this] { ImportFromArc(); }},
         // One window, so closing it quits, as the Mac's last window does with Kite set so.
         {"closeWindow", [this] { PostMessageW(window_.Handle(), WM_CLOSE, 0, 0); }},
         {"quitKite", [this] { PostMessageW(window_.Handle(), WM_CLOSE, 0, 0); }},
@@ -695,6 +704,15 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     }
     if (message == kSpaceIconsMessage) {
         sidebar_->PicturesArrived();
+        return true;
+    }
+    if (message == kArcReadMessage) {
+        ArcRead();
+        return true;
+    }
+    if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == kImportFromArcMenuID) {
+        RunCommand("importFromArc");
+        result = 0;
         return true;
     }
     if (message == kFaviconsMessage) {

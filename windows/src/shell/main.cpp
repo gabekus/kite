@@ -280,6 +280,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.smokeTest = smokeTest;
     options.frameLog = frameLogOption.present;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
+    options.supportDirectory = supportDirectory;
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
     auto save = [&] {
         if (maySave) saveError = session.Save(state);

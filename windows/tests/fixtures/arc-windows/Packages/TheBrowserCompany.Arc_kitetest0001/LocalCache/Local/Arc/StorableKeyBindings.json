@@ -1,0 +1,11 @@
+{
+  "userOverrides": [
+    {"priority": "low", "default": {"priority": "low", "shortcut": {"deviceIndependentModifierFlags": 1048576, "keyEquivalent": "s"}},
+     "state": {"valid": {"_0": {"keyEquivalent": "b", "deviceIndependentModifierFlags": 1179648}}},
+     "action": {"identifier": "toggleSidebar", "name": "Toggle Sidebar"}, "source": "userDefined"},
+    {"priority": "overrideWebView", "default": {"priority": "overrideWebView", "shortcut": {"deviceIndependentModifierFlags": 1048576, "keyEquivalent": "l"}},
+     "state": {"unset": {}},
+     "action": {"identifier": "addressBar", "name": "Open Command Bar"}, "source": "userDefined"}
+  ],
+  "version": 1
+}
