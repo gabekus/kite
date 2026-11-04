@@ -118,6 +118,44 @@ import Testing
         #expect(try Data(contentsOf: aside) == Data("{\"version\":1,\"downl".utf8))
     }
 
+    @Test func oneBadItemIsDroppedNotTheList() throws {
+        let json = """
+        {"version":1,"downloads":{"items":[{"id":"not-a-uuid","url":"https://a/x"},
+        {"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","url":"https://a/y","path":"/d/y","state":"complete",
+        "receivedBytes":5,"totalBytes":5,"startedAt":700000000}]}}
+        """
+        let file = try JSONDecoder().decode(DownloadsFile.self, from: Data(json.utf8))
+        #expect(file.downloads.items.map(\.fileName) == ["y"])
+    }
+
+    @Test func closingAnIncognitoWindowDropsOnlyItsDownloads() {
+        var list = DownloadList()
+        list.apply(update(1, .complete))
+        for context in ["incognito-1", "incognito-2"] {
+            list.apply(DownloadUpdate(engineID: 1, engineContext: context, isIncognito: true, url: "https://a/x",
+                                      path: "/d/x", state: .complete, receivedBytes: 1, totalBytes: 1))
+        }
+        list.removeIncognito(context: "incognito-1")
+        #expect(list.items.map(\.engineContext) == ["incognito-2", ""])
+    }
+
+    @Test func readsTheBridgesNotification() throws {
+        let info: [AnyHashable: Any] = [
+            "id": NSNumber(value: 3), "context": "Profile 1", "incognito": NSNumber(value: false),
+            "profileDirectory": "Profile 1", "url": "https://a/x", "path": "/d/x", "state": "in-progress",
+            "receivedBytes": NSNumber(value: 10), "totalBytes": NSNumber(value: 20), "speed": NSNumber(value: 5),
+        ]
+        let update = try #require(DownloadUpdate(notificationInfo: info))
+        #expect(update == DownloadUpdate(engineID: 3, engineContext: "Profile 1", profileDirectory: "Profile 1",
+                                         url: "https://a/x", path: "/d/x", state: .inProgress,
+                                         receivedBytes: 10, totalBytes: 20, speed: 5))
+        #expect(DownloadUpdate.name(of: update.state) == "in-progress")
+        let incognito = try #require(DownloadUpdate(notificationInfo: ["id": NSNumber(value: 1), "context": "incognito-2",
+                                                                       "incognito": NSNumber(value: true)]))
+        #expect(incognito.isIncognito && incognito.profileDirectory == nil && incognito.totalBytes == -1)
+        #expect(DownloadUpdate(notificationInfo: ["url": "https://a/x"]) == nil)
+    }
+
     @Test func activeFractionCombinesBytes() {
         var list = DownloadList()
         list.apply(update(1, received: 50, total: 100))

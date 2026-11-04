@@ -194,6 +194,8 @@ protocol WebEngine: AnyObject {
     func forProfile(_ profile: Profile) -> WebEngine
     /// The profile folder this engine's pages use; nil for incognito.
     var profileDirectory: String? { get }
+    /// The context its downloads are listed under (DownloadItem.engineContext).
+    var downloadContextKey: String { get }
     /// What Delete browsing data can delete in this engine's profile, in Chromium's order.
     /// Kite's own history and downloads list count: the caller deletes those.
     var deletableBrowsingData: [BrowsingDataType] { get }

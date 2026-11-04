@@ -128,6 +128,9 @@ NS_SWIFT_UI_ACTOR
 /// profile path: its own cookies, storage, history and extensions. One object per folder.
 + (instancetype)contextForProfileDirectory:(NSString *)directory NS_SWIFT_NAME(init(profileDirectory:));
 - (instancetype)init NS_UNAVAILABLE;
+/// The "context" KCDownloadDidUpdateNotification gives this context's downloads: "incognito-N"
+/// for an incognito context, the folder name for a profile's ("" for "Default").
+@property (nonatomic, readonly, copy) NSString *downloadContextKey;
 /// Sets cookies in this profile (first used by Import from Arc's sign-ins). Each is a dictionary: "url" (NSURL it's
 /// set for), "name", "value", "path" (NSString), optional "domain" (with its leading dot, for a domain
 /// cookie), "secure", "httpOnly" (NSNumber BOOL), "expires" (NSNumber, microseconds since 1601 UTC;
@@ -327,7 +330,7 @@ NS_SWIFT_UI_ACTOR
 - (void)close;
 /// Cancels a live download by the id and context in KCDownloadDidUpdateNotification. Returns NO
 /// when Chromium no longer has it.
-+ (BOOL)cancelDownloadWithID:(NSInteger)downloadID context:(NSString *)context;
++ (BOOL)cancelDownloadWithID:(NSInteger)downloadID contextKey:(NSString *)contextKey;
 /// Where downloads go, asked as each one starts: the folder for the profile in
 /// `profileDirectory` (nil for the default profile's own context or an incognito one), and
 /// whether to show Chromium's Save panel there (`prompt`). Unset, downloads go to Downloads.

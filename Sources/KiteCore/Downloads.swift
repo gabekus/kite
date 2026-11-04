@@ -85,6 +85,8 @@ public struct DownloadUpdate: Equatable, Sendable {
     /// The browser context the id is unique within (KCDownloadDidUpdateNotification's "context").
     public var engineContext: String
     public var isIncognito: Bool
+    /// The profile folder, for a non-default profile's download.
+    public var profileDirectory: String?
     public var url: String
     public var path: String
     public var state: DownloadItem.State
@@ -92,17 +94,34 @@ public struct DownloadUpdate: Equatable, Sendable {
     public var totalBytes: Int64
     public var speed: Int64
 
-    public init(engineID: Int, engineContext: String = "", isIncognito: Bool = false, url: String, path: String,
-                state: DownloadItem.State, receivedBytes: Int64, totalBytes: Int64, speed: Int64 = 0) {
+    public init(engineID: Int, engineContext: String = "", isIncognito: Bool = false, profileDirectory: String? = nil,
+                url: String, path: String, state: DownloadItem.State, receivedBytes: Int64, totalBytes: Int64,
+                speed: Int64 = 0) {
         self.engineID = engineID
         self.engineContext = engineContext
         self.isIncognito = isIncognito
+        self.profileDirectory = profileDirectory
         self.url = url
         self.path = path
         self.state = state
         self.receivedBytes = receivedBytes
         self.totalBytes = totalBytes
         self.speed = speed
+    }
+
+    /// KCDownloadDidUpdateNotification's userInfo; nil without an id.
+    public init?(notificationInfo info: [AnyHashable: Any]) {
+        guard let id = (info["id"] as? NSNumber)?.intValue else { return nil }
+        self.init(engineID: id,
+                  engineContext: info["context"] as? String ?? "",
+                  isIncognito: (info["incognito"] as? NSNumber)?.boolValue ?? false,
+                  profileDirectory: info["profileDirectory"] as? String,
+                  url: info["url"] as? String ?? "",
+                  path: info["path"] as? String ?? "",
+                  state: Self.state(named: info["state"] as? String ?? ""),
+                  receivedBytes: (info["receivedBytes"] as? NSNumber)?.int64Value ?? 0,
+                  totalBytes: (info["totalBytes"] as? NSNumber)?.int64Value ?? -1,
+                  speed: (info["speed"] as? NSNumber)?.int64Value ?? 0)
     }
 
     /// Chromium's names (KCDownloadDidUpdateNotification's "state").
@@ -112,6 +131,15 @@ public struct DownloadUpdate: Equatable, Sendable {
         case "canceled": .canceled
         case "interrupted": .interrupted
         default: .inProgress
+        }
+    }
+
+    public static func name(of state: DownloadItem.State) -> String {
+        switch state {
+        case .complete: "complete"
+        case .canceled: "canceled"
+        case .interrupted: "interrupted"
+        case .inProgress: "in-progress"
         }
     }
 }
@@ -130,9 +158,21 @@ public struct DownloadList: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey { case items }
 
+    /// One item Kite can't read is dropped, not the whole list.
+    private struct LossyItem: Decodable {
+        let item: DownloadItem?
+        init(from decoder: Decoder) throws { item = try? DownloadItem(from: decoder) }
+    }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        items = try container.decodeIfPresent([DownloadItem].self, forKey: .items) ?? []
+        items = (try container.decodeIfPresent([LossyItem].self, forKey: .items) ?? []).compactMap(\.item)
+    }
+
+    /// Ends an incognito session (its window closed): its downloads leave the list, as Chrome
+    /// drops them with the incognito profile.
+    public mutating func removeIncognito(context: String) {
+        items.removeAll { $0.isIncognito && $0.engineContext == context }
     }
 
     /// Incognito downloads stay in memory, as Chrome keeps them: the file never lists them.
@@ -234,8 +274,9 @@ public struct DownloadsFile: Codable, Sendable {
             list.markRestored()
             return (list, nil)
         }
-        let stamp = Int(Date().timeIntervalSince1970)
-        let aside = fileURL.deletingPathExtension().appendingPathExtension("unreadable-\(stamp).json")
+        let stamp = Int(Date().timeIntervalSince1970 * 1000)
+        let unique = UUID().uuidString.prefix(8)
+        let aside = fileURL.deletingPathExtension().appendingPathExtension("unreadable-\(stamp)-\(unique).json")
         do {
             try fileManager.moveItem(at: fileURL, to: aside)
             return (DownloadList(), aside)

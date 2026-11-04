@@ -1,9 +1,11 @@
 #import "CEFBridge.h"
 #import "KCInternal.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <map>
+#include <vector>
 
 #include "include/cef_client.h"
 #include "include/cef_cookie.h"
@@ -19,8 +21,6 @@
 @interface KCRequestContext ()
 - (instancetype)initPrivate;
 - (CefRefPtr<CefRequestContext>)cefContext;
-/// An incognito context's name for its downloads (see DownloadSource).
-- (NSString*)downloadKey;
 @end
 
 @interface KCBrowser ()
@@ -130,32 +130,14 @@ class NetworkCountingHandler : public CefResourceRequestHandler {
     IMPLEMENT_REFCOUNTING(NetworkCountingHandler);
 };
 
-/// A download as Chromium knows it: its id restarts at 1 in every browser context (each profile,
-/// each incognito window), so the id alone doesn't name one. The context is DownloadSource's key.
-using DownloadKey = std::pair<std::string, uint32_t>;
-
-// Live downloads' callbacks, so the downloads list can cancel them.
-// Download callbacks run on the main (UI) thread.
-std::map<DownloadKey, CefRefPtr<CefDownloadItemCallback>>& DownloadCallbacks() {
-    static std::map<DownloadKey, CefRefPtr<CefDownloadItemCallback>> callbacks;
-    return callbacks;
-}
-
-/// Paths handed to downloads that haven't finished: Chromium only creates the file at the end
-/// (it writes a .crdownload until then), so two same-name downloads started together would both
-/// look free. By download, released when it completes, fails or is canceled.
-std::map<DownloadKey, NSString*>& ReservedDownloadPaths() {
-    static std::map<DownloadKey, NSString*> paths;
-    return paths;
-}
-
 /// The on-disk profiles' contexts, by folder name (see contextForProfileDirectory:).
 NSMutableDictionary<NSString*, KCRequestContext*>* ProfileContexts() {
     static NSMutableDictionary<NSString*, KCRequestContext*>* contexts = [NSMutableDictionary dictionary];
     return contexts;
 }
 
-/// Incognito contexts that are still around, for telling their downloads apart.
+/// Incognito contexts whose KCRequestContext is still around (weakly held: an incognito
+/// window's engine goes when the window closes).
 NSHashTable<KCRequestContext*>* IncognitoContexts() {
     static NSHashTable<KCRequestContext*>* contexts = [NSHashTable weakObjectsHashTable];
     return contexts;
@@ -170,36 +152,90 @@ struct DownloadSource {
     bool incognito = false;
 };
 
-DownloadSource DownloadSourceOf(CefRefPtr<CefBrowser> browser) {
+DownloadSource DownloadSourceOf(CefRefPtr<CefRequestContext> context) {
     DownloadSource source;
-    CefRefPtr<CefRequestContext> context = browser->GetHost()->GetRequestContext();
     if (!context) return source;
+    // The default profile: the global context, or one sharing its storage (the ad blocker's).
+    // An Arc sign-in import can also open a "Default" profile context; that's this one too.
+    CefRefPtr<CefRequestContext> global = CefRequestContext::GetGlobalContext();
+    if (global && (context->IsSame(global) || context->IsSharingWith(global))) return source;
     for (NSString* directory in ProfileContexts()) {
+        if ([directory isEqualToString:@"Default"]) continue;
         if (ProfileContexts()[directory].cefContext->IsSame(context)) {
             source.key = directory;
             source.profile = directory;
             return source;
         }
     }
-    // An empty cache path is an in-memory (incognito) profile, even if its context object has gone.
+    // An empty cache path is an in-memory (incognito) profile.
     if (context->GetCachePath().empty()) {
         source.incognito = true;
-        source.key = @"incognito";
         for (KCRequestContext* incognito in IncognitoContexts()) {
-            if (incognito.cefContext->IsSame(context)) { source.key = incognito.downloadKey; break; }
+            if (incognito.cefContext->IsSame(context)) { source.key = incognito.downloadContextKey; return source; }
         }
+        // Its window has already closed: a key of its own, so it can't be mistaken for another
+        // incognito window's download with the same id.
+        static NSInteger orphans = 0;
+        source.key = [NSString stringWithFormat:@"incognito-orphan-%ld", (long)++orphans];
     }
     return source;
 }
 
+/// A download Kite has handed a path to and is still following. Chromium's id restarts at 1 in
+/// every browser context (each profile, each incognito window), so a download is its id plus its
+/// context. Its source is worked out once, when it starts, and reused for every update: the
+/// incognito window's KCRequestContext can go while the download carries on.
+/// Download callbacks run on the main (UI) thread.
+struct LiveDownload {
+    CefRefPtr<CefRequestContext> context;
+    uint32_t id;
+    DownloadSource source;
+    /// The path it saves to, held so no other download is given it until this one completes
+    /// or is canceled (an interrupted one can resume into the same file).
+    NSString* path;
+    /// Set while in progress, so the downloads list can cancel it.
+    CefRefPtr<CefDownloadItemCallback> callback;
+};
+
+std::vector<LiveDownload>& LiveDownloads() {
+    static std::vector<LiveDownload> downloads;
+    return downloads;
+}
+
+/// Interrupted downloads stay listed (they can resume) and a destroyed browser may never send a
+/// final update, so the oldest finished-or-stuck entries go past this many.
+constexpr size_t kMaxLiveDownloads = 200;
+
+LiveDownload* FindLiveDownload(CefRefPtr<CefRequestContext> context, uint32_t id) {
+    for (LiveDownload& download : LiveDownloads()) {
+        if (download.id == id && context && download.context && download.context->IsSame(context)) return &download;
+    }
+    return nullptr;
+}
+
+LiveDownload& AddLiveDownload(CefRefPtr<CefRequestContext> context, uint32_t id, NSString* path) {
+    std::vector<LiveDownload>& downloads = LiveDownloads();
+    while (downloads.size() >= kMaxLiveDownloads) {
+        auto stale = std::find_if(downloads.begin(), downloads.end(), [](const LiveDownload& d) { return !d.callback; });
+        downloads.erase(stale != downloads.end() ? stale : downloads.begin());
+    }
+    downloads.push_back({context, id, DownloadSourceOf(context), path, nullptr});
+    return downloads.back();
+}
+
+void RemoveLiveDownload(LiveDownload* download) {
+    std::vector<LiveDownload>& downloads = LiveDownloads();
+    downloads.erase(downloads.begin() + (download - downloads.data()));
+}
+
 NSURL* _Nullable (^gDownloadFolderProvider)(NSString* _Nullable, BOOL*);
 
-/// The folder a download from `browser` saves into, and whether to ask where first: the
-/// app's answer for the browser's profile, else Downloads.
-NSURL* DownloadFolder(CefRefPtr<CefBrowser> browser, BOOL* prompt) {
+/// The folder a download from `profile` (nil: the default profile or incognito) saves into, and
+/// whether to ask where first: the app's answer for the profile, else Downloads.
+NSURL* DownloadFolder(NSString* profile, BOOL* prompt) {
     *prompt = NO;
     if (gDownloadFolderProvider) {
-        if (NSURL* folder = gDownloadFolderProvider(DownloadSourceOf(browser).profile, prompt)) return folder;
+        if (NSURL* folder = gDownloadFolderProvider(profile, prompt)) return folder;
     }
     NSURL* directory = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
     // Test runs on a throwaway profile save into their own folder, never the user's Downloads.
@@ -213,8 +249,10 @@ NSURL* DownloadFolder(CefRefPtr<CefBrowser> browser, BOOL* prompt) {
 NSURL* UniqueDownloadURL(NSString* name, NSURL* directory) {
     NSString* base = name.stringByDeletingPathExtension;
     NSString* extension = name.pathExtension;
+    // Paths given to downloads still running: Chromium creates the file only once data arrives,
+    // so two same-name downloads that start together would both find the name free.
     NSMutableSet<NSString*>* reserved = [NSMutableSet set];
-    for (auto& entry : ReservedDownloadPaths()) [reserved addObject:entry.second];
+    for (const LiveDownload& download : LiveDownloads()) if (download.path) [reserved addObject:download.path];
     auto taken = [&](NSURL* url) {
         return [reserved containsObject:url.path] || [NSFileManager.defaultManager fileExistsAtPath:url.path];
     };
@@ -700,10 +738,13 @@ class KCClient : public CefClient,
             callback->Continue([directory stringByAppendingPathComponent:name].UTF8String, false);
             return true;
         }
+        CefRefPtr<CefRequestContext> context = browser->GetHost()->GetRequestContext();
+        LiveDownload* live = FindLiveDownload(context, download_item->GetId());
+        if (!live) live = &AddLiveDownload(context, download_item->GetId(), nil);
         BOOL prompt = NO;
-        NSURL* folder = DownloadFolder(browser, &prompt);
+        NSURL* folder = DownloadFolder(live->source.profile, &prompt);
         NSString* path = UniqueDownloadURL(ToNSString(suggested_name), folder).path;
-        ReservedDownloadPaths()[{DownloadSourceOf(browser).key.UTF8String, download_item->GetId()}] = path;
+        live->path = path;
         // With `prompt`, Chromium's Save panel opens in the folder with the name filled in.
         callback->Continue(path.UTF8String, prompt);
         return true;
@@ -714,15 +755,19 @@ class KCClient : public CefClient,
                            CefRefPtr<CefDownloadItemCallback> callback) override {
         // A store install's package isn't the user's download: no bounce, not listed.
         if (IsExtensionPackage(download_item, download_item->GetSuggestedFileName())) return;
+        CefRefPtr<CefRequestContext> context = browser->GetHost()->GetRequestContext();
+        LiveDownload* live = FindLiveDownload(context, download_item->GetId());
+        // A repeat after the download finished (Kite already let it go): nothing new to report.
+        if (!live && !download_item->IsInProgress() && !download_item->IsInterrupted()) return;
+        if (!live) live = &AddLiveDownload(context, download_item->GetId(), nil);
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
-        DownloadSource source = DownloadSourceOf(browser);
-        DownloadKey key{source.key.UTF8String, download_item->GetId()};
-        if (download_item->IsInProgress()) {
-            DownloadCallbacks()[key] = callback;
-        } else {
-            DownloadCallbacks().erase(key);
-            ReservedDownloadPaths().erase(key);
-        }
+        DownloadSource source = live->source;
+        // The Save panel may have put it somewhere else: hold the path it really uses.
+        NSString* fullPath = ToNSString(download_item->GetFullPath());
+        if (fullPath.length) live->path = fullPath;
+        bool finished = download_item->IsComplete() || download_item->IsCanceled();
+        live->callback = download_item->IsInProgress() ? callback : nullptr;
+        if (finished) RemoveLiveDownload(live);
         NSString* state = download_item->IsComplete() ? @"complete"
             : download_item->IsCanceled() ? @"canceled"
             : download_item->IsInterrupted() ? @"interrupted" : @"in-progress";
@@ -731,7 +776,7 @@ class KCClient : public CefClient,
             @"context": source.key,
             @"incognito": @(source.incognito),
             @"url": ToNSString(download_item->GetOriginalUrl()),
-            @"path": ToNSString(download_item->GetFullPath()),
+            @"path": fullPath,
             @"state": state,
             @"receivedBytes": @(download_item->GetReceivedBytes()),
             @"totalBytes": @(download_item->GetTotalBytes()),
@@ -927,8 +972,8 @@ class KCClient : public CefClient,
     return context;
 }
 
-- (NSString*)downloadKey {
-    return _downloadKey ?: @"incognito";
+- (NSString*)downloadContextKey {
+    return _downloadKey;
 }
 
 + (instancetype)contextForProfileDirectory:(NSString*)directory {
@@ -941,6 +986,8 @@ class KCClient : public CefClient,
     // per folder, with its own extensions, prefs and history.
     CefString(&settings.cache_path) = [KCRootCachePath() stringByAppendingPathComponent:directory].UTF8String;
     context->_context = CefRequestContext::CreateContext(settings, KCAdblockContextHandler());
+    // "Default" (an Arc sign-in import's) is the default profile, whose downloads are keyed "".
+    context->_downloadKey = [directory isEqualToString:@"Default"] ? @"" : directory;
     contexts[directory] = context;
     return context;
 }
@@ -1626,11 +1673,14 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
     gDownloadFolderProvider = [provider copy];
 }
 
-+ (BOOL)cancelDownloadWithID:(NSInteger)downloadID context:(NSString*)context {
-    auto it = DownloadCallbacks().find({context.UTF8String, (uint32_t)downloadID});
-    if (it == DownloadCallbacks().end()) return NO;
-    it->second->Cancel();
-    return YES;
++ (BOOL)cancelDownloadWithID:(NSInteger)downloadID contextKey:(NSString*)contextKey {
+    for (LiveDownload& download : LiveDownloads()) {
+        if (download.id != (uint32_t)downloadID || ![download.source.key isEqualToString:contextKey]) continue;
+        if (!download.callback) return NO;
+        download.callback->Cancel();
+        return YES;
+    }
+    return NO;
 }
 
 @end

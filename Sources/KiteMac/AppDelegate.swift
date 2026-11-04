@@ -458,14 +458,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// (the page menu's Open Link in Incognito Window) it shows that page instead of the command bar.
     @discardableResult
     func openIncognitoWindow(url: URL? = nil) -> BrowserWindowController {
+        let ephemeral = engine.makeEphemeral()
+        let downloadContext = ephemeral.downloadContextKey
         let controller = BrowserWindowController(
-            store: .incognito(), engine: engine.makeEphemeral(), adblocker: adblocker, incognito: true
+            store: .incognito(), engine: ephemeral, adblocker: adblocker, incognito: true
         )
         incognitoControllers.append(controller)
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: controller.window, queue: .main
         ) { [weak self, weak controller] _ in
-            MainActor.assumeIsolated { self?.incognitoControllers.removeAll { $0 === controller } }
+            MainActor.assumeIsolated {
+                self?.incognitoControllers.removeAll { $0 === controller }
+                // The window's in-memory profile ends with it, and so do its downloads.
+                DownloadsModel.shared.endIncognitoSession(context: downloadContext)
+            }
         }
         // Offset from the window in front so the two don't stack exactly. Read it
         // before showWindow, which makes the new window main.
