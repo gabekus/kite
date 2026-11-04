@@ -63,11 +63,12 @@ set -euo pipefail
 SAFE_FLOOR=811b5fbaeeee6c0f5187661ecba992f5795e5623
 
 # The oldest Kite a text step may run on: fix/test-safe-text-input (#374), where a test-safe `ui input` text goes
-# straight into the command bar's field editor (insertText) and nowhere else. Before it, text was real key events
+# straight into the command bar's field editor (insertText, its text checking off) and nowhere else, and keys that
+# type a character are refused. Before it, text was real key events
 # through the input method, whose candidate window (a Japanese input source) could draw on Gabe's screen. A base
 # without it can still take requests, just not text steps. If #374 lands by squash or rebase, set this to the commit
 # it landed as on main.
-TEXT_FLOOR=235b56ee38f5b6ae5b02932232e3c4b5062aead5
+TEXT_FLOOR=92611226a9834ac52b95a77268bf1f5647f08490
 
 # Views a click, right-click (through showSidebarMenu's KITE_TEST_CONTEXT_MENU hook) or drag may start on. Each was
 # read in the Mac source: no hookless NSMenu, no window drag. Add one only after the same check. Not safe, for
@@ -733,9 +734,9 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
             if [[ -z "$last_hit" || " $COMMAND_BAR_OPENERS " != *" $last_hit "* ]]; then
                 refused="the text step doesn't follow a click on a command-bar opener (${last_hit:-no safe click})"
             else
-                # The bar opens a moment after the click: look for its field for up to 3 s.
+                # The bar opens a moment after the click: 15 looks 0.2 s apart, each tree read capped at 5 s.
                 for _ in $(seq 15); do
-                    tmo 60 "$CLI" ui tree "$(match_json CommandBarField)" >"$folder/targets.txt" 2>&1 || true
+                    tmo 5 "$CLI" ui tree "$(match_json CommandBarField)" >"$folder/targets.txt" 2>&1 || true
                     result="$(on_safe_target "$checks" "$folder/targets.txt" CommandBarField)"
                     if [[ "$result" == "hit "* ]]; then break; fi
                     sleep 0.2
