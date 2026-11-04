@@ -174,8 +174,9 @@ candidates:)` in the binary), so these are its orders for items it hadn't learne
 Not observed in Arc, so Kite's own choice: a menu command and a tab matching together (strong commands stay on
 top); several matching tabs (all go above the engine's suggestions; with a short query only the best goes above
 the search); short word or host prefixes of a favorite; an open tab's address past three letters (Kite keeps it under the
-search); the address-edit mode (same order as before, but the tab
-you're on is now left out of tabs and history there too); a URL-looking query on the tab you're on (left out);
+search); the address-edit mode and a new split pane's bar (⌘L): the same leading tab as ⌘T goes above the search,
+so Return switches to it rather than searching in the tab or pane you're on, then the old order (the tab you're on
+is left out of tabs and history there too); a URL-looking query on the tab you're on (left out);
 panes of the current split (offered); weak short matches such as "ai" inside a title (kept under the search).
 A Site Search shortcut's inline completion ("gi" + "thub.com") makes the query URL-like: the Open row leads unless
 a favorite's host starts with what was typed, as Arc did while completing a favorite's host inline (not checked with
@@ -184,7 +185,9 @@ whose address is being typed leads even over stronger title matches ("ma" with a
 letter; a favorite also leads by its pinned page's host (a Gmail favorite sent to accounts.google.com to sign in still
 leads for "mail"); with a Site Search completion for another site in the field ("m" + "usic.apple.com") no favorite
 leads, so the row matches the field; a whole host typed only rules out that favorite ("x.co" still leads to an x.com favorite);
-"www." and schemes aren't matched against the host ("www.goo" gets no leader). History is left out by exact
+"www." and schemes aren't matched against the host ("www.goo" gets no leader). A site's well-known name counts as
+its address (`TabSearch.siteNames`: "gmail" for mail.google.com, "yt", "gh", "gcal"…, from two letters): it ranks
+any tab like a host prefix and makes a favorite lead, so "gmail" finds a Workspace inbox titled "… - Komado Lab Mail". History is left out by exact
 URL, so the current page under another fragment still shows.
 
 Kite also learns ⌘T picks, which Arc doesn't do this way (one pick left Arc's order unchanged): the tab you picked

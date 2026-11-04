@@ -1,8 +1,9 @@
 import Foundation
 
-/// What you picked in ⌘T for what you typed, so the same text leads to it next time ("gmail" → the Gmail
-/// favorite after you chose it once). Arc ranks with a model it trains on device from its picks; a single pick
-/// didn't change Arc's order in testing (3 Nov 2026), so this is Kite's own, more direct version.
+/// What you picked in the command bar (⌘T, a new split pane's or the address) for what you typed, so the same text
+/// leads to it next time ("inbox" → the Gmail favorite after you chose it once). Arc ranks with a model it trains
+/// on device from its picks; a single pick didn't change Arc's order in testing (3 Nov 2026), so this is Kite's own,
+/// more direct version.
 public struct CommandBarPick: Codable, Hashable, Sendable {
     public var query: String
     public var tabID: UUID
@@ -16,7 +17,7 @@ extension BrowserState {
         text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    /// Records a ⌘T pick for `typed`: a tab remembers it; anything else (a search, a URL) forgets what that
+    /// Records a command bar pick for `typed`: a tab remembers it; anything else (a search, a URL) forgets what that
     /// text led to before.
     public mutating func recordCommandBarPick(typed: String, tab id: UUID?, now: Date = Date()) {
         let key = Self.pickKey(typed)

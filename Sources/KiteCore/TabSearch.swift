@@ -46,10 +46,29 @@ public enum TabSearch {
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
+    /// Names people type for a site whose host doesn't start with them, so "gmail" finds a mail.google.com tab
+    /// titled "Inbox - Komado Lab Mail". Kite's own list: Arc ranks with a model it trains on your picks.
+    static let siteNames: [String: [String]] = [
+        "gmail": ["mail.google.com"], "gcal": ["calendar.google.com"], "gdrive": ["drive.google.com"],
+        "gdocs": ["docs.google.com"], "gsheets": ["docs.google.com"], "gslides": ["docs.google.com"],
+        "gmeet": ["meet.google.com"], "yt": ["youtube.com"], "gh": ["github.com"], "fb": ["facebook.com"],
+        "ig": ["instagram.com"], "hn": ["news.ycombinator.com"], "twitter": ["x.com"],
+    ]
+
+    /// Whether `q` (trimmed, lowercased, two characters or more) starts one of the site names for `host`, and
+    /// `field` (what the field shows) too.
+    static func startsSiteName(_ q: String, of host: String, field: String? = nil) -> Bool {
+        guard q.count >= 2 else { return false }
+        return siteNames.contains { name, hosts in
+            name.hasPrefix(q) && name.hasPrefix(field ?? q) && hosts.contains { host == $0 || host.hasSuffix("." + $0) }
+        }
+    }
+
     /// The favorite (not the tab you're on) whose address is being typed: its page's or pinned page's host (it may
-    /// have been redirected to sign in) starts with `typed` but isn't all of it. With an inline completion after
-    /// what was typed, the host must start with all of `shown` too, so the row matches the field. Searched among
-    /// every favorite, so better title matches can't push it out.
+    /// have been redirected to sign in) starts with `typed` but isn't all of it, or `typed` starts one of its site
+    /// names ("gmail" for mail.google.com). With an inline completion after what was typed, the host or name must
+    /// start with all of `shown` too, so the row matches the field. Searched among every favorite, so better title
+    /// matches can't push it out.
     public static func addressFavorite(_ typed: String, shown: String, in state: BrowserState) -> BrowserTab? {
         let q = typed.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let field = shown.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -59,14 +78,15 @@ public enum TabSearch {
         return state.favorites.filter { tab in
             let hosts = [tab.url, tab.pinnedURL].compactMap(host)
             // A whole host typed opens it, even when the other host only starts with it.
-            return tab.id != selected && !hosts.contains(q) && hosts.contains { $0.hasPrefix(q) && $0.hasPrefix(field) }
+            return tab.id != selected && !hosts.contains(q)
+                && hosts.contains { ($0.hasPrefix(q) && $0.hasPrefix(field)) || startsSiteName(q, of: $0, field: field) }
         }.max { $0.lastActiveAt < $1.lastActiveAt }
     }
 
     /// Whether `q` (trimmed, lowercased) finds the tab at all, by its page or, for a pinned tab or favorite sent
-    /// elsewhere (to sign in, say), its pinned page's host.
+    /// elsewhere (to sign in, say), its pinned page's host or site name.
     static func matches(_ q: String, _ tab: BrowserTab) -> Bool {
-        score(q, tab) != nil || host(tab.pinnedURL).map { $0.hasPrefix(q) } == true
+        score(q, tab) != nil || host(tab.pinnedURL).map { $0.hasPrefix(q) || startsSiteName(q, of: $0) } == true
     }
 
     static func score(_ q: String, _ tab: BrowserTab) -> Int? {
@@ -78,6 +98,8 @@ public enum TabSearch {
         if title.hasPrefix(q) { return titlePrefix }
         if title.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).contains(where: { $0.hasPrefix(q) }) { return wordPrefix }
         if host.hasPrefix(q) { return hostPrefix }
+        // Its site's name, typed like its address ("gmail" for a mail.google.com tab whose title doesn't say Gmail).
+        if startsSiteName(q, of: host) { return hostPrefix }
         if title.contains(q) { return inTitle }
         if url.contains(q) { return inAddress }
         return nil

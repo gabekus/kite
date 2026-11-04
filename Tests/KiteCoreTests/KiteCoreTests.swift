@@ -333,6 +333,31 @@ import Testing
         #expect(TabSearch.rank("inbox", in: state).map(\.tab.id) == [mail])
     }
 
+    @Test func findsTabsBySiteNameWhenTheTitleDoesntSayIt() {
+        // A Workspace inbox's title says "Komado Lab Mail", not Gmail: "gmail" still finds it by its host.
+        var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
+        let mail = state.openTab(url: URL(string: "https://mail.google.com/mail/u/0/#inbox"))
+        state.update(tab: mail) { $0.title = "Inbox (3) - gabe@komadolab.com - Komado Lab Mail" }
+        state.toggleFavorite(tab: mail)
+        let tube = state.openTab(url: URL(string: "https://music.youtube.com/"))
+        state.update(tab: tube) { $0.title = "Home" }
+        state.togglePin(tab: tube)
+        let hub = state.openTab(url: URL(string: "https://github.com/gabekus/kite"))
+        state.update(tab: hub) { $0.title = "kite" }
+        let cal = state.openTab(url: URL(string: "https://calendar.google.com/calendar/r"))
+        state.update(tab: cal) { $0.title = "Calendar" }
+
+        #expect(TabSearch.rank("gmail", in: state).map(\.tab.id) == [mail])
+        #expect(TabSearch.rank("Gmail ", in: state).first?.strength == TabSearch.hostPrefix)
+        #expect(TabSearch.rank("gm", in: state).map(\.tab.id) == [mail])
+        #expect(TabSearch.rank("gmailx", in: state).isEmpty)
+        #expect(TabSearch.rank("yt", in: state).map(\.tab.id) == [tube])  // a pinned tab, on a subdomain
+        #expect(TabSearch.rank("gh", in: state).map(\.tab.id) == [hub])  // an open tab
+        #expect(TabSearch.rank("gcal", in: state).map(\.tab.id) == [cal])
+        // One letter is too little to be a site's name.
+        #expect(!TabSearch.startsSiteName("g", of: "mail.google.com"))
+    }
+
     @Test func switchTargetsLeaveOutTheTabYoureOnAndStillGiveFive() {
         var state = BrowserState(spaces: [Space(name: "A", icon: "a", theme: Theme.presets[0])])
         let ids = (0..<7).map { i in
@@ -499,7 +524,29 @@ import Testing
             #expect(!TabSearch.switchTargets(query, in: state).isEmpty)
             #expect(leader(query, state) == nil)
         }
-        #expect(CommandBarOrder.leader("gm", shown: "gm", in: state, typedMatches: [], looksLikeURL: false) == nil)
+        #expect(CommandBarOrder.leader("in", shown: "in", in: state, typedMatches: [], looksLikeURL: false) == nil)
+    }
+
+    @Test func typingAFavoritesSiteNameLeadsLikeItsAddress() {
+        // Kite's own: "gmail" (any title) switches to the Gmail favorite on Return, rather than searching for it in the
+        // tab you're on. Arc, with nothing learned, put a favorite's 5-letter title match under the search.
+        var (state, mail) = gmail()
+        state.update(tab: mail) { $0.title = "Inbox (3) - gabe@komadolab.com - Komado Lab Mail" }
+        for query in ["gm", "gma", "gmail", " Gmail "] {
+            #expect(leader(query, state) == mail)
+        }
+        #expect(leader("gmailx", state) == nil)
+        // Sent to sign in, it still leads by its pinned page.
+        state.update(tab: mail) { $0.url = URL(string: "https://accounts.google.com/v3/signin/identifier") }
+        #expect(leader("gmail", state) == mail)
+        // Not with a completion for something else in the field, nor when you're on it.
+        #expect(CommandBarOrder.leader("gm", shown: "gmx.net", in: state, typedMatches: [], looksLikeURL: true) == nil)
+        state.select(tab: mail)
+        #expect(leader("gmail", state) == nil)
+        // Only favorites lead by name past three letters; an open Gmail tab stays under the search.
+        let (tabs, _) = gmail(favorite: false)
+        #expect(leader("gmail", tabs) == nil)
+        #expect(TabSearch.switchTargets("gmail", in: tabs).count == 1)
     }
 
     @Test func aStrongCommandStaysOnTop() {
@@ -531,11 +578,11 @@ import Testing
 
     @Test func aPickLeadsNextTime() {
         var (state, mail, _) = setup()
-        #expect(leader("gmail", state) == nil)  // Arc's order: the search first
-        state.recordCommandBarPick(typed: "Gmail ", tab: mail)
-        #expect(leader("gmail", state) == mail)
-        #expect(leader("gm", state) == mail)  // a shorter start of what was picked for
-        #expect(leader("gmailx", state) == nil)
+        #expect(leader("someone", state) == nil)  // Arc's order: the search first
+        state.recordCommandBarPick(typed: "Someone ", tab: mail)
+        #expect(leader("someone", state) == mail)
+        #expect(leader("some", state) == mail)  // a shorter start of what was picked for
+        #expect(leader("someonex", state) == nil)
     }
 
     @Test func aLaterPickReplacesAnEarlierOneAndASearchForgetsIt() {
@@ -550,10 +597,10 @@ import Testing
 
     @Test func anotherPickForTheStartForgetsLongerPicks() {
         var (state, mail, _) = setup()
-        state.recordCommandBarPick(typed: "gmail inbox", tab: mail)
-        #expect(leader("gmail", state) == mail)
-        state.recordCommandBarPick(typed: "gmail", tab: nil)  // searched instead
-        #expect(leader("gmail", state) == nil)
+        state.recordCommandBarPick(typed: "someone inbox", tab: mail)
+        #expect(leader("someone", state) == mail)
+        state.recordCommandBarPick(typed: "someone", tab: nil)  // searched instead
+        #expect(leader("someone", state) == nil)
         #expect(state.commandBarPicks.isEmpty)
     }
 
