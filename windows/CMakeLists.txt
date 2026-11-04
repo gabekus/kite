@@ -33,10 +33,14 @@ endif()
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
   src/core/CommandBar.cpp
+  src/core/Downloads.cpp
+  src/core/DownloadsModel.cpp
+  src/core/DownloadsWriter.cpp
   src/core/Json.cpp
   src/core/KeyBindings.cpp
   src/core/Models.cpp
   src/core/OKLab.cpp
+  src/core/ProfileSettings.cpp
   src/core/SessionBackups.cpp
   src/core/SessionSaveDelay.cpp
   src/core/SessionStore.cpp
@@ -116,6 +120,8 @@ if(WIN32)
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
+    src/shell/QuietRun.cpp
+    src/shell/QuitDialog.cpp
     src/shell/MemoryPressure.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
@@ -177,6 +183,7 @@ enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
   tests/CommandBarTests.cpp
+  tests/DownloadsTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp

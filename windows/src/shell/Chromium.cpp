@@ -17,6 +17,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_devtools_message_observer.h"
+#include "include/cef_download_handler.h"
 #include "include/cef_focus_handler.h"
 #include "include/cef_keyboard_handler.h"
 #include "include/cef_request_context.h"
@@ -27,6 +28,8 @@
 #include "core/Uuid.h"
 #include "shell/Keys.h"
 #include "shell/MainWindow.h"
+#include "shell/QuietRun.h"
+#include "shell/Text.h"
 
 namespace kite {
 
@@ -72,6 +75,9 @@ HWND FindPageWidget(HWND host) {
 
 struct Chromium::Shared {
     HWND window = nullptr;
+    // A quiet run (Start's `quiet`): no page shows a dialog. Set before CEF starts, then only
+    // read (any thread).
+    bool quiet = false;
     // Where Post's wakes go: the window until it's about to be destroyed, then null, so CEF's
     // late callbacks never post to a handle Windows may have reused.
     std::atomic<HWND> wakeTarget{nullptr};
@@ -128,6 +134,100 @@ struct Chromium::Shared {
     LiveTabPolicy policy;  // at most six live pages, as the Mac's PagePool
     ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
     bool closeForced = false;    // the deadline closed the window before every browser was ready
+
+    // MARK: Downloads (KCBrowser.mm's LiveDownloads and its download handler)
+
+    // A download Kite has handed a path to and is still following. Chromium numbers each
+    // browser context's downloads from 1, so a download is its id plus its context's key ("" for
+    // the default profile, the folder for another; a page's client knows its profile). Its
+    // callback is kept until it completes or is canceled (interrupted too, as it can resume),
+    // so Kite can cancel it. Under downloadsMutex: CEF's thread follows them, Kite's cancels.
+    struct LiveDownload {
+        std::string context;
+        uint32_t id = 0;
+        // The path it saves to, held so no other download is given it until this one is done:
+        // Chromium creates the file only once data arrives.
+        std::filesystem::path path;
+        CefRefPtr<CefDownloadItemCallback> callback;
+        bool interrupted = false;
+    };
+    // Interrupted downloads stay followed and a destroyed browser may never send a final
+    // update, so past this many the oldest interrupted one goes, else the oldest.
+    static constexpr size_t kMaxLiveDownloads = 200;
+    mutable std::mutex downloadsMutex;
+    std::vector<LiveDownload> liveDownloads;
+    // SetDownloadLocations' answer, read as each download starts.
+    std::map<std::string, ProfileSettings> downloadSettings;
+    std::filesystem::path downloadFolder;
+    // Reports waiting for Kite's thread, one per download (a newer one replaces it in place,
+    // keeping the order downloads first reported), and whether a delivery is on its way.
+    std::vector<DownloadUpdate> downloadReports;
+    bool downloadsPosted = false;
+    uint64_t reportsFromChromium = 0, reportsDelivered = 0;
+
+    LiveDownload* FindLiveDownload(const std::string& context, uint32_t id) {
+        for (LiveDownload& download : liveDownloads) {
+            if (download.id == id && download.context == context) return &download;
+        }
+        return nullptr;
+    }
+    LiveDownload& AddLiveDownload(const std::string& context, uint32_t id) {
+        while (liveDownloads.size() >= kMaxLiveDownloads) {
+            auto stale = std::find_if(liveDownloads.begin(), liveDownloads.end(), [](const LiveDownload& d) { return d.interrupted; });
+            liveDownloads.erase(stale != liveDownloads.end() ? stale : liveDownloads.begin());
+        }
+        liveDownloads.push_back({context, id, {}, nullptr, false});
+        return liveDownloads.back();
+    }
+
+    // The folder a download from `profile` saves into, and whether to ask where first: the
+    // profile's chosen folder while it exists, else the default one (DownloadLocation.folder).
+    std::pair<std::filesystem::path, bool> DownloadTarget(const std::string& profile) {
+        ProfileSettings settings;
+        std::filesystem::path fallback;
+        {
+            std::lock_guard lock(downloadsMutex);
+            auto it = downloadSettings.find(profile);
+            if (it == downloadSettings.end()) it = downloadSettings.find(BrowserState::kDefaultProfile);
+            if (it != downloadSettings.end()) settings = it->second;
+            fallback = downloadFolder;
+        }
+        const std::filesystem::path folder = settings.DownloadFolder(fallback, [](const std::string& path) {
+            std::error_code error;
+            return std::filesystem::is_directory(std::filesystem::path(std::u8string(path.begin(), path.end())), error);
+        });
+        return {folder, settings.promptsForDownload};
+    }
+
+    // CEF's thread: hands the report to Kite's, folded into one still waiting for the same
+    // download, so one delivery carries each download's latest however often Chromium reports.
+    void ReportDownload(DownloadUpdate update) {
+        bool post = false;
+        {
+            std::lock_guard lock(downloadsMutex);
+            ++reportsFromChromium;
+            auto waiting = std::find_if(downloadReports.begin(), downloadReports.end(), [&](const DownloadUpdate& u) {
+                return u.engineID == update.engineID && u.engineContext == update.engineContext;
+            });
+            if (waiting != downloadReports.end()) *waiting = std::move(update);
+            else downloadReports.push_back(std::move(update));
+            post = !std::exchange(downloadsPosted, true);
+        }
+        if (post) Post([this] { DeliverDownloads(); });
+    }
+
+    // Kite's thread.
+    void DeliverDownloads() {
+        std::vector<DownloadUpdate> reports;
+        {
+            std::lock_guard lock(downloadsMutex);
+            reports.swap(downloadReports);
+            downloadsPosted = false;
+            reportsDelivered += reports.size();
+        }
+        if (!events.downloadUpdated) return;
+        for (const DownloadUpdate& update : reports) events.downloadUpdated(update);
+    }
 
     // Hands work to Kite's UI thread; one wake per batch.
     void Post(std::function<void()> work) {
@@ -342,6 +442,7 @@ private:
 class PageClient : public CefClient,
                    public CefLifeSpanHandler,
                    public CefDisplayHandler,
+                   public CefDownloadHandler,
                    public CefFocusHandler,
                    public CefKeyboardHandler,
                    public CefLoadHandler,
@@ -349,11 +450,14 @@ class PageClient : public CefClient,
                    public CefDevToolsMessageObserver {
 public:
     // `firstURL` is loaded once the browser exists, after the white-background override.
-    PageClient(std::string tabID, std::shared_ptr<Chromium::Shared> shared, std::string firstURL = {})
-        : tabID_(std::move(tabID)), shared_(std::move(shared)), firstURL_(std::move(firstURL)) {}
+    // `profile`: the profile folder whose request context the page is in (a popup is in its
+    // opener's), which names its downloads' context.
+    PageClient(std::string tabID, std::shared_ptr<Chromium::Shared> shared, std::string profile, std::string firstURL = {})
+        : tabID_(std::move(tabID)), shared_(std::move(shared)), profile_(std::move(profile)), firstURL_(std::move(firstURL)) {}
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+    CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
     CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -409,7 +513,7 @@ public:
         }
         windowInfo.SetAsChild(shared_->window, ToCefRect(bounds));
         windowInfo.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
-        client = new PageClient(id, shared_);
+        client = new PageClient(id, shared_, profile_);
         settings.background_color = kPageBackdrop;
         shared_->Count(+1, 0);
         shared_->Post([shared = shared_, opener = tabID_, id, url = targetURL.ToString()] {
@@ -546,6 +650,95 @@ public:
         });
     }
 
+    // CefDownloadHandler (KCBrowser.mm's)
+
+    // The context key of this page's downloads ("" for the default profile, as the Mac's).
+    std::string DownloadContext() const { return profile_ == BrowserState::kDefaultProfile ? std::string() : profile_; }
+
+    bool OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item, const CefString& suggestedName,
+                          CefRefPtr<CefBeforeDownloadCallback> callback) override {
+        namespace fs = std::filesystem;
+        const std::string name = suggestedName.ToString();
+        if (IsExtensionPackage(item->GetMimeType().ToString(), name, item->GetOriginalUrl().ToString())) {
+            // Chromium's installer picks it up from here; it never reaches Downloads.
+            std::error_code ignored;
+            const fs::path directory = fs::temp_directory_path(ignored) / L"KiteExtensionInstalls";
+            fs::create_directories(directory, ignored);
+            const fs::path path =
+                UniqueDownloadPath(std::to_string(item->GetId()) + "-" + name, directory, [](const fs::path&) { return false; });
+            callback->Continue(path.wstring(), false);
+            return true;
+        }
+        const std::string context = DownloadContext();
+        auto [folder, prompt] = shared_->DownloadTarget(profile_);
+        if (prompt && shared_->quiet) {
+            // A quiet run shows no save panel: it answers as a dismissed one (SkippedModal's
+            // openOrSavePanel), and Chromium cancels the download.
+            LogSkippedModal(L"save panel: " + suggestedName.ToWString());
+            return false;
+        }
+        std::error_code ignored;
+        fs::create_directories(folder, ignored);
+        fs::path path;
+        {
+            std::lock_guard lock(shared_->downloadsMutex);
+            Chromium::Shared::LiveDownload* live = shared_->FindLiveDownload(context, item->GetId());
+            if (!live) live = &shared_->AddLiveDownload(context, item->GetId());
+            // Asked again for the same download (Chromium restarting an interrupted one): its own
+            // reservation doesn't count against it.
+            live->path.clear();
+            path = UniqueDownloadPath(name, folder, [&](const fs::path& candidate) {
+                for (const auto& download : shared_->liveDownloads) {
+                    if (download.path == candidate) return true;
+                }
+                std::error_code error;
+                return fs::exists(candidate, error) || error;
+            });
+            live->path = path;
+        }
+        // With `prompt`, Chromium's Save As dialog opens in the folder with the name filled in.
+        callback->Continue(path.wstring(), prompt);
+        return true;
+    }
+
+    void OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item, CefRefPtr<CefDownloadItemCallback> callback) override {
+        // A store install's package isn't the user's download: not listed.
+        if (IsExtensionPackage(item->GetMimeType().ToString(), item->GetSuggestedFileName().ToString(),
+                               item->GetOriginalUrl().ToString())) {
+            return;
+        }
+        const std::string context = DownloadContext();
+        const std::wstring fullPath = item->GetFullPath().ToWString();
+        {
+            std::lock_guard lock(shared_->downloadsMutex);
+            Chromium::Shared::LiveDownload* live = shared_->FindLiveDownload(context, item->GetId());
+            // A repeat after the download finished (Kite already let it go): nothing new to report.
+            if (!live && !item->IsInProgress() && !item->IsInterrupted()) return;
+            if (!live) live = &shared_->AddLiveDownload(context, item->GetId());
+            // The Save As dialog may have put it somewhere else: hold the path it really uses.
+            if (!fullPath.empty()) live->path = std::filesystem::path(fullPath);
+            live->callback = callback;
+            live->interrupted = item->IsInterrupted();
+            if (item->IsComplete() || item->IsCanceled()) {
+                shared_->liveDownloads.erase(shared_->liveDownloads.begin() + (live - shared_->liveDownloads.data()));
+            }
+        }
+        DownloadUpdate update;
+        update.engineID = item->GetId();
+        update.engineContext = context;
+        if (!context.empty()) update.profileDirectory = profile_;
+        update.url = item->GetOriginalUrl().ToString();
+        update.path = Narrow(fullPath);
+        update.state = item->IsComplete()      ? DownloadState::Complete
+                       : item->IsCanceled()    ? DownloadState::Canceled
+                       : item->IsInterrupted() ? DownloadState::Interrupted
+                                               : DownloadState::InProgress;
+        update.receivedBytes = item->GetReceivedBytes();
+        update.totalBytes = item->GetTotalBytes();
+        update.speed = item->GetCurrentSpeed();
+        shared_->ReportDownload(std::move(update));
+    }
+
     // CefFocusHandler
 
     // While Kite's command bar is open, a page never takes the keyboard back (Chromium
@@ -680,6 +873,7 @@ private:
 
     const std::string tabID_;
     const std::shared_ptr<Chromium::Shared> shared_;
+    const std::string profile_;
     const std::string firstURL_;
     // CEF's UI thread only.
     CefRefPtr<CefRegistration> devTools_;
@@ -725,7 +919,7 @@ int RunChromiumSubprocess(HINSTANCE instance) {
     return CefExecuteProcess(args, nullptr, nullptr);
 }
 
-Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
+Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events, bool quiet,
                                       std::unique_ptr<Chromium>& out, std::wstring& error) {
     // Chromium wants root_cache_path absolute and every cache_path inside it, else it keeps
     // that profile in memory only; built from the resolved path, like the Mac (realpath).
@@ -736,6 +930,7 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
 
     auto shared = std::make_shared<Shared>();
     shared->window = window;
+    shared->quiet = quiet;
     shared->wakeTarget = window;
     shared->events = std::move(events);
     shared->root = resolved;
@@ -808,6 +1003,12 @@ bool Chromium::Shutdown() {
         std::lock_guard lock(shared_->mutex);
         shared_->pending.clear();  // their lambdas hold `shared_`
     }
+    {
+        // The downloads' callbacks are CEF's objects: let go of them before CEF goes.
+        std::lock_guard lock(shared_->downloadsMutex);
+        shared_->liveDownloads.clear();
+        shared_->downloadReports.clear();
+    }
     CefShutdown();
     CloseHandle(shared_->allClosed);
     cleanShutdown_ = allClosed && !shared_->closeForced;
@@ -859,7 +1060,7 @@ void Chromium::Show(const std::string& tabID, const std::string& profileDirector
         shared_->Count(+1, 0);
         // Created blank and loaded once it exists (OnAfterCreated), after the white
         // background override, as the Mac does.
-        if (!CefBrowserHost::CreateBrowser(windowInfo, new PageClient(tabID, shared_, url.empty() ? "about:blank" : url), "",
+        if (!CefBrowserHost::CreateBrowser(windowInfo, new PageClient(tabID, shared_, profileDirectory, url.empty() ? "about:blank" : url), "",
                                            browserSettings, nullptr, context)) {
             OutputDebugStringW(L"Kite: CefBrowserHost::CreateBrowser failed\n");
             shared_->pages.erase(tabID);
@@ -1014,6 +1215,35 @@ bool Chromium::MayCloseWindow() {
 }
 
 bool Chromium::PagesCanBeHidden() const { return !shared_->widgetMissing; }
+
+void Chromium::SetDownloadLocations(std::map<std::string, ProfileSettings> byProfile, std::filesystem::path defaultFolder) {
+    std::lock_guard lock(shared_->downloadsMutex);
+    shared_->downloadSettings = std::move(byProfile);
+    shared_->downloadFolder = std::move(defaultFolder);
+}
+
+void Chromium::CancelDownloads(std::vector<DownloadKey> downloads, std::function<void(const DownloadKey&)> gone) {
+    if (downloads.empty()) return;
+    // On CEF's thread, which runs the callbacks; Chromium reports each one canceled.
+    RunOnCefUIThread([shared = shared_, downloads = std::move(downloads), gone = std::move(gone)] {
+        for (const DownloadKey& key : downloads) {
+            CefRefPtr<CefDownloadItemCallback> callback;
+            {
+                std::lock_guard lock(shared->downloadsMutex);
+                if (key.first >= 0 && key.first <= static_cast<int64_t>(UINT32_MAX)) {
+                    if (auto* live = shared->FindLiveDownload(key.second, static_cast<uint32_t>(key.first))) callback = live->callback;
+                }
+            }
+            if (callback) callback->Cancel();
+            else if (gone) shared->Post([gone, key] { gone(key); });
+        }
+    });
+}
+
+std::pair<uint64_t, uint64_t> Chromium::DownloadReports() const {
+    std::lock_guard lock(shared_->downloadsMutex);
+    return {shared_->reportsFromChromium, shared_->reportsDelivered};
+}
 
 void Chromium::RunPending() {
     std::deque<std::function<void()>> work;

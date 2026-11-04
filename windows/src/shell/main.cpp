@@ -29,7 +29,13 @@
 //                            it made (when, and its cost on the UI thread) and the writer's
 //                            statistics to FILE as JSON: the live check of saving as it changes.
 //                            KITE_TEST_SLOW_BACKUP_MS=N makes each backup take N ms more
-//                            (the live check of a relaunch while Kite quits).
+//                            (the live check of a relaunch while Kite quits). It logs the
+//                            downloads too (Chromium's reports, what each cost the UI thread,
+//                            downloads.json's writes): the live check of the download engine.
+//
+// Downloads go to the profile's chosen folder, else the user's Downloads. KITE_TEST_DOWNLOADS_PATH
+// (with KITE_SUPPORT_PATH, as on the Mac) puts them in a test's own folder; a quiet run without
+// it uses <support>\Downloads, never the user's.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 //                            Prints a report; exits 0 when it matches, 5 when it differs, 3
@@ -37,7 +43,9 @@
 
 #include <windows.h>
 
+#include <knownfolders.h>
 #include <shellapi.h>
+#include <shlobj.h>
 
 #include <algorithm>
 #include <charconv>
@@ -54,7 +62,9 @@
 #include <variant>
 #include <vector>
 
+#include "core/DownloadsWriter.h"
 #include "core/KeyBindings.h"
+#include "core/ProfileSettings.h"
 #include "core/SessionStore.h"
 #include "core/SessionWriter.h"
 #include "core/SupportDirectory.h"
@@ -65,12 +75,14 @@
 #endif
 #include "shell/Capture.h"
 #include "shell/MainWindow.h"
+#include "shell/QuietRun.h"
 #include "shell/Text.h"
 
 namespace {
 
 using kite::Narrow;
 using kite::Widen;
+using kite::WriteUtf8;
 
 // How long Kite waits, once its window is gone, for the session's last write.
 constexpr std::chrono::milliseconds kQuitFlush{10'000};
@@ -132,19 +144,6 @@ std::optional<std::pair<int, int>> ParseSize(std::wstring_view text) {
     return std::make_pair(*w, *h);
 }
 
-// Writes `text` as UTF-8 to a standard handle, if the launcher gave us one (a GUI process
-// has no console, but a launcher that redirects stdout or stderr, like CI, gets the text).
-void WriteUtf8(DWORD which, const std::wstring& text) {
-    HANDLE handle = GetStdHandle(which);
-    if (!handle || handle == INVALID_HANDLE_VALUE || text.empty()) return;
-    const int bytes = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    if (bytes <= 0) return;
-    std::string utf8(static_cast<size_t>(bytes), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), utf8.data(), bytes, nullptr, nullptr);
-    DWORD written = 0;
-    WriteFile(handle, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
-}
-
 // The user's shortcut changes (keybindings.json, the Mac's KeyBindingsStore): none when the
 // file isn't there, or can't be read (the defaults then, as the Mac does).
 kite::KeyBindings LoadKeyBindings(const std::filesystem::path& file) {
@@ -154,6 +153,19 @@ kite::KeyBindings LoadKeyBindings(const std::filesystem::path& file) {
     if (auto bindings = kite::KeyBindings::FromText(text)) return *bindings;
     OutputDebugStringW(L"Kite: couldn't read keybindings.json, using the default shortcuts\n");
     return {};
+}
+
+// The user's Downloads folder (FOLDERID_Downloads, which they may have moved), else
+// %USERPROFILE%\Downloads.
+std::filesystem::path UserDownloads() {
+    PWSTR path = nullptr;
+    std::filesystem::path folder;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Downloads, KF_FLAG_DEFAULT, nullptr, &path)) && path) folder = path;
+    CoTaskMemFree(path);
+    if (folder.empty()) {
+        if (auto profile = kite::EnvironmentPath("USERPROFILE"); profile && !profile->empty()) folder = *profile / L"Downloads";
+    }
+    return folder;
 }
 
 int Fail(bool quiet, const std::wstring& message, int code) {
@@ -315,6 +327,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         TerminateProcess(GetCurrentProcess(), kSaveFailed);
     };
     writer.OnStuck(endStuck);
+    // downloads.json, read on its worker once the window shows (not by a launch that hands over)
+    // and written as the list changes (core/DownloadsWriter.h); none for a capture, which has no
+    // pages.
+    std::optional<kite::DownloadsWriter> downloadsWriter;
+    if (!capture) {
+        downloadsWriter.emplace(supportDirectory / L"downloads.json");
+        downloadsWriter->OnStuck(endStuck);
+    }
     // As the Mac does once per launch, the session as found (read, recovered or a fresh one, as
     // BrowserStore.init) is kept as a launch backup: before the auto-archive, as the Mac's is
     // before its first pass, but handed over only once this launch is Kite's (not a second one
@@ -343,7 +363,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.frameLog = frameLogOption.present;
     options.saveLog = saveLogOption.present;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
-    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, problem);
+    options.quiet = quiet;
+    options.downloadFolder = kite::DefaultDownloadFolder(kite::EnvironmentPath("KITE_TEST_DOWNLOADS_PATH"), supportOverride.has_value(),
+                                                         quiet, supportDirectory, UserDownloads());
+    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer,
+                                                            downloadsWriter ? &*downloadsWriter : nullptr, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
     if (archivedAtLaunch) controller->SessionChanged();
@@ -424,9 +448,19 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     // one). Before Chromium shuts down: until then this Kite holds the profile, so a launch in
     // the meantime hands over to it rather than read a session.json about to be replaced.
     const std::string saveError = writer.Flush(kQuitFlush);
+    // downloads.json likewise: a read the window never got is joined first, then the last save.
+    std::string downloadsError;
+    if (downloadsWriter) {
+        controller->FinishDownloads(kQuitFlush);
+        downloadsError = downloadsWriter->Flush(kQuitFlush);
+    }
     // Still writing after that: end here, before Chromium's shutdown or a dialog, while the
     // stuck write may yet rename (no other Kite can have the profile until this one is gone).
-    if (writer.Writing()) endStuck();
+    if (writer.Writing() || (downloadsWriter && downloadsWriter->Writing())) endStuck();
+    if (!downloadsError.empty()) {
+        OutputDebugStringW((L"Kite: " + Widen(downloadsError) + L"\n").c_str());
+        if (quiet) WriteUtf8(STD_ERROR_HANDLE, L"Kite: couldn't save the downloads: " + Widen(downloadsError) + L"\n");
+    }
     if (capture && !captureError.empty()) return Fail(quiet, L"Capture failed: " + captureError, kCaptureFailed);
     if (frameLogOption.value) {
         if (problem = controller->SaveFrameLog(*frameLogOption.value); !problem.empty()) {

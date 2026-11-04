@@ -385,6 +385,51 @@ logs each save and its UI-thread cost. Not yet: the Mac's `syncPinnedURLs` in
 its page-event path (a pinned tab that had no page adopting the first address
 it reports), which comes with pinning.
 
+## Downloads
+
+Chromium's downloads (W20a) follow the Mac's engine (`KCBrowser.mm`'s download
+handler, `DownloadsModel`, `DownloadLocation`): each page's client is CEF's
+`CefDownloadHandler`. A download saves into its profile's folder (Settings ›
+Profiles › Download location, kept in `session.json`'s `profileSettings` by the
+profile's dataStoreID, as on the Mac; a chosen folder that has gone falls back),
+under the name Chromium suggests, numbered "name 2.ext" when the folder has one
+or a download still running holds it; a profile set to Ask gets Chromium's Save
+As dialog there. A Chrome Web Store package (its MIME type, or a .crx from
+Google's extension hosts) saves into `%TEMP%\KiteExtensionInstalls` for the
+installer and is never listed. Chromium's reports reach Kite's thread folded
+together, one per download per wake however often Chromium reports (about
+twice a second), and go through `core/DownloadsModel.h`'s rules: a finished
+download is final, an ended incognito session takes no more, and downloads.json
+is written 0.2 s after a download starts or finishes and 5 s after a progress
+tick, which never pushes back a save already waiting. downloads.json is the
+Mac's file (`Tests/Fixtures/downloads-v1.json`, which both suites read), read
+at launch and written by `core/DownloadsWriter.h`'s worker as the session's
+writer does (atomically, skipping unchanged bytes), so the UI thread touches no
+file; a download that starts before the read is in waits for it, and the list
+read joins under it. An unreadable file is moved aside, and one with items Kite
+can't read is copied aside first, as on the Mac. A progress report costs Kite's
+UI thread about 8 μs (the model and the timer; nothing is drawn: the Library
+comes with W20b), measured by `--save-log`, which logs Chromium's reports, those
+that reached Kite, their cost and downloads.json's writes. Closing the window
+with downloads running asks first, the Mac's "Downloads in progress"
+(`shell/QuitDialog.h`, a task dialog where the Mac draws its own alert); Close
+Kite cancels them. A quiet run logs `KITE_TEST_MODAL: dialog: Downloads in
+progress | [Close Kite, Keep browsing]` and closes, as the Mac's test-safe run
+answers, and a profile set to Ask has its download cancelled with
+`KITE_TEST_MODAL: save panel: <name>`. Downloads go to `KITE_TEST_DOWNLOADS_PATH`
+when it's set with `KITE_SUPPORT_PATH`, as on the Mac, and a quiet run without
+it uses `<support>\Downloads`, never the user's. A finished download flashes
+the taskbar button while Kite is behind, the Mac's Dock bounce. `kitecore
+downloads` lists the file, `downloads apply` replays the engine's reports
+through the same rules, and `downloads location` shows and sets each profile's
+folder and Ask. Known differences: logging off or shutting down doesn't ask
+(Windows ends Kite there; its downloads read as interrupted next launch, as a
+download cut off by quitting does on the Mac); a .crx navigation from another
+host isn't a store package and saves as a file, as on the Mac. Not yet: the
+Library's Downloads page and its actions (W20b), the progress badge and the
+download's flight (W20c), Tidy Downloads, incognito windows (W29b), and the
+Settings pane that changes the location (W31a).
+
 ## Refresh rate
 
 Kite renders at whatever the display supports (60Hz, 120/144Hz laptops, 240 to

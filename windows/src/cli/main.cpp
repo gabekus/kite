@@ -12,6 +12,10 @@
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
 //   kitecore [--profile DIR] backups
+//   kitecore [--profile DIR] downloads [list]
+//   kitecore [--profile DIR] downloads apply REPORT...
+//   kitecore [--profile DIR] downloads clear|remove ID
+//   kitecore [--profile DIR] downloads location [PROFILE [FOLDER|ask|folder|downloads]]
 //   kitecore save-schedule KIND@SECONDS... [--at SECONDS]
 //   kitecore save-bench [TABS]
 //
@@ -35,6 +39,15 @@
 // `save-bench` writes a session of TABS tabs (default 200) the way the app does, in a temp
 // folder of its own (never a profile), and prints what it cost: the copy on the UI thread (μs),
 // the encoding and the atomic write on the writer's thread, medians of 25 runs.
+// `downloads` lists downloads.json as Kite would show it after a launch (nothing live), newest
+// first, with each item's file name and subtitle; it never moves an unreadable file aside.
+// `downloads apply` replays the engine's reports (each a JSON object with the Mac bridge's keys:
+// id, context, incognito, profileDirectory, url, path, state, receivedBytes, totalBytes, speed)
+// through the app's rules (core/DownloadsModel.h) onto that list, writes it, and prints what each
+// report did and when the app would save. `clear` drops the finished ones, `remove` one item.
+// `downloads location` prints a profile's download settings (default: every profile's) and the
+// folder its downloads go to; with a FOLDER it saves there, `ask` asks every time, `folder` stops
+// asking, `downloads` goes back to the Downloads folder (Settings › Profiles › Download location).
 
 #include <algorithm>
 #include <charconv>
@@ -50,7 +63,11 @@
 #include <vector>
 
 #include "core/CommandBar.h"
+#include "core/Downloads.h"
+#include "core/DownloadsModel.h"
 #include "core/KeyBindings.h"
+#include "core/ProfileSettings.h"
+#include "core/StoreFile.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/SessionSaveDelay.h"
@@ -94,6 +111,10 @@ int Usage() {
         "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n"
         "       kitecore [--profile DIR] backups\n"
+        "       kitecore [--profile DIR] downloads [list]\n"
+        "       kitecore [--profile DIR] downloads apply REPORT...\n"
+        "       kitecore [--profile DIR] downloads clear|remove ID\n"
+        "       kitecore [--profile DIR] downloads location [PROFILE [FOLDER|ask|folder|downloads]]\n"
         "       kitecore save-schedule KIND@SECONDS... [--at SECONDS]\n"
         "       kitecore save-bench [TABS]\n",
         stderr);
@@ -250,6 +271,73 @@ json::Value BackupsSummary(const SessionBackups& backups) {
     return json::Value(json::Object{{"directory", PathUtf8(backups.Directory())}, {"backups", json::Value(std::move(rows))}});
 }
 
+json::Value DownloadsSummary(const DownloadList& list) {
+    json::Array items;
+    for (const DownloadItem& item : list.Items()) {
+        json::Value encoded = Encode(item);
+        json::Object o = *encoded.AsObject();
+        o.emplace("fileName", item.FileName());
+        o.emplace("subtitle", download_text::Subtitle(item));
+        if (auto fraction = item.Fraction()) o.emplace("fraction", *fraction);
+        items.push_back(json::Value(std::move(o)));
+    }
+    json::Object root{{"items", json::Value(std::move(items))}, {"active", list.Active().size()}};
+    if (auto fraction = list.ActiveFraction()) root.emplace("activeFraction", *fraction);
+    return json::Value(std::move(root));
+}
+
+// downloads.json's commands that touch only it (`location` reads the session too, below).
+int DownloadsCommand(const std::vector<std::string>& args, const std::filesystem::path& support) {
+    const std::filesystem::path file = support / "downloads.json";
+    auto read = downloads_file::Read(file);
+    if (!read) {
+        std::fprintf(stderr, "kitecore: downloads.json doesn't read; left as it is\n");
+        return kLoadFailed;
+    }
+    const std::string action = args.size() > 1 ? args[1] : "list";
+    DownloadsModel model;
+    model.Restore(*read, true, 0);
+    json::Array reports;
+    if (action == "list" && args.size() <= 2) {
+        std::puts(json::Write(DownloadsSummary(model.List())).c_str());
+        return kOk;
+    } else if (action == "apply" && args.size() > 2) {
+        for (size_t i = 2; i < args.size(); ++i) {
+            auto parsed = json::Parse(args[i]);
+            auto* value = std::get_if<json::Value>(&parsed);
+            auto update = value ? DownloadUpdate::FromInfo(*value) : std::nullopt;
+            if (!update) {
+                std::fprintf(stderr, "kitecore: not a download report: %s\n", args[i].c_str());
+                return kUsage;
+            }
+            // A second apart, so the save delays read as the app's timer would arm them: a save
+            // due by then has fired.
+            const double now = static_cast<double>(i - 2);
+            if (auto due = model.Schedule().DueAt(); due && *due <= now) model.Schedule().Saved();
+            const auto outcome = model.Apply(*update, now);
+            json::Object o{{"applied", outcome.applied}, {"isNew", outcome.isNew}};
+            if (outcome.applied) o.emplace("id", outcome.item.id);
+            if (outcome.save) o.emplace("saveAfter", *outcome.save);
+            reports.push_back(json::Value(std::move(o)));
+        }
+    } else if (action == "clear" && args.size() == 2) {
+        model.ClearFinished(0);
+    } else if (action == "remove" && args.size() == 3) {
+        if (!model.List().Find(Id(args[2]))) return kNotFound;
+        model.Remove(Id(args[2]), 0);
+    } else {
+        return Usage();
+    }
+    if (std::string error = store_file::WriteAtomically(file, downloads_file::Encode(model.List())); !error.empty()) {
+        std::fprintf(stderr, "kitecore: %s\n", error.c_str());
+        return kSaveFailed;
+    }
+    json::Value summary = DownloadsSummary(model.List());
+    if (!reports.empty()) summary.AsObject()->emplace("reports", json::Value(std::move(reports)));
+    std::puts(json::Write(summary).c_str());
+    return kOk;
+}
+
 // The changes `save-schedule` replays: KIND@SECONDS, in time order.
 int SaveScheduleCommand(const std::vector<std::string>& args) {
     std::vector<SaveChange> changes;
@@ -386,6 +474,8 @@ int main(int argc, char** argv) {
         std::puts(json::Write(BackupsSummary(store.Backups())).c_str());
         return kOk;
     }
+    const std::filesystem::path support = std::get<std::filesystem::path>(resolved);
+    if (args[0] == "downloads" && (args.size() == 1 || args[1] != "location")) return DownloadsCommand(args, support);
 
     BrowserState state;
     // kitecore never moves the user's session aside: an unreadable one is reported and left.
@@ -401,7 +491,65 @@ int main(int argc, char** argv) {
     const SearchEngine engine = SearchEngineFromRaw(state.searchEngine).value_or(SearchEngine::Google);
     bool changed = false;
 
-    if (command == "state") {
+    if (command == "downloads" && args.size() >= 2 && args.size() <= 4) {
+        // Where a profile's downloads go, as a normal launch of Kite.exe resolves it.
+        std::filesystem::path userDownloads;
+        if (auto home = EnvironmentPath("USERPROFILE"); home && !home->empty()) userDownloads = *home / "Downloads";
+        else if (auto home2 = EnvironmentPath("HOME"); home2 && !home2->empty()) userDownloads = *home2 / "Downloads";
+        const std::filesystem::path defaultFolder =
+            DefaultDownloadFolder(EnvironmentPath("KITE_TEST_DOWNLOADS_PATH"), profile.has_value() || EnvironmentPath("KITE_SUPPORT_PATH").has_value(), false,
+                                  support, userDownloads);
+        std::vector<std::string> profiles{BrowserState::kDefaultProfile};
+        if (auto list = state.extra.find("profiles"); list != state.extra.end() && list->second.AsArray()) {
+            for (const auto& entry : *list->second.AsArray()) {
+                if (const json::Value* directory = entry.Find("directory"); directory && directory->AsString()) profiles.push_back(*directory->AsString());
+            }
+        }
+        if (args.size() >= 3 && std::find(profiles.begin(), profiles.end(), args[2]) == profiles.end()) {
+            std::fprintf(stderr, "kitecore: no profile in the folder \"%s\"\n", args[2].c_str());
+            return kNotFound;
+        }
+        if (args.size() == 4) {
+            const std::string& choice = args[3];
+            state.UpdateSettings(args[2], [&](ProfileSettings& settings) {
+                if (choice == "ask") {
+                    settings.promptsForDownload = true;
+                } else if (choice == "folder") {
+                    settings.promptsForDownload = false;
+                } else if (choice == "downloads") {
+                    settings.downloadDirectory.reset();
+                    settings.promptsForDownload = false;
+                } else {
+                    // DownloadLocation.setFolder: the Downloads folder itself is stored as none.
+                    const std::filesystem::path chosen = std::filesystem::path(std::u8string(choice.begin(), choice.end()));
+                    std::error_code error;
+                    const bool same = std::filesystem::equivalent(chosen, defaultFolder, error) && !error;
+                    if (same) settings.downloadDirectory.reset();
+                    else settings.downloadDirectory = choice;
+                    settings.promptsForDownload = false;
+                }
+            });
+            changed = true;
+        }
+        json::Array rows;
+        for (const std::string& directory : profiles) {
+            if (args.size() >= 3 && directory != args[2]) continue;
+            const ProfileSettings settings = state.Settings(directory);
+            const std::filesystem::path folder = settings.DownloadFolder(defaultFolder, [](const std::string& path) {
+                std::error_code error;
+                return std::filesystem::is_directory(std::filesystem::path(std::u8string(path.begin(), path.end())), error);
+            });
+            json::Object row{{"profile", directory},
+                             {"name", state.ProfileName(directory)},
+                             {"promptsForDownload", settings.promptsForDownload},
+                             {"includesSearchSuggestions", settings.includesSearchSuggestions},
+                             {"folder", PathUtf8(folder)}};
+            if (settings.downloadDirectory) row.emplace("downloadDirectory", *settings.downloadDirectory);
+            rows.push_back(json::Value(std::move(row)));
+        }
+        std::puts(json::Write(json::Value(std::move(rows))).c_str());
+        if (!changed) return kOk;
+    } else if (command == "state") {
         std::puts(json::Write(Summary(state)).c_str());
         return kOk;
     } else if (command == "shortcuts" && args.size() == 1) {

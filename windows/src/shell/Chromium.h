@@ -22,12 +22,18 @@
 
 #include <windows.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
+#include "core/Downloads.h"
 #include "core/KeyBindings.h"
+#include "core/ProfileSettings.h"
 
 namespace kite {
 
@@ -75,6 +81,11 @@ struct PageEvents {
     std::function<bool(const std::string& tabID)> keepAlive;
     // A page closed for the limit; its tab stays and loads again when it's next shown.
     std::function<void(const std::string& tabID)> pageDiscarded;
+    // A download moved along (the Mac's KCDownloadDidUpdateNotification): Chromium's report,
+    // its context "" for the default profile and the folder for another. Chrome Web Store
+    // packages never come here. Coalesced on CEF's thread, so however often Chromium reports,
+    // Kite's thread gets each download's latest once per wake.
+    std::function<void(const DownloadUpdate& update)> downloadUpdated;
 };
 
 class Chromium {
@@ -84,7 +95,9 @@ public:
     // Starts Chromium with its profiles under `root` (the Mac's <support>/Chromium): the
     // default profile in root\Default, a space's other profile in root\<directory>.
     // AlreadyRunning: another Kite has this profile and has been told to come forward.
-    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
+    // `quiet`: a quiet run (main.cpp's `quiet`), which shows no dialog: a download whose
+    // profile asks where to save is cancelled instead, with a KITE_TEST_MODAL line.
+    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events, bool quiet,
                              std::unique_ptr<Chromium>& out, std::wstring& error);
     // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();
@@ -134,6 +147,17 @@ public:
     // unless it's playing sound, using the camera or microphone, tied to a popup, or shown
     // again before it answers. Their tabs stay and load again when next shown (pageDiscarded).
     void DiscardHiddenPages();
+    // Where each profile's downloads go (DownloadLocation.installForChromium): its settings by
+    // profile folder (one not listed reads Default's), and the folder for a profile that chose
+    // none (or whose chosen one has gone). Read on CEF's thread as each download starts.
+    void SetDownloadLocations(std::map<std::string, ProfileSettings> byProfile, std::filesystem::path defaultFolder);
+    // Cancels live downloads, by engine id and context (KCBrowser.cancelDownload). `gone` runs on
+    // Kite's thread for each one Chromium had already let go (it finished in between).
+    using DownloadKey = std::pair<int64_t, std::string>;
+    void CancelDownloads(std::vector<DownloadKey> downloads, std::function<void(const DownloadKey&)> gone = nullptr);
+    // Chromium's download reports so far, and how many reached Kite's thread (the rest were
+    // folded into a later one): for the save log.
+    std::pair<uint64_t, uint64_t> DownloadReports() const;
     // Runs what CEF's thread handed over. MainWindow::kWakeMessage calls it.
     void RunPending();
     // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden

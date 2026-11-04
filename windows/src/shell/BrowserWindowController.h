@@ -11,19 +11,30 @@
 // caller's SessionWriter, which writes it on its own thread. Closing the window saves at once
 // (main.cpp waits for that write once the window is gone); logoff and shutdown save at once and
 // wait here, for kEndSessionFlush at most.
+//
+// Downloads (W20a) go the same way, as the Mac's DownloadsModel: Chromium's reports go through
+// core/DownloadsModel.h's rules, and downloads.json is written by the caller's DownloadsWriter
+// (read on its worker at launch, then each save), 0.2 s after a download starts or finishes and
+// 5 s after a progress tick. Nothing on screen shows them yet (the Library comes with W20b), so a
+// report redraws nothing. Closing the window with downloads running asks first ("Downloads in
+// progress", shell/QuitDialog.h), as the Mac's applicationShouldTerminate.
 
 #include <windows.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "core/DownloadsModel.h"
+#include "core/DownloadsWriter.h"
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/Models.h"
@@ -59,6 +70,13 @@ public:
         // --frame-log: each frame the clock delivered (when it was handled, the time it was
         // drawn for, the pages' offset and the theme's crossfade) is kept for SaveFrameLog.
         bool frameLog = false;
+        // A quiet run (main.cpp's `quiet`, which alone decides it): the window opens behind
+        // the others and never activates, the pages never take the focus or show a dialog
+        // (Chromium::Start's `quiet`), and every shortcut command must do something.
+        bool quiet = false;
+        // Where downloads go for a profile that chose no folder (core/ProfileSettings.h's
+        // DefaultDownloadFolder: a test run's own folder, never the user's Downloads).
+        std::filesystem::path downloadFolder;
         // --save-log: each save handed to the writer (when, and what it cost the UI thread) is
         // kept for SaveSaveLog.
         bool saveLog = false;
@@ -71,9 +89,11 @@ public:
     // `error` when the GPU, the window or a view couldn't be made. No command bar isn't a
     // failure (CommandBar() is null then). `writer` (the caller's, outliving the window) gets
     // the session as it changes, and once more as the window closes, and at logoff or shutdown,
-    // after the pages' last reports; null saves nothing.
+    // after the pages' last reports; null saves nothing. `downloads` (the caller's too) reads
+    // downloads.json at once, on its worker, and writes the list as it changes; null keeps none.
     static std::unique_ptr<BrowserWindowController> Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
-                                                           Options options, SessionWriter* writer, std::wstring& error);
+                                                           Options options, SessionWriter* writer, DownloadsWriter* downloads,
+                                                           std::wstring& error);
     ~BrowserWindowController();
     BrowserWindowController(const BrowserWindowController&) = delete;
     BrowserWindowController& operator=(const BrowserWindowController&) = delete;
@@ -93,7 +113,8 @@ public:
     std::wstring ShutDownChromium();
 #endif
     // Shows the window (behind other windows for a quiet run) and, with Chromium, the first page,
-    // and starts the auto-archive's timer.
+    // and starts the auto-archive's timer and the read of downloads.json (only once this launch
+    // is Kite's: a second one that hands over touches no file).
     void Show(int showCommand, bool behindOtherWindows);
 
     // Draws the backdrop, the sidebar and the caption buttons and commits them; with
@@ -105,8 +126,9 @@ public:
     std::wstring SaveFrameLog(const std::filesystem::path& file) const;
     // The run's saves (Options::saveLog) as one JSON object: `saves` (`t`, s from the window's
     // creation; `uiMicros`, the copy handed to the writer; `closing`), `frames` (frames the
-    // clock delivered) and `writer` (the writer's statistics after its last write). Empty on
-    // success.
+    // clock delivered), `writer` (the writer's statistics after its last write) and
+    // `downloads` (Chromium's reports, those that reached Kite's thread and what each cost it,
+    // the list's saves and its writer's statistics). Empty on success.
     std::wstring SaveSaveLog(const std::filesystem::path& file) const;
     // The smoke test's checks of the window: the command bar opens and draws, the sidebar and
     // the caption buttons draw something, and the lost-GPU path rebuilds and draws. Empty on
@@ -124,6 +146,12 @@ public:
     // launch): it's saved after `delay`, as the window's own changes are.
     void SessionChanged(SessionSaveDelay delay = SessionSaveDelay::Soon);
 
+    // After the message loop: a downloads.json read that hadn't reached the window yet is
+    // waited for (`wait` at most) and joined, and the list's last save handed over (the
+    // window's close hands it over itself when the read was in). The caller then flushes.
+    void FinishDownloads(std::chrono::milliseconds wait);
+    const DownloadsModel& Downloads() const { return downloads_; }
+
     // How long the window waits for the session's last write when Windows ends the session
     // (WM_ENDSESSION: the process may end as soon as it returns). Giving up is safe: the
     // atomic write leaves the old file or the new one.
@@ -136,7 +164,7 @@ private:
     static constexpr int kContentInset = 10;
 
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                            SessionWriter* writer, std::unique_ptr<Renderer> renderer);
+                            SessionWriter* writer, DownloadsWriter* downloads, std::unique_ptr<Renderer> renderer);
     std::wstring Init();
     // What follows from the selected space's theme at once: the title bar's dark mode, the
     // material under the backdrop, the caption buttons' glyphs (the Mac's NSAppearance).
@@ -168,6 +196,24 @@ private:
     void StateChanged(std::optional<SessionSaveDelay> save = SessionSaveDelay::Soon);
     // The save timer fired, or the window is closing: a copy of the session to the writer.
     void SaveNow();
+    // Downloads (the Mac's DownloadsModel and DownloadLocation).
+    // Chromium's report, through the model's rules; what it cost the UI thread is kept for the
+    // save log.
+    void DownloadUpdated(const DownloadUpdate& update);
+    // Arms the downloads.json timer, for `seconds` (none: leaves it as it is).
+    void DownloadsChanged(std::optional<double> seconds);
+    // The timer fired, or the window is closing: a copy of the list to the writer.
+    void SaveDownloadsNow();
+    // Asks the writer's worker for downloads.json; it posts here once it has it.
+    void ReadDownloads();
+    // The worker's read of downloads.json has arrived: it joins the list.
+    void DownloadsRead();
+    // Each profile's download settings, by folder, for Chromium (DownloadLocation's provider).
+    std::map<std::string, ProfileSettings> DownloadLocations() const;
+    // Whether the window may close: with downloads running, "Downloads in progress" asks
+    // first; Close Kite cancels them (the Mac's applicationShouldTerminate).
+    bool MayQuit();
+
     // The selected tab's page shows, and the sidebar with it, after the selection moved.
     void SelectionMoved();
     void ShowPage();
@@ -203,6 +249,27 @@ private:
     const ShortcutMap shortcuts_;
     const Options options_;
     SessionWriter* const writer_;
+    DownloadsWriter* const downloadsWriter_;
+    DownloadsModel downloads_;
+    // The worker's read of downloads.json, handed to the window: the result, and where to post
+    // that it's in (cleared as the window goes).
+    struct DownloadsReadSlot {
+        std::mutex mutex;
+        std::optional<std::optional<downloads_file::Loaded>> result;
+        std::atomic<HWND> target{nullptr};
+    };
+    std::shared_ptr<DownloadsReadSlot> downloadsRead_ = std::make_shared<DownloadsReadSlot>();
+    // What the downloads cost Kite's UI thread, for the save log: each report Chromium's thread
+    // handed over (the model's rules and the timer), and each save (the list's copy).
+    struct DownloadCost {
+        uint64_t reports = 0;
+        double maxMicros = 0, totalMicros = 0;
+        uint64_t saves = 0;
+        double saveMaxMicros = 0;
+    };
+    DownloadCost downloadCost_;
+    bool askingToQuit_ = false;   // "Downloads in progress" is open
+    bool quitConfirmed_ = false;  // asked (or nothing to ask): the window closes
     SaveSchedule saveSchedule_;
     // What saving cost Kite's UI thread (the copy handed to the writer), for the save log.
     struct SaveCost {

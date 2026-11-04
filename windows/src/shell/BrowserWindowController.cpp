@@ -23,6 +23,7 @@
 #endif
 #include "shell/Errors.h"
 #include "shell/Keys.h"
+#include "shell/QuitDialog.h"
 #include "shell/Text.h"
 
 namespace kite {
@@ -44,6 +45,10 @@ constexpr UINT kFrameMessage = WM_APP + 5;
 constexpr UINT kSpaceIconsMessage = WM_APP + 6;
 // Posted by the memory watch (MemoryPressure.h), wParam the MemoryPressure level.
 constexpr UINT kMemoryPressureMessage = WM_APP + 7;
+// downloads.json's save, armed by a change (DownloadsSaveSchedule) and gone once it fires.
+constexpr UINT_PTR kDownloadsSaveTimer = 5;
+// Posted by the downloads writer's worker once it has read downloads.json.
+constexpr UINT kDownloadsReadMessage = WM_APP + 8;
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -76,7 +81,7 @@ bool Inked(const Pixels& pixels, UINT fromRow = 0) {
 
 std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
                                                                           Options options, SessionWriter* writer,
-                                                                          std::wstring& error) {
+                                                                          DownloadsWriter* downloads, std::wstring& error) {
     // The GPU first: everything is set up before the window shows, so it never appears empty
     // or with the wrong title bar.
     std::unique_ptr<Renderer> renderer = Renderer::Create(error);
@@ -89,7 +94,7 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
         return nullptr;
     }
     std::unique_ptr<BrowserWindowController> controller(
-        new BrowserWindowController(instance, state, std::move(shortcuts), options, writer, std::move(renderer)));
+        new BrowserWindowController(instance, state, std::move(shortcuts), options, writer, downloads, std::move(renderer)));
     if (!controller->window_.IsValid()) {
         error = L"CreateWindowExW failed";
         return nullptr;
@@ -99,12 +104,13 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
 }
 
 BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                                                 SessionWriter* writer, std::unique_ptr<Renderer> renderer)
+                                                 SessionWriter* writer, DownloadsWriter* downloads, std::unique_ptr<Renderer> renderer)
     : instance_(instance),
       state_(state),
       shortcuts_(std::move(shortcuts)),
       options_(options),
       writer_(writer),
+      downloadsWriter_(downloads),
       renderer_(std::move(renderer)),
       window_(instance),
       theme_(state.SelectedSpace().theme),
@@ -113,6 +119,7 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
 }
 
 BrowserWindowController::~BrowserWindowController() {
+    downloadsRead_->target = nullptr;  // a read still on the worker posts nowhere
     // The views and the compositor go before the window: it stops calling into them first.
     window_.onClose = nullptr;
     window_.onSize = nullptr;
@@ -237,11 +244,15 @@ std::wstring BrowserWindowController::Init() {
         RunPending();
         closing_ = true;
         SaveNow();
+        // The read is in (else FinishDownloads joins it once the window is gone): the list's
+        // last state, as the Mac's applicationWillTerminate saves it.
+        if (downloads_.Restored()) SaveDownloadsNow();
         if (endingSession && writer_) {
             if (std::string problem = writer_->Flush(kEndSessionFlush); !problem.empty()) {
                 OutputDebugStringW((L"Kite: " + Widen(problem) + L"\n").c_str());
             }
         }
+        if (endingSession && downloadsWriter_) downloadsWriter_->Flush(kEndSessionFlush);
     };
     return {};
 }
@@ -362,6 +373,36 @@ std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& f
                      {"frames", frameCount_},
                      {"uiMicros", json::Object{{"max", saveCost_.maxMicros}, {"mean", mean}}},
                      {"memoryPressure", json::Object{{"watching", watchingMemory_}, {"reports", json::Value(std::move(reports))}}}};
+    json::Object downloads{{"reports", downloadCost_.reports},
+                           {"uiMicros", json::Object{{"max", downloadCost_.maxMicros},
+                                                     {"mean", downloadCost_.reports ? downloadCost_.totalMicros / static_cast<double>(downloadCost_.reports) : 0.0}}},
+                           {"saves", downloadCost_.saves},
+                           {"saveMaxMicros", downloadCost_.saveMaxMicros},
+                           {"items", downloads_.List().Items().size()},
+                           {"active", downloads_.List().Active().size()}};
+#ifdef KITE_HAS_CEF
+    if (chromium_) {
+        const auto [fromChromium, delivered] = chromium_->DownloadReports();
+        downloads.emplace("fromChromium", fromChromium);
+        downloads.emplace("deliveredToKite", delivered);
+    }
+#endif
+    if (downloadsWriter_) {
+        const DownloadsWriter::Statistics stats = downloadsWriter_->Stats();
+        downloads.emplace("writer", json::Object{{"handedOver", stats.handedOver},
+                                                 {"written", stats.written},
+                                                 {"unchanged", stats.unchanged},
+                                                 {"superseded", stats.superseded},
+                                                 {"refused", stats.refused},
+                                                 {"loaded", stats.loaded},
+                                                 {"canSave", stats.canSave},
+                                                 {"loadMicros", stats.loadMicros},
+                                                 {"lastBytes", stats.lastBytes},
+                                                 {"lastEncodeMicros", stats.lastEncodeMicros},
+                                                 {"lastWriteMicros", stats.lastWriteMicros},
+                                                 {"lastError", stats.lastError}});
+    }
+    log.emplace("downloads", json::Value(std::move(downloads)));
     if (writer_) {
         const SessionWriter::Statistics stats = writer_->Stats();
         log.emplace("writer", json::Object{{"handedOver", stats.handedOver},
@@ -408,6 +449,128 @@ void BrowserWindowController::SaveNow() {
     saveCost_.maxMicros = std::max(saveCost_.maxMicros, micros);
     saveCost_.totalMicros += micros;
     if (options_.saveLog) saves_.push_back(LoggedSave{FrameClock::Now() - createdAt_, micros, closing_});
+}
+
+// MARK: Downloads
+
+void BrowserWindowController::DownloadUpdated(const DownloadUpdate& update) {
+    const auto start = std::chrono::steady_clock::now();
+    const DownloadsModel::Outcome outcome = downloads_.Apply(update, FrameClock::Now());
+    if (outcome.save) DownloadsChanged(outcome.save);
+    // The Mac's requestUserAttention(.informational) as a download completes: the taskbar
+    // button flashes, unless Kite is in front (or the run is quiet).
+    if (outcome.applied && outcome.stateChanged && outcome.item.state == DownloadState::Complete && !options_.quiet &&
+        GetForegroundWindow() != window_.Handle()) {
+        FLASHWINFO flash{sizeof flash, window_.Handle(), FLASHW_TRAY, 2, 0};
+        FlashWindowEx(&flash);
+    }
+    const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+    ++downloadCost_.reports;
+    downloadCost_.maxMicros = std::max(downloadCost_.maxMicros, micros);
+    downloadCost_.totalMicros += micros;
+}
+
+void BrowserWindowController::DownloadsChanged(std::optional<double> seconds) {
+    if (!seconds || !downloadsWriter_) return;
+    SetTimer(window_.Handle(), kDownloadsSaveTimer, static_cast<UINT>(std::ceil(*seconds * 1000)), nullptr);
+}
+
+void BrowserWindowController::SaveDownloadsNow() {
+    KillTimer(window_.Handle(), kDownloadsSaveTimer);
+    downloads_.Schedule().Saved();
+    if (!downloadsWriter_ || !downloads_.MaySave()) return;
+    const auto start = std::chrono::steady_clock::now();
+    downloadsWriter_->Save(downloads_.List());
+    const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+    ++downloadCost_.saves;
+    downloadCost_.saveMaxMicros = std::max(downloadCost_.saveMaxMicros, micros);
+}
+
+void BrowserWindowController::ReadDownloads() {
+    if (!downloadsWriter_ || downloadsRead_->target) return;
+    downloadsRead_->target = window_.Handle();
+    downloadsWriter_->Load([slot = downloadsRead_](std::optional<downloads_file::Loaded> loaded) {
+        {
+            std::lock_guard lock(slot->mutex);
+            slot->result = std::move(loaded);
+        }
+        if (const HWND target = slot->target.load()) PostMessageW(target, kDownloadsReadMessage, 0, 0);
+    });
+}
+
+void BrowserWindowController::DownloadsRead() {
+    std::optional<std::optional<downloads_file::Loaded>> result;
+    {
+        std::lock_guard lock(downloadsRead_->mutex);
+        result = std::exchange(downloadsRead_->result, std::nullopt);
+    }
+    if (!result || downloads_.Restored()) return;
+    const std::optional<downloads_file::Loaded>& loaded = *result;
+    // DownloadsModel.start's notes, to the debugger and a quiet run's stderr.
+    std::wstring note;
+    const std::wstring file = downloadsWriter_->File().wstring();
+    if (!loaded) {
+        note = L"couldn't read or move downloads; not saving over " + file + L" this launch";
+    } else {
+        if (loaded->movedAside) note = L"couldn't read downloads, moved them to " + loaded->movedAside->wstring();
+        if (loaded->copiedAside) {
+            note = L"couldn't read " + std::to_wstring(loaded->dropped) + L" of the downloads, kept the original at " +
+                   loaded->copiedAside->wstring();
+        }
+        if (!loaded->canSave) note = L"not saving downloads over " + file + L" this launch";
+    }
+    if (!note.empty()) {
+        OutputDebugStringW((L"Kite: " + note + L"\n").c_str());
+        if (options_.quiet) WriteUtf8(STD_ERROR_HANDLE, L"Kite: " + note + L"\n");
+    }
+    DownloadsChanged(downloads_.Restore(loaded ? loaded->list : DownloadList(), loaded && loaded->canSave, FrameClock::Now()));
+}
+
+void BrowserWindowController::FinishDownloads(std::chrono::milliseconds wait) {
+    if (!downloadsWriter_ || downloads_.Restored() || !downloadsRead_->target) return;
+    // The window is gone, so the worker's post went nowhere: wait for the read itself.
+    downloadsWriter_->Flush(wait);
+    DownloadsRead();
+    if (downloads_.Restored()) SaveDownloadsNow();
+}
+
+std::map<std::string, ProfileSettings> BrowserWindowController::DownloadLocations() const {
+    std::map<std::string, ProfileSettings> byProfile{{BrowserState::kDefaultProfile, state_.Settings(std::string(BrowserState::kDefaultProfile))}};
+    if (auto profiles = state_.extra.find("profiles"); profiles != state_.extra.end() && profiles->second.AsArray()) {
+        for (const json::Value& profile : *profiles->second.AsArray()) {
+            const json::Value* directory = profile.Find("directory");
+            if (directory && directory->AsString()) byProfile.emplace(*directory->AsString(), state_.Settings(*directory->AsString()));
+        }
+    }
+    return byProfile;
+}
+
+bool BrowserWindowController::MayQuit() {
+    if (quitConfirmed_) return true;
+    // A close that comes while the dialog is open (a second click on the close button) waits for it.
+    if (askingToQuit_) return false;
+    if (downloads_.List().Active().empty()) {
+        quitConfirmed_ = true;
+        return true;
+    }
+    askingToQuit_ = true;
+    const bool close = RunDownloadsInProgress(window_.Handle(), options_.quiet);
+    askingToQuit_ = false;
+    if (!close) return false;
+    quitConfirmed_ = true;
+#ifdef KITE_HAS_CEF
+    // Close Kite cancels them. Those still running now (some may have finished while it asked).
+    std::vector<Chromium::DownloadKey> running;
+    for (const DownloadItem& item : downloads_.List().Active()) {
+        if (item.engineID) running.emplace_back(*item.engineID, item.engineContext.value_or(""));
+    }
+    if (chromium_) {
+        chromium_->CancelDownloads(std::move(running), [this](const Chromium::DownloadKey& key) {
+            if (const DownloadItem* item = downloads_.List().Item(key.first, key.second)) downloads_.CanceledWithoutEngine(*item);
+        });
+    }
+#endif
+    return true;
 }
 
 void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save) {
@@ -787,6 +950,14 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         SaveNow();
         return true;
     }
+    if (message == WM_TIMER && wParam == kDownloadsSaveTimer) {
+        SaveDownloadsNow();
+        return true;
+    }
+    if (message == kDownloadsReadMessage) {
+        DownloadsRead();
+        return true;
+    }
     if (message == kMemoryPressureMessage) {
         // The Mac's watchMemoryPressure: the pages that aren't on screen close, if memory is
         // still low as the report is handled (a dip already over, seen at launch on a busy PC,
@@ -830,6 +1001,8 @@ void BrowserWindowController::Show(int showCommand, bool behindOtherWindows) {
     // Quiet runs open behind other windows without focus, and ignore a launcher's "start maximized".
     if (behindOtherWindows) window_.ShowBehindOtherWindows();
     else window_.Show(showCommand);
+    // Before the first page, whose first download then usually finds the history already in.
+    ReadDownloads();
 #ifdef KITE_HAS_CEF
     ShowFirstPage();
 #endif
@@ -1127,10 +1300,14 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
-    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), chromium_, error);
+    events.downloadUpdated = [this](const DownloadUpdate& update) { DownloadUpdated(update); };
+    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), options_.quiet, chromium_, error);
         started != Chromium::StartResult::Started) {
         return started;
     }
+    // Each profile's download folder and Ask, as each download starts (read once: nothing on
+    // Windows changes them yet; Settings comes with W31a).
+    chromium_->SetDownloadLocations(DownloadLocations(), options_.downloadFolder);
     window_.onWake = [this] { chromium_->RunPending(); };
     window_.onMinimize = [this] {
         sidebar_->HideTip();
@@ -1140,7 +1317,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         sidebar_->HideTip();
         chromium_->WindowMoved();
     };
-    window_.mayClose = [this] { return chromium_->MayCloseWindow(); };
+    window_.mayClose = [this] { return MayQuit() && chromium_->MayCloseWindow(); };
     window_.onFocus = [this] {
         // The open bar keeps the keyboard in Kite's window.
         if (!commandBar_ || !commandBar_->IsOpen()) chromium_->Focus();
