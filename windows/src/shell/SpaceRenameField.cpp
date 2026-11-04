@@ -26,10 +26,11 @@ constexpr D2D1_COLOR_F kLightSelection{179 / 255.0f, 215 / 255.0f, 1, 1};
 // While it edits, the field is AppKit's field editor: its text sits after the editor's line
 // fragment padding (2pt), over the editor's background, NSColor.textBackgroundColor (sRGB #1E1E1E
 // in a dark appearance, white in a light one, opaque, square-cornered). That background covers the
-// field's frame grown to the editor's: 3pt before it and to its end, 2pt above its line and 4pt
+// field's frame (from the name's x to 2pt before Done's frame) grown to the editor's: 3pt before
+// it and 1pt past its end (4pt wider: 160pt in the Mac's capture), 2pt above its line and 4pt
 // below (22pt for the header's 16pt line), as the Mac's capture of the open field draws it.
 constexpr float kTextInset = 2;
-constexpr float kBackgroundBefore = 3, kBackgroundAbove = 2, kBackgroundBelow = 4;
+constexpr float kBackgroundBefore = 3, kBackgroundAfter = 1, kBackgroundAbove = 2, kBackgroundBelow = 4;
 constexpr float kDarkTextBackground = 30 / 255.0f;
 
 D2D1_COLOR_F Primary(bool dark, float alpha) {
@@ -182,7 +183,8 @@ std::wstring SpaceRenameField::Draw(Pixels* readBack, POINT* origin) {
                 const float shade = dark_ ? kDarkTextBackground : 1.0f;
                 brush_->SetColor(D2D1_COLOR_F{shade, shade, shade, 1});
                 context->FillRectangle(
-                    D2D1::RectF(left_ - kBackgroundBefore, lineTop_ - kBackgroundAbove, right_, lineTop_ + lineHeight_ + kBackgroundBelow),
+                    D2D1::RectF(left_ - kBackgroundBefore, lineTop_ - kBackgroundAbove, right_ + kBackgroundAfter,
+                                lineTop_ + lineHeight_ + kBackgroundBelow),
                     brush_.Get());
                 const D2D1_POINT_2F text{left_ + kTextInset - line_.ScrollX(), baseline_ - line_.Baseline()};
                 context->PushAxisAlignedClip(D2D1::RectF(left_, doneBox_.top, right_, doneBox_.bottom), D2D1_ANTIALIAS_MODE_ALIASED);

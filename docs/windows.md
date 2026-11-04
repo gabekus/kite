@@ -424,7 +424,7 @@ Edit Theme Color…, Set Profile ▸, then New Folder and Live Folders ▸, then
 the header's name field (`shell/SpaceRenameField`, the Mac's SpaceRenameField and Done): the
 name all selected in the header's 13pt semibold, 2pt into the field as in AppKit's field
 editor, over the editor's textBackgroundColor (#1E1E1E dark, white light, square, from 3pt
-before the field to its end and 22pt tall, as the Mac's capture draws it), "Space Name" when
+before the field to 1pt past its end and 22pt tall, as the Mac's capture draws it), "Space Name" when
 empty, Done at the right (its width rounded up to a point, as SidebarLabel's naturalWidth);
 Return or Done renames (a blank name keeps the old one), Escape doesn't, and leaving it (a
 press elsewhere in the window, the page or the command bar taking the keyboard, the menu
