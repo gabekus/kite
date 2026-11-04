@@ -17,6 +17,11 @@ final class HistoryStore {
     /// Debounced saves encode and write here, off the main thread: a full history is 20,000 entries.
     /// Serial, so writes land in order, and `saveNow` waits behind any that are queued.
     private static let writeQueue = DispatchQueue(label: "dev.gabek.Kite.history-save", qos: .utility)
+    /// What `search` compares, by entry key, made at the first search and kept up to date by single
+    /// visits and titles; anything bigger drops it. Typing in the command bar searches on every key.
+    @ObservationIgnored private var searchItems: [String: HistorySearchItem]?
+    /// Drops `searchItems` a while after the last search: about 400 bytes an entry.
+    @ObservationIgnored private var forgetSearchItems: Task<Void, Never>?
 
     private struct File: Codable, Sendable {
         var version: Int
@@ -53,6 +58,7 @@ final class HistoryStore {
 
     func recordVisit(_ url: URL, title: String) {
         history.recordVisit(url, title: title)
+        updateSearchItem(url)
         scheduleSave()
     }
 
@@ -61,17 +67,36 @@ final class HistoryStore {
     func updateTitle(_ url: URL, _ title: String) {
         guard let entry = history.entries[url.absoluteString], entry.title != title, !title.isEmpty else { return }
         history.updateTitle(url, title)
+        updateSearchItem(url)
         scheduleSave()
     }
 
     func search(_ query: String, limit: Int) -> [HistoryEntry] {
-        history.search(query, limit: limit)
+        // Reading `history` here is what lets the command bar's observation see changes.
+        let entries = history.entries
+        // A visit past the entry limit prunes thousands at once.
+        let items = searchItems?.count == entries.count ? searchItems ?? [:] : entries.mapValues(HistorySearchItem.init)
+        searchItems = items
+        forgetSearchItems?.cancel()
+        forgetSearchItems = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(120))
+            guard !Task.isCancelled else { return }
+            self?.searchItems = nil
+        }
+        return History.search(query, in: items.values, limit: limit)
+    }
+
+    private func updateSearchItem(_ url: URL) {
+        guard searchItems != nil else { return }
+        let key = url.absoluteString
+        searchItems?[key] = history.entries[key].map(HistorySearchItem.init)
     }
 
     /// Import from Arc. Returns how many pages were new.
     @discardableResult
     func merge(_ entries: [HistoryEntry]) -> Int {
         let added = history.merge(entries)
+        searchItems = nil
         isDirty = true
         saveNow()
         return added
@@ -79,12 +104,14 @@ final class HistoryStore {
 
     func removeAll() {
         history.removeAll()
+        searchItems = nil
         isDirty = true
         saveNow()
     }
 
     func remove(_ urls: [URL]) {
         history.remove(urls)
+        searchItems = nil
         isDirty = true
         saveNow()
     }
@@ -92,6 +119,7 @@ final class HistoryStore {
     /// Delete browsing data's history: pages visited at or after `since` (nil: all).
     func removeVisits(since: Date?) {
         history.removeVisits(since: since)
+        searchItems = nil
         isDirty = true
         saveNow()
     }
