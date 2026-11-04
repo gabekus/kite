@@ -26,7 +26,7 @@ extension AutomationController {
         handoffCardCollapsed = false
         handback = nil
         // The tab in front may be one of them: show its step at once rather than on the next look.
-        startHandoffPoller()
+        pollHandoffsSoon()
         if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
         await lookAtSteps(id, attempts: UserHandoff.probeAttempts)
         // A step Claude handed over blocked is news now, not after the wait. One that turns off later, during the
@@ -350,24 +350,82 @@ extension AutomationController {
 
     // MARK: Watching the pages
 
-    /// While any step waits on a tab, Kite looks at the pages on screen twice a second: it puts the ring up for
-    /// their step, follows it through navigations, and hears a click the binding missed.
-    func startHandoffPoller() {
-        guard handoffPoller == nil else { return pollHandoffsSoon() }
+    /// Kite looks at the pages when something the user sees could have changed: a tab comes forward or closes, a
+    /// page finishes loading, a window becomes key or visible, Kite comes to the front, or the ring hears a click.
+    /// It puts the ring up for the step a page shows, follows it through reloads, and notes what's in the way.
+    /// Between those, it looks twice a second only while a step's page is on screen in a visible window (to follow
+    /// a page that redraws without loading, and hear a click the binding missed), and only for handoffs under
+    /// `UserHandoff.watchLimit` old: older steps keep their card, sidebar dot and ring, but wait for one of those
+    /// events. An idle Kite with steps left waiting doesn't wake for them.
+    func watchHandoffEvents() {
+        guard handoffObservers.isEmpty else { return }
+        let names = [NSWindow.didBecomeKeyNotification, NSWindow.didChangeOcclusionStateNotification,
+                     NSWindow.didDeminiaturizeNotification, NSApplication.didBecomeActiveNotification]
+        handoffObservers = names.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.handoffEvent() }
+            }
+        }
+        watchHandoffTabs()
+    }
+
+    /// The tab in front, and which steps' tabs are open: a switch or a close changes what the ring and card show.
+    private func watchHandoffTabs() {
+        let key = withObservationTracking { handoffTabsKey } onChange: { [weak self] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.watchHandoffTabs() } }
+        }
+        if key != lastHandoffTabsKey {
+            lastHandoffTabsKey = key
+            handoffEvent()
+        }
+    }
+
+    private var handoffTabsKey: [UUID] {
+        guard !handoffs.allSatisfy(\.isFinished) else { return [] }
+        let live = store.state.allTabIDs
+        return [store.state.selectedTab?.id].compactMap { $0 } + handoffTabs.filter(live.contains).sorted { $0.uuidString < $1.uuidString }
+    }
+
+    private func handoffEvent() {
+        guard !handoffs.allSatisfy(\.isFinished) || !ringShown.isEmpty else { return }
+        pollHandoffsSoon()
+    }
+
+    /// A look now, for a change the user made (a tab switch, Done), then the twice-a-second looks if a step's page
+    /// is on screen.
+    func pollHandoffsSoon() {
+        Task { [weak self] in
+            await self?.pollHandoffs()
+            self?.startHandoffPoller()
+        }
+    }
+
+    private func startHandoffPoller() {
+        guard handoffPoller == nil, needsHandoffPolling else { return }
         handoffPoller = Task { [weak self] in
-            while let self, !Task.isCancelled {
-                await self.pollHandoffs()
-                if self.handoffs.allSatisfy(\.isFinished) && self.ringShown.isEmpty { break }
+            while let self, !Task.isCancelled, self.needsHandoffPolling {
                 try? await Task.sleep(for: .seconds(UserHandoff.pollInterval))
+                await self.pollHandoffs()
             }
             self?.handoffPoller = nil
         }
     }
 
-    /// A look now, for a change the user made (a tab switch, Done), instead of on the next tick.
-    func pollHandoffsSoon() {
-        guard handoffPoller != nil else { return startHandoffPoller() }
-        Task { [weak self] in await self?.pollHandoffs() }
+    /// Whether a step under `UserHandoff.watchLimit` old has its page on screen in a visible window.
+    var needsHandoffPolling: Bool {
+        guard let host else { return false }
+        let now = Date()
+        return handoffs.contains { handoff in
+            handoff.isWatched(now: now) && handoff.waiting.contains { step in
+                step.tab.flatMap { host.livePages[$0] }.map(isShown) == true
+            }
+        }
+    }
+
+    /// On screen in a window the user can see: not covered, minimised or on another space.
+    private func isShown(_ page: WebPage) -> Bool {
+        guard isOnScreen(page), let window = page.view.window else { return false }
+        return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
     }
 
     private func pollHandoffs() async {
@@ -429,6 +487,8 @@ extension AutomationController {
                 if let done = state.done {
                     update(handoff) { $0.finish(step.id, .done, how: UserHandoff.describe(done)) }
                     stepClicked(step.id, on: id)
+                    // Again at once: the tab's next step gets the ring, or the ring goes.
+                    handoffPollAgain = true
                 } else {
                     setLook(step.id, state, tab: id, at: at)
                 }

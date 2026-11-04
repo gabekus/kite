@@ -28,7 +28,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var archiveTimer: Timer?
     /// Settings › Links: the ⌥⌘N hotkey in any app, and "Archive Little Kites after:".
     private(set) var littleKiteHotkey: LittleKiteHotkey?
-    private var littleArchiveTimer: Timer?
     #if canImport(CEFBridge)
     /// Shows extensions Kite's tabs (tabs.query and friends).
     /// One per Chromium profile in use: its extensions see the tabs in its profile.
@@ -216,9 +215,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         archiveTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.store.archiveStaleTabs() }
         }
-        littleArchiveTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.archiveStaleLittleKites() }
-        }
+        // Archiving hours-old tabs can wait a few minutes, so the system can batch the wakeup with others.
+        archiveTimer?.tolerance = 3 * 60
         littleKiteHotkey = LittleKiteHotkey(
             menuItem: { NSApp.mainMenu.flatMap { Self.menuItem(withID: "newLittleBrowserWindow", in: $0) } },
             onPress: { [weak self] in self?.openLittleKiteWindow(url: nil) }
@@ -375,10 +373,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Settings › Links › "Archive Little Kites after:": closes Little Kite windows left unused that long.
+    /// Settings › Links › "Archive Little Kites after:": closes Little Kite windows left unused that long. Each
+    /// window keeps its own timer (`LittleKiteWindowController.scheduleArchive`); a changed setting reschedules them.
     func archiveStaleLittleKites(now: Date = Date()) {
-        let threshold = LittleKite.ArchiveThreshold.current(in: .standard)
-        for controller in littleControllers { controller.archiveIfStale(threshold, now: now) }
+        for controller in littleControllers { controller.scheduleArchive(now: now) }
     }
 
     static func menuItem(withID id: String, in menu: NSMenu) -> NSMenuItem? {

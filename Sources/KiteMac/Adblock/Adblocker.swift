@@ -93,6 +93,7 @@ final class Adblocker {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refreshIfDue() }
         }
+        refreshTimer?.tolerance = 10 * 60
     }
 
     func setPolicy(enabled: Bool, allowedHosts: Set<String>) {

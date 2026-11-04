@@ -370,4 +370,16 @@ import Testing
         #expect(kept.contains { $0.id == "h3" })
         #expect(kept.last?.id == "h25")
     }
+
+    @Test func stopsWatchingOldHandoffs() {
+        let now = Date()
+        var fresh = Handoff(id: "h1", reason: "R", created: now.addingTimeInterval(-3600), steps: [.init(id: "h1.1", number: 1, instruction: "Do")])
+        let old = Handoff(id: "h2", reason: "R", created: now.addingTimeInterval(-UserHandoff.watchLimit - 1),
+                          steps: [.init(id: "h2.1", number: 1, instruction: "Do")])
+        #expect(fresh.isWatched(now: now))
+        // A day on, the step still waits (card, sidebar, ring), but Kite no longer looks twice a second.
+        #expect(!old.isWatched(now: now) && !old.isFinished && old.current(on: UUID()) == nil)
+        fresh.finishAll(.done, how: "the user pressed Done")
+        #expect(!fresh.isWatched(now: now))
+    }
 }

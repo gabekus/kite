@@ -438,6 +438,7 @@ struct LinksPane: View {
                                 ForEach(LittleKite.ArchiveThreshold.allCases, id: \.self) { Text($0.title).tag($0) }
                             }
                             .labelsHidden().frame(width: 200)
+                            .onChange(of: littleArchive) { (NSApp.delegate as? AppDelegate)?.archiveStaleLittleKites() }
                         }
                     }
                     SettingsMetrics.line.frame(height: 1).padding(.vertical, 6)

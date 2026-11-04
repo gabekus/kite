@@ -6,6 +6,10 @@ import KiteCore
 /// port. Its folder is 0700 and the socket 0600, and each connection's peer
 /// must be the same user, so only this user's own processes (the `kite` CLI)
 /// can reach it. One JSON request per line in, one response per line out.
+///
+/// Nothing here blocks: sockets stay non-blocking, and what the main thread asks
+/// (`isListening`, `ownsSocketFile`, `stop`) never waits on `queue`, so a client
+/// that stops reading can't stall Kite.
 final class AutomationServer: @unchecked Sendable {
     typealias Handler = @Sendable (AutomationWire.Request, _ connection: Int) async -> ToolOutput
 
@@ -13,10 +17,14 @@ final class AutomationServer: @unchecked Sendable {
     private let handler: Handler
     private let onDisconnect: @Sendable (Int) -> Void
     private let queue = DispatchQueue(label: "dev.gabek.Kite.automation")
+    /// Guards `listenFD`, `boundFile` and `listenSource`, which the main thread reads and `stop()` clears. Never
+    /// held across a write or a wait on `queue`.
+    private let lock = NSLock()
     private var listenFD: Int32 = -1
     /// The socket file this server bound (device and inode), so it only ever deletes its own.
     private var boundFile: (dev: dev_t, ino: ino_t)?
     private var listenSource: DispatchSourceRead?
+    /// On `queue`.
     private var connections: [Int: Connection] = [:]
     private var nextConnectionID = 1
 
@@ -26,7 +34,13 @@ final class AutomationServer: @unchecked Sendable {
         self.onDisconnect = onDisconnect
     }
 
-    deinit { stop() }
+    /// Never waits on `queue`: the last release can happen on it (a block that held the server outliving the
+    /// controller's reference), and a `queue.sync` there would deadlock.
+    deinit {
+        _ = stopListening()
+        let open = Array(connections.values)
+        if !open.isEmpty { queue.async { for connection in open { connection.close() } } }
+    }
 
     func start() throws {
         let directory = socketURL.deletingLastPathComponent()
@@ -47,7 +61,7 @@ final class AutomationServer: @unchecked Sendable {
             buffer[path.utf8.count] = 0
         }
         // Don't take the socket from another Kite that's still answering on it
-        // (it would lose Claude's connection). The watchdog tries again later.
+        // (it would lose Claude's connection). The controller tries again when the folder changes.
         if Self.isAnswering(address) {
             throw AutomationError(.failed, "Another Kite is already answering at \(path).")
         }
@@ -66,38 +80,58 @@ final class AutomationServer: @unchecked Sendable {
             throw error
         }
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+        source.setEventHandler { [weak self] in self?.acceptConnections(fd) }
+        source.setCancelHandler { close(fd) }
         var info = stat()
+        lock.lock()
         if lstat(path, &info) == 0 { boundFile = (info.st_dev, info.st_ino) }
         listenFD = fd
-
-        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-        source.setEventHandler { [weak self] in self?.acceptConnections() }
-        source.setCancelHandler { close(fd) }
         listenSource = source
+        lock.unlock()
         source.resume()
     }
 
+    /// Stops listening and drops every connection. Returns at once: the connections close on `queue`.
     func stop() {
-        queue.sync {
-            listenSource?.cancel()
-            listenSource = nil
-            // Only our own file: a newer Kite may have bound the path since
-            // (an update relaunching, a second instance), and deleting its
-            // socket leaves Claude unable to find the running Kite.
-            if listenFD >= 0, ownsSocketFileLocked { unlink(socketURL.path) }
-            listenFD = -1
-            boundFile = nil
+        guard stopListening() else { return }
+        queue.async { [self] in
             for connection in Array(connections.values) { connection.close() }
             connections.removeAll()
         }
     }
 
+    /// Cancels the listener and deletes the socket file if it's still ours. True if it was listening.
+    private func stopListening() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard listenFD >= 0 else { return false }
+        // Only our own file: a newer Kite may have bound the path since
+        // (an update relaunching, a second instance), and deleting its
+        // socket leaves Claude unable to find the running Kite.
+        if ownsSocketFileLocked { unlink(socketURL.path) }
+        listenSource?.cancel()
+        listenSource = nil
+        listenFD = -1
+        boundFile = nil
+        return true
+    }
+
     /// True while the server is listening.
-    var isListening: Bool { queue.sync { listenFD >= 0 } }
+    var isListening: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return listenFD >= 0
+    }
 
     /// True while the file at `socketURL` is still the socket this server bound.
-    var ownsSocketFile: Bool { queue.sync { ownsSocketFileLocked } }
+    var ownsSocketFile: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return ownsSocketFileLocked
+    }
 
+    /// With `lock` held.
     private var ownsSocketFileLocked: Bool {
         guard let boundFile else { return false }
         var info = stat()
@@ -119,7 +153,7 @@ final class AutomationServer: @unchecked Sendable {
 
     // MARK: Private (on `queue`)
 
-    private func acceptConnections() {
+    private func acceptConnections(_ listenFD: Int32) {
         while true {
             let fd = accept(listenFD, nil, nil)
             guard fd >= 0 else { return }
@@ -128,8 +162,9 @@ final class AutomationServer: @unchecked Sendable {
                 close(fd)
                 continue
             }
-            // Accepted sockets inherit O_NONBLOCK; writes of big screenshots should block instead.
-            _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK)
+            // Accepted sockets inherit O_NONBLOCK, and keep it: a blocking write to a client that stopped reading
+            // would stall `queue` (see `Connection.flush`).
+            _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
             var on: Int32 = 1
             setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
             let id = nextConnectionID
@@ -163,12 +198,23 @@ final class AutomationServer: @unchecked Sendable {
     }
 }
 
-/// One client connection. Reads and writes happen on the server's queue.
+/// One client connection. Reads and writes happen on the server's queue and never block: a response the client
+/// isn't reading yet waits in `pending`, and a client that reads none of it for `stallTimeout` is dropped.
 private final class Connection: @unchecked Sendable {
+    static let stallTimeout: TimeInterval = 10
+
     let id: Int
     private let fd: Int32
     private let queue: DispatchQueue
     private var source: DispatchSourceRead?
+    /// Created suspended; resumed only while `pending` waits for room in the socket.
+    private var writeSource: DispatchSourceWrite?
+    private var writing = false
+    /// Sources whose cancel handlers haven't run: `fd` closes after the last.
+    private var openSources = 0
+    private var pending = Data()
+    /// When a write last went through (or `pending` began waiting).
+    private var lastProgress = Date()
     private var lines = LineBuffer()
     private var closed = false
     var onLine: ((Data) -> Void)?
@@ -181,17 +227,28 @@ private final class Connection: @unchecked Sendable {
     }
 
     func start() {
+        let fd = self.fd
+        // Cancel handlers run on `queue`, one after the other; they keep the connection alive until both have.
+        let cancelled: @Sendable () -> Void = { [self] in
+            openSources -= 1
+            if openSources == 0 { Darwin.close(fd) }
+        }
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler { [weak self] in self?.readAvailable() }
-        let fd = self.fd
-        source.setCancelHandler { Darwin.close(fd) }
+        source.setCancelHandler(handler: cancelled)
+        let writeSource = DispatchSource.makeWriteSource(fileDescriptor: fd, queue: queue)
+        writeSource.setEventHandler { [weak self] in self?.flush() }
+        writeSource.setCancelHandler(handler: cancelled)
         self.source = source
+        self.writeSource = writeSource
+        openSources = 2
         source.resume()
     }
 
     private func readAvailable() {
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         let count = read(fd, &buffer, buffer.count)
+        if count < 0, errno == EAGAIN || errno == EINTR { return }
         guard count > 0 else { return close() }
         do {
             for line in try lines.append(Data(buffer[0..<count])) { onLine?(line) }
@@ -204,13 +261,50 @@ private final class Connection: @unchecked Sendable {
         guard let data = try? AutomationWire.encodeLine(response) else { return }
         queue.async { [self] in
             guard !closed else { return }
-            data.withUnsafeBytes { raw in
-                var offset = 0
-                while offset < raw.count {
-                    let written = write(fd, raw.baseAddress! + offset, raw.count - offset)
-                    if written <= 0 { return }
-                    offset += written
+            if pending.isEmpty { lastProgress = Date() }
+            pending.append(data)
+            flush()
+        }
+    }
+
+    /// Writes what the socket takes now, and waits on the write source for room for the rest.
+    private func flush() {
+        guard !closed else { return }
+        while !pending.isEmpty {
+            let written = pending.withUnsafeBytes { raw in write(fd, raw.baseAddress!, raw.count) }
+            if written > 0 {
+                pending.removeFirst(written)
+                lastProgress = Date()
+            } else if written < 0, errno == EINTR {
+                continue
+            } else if written < 0, errno == EAGAIN {
+                if !writing {
+                    writing = true
+                    writeSource?.resume()
+                    watchStall()
                 }
+                return
+            } else {
+                return close()
+            }
+        }
+        // A fresh buffer, so a big screenshot's storage goes once it's sent.
+        pending = Data()
+        if writing {
+            writing = false
+            writeSource?.suspend()
+        }
+    }
+
+    /// Drops the connection once the client has read nothing of a waiting response for `stallTimeout`.
+    private func watchStall() {
+        queue.asyncAfter(deadline: .now() + Self.stallTimeout) { [weak self] in
+            guard let self, !closed, writing else { return }
+            if Date().timeIntervalSince(lastProgress) >= Self.stallTimeout {
+                NSLog("Kite: dropped Claude's connection \(id): it stopped reading a response.")
+                close()
+            } else {
+                watchStall()
             }
         }
     }
@@ -221,6 +315,12 @@ private final class Connection: @unchecked Sendable {
         closed = true
         source?.cancel()
         source = nil
+        // A suspended source never runs its cancel handler: resume it first.
+        if !writing { writeSource?.resume() }
+        writing = false
+        writeSource?.cancel()
+        writeSource = nil
+        pending = Data()
         onClose?()
     }
 }
