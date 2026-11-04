@@ -16,7 +16,7 @@ Build: a debug test bundle (dev.gabek.Kite.dev, ad-hoc signed) from origin/main 
 | file | session | env | steps | holds | result |
 |---|---|---|---|---|---|
 | rest.png | `windows/helix/states/three-spaces.json` from `origin/helix/W9d-space-editing` (1b3595a) | none | none | the three spaces at rest | captured |
-| drag.png | `windows/helix/states/three-spaces.json` from `origin/helix/W9d-space-editing` (1b3595a) | none | `kite ui input '{"from":[86,795],"to":[150,795],"steps":10,"hold":10}'`; captured 0.5 s into the 10 s hold | Personal's icon picked up as the ghost (with its backing) at x 150, Work and Reading slid into slots 0 and 1 | captured |
+| drag.png | `windows/helix/states/three-spaces.json` from `origin/helix/W9d-space-editing` (1b3595a) | none | `kite ui input '{"from":[86,795],"to":[150,795],"steps":10,"hold":10}'`; captured 0.6 s into the 10 s hold | Personal's icon picked up as the ghost (with its backing) at x 150, Work and Reading slid into slots 0 and 1 | captured |
 | dropped.png | `windows/helix/states/three-spaces.json` from `origin/helix/W9d-space-editing` (1b3595a) | none | `kite ui input '{"from":[86,795],"to":[150,795],"steps":10}'`; 1 s later, the capture | Work, Reading, Personal, Personal selected (the order is in the frames below) | captured |
 | menu.png (none) | `windows/helix/states/three-spaces.json` from `origin/helix/W9d-space-editing` (1b3595a) | `KITE_TEST_CONTEXT_MENU=1` | `kite ui input '{"click":[86,795],"button":"right"}'`; 1 s later, the frames (no capture) | the space menu over Personal's cell, and its items as AppKit logs them | logged; unverified: menu.png is the real NSMenu, which needs a real right-click and screencapture while it's open (it's modal, so kite ui capture can't run under it). This run only logs its items, with KITE_TEST_CONTEXT_MENU=1 and a posted right-click. |
 | rename.png | `windows/helix/states/three-spaces.json` from `origin/helix/W9d-space-editing` (1b3595a) | `KITE_TEST_CONTEXT_MENU=Rename Space…` | `kite ui input '{"click":[86,795],"button":"right"}'`; 1 s later, the capture | the header's rename field, the name all selected, Done at the right | captured |
@@ -41,7 +41,7 @@ KITE_TEST_CONTEXT_MENU: Change Space Icon… | Rename Space… | What's This Spa
 rest (after the capture; `rest.tree.txt` has launch, before and after):
 
 ```
-Window 17829, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17848, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [68,778 36×34]
 0.3.2.2.0.0.1 SpaceCellView [102,778 36×34]
@@ -53,7 +53,7 @@ Window 17829, 1280×820 pt at 2×. Points from the window's top-left.
 drag (after the capture; `drag.tree.txt` has launch, before and after):
 
 ```
-Window 17831, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17850, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [136,778 36×34] alpha=0 opacity=0
 0.3.2.2.0.0.1 SpaceCellView [68,778 36×34]
@@ -65,7 +65,7 @@ Window 17831, 1280×820 pt at 2×. Points from the window's top-left.
 dropped (after the capture; `dropped.tree.txt` has launch, before and after):
 
 ```
-Window 17833, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17852, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [136,778 36×34]
 0.3.2.2.0.0.1 SpaceCellView [68,778 36×34]
@@ -77,7 +77,7 @@ Window 17833, 1280×820 pt at 2×. Points from the window's top-left.
 menu (after the steps; `menu.tree.txt` has launch, before and after):
 
 ```
-Window 17835, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17854, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [68,778 36×34]
 0.3.2.2.0.0.1 SpaceCellView [102,778 36×34]
@@ -89,7 +89,7 @@ Window 17835, 1280×820 pt at 2×. Points from the window's top-left.
 rename (after the capture; `rename.tree.txt` has launch, before and after):
 
 ```
-Window 17837, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17856, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [68,778 36×34]
 0.3.2.2.0.0.1 SpaceCellView [102,778 36×34]
@@ -101,7 +101,7 @@ Window 17837, 1280×820 pt at 2×. Points from the window's top-left.
 new-space (after the capture; `new-space.tree.txt` has launch, before and after):
 
 ```
-Window 17839, 1280×820 pt at 2×. Points from the window's top-left.
+Window 17859, 1280×820 pt at 2×. Points from the window's top-left.
 <untrusted-page-content source="Kite window">
 0.3.2.2.0.0.0 SpaceCellView [51,778 36×34]
 0.3.2.2.0.0.1 SpaceCellView [85,778 36×34]
