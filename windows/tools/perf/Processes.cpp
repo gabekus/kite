@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cwctype>
 
+#include "shell/PerfProtocol.h"
+
 namespace kiteperf {
 
 namespace {
@@ -69,7 +71,8 @@ F Ntdll(const char* name) {
     return ntdll ? reinterpret_cast<F>(reinterpret_cast<void*>(GetProcAddress(ntdll, name))) : nullptr;
 }
 
-double Ms(const FILETIME& t) { return static_cast<double>((static_cast<ULONGLONG>(t.dwHighDateTime) << 32) | t.dwLowDateTime) / 1e4; }
+uint64_t Ticks(const FILETIME& t) { return (static_cast<uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime; }
+double Ms(const FILETIME& t) { return static_cast<double>(Ticks(t)) / 1e4; }
 double Ms(const LARGE_INTEGER& t) { return static_cast<double>(t.QuadPart) / 1e4; }
 
 std::wstring Lower(std::wstring s) {
@@ -77,17 +80,18 @@ std::wstring Lower(std::wstring s) {
     return s;
 }
 
-std::wstring CommandLine(HANDLE process) {
+// Nullopt when it can't be read (then the process's type is "unknown").
+std::optional<std::wstring> CommandLine(HANDLE process) {
     static const auto query = Ntdll<NtQueryInformationProcessFn>("NtQueryInformationProcess");
-    if (!query) return {};
+    if (!query) return std::nullopt;
     std::vector<unsigned char> buffer(4096);
     ULONG needed = 0;
     LONG status = query(process, kProcessCommandLineInformation, buffer.data(), static_cast<ULONG>(buffer.size()), &needed);
-    if (status == kInfoLengthMismatch || (status < 0 && needed > buffer.size())) {
+    if (status < 0 && needed > buffer.size()) {
         buffer.resize(needed + 16);
         status = query(process, kProcessCommandLineInformation, buffer.data(), static_cast<ULONG>(buffer.size()), &needed);
     }
-    if (status < 0) return {};
+    if (status < 0) return std::nullopt;
     const auto* text = reinterpret_cast<const UnicodeString*>(buffer.data());
     return text->Buffer ? std::wstring(text->Buffer, text->Length / sizeof(wchar_t)) : std::wstring{};
 }
@@ -110,9 +114,14 @@ DWORD PidOfInstance(const wchar_t* name) {
     return static_cast<DWORD>(std::wcstoul(name + 4, nullptr, 10));
 }
 
-// A wildcard counter's raw values, summed by process.
-std::map<DWORD, double> RawByPid(PDH_HCOUNTER counter) {
-    std::map<DWORD, double> out;
+struct Instance {
+    std::wstring name;
+    DWORD pid;
+    double value;
+};
+// A wildcard counter's raw values, one per instance.
+std::vector<Instance> Raw(PDH_HCOUNTER counter) {
+    std::vector<Instance> out;
     if (!counter) return out;
     DWORD bytes = 0, count = 0;
     if (PdhGetRawCounterArrayW(counter, &bytes, &count, nullptr) != static_cast<PDH_STATUS>(PDH_MORE_DATA) || !bytes) return out;
@@ -120,18 +129,14 @@ std::map<DWORD, double> RawByPid(PDH_HCOUNTER counter) {
     auto* items = reinterpret_cast<PDH_RAW_COUNTER_ITEM_W*>(buffer.data());
     if (PdhGetRawCounterArrayW(counter, &bytes, &count, items) != ERROR_SUCCESS) return out;
     for (DWORD i = 0; i < count; ++i) {
-        if (DWORD pid = PidOfInstance(items[i].szName)) out[pid] += static_cast<double>(items[i].RawValue.FirstValue);
+        if (DWORD pid = PidOfInstance(items[i].szName)) {
+            out.push_back({items[i].szName, pid, static_cast<double>(items[i].RawValue.FirstValue)});
+        }
     }
     return out;
 }
 
 }  // namespace
-
-int64_t Qpc() {
-    LARGE_INTEGER now{};
-    QueryPerformanceCounter(&now);
-    return now.QuadPart;
-}
 
 double QpcFrequency() {
     static const double frequency = [] {
@@ -196,10 +201,10 @@ void Processes::WatchJob() {
         const DWORD pid = static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(data));
         std::lock_guard lock(eventsMutex_);
         switch (message) {
-        case JOB_OBJECT_MSG_NEW_PROCESS: events_.push_back({Qpc(), true, pid}); break;
+        case JOB_OBJECT_MSG_NEW_PROCESS: events_.push_back({kite::perf::Now(), true, pid}); break;
         case JOB_OBJECT_MSG_EXIT_PROCESS:
-        case JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS: events_.push_back({Qpc(), false, pid}); break;
-        case JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO: emptyAt_ = Qpc(); break;
+        case JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS: events_.push_back({kite::perf::Now(), false, pid}); break;
+        case JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO: emptyAt_ = kite::perf::Now(); break;
         default: break;
         }
     }
@@ -220,32 +225,38 @@ void Processes::SetRoot(DWORD pid, const std::wstring& imageName) {
     imageName_ = Lower(imageName);
 }
 
-// What a process of Kite's is, from its command line: no --type is the browser process.
-Processes::Known Processes::Identify(HANDLE process) {
-    const std::wstring line = CommandLine(process);
-    std::string type = SwitchValue(line, L"type");
-    if (type.empty()) type = "browser";
-    else if (type == "crashpad-handler") type = "crashpad";
-    else if (type != "renderer" && type != "gpu-process" && type != "utility") type = "other";
-    return Known{process, type, SwitchValue(line, L"utility-sub-type")};
-}
-
 void Processes::Add(DWORD pid) {
     if (known_.contains(pid)) return;
-    if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ | SYNCHRONIZE, FALSE, pid)) known_[pid] = Identify(h);
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return;
+    Known known;
+    known.handle = h;
+    if (const auto line = CommandLine(h)) {
+        known.type = SwitchValue(*line, L"type");
+        known.subtype = SwitchValue(*line, L"utility-sub-type");
+        if (known.type.empty()) known.type = "browser";
+        else if (known.type == "crashpad-handler") known.type = "crashpad";
+        else if (known.type != "renderer" && known.type != "gpu-process" && known.type != "utility") known.type = "other";
+    } else {
+        known.type = "unknown";
+    }
+    known_[pid] = std::move(known);
 }
 
 Snapshot Processes::Take() {
     Snapshot snap;
-    // The whole machine's processes: context switches, handles and threads, and the parent of
-    // each (children that left the job are still Kite's if their parent is and they're Kite.exe).
+    // The whole machine's processes: context switches by thread, handles and threads, and each
+    // one's parent (children outside the job are still Kite's if their parent is and they're
+    // Kite.exe).
     static const auto querySystem = Ntdll<NtQuerySystemInformationFn>("NtQuerySystemInformation");
     struct Nt {
         DWORD parent;
         std::wstring image;
-        double cswitches, handles, threads, cpuMs;
+        std::vector<std::pair<uintptr_t, double>> threads;  // id, context switches
+        double handles, cpuMs;
     };
     std::map<DWORD, Nt> nt;
+    bool ntOk = false;
     if (querySystem) {
         if (ntBuffer_.empty()) ntBuffer_.resize(1 << 20);
         ULONG needed = 0;
@@ -254,23 +265,24 @@ Snapshot Processes::Take() {
                kInfoLengthMismatch) {
             ntBuffer_.resize(std::max<size_t>(needed + 65536, ntBuffer_.size() * 2));
         }
-        if (status >= 0) {
+        ntOk = status >= 0;
+        if (ntOk) {
             for (size_t offset = 0;;) {
                 const auto* p = reinterpret_cast<const SystemProcessInformation*>(ntBuffer_.data() + offset);
                 const auto* threads = reinterpret_cast<const SystemThreadInformation*>(p + 1);
-                double switches = 0;
-                for (ULONG t = 0; t < p->NumberOfThreads; ++t) switches += threads[t].ContextSwitches;
                 Nt entry{static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(p->InheritedFromUniqueProcessId)),
                          p->ImageName.Buffer ? Lower(std::wstring(p->ImageName.Buffer, p->ImageName.Length / sizeof(wchar_t))) : L"",
-                         switches, static_cast<double>(p->HandleCount), static_cast<double>(p->NumberOfThreads),
-                         Ms(p->KernelTime) + Ms(p->UserTime)};
+                         {}, static_cast<double>(p->HandleCount), Ms(p->KernelTime) + Ms(p->UserTime)};
+                for (ULONG t = 0; t < p->NumberOfThreads; ++t) {
+                    entry.threads.emplace_back(reinterpret_cast<uintptr_t>(threads[t].ClientId.UniqueThread), threads[t].ContextSwitches);
+                }
                 nt[static_cast<DWORD>(reinterpret_cast<ULONG_PTR>(p->UniqueProcessId))] = std::move(entry);
                 if (!p->NextEntryOffset) break;
                 offset += p->NextEntryOffset;
             }
         }
     }
-    // The job's list, then the parent walk: Kite.exe children of known processes that left the job.
+    // The job's list, then the parent walk.
     std::vector<unsigned char> buffer(sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + 512 * sizeof(ULONG_PTR));
     auto* list = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(buffer.data());
     if (QueryInformationJobObject(job_, JobObjectBasicProcessIdList, list, static_cast<DWORD>(buffer.size()), nullptr)) {
@@ -285,35 +297,43 @@ Snapshot Processes::Take() {
             added = added || known_.contains(pid);
         }
     }
-    // Gone: their handle is signalled.
-    for (auto it = known_.begin(); it != known_.end();) {
-        if (WaitForSingleObject(it->second.handle, 0) == WAIT_OBJECT_0) {
-            CloseHandle(it->second.handle);
-            it = known_.erase(it);
-        } else {
-            ++it;
-        }
-    }
 
-    std::map<DWORD, double> dedicated, shared, engine;
+    std::vector<Instance> dedicated, shared;
     bool gpu = false;
     if (gpuCounters_ && PdhCollectQueryData(static_cast<PDH_HQUERY>(query_)) == ERROR_SUCCESS) {
         gpu = true;
-        dedicated = RawByPid(static_cast<PDH_HCOUNTER>(dedicated_));
-        shared = RawByPid(static_cast<PDH_HCOUNTER>(shared_));
-        engine = RawByPid(static_cast<PDH_HCOUNTER>(engine_));  // 100 ns units
+        dedicated = Raw(static_cast<PDH_HCOUNTER>(dedicated_));
+        shared = Raw(static_cast<PDH_HCOUNTER>(shared_));
+        // Engine time (100 ns units): each instance's own increase, from 0 for a new one.
+        for (const Instance& i : Raw(static_cast<PDH_HCOUNTER>(engine_))) {
+            auto last = engineLast_.find(i.name);
+            const double before = last == engineLast_.end() ? 0 : last->second;
+            engineMs_[i.pid] += std::max(0.0, i.value - before) / 1e4;
+            engineLast_[i.name] = i.value;
+        }
     }
-    snap.qpc = Qpc();
-    for (const auto& [pid, known] : known_) {
+    FILETIME now{};
+    GetSystemTimePreciseAsFileTime(&now);
+    snap.fileTime = Ticks(now);
+    snap.qpc = kite::perf::Now();
+    for (auto it = known_.begin(); it != known_.end();) {
+        const DWORD pid = it->first;
+        Known& known = it->second;
         ProcessSample s;
         s.pid = pid;
         s.type = known.type;
         s.subtype = known.subtype;
+        DWORD code = 0;
+        // An ended process's handle still answers, with its final totals: this is its last sample.
+        s.exited = GetExitCodeProcess(known.handle, &code) && code != STILL_ACTIVE;
         FILETIME created, exited, kernel, user;
-        if (GetProcessTimes(known.handle, &created, &exited, &kernel, &user)) s.cpuMs = Ms(kernel) + Ms(user);
+        if (GetProcessTimes(known.handle, &created, &exited, &kernel, &user)) {
+            s.created = Ticks(created);
+            s.cpuMs = Ms(kernel) + Ms(user);
+        }
         MemoryCounters2 memory{};
         memory.cb = sizeof memory;
-        if (GetProcessMemoryInfo(known.handle, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof memory)) {
+        if (!s.exited && GetProcessMemoryInfo(known.handle, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof memory)) {
             s.privateWsBytes = static_cast<double>(memory.PrivateWorkingSetSize);
             s.commitBytes = static_cast<double>(memory.PrivateUsage);
         }
@@ -322,22 +342,53 @@ Snapshot Processes::Take() {
             s.ioWriteBytes = static_cast<double>(io.WriteTransferCount);
             s.ioWriteOps = static_cast<double>(io.WriteOperationCount);
         }
-        if (auto it = nt.find(pid); it != nt.end()) {
-            s.contextSwitches = it->second.cswitches;
-            s.handles = it->second.handles;
-            s.threads = it->second.threads;
+        // Threads that ended since the last snapshot keep their last count.
+        if (auto e = nt.find(pid); e != nt.end()) {
+            std::map<uintptr_t, double> live(e->second.threads.begin(), e->second.threads.end());
+            for (const auto& [tid, count] : known.threadSwitches) {
+                if (!live.contains(tid)) known.endedThreadSwitches += count;
+            }
+            known.threadSwitches = std::move(live);
+            double sum = known.endedThreadSwitches;
+            for (const auto& [tid, count] : known.threadSwitches) sum += count;
+            s.contextSwitches = sum;
+            s.handles = e->second.handles;
+            s.threads = static_cast<double>(e->second.threads.size());
+        } else if (ntOk && s.exited) {
+            double sum = known.endedThreadSwitches;
+            for (const auto& [tid, count] : known.threadSwitches) sum += count;
+            s.contextSwitches = sum;
         }
         if (gpu) {
-            s.gpuDedicatedBytes = dedicated.contains(pid) ? dedicated[pid] : 0;
-            s.gpuSharedBytes = shared.contains(pid) ? shared[pid] : 0;
-            s.gpuRunningMs = (engine.contains(pid) ? engine[pid] : 0) / 1e4;
+            const auto sum = [&](const std::vector<Instance>& all) {
+                double total = 0;
+                for (const Instance& i : all) total += i.pid == pid ? i.value : 0;
+                return total;
+            };
+            if (!s.exited) {
+                s.gpuDedicatedBytes = sum(dedicated);
+                s.gpuSharedBytes = sum(shared);
+            }
+            s.gpuRunningMs = engineMs_.contains(pid) ? engineMs_[pid] : 0;
         }
         snap.processes.push_back(std::move(s));
+        if (snap.processes.back().exited) {
+            CloseHandle(known.handle);
+            it = known_.erase(it);
+        } else {
+            ++it;
+        }
     }
-    for (const auto& [pid, entry] : nt) {
-        if (entry.image != L"dwm.exe") continue;
-        snap.dwmCpuMs += entry.cpuMs;
-        if (gpu) snap.dwmGpuMs = snap.dwmGpuMs.value_or(0) + (engine.contains(pid) ? engine[pid] : 0) / 1e4;
+    if (ntOk) {
+        double dwm = 0;
+        bool found = false;
+        for (const auto& [pid, entry] : nt) {
+            if (entry.image != L"dwm.exe") continue;
+            dwm += entry.cpuMs;
+            found = true;
+            if (gpu) snap.dwmGpuMs = snap.dwmGpuMs.value_or(0) + (engineMs_.contains(pid) ? engineMs_[pid] : 0);
+        }
+        if (found) snap.dwmCpuMs = dwm;
     }
     FILETIME idle, kernel, user;
     if (GetSystemTimes(&idle, &kernel, &user)) {

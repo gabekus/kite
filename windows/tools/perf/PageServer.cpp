@@ -44,7 +44,8 @@ std::unique_ptr<PageServer> PageServer::Start(const std::filesystem::path& pages
     }
     // Each loopback address on its own: binding them, unlike 0.0.0.0, asks nothing of the firewall.
     for (int host = 1; host <= hosts; ++host) {
-        SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        // Never inherited: Kite gets only its output file (Run::Launch).
+        SOCKET s = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
         BOOL exclusive = TRUE;
         setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof exclusive);
         sockaddr_in address{};

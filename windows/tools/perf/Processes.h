@@ -1,9 +1,12 @@
 #pragma once
-// kiteperf's view of Kite's processes: the job they run in, which of them exist (the job's list
-// and a Toolhelp walk from parent to child), what each is (its command line's --type), and a
-// snapshot of what each uses, once a second: CPU, private working set and commit, writes,
-// context switches, handles, threads, GPU memory and GPU engine time (PDH), and dwm.exe's and
-// the whole machine's CPU for context.
+// kiteperf's view of Kite's processes: the job they run in, which of them exist (the job's list,
+// and a parent walk over the system's process list for Kite.exe children outside it), what
+// each is (its command line's --type), and a snapshot of what each uses: CPU, private working
+// set and commit, writes, context switches, handles, threads, GPU memory and GPU engine time
+// (PDH), with dwm.exe's and the whole machine's CPU for context.
+//
+// A process is opened with PROCESS_QUERY_LIMITED_INFORMATION only, which a sandboxed helper
+// still allows. Every figure is optional: an API that fails gives none, never a 0.
 
 #include <windows.h>
 
@@ -22,25 +25,34 @@ namespace kiteperf {
 // snapshots.
 struct ProcessSample {
     DWORD pid = 0;
-    std::string type;     // browser, renderer, gpu-process, utility, crashpad or other
-    std::string subtype;  // a utility's --utility-sub-type, a renderer's nothing
-    double cpuMs = 0;     // kernel + user (GetProcessTimes)
-    double privateWsBytes = 0, commitBytes = 0;  // PROCESS_MEMORY_COUNTERS_EX2
-    double ioWriteBytes = 0, ioWriteOps = 0;
-    double contextSwitches = 0, handles = 0, threads = 0;  // SystemProcessInformation
-    std::optional<double> gpuDedicatedBytes, gpuSharedBytes, gpuRunningMs;  // none without PDH's GPU counters
+    std::string type;     // browser, renderer, gpu-process, utility, crashpad, other or unknown
+    std::string subtype;  // a utility's --utility-sub-type
+    uint64_t created = 0;  // FILETIME, to tell a process born since the last snapshot
+    bool exited = false;   // its last sample: it has ended, and its totals are final
+    std::optional<double> cpuMs;                     // kernel + user (GetProcessTimes)
+    std::optional<double> privateWsBytes, commitBytes;  // PROCESS_MEMORY_COUNTERS_EX2
+    std::optional<double> ioWriteBytes, ioWriteOps;
+    // Every thread's context switches, the ended ones' included (SystemProcessInformation).
+    std::optional<double> contextSwitches, handles, threads;
+    // PDH; none without its GPU counters (WARP). Engine time sums each engine's own increase.
+    std::optional<double> gpuDedicatedBytes, gpuSharedBytes, gpuRunningMs;
 };
 
 struct Snapshot {
     int64_t qpc = 0;
+    uint64_t fileTime = 0;  // the same moment as a FILETIME
     std::vector<ProcessSample> processes;  // Kite's
-    double dwmCpuMs = 0;
-    std::optional<double> dwmGpuMs;
+    std::optional<double> dwmCpuMs, dwmGpuMs;
     // GetSystemTimes, in ms: idle, and kernel + user (kernel includes idle).
-    double systemIdleMs = 0, systemTotalMs = 0;
+    std::optional<double> systemIdleMs, systemTotalMs;
+    // What the window manager shows of Kite (filled in by the run): how much of its window no
+    // other window covers, whether the real pointer is over it, and whether it's in front.
+    std::optional<double> kiteVisiblePct;
+    bool pointerOverKite = false, kiteInFront = false;
 };
 
-// Job notifications: a process came or went (exact, unlike the 1 Hz sampling).
+// Job notifications: a process came or went (nearly exact, unlike the 1 Hz sampling: a full
+// completion port can drop one).
 struct JobEvent {
     int64_t qpc;
     bool started;
@@ -60,8 +72,9 @@ public:
     // The process kiteperf started: its children are found from it too, and must have its
     // image name.
     void SetRoot(DWORD pid, const std::wstring& imageName);
+    // One thread at a time.
     Snapshot Take();
-    // Every process start and exit in the job so far, and whether the job is empty again.
+    // Every process start and exit in the job so far.
     std::vector<JobEvent> Events() const;
     // When the job's last process ended (its QPC), or 0 while any is left.
     int64_t EmptyAt() const;
@@ -74,8 +87,9 @@ private:
     struct Known {
         HANDLE handle = nullptr;
         std::string type, subtype;
+        std::map<uintptr_t, double> threadSwitches;  // each live thread's count, by id
+        double endedThreadSwitches = 0;              // the last counts of threads that ended
     };
-    static Known Identify(HANDLE process);
     void Add(DWORD pid);
     HANDLE job_ = nullptr;
     HANDLE port_ = nullptr;
@@ -86,16 +100,18 @@ private:
     mutable std::mutex eventsMutex_;
     std::vector<JobEvent> events_;
     int64_t emptyAt_ = 0;
-    // PDH
+    // PDH, and each GPU engine instance's last running time (so one that comes or goes mid-run
+    // counts from 0 and never takes the sum backwards).
     void* query_ = nullptr;
     void* dedicated_ = nullptr;
     void* shared_ = nullptr;
     void* engine_ = nullptr;
     bool gpuCounters_ = false;
+    std::map<std::wstring, double> engineLast_;
+    std::map<DWORD, double> engineMs_;
     std::vector<unsigned char> ntBuffer_;
 };
 
-int64_t Qpc();
 double QpcFrequency();
 
 }  // namespace kiteperf
