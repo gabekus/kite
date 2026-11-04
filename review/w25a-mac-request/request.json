@@ -1,0 +1,23 @@
+{
+  "id": "w25a",
+  "title": "W25a Mac references: the command bar's history rows",
+  "about": "Kite for Mac from origin/main (W25a changes no Mac code). One state: Ctrl+T's bar over windows/helix/states/command-bar-history.json (sidebar.json with the engine's suggestions off, so no network rows), with windows/helix/states/command-bar-history.history.json as the profile's history.json, and \"recipe\" typed. The Windows capture is Kite.exe --capture --window-size 1280,820 --capture-scale 2 --command-bar recipe on the same two files. Needs two things the capture script doesn't take yet: a history file copied into the profile as history.json (\"history\", shaped like \"session\"), and typed text (input \"text\"; the bar is opened with a click on New Tab, not a key).",
+  "base": "origin/main",
+  "window_size": [1280, 820],
+  "session": {"ref": "origin/helix/W25a-history", "path": "windows/helix/states/command-bar-history.json"},
+  "history": {"ref": "origin/helix/W25a-history", "path": "windows/helix/states/command-bar-history.history.json"},
+  "tree_match": "SuggestionRowView",
+  "expect_frames": [],
+  "states": [
+    {
+      "name": "command-bar-history",
+      "holds": "Ctrl+T's bar with \"recipe\" typed: the DuckDuckGo search highlighted, then three pages from history, Pasta Carbonara Recipe — recipes.example/pasta-carbonara, recipes.example (no subtitle: it has no title), Recipe Index: Weeknight Dinners — blog.example/2026/01/recipe-index; no tab rows (no open tab matches)",
+      "steps": [
+        {"ui": "input", "args": {"click": [100, 258]}},
+        {"wait": 1},
+        {"ui": "input", "args": {"text": "recipe"}}
+      ],
+      "settle": 1
+    }
+  ]
+}
