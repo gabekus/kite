@@ -30,6 +30,9 @@ enum ClaudeDesktop {
     /// Adds Kite's server to `claude_desktop_config.json`, keeping everything else in it.
     /// The file as it was is kept next to it as `claude_desktop_config.json.kite-backup`.
     nonisolated static func link(cli: String, profile: String?) -> ClaudeDesktopLinkResult {
+        if let reason = ClaudeSetupGuard.refusal(.desktop, cli: cli, environment: ProcessInfo.processInfo.environment) {
+            return .skipped(reason)
+        }
         let url = configURL
         let files = FileManager.default
         let existing = try? Data(contentsOf: url)
@@ -97,12 +100,15 @@ enum ClaudeDesktop {
 enum ClaudeDesktopLinkResult: Equatable, Sendable {
     case added, alreadyLinked
     case failed(String)
+    /// A test build, which leaves the real config alone (`ClaudeSetupGuard`).
+    case skipped(String)
 
     var line: String {
         switch self {
         case .added: "Added Kite to the Claude desktop app. Quit and reopen Claude to load it."
         case .alreadyLinked: "The Claude desktop app already has Kite."
         case let .failed(reason): "Couldn't add Kite to the Claude desktop app: \(reason)"
+        case let .skipped(reason): "Left the Claude desktop app alone: \(reason)."
         }
     }
 }
