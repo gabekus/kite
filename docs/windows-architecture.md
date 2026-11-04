@@ -24,8 +24,8 @@ their own PR, never as a side effect of a checkpoint.
   measurement APIs: PDH, psapi, job objects, `NtQuerySystemInformation` and
   `NtQueryInformationProcess` (looked up with `GetProcAddress`, never linked),
   and Winsock (`ws2_32`, for a loopback page server). A new API is added here
-  first. They're Windows-only and MSVC-only: the MinGW-w64 build below doesn't
-  cover them. `core` and the shell never use them.
+  first. They're Windows-only and MSVC-only, so they're exempt from the
+  MinGW-w64 build (Code, below). `core` and the shell never use them.
 - No third-party code except CEF. No WinUI or Windows App SDK, no .NET, no
   Swift runtime, no Boost, no JSON or test libraries. First-party Windows APIs
   (WIC, DirectWrite, UI Automation, WinHTTP) are fine.
@@ -73,18 +73,23 @@ their own PR, never as a side effect of a checkpoint.
   from a saved file: the machine and main both move.
 - Kite.exe's measurement hooks (`--perf-log`, `--perf-control`,
   `--chromium-switches`) run only with `KITE_SUPPORT_PATH` set to a test
-  profile, never the default one (`%LOCALAPPDATA%\Kite`), like `--frame-log`.
+  profile: one that holds a `kite-test-profile` marker file (kiteperf and CI
+  make it), never the default one (`%LOCALAPPDATA%\Kite`), and one that
+  resolves.
   Off, they cost at most one predictable bool check on a hot path and
   allocate nothing. `--chromium-switches` takes only the switches on its
-  allow-list (`shell/PerfProtocol.h`): nothing that weakens the sandbox or web
-  security, opens a debugging port, or changes a path or a launched process.
+  allow-list (`shell/PerfProtocol.h`): nothing that weakens the sandbox, site
+  isolation or web security, opens a debugging port, or changes a path or a
+  launched process. Chromium reads nothing else of Kite.exe's command line
+  (`command_line_args_disabled`).
 
 ## Code
 
 - C++20, MSVC `/W4 /WX /permissive-`, static CRT. It must also build with
   MinGW-w64 GCC (`-Wall -Wextra -Werror`, `windows/cmake/mingw-w64.cmake`),
   which is how a non-Windows machine checks it. The measurement tools
-  (`windows/tools/perf`) are exempt (MSVC only).
+  (`windows/tools/perf`, and every other folder of `windows/tools` but
+  `windows/tools/build`) are exempt: they're MSVC only.
 - Text from people (URL input, names) is classified by Unicode character
   (`core/Unicode.h`), not by byte or ASCII, the way Swift's `Character` does.
 - JSON read and written is valid UTF-8 (Foundation rejects anything else).
