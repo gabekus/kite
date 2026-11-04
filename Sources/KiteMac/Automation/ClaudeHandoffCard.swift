@@ -3,9 +3,9 @@ import KiteCore
 import SwiftUI
 
 /// handoff's card, over the bottom of the page: what Claude needs the user to do here and why it stopped, with
-/// Back, Skip, Next and Done. The page itself rings the control to click. While no step is on the tab in front, the card
-/// folds to a pill ("Claude needs you · 3 steps") that brings up the next one. When the user hands back (the last step
-/// ended, or a step's click opened a tab), it says whether Claude is taking over or needs telling.
+/// Back, Skip, Next and Done. The page itself rings the control to click. The chevron folds the card to a pill ("Claude
+/// needs you · 3 steps"). A step on another tab shows nothing here: the sidebar already rings that tab. When the user
+/// hands back (the last step ended, or a step's click opened a tab), it says whether Claude is taking over or needs telling.
 struct ClaudeHandoffCard: View {
     let automation: AutomationController
     let store: BrowserStore
@@ -29,7 +29,7 @@ struct ClaudeHandoffCard: View {
                                 onFront: current.step.tab == nil || current.step.tab == front,
                                 others: waiting.count - 1)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if !waiting.isEmpty {
+            } else if Self.pillShows(automation, store: store, front: front) {
                 HandoffPill(count: waiting.count, front: automation.cardStep(front: front) != nil) {
                     if automation.cardStep(front: front) != nil {
                         automation.handoffCardCollapsed = false
@@ -47,9 +47,17 @@ struct ClaudeHandoffCard: View {
     }
 
     /// Whether the card or its pill shows, as `body` decides it.
-    @MainActor static func shows(_ automation: AutomationController, front: UUID?) -> Bool {
+    @MainActor static func shows(_ automation: AutomationController, store: BrowserStore, front: UUID?) -> Bool {
         if let front, automation.signIns[front] != nil { return false }
-        return automation.handback != nil || !automation.waitingHandoffSteps.isEmpty
+        guard automation.handback == nil else { return true }
+        return pillShows(automation, store: store, front: front)
+    }
+
+    /// The pill shows for a folded card, or for a step the sidebar can't show (one outside the browser, or on a closed
+    /// tab). Steps on other open tabs leave the bottom of the page alone.
+    @MainActor static func pillShows(_ automation: AutomationController, store: BrowserStore, front: UUID?) -> Bool {
+        automation.cardStep(front: front) != nil
+            || automation.waitingHandoffSteps.contains { $0.step.tab.map { store.state.tab($0) == nil } ?? true }
     }
 }
 
@@ -334,7 +342,7 @@ private struct HandoffBlockedNote: View {
     }
 }
 
-/// The folded card: how many steps wait on the user. Clicking brings up the next one.
+/// The folded card, or a step the sidebar can't show: how many steps wait on the user. Clicking brings up the next one.
 private struct HandoffPill: View {
     let count: Int
     /// A step waits on the tab in front (the card was folded).
@@ -394,7 +402,7 @@ extension BrowserWindowController {
     /// out before the host leaves.
     private func watchHandoffCard(_ container: DetachingContainer, _ gate: HandoffCardGate, _ automation: AutomationController) {
         let shows = withObservationTracking {
-            ClaudeHandoffCard.shows(automation, front: store.state.selectedTab?.id)
+            ClaudeHandoffCard.shows(automation, store: store, front: store.state.selectedTab?.id)
         } onChange: { [weak self, weak container, weak gate, weak automation] in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -411,7 +419,7 @@ extension BrowserWindowController {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self, weak container, weak gate, weak automation] in
                 MainActor.assumeIsolated {
                     guard let self, let container, let gate, let automation,
-                          !ClaudeHandoffCard.shows(automation, front: self.store.state.selectedTab?.id) else { return }
+                          !ClaudeHandoffCard.shows(automation, store: self.store, front: self.store.state.selectedTab?.id) else { return }
                     gate.isOpen = false
                     container.isHidden = true
                 }
