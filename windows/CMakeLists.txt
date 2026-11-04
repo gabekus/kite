@@ -106,10 +106,10 @@ if(WIN32)
     src/shell/CommandBarView.cpp
     src/shell/Compositor.cpp
     src/shell/Favicons.cpp
-    src/shell/ForegroundWatch.cpp
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
+    src/shell/QuietRun.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp

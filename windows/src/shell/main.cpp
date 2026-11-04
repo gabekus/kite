@@ -56,14 +56,15 @@
 #include "shell/Chromium.h"
 #endif
 #include "shell/Capture.h"
-#include "shell/ForegroundWatch.h"
 #include "shell/MainWindow.h"
+#include "shell/QuietRun.h"
 #include "shell/Text.h"
 
 namespace {
 
 using kite::Narrow;
 using kite::Widen;
+using kite::WriteUtf8;
 
 enum ExitCode : int { kOk = 0, kUsage = 1, kBadSupportDirectory = 2, kWindowFailed = 3, kSaveFailed = 4, kCaptureFailed = 5 };
 
@@ -122,19 +123,6 @@ std::optional<std::pair<int, int>> ParseSize(std::wstring_view text) {
     return std::make_pair(*w, *h);
 }
 
-// Writes `text` as UTF-8 to a standard handle, if the launcher gave us one (a GUI process
-// has no console, but a launcher that redirects stdout or stderr, like CI, gets the text).
-void WriteUtf8(DWORD which, const std::wstring& text) {
-    HANDLE handle = GetStdHandle(which);
-    if (!handle || handle == INVALID_HANDLE_VALUE || text.empty()) return;
-    const int bytes = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    if (bytes <= 0) return;
-    std::string utf8(static_cast<size_t>(bytes), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), utf8.data(), bytes, nullptr, nullptr);
-    DWORD written = 0;
-    WriteFile(handle, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
-}
-
 // The user's shortcut changes (keybindings.json, the Mac's KeyBindingsStore): none when the
 // file isn't there, or can't be read (the defaults then, as the Mac does).
 kite::KeyBindings LoadKeyBindings(const std::filesystem::path& file) {
@@ -190,8 +178,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const OptionValue captureOption = Option(args, L"--capture");
     const OptionValue sizeOption = Option(args, L"--window-size");
     const std::optional<std::wstring>& capture = captureOption.value;
-    // A quiet run never comes to the front, takes the focus or shows a dialog (the Mac's
-    // KITE_DIAGNOSTICS test-safe mode): watched from here on, and --smoke-test fails if one did.
+    // A quiet run: the one place that decides it (everything else reads Options::quiet). It
+    // never comes to the front, takes the focus or shows a dialog (shell/QuietRun.h, the Mac's
+    // KITE_DIAGNOSTICS test-safe mode): watched from here on, and --smoke-test fails if it did.
+    // A capture is watched too, and says so on stderr.
     const bool quiet = smokeTest || captureOption.present;
     std::optional<kite::ForegroundWatch> foreground;
     if (quiet) foreground.emplace();
@@ -343,7 +333,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     }
 #endif
 
-    controller->Show(showCommand, quiet);
+    controller->Show(showCommand);
     if (capture && !window.HasClientSize(size->first, size->second)) {
         // A capture is compared pixel for pixel with the Mac's, so a window Windows resized
         // (maximized by the launcher, clamped to 32767 px) would compare the wrong thing.

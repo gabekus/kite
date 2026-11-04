@@ -77,10 +77,14 @@ void MainWindow::Show(int showCommand) {
     UpdateWindow(hwnd_);
 }
 
-void MainWindow::ShowBehindOtherWindows() {
+void MainWindow::NeverActivate() {
     neverActivates_ = true;
     SetWindowLongPtrW(hwnd_, GWL_EXSTYLE, GetWindowLongPtrW(hwnd_, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_APPWINDOW);
-    SetWindowPos(hwnd_, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+}
+
+void MainWindow::ShowBehindOtherWindows() {
+    SetWindowPos(hwnd_, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     UpdateWindow(hwnd_);
 }
 
