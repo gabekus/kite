@@ -60,6 +60,52 @@ import Testing
         #expect(SessionSaveDelay.soon.rearm(pending: .soon) == 1)
     }
 
+    @Test func pendingSaveWiresTheRearmRules() {
+        var save = PendingSave()
+        #expect(save.arm(.pageEvent) == 10)
+        #expect(save.pending == .pageEvent)
+        // Ticks while it waits leave it alone.
+        #expect(save.arm(.pageEvent) == nil)
+        #expect(save.pending == .pageEvent)
+        // A navigation or sidebar change brings it forward; ticks then leave that alone too.
+        #expect(save.arm(.soon) == 1)
+        #expect(save.pending == .soon)
+        #expect(save.arm(.pageEvent) == nil)
+        #expect(save.arm(.soon) == 1)
+        save.saved()
+        #expect(save.pending == nil)
+        #expect(save.arm(.pageEvent) == 10)
+    }
+
+    @Test func cappedDebounceNeverWaitsPastItsMaximum() {
+        var debounce = CappedDebounce(quiet: 3, maxWait: 30)
+        #expect(debounce.changed(at: 100) == 3)
+        // A title every second: the quiet wait, until the cap closes in.
+        #expect(debounce.changed(at: 101) == 3)
+        #expect(debounce.changed(at: 128) == 2)
+        #expect(debounce.changed(at: 129.5) == 0.5)
+        #expect(debounce.changed(at: 131) == 0)
+        debounce.saved()
+        #expect(debounce.pendingSince == nil)
+        #expect(debounce.changed(at: 140) == 3)
+        #expect(debounce.pendingSince == 140)
+    }
+
+    /// `mutatePage` keeps `syncPinnedURLs`: a pinned tab that had no page yet adopts the first URL it reports.
+    @Test func pinnedTabWithoutAPageAdoptsItsFirstURL() {
+        var state = BrowserState.makeDefault()
+        let id = state.openTab(url: nil)
+        state.togglePin(tab: id)
+        #expect(state.tab(id)?.pinnedURL == nil)
+        state.update(tab: id) { $0.url = self.url("first") }
+        state.syncPinnedURLs()
+        #expect(state.tab(id)?.pinnedURL == url("first"))
+        // Later navigations leave the pinned page alone.
+        state.update(tab: id) { $0.url = self.url("second") }
+        state.syncPinnedURLs()
+        #expect(state.tab(id)?.pinnedURL == url("first"))
+    }
+
     /// BrowserStore's page-event path skips the undo comparison and Tidy Tab Titles: neither may
     /// ever see a title, URL or favicon change, for pinned, Today and favorite tabs alike.
     @Test func pageEventsAreNeverUndoableAndNeverPinATab() {

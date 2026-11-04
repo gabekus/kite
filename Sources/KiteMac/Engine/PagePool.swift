@@ -154,11 +154,11 @@ final class PagePool {
     /// Runs after every store change, so it builds CSS only when a page's theme (or the switch) changed.
     func updateThemeCSS() {
         let ids = Set(pages.keys)
-        guard !ids.isEmpty else { return }
         let allowed = ThemeCSS.isAllowed()
         let key = ThemeCSSKey(allowed: allowed, themes: allowed ? themes(forTabs: ids) : [:], pages: ids)
         guard key != themeCSSKey else { return }
         themeCSSKey = key
+        guard !ids.isEmpty else { return }
         for (id, css) in themeCSS(forTabs: ids) where pages[id]?.themeCSS != css {
             pages[id]?.themeCSS = css
         }
@@ -245,25 +245,13 @@ final class PagePool {
 
     /// Drops pages for tabs that no longer exist, and saved history for tabs that can't come back.
     func retain(live: Set<UUID>, restorable: Set<UUID>) {
-        // Every store change calls this: nothing to do unless the tabs changed or a page or saved
-        // history was added since.
-        let key = RetainKey(live: live, restorable: restorable)
-        guard key != retainedFor else { return }
         for id in pages.keys where !live.contains(id) {
             discard(id, keepHistory: true)
         }
         for id in savedState.keys where !restorable.contains(id) {
             savedState[id] = nil
         }
-        retainedFor = key
     }
-
-    private struct RetainKey: Equatable {
-        var live: Set<UUID>
-        var restorable: Set<UUID>
-    }
-    /// What `retain` last trimmed to; nil once a page or saved history is added.
-    private var retainedFor: RetainKey?
 
     /// A new selected tab showing `page`, which already exists (a popup, or a Peek's page expanded). `url` is
     /// what it shows already: WebKit doesn't report a page's URL again until it changes.
@@ -311,7 +299,6 @@ final class PagePool {
         pageProfiles[id] = nil
         OAuthResumeTracker.forget(id)
         savedState[id] = keepHistory ? page.hibernationState() : nil
-        retainedFor = nil
         lastShown[id] = nil
         page.onEvent = nil
         page.linkPeekPolicy = nil
@@ -325,7 +312,9 @@ final class PagePool {
 
     private func register(_ page: WebPage, id: UUID) {
         pages[id] = page
-        retainedFor = nil
+        // A different page under a known tab id (claimed from another window, or made again) may
+        // not have this window's theme CSS yet.
+        themeCSSKey = nil
         lastShown[id] = Date()
         page.onEvent = { [weak self] event in self?.handle(event, from: id) }
         page.contextMenuHost = { [weak self] in self?.contextMenuHost?() ?? PageContextMenu.Host() }

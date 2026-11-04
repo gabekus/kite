@@ -28,6 +28,8 @@ final class BrowserWindows {
     /// Each window's will-close observer, removed when it fires.
     private var closeObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
     private var saveTask: Task<Void, Never>?
+    /// The kind of change the waiting save is for; nil when none is waiting.
+    private var pendingSave = PendingSave()
     /// While the app quits, windows closing don't drop out of the saved list.
     private var isTerminating = false
     /// windows.json couldn't be read or kept aside: saving would overwrite (or delete) the only copy.
@@ -121,7 +123,7 @@ final class BrowserWindows {
 
     private func show(_ store: BrowserStore, kind: SavedWindow.Kind, frame: NSRect?, sharedPages: SharedPages?) -> BrowserWindowController {
         store.historyRoot = history
-        store.didChangeState = { [weak self] in self?.scheduleSave() }
+        store.didChangeState = { [weak self] delay in self?.scheduleSave(delay) }
         let controller = BrowserWindowController(store: store, engine: engine, adblocker: adblocker, autosaveName: nil,
                                                  sharedPages: sharedPages)
         controllers.append(controller)
@@ -156,10 +158,12 @@ final class BrowserWindows {
         return controller
     }
 
-    private func scheduleSave() {
+    /// Debounced like the session (SessionSaveDelay): a page's ticking title doesn't keep pushing it back.
+    private func scheduleSave(_ delay: SessionSaveDelay = .soon) {
+        guard let seconds = pendingSave.arm(delay) else { return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
             self?.saveNow()
         }
@@ -167,6 +171,7 @@ final class BrowserWindows {
 
     private func saveNow() {
         saveTask?.cancel()
+        pendingSave.saved()
         guard !savesBlocked else { return }
         let windows = controllers.compactMap { controller -> SavedWindow? in
             guard let kind = kinds[ObjectIdentifier(controller)], let window = controller.window else { return nil }

@@ -88,11 +88,13 @@ final class HistoryStore {
         saveNow()
     }
 
-    /// Debounced: a page load sends its URL and title in quick succession.
+    /// Debounced: a page load sends its URL and title in quick succession. A page whose title
+    /// keeps ticking still gets saved every 30 s.
     private func scheduleSave() {
+        let delay = debounce.changed(at: ProcessInfo.processInfo.systemUptime)
         saveTask?.cancel()
         saveTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             self?.saveNow()
         }
@@ -104,27 +106,50 @@ final class HistoryStore {
     }
 
     /// Saves this store and the other profiles' that changed. The encoding and the write happen
-    /// on a background queue, from a snapshot taken now.
+    /// on a background queue, from a snapshot taken now. A write that fails leaves the store
+    /// changed, so the next save or the quit flush tries again.
     func saveNow() {
         saveTask?.cancel()
+        debounce.saved()
         profileStores.values.forEach { $0.saveNow() }
         guard isDirty else { return }
         isDirty = false
-        let file = file, snapshot = history
-        Self.writes.async { Self.write(snapshot, to: file) }
+        let file = file, snapshot = history, status = writeStatus
+        Self.writes.async { [weak self] in
+            status.failed = !Self.write(snapshot, to: file)
+            guard status.failed else { return }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.isDirty = true } }
+        }
     }
 
-    /// Quit: saves what changed and waits for every write to land.
+    /// Quit: waits for the writes under way, then writes what's still unsaved (a failed write
+    /// included) before returning.
     func flush() {
-        saveNow()
-        Self.writes.sync {}
+        saveTask?.cancel()
+        debounce.saved()
+        profileStores.values.forEach { $0.flush() }
+        let status = writeStatus
+        let failed = Self.writes.sync { status.failed }
+        guard isDirty || failed else { return }
+        isDirty = false
+        let file = file, snapshot = history
+        Self.writes.sync { status.failed = !Self.write(snapshot, to: file) }
     }
 
-    nonisolated private static func write(_ history: History, to file: HistoryFile) {
+    /// Whether this store's last write failed. Only touched on `writes`.
+    private final class WriteStatus: @unchecked Sendable {
+        var failed = false
+    }
+    @ObservationIgnored private let writeStatus = WriteStatus()
+    @ObservationIgnored private var debounce = CappedDebounce(quiet: 3, maxWait: 30)
+
+    nonisolated private static func write(_ history: History, to file: HistoryFile) -> Bool {
         do {
             try file.save(history)
+            return true
         } catch {
             NSLog("Kite: couldn't save history: \(error)")
+            return false
         }
     }
 }

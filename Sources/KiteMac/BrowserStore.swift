@@ -111,7 +111,7 @@ final class BrowserStore {
     @ObservationIgnored private let session: SessionStore?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     /// The kind of change the waiting save is for; nil when none is waiting.
-    @ObservationIgnored private var pendingSave: SessionSaveDelay?
+    @ObservationIgnored private var pendingSave = PendingSave()
     /// Set when session.json couldn't be read or moved aside: saving would overwrite the only copy.
     @ObservationIgnored private var savesBlocked = false
     /// The backup session.json was unusable and the session came from, at launch; AppDelegate says so once.
@@ -153,8 +153,9 @@ final class BrowserStore {
 
     /// The normal windows this store's changes are copied to; nil for incognito and blank windows.
     @ObservationIgnored weak var link: WindowLink?
-    /// After every change: AppDelegate saves the extra windows (windows.json).
-    @ObservationIgnored var didChangeState: (() -> Void)?
+    /// After every change: BrowserWindows saves the extra windows (windows.json), as soon as the
+    /// kind of change asks for (SessionSaveDelay).
+    @ObservationIgnored var didChangeState: ((SessionSaveDelay) -> Void)?
     /// Where a sidebar drag that leaves the sidebar can drop: the window's page area (Split View).
     @ObservationIgnored weak var sidebarDragContent: SidebarDragContentTarget?
     /// Tidy Tab Titles names the tabs pinned here; off in incognito, where nothing leaves the window.
@@ -165,7 +166,7 @@ final class BrowserStore {
         state = state.adoptingContent(of: other)
         scheduleSave(delay)
         onChange?()
-        didChangeState?()
+        didChangeState?(delay)
     }
 
     private init(state: BrowserState) {
@@ -269,7 +270,7 @@ final class BrowserStore {
         scheduleSave()
         onChange?()
         link?.propagate(from: self)
-        didChangeState?()
+        didChangeState?(.soon)
         // Tidy Tab Titles: a tab pinned by any path gets a short name from Claude, but not one that Undo
         // of an unpin (or Redo of a pin) puts back: it was named, or not, when it was first pinned.
         if tidiesPinnedTabs, !restoringUndoStep, TidyTabTitles.isEnabled() {
@@ -281,15 +282,16 @@ final class BrowserStore {
 
     /// A page reporting its title, URL or favicon. Those are left out of undo and can't pin a tab
     /// (SidebarUndo.Layout and TidyTabTitles.newlyPinnedTabs ignore them), so this skips comparing
-    /// the whole sidebar before and after, and the session save waits longer (SessionSaveDelay).
-    private func mutatePage(_ body: (inout BrowserState) -> Void) {
+    /// the whole sidebar before and after. Titles and favicons save later (`.pageEvent`); a
+    /// navigation, which is rare next to them, saves as soon as a sidebar change.
+    private func mutatePage(_ delay: SessionSaveDelay, _ body: (inout BrowserState) -> Void) {
         body(&state)
         // A pinned tab that had no page yet remembers the first one it reports.
         state.syncPinnedURLs()
-        scheduleSave(.pageEvent)
+        scheduleSave(delay)
         onChange?()
-        link?.propagate(from: self, delay: .pageEvent)
-        didChangeState?()
+        link?.propagate(from: self, delay: delay)
+        didChangeState?(delay)
     }
 
     /// Archives unpinned tabs left unused longer than the user's setting.
@@ -445,7 +447,7 @@ final class BrowserStore {
         guard let title, !title.isEmpty, !showsInternalPage(id) else { return }
         if let url = recordedURLs[id] { history(forTab: id)?.updateTitle(url, title) }
         guard state.tab(id)?.title != title else { return }
-        mutatePage { $0.update(tab: id) { $0.title = title } }
+        mutatePage(.pageEvent) { $0.update(tab: id) { $0.title = title } }
     }
 
     func pageURLChanged(_ id: UUID, _ url: URL?) {
@@ -459,7 +461,7 @@ final class BrowserStore {
         }
         let previous = state.tab(id)?.url
         guard previous != url else { return }
-        mutatePage { $0.update(tab: id) { $0.url = url } }
+        mutatePage(.soon) { $0.update(tab: id) { $0.url = url } }
         LiveFoldersController.shared?.tabURLChanged(id, from: previous, to: url, in: self)
     }
 
@@ -469,7 +471,7 @@ final class BrowserStore {
 
     func faviconChanged(_ id: UUID, _ url: URL?) {
         guard state.tab(id)?.faviconURL != url else { return }
-        mutatePage { $0.update(tab: id) { $0.faviconURL = url } }
+        mutatePage(.pageEvent) { $0.update(tab: id) { $0.faviconURL = url } }
     }
 
     func updatePage(_ id: UUID, _ body: (inout PageStatus) -> Void) {
@@ -533,9 +535,8 @@ final class BrowserStore {
     /// Saves are debounced (SessionSaveDelay): sidebar changes by a second, page titles, URLs and
     /// favicons by longer. Quitting and closing the window call `saveNow`.
     private func scheduleSave(_ delay: SessionSaveDelay = .soon) {
-        guard session != nil, let seconds = delay.rearm(pending: pendingSave) else { return }
+        guard session != nil, let seconds = pendingSave.arm(delay) else { return }
         saveTask?.cancel()
-        pendingSave = delay
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
@@ -545,7 +546,7 @@ final class BrowserStore {
 
     func saveNow() {
         saveTask?.cancel()
-        pendingSave = nil
+        pendingSave.saved()
         guard let session, !savesBlocked else { return }
         do {
             let data = try session.save(state)
@@ -563,7 +564,7 @@ final class BrowserStore {
     func restoreSession(from backup: SessionBackups.Backup) throws {
         guard let session else { return }
         saveTask?.cancel()
-        pendingSave = nil
+        pendingSave.saved()
         let current = state
         // On the backup queue, so it never writes Backups alongside a save's backup.
         let restored = try Self.backupQueue.sync { try session.restore(backup, current: current) }
@@ -574,7 +575,7 @@ final class BrowserStore {
         state = restored
         onChange?()
         link?.propagate(from: self)
-        didChangeState?()
+        didChangeState?(.soon)
     }
 }
 
