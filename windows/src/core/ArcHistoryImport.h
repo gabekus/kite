@@ -16,16 +16,21 @@
 // the file where it is, with its own reader (core/SQLiteReader.h) a page at a time: a History of
 // hundreds of MB is never in memory or copied, and the newest 20,000 rows are kept as they
 // stream past (a heap), so memory stays at those rows and a few pages. Since it isn't a copy,
-// it's read only when Arc can't be changing it: Arc isn't running (Chromium's User Data/lockfile,
-// which exists exactly while it runs), no write is half done (a hot History-journal), nothing
-// committed waits in a write-ahead log (a History-wal that isn't empty), and the file is the
-// same size and age after the read as before. Otherwise the profile's history is left out with
-// the reason ("quit Arc and import again"). Delete with ArcImportController.h once Arc has shut down.
+// it's read only when Arc can't be changing it (DatabaseBusy): nothing has History, its journal,
+// its log or Chromium's User Data/lockfile open for writing (a probe that opens each for reading
+// while denying writers, closed at once), no write was left half done (a hot History-journal),
+// nothing committed waits in a write-ahead log (a History-wal that isn't empty), and the file is
+// the same size and age, with no writer, after the read as before. Otherwise the profile's
+// history is left out with the reason. The Mac reads a copy, which SQLite rolls back or replays;
+// once Arc has shut down for good (2026-12-22) a hot journal or a WAL can't be cleared by
+// opening Arc, and reading through them (an in-memory rollback, WAL frames) is the follow-up.
+// Delete with ArcImportController.h once Arc's data is gone.
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -44,17 +49,21 @@ struct HistoryRead {
     uint64_t neverVisited = 0;  // no last visit (last_visit_time 0, or not a number)
     uint64_t beyondCap = 0;     // visited before the newest `maxEntries` rows, as the Mac's LIMIT
     uint64_t notWebPages = 0;   // among those, a URL Kite doesn't record (not http or https, or unreadable)
-    uint64_t tooLong = 0;       // a row over kMaxHistoryRowBytes, left unread
+    uint64_t tooLong = 0;       // a row over kMaxHistoryRowBytes (left unread), or a URL over kMaxHistoryURLBytes
     uint64_t sameURL = 0;       // among those, a URL another newer row has once both are Normalized
 };
 
 // Chromium keeps a URL to 2 MB (url::kMaxURLChars) and a title far shorter; a row past this
 // isn't one Chromium wrote, and is left out without being read.
 inline constexpr size_t kMaxHistoryRowBytes = size_t{4} << 20;
+// url::kMaxURLChars: Chromium keeps no longer URL.
+inline constexpr size_t kMaxHistoryURLBytes = size_t{2} << 20;
 
 struct HistoryReadOptions {
     size_t maxEntries = History::kMaxEntries;
-    const std::atomic<bool>* cancel = nullptr;  // checked between pages
+    const std::atomic<bool>* cancel = nullptr;  // checked before each leaf page
+    // Tests only: runs after ReadArcHistory's read, before its checks that nothing changed.
+    std::function<void()> afterRead;
 };
 
 // The urls table of the database in `source`. Nullopt when it isn't a History database (no urls
@@ -64,6 +73,16 @@ std::optional<HistoryRead> ReadChromiumHistory(sqlite::PageSource& source, const
 // An Arc profile's browsing history; `profile` is its folder ("Default", "Profile 1"...). The
 // Mac's ArcImportController.historyFile(profile:in:).
 std::filesystem::path ArcHistoryFile(const std::filesystem::path& arcFolder, const std::string& profile);
+
+// Whether something has `file` open for writing (a sharing violation on a read that denies
+// writers). Windows only: elsewhere, false.
+bool HasLiveWriter(const std::filesystem::path& file);
+
+// Why Arc may be changing the SQLite `database` now, or empty: a live writer of it, its journal,
+// its log or `lockfile` ("Arc is writing it: quit Arc and import again"), else a hot journal or a
+// write-ahead log that isn't empty ("Arc didn't finish its last write: open and quit Arc once,
+// then import again"). History and Web Data both.
+std::string DatabaseBusy(const std::filesystem::path& database, const std::filesystem::path& lockfile);
 
 // Whether SQLite is in the middle of writing the database `journal` sits beside: a hot journal
 // (sqlite::IsHotJournal, its first 8 bytes). One that's there but can't be read counts as hot,

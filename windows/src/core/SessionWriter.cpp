@@ -3,6 +3,7 @@
 #include "core/SessionWriter.h"
 
 #include <optional>
+#include <vector>
 #include <utility>
 
 namespace kite {
@@ -25,6 +26,8 @@ struct SessionWriter::Shared : WorkerState {
     const std::function<double()> now;
 
     std::optional<BrowserState> next;
+    // SaveThen's continuations, run after the write that takes `next`.
+    std::vector<std::function<void(const std::string&)>> after;
     std::optional<BrowserState> launch;
     bool offer = false;  // OfferBackup: the hourly backup of what was last written
     Statistics stats;
@@ -38,7 +41,8 @@ struct SessionWriter::Shared : WorkerState {
     bool HasWork() const override { return next || launch || offer; }
     void RunOne(std::unique_lock<std::mutex>& lock) override;
     void Failed(const char* what) noexcept override;
-    void Write(const BrowserState& state);
+    // The write's error, empty when written (or the file already held these bytes).
+    std::string Write(const BrowserState& state);
     void BackUpHourly();
 };
 
@@ -99,6 +103,22 @@ std::string SessionWriter::Flush(Deadline deadline) {
     return shared_->stats.lastError;
 }
 
+void SessionWriter::SaveThen(BrowserState snapshot, std::function<void(const std::string& error)> then) {
+    if (!maySave_) {
+        if (then) then("Kite doesn't save this session (it couldn't be read)");
+        return;
+    }
+    {
+        std::lock_guard lock(shared_->mutex);
+        ++shared_->stats.handedOver;
+        if (shared_->next) ++shared_->stats.superseded;
+        shared_->next = std::move(snapshot);
+        if (then) shared_->after.push_back(std::move(then));
+        shared_->stats.pending = true;
+    }
+    shared_->wake.notify_one();
+}
+
 bool SessionWriter::Writing() const { return maySave_ && worker_.Writing(); }
 
 SessionWriter::Statistics SessionWriter::Stats() const {
@@ -111,6 +131,7 @@ void SessionWriter::Shared::RunOne(std::unique_lock<std::mutex>& lock) {
     // The launch backup first: it's the session as found, before any change.
     std::optional<BrowserState> found = std::exchange(launch, std::nullopt);
     std::optional<BrowserState> snapshot = std::exchange(next, std::nullopt);
+    std::vector<std::function<void(const std::string&)>> continuations = std::exchange(after, {});
     // A save offers the backup anyway.
     const bool offered = std::exchange(offer, false) && !snapshot;
     lock.unlock();
@@ -120,7 +141,27 @@ void SessionWriter::Shared::RunOne(std::unique_lock<std::mutex>& lock) {
         stats.backups += made.made ? 1 : 0;
         stats.lastBackupError = made.error;
     }
-    if (snapshot) Write(*snapshot);
+    auto runContinuations = [&](const std::string& error) {
+        for (auto& then : continuations) {
+            try {
+                then(error);
+            } catch (...) {
+                // The continuation's own failure is its to report; the writer goes on.
+            }
+        }
+    };
+    std::string error;
+    try {
+        if (snapshot) error = Write(*snapshot);
+    } catch (...) {
+        // Failed() records it; the continuations still hear that the session wasn't written.
+        try {
+            runContinuations("couldn't save the session");
+        } catch (...) {
+        }
+        throw;
+    }
+    runContinuations(error);
     if (offered && !lastWritten.empty()) BackUpHourly();
     lock.lock();
     stats.pending = HasWork();
@@ -139,7 +180,7 @@ void SessionWriter::Shared::Failed(const char* what) noexcept {
     stats.pending = HasWork();
 }
 
-void SessionWriter::Shared::Write(const BrowserState& state) {
+std::string SessionWriter::Shared::Write(const BrowserState& state) {
     const auto encodeStart = std::chrono::steady_clock::now();
     std::string bytes = SessionStore::EncodeFile(state);
     const double encodeMicros = MicrosSince(encodeStart);
@@ -153,7 +194,7 @@ void SessionWriter::Shared::Write(const BrowserState& state) {
             stats.lastError.clear();
         }
         BackUpHourly();
-        return;
+        return {};
     }
     const size_t size = bytes.size();
     const auto writeStart = std::chrono::steady_clock::now();
@@ -172,6 +213,7 @@ void SessionWriter::Shared::Write(const BrowserState& state) {
         if (stats.lastError.empty()) ++stats.written;
     }
     if (!lastWritten.empty()) BackUpHourly();
+    return error;
 }
 
 void SessionWriter::Shared::BackUpHourly() {

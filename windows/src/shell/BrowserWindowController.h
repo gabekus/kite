@@ -182,7 +182,8 @@ private:
     // saved after `save` (none: nothing that's saved changed, a page repeating its title).
     void StateChanged(std::optional<SessionSaveDelay> save = SessionSaveDelay::Soon);
     // The save timer fired, or the window is closing: a copy of the session to the writer.
-    void SaveNow();
+    // `then` runs on the writer's thread after that write (SessionWriter::SaveThen).
+    void SaveNow(std::function<void(const std::string& error)> then = {});
     // History changed (a visit, a title): its save timer, armed for the store due first.
     void ArmHistorySave();
     // The history a tab's visits go to: its own profile's (the Mac's history(forTab:)).
@@ -214,12 +215,14 @@ private:
     static constexpr UINT kArcReadMessage = WM_APP + 7;
     // The window's system menu item for it (Alt+Space): a WM_SYSCOMMAND id, under 0xF000.
     static constexpr UINT kImportFromArcMenuID = 0x0A10;
-    // How long Import from Arc waits for the session's write before it writes the other files.
-    static constexpr std::chrono::milliseconds kArcImportFlush{3000};
+    // The writer's thread has written an import's session and its other files.
+    static constexpr UINT kArcSavedMessage = WM_APP + 8;
     struct ArcJob;
+    struct ArcSave;
     void ImportFromArc();
     void ReadArc(std::optional<std::filesystem::path> picked);
     void ArcRead();
+    void ArcSaved();
     // As the window goes: asks a running read to stop and waits for it (a few seconds at most).
     void StopArcRead();
     void RunCommand(const std::string& command);
@@ -328,6 +331,8 @@ private:
     // Import from Arc's read: the worker (joined before the window goes) and what it hands back.
     std::thread arcThread_;
     std::shared_ptr<ArcJob> arcJob_;
+    // An import whose session the writer hasn't written yet (kArcSavedMessage brings it back).
+    std::shared_ptr<ArcSave> arcSave_;
     bool arcReading_ = false;  // from the command until the confirmation's answer
 #ifdef KITE_HAS_CEF
     // Each open popup's tab and the tab that opened it (the Mac's PagePool.popupOpeners).

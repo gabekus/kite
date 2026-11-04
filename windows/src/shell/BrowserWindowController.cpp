@@ -449,14 +449,15 @@ void BrowserWindowController::SessionChanged(SessionSaveDelay delay) {
     }
 }
 
-void BrowserWindowController::SaveNow() {
+void BrowserWindowController::SaveNow(std::function<void(const std::string& error)> then) {
     KillTimer(window_.Handle(), kSaveTimer);
     saveSchedule_.Saved();
     if (!writer_ || !writer_->MaySave()) return;
     // A copy for the writer's thread (the session is the UI thread's to change): the only cost
     // here. Encoding and the disk are the writer's.
     const auto start = std::chrono::steady_clock::now();
-    writer_->Save(state_);
+    if (then) writer_->SaveThen(state_, std::move(then));
+    else writer_->Save(state_);
     const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
     ++saveCost_.saves;
     saveCost_.maxMicros = std::max(saveCost_.maxMicros, micros);
@@ -945,6 +946,10 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     }
     if (message == kArcReadMessage) {
         ArcRead();
+        return true;
+    }
+    if (message == kArcSavedMessage) {
+        ArcSaved();
         return true;
     }
     if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == kImportFromArcMenuID) {

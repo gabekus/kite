@@ -182,6 +182,15 @@ std::string BackupDateText(Timestamp t) {
            std::to_string(hour) + ":" + minutes + (local.tm_hour < 12 ? " AM" : " PM");
 }
 
+LoadError ReadFailed(const char* what) {
+    LoadError error{std::nullopt, "Kite couldn't read Arc's data.", "", false, true};
+    try {
+        error.detail = std::string("Reading it failed") + (what ? std::string(": ") + what : std::string()) + ".";
+    } catch (...) {
+    }
+    return error;
+}
+
 std::optional<fs::path> ArcDirectory(const std::optional<fs::path>& supportOverride, const std::optional<fs::path>& arcDataOverride,
                                      const std::optional<fs::path>& localAppData) {
     if (supportOverride && arcDataOverride && !arcDataOverride->empty()) return *arcDataOverride;
@@ -290,12 +299,10 @@ Plan ReadPlan(Sidebar sidebar, const fs::path& folder, const ReadOptions& option
     plan.folder = folder;
     if (Cancelled(options)) return plan;
     // Arc keeps Site Search where Chromium does: the keywords table of the profile's Web Data.
-    // A hot journal beside it means Arc is writing it, and the file may be half changed.
+    // Not while Arc may be changing it (DatabaseBusy: a live writer, a hot journal).
     const fs::path webDataFile = folder / "User Data" / "Default" / "Web Data";
-    fs::path journal = webDataFile;
-    journal += "-journal";
-    if (JournalIsHot(journal)) {
-        plan.unreadable.push_back({"Web Data", "Arc is writing it: quit Arc and import again"});
+    if (std::string busy = DatabaseBusy(webDataFile, folder / "User Data" / "lockfile"); !busy.empty()) {
+        plan.unreadable.push_back({"Web Data", std::move(busy)});
     } else if (auto webData = ReadArcFile(webDataFile, options, plan)) {
         if (auto sites = ParseSiteSearches(*webData)) plan.siteSearches = std::move(*sites);
         else plan.unreadable.push_back({"Web Data", ""});
@@ -566,7 +573,7 @@ Imported Import(BrowserState& state, const Plan& plan, ImportOptions options) {
         left.notWebPages += read.notWebPages;
         left.tooLong += read.tooLong;
         left.sameURL += read.sameURL;
-        if (!read.entries.empty()) out.histories.push_back({arc, kite->second, read.entries});
+        if (!read.entries.empty()) out.histories.push_back({kite->second, read.entries});
     }
     auto skippedHistory = [&](const char* kind, uint64_t count, const std::string& reason) {
         if (count > 0) out.skipped.push_back(Skipped(kind, static_cast<size_t>(count), reason));
@@ -675,17 +682,21 @@ void WriteProfileFiles(Imported& out, const fs::path& profileDirectory) {
     out.routes.reset();
 }
 
-void MergeHistories(Imported& out, HistoryStores& stores, std::chrono::milliseconds waitForLoads) {
-    if (out.histories.empty()) return;
+bool MergeHistories(Imported& out, HistoryStores& stores, std::chrono::milliseconds waitForLoads) {
+    if (out.histories.empty()) return true;
     std::vector<HistoryStore*> targets;
     for (const Imported::PendingHistory& history : out.histories) targets.push_back(&stores.ForProfile(history.kiteProfile));
-    if (waitForLoads > std::chrono::milliseconds::zero()) stores.WaitForLoads(waitForLoads);
+    // Nothing merged into stores that haven't read their files: the caller says so and saves nothing.
+    if (waitForLoads > std::chrono::milliseconds::zero() && !stores.WaitForLoads(waitForLoads)) return false;
     size_t merged = 0, added = 0, dropped = 0;
     for (size_t i = 0; i < out.histories.size(); ++i) {
         HistoryStore& store = *targets[i];
+        const bool loaded = store.IsLoaded();
         const size_t before = store.Get().Count();
-        const size_t fresh = store.Merge(out.histories[i].entries);
         merged += out.histories[i].entries.size();
+        // Moved, not copied: a store whose file isn't read yet only queues them (HistoryStore::Merge).
+        const size_t fresh = store.Merge(std::move(out.histories[i].entries));
+        if (!loaded) continue;
         added += fresh;
         // Past the cap, the oldest pages went (Arc's or Kite's own).
         dropped += before + fresh - store.Get().Count();
@@ -697,6 +708,7 @@ void MergeHistories(Imported& out, HistoryStores& stores, std::chrono::milliseco
                                       "Kite's history keeps the latest " + std::to_string(History::kMaxEntries) + " pages a profile, so the oldest went"));
     }
     out.histories.clear();
+    return true;
 }
 
 json::Value Summary(const Imported& imported) {

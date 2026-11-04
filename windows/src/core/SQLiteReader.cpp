@@ -77,6 +77,7 @@ public:
         visit_ = &visit;
         maxRecord_ = maxRecord;
         cancel_ = cancel;
+        stopped_ = false;
         return Walk(root, 0);
     }
     bool Stopped() const { return stopped_; }
@@ -88,8 +89,9 @@ private:
         return source_.Read((number - 1) * pageSize_, pageSize_, out);
     }
 
-    // Each page is read once in the whole read, as a b-tree page or an overflow page: a page
-    // reached twice (a loop, a child or overflow chain shared by two cells) is a broken file.
+    // Each page is read once in the whole read (the schema's walk and the table's, which share
+    // this reader), as a b-tree page or an overflow page: a page reached twice (a loop, a child
+    // or overflow chain shared by two cells, a table inside the schema's tree) is a broken file.
     bool Use(uint64_t number) {
         if (number < 1 || number > pageCount_ || used_[static_cast<size_t>(number)]) return false;
         used_[static_cast<size_t>(number)] = true;
@@ -312,7 +314,9 @@ SqlValue Literal(const std::vector<Token>& def, size_t at) {
 
 }  // namespace
 
-std::optional<size_t> Table::Column(std::string_view name) const {
+std::optional<size_t> Table::Column(std::string_view name) const { return ColumnIndex(columns, name); }
+
+std::optional<size_t> ColumnIndex(const std::vector<std::string>& columns, std::string_view name) {
     for (size_t i = 0; i < columns.size(); ++i) {
         if (EqualsIgnoringCase(columns[i], name)) return i;
     }
@@ -424,7 +428,10 @@ std::optional<Scan> ScanTable(PageSource& source, std::string_view name,
         }
         return true;
     };
-    if (!reader.Rows(1, schema, std::numeric_limits<size_t>::max(), nullptr)) return std::nullopt;
+    // A schema row is a CREATE statement: one past kMaxSchemaRecordBytes isn't one Chromium wrote,
+    // and is left unread (so a crafted 1 GiB overflow chain there costs nothing).
+    if (!reader.Rows(1, schema, kMaxSchemaRecordBytes, options.cancel)) return std::nullopt;
+    if (reader.Stopped() && !root) return std::nullopt;  // cancelled
     if (!root) return std::nullopt;
     auto definitions = ParseColumns(sql);
     if (!definitions || definitions->empty()) return std::nullopt;
@@ -436,9 +443,6 @@ std::optional<Scan> ScanTable(PageSource& source, std::string_view name,
         return scan;
     }
 
-    // A second reader: the schema's walk marked page 1 and its children as read.
-    Reader table(source);
-    if (!table.Open()) return std::nullopt;
     bool broken = false;
     const CellVisitor cells = [&](int64_t rowid, const std::string* bytes) {
         if (!bytes) {
@@ -458,8 +462,8 @@ std::optional<Scan> ScanTable(PageSource& source, std::string_view name,
         ++scan.rows;
         return row(*values);
     };
-    if (!table.Rows(*root, cells, options.maxRecordBytes, options.cancel) || broken) return std::nullopt;
-    scan.stopped = table.Stopped();
+    if (!reader.Rows(*root, cells, options.maxRecordBytes, options.cancel) || broken) return std::nullopt;
+    scan.stopped = reader.Stopped();
     return scan;
 }
 

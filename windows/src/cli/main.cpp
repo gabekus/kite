@@ -892,7 +892,12 @@ int main(int argc, char** argv) {
         }
         const auto arcDirectory = arc_import::ArcDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"),
                                                            EnvironmentPath("KITE_ARC_DATA_PATH"), EnvironmentPath("LOCALAPPDATA"));
-        auto plan = picked ? arc_import::ReadPicked(*picked, arcDirectory) : arc_import::ReadAuto(arcDirectory);
+        std::variant<arc_import::Plan, arc_import::LoadError> plan = arc_import::LoadError{};
+        try {
+            plan = picked ? arc_import::ReadPicked(*picked, arcDirectory) : arc_import::ReadAuto(arcDirectory);
+        } catch (const std::exception& e) {
+            plan = arc_import::ReadFailed(e.what());
+        }
         if (auto* error = std::get_if<arc_import::LoadError>(&plan)) {
             std::fprintf(stderr, "kitecore: %s %s\n", error->message.c_str(), error->detail.c_str());
             return kNotFound;
@@ -908,7 +913,10 @@ int main(int argc, char** argv) {
         // Chromium/<dir>/Kite History.json for another profile), written before the summary.
         HistoryStores stores(std::get<std::filesystem::path>(resolved));
         stores.Start();
-        arc_import::MergeHistories(imported, stores, std::chrono::seconds(60));
+        if (!arc_import::MergeHistories(imported, stores, std::chrono::seconds(60))) {
+            std::fputs("kitecore: history: the profiles' history files weren't read within 60 s, so Arc's history wasn't merged\n", stderr);
+            return kSaveFailed;
+        }
         stores.SaveNow();
         if (std::string error = stores.Flush(DeadlineAfter(std::chrono::seconds(60))); !error.empty()) {
             std::fprintf(stderr, "kitecore: history: %s\n", error.c_str());

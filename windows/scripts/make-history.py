@@ -61,6 +61,8 @@ def add(db, url, title, visits, last, hidden=0):
     cursor = db.execute(
         "INSERT INTO urls (url, title, visit_count, last_visit_time, hidden) VALUES (?, ?, ?, ?, ?)", (url, title, visits, last, hidden)
     )
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name = 'visits'").fetchone():
+        return
     for n in range(max(visits, 1) if last else 0):
         db.execute("INSERT INTO visits (url, visit_time, transition) VALUES (?, ?, 805306368)", (cursor.lastrowid, last - n * 60 * SECOND))
 
@@ -95,6 +97,20 @@ def fixture():
     add(db, "https://pipes.example.test/a|b?q={x}", "Raw", 2, BASE + 20 * 3600 * SECOND)
     add(db, "https://pipes.example.test/a%7Cb?q=%7Bx%7D", "Encoded", 5, BASE + 10 * 3600 * SECOND)
     add(db, "https://braces.example.test/{id}#a|b", "Fragment", 1, BASE + 5 * 3600 * SECOND)
+    db.commit()
+    db.close()
+
+    # tests/fixtures/history-big-schema.sqlite: a schema row past the reader's 64 KB cap (a
+    # 70 KB DEFAULT, on overflow pages) before the urls table.
+    path = os.path.join(HERE, "history-big-schema.sqlite")
+    for suffix in ("", "-journal"):
+        if os.path.exists(path + suffix):
+            os.remove(path + suffix)
+    db = sqlite3.connect(path)
+    db.execute("PRAGMA page_size=1024")
+    db.execute("CREATE TABLE pad(x TEXT DEFAULT '" + "p" * 70_000 + "')")
+    db.execute(URLS)
+    add(db, "https://after.example.test/", "After", 1, BASE)
     db.commit()
     db.close()
 

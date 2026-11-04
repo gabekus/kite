@@ -50,7 +50,12 @@ bool WorkerThread::WaitIdle(Deadline deadline) {
         state_->done.wait(lock, idle);
         return true;
     }
-    if (state_->done.wait_until(lock, deadline, idle)) return true;
+    // A wait that ends in time clears an earlier timeout: the thread wasn't stuck after all, so
+    // Stop waits for it again.
+    if (state_->done.wait_until(lock, deadline, idle)) {
+        timedOut_ = false;
+        return true;
+    }
     timedOut_ = true;
     return false;
 }

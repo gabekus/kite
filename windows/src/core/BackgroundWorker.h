@@ -63,7 +63,8 @@ public:
     void Start(std::shared_ptr<WorkerState> state);
     bool Started() const { return state_ != nullptr; }
 
-    // Until nothing waits or runs, or `deadline`; false then, and Stop won't wait again.
+    // Until nothing waits or runs, or `deadline`; false then, and Stop won't wait again (until a
+    // later wait ends in time).
     bool WaitIdle(Deadline deadline);
     // Until `ready()` (checked under the lock, as each piece of work ends) or the thread ends,
     // or `deadline`; false on the deadline.

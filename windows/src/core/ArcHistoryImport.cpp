@@ -5,7 +5,16 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <unordered_map>
+
+#ifdef _WIN32
+#include <errno.h>
+#include <fcntl.h>
+#include <io.h>
+#include <share.h>
+#include <sys/stat.h>
+#endif
 
 #include "core/Files.h"
 #include "core/Unicode.h"
@@ -16,7 +25,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char* kQuitArc = "quit Arc and import again";
 
 // A row kept for now: among the newest `maxEntries` seen so far.
 struct Candidate {
@@ -39,13 +47,27 @@ std::optional<int64_t> Integer(const sqlite::SqlValue& v) {
     return std::nullopt;
 }
 
+// A REAL as sqlite3_column_text writes it: "%!.15g", which always has a decimal point.
+std::string RealText(double d) {
+    if (std::isinf(d)) return d > 0 ? "Inf" : "-Inf";
+    char buffer[40];
+    std::snprintf(buffer, sizeof buffer, "%.15g", d);
+    std::string text = buffer;
+    if (text.find_first_of(".n") == std::string::npos) {
+        const size_t e = text.find('e');
+        text.insert(e == std::string::npos ? text.size() : e, ".0");
+    }
+    return text;
+}
+
 // As the Mac reads a column, String(cString: sqlite3_column_text(...)): the text up to its
-// first NUL; none for NULL. Numbers as SQLite writes them out are left to the caller.
+// first NUL, numbers as SQLite writes them out; none for NULL.
 std::optional<std::string> TakeText(sqlite::SqlValue& v) {
     std::string* text = std::get_if<std::string>(&v);
     if (!text) {
         if (auto* blob = std::get_if<sqlite::Blob>(&v)) text = &blob->bytes;
         else if (auto* i = std::get_if<int64_t>(&v)) return std::to_string(*i);
+        else if (auto* d = std::get_if<double>(&v)) return RealText(*d);
         else return std::nullopt;
     }
     std::string out = std::move(*text);
@@ -76,28 +98,51 @@ std::optional<Stamp> StampOf(const fs::path& file) {
     return stamp;
 }
 
-// Why Arc may be changing the database now, or empty.
-std::string Busy(const fs::path& arcFolder, const fs::path& file) {
-    std::error_code error;
-    // Chromium holds User Data/lockfile open while it runs, and Windows deletes it as the
-    // process ends (FILE_FLAG_DELETE_ON_CLOSE), so it's there exactly while Arc runs.
-    if (fs::exists(arcFolder / "User Data" / "lockfile", error) || error) return std::string("Arc is running: ") + kQuitArc;
-    fs::path journal = file;
-    journal += "-journal";
-    if (JournalIsHot(journal)) return std::string("Arc is writing it: ") + kQuitArc;
-    // Pages committed to a write-ahead log may be there only: SQLite moves them into the file
-    // when the last connection closes. One left behind (Arc ended without closing it) goes when
-    // Arc next opens and quits.
-    fs::path wal = file;
-    wal += "-wal";
-    if (fs::exists(wal, error) || error) {
-        const auto size = fs::file_size(wal, error);
-        if (error || size > 0) return "Arc's latest history is still in History-wal: open Arc, quit it and import again";
+}  // namespace
+
+bool HasLiveWriter(const fs::path& file) {
+#ifdef _WIN32
+    // Read access while denying others write access: Windows refuses that (a sharing violation)
+    // while another handle has the file open for writing, as SQLite's and Chromium's lockfile's
+    // are. Closed at once.
+    int fd = -1;
+    const errno_t error = _wsopen_s(&fd, file.c_str(), _O_RDONLY | _O_BINARY, _SH_DENYWR, _S_IREAD);
+    if (error == 0) {
+        _close(fd);
+        return false;
     }
+    return error == EACCES;
+#else
+    (void)file;
+    return false;
+#endif
+}
+
+std::string DatabaseBusy(const fs::path& database, const fs::path& lockfile) {
+    std::error_code error;
+    fs::path journal = database, wal = database;
+    journal += "-journal";
+    wal += "-wal";
+    // Arc has the database (or its journal or log) open for writing, or is running at all (it
+    // holds User Data/lockfile open): it may change any moment. A lockfile nobody holds (left by
+    // a crash or a power cut) is nothing.
+    for (const fs::path& file : {database, journal, wal, lockfile}) {
+        if (HasLiveWriter(file)) return "Arc is writing it: quit Arc and import again";
+    }
+    // Nobody is writing, but the last write didn't finish: a hot journal (the database may be
+    // half changed until SQLite rolls it back) or pages committed only to a write-ahead log
+    // (moved into the file when the last connection closes). Arc's next open and quit sorts
+    // either out.
+    bool unfinished = JournalIsHot(journal);
+    if (!unfinished && (fs::exists(wal, error) || error)) {
+        // One that can't be looked at counts as holding pages.
+        const auto size = error ? 0 : fs::file_size(wal, error);
+        unfinished = error || size > 0;
+    }
+    if (unfinished) return "Arc didn't finish its last write: open and quit Arc once, then import again";
     return {};
 }
 
-}  // namespace
 
 std::optional<HistoryRead> ReadChromiumHistory(sqlite::PageSource& source, const HistoryReadOptions& options) {
     HistoryRead out;
@@ -109,12 +154,11 @@ std::optional<HistoryRead> ReadChromiumHistory(sqlite::PageSource& source, const
     auto scan = sqlite::ScanTable(
         source, "urls",
         [&](const std::vector<std::string>& columns) {
-            sqlite::Table names{columns, {}};
-            url = names.Column("url");
-            title = names.Column("title");
-            visitCount = names.Column("visit_count");
-            lastVisit = names.Column("last_visit_time");
-            hidden = names.Column("hidden");
+            url = sqlite::ColumnIndex(columns, "url");
+            title = sqlite::ColumnIndex(columns, "title");
+            visitCount = sqlite::ColumnIndex(columns, "visit_count");
+            lastVisit = sqlite::ColumnIndex(columns, "last_visit_time");
+            hidden = sqlite::ColumnIndex(columns, "hidden");
             // The Mac's query names all five: without one it doesn't run.
             return url && title && visitCount && lastVisit && hidden;
         },
@@ -139,6 +183,11 @@ std::optional<HistoryRead> ReadChromiumHistory(sqlite::PageSource& source, const
             }
             Candidate row{*visited, TakeText(values[*url]), TakeText(values[*title]).value_or(""),
                           Integer(values[*visitCount]).value_or(0)};
+            // Chromium keeps no URL longer than url::kMaxURLChars.
+            if (row.url && row.url->size() > kMaxHistoryURLBytes) {
+                ++out.tooLong;
+                return true;
+            }
             if (heap.size() == options.maxEntries) {
                 std::pop_heap(heap.begin(), heap.end(), Newer);
                 heap.pop_back();
@@ -150,7 +199,7 @@ std::optional<HistoryRead> ReadChromiumHistory(sqlite::PageSource& source, const
         },
         scanOptions);
     if (!scan || scan->stopped) return std::nullopt;
-    out.tooLong = scan->oversized;
+    out.tooLong += scan->oversized;
     out.rows += scan->oversized;
     // Newest first, as the query returns them, and the Mac's filter after its LIMIT: a row whose
     // URL Kite doesn't record still took its place among the newest.
@@ -203,7 +252,8 @@ ProfileHistory ReadArcHistory(const fs::path& arcFolder, const std::string& prof
         out.unreadable = true;
         return out;
     }
-    if (out.problem = Busy(arcFolder, file); !out.problem.empty()) return out;
+    const fs::path lockfile = arcFolder / "User Data" / "lockfile";
+    if (out.problem = DatabaseBusy(file, lockfile); !out.problem.empty()) return out;
     const auto before = StampOf(file);
     if (!before) {
         out.unreadable = true;
@@ -214,6 +264,11 @@ ProfileHistory ReadArcHistory(const fs::path& arcFolder, const std::string& prof
         return out;
     }
     sqlite::FilePages pages(file);
+    // The size it has as it's opened (it may have grown since the stamp).
+    if (pages.IsOpen() && pages.Size() > maxFileBytes) {
+        out.tooLarge = pages.Size();
+        return out;
+    }
     std::string header;
     if (!pages.IsOpen() || !pages.Read(0, 100, header) || !sqlite::HeaderJournal(header)) {
         out.unreadable = true;
@@ -221,9 +276,10 @@ ProfileHistory ReadArcHistory(const fs::path& arcFolder, const std::string& prof
     }
     auto read = ReadChromiumHistory(pages, options);
     if (options.cancel && options.cancel->load()) return out;
+    if (options.afterRead) options.afterRead();
     // Arc started (or wrote) while it was read: what came out may mix two versions.
-    if (StampOf(file) != before || !Busy(arcFolder, file).empty()) {
-        out.problem = std::string("Arc changed it while Kite read it: ") + kQuitArc;
+    if (StampOf(file) != before || !DatabaseBusy(file, lockfile).empty()) {
+        out.problem = "Arc changed it while Kite read it: quit Arc and import again";
         return out;
     }
     if (!read) {

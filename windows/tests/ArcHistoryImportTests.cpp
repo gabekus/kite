@@ -14,6 +14,13 @@
 #include <fstream>
 #include <iterator>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#include <share.h>
+#include <sys/stat.h>
+#endif
+
 #include "Check.h"
 #include "core/ArcHistoryImport.h"
 #include "core/ArcImportController.h"
@@ -71,6 +78,21 @@ const HistoryEntry* Find(const HistoryRead& read, const std::string& url) {
     auto it = std::find_if(read.entries.begin(), read.entries.end(), [&](const HistoryEntry& e) { return e.url == url; });
     return it == read.entries.end() ? nullptr : &*it;
 }
+
+#ifdef _WIN32
+// A file held open as a live writer holds it: SQLite's read-write handle sharing everything, or
+// Chromium's lockfile (written, shared for reading only). Closed when it goes.
+struct Held {
+    int fd = -1;
+    Held(const fs::path& file, bool likeLockfile) {
+        _wsopen_s(&fd, file.c_str(), (likeLockfile ? _O_WRONLY | _O_CREAT : _O_RDWR) | _O_BINARY, likeLockfile ? _SH_DENYWR : _SH_DENYNO,
+                  _S_IREAD | _S_IWRITE);
+    }
+    ~Held() {
+        if (fd >= 0) _close(fd);
+    }
+};
+#endif
 
 int SkippedCount(const json::Value& summary, const std::string& kind) {
     const json::Value* skipped = summary.Find("skipped");
@@ -166,12 +188,16 @@ TEST(ArcHistoryImport_whatIsntAHistoryDatabaseReadsAsNone) {
     CHECK(!ReadChromiumHistory(webData));
     sqlite::MemoryPages text(std::string_view("not a database"));
     CHECK(!ReadChromiumHistory(text));
-    // Cut short anywhere: none, never a crash or rows from nowhere.
+    // Cut short anywhere: none, or (when what's cut is no page of urls) all of it, never part.
     const std::string bytes = Read(DefaultHistory());
-    for (size_t size : {size_t{100}, size_t{1024}, size_t{5000}, bytes.size() / 2, bytes.size() - 1}) {
+    for (size_t size : {size_t{100}, size_t{1024}, size_t{5000}}) {
+        sqlite::MemoryPages cut(std::string_view(bytes).substr(0, size));
+        CHECK(!ReadChromiumHistory(cut));
+    }
+    for (size_t size : {bytes.size() / 2, bytes.size() - 1024, bytes.size() - 1}) {
         sqlite::MemoryPages cut(std::string_view(bytes).substr(0, size));
         auto read = ReadChromiumHistory(cut);
-        CHECK(!read || read->entries.size() <= 86);
+        CHECK(!read || read->entries.size() == 86);
     }
     // Garbage after the schema page.
     std::string scrambled = bytes;
@@ -232,17 +258,18 @@ TEST(ArcHistoryImport_readsArcsFileOnlyWhenArcCantBeChangingIt) {
     auto missing = ReadArcHistory(arc, "Profile 9", kMaxArcFileBytes);
     CHECK(!missing.read && missing.problem.empty() && !missing.tooLarge && !missing.unreadable);
 
-    // Arc is running: Chromium's lockfile is in User Data.
+    // A lockfile nobody holds (Arc ended in a crash or a power cut, or has shut down for good)
+    // is nothing.
     Write(arc / "User Data" / "lockfile", "");
-    auto running = ReadArcHistory(arc, "Default", kMaxArcFileBytes);
-    CHECK(!running.read && running.problem == "Arc is running: quit Arc and import again");
+    CHECK(ReadArcHistory(arc, "Default", kMaxArcFileBytes).read);
     fs::remove(arc / "User Data" / "lockfile");
 
-    // A hot rollback journal: a write half done. A finished (empty or zeroed) one is nothing.
+    // A hot rollback journal with no writer: a write left half done. A finished (empty or
+    // zeroed) one is nothing.
     const fs::path journal = history.string() + "-journal";
     Write(journal, std::string("\xD9\xD5\x05\xF9\x20\xA1\x63\xD7", 8) + std::string(504, '\0'));
     auto writing = ReadArcHistory(arc, "Default", kMaxArcFileBytes);
-    CHECK(!writing.read && writing.problem == "Arc is writing it: quit Arc and import again");
+    CHECK(!writing.read && writing.problem == "Arc didn't finish its last write: open and quit Arc once, then import again");
     Write(journal, std::string(512, '\0'));
     CHECK(ReadArcHistory(arc, "Default", kMaxArcFileBytes).read);
     Write(journal, "");
@@ -255,12 +282,20 @@ TEST(ArcHistoryImport_readsArcsFileOnlyWhenArcCantBeChangingIt) {
     const fs::path wal = history.string() + "-wal";
     Write(wal, std::string(4096 + 32, '\x01'));
     auto logged = ReadArcHistory(arc, "Default", kMaxArcFileBytes);
-    CHECK(!logged.read && logged.problem.find("History-wal") != std::string::npos);
+    CHECK(!logged.read && logged.problem == "Arc didn't finish its last write: open and quit Arc once, then import again");
     // An empty one (checkpointed as the last connection closed): the file is all of it.
     Write(wal, "");
     auto checkpointed = ReadArcHistory(arc, "Default", kMaxArcFileBytes);
     CHECK(checkpointed.read && checkpointed.read->entries.size() == 86);
     fs::remove(wal);
+    CHECK(ReadArcHistory(arc, "Default", kMaxArcFileBytes).read);
+
+    // Changed while it was read (Arc started and wrote): left out, whatever came out.
+    HistoryReadOptions racing;
+    racing.afterRead = [&] { std::ofstream(history, std::ios::binary | std::ios::app) << std::string(1024, '\0'); };
+    auto changed = ReadArcHistory(arc, "Default", kMaxArcFileBytes, racing);
+    CHECK(!changed.read && changed.problem == "Arc changed it while Kite read it: quit Arc and import again");
+    fs::resize_file(history, fs::file_size(history) - 1024);
     CHECK(ReadArcHistory(arc, "Default", kMaxArcFileBytes).read);
 
     // Past the cap, and not a database.
@@ -269,6 +304,50 @@ TEST(ArcHistoryImport_readsArcsFileOnlyWhenArcCantBeChangingIt) {
     Write(history, "not a database at all, but longer than an SQLite header is, which is one hundred bytes long......");
     auto broken = ReadArcHistory(arc, "Default", kMaxArcFileBytes);
     CHECK(!broken.read && broken.unreadable && broken.problem.empty());
+}
+
+#ifdef _WIN32
+TEST(ArcHistoryImport_aLiveWriterIsRefusedAndAStaleLockfileIsNot) {
+    // What "Arc is running" rests on: a probe that opens the file for reading while denying
+    // writers, which Windows refuses while a writer has it open. Arc itself is never launched.
+    TempDir dir;
+    const fs::path arc = CopyArc(dir);
+    const fs::path history = ArcHistoryFile(arc, "Default");
+    const std::string writing = "Arc is writing it: quit Arc and import again";
+    {
+        Held sqlite(history, false);  // History open for writing, as Chromium's HistoryBackend keeps it
+        CHECK(sqlite.fd >= 0 && HasLiveWriter(history));
+        auto read = ReadArcHistory(arc, "Default", kMaxArcFileBytes);
+        CHECK(!read.read && read.problem == writing);
+        // Web Data the same way: its own database is free, but Arc is running (the lockfile).
+    }
+    CHECK(!HasLiveWriter(history) && ReadArcHistory(arc, "Default", kMaxArcFileBytes).read);
+    {
+        Held lock(arc / "User Data" / "lockfile", true);  // Chromium's ProcessSingleton lockfile, held
+        CHECK(lock.fd >= 0);
+        auto read = ReadArcHistory(arc, "Default", kMaxArcFileBytes);
+        CHECK(!read.read && read.problem == writing);
+        auto plan = ReadAuto(arc);
+        CHECK(std::holds_alternative<Plan>(plan) && std::get<Plan>(plan).siteSearches.empty() &&
+              std::find(std::get<Plan>(plan).unreadable.begin(), std::get<Plan>(plan).unreadable.end(), FileProblem{"Web Data", writing}) !=
+                  std::get<Plan>(plan).unreadable.end());
+    }
+    // Let go (and still there): stale, so nothing.
+    CHECK(fs::exists(arc / "User Data" / "lockfile") && ReadArcHistory(arc, "Default", kMaxArcFileBytes).read);
+    CHECK(!HasLiveWriter(arc / "User Data" / "no such file"));
+}
+#endif
+
+TEST(ArcHistoryImport_aSchemaRowPastTheCapIsLeftUnread) {
+    // A CREATE statement past kMaxSchemaRecordBytes (a 70 KB DEFAULT) is skipped without
+    // reading its overflow pages, and the urls table after it still reads.
+    sqlite::FilePages pages(fs::path(KITE_TEST_FIXTURES_DIR) / "history-big-schema.sqlite");
+    auto read = ReadChromiumHistory(pages);
+    CHECK(read && read->entries.size() == 1);
+    sqlite::FilePages again(fs::path(KITE_TEST_FIXTURES_DIR) / "history-big-schema.sqlite");
+    auto pad = sqlite::ScanTable(
+        again, "pad", [](const std::vector<std::string>&) { return true; }, [](std::vector<sqlite::SqlValue>&) { return true; });
+    CHECK(!pad);
 }
 
 TEST(ArcImportController_readsEachProfilesHistoryAndCountsItInTheConfirmation) {
@@ -297,17 +376,17 @@ TEST(ArcImportController_readsEachProfilesHistoryAndCountsItInTheConfirmation) {
 TEST(ArcImportController_aProfileWhoseHistoryWontReadIsNamed) {
     TempDir dir;
     const fs::path arc = CopyArc(dir);
-    Write(arc / "User Data" / "lockfile", "");
+    Write(ArcHistoryFile(arc, "Default").string() + "-journal", std::string("\xD9\xD5\x05\xF9\x20\xA1\x63\xD7", 8) + std::string(504, '\0'));
     auto plan = ReadAuto(arc);
     CHECK(std::holds_alternative<Plan>(plan));
     if (!std::holds_alternative<Plan>(plan)) return;
     const Plan& p = std::get<Plan>(plan);
-    CHECK(p.histories.empty());
-    CHECK(std::find(p.unreadable.begin(), p.unreadable.end(), FileProblem{"Default/History", "Arc is running: quit Arc and import again"}) !=
-          p.unreadable.end());
+    CHECK(p.histories.size() == 1 && p.histories.contains("Profile 1"));
+    const std::string unfinished = "Arc didn't finish its last write: open and quit Arc once, then import again";
+    CHECK(std::find(p.unreadable.begin(), p.unreadable.end(), FileProblem{"Default/History", unfinished}) != p.unreadable.end());
     BrowserState state;
     auto lines = ConfirmLines(p, state, false);
-    CHECK(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.find("Default/History (Arc is running") != std::string::npos; }));
+    CHECK(std::any_of(lines.begin(), lines.end(), [&](const std::string& l) { return l.find("Default/History (" + unfinished + ")") != std::string::npos; }));
 }
 
 TEST(ArcImportController_historyGoesToTheKiteProfileItsSpacesWentTo) {
@@ -318,9 +397,11 @@ TEST(ArcImportController_historyGoesToTheKiteProfileItsSpacesWentTo) {
     const Plan& p = std::get<Plan>(plan);
 
     // A page Kite already has, visited later in Kite: it keeps Kite's visit and the higher count.
+    // One Kite has with no title (visited later still) takes Arc's.
     {
         History mine;
         mine.RecordVisit("https://docs.kite.example/start", "Mine", History::ChromiumDate(At(900)));
+        mine.RecordVisit("https://news.example.test/", "", History::ChromiumDate(At(950)));
         CHECK(HistoryFile(dir.path / "history.json").Save(mine).empty());
     }
     BrowserState state;
@@ -331,12 +412,13 @@ TEST(ArcImportController_historyGoesToTheKiteProfileItsSpacesWentTo) {
     {
         HistoryStores stores(dir.path);
         stores.Start();
-        MergeHistories(imported, stores, std::chrono::seconds(10));
+        CHECK(MergeHistories(imported, stores, std::chrono::seconds(10)));
         stores.SaveNow();
         CHECK(stores.Flush(DeadlineAfter(std::chrono::seconds(10))).empty());
     }
-    // 86 + 2 merged; the docs page was in Default's history already (Profile 1's is new there).
-    CHECK(ImportedCount(imported, "historyPages") == 88 && ImportedCount(imported, "historyPagesNew") == 87);
+    // 86 + 2 merged; the docs and news pages were in Default's history already (Profile 1's docs
+    // page is new there).
+    CHECK(ImportedCount(imported, "historyPages") == 88 && ImportedCount(imported, "historyPagesNew") == 86);
     const json::Value summary = Summary(imported);
     CHECK(SkippedCount(summary, "historyHidden") == 1 && SkippedCount(summary, "historyNeverVisited") == 1 &&
           SkippedCount(summary, "historyNotWebPages") == 2 && SkippedCount(summary, "historyProfilesLeftOut") == -1 &&
@@ -345,9 +427,11 @@ TEST(ArcImportController_historyGoesToTheKiteProfileItsSpacesWentTo) {
     auto loaded = HistoryFile(dir.path / "history.json").Load(HistoryFile::Unreadable::Leave);
     CHECK(std::holds_alternative<History>(loaded));
     if (auto* history = std::get_if<History>(&loaded)) {
-        CHECK(history->Count() == 86);
+        CHECK(history->Count() == 86);  // 84 new, 2 Kite had
         auto docs = history->Find("https://docs.kite.example/start");
-        CHECK(docs && docs->lastVisit == History::ChromiumDate(At(900)) && docs->visitCount == 3);
+        CHECK(docs && docs->lastVisit == History::ChromiumDate(At(900)) && docs->visitCount == 3 && docs->title == "Mine");
+        auto news = history->Find("https://news.example.test/");
+        CHECK(news && news->title == "News" && news->lastVisit == History::ChromiumDate(At(950)));
     }
     // Profile 1's pages are in the Kite profile made for it.
     std::string made;
@@ -363,7 +447,7 @@ TEST(ArcImportController_historyGoesToTheKiteProfileItsSpacesWentTo) {
     {
         HistoryStores stores(dir.path);
         stores.Start();
-        MergeHistories(again, stores, std::chrono::seconds(10));
+        CHECK(MergeHistories(again, stores, std::chrono::seconds(10)));
         stores.SaveNow();
         CHECK(stores.Flush(DeadlineAfter(std::chrono::seconds(10))).empty());
     }
@@ -388,7 +472,7 @@ TEST(ArcImportController_historyLeftOutWithItsProfileAndPrunedPastTheCap) {
     CHECK(imported.histories.size() == 1);
     HistoryStores stores(dir.path);
     stores.Start();
-    MergeHistories(imported, stores, std::chrono::seconds(10));
+    CHECK(MergeHistories(imported, stores, std::chrono::seconds(10)));
     stores.SaveNow();
     CHECK(stores.Flush(DeadlineAfter(std::chrono::seconds(10))).empty());
     const json::Value summary = Summary(imported);
@@ -411,7 +495,7 @@ TEST(ArcImportController_kitesOwnUnreadableHistoryIsMovedAsideFirst) {
     {
         HistoryStores stores(dir.path);
         stores.Start();
-        MergeHistories(imported, stores, std::chrono::seconds(10));
+        CHECK(MergeHistories(imported, stores, std::chrono::seconds(10)));
         stores.SaveNow();
         CHECK(stores.Flush(DeadlineAfter(std::chrono::seconds(10))).empty());
     }

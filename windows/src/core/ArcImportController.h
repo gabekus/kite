@@ -57,7 +57,8 @@ struct Sidebar {
 inline constexpr size_t kMaxArcFileBytes = size_t{1} << 30;
 
 // How Arc's files are read: imported tabs' time, the size cap (tests make it small), and a flag
-// the app sets to stop a read whose window is closing (checked between files).
+// the app sets to stop a read whose window is closing (checked between files, and before each
+// leaf page of a History).
 struct ReadOptions {
     Timestamp now = Now();
     size_t maxFileBytes = kMaxArcFileBytes;
@@ -75,7 +76,11 @@ struct LoadError {
     std::string message;
     std::string detail;
     bool tooLarge = false;  // the sidebar is past ReadOptions::maxFileBytes
+    bool internal = false;  // the read itself failed (out of memory, say): no folder would help
 };
+// An exception out of a read (ReadAuto, ReadPicked) as a LoadError: callers on a worker catch
+// everything, so a crafted file can never end the process.
+LoadError ReadFailed(const char* what);
 
 // Arc's sidebar from `folder`: StorableSidebar.json, read again a moment later if it was cut
 // short (Arc writing it), then Arc's dated backups newest first. Failing that, why the current
@@ -138,9 +143,10 @@ struct Imported {
     json::Array skipped, notes;
     std::vector<KeyBindingOverride> keyBindings;  // for keybindings.json
     std::optional<LinkRouting> routes;            // for LinkRouting.json, to spaces Kite has
-    // For MergeHistories: each Arc profile's pages with the Kite profile folder they go to.
+    // For MergeHistories: each Arc profile's pages with the Kite profile folder they go to (two
+    // Arc profiles can go to one).
     struct PendingHistory {
-        std::string arcProfile, kiteProfile;
+        std::string kiteProfile;
         std::vector<HistoryEntry> entries;
     };
     std::vector<PendingHistory> histories;
@@ -155,11 +161,12 @@ void WriteProfileFiles(Imported& imported, const std::filesystem::path& profileD
 // Then (in any order after Import) each Arc profile's history into its Kite profile's store, as
 // the Mac's perform does (History::Merge: a page already there keeps the later visit and the
 // higher count, so importing again doubles nothing). Counts what was new, and what Kite's
-// 20,000-page cap then dropped, into the summary; the stores save at once. `waitForLoads`: how
-// long to wait for the stores' files to be read first, so the counts are against what they hold
-// (a store merges correctly either way: an import before its file is read is replayed over it).
-// The stores must have been started (HistoryStores::Start).
-void MergeHistories(Imported& imported, HistoryStores& stores,
+// 20,000-page cap then dropped, into the summary; the stores save at once. The stores must have
+// been started (HistoryStores::Start). `waitForLoads`: how long to wait for their files to be
+// read first, so the counts are against what they hold; false, and nothing merged, when they
+// weren't read in that time. Zero (the app's) doesn't wait: a store whose file isn't read yet
+// queues the pages and merges them over it once it is (new pages aren't counted then).
+bool MergeHistories(Imported& imported, HistoryStores& stores,
                     std::chrono::milliseconds waitForLoads = std::chrono::milliseconds::zero());
 // Counts per kind of what came over, what was skipped and why, and the notes. Never Arc's
 // titles, addresses or names.

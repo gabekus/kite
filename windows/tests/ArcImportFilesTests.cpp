@@ -661,6 +661,27 @@ TEST(SQLiteReader_refusesOverflowLoopsAndSharedChains) {
     CHECK(!ReadT(Database(kT, "t", {TablePage(false, {{200, cellTo(77)}})})));
 }
 
+TEST(ArcHistoryImport_aNumberTitleReadsAsSQLiteWritesIt) {
+    // A title stored as a REAL or an INTEGER (a column without affinity, as a crafted file can
+    // have) is the text sqlite3_column_text gives the Mac: "%!.15g", "1.5", "3.0", "42".
+    const std::string sql = "CREATE TABLE urls(id INTEGER PRIMARY KEY, url, title, visit_count, last_visit_time, hidden)";
+    const double visited = 13.4e15;  // Chromium microseconds, as a REAL (read as the integer it is)
+    auto row = [&](int id, const std::string& url, std::variant<std::string, double, int> title) {
+        return LeafCell(id, Record({id, url, title, 1, visited - id * 1000, 0}));
+    };
+    const std::string file = Database(sql, "urls",
+                                      {TablePage(false, {{100, row(1, "https://a.example/", 1.5)},
+                                                         {200, row(2, "https://b.example/", 3.0)},
+                                                         {300, row(3, "https://c.example/", 42)},
+                                                         {400, row(4, "https://d.example/", std::string("Text"))}})});
+    sqlite::MemoryPages pages(file);
+    auto read = ReadChromiumHistory(pages);
+    CHECK(read && read->entries.size() == 4);
+    if (!read || read->entries.size() != 4) return;
+    CHECK(read->entries[0].title == "1.5" && read->entries[1].title == "3.0" && read->entries[2].title == "42" && read->entries[3].title == "Text");
+    CHECK(read->entries[0].lastVisit == History::ChromiumDate(static_cast<int64_t>(visited - 1000)));
+}
+
 TEST(SQLiteReader_aHotJournalIsSeen) {
     CHECK(sqlite::IsHotJournal(std::string("\xD9\xD5\x05\xF9\x20\xA1\x63\xD7", 8) + std::string(504, '\0')));
     CHECK(!sqlite::IsHotJournal(""));
@@ -870,7 +891,7 @@ TEST(ArcImportController_aHotWebDataJournalLeavesSiteSearchOut) {
     if (!std::holds_alternative<Plan>(read)) return;
     const Plan& plan = std::get<Plan>(read);
     CHECK(plan.siteSearches.empty() && plan.unreadable.size() == 1 && plan.unreadable[0].file == "Web Data" &&
-          plan.unreadable[0].reason.starts_with("Arc is writing it"));
+          plan.unreadable[0].reason.starts_with("Arc didn't finish its last write"));
     // Only its first 8 bytes are read: a hot journal far past any read cap is still hot.
     fs::resize_file(dir.path / "Arc" / "User Data" / "Default" / "Web Data-journal", uintmax_t{70} << 20);
     read = ReadAuto(dir.path / "Arc");

@@ -9,9 +9,10 @@
 //
 // The bytes come from a PageSource: the whole file in memory (ReadTable), or the file on disk a
 // page at a time (FilePages, for ScanTable), so a History of hundreds of MB is never read whole.
-// Each page is read at most once in a read, and the records together never exceed the file, so
-// a crafted file costs no more than its own size; a scan holds one page per b-tree level and one
-// record at a time, and leaves out records over its cap without reading them.
+// Each page is read at most once in a read (the schema's tree and the table's together), and the
+// records together never exceed the file, so a crafted file costs no more than its own size; a
+// scan holds one page per b-tree level and one record at a time, and leaves out records over its
+// cap (and schema rows over kMaxSchemaRecordBytes) without reading them.
 //
 // Not handled, since Chromium's databases don't need them: WITHOUT ROWID tables, write-ahead log
 // frames and UTF-16 text. Chromium keeps a rollback journal, which this never reads: while a
@@ -47,6 +48,11 @@ struct Table {
     // The column's index, by name ignoring ASCII case, as SQL does.
     std::optional<size_t> Column(std::string_view name) const;
 };
+// The same for a list of column names (ScanTable's).
+std::optional<size_t> ColumnIndex(const std::vector<std::string>& columns, std::string_view name);
+
+// The longest schema row (a CREATE statement) read; a longer one is left unread.
+inline constexpr size_t kMaxSchemaRecordBytes = size_t{64} << 10;
 
 // Where a database's bytes come from.
 class PageSource {
@@ -94,7 +100,8 @@ struct ScanOptions {
     // Rows whose record is longer than this are left out (counted in Scan::oversized) without
     // reading their overflow pages.
     size_t maxRecordBytes = std::numeric_limits<size_t>::max();
-    // Checked before each leaf page: set, the scan stops (Scan::stopped).
+    // Checked before each leaf page (the schema's and the table's): set, the scan stops
+    // (Scan::stopped; nullopt while the schema is still being read).
     const std::atomic<bool>* cancel = nullptr;
 };
 struct Scan {
