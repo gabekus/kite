@@ -52,6 +52,61 @@ public enum ClaudeCodeSessions {
         home.appendingPathComponent(".claude/projects", isDirectory: true)
     }
 
+    /// The home folder the bar reads Claude Code's and the Claude app's sessions from. A test
+    /// profile (`KITE_SUPPORT_PATH` set) never reads the user's own: it reads `KITE_TEST_CLAUDE_HOME`
+    /// (a fixture folder holding `.claude/projects`), or else the empty profile folder.
+    public static func home(environment: [String: String], userHome: URL) -> URL {
+        guard let support = environment["KITE_SUPPORT_PATH"], !support.isEmpty else { return userHome }
+        if let fixture = environment["KITE_TEST_CLAUDE_HOME"], !fixture.isEmpty {
+            return URL(fileURLWithPath: fixture, isDirectory: true)
+        }
+        return URL(fileURLWithPath: support, isDirectory: true)
+    }
+
+    /// The environment for a `claude` Kite starts. On a test profile it gets `home` (the fixture,
+    /// or the empty profile folder) as its HOME and config folder, so it never reads or writes the
+    /// user's own `~/.claude`.
+    public static func processEnvironment(_ base: [String: String], environment: [String: String], home: URL) -> [String: String] {
+        guard let support = environment["KITE_SUPPORT_PATH"], !support.isEmpty else { return base }
+        var result = base
+        result["HOME"] = home.path
+        result["CLAUDE_CONFIG_DIR"] = home.appendingPathComponent(".claude", isDirectory: true).path
+        return result
+    }
+
+    /// What the bar watches for changes while it's open: Claude Code's transcripts, and the Claude
+    /// app's session files (their titles).
+    public static func watchedDirectories(home: URL) -> [URL] {
+        [projectsDirectory(home: home), ClaudeDesktopSessions.directory(home: home)]
+    }
+
+    /// Listings that follow file changes start at most this often (the old poll's rate); the last
+    /// change in a burst still gets one.
+    public static let minimumListingInterval: TimeInterval = 2
+
+    /// How long to wait before listing again after a change, given when the last listing started.
+    public static func listingDelay(lastStarted: Date?, now: Date = Date()) -> TimeInterval {
+        guard let lastStarted else { return 0 }
+        return max(0, minimumListingInterval - now.timeIntervalSince(lastStarted))
+    }
+
+    /// Whether a change at `path` (as FSEvents reports it, symlinks resolved) can change the bar: a
+    /// session's transcript (`<projects>/<folder>/<uuid>.jsonl`) outside `excluding` (Kite's own ⌘J
+    /// tasks' folders), or one of the Claude app's session files (their titles). Subagents' files,
+    /// tool output and other side files don't count.
+    public static func isListingChange(_ path: String, projects: String, desktop: String, excluding: [String]) -> Bool {
+        func under(_ folder: String) -> String? {
+            let folder = folder.hasSuffix("/") ? folder : folder + "/"
+            return path.hasPrefix(folder) ? String(path.dropFirst(folder.count)) : nil
+        }
+        if under(desktop) != nil { return path.hasSuffix(".json") }
+        guard let rest = under(projects) else { return false }
+        let parts = rest.split(separator: "/", omittingEmptySubsequences: true)
+        guard parts.count == 2, parts[1].hasSuffix(".jsonl"), isSessionID(String(parts[1].dropLast(6))) else { return false }
+        let key = String(parts[0])
+        return !excluding.map(ClaudeCodeFolders.transcriptKey).contains { key == $0 || key.hasPrefix($0 + "-") }
+    }
+
     /// `8c0f…-…`: Claude Code names transcripts by their session's UUID. Subagents' and other
     /// side files (`agent-…jsonl`) aren't sessions.
     public static func isSessionID(_ text: String) -> Bool {

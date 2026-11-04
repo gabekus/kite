@@ -29,12 +29,19 @@ final class FavoritePreviewController {
     private var showWork: DispatchWorkItem?
     private var leaveWork: DispatchWorkItem?
     private var resignObserver: NSObjectProtocol?
-    private let fetcher = FavoritePreviewFetcher()
+    private var activeObserver: NSObjectProtocol?
+    private var favorites: () -> [BrowserTab] = { [] }
+    /// Shared by every window, so two windows don't read the same mail twice.
+    private let fetcher = FavoritePreviewFetcher.shared
 
     init(host: Host) {
         self.host = host
         model.open = { [weak self] url in self?.openFromCard(url) }
         model.signIn = { [weak self] in self?.signIn() }
+    }
+
+    isolated deinit {
+        for observer in [resignObserver, activeObserver].compactMap({ $0 }) { NotificationCenter.default.removeObserver(observer) }
     }
 
     /// The pointer moved onto favorite `tab` (anchored at its tile), or off it (nil).
@@ -76,9 +83,6 @@ final class FavoritePreviewController {
         static let fade: Double = 0.08
         /// A preview's data is fetched again when it's older than this.
         static let staleAfter: TimeInterval = 50
-        /// Gmail favorites' mail is read this long after the window opens, then every minute.
-        static let firstPrefetch: Double = 3
-        static let prefetchInterval: TimeInterval = 60
     }
 
     private func show(_ tab: BrowserTab, kind: FavoritePreviews.Kind) {
@@ -106,23 +110,29 @@ final class FavoritePreviewController {
         card.show()
     }
 
-    private var prefetchTimer: Timer?
-
     /// Arc keeps its previews fetched (`PreviewsDataClient.setPeriodicUpdatesEnabled`, a refresh
-    /// timer), so its Gmail card opened with the mail already in it. Kite reads each Gmail favorite's
-    /// mail as the window opens and every minute after, so the card doesn't wait on the network.
+    /// timer), so its Gmail card opened with the mail already in it. Kite reads Gmail favorites' mail
+    /// only when a card may be wanted soon rather than every minute in the background: when Kite comes
+    /// to the front, and when the pointer comes onto the sidebar and then the favorites tray
+    /// (`prefetch`), well ahead of the card's 0.38s hover delay. Each reads only mail older than
+    /// `staleAfter`, and the hidden page that reads it closes once it's idle
+    /// (`FavoritePreviews.readerIdleTimeout`).
     func startPrefetching(_ favorites: @escaping () -> [BrowserTab]) {
-        guard prefetchTimer == nil else { return }
-        let prefetch = { [weak self] in
-            guard let self, FavoritePreviews.isEnabled() else { return }
-            for tab in favorites() {
-                guard let kind = FavoritePreviews.kind(for: tab.pinnedURL ?? tab.url), case .gmail = kind else { continue }
-                self.refresh(kind, profile: self.host.profile(tab.id), tab: tab.id)
-            }
+        guard activeObserver == nil else { return }
+        self.favorites = favorites
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.prefetch() }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Timing.firstPrefetch) { prefetch() }
-        prefetchTimer = Timer.scheduledTimer(withTimeInterval: Timing.prefetchInterval, repeats: true) { _ in
-            MainActor.assumeIsolated { prefetch() }
+    }
+
+    /// Reads each Gmail favorite's mail unless it was read in the last `staleAfter`.
+    func prefetch() {
+        guard FavoritePreviews.isEnabled() else { return }
+        for tab in favorites() {
+            guard let kind = FavoritePreviews.kind(for: tab.pinnedURL ?? tab.url), case .gmail = kind else { continue }
+            refresh(kind, profile: host.profile(tab.id), tab: tab.id)
         }
     }
 
@@ -205,13 +215,17 @@ final class FavoritePreviewController {
 /// Fetches and caches each preview's content, by profile.
 @MainActor
 final class FavoritePreviewFetcher {
+    static let shared = FavoritePreviewFetcher()
+
     private struct Entry {
         var content: FavoritePreviews.Content
         var fetched: Date
     }
 
     private var cache: [String: Entry] = [:]
-    private var inFlight: Set<String> = []
+    /// Fetches under way, with everyone waiting on each: a card that opens while the tray's
+    /// prefetch is out gets its answer too.
+    private var inFlight: [String: [(FavoritePreviews.Content) -> Void]] = [:]
     private let eventStore = EKEventStore()
 
     private func key(_ kind: FavoritePreviews.Kind, _ profile: String) -> String {
@@ -220,8 +234,11 @@ final class FavoritePreviewFetcher {
         return "\(profile)|\(kind)"
     }
 
+    /// What a card opens with: the last read unless it's more than a few minutes old.
     func cached(_ kind: FavoritePreviews.Kind, profile: String) -> FavoritePreviews.Content {
-        cache[key(kind, profile)]?.content ?? .loading
+        guard let entry = cache[key(kind, profile)],
+              FavoritePreviews.showsCached(age: Date().timeIntervalSince(entry.fetched)) else { return .loading }
+        return entry.content
     }
 
     func isStale(_ kind: FavoritePreviews.Kind, profile: String) -> Bool {
@@ -238,20 +255,20 @@ final class FavoritePreviewFetcher {
     func fetch(_ kind: FavoritePreviews.Kind, profile: String, engine: @escaping () -> WebEngine?, history: HistoryStore?,
                completion: @escaping (FavoritePreviews.Content) -> Void) {
         let key = key(kind, profile)
+        if inFlight[key] != nil { return inFlight[key, default: []].append(completion) }
+        inFlight[key] = [completion]
         let finish: (FavoritePreviews.Content) -> Void = { [weak self] content in
-            self?.inFlight.remove(key)
-            self?.cache[key] = Entry(content: content, fetched: Date())
-            completion(content)
+            guard let self else { return }
+            self.cache[key] = Entry(content: content, fetched: Date())
+            for waiting in self.inFlight.removeValue(forKey: key) ?? [] { waiting(content) }
         }
         switch kind {
         case .recents(let site):
             let entries = history.map { Array($0.history.entries.values) } ?? []
             finish(.items(FavoritePreviews.recentPages(entries, site: site)))
         case .calendar:
-            guard inFlight.insert(key).inserted else { return }
             finish(calendarContent())
         case .gmail(let account):
-            guard inFlight.insert(key).inserted else { return }
             guard let engine = engine() else { return finish(.signedOut) }
             GmailFeedReader.read(account: account, engine: engine) { messages in
                 finish(messages.map { .items(FavoritePreviews.emails($0)) } ?? .signedOut)
@@ -307,12 +324,21 @@ enum GmailFeedReader {
         """
     }
 
+    /// How often an idle reader page checks whether it has been idle long enough to close
+    /// (`FavoritePreviews.readerIdleTimeout`: 10 minutes with Kite in front, 2 behind). Closing takes
+    /// its renderer with it; the next read opens another.
+    static let idleCheck: TimeInterval = 60
+
     #if canImport(CEFBridge)
-    /// One hidden page per profile, kept for the next read (reads come every minute, see `prefetch`).
+    /// One hidden page per profile, kept for the next read until it's idle.
     private final class Reader {
         let page: ChromiumPage
         var ready = false
         var waiting: [() -> Void] = []
+        /// Reads started and not yet answered.
+        var reading = 0
+        var lastRead = Date()
+        var idleClose: DispatchWorkItem?
         init(page: ChromiumPage) { self.page = page }
     }
 
@@ -320,10 +346,21 @@ enum GmailFeedReader {
 
     static func read(account: Int, engine: WebEngine, completion: @escaping ([VerificationCodes.Message]?) -> Void) {
         guard let reader = reader(for: engine) else { return completion(nil) }
+        let key = ObjectIdentifier(engine)
+        let cold = !reader.ready, started = Date()
+        reader.idleClose?.cancel()
+        reader.reading += 1
         var done = false
         func finish(_ messages: [VerificationCodes.Message]?) {
             guard !done else { return }
             done = true
+            reader.reading -= 1
+            reader.lastRead = Date()
+            if reader.reading == 0 { closeWhenIdle(reader, key: key) }
+            if UIDiagnostics.enabledByEnvironment {
+                let ms = Int(Date().timeIntervalSince(started) * 1000)
+                NSLog("Kite: Gmail preview read in \(ms) ms (\(cold ? "new page" : "open page"))")
+            }
             completion(messages)
         }
         let run = {
@@ -333,6 +370,21 @@ enum GmailFeedReader {
         }
         if reader.ready { run() } else { reader.waiting.append(run) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { finish(nil) }
+    }
+
+    private static func closeWhenIdle(_ reader: Reader, key: ObjectIdentifier) {
+        reader.idleClose?.cancel()
+        let work = DispatchWorkItem { [weak reader] in
+            guard let reader, reader.reading == 0, readers[key] === reader else { return }
+            let timeout = FavoritePreviews.readerIdleTimeout(appActive: NSApp.isActive)
+            guard Date().timeIntervalSince(reader.lastRead) >= timeout else { return closeWhenIdle(reader, key: key) }
+            readers[key] = nil
+            reader.page.onEvent = nil
+            reader.page.close()
+            if UIDiagnostics.enabledByEnvironment { NSLog("Kite: Gmail preview reader closed") }
+        }
+        reader.idleClose = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + idleCheck, execute: work)
     }
 
     private static func reader(for engine: WebEngine) -> Reader? {

@@ -196,4 +196,60 @@ import Testing
         #expect(Array(new.suffix(2)) == ["--session-id", "id1"])
         #expect(new.contains("bypassPermissions"))
     }
+
+    @Test func testProfilesNeverReadTheUsersHome() {
+        let user = URL(fileURLWithPath: "/Users/me", isDirectory: true)
+        #expect(ClaudeCodeSessions.home(environment: [:], userHome: user) == user)
+        // KITE_TEST_CLAUDE_HOME counts only on a test profile.
+        #expect(ClaudeCodeSessions.home(environment: ["KITE_TEST_CLAUDE_HOME": "/tmp/fixture"], userHome: user) == user)
+        #expect(ClaudeCodeSessions.home(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1", "KITE_TEST_CLAUDE_HOME": "/tmp/fixture"],
+                                        userHome: user).path == "/tmp/fixture")
+        #expect(ClaudeCodeSessions.home(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1"], userHome: user).path == "/tmp/k.1")
+    }
+
+    @Test func watchesTranscriptsAndTheAppsSessions() {
+        let home = URL(fileURLWithPath: "/Users/me", isDirectory: true)
+        let paths = ClaudeCodeSessions.watchedDirectories(home: home).map(\.path)
+        #expect(paths == ["/Users/me/.claude/projects", "/Users/me/Library/Application Support/Claude/claude-code-sessions"])
+    }
+
+    @Test func testProfilesRunClaudeInTheFixtureHome() {
+        let home = URL(fileURLWithPath: "/tmp/fixture", isDirectory: true)
+        let base = ["HOME": "/Users/me", "PATH": "/usr/bin"]
+        #expect(ClaudeCodeSessions.processEnvironment(base, environment: [:], home: home) == base)
+        let test = ClaudeCodeSessions.processEnvironment(base, environment: ["KITE_SUPPORT_PATH": "/tmp/k.1"], home: home)
+        #expect(test["HOME"] == "/tmp/fixture")
+        #expect(test["CLAUDE_CONFIG_DIR"] == "/tmp/fixture/.claude")
+        #expect(test["PATH"] == "/usr/bin")
+    }
+
+    @Test func listingsAreAtLeastTwoSecondsApart() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        #expect(ClaudeCodeSessions.listingDelay(lastStarted: nil, now: start) == 0)
+        #expect(ClaudeCodeSessions.listingDelay(lastStarted: start, now: start.addingTimeInterval(0.5)) == 1.5)
+        #expect(ClaudeCodeSessions.listingDelay(lastStarted: start, now: start.addingTimeInterval(2)) == 0)
+        #expect(ClaudeCodeSessions.listingDelay(lastStarted: start, now: start.addingTimeInterval(30)) == 0)
+    }
+
+    @Test func onlySessionTranscriptsOutsideKitesTasksCount() {
+        let projects = "/Users/me/.claude/projects"
+        let desktop = "/Users/me/Library/Application Support/Claude/claude-code-sessions"
+        let kite = ["/Users/me/Library/Application Support/Kite/Claude"]
+        func counts(_ path: String) -> Bool {
+            ClaudeCodeSessions.isListingChange(path, projects: projects, desktop: desktop, excluding: kite)
+        }
+        let id = "8c0f6b7e-1d2a-4b3c-9d4e-5f6a7b8c9d0e"
+        #expect(counts("\(projects)/-Users-me-dev-kite/\(id).jsonl"))
+        // Subagents, tool output, other side files, the folder itself.
+        #expect(!counts("\(projects)/-Users-me-dev-kite/agent-1234.jsonl"))
+        #expect(!counts("\(projects)/-Users-me-dev-kite/\(id)/subagents/\(id).jsonl"))
+        #expect(!counts("\(projects)/-Users-me-dev-kite/\(id).json"))
+        #expect(!counts("\(projects)/-Users-me-dev-kite"))
+        // Kite's own ⌘J tasks, in its support folder and below.
+        #expect(!counts("\(projects)/-Users-me-Library-Application-Support-Kite-Claude/\(id).jsonl"))
+        #expect(!counts("\(projects)/-Users-me-Library-Application-Support-Kite-Claude-tasks-1/\(id).jsonl"))
+        // The Claude app's session files (titles), and nothing outside either folder.
+        #expect(counts("\(desktop)/account/org/local_1.json"))
+        #expect(!counts("/Users/me/.claude/todos/\(id).json"))
+    }
 }

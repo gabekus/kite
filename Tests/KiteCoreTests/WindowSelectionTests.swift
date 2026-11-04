@@ -58,4 +58,19 @@ import Testing
         let adopted = window.adoptingContent(of: changed)
         #expect(adopted.selectedSpace.id == state.spaces[0].id)
     }
+
+    @Test func focusIsTheSelectedSpaceAndTab() {
+        var state = twoSpaces()
+        state.selectedSpaceID = state.spaces[0].id
+        let before = state.focus
+        #expect(before.space == state.spaces[0].id)
+        #expect(before.tab == state.spaces[0].selectedTabID)
+        #expect(before.tab != nil)
+        // A change elsewhere (another space's selection, a title) leaves it alone.
+        state.spaces[1].selectedTabID = nil
+        state.spaces[0].tabs[0].title = "Renamed"
+        #expect(state.focus == before)
+        state.selectedSpaceID = state.spaces[1].id
+        #expect(state.focus == BrowserState.Focus(space: state.spaces[1].id, tab: nil))
+    }
 }
