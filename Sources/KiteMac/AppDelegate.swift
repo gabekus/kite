@@ -67,6 +67,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SoftwareUpdater.shared.start()
         // The login shell's PATH and claude, asked once in the background, so the first claude doesn't wait.
         ClaudeConnect.loginShell.warm()
+        // A typed claude:// (zoommtg://, …) link is a URL when another app opens it, not a search.
+        URLInput.appOpens = { url in
+            guard let app = NSWorkspace.shared.urlForApplication(toOpen: url) else { return false }
+            return Bundle(url: app)?.bundleIdentifier != Bundle.main.bundleIdentifier
+        }
         // Before the store writes session.json, which tells a new profile from an existing install.
         let showsOnboarding = OnboardingWindow.shouldShowAtLaunch()
         store = BrowserStore(session: SessionStore(fileURL: Self.sessionURL))
