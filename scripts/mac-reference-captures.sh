@@ -27,7 +27,8 @@
 #     "holds": "what the capture should show",
 #     "session": {"ref": …, "path": …} | {"inline": {…session.json…}},           default: the top-level one
 #     "env": {"KITE_TEST_CONTEXT_MENU": "1"},       only the hooks in HOOKS below
-#     "profile_files": {"test-context-menu-pick": "Rename Space…"},              test-* files in the profile
+#     "profile_files": {"test-context-menu-pick": "Rename Space…"},              test-* files in the profile, and
+#                                                   history.json (checked like a session, 1 MB at most)
 #     "steps": [{"ui": "input", "args": {"from": [86,795], "to": [150,795], "steps": 10, "hold": 10}},
 #               {"wait": 1}],                       kite ui ACTION ARGS (see STEPS below), or a pause
 #     "settle": 1,                                  seconds between the last step and the capture (default 1;
@@ -48,7 +49,9 @@
 # - Sessions: URLs must be public http(s) (or about:), no path-like values, profileSettings stripped, and every
 #   profile's WebKit dataStoreID replaced with a fresh one whose store is deleted afterwards.
 # - STEPS: clicks and drag starts must land on a visible view in SAFE_TARGETS (from the tree, just before the step);
-#   right- and ⌃-clicks also need KITE_TEST_CONTEXT_MENU. No keys, text or modifier flags.
+#   right- and ⌃-clicks also need a non-empty KITE_TEST_CONTEXT_MENU. No keys or modifier flags. Text only as
+#   [A-Za-z0-9 ._-]{1,40}, straight after a click on a COMMAND_BAR_OPENERS view, into a visible CommandBarField
+#   (Kite's own command bar, which acts only on Return, and Return can't be sent).
 # - Every test Kite is quit; the build's bundles are unregistered from Launch Services and deleted (never through a
 #   symlink, never outside the checkout).
 set -euo pipefail
@@ -64,7 +67,10 @@ SAFE_FLOOR=811b5fbaeeee6c0f5187661ecba992f5795e5623
 # link preview's Share button (LinkPreviewCard.swift, popUpAtPointer at the REAL pointer), and the window background
 # and page-top band (isMovableByWindowBackground, PageTopWindowDragger: a window-server drag follows the real
 # pointer).
-SAFE_TARGETS="SpaceCellView"
+SAFE_TARGETS="SpaceCellView NewTabRowCell"
+# The subset whose left click opens Kite's own command bar (NewTabRowCell.tapped: showCommandBar(.newTab)), the
+# only place a text step may type. The sidebar's address field opens it too; add its tree class after checking it.
+COMMAND_BAR_OPENERS="NewTabRowCell"
 
 [[ $# == 2 ]] || { echo "usage: $0 REQUEST.json OUTDIR" >&2; exit 2; }
 REQUEST="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
@@ -180,8 +186,8 @@ except Exception as error:
     fail(f"not JSON ({error})")
 if not isinstance(request, dict) or not isinstance(request.get("states"), list) or not request["states"]:
     fail("needs a non-empty \"states\" list")
-NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-if not NAME.match(str(request.get("id", ""))):
+NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+if not NAME.fullmatch(str(request.get("id", ""))):
     fail("\"id\" must be lower case letters, digits, . _ or -")
 
 # HOOKS: every KITE_TEST_* the Mac sources read (git grep -o 'KITE_TEST_[A-Z0-9_]*' Sources), classified.
@@ -200,7 +206,8 @@ HOOKS = {
     "KITE_TEST_OPEN_URL": "url",               # opens a link as another app would
 }
 # Set by this script for every launch, never by a request.
-OWNED = {"KITE_TEST_BLOCK_VIEWS_WINDOWS", "KITE_TEST_DOWNLOADS_PATH", "KITE_TEST_APPS_DIR", "KITE_TEST_DEFAULTS_PROBE"}
+OWNED = {"KITE_TEST_BLOCK_VIEWS_WINDOWS", "KITE_TEST_DOWNLOADS_PATH", "KITE_TEST_APPS_DIR", "KITE_TEST_DEFAULTS_PROBE",
+         "KITE_TEST_PASTEBOARD"}   # PASTEBOARD: a pasteboard of the profile's own, never the clipboard
 # Refused: they reach outside the profile or stand in for a real service.
 REFUSED = {
     "KITE_TEST_GLOBAL_HOTKEY": "registers a system-wide hotkey",
@@ -209,7 +216,6 @@ REFUSED = {
     "KITE_TEST_CLAUDE_HOME": "points Kite at a Claude home (Gabe's real ~/.claude by default)",
     "KITE_TEST_MESSAGES_DB": "reads a Messages database",
     "KITE_TEST_MEDIA_HOME": "reads a media folder",
-    "KITE_TEST_PASTEBOARD": "reads and writes a pasteboard",
     "KITE_TEST_INSTANT_LINKS_SEARCH_URL": "sends queries to a search endpoint",
     "KITE_TEST_LIVE_FOLDER_URL": "fetches a feed endpoint",
     "KITE_TEST_MAIL_ORIGIN": "fetches a mail feed endpoint",
@@ -233,7 +239,10 @@ def git(*args, lazy=True):
 # --- URLs and sessions ---
 BAD_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home", ".corp", ".intranet", ".arpa", ".test",
                 ".invalid", ".onion")
-LABEL = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
+LABEL = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)")
+# The last label must start with a letter: WebKit parses hosts WHATWG-style, so an all-numeric, octal or hex last
+# label (127.1, 0177.0.0.1, 0x7f.1, 10.1, 192.168.1) makes the host an IPv4 address. xn-- still passes.
+TLD = re.compile(r"[a-z][a-z0-9-]{0,62}(?<!-)")
 def public_url(value):
     """None if value is a public http(s) URL or about:, else why not."""
     try:
@@ -257,8 +266,10 @@ def public_url(value):
     except ValueError:
         pass
     labels = host.split(".")
-    if len(labels) < 2 or host == "localhost" or host.endswith(BAD_SUFFIXES) or not all(LABEL.match(l) for l in labels):
+    if len(labels) < 2 or host == "localhost" or host.endswith(BAD_SUFFIXES) or not all(LABEL.fullmatch(l) for l in labels):
         return "isn't a public host name"
+    if not TLD.fullmatch(labels[-1]):
+        return "ends in a numeric label, so it's read as an IPv4 address"
     return None
 
 URLISH = re.compile(r"^([a-z][a-z0-9+.-]*://|(https?|file|ftp|data|javascript|blob|wss?|chrome|chrome-extension|"
@@ -332,7 +343,7 @@ def session(spec, where):
     ref, path = spec.get("ref"), spec.get("path")
     if not (isinstance(ref, str) and isinstance(path, str)) or ref.startswith("-") or ".." in path or path.startswith("/"):
         fail(f"{where}: session needs a \"ref\" and a relative \"path\"")
-    if not re.match(r"^[A-Za-z0-9._/-]+$", ref):
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", ref):
         fail(f"{where}: bad ref {ref}")
     if git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", lazy=False).returncode != 0 and ref.startswith("origin/"):
         branch = ref[len("origin/"):]
@@ -371,19 +382,28 @@ def point(value, where):
         fail(f"{where}: a point is [x, y]")
     return [value[0], value[1]]
 
-INPUT_KEYS = {"click", "button", "count", "modifiers", "from", "to", "steps", "hold", "scroll", "dx", "dy", "phase", "window"}
-def check_step(action, args, menu_hook, where):
-    """Returns the points that must land on a SAFE_TARGETS view when the step runs."""
+# No "window": the target check reads the front browser window's tree, so input goes there too.
+INPUT_KEYS = {"click", "button", "count", "modifiers", "from", "to", "steps", "hold", "scroll", "dx", "dy", "phase", "text"}
+TEXT = re.compile(r"[A-Za-z0-9 ._-]{1,40}")
+def check_step(action, args, menu_hook, where, previous):
+    """Returns what must be true when the step runs: points on SAFE_TARGETS views, or (text) the command bar open."""
     if action == "trace" and "keys" in args:
         fail(f"{where}: trace keys aren't allowed (keys aren't reviewed for headless safety)")
     if action != "input":
         return []
     extra = set(args) - INPUT_KEYS
     if extra:
-        fail(f"{where}: input {sorted(extra)[0]!r} isn't allowed (keys, text and flags aren't reviewed for headless safety)")
-    kinds = [k for k in ("click", "from", "scroll") if k in args]
+        fail(f"{where}: input {sorted(extra)[0]!r} isn't allowed (keys, flags and window aren't reviewed for headless safety)")
+    kinds = [k for k in ("click", "from", "scroll", "text") if k in args]
     if len(kinds) != 1:
-        fail(f"{where}: an input step is one click, one drag (from/to) or one scroll")
+        fail(f"{where}: an input step is one click, one drag (from/to), one scroll or one text")
+    if "text" in args:
+        if set(args) != {"text"} or not isinstance(args["text"], str) or not TEXT.fullmatch(args["text"]):
+            fail(f"{where}: text is 1–40 of A-Z a-z 0-9 space . _ - (no keys, no Return), on its own")
+        if not (previous and previous[0] == "input" and "click" in previous[1]
+                and previous[1].get("button", "left") == "left" and not previous[1].get("modifiers")):
+            fail(f"{where}: text must come straight after a plain left click on a command-bar opener")
+        return [{"what": "text", "needs": "command bar"}]
     if "click" in args:
         at = point(args["click"], where)
         button = args.get("button", "left")
@@ -394,7 +414,7 @@ def check_step(action, args, menu_hook, where):
         mods = modifier_tokens(args.get("modifiers", ""), where)
         if (button == "right" or mods & CONTROL) and not menu_hook:
             fail(f"{where}: a right- or ⌃-click needs KITE_TEST_CONTEXT_MENU in env (a real menu needs a real screen)")
-        return [{"point": at, "what": f"{button} click"}]
+        return [{"point": at, "what": f"{button} click", "click": True}]
     if "from" in args:
         start = point(args["from"], where)
         point(args.get("to"), where)
@@ -427,7 +447,7 @@ for i, state in enumerate(request["states"]):
     if not isinstance(state, dict):
         fail(f"{where} is an object")
     name = state.get("name", "")
-    if not NAME.match(str(name)) or name in seen or name in ("notes", "logs", "request"):
+    if not NAME.fullmatch(str(name)) or name in seen or name in ("notes", "logs", "request"):
         fail(f"{where}: name must be unique, lower case, [a-z0-9._-]")
     seen.add(name)
     where = f"state {name}"
@@ -445,28 +465,51 @@ for i, state in enumerate(request["states"]):
             fail(f"{where}: env {key} isn't a hook this script allows (see HOOKS)")
         if not isinstance(value, str) or "\n" in value or "\0" in value or len(value) > 200:
             fail(f"{where}: env {key} must be a short one-line string")
+        # Kite turns a hook off for an empty value (PageContextMenuItems.testMode): a right-click would then open a
+        # real menu. Empty and blank values are refused for every hook.
+        if not value.strip():
+            fail(f"{where}: env {key} is empty or blank, which turns the hook off")
         if isinstance(kind, tuple):
             if value not in kind:
                 fail(f"{where}: {key} is one of {', '.join(kind)}")
         elif kind == "flag" and value != "1":
             fail(f"{where}: {key} is 1")
-        elif kind == "number" and not re.match(r"^\d{1,3}(\.\d+)?$", value):
+        elif kind == "number" and not re.fullmatch(r"\d{1,3}(\.\d+)?", value):
             fail(f"{where}: {key} is a number of seconds")
         elif kind == "url" and public_url(value):
             fail(f"{where}: {key} {public_url(value)}")
         elif kind == "name":
-            if not NAME.match(value):
+            if not NAME.fullmatch(value):
                 fail(f"{where}: {key} is a file name inside the profile ([a-z0-9._-])")
             value = "@profile/" + value
         env_lines.append(f"{key}={value}")
-    files = state.get("profile_files") or {}
-    if not isinstance(files, dict) or not all(re.match(r"^test-[a-z0-9-]+$", k) and isinstance(v, str) for k, v in files.items()):
-        fail(f"{where}: profile_files maps test-* names to text")
+    files = dict(state.get("profile_files") or {}) if isinstance(state.get("profile_files") or {}, dict) else None
+    if files is None:
+        fail(f"{where}: profile_files is an object")
+    for k, v in list(files.items()):
+        if k == "history.json":
+            # Browsing history (HistoryStore): checked like a session, so it can only name public pages.
+            if isinstance(v, str):
+                try:
+                    v = json.loads(v)
+                except ValueError:
+                    fail(f"{where}: history.json isn't JSON")
+            text = json.dumps(v, ensure_ascii=False)
+            if len(text.encode("utf-8")) > 1_000_000:
+                fail(f"{where}: history.json is over 1 MB")
+            problems = []
+            check_session(v, "", "history.json", problems)
+            if problems:
+                fail(f"{where}: " + "; ".join(problems[:5]))
+            files[k] = text
+        elif not (re.fullmatch(r"test-[a-z0-9-]+", k) and isinstance(v, str) and len(v) <= 10_000):
+            fail(f"{where}: profile_files maps test-* names (or history.json) to text")
     steps = state.get("steps") or []
     if not isinstance(steps, list):
         fail(f"{where}: steps is a list")
     lines, shown = [], []
-    menu_hook = "KITE_TEST_CONTEXT_MENU" in env
+    previous = None
+    menu_hook = bool(str(env.get("KITE_TEST_CONTEXT_MENU", "")).strip())
     for j, step in enumerate(steps):
         if not isinstance(step, dict):
             fail(f"{where}: steps[{j}] is an object")
@@ -476,13 +519,15 @@ for i, state in enumerate(request["states"]):
                 fail(f"{where}: wait is 0–30 seconds")
             lines.append(f"wait\t{seconds}\t\t")
             shown.append(f"wait {number(seconds)} s")
+            previous = ("wait", {})
             continue
         action, args = step.get("ui"), step.get("args") or {}
         if action not in ("input", "tree", "pointer", "windows", "menu", "key_log", "trace"):
             fail(f"{where}: steps[{j}] is {{\"ui\": ACTION, \"args\": {{…}}}} (not capture) or {{\"wait\": s}}")
         if not isinstance(args, dict) or "action" in args or "save" in args:
             fail(f"{where}: steps[{j}].args is the action's JSON object, without action or save")
-        checks = check_step(action, args, menu_hook, f"{where} steps[{j}]")
+        checks = check_step(action, args, menu_hook, f"{where} steps[{j}]", previous)
+        previous = (action, args)
         encoded = json.dumps(args, ensure_ascii=False, separators=(",", ":"))
         lines.append(f"ui\t{action}\t{encoded}\t{json.dumps(checks, separators=(',', ':')) if checks else ''}")
         shown.append(f"`kite ui {action} '{encoded}'`")
@@ -534,22 +579,32 @@ PY
 TREE_MATCH="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["tree_match"] or "")' "$WORK/plan/request.json")"
 match_json() { python3 -I -c 'import json,sys; print(json.dumps({"match": sys.argv[1]}))' "$1"; }
 
-# on_safe_target CHECKS TREEFILE: prints nothing if every point lands on a visible SAFE_TARGETS view, else why not.
+# on_safe_target CHECKS TREEFILE CLASSES: prints "hit CLASS" when the check's point lands on a visible view of one of
+# CLASSES (or, for a check without a point, when one is visible at all), else why not.
 on_safe_target() {
-    python3 -I - "$1" "$2" "$SAFE_TARGETS" <<'PY'
+    python3 -I - "$1" "$2" "$3" <<'PY'
 import json, re, sys
 checks, tree, safe = json.loads(sys.argv[1]), open(sys.argv[2], encoding="utf-8", errors="replace").read(), sys.argv[3].split()
-LINE = re.compile(r"^\S+ (\S+) \[(-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+)\](.*)$")
+LINE = re.compile(r"\S+ (\S+) \[(-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+)\](.*)")
 frames = []
 for line in tree.splitlines():
-    m = LINE.match(line.strip())
-    if m and m.group(1) in safe and not re.search(r"\b(hidden=true|alpha=0|opacity=0)(\s|$)", m.group(6)):
-        frames.append([float(m.group(i)) for i in range(2, 6)])
+    m = LINE.fullmatch(line.strip())
+    if m and m.group(1) in safe and not re.search(r"\b(hidden=true|alpha=0|opacity=0)(\s|\Z)", m.group(6)):
+        frames.append((m.group(1), [float(m.group(i)) for i in range(2, 6)]))
+hit = None
 for check in checks:
+    if "point" not in check:
+        hit = frames[0][0] if frames else None
+        if not hit:
+            print(f"no visible {' or '.join(safe)} for the {check['what']} step")
+            sys.exit()
+        continue
     x, y = check["point"]
-    if not any(fx <= x < fx + fw and fy <= y < fy + fh for fx, fy, fw, fh in frames):
+    hit = next((c for c, (fx, fy, fw, fh) in frames if fx <= x < fx + fw and fy <= y < fy + fh), None)
+    if not hit:
         print(f"the {check['what']} at {x:g},{y:g} isn't on a visible {' or '.join(safe)}")
-        break
+        sys.exit()
+print(f"hit {hit}")
 PY
 }
 
@@ -595,7 +650,7 @@ while IFS= read -r folder <&3; do
     launch_env=("${SCRUB[@]}" KITE_SUPPORT_PATH="$PROFILE" KITE_DIAGNOSTICS=1 KITE_TEST_BLOCK_VIEWS_WINDOWS=1
                 TYPESAFE_API_KEY=x KITE_WINDOW_SIZE="$WIDTH,$HEIGHT"
                 KITE_TEST_DOWNLOADS_PATH="$PROFILE/Downloads" KITE_TEST_APPS_DIR="$PROFILE/apps"
-                KITE_BROWSER_DATA_PATH="$PROFILE/browsers")
+                KITE_BROWSER_DATA_PATH="$PROFILE/browsers" KITE_TEST_PASTEBOARD="kite-test-$(basename "$PROFILE")")
     while IFS= read -r line; do
         if [[ "$line" == *=@profile/* ]]; then line="${line%%=*}=$PROFILE/${line#*=@profile/}"; fi
         if [[ -n "$line" ]]; then launch_env+=("$line"); fi
@@ -629,18 +684,32 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
 
     step_status=0
     refused=""
+    last_hit=""   # the SAFE_TARGETS class the previous step clicked, for a text step
     : >"$folder/steps.out"
     while IFS=$'\t' read -r kind action args checks <&4; do
         [[ -n "$kind" ]] || continue
-        if [[ "$kind" == wait ]]; then sleep "$action"; continue; fi
-        if [[ -n "$checks" ]]; then
+        if [[ "$kind" == wait ]]; then sleep "$action"; last_hit=""; continue; fi
+        if [[ "$checks" == *'"needs":"command bar"'* ]]; then
+            # Text only straight after a click on a command-bar opener, and only into Kite's own open command bar.
+            if [[ -z "$last_hit" || " $COMMAND_BAR_OPENERS " != *" $last_hit "* ]]; then
+                refused="the text step doesn't follow a click on a command-bar opener (${last_hit:-no safe click})"
+            else
+                tmo 60 "$CLI" ui tree "$(match_json CommandBarField)" >"$folder/targets.txt" 2>&1 || true
+                result="$(on_safe_target "$checks" "$folder/targets.txt" CommandBarField)"
+                if [[ "$result" != "hit "* ]]; then refused="$result"; fi
+            fi
+            last_hit=""
+        elif [[ -n "$checks" ]]; then
             : >"$folder/targets.txt"
             for target in $SAFE_TARGETS; do
                 tmo 60 "$CLI" ui tree "$(match_json "$target")" >>"$folder/targets.txt" 2>&1 || true
             done
-            refused="$(on_safe_target "$checks" "$folder/targets.txt")"
-            if [[ -n "$refused" ]]; then echo "refused: $refused" >>"$folder/steps.out"; break; fi
+            result="$(on_safe_target "$checks" "$folder/targets.txt" "$SAFE_TARGETS")"
+            if [[ "$result" == "hit "* ]]; then last_hit="${result#hit }"; else refused="$result"; fi
+        else
+            last_hit=""
         fi
+        if [[ -n "$refused" ]]; then echo "refused: $refused" >>"$folder/steps.out"; break; fi
         echo "\$ kite ui $action '$args'" >>"$folder/steps.out"
         tmo 60 "$CLI" ui "$action" "$args" >>"$folder/steps.out" 2>&1 || { step_status=$?; echo "(exit $step_status)" >>"$folder/steps.out"; }
     done 4<"$folder/steps"

@@ -112,6 +112,19 @@ jobs:
             done < "$PROFILES"
             rm -f "$PROFILES"
           fi
+      # upload-artifact follows symlinks, so a link in the results could upload a file from anywhere on the Mac.
+      - name: Refuse links in the results
+        if: always()
+        env:
+          WORK: ${{ steps.base.outputs.work }}
+        run: |
+          [[ -n "$WORK" ]] || exit 0
+          links="$(find "$WORK/out" "$WORK/out-logs" -type l 2>/dev/null || true)"
+          if [[ -n "$links" ]]; then
+            echo "::error::links in the results, nothing uploaded: $links"
+            rm -rf "$WORK/out" "$WORK/out-logs"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

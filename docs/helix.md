@@ -94,7 +94,8 @@ PNGs, `NAME.tree.txt` frames and a NOTES.md to `review/<id>-mac` (logs go to the
 
 Each state gets a fresh profile with its `session` (`ref` + `path` from any branch, or `inline`),
 `defaults delete dev.gabek.Kite.dev SidebarWidth`, and `KITE_DIAGNOSTICS=1 KITE_WINDOW_SIZE=W,H`
-plus its `env` (only the hooks the script's `HOOKS` list allows) and `profile_files` (`test-*`). Its
+plus its `env` (only the hooks the script's `HOOKS` list allows) and `profile_files` (`test-*`, and
+`history.json`, checked like a session). Its
 `steps` are `kite ui` actions (`{"ui": ACTION, "args": {…}}`) and pauses (`{"wait": s}`). The capture comes `settle`
 seconds after the last step (default 1), or straight away when `hold` says the steps hold the state
 that long. It's `kite ui capture '{"source":"in-process"}'` at 2×, with the tree's `tree_match`
@@ -107,16 +108,29 @@ its window only, nothing records the screen. What needs a real screen (a real ri
 `screencapture`, focus) isn't taken and is listed in NOTES.md as unverified. The script refuses a
 request that could reach past that, before anything runs:
 - a `base` older than its `SAFE_FLOOR` (test-safe mode) or not on one of origin's branches;
-- a hook outside `HOOKS` (Gabe's Claude home, Messages, media, pasteboard, imports, a global hotkey
-  and the stand-ins for real services are refused; test paths always point inside the profile);
-- a session URL that isn't public http(s) or `about:`, or a path-like value (`profileSettings` is
-  dropped, and every profile gets a fresh WebKit store that's deleted afterwards);
-- keys, text or modifier flags; a click or drag that doesn't start on a visible view in
-  `SAFE_TARGETS` (checked against the tree just before the step); a right- or ⌃-click without
-  `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it.
+- a hook outside `HOOKS`, or an empty or blank hook value (Kite turns an empty hook off). Gabe's
+  Claude home, Messages, media, imports, a global hotkey and the stand-ins for real services are
+  refused; downloads, web apps, browser data and the pasteboard always point inside the profile;
+- a session or `history.json` URL that isn't public http(s) or `about:` (a host whose last label is
+  numeric, like `127.1` or `0x7f.1`, counts as an address), or a path-like value. `profileSettings`
+  is dropped, and every profile gets a fresh WebKit store that's deleted afterwards;
+- keys or modifier flags; a click or drag that doesn't start on a visible view in `SAFE_TARGETS`
+  (checked against the tree just before the step); a right- or ⌃-click without a non-empty
+  `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it;
+- text, except 1–40 of `A-Z a-z 0-9 space . _ -` straight after a plain click on a command-bar
+  opener (`NewTabRowCell`), into a visible `CommandBarField`: Kite's own command bar, which acts
+  only on Return, and Return can't be sent.
 
 The Mac job only reads the repository (no token left in its checkout); a GitHub-hosted job pushes
 `review/<id>-mac`. Raise `SAFE_FLOOR` whenever new test-safety work lands in Kite.
+
+Known gaps, which need changes in Kite rather than here:
+- A public host name that resolves to a private address, a redirect, or an iframe can still reach
+  the LAN from a test page. Kite needs to block private addresses itself on a test profile.
+- The Default profile's WebKit store is `WKWebsiteDataStore.default()` for `dev.gabek.Kite.dev`,
+  which Gabe's own dev runs share. A test profile needs a store of its own.
+- `GIT_NO_LAZY_FETCH` only works with git 2.45 or newer; on older git the real guard against a
+  fork-network commit is the check that the base is on one of origin's branches.
 
 ## Evidence
 
