@@ -195,6 +195,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         open(pendingURLs)
         pendingURLs = []
+        // A test run can show the main window again after it was closed, as the Dock icon does
+        // (`applicationShouldHandleReopen`), KITE_TEST_REOPEN_MAIN_AFTER seconds after launch; behind the user's windows.
+        if UIDiagnostics.enabledByEnvironment, let delay = ProcessInfo.processInfo.environment["KITE_TEST_REOPEN_MAIN_AFTER"].flatMap(Double.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                if self?.windowController.window?.isVisible == false { self?.windowController.window?.orderBack(nil) }
+            }
+        }
         // A test run can open the Zap picker directly (users open it from the Boost editor's Zap tool).
         // A test run can open the shown site's Boost editor (Edit Boost) 10 s after launch.
         if UIDiagnostics.enabledByEnvironment, ProcessInfo.processInfo.environment["KITE_TEST_BOOST_MENU"] != nil {
