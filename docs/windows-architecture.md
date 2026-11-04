@@ -16,6 +16,13 @@ their own PR, never as a side effect of a checkpoint.
   Win32 for process plumbing (UTF-16 arguments, the console's UTF-8 output) and
   nothing else.
 - `windows/resources`: the process manifest both executables embed.
+- `windows/tools`: test and measurement executables only (`tools/perf`'s
+  `kiteperf`). They are never linked into Kite.exe and never shipped. They may
+  use `core`, Win32 and first-party measurement APIs: PDH, psapi, Toolhelp,
+  job objects, `NtQuerySystemInformation` and `NtQueryInformationProcess`
+  (looked up with `GetProcAddress`, never linked), Winsock (`ws2_32`, for a
+  loopback page server) and, if a check needs the screen, DXGI desktop
+  duplication. They're Windows-only; `core` never uses them.
 - No third-party code except CEF. No WinUI or Windows App SDK, no .NET, no
   Swift runtime, no Boost, no JSON or test libraries. First-party Windows APIs
   (WIC, DirectWrite, UI Automation, WinHTTP) are fine.
@@ -50,6 +57,16 @@ their own PR, never as a side effect of a checkpoint.
   the final save as the window closes or Windows ends the session.
 - Never save over a session that couldn't be read (`SessionStore::MaySave`).
 - Measure before claiming a speedup, and put the numbers in the PR.
+- "Draw nothing while idle" is checked, not just reviewed: kiteperf's idle
+  phase (60 s on a settled ten-tab session) fails unless Kite presented
+  nothing and committed nothing (`Kite.exe --perf-log`'s counters).
+- Every checkpoint PR that could change performance attaches a
+  `kiteperf --compare before.json after.json` table against main: medians of
+  3 runs of the idle scenario plus the scenario that exercises the change.
+- Kite.exe's measurement hooks (`--perf-log`, `--perf-control`,
+  `--chromium-switches`) run only on a test profile (`KITE_SUPPORT_PATH`), like
+  `--frame-log`. Off, they cost at most one predictable bool check on a hot
+  path and allocate nothing.
 
 ## Code
 
