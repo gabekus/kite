@@ -89,7 +89,7 @@ import Testing
     }
 
     @Test func duplicateFolderCopiesTheTreeRightAfterIt() throws {
-        var (state, folder, _, tabs) = folderState()
+        var (state, folder, inner, tabs) = folderState()
         let duplicated = state.duplicateFolder(folder)
         let copyID = try #require(duplicated)
         let top = state.spaces[0].pinnedItems.map(\.id)
@@ -103,6 +103,7 @@ import Testing
         #expect(Set(copied.map(\.id)).isDisjoint(with: tabs))
         guard case .folder(let innerCopy) = copy.items.last else { Issue.record("no nested folder"); return }
         #expect(innerCopy.name == "Inner")
+        #expect(innerCopy.id != inner && copyID != folder)
         #expect(state.spaces[0].pinnedItems.folder(innerCopy.id) != nil)
         #expect(state.duplicateFolder(UUID()) == nil)
     }
@@ -129,5 +130,77 @@ import Testing
         #expect(state.spaces[0].pinnedItems.folder(folder) == nil)
         #expect(state.spaces[0].allTabs.isEmpty && state.spaces[0].selectedTabID == nil)
         #expect(state.turnFolderIntoSpace(folder) == nil)
+    }
+
+    @Test func theClaudeFolderNeverBecomesASpaceOrIsDuplicated() throws {
+        var state = BrowserState(spaces: [Space(name: "Home", icon: "🏠", theme: Theme.presets[0])])
+        let space = state.spaces[0].id
+        let session = state.claudeSessionFolder(named: "Research", inSpace: space)
+        let claude = try #require(session)
+        let tab = state.openTab(url: URL(string: "https://a.example"), in: space, select: false)
+        _ = state.moveTab(tab, toFolder: claude)
+        let rootFolder = state.claudeFolder(inSpace: space)
+        let root = try #require(rootFolder)
+        for id in [root, claude] {
+            #expect(!state.canTurnFolderIntoSpace(id) && !state.canDuplicateFolder(id))
+            #expect(state.turnFolderIntoSpace(id) == nil && state.duplicateFolder(id) == nil)
+        }
+        // A plain folder holding a Claude folder doesn't go either.
+        let outer = state.createFolder(name: "Outer", inSpace: 0)
+        let removed = state.spaces[0].pinnedItems.removeFolder(root)
+        let moved = try #require(removed)
+        state.spaces[0].pinnedItems.updateFolder(outer) { $0.items.append(.folder(moved)) }
+        #expect(state.turnFolderIntoSpace(outer) == nil)
+        #expect(state.spaces.count == 1)
+    }
+
+    @Test func aFolderNamedClaudeOrAnEmptyOneNeverBecomesASpace() {
+        var (state, folder, _, _) = folderState()
+        state.renameFolder(folder, to: " claude ")
+        #expect(!state.canTurnFolderIntoSpace(folder))
+        #expect(state.turnFolderIntoSpace(folder) == nil)
+        let empty = state.createFolder(name: "Empty", inSpace: 0)
+        #expect(!state.canTurnFolderIntoSpace(empty))
+        #expect(state.turnFolderIntoSpace(empty) == nil)
+        #expect(state.spaces.count == 1)
+    }
+
+    @Test func duplicateLeavesLiveFoldersOutAndKeepsClaudeFlags() throws {
+        var (state, folder, _, _) = folderState()
+        let live = TabFolder(name: "GitHub", live: LiveFolder(source: .github))
+        state.spaces[0].pinnedItems.updateFolder(folder) { $0.items.append(.folder(live)) }
+        #expect(!state.canDuplicateFolder(live.id))
+        let duplicated = state.duplicateFolder(folder)
+        let copy = try #require(duplicated.flatMap { state.spaces[0].pinnedItems.folder($0) })
+        #expect(!copy.items.contains { if case .folder(let f) = $0 { f.live != nil } else { false } })
+        #expect(copy.items.count == 2)
+    }
+
+    /// Edit › Undo of a menu change, as `BrowserStore.mutate` records it.
+    private func undoRoundTrip(_ state: inout BrowserState, _ change: (inout BrowserState) -> Void) {
+        let old = state
+        change(&state)
+        #expect(SidebarUndo.isUndoable(from: old, to: state))
+        let before = SidebarSnapshot(old), after = SidebarSnapshot(state)
+        let changed = state
+        state.restoreSidebar(before, other: after)
+        #expect(SidebarSnapshot(state) == before)
+        state.restoreSidebar(after, other: before)
+        #expect(SidebarSnapshot(state) == SidebarSnapshot(changed))
+    }
+
+    @Test func undoAndRedoDuplicateFolder() {
+        var (state, folder, _, _) = folderState()
+        undoRoundTrip(&state) { _ = $0.duplicateFolder(folder) }
+    }
+
+    @Test func undoAndRedoTurnFolderIntoSpace() {
+        var (state, folder, _, _) = folderState()
+        undoRoundTrip(&state) { _ = $0.turnFolderIntoSpace(folder) }
+    }
+
+    @Test func undoAndRedoArchiveTabs() {
+        var (state, t) = today()
+        undoRoundTrip(&state) { _ = $0.archiveTabs(.others, relativeTo: t[2]) }
     }
 }

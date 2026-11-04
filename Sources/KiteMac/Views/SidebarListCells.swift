@@ -642,11 +642,7 @@ final class TabRowCell: SidebarRowCell {
         if t.isPinned && t.tab.pinnedURL != nil {
             menu.addEditPinnedPage(onEdit: { actions.editPinnedURL(id) }, onReplace: { actions.replacePinnedURL(id) })
         }
-        let url = t.tab.url, title = t.tab.displayTitle
-        menu.add("Copy Link") { if let url { copyToPasteboard(url.absoluteString) } }
-        menu.add("Copy link as Markdown", enabled: url != nil) {
-            if let url { copyToPasteboard(LinkFormat.markdown(title: title, url: url)) }
-        }
+        menu.addCopyLinkItems(t.tab)
         menu.add("Rename…") { actions.renameTab(id) }
         if TabAudioButton.isShown(isAudible: t.isAudible, isMuted: t.isMuted) {
             menu.add(TabAudioButton.menuTitle(isMuted: t.isMuted)) { actions.toggleMute(id) }
@@ -673,12 +669,7 @@ final class TabRowCell: SidebarRowCell {
         }
         menu.addSeparator()
         menu.add(t.isPinned ? "Unload Tab" : "Close Tab") { actions.closeTab(id) }
-        if !t.isPinned {
-            for (title, which) in [("Archive Other Tabs", ArchiveTabsRelative.others), ("Archive Tabs Below", .below),
-                                   ("Archive Tabs Above", .above)] {
-                menu.add(title, enabled: !state.tabsToArchive(which, relativeTo: id).isEmpty) { actions.archiveTabs(id, which) }
-            }
-        }
+        menu.addArchiveTabsItems(state: state, relativeTo: id, actions: actions)
         return menu
     }
 
@@ -691,6 +682,23 @@ final class TabRowCell: SidebarRowCell {
 
 @MainActor
 extension NSMenu {
+    /// Copy Link and Copy link as Markdown, greyed out for a tab with no page yet.
+    func addCopyLinkItems(_ tab: BrowserTab) {
+        let url = tab.url, markdown = LinkFormat.markdown(tab)
+        add("Copy Link", enabled: url != nil) { if let url { copyToPasteboard(url.absoluteString) } }
+        add("Copy link as Markdown", enabled: markdown != nil) { if let markdown { copyToPasteboard(markdown) } }
+    }
+
+    /// Archive Other Tabs, Archive Tabs Below and Archive Tabs Above for a Today row (a tab, or a split by
+    /// any of its panes), each greyed out when there's nothing on that side. Nothing for pinned rows.
+    func addArchiveTabsItems(state: BrowserState, relativeTo id: UUID, actions: SidebarActions) {
+        guard state.location(of: id)?.section == .unpinned else { return }
+        for (title, which) in [("Archive Other Tabs", ArchiveTabsRelative.others), ("Archive Tabs Below", .below),
+                               ("Archive Tabs Above", .above)] {
+            add(title, enabled: !state.tabsToArchive(which, relativeTo: id).isEmpty) { actions.archiveTabs(id, which) }
+        }
+    }
+
     /// Arc's "Edit Pinned Page" submenu on a pinned tab or favorite (SidebarMenu+TabContextMenu).
     func addEditPinnedPage(onEdit: @escaping () -> Void, onReplace: @escaping () -> Void) {
         addSubmenu("Edit Pinned Page") { menu in
@@ -939,7 +947,7 @@ final class FolderRowCell: SidebarRowCell {
     // Arc's folder menu (SidebarMenu+ListContextMenu), in its order, with the items Kite has.
     override func contextMenu(at point: CGPoint) -> NSMenu? {
         guard let f = folderModel, let list else { return nil }
-        let folder = f.folder, actions = list.actions
+        let folder = f.folder, actions = list.actions, store = list.store
         let menu = NSMenu()
         if let live = folder.live {
             menu.addLiveFolderItems(folder: folder, live: live) { actions.deleteFolder(folder.id) }
@@ -948,14 +956,28 @@ final class FolderRowCell: SidebarRowCell {
                 menu.add("Stop Claude") { [weak self] in self?.stopClaude() }
                 menu.addSeparator()
             }
-            menu.add("Duplicate") { actions.duplicateFolder(folder.id) }
-            menu.addSeparator()
+            let state = store.state
+            // Claude's folders are never copied or turned into a space (Kite never makes a Claude space).
+            let claudeFolder = folder.ephemeral == true || f.claudeActive
+            if !claudeFolder {
+                menu.add("Duplicate", enabled: state.canDuplicateFolder(folder.id)) {
+                    store.mutate { _ = $0.duplicateFolder(folder.id) }
+                }
+                menu.addSeparator()
+            }
             // Arc builds Archive Folder or Delete (`canArchiveFolders`); Kite's archive holds tabs, not
             // folders, so it's Delete, which archives the tabs inside.
             menu.add("Delete") { actions.deleteFolder(folder.id) }
             menu.addSeparator()
-            menu.add("New Nested Folder…") { actions.newNestedFolder(folder.id) }
-            menu.add("Turn \u{201C}\(folder.name)\u{201D} into Space") { actions.turnFolderIntoSpace(folder.id) }
+            menu.add("New Nested Folder…") {
+                guard let nested = store.mutate({ $0.createNestedFolder(in: folder.id) }) else { return }
+                store.beginRenaming(folder: nested)
+            }
+            if !claudeFolder && BrowserState.claudeMayCreateSpace(named: folder.name) {
+                menu.add("Turn \u{201C}\(folder.name)\u{201D} into Space", enabled: state.canTurnFolderIntoSpace(folder.id)) {
+                    store.mutate { _ = $0.turnFolderIntoSpace(folder.id) }
+                }
+            }
             let tabs = folder.items.tabs.filter { $0.url != nil }
             menu.add("Copy All Links", enabled: !tabs.isEmpty) {
                 copyToPasteboard(tabs.compactMap(\.url?.absoluteString).joined(separator: "\n"))
@@ -963,6 +985,8 @@ final class FolderRowCell: SidebarRowCell {
             menu.add("Copy All Links as Markdown", enabled: !tabs.isEmpty) {
                 copyToPasteboard(LinkFormat.markdownList(tabs))
             }
+            // Arc's builder has no separator marker here; Kite keeps the one it had (inferred from grouping).
+            menu.addSeparator()
             menu.add("Rename…") { actions.renameFolder(folder.id) }
         }
         return menu
@@ -1175,17 +1199,14 @@ final class SplitRowCell: SidebarRowCell {
                 sub.addSeparator()
                 // Arc shows Mute greyed out for a pane that isn't playing anything.
                 sub.add(TabAudioButton.menuTitle(isMuted: sound.muted), enabled: sound.audible || sound.muted) { actions.toggleMute(id) }
-                let url = tab.url
-                sub.add("Copy Link") { if let url { copyToPasteboard(url.absoluteString) } }
-                sub.add("Copy link as Markdown") {
-                    if let url { copyToPasteboard(LinkFormat.markdown(title: tab.displayTitle, url: url)) }
-                }
+                sub.addCopyLinkItems(tab)
                 sub.addSeparator()
                 sub.add("Archive Item") { actions.closeTab(id) }
             }
         }
         menu.addSeparator()
         menu.add("Archive Item") { s.tabs.forEach { actions.closeTab($0.id) } }
+        if let first = split.tabIDs.first { menu.addArchiveTabsItems(state: store.state, relativeTo: first, actions: actions) }
         return menu
     }
 }

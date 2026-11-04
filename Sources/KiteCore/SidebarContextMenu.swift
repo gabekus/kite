@@ -33,27 +33,32 @@ extension BrowserState {
     /// opened on is selected instead.
     @discardableResult
     public mutating func archiveTabs(_ which: ArchiveTabsRelative, relativeTo id: UUID) -> [BrowserTab] {
-        let ids = Set(tabsToArchive(which, relativeTo: id))
+        let ids = tabsToArchive(which, relativeTo: id)
         guard !ids.isEmpty, let s = location(of: id)?.space else { return [] }
-        let archived = spaces[s].tabs.enumerated().filter { ids.contains($1.id) }
-        appendToArchive(archived.map { ClosedTab(tab: $1, spaceID: spaces[s].id, index: $0) })
-        spaces[s].tabs.removeAll { ids.contains($0.id) }
-        normalizeSplits()
+        let archived = archiveToday(ids, inSpace: s)
         if let selected = spaces[s].selectedTabID, ids.contains(selected) {
             spaces[s].selectedTabID = id
         }
-        return archived.map(\.element)
+        return archived
     }
 
     // MARK: Folder menu
 
+    /// Whether the folder menu offers Duplicate: not for a Claude (ephemeral) folder or a live one.
+    public func canDuplicateFolder(_ id: UUID) -> Bool {
+        guard let folder = spaces.lazy.compactMap({ $0.pinnedItems.folder(id) }).first else { return false }
+        return folder.ephemeral != true && folder.live == nil
+    }
+
     /// Arc's folder Duplicate: a copy of the folder, its nested folders and tabs (new ids, not
-    /// loaded) right after it in the same place. Returns the copy's id.
+    /// loaded) right after it in the same place. Live folders inside are left out: their tabs come
+    /// from their source, which a space has one folder for. Returns the copy's id.
     @discardableResult
     public mutating func duplicateFolder(_ id: UUID, now: Date = Date()) -> UUID? {
-        guard let s = spaces.indices.first(where: { spaces[$0].pinnedItems.folder(id) != nil }),
+        guard canDuplicateFolder(id),
+              let s = spaces.indices.first(where: { spaces[$0].pinnedItems.folder(id) != nil }),
               let folder = spaces[s].pinnedItems.folder(id) else { return nil }
-        func copy(_ item: PinnedItem) -> PinnedItem {
+        func copy(_ item: PinnedItem) -> PinnedItem? {
             switch item {
             case .tab(let tab):
                 var new = BrowserTab(url: tab.url, title: tab.title, faviconURL: tab.faviconURL, lastActiveAt: now,
@@ -61,11 +66,12 @@ extension BrowserState {
                 new.customTitle = tab.customTitle
                 return .tab(new)
             case .folder(let folder):
-                return .folder(TabFolder(name: folder.name, isExpanded: folder.isExpanded, items: folder.items.map(copy)))
+                guard folder.live == nil else { return nil }
+                return .folder(TabFolder(name: folder.name, isExpanded: folder.isExpanded, items: folder.items.compactMap(copy),
+                                         ephemeral: folder.ephemeral))
             }
         }
-        let duplicate = copy(.folder(folder))
-        guard spaces[s].pinnedItems.insertItem(duplicate, after: id) else { return nil }
+        guard let duplicate = copy(.folder(folder)), spaces[s].pinnedItems.insertItem(duplicate, after: id) else { return nil }
         return duplicate.id
     }
 
@@ -82,48 +88,53 @@ extension BrowserState {
         return nil
     }
 
+    /// Whether Turn "<folder>" into Space is offered and enabled: a plain folder with tabs in it. Never a
+    /// Claude folder, one with Claude or live folders inside, or one named Claude: Kite never makes a
+    /// Claude space (`claudeMayCreateSpace`).
+    public func canTurnFolderIntoSpace(_ id: UUID) -> Bool {
+        guard let folder = spaces.lazy.compactMap({ $0.pinnedItems.folder(id) }).first,
+              Self.claudeMayCreateSpace(named: folder.name), !folder.items.tabs.isEmpty else { return false }
+        func plain(_ folder: TabFolder) -> Bool {
+            folder.ephemeral != true && folder.live == nil && folder.items.allSatisfy {
+                if case .folder(let inner) = $0 { plain(inner) } else { true }
+            }
+        }
+        return plain(folder)
+    }
+
     /// Arc's Turn "<folder>" into Space: a new space right after the folder's, named after it, with
-    /// the folder's items as its pinned tabs. It keeps the old space's theme and profile, and Kite
-    /// switches to it, as it does for a new space. Splits made only of the folder's tabs go along.
+    /// the folder's items as its pinned tabs. It keeps the old space's theme and profile, has no icon
+    /// (a dot, as Arc shows an icon-less space), and Kite switches to it, as for a new space. Splits
+    /// made only of the folder's tabs go along.
     @discardableResult
     public mutating func turnFolderIntoSpace(_ id: UUID) -> UUID? {
-        guard let s = spaces.indices.first(where: { spaces[$0].pinnedItems.folder(id) != nil }),
-              spaces[s].pinnedItems.folder(id)?.live == nil,
+        guard canTurnFolderIntoSpace(id),
+              let s = spaces.indices.first(where: { spaces[$0].pinnedItems.folder(id) != nil }),
               let folder = spaces[s].pinnedItems.removeFolder(id) else { return nil }
         let moved = Set(folder.items.tabs.map(\.id))
-        var space = Space(name: folder.name, icon: "", theme: spaces[s].theme, pinnedItems: folder.items)
-        space.profile = spaces[s].profile
-        space.splits = spaces[s].splits.filter { $0.tabIDs.allSatisfy(moved.contains) }
-        space.selectedTabID = spaces[s].selectedTabID.flatMap { moved.contains($0) ? $0 : nil } ?? folder.items.tabs.first?.id
-        if let selected = spaces[s].selectedTabID, moved.contains(selected) {
+        let source = spaces[s]
+        let spaceID = insertSpace(name: folder.name, icon: "", theme: source.theme, profile: source.profile, at: s + 1)
+        let n = s + 1
+        spaces[n].pinnedItems = folder.items
+        spaces[n].splits = source.splits.filter { $0.tabIDs.allSatisfy(moved.contains) }
+        spaces[n].selectedTabID = source.selectedTabID.flatMap { moved.contains($0) ? $0 : nil } ?? folder.items.tabs.first?.id
+        if let selected = source.selectedTabID, moved.contains(selected) {
             spaces[s].selectedTabID = spaces[s].allTabs.first?.id
         }
-        spaces.insert(space, at: s + 1)
-        selectedSpaceID = space.id
         normalizeSplits()
-        return space.id
+        return spaceID
     }
 }
 
 extension LinkFormat {
+    /// A tab as `[title](url)` with the title its row shows (a Rename… name wins), as every Copy … as
+    /// Markdown uses. Nil without a URL.
+    public static func markdown(_ tab: BrowserTab) -> String? {
+        tab.url.map { markdown(title: tab.displayTitle, url: $0) }
+    }
+
     /// Copy All Links as Markdown: one `[title](url)` per line, the folder's tabs in sidebar order.
     public static func markdownList(_ tabs: [BrowserTab]) -> String {
-        tabs.compactMap { tab in tab.url.map { markdown(title: tab.displayTitle, url: $0) } }.joined(separator: "\n")
-    }
-}
-
-extension [PinnedItem] {
-    /// Inserts `item` just after the item `neighbor` (a tab or folder), at whatever depth it is.
-    mutating func insertItem(_ item: PinnedItem, after neighbor: UUID) -> Bool {
-        for i in indices {
-            if self[i].id == neighbor {
-                insert(item, at: i + 1)
-                return true
-            }
-            guard case .folder(var folder) = self[i], folder.items.insertItem(item, after: neighbor) else { continue }
-            self[i] = .folder(folder)
-            return true
-        }
-        return false
+        tabs.compactMap(markdown).joined(separator: "\n")
     }
 }

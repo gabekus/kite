@@ -1,7 +1,7 @@
 import AppKit
 import KiteCore
 
-/// The sidebar tab and folder context menus' items that need the window (SidebarListCells).
+/// The sidebar tab menus' items that need the window (SidebarListCells); the rest change the store inline.
 extension BrowserWindowController {
     /// The tab menu's Add Split View: the tab is selected, then Add Split View as from the View menu.
     func addSplitView(with id: UUID) {
@@ -19,7 +19,7 @@ extension BrowserWindowController {
         store.hideCommandBar()
         var outcome: SidebarDropOutcome?
         store.mutate { outcome = $0.dropSidebarItems(ids, besidePane: pane, before: false) }
-        if let outcome { sidebarDropped(outcome) }
+        if let outcome { sidebarDropped(outcome, haptic: false) }
     }
 
     /// The tab menu's Move to › space: a pinned tab goes to the end of that space's pinned items, a Today
@@ -33,19 +33,17 @@ extension BrowserWindowController {
         let ids = [state.sidebarDragID(for: id)]
         var outcome: SidebarDropOutcome?
         store.mutate { outcome = $0.dropSidebarItems(ids, on: target) }
-        if let outcome { sidebarDropped(outcome) }
+        if let outcome { sidebarDropped(outcome, haptic: false) }
     }
 
     /// Archive Other Tabs / Below / Above, with the Today divider's Clear toast.
     func archiveTabs(_ which: ArchiveTabsRelative, relativeTo id: UUID) {
-        let archived = store.mutate { $0.archiveTabs(which, relativeTo: id) }
-        if archived.isEmpty { return NSSound.beep() }
-        showToast(archived.count == 1 ? "Archived 1 tab" : "Archived \(archived.count) tabs")
+        showArchivedToast(store.mutate { $0.archiveTabs(which, relativeTo: id) })
     }
 
-    /// The folder menu's New Nested Folder…: the new folder's name is edited in place.
-    func newNestedFolder(in id: UUID) {
-        guard let nested = store.mutate({ $0.createNestedFolder(in: id) }) else { return }
-        store.beginRenaming(folder: nested)
+    /// "Archived 1 tab" / "Archived N tabs" after a menu or the Today divider archives tabs, or a beep for none.
+    func showArchivedToast(_ archived: [BrowserTab]) {
+        if archived.isEmpty { return NSSound.beep() }
+        showToast(archived.count == 1 ? "Archived 1 tab" : "Archived \(archived.count) tabs")
     }
 }
