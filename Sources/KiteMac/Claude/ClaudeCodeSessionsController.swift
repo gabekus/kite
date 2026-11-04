@@ -339,7 +339,7 @@ final class ClaudeCodeSessionsController {
         runs[id] = placeholder
         updateRunning()
         Task.detached { [weak self] in
-            let claude = ClaudeCommand.find()
+            let claude = await ClaudeCommand.find()
             await self?.spawn(id, claude: claude, arguments: arguments,
                               directory: folder, prompt: prompt, placeholder: placeholder)
         }

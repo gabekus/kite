@@ -15,10 +15,16 @@ extension ClaudeTasksController {
         if !automation.isEnabled { automation.setEnabled(true) }
         guard automation.isEnabled else { return false }
 
-        var claude = await Task.detached { ClaudeCommand.find() }.value
-        if claude == nil {
+        var lookup = await ClaudeCommand.lookUp()
+        if case .unknown = lookup {
+            tell("Couldn't look for Claude Code",
+                 "Your login shell took more than \(Int(LoginShellProbe.timeout)) seconds to start, so Kite couldn't check whether "
+                 + "Claude Code is installed. Click the Claude button to try again.")
+            return false
+        }
+        if case .missing = lookup {
             // The installer writes to the real home (~/.local, the shell's PATH): never from a test profile.
-            guard !ClaudeConnect.isTestProfile else {
+            guard !ClaudeProcessEnvironment.isTestProfile(ProcessInfo.processInfo.environment) else {
                 tell("Claude Code isn't installed", "A test profile doesn't install Claude Code. Set KITE_CLAUDE_BIN to a claude to run.")
                 return false
             }
@@ -26,14 +32,16 @@ extension ClaudeTasksController {
                       "Kite runs Claude with Claude Code, on your own Claude plan. Claude Code isn't installed yet.\n\n"
                       + "Install it now? Kite runs Anthropic's installer:\n\(Self.installCommand)",
                       confirm: "Install Claude Code") else { return false }
-            let (_, output) = await Task.detached { ClaudeConnect.run("/bin/zsh", ["-lc", Self.installCommand]) }.value
-            claude = await Task.detached { ClaudeCommand.find() }.value
-            guard claude != nil else {
+            let (_, output) = await Task.detached { ClaudeConnect.runLoginShell(Self.installCommand) }.value
+            // The install changed where claude is and maybe the shell's PATH: ask the shell again.
+            ClaudeConnect.loginShell.invalidate()
+            lookup = await ClaudeCommand.lookUp()
+            guard case .found = lookup else {
                 tell("Claude Code didn't install", String(output.trimmingCharacters(in: .whitespacesAndNewlines).suffix(600)))
                 return false
             }
         }
-        guard let claude else { return false }
+        guard case .found(let claude) = lookup else { return false }
 
         let signedIn = await Task.detached { Self.isSignedIn(claude) }.value
         if !signedIn {
@@ -49,7 +57,7 @@ extension ClaudeTasksController {
         let cli = automation.cliPath, profile = automation.profileOverride, directory = ClaudeConnect.linkDirectory
         let desktop = ClaudeDesktop.isInstalled
         let linked = await Task.detached { () -> ClaudeDesktopLinkResult? in
-            _ = ClaudeConnect.register(cli: cli, profile: profile, linkDirectory: directory)
+            _ = await ClaudeConnect.register(cli: cli, profile: profile, linkDirectory: directory)
             // The Claude app gets Kite's tools too, so ⌘J can hand requests to it.
             return desktop ? ClaudeDesktop.link(cli: cli, profile: profile) : nil
         }.value
@@ -81,14 +89,13 @@ extension ClaudeTasksController {
     private func openSignIn(_ claude: ClaudeCommand) {
         let script = FileManager.default.temporaryDirectory.appendingPathComponent("Kite Claude Sign In.command")
         // A test profile signs in to its test Claude home, never the user's own ~/.claude.
-        let exports = ClaudeProcessEnvironment.exports(claude.environment, base: ProcessInfo.processInfo.environment)
-        let body = "#!/bin/zsh -l\n\(exports)\(AutomationController.shellQuote(claude.executable)) auth login\n"
+        let body = claude.signInScript()
         do {
             try body.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
             NSWorkspace.shared.open(script)
         } catch {
-            tell("Couldn't open Terminal", "Run this in a terminal, then click the Claude button again:\n\(exports)\(claude.executable) auth login")
+            tell("Couldn't open Terminal", "Run this in a terminal, then click the Claude button again:\n\(claude.signInCommand)")
         }
     }
 

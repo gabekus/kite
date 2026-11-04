@@ -65,6 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Release builds check for updates (8-hourly, installing on quit); others do nothing.
         SoftwareUpdater.shared.start()
+        // The login shell's PATH and claude, asked once in the background, so the first claude doesn't wait.
+        ClaudeConnect.loginShell.warm()
         // Before the store writes session.json, which tells a new profile from an existing install.
         let showsOnboarding = OnboardingWindow.shouldShowAtLaunch()
         store = BrowserStore(session: SessionStore(fileURL: Self.sessionURL))

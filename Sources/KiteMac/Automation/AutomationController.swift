@@ -820,5 +820,5 @@ final class AutomationController {
         return command + " -- \(Self.shellQuote(cliPath)) mcp"
     }
 
-    static func shellQuote(_ string: String) -> String { ClaudeProcessEnvironment.shellQuote(string) }
+    static func shellQuote(_ string: String) -> String { Shell.quote(string) }
 }

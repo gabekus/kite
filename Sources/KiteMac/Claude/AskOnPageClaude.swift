@@ -18,7 +18,7 @@ final class AskOnPageClaude {
         let mine = generation
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("KiteAskOnPage", isDirectory: true)
         Task.detached { [weak self] in
-            let claude = ClaudeCommand.find()
+            let claude = await ClaudeCommand.find()
             await self?.run(claude: claude, directory: directory, prompt: prompt,
                             generation: mine, completion: completion)
         }

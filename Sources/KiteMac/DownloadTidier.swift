@@ -96,7 +96,7 @@ final class DownloadTidier {
     /// One `claude -p` run with no tools or MCP servers, in an empty folder. Nil on any failure.
     nonisolated private static func askClaude(_ prompt: String, timeout: TimeInterval) async -> String? {
         // Without the test switches Tidy Downloads itself reads.
-        guard let claude = ClaudeCommand.find()?.removing(["KITE_SUPPORT_PATH", "KITE_TEST_DOWNLOADS_PATH"]) else { return nil }
+        guard let claude = await ClaudeCommand.find()?.removing(["KITE_SUPPORT_PATH", "KITE_TEST_DOWNLOADS_PATH"]) else { return nil }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("KiteTidyDownloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])

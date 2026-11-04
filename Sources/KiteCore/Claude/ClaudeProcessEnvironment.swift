@@ -5,21 +5,9 @@ import Foundation
 /// profile it's Kite's own environment with the login shell's PATH. On a test profile
 /// (`KITE_SUPPORT_PATH` set) HOME and CLAUDE_CONFIG_DIR also point at the test Claude home
 /// (`ClaudeCodeSessions.home`), so a test build never reads or writes the user's own `~/.claude`.
+/// It's built afresh for each run from the login shell's cached answers (`LoginShellCache`), so it
+/// always follows the current test-profile state.
 public enum ClaudeProcessEnvironment {
-    /// What the environment depends on besides the login PATH: the test-profile state. A cached
-    /// environment is kept per key, so one worked out for one profile is never used for another.
-    public struct Key: Hashable, Sendable {
-        public let supportPath: String?
-        public let home: String
-
-        public init(environment: [String: String], userHome: URL) {
-            supportPath = environment["KITE_SUPPORT_PATH"]
-            home = ClaudeCodeSessions.home(environment: environment, userHome: userHome).path
-        }
-
-        public var isTestProfile: Bool { supportPath != nil }
-    }
-
     /// Kite's one rule for a test profile: `KITE_SUPPORT_PATH` is set, even to an empty string
     /// (main.swift, `AppDelegate.supportDirectory`). A test profile never drives the user's own
     /// Claude: their `~/.claude`, their Claude app, their installs.
@@ -31,48 +19,55 @@ public enum ClaudeProcessEnvironment {
     public static let isolatedKeys = ["HOME", "CLAUDE_CONFIG_DIR"]
 
     /// `export` lines for a shell script (the Terminal sign-in) that put it in `environment`'s Claude
-    /// home: one per `isolatedKeys` variable that differs from Kite's own `base`, so a real profile
-    /// gets none.
-    public static func exports(_ environment: [String: String], base: [String: String]) -> String {
-        isolatedKeys.compactMap { key in
-            guard let value = environment[key], value != base[key] else { return nil }
-            return "export \(key)=\(shellQuote(value))\n"
+    /// home: on a test profile (`kite`, Kite's own environment) every `isolatedKeys` variable
+    /// `environment` has, whatever the script's own shell would set; on a real profile none.
+    public static func exports(_ environment: [String: String], kite: [String: String]) -> String {
+        guard isTestProfile(kite) else { return "" }
+        return isolatedKeys.compactMap { key in
+            environment[key].map { "export \(key)=\(Shell.quote($0))\n" }
         }.joined()
     }
 
-    /// `string` as one shell word: as is when it's plainly safe, else single-quoted.
-    public static func shellQuote(_ string: String) -> String {
-        !string.isEmpty && string.allSatisfy { $0.isLetter || $0.isNumber || "/._-".contains($0) }
-            ? string : "'" + string.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    /// Where Claude Code and Node usually live, put ahead of launchd's bare PATH when the login shell
+    /// gave no PATH, so a Node-script `claude` still finds `node`.
+    public static func fallbackDirectories(userHome: URL) -> [String] {
+        [userHome.appendingPathComponent(".local/bin", isDirectory: true).path, "/opt/homebrew/bin", "/usr/local/bin"]
     }
 
-    /// Kite's environment `base` with the login shell's PATH (when it gave one), without Kite's
-    /// own test switches, isolated on a test profile.
-    public static func make(_ base: [String: String], loginPath: String?, userHome: URL) -> [String: String] {
+    /// `path` with `directories` in front, each once and only if it isn't in `path` already.
+    public static func prepending(_ directories: [String], to path: String?) -> String {
+        var parts = (path ?? "").split(separator: ":").map(String.init)
+        let missing = directories.reduce(into: [String]()) { result, directory in
+            if !directory.isEmpty, !parts.contains(directory), !result.contains(directory) { result.append(directory) }
+        }
+        parts.insert(contentsOf: missing, at: 0)
+        return parts.joined(separator: ":")
+    }
+
+    /// Kite's environment `base` with the login shell's PATH, without Kite's own test switches,
+    /// isolated on a test profile. With no login PATH (the shell failed or timed out) it keeps
+    /// Kite's PATH with `fallbackDirectories` in front.
+    public static func make(_ base: [String: String], loginPath: String?, userHome: URL,
+                            fallbackDirectories: [String] = []) -> [String: String] {
         var environment = base
         let path = loginPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if path.contains("/") { environment["PATH"] = path }
+        if path.contains("/") {
+            environment["PATH"] = path
+        } else if !fallbackDirectories.isEmpty {
+            environment["PATH"] = prepending(fallbackDirectories, to: base["PATH"])
+        }
         // Kite's own test switches mustn't leak into Claude Code.
         environment["KITE_DIAGNOSTICS"] = nil
         return ClaudeCodeSessions.processEnvironment(environment, environment: base,
                                                      home: ClaudeCodeSessions.home(environment: base, userHome: userHome))
     }
+}
 
-    /// Environments worked out once per `Key` (the login shell is slow). Safe from any thread;
-    /// the first caller for a key works it out while later ones wait.
-    public final class Cache: @unchecked Sendable {
-        private let lock = NSLock()
-        private var environments: [Key: [String: String]] = [:]
-
-        public init() {}
-
-        public func environment(for key: Key, make: () -> [String: String]) -> [String: String] {
-            lock.lock()
-            defer { lock.unlock() }
-            if let cached = environments[key] { return cached }
-            let environment = make()
-            environments[key] = environment
-            return environment
-        }
+/// Shell words.
+public enum Shell {
+    /// `string` as one shell word: as is when it's plainly safe, else single-quoted.
+    public static func quote(_ string: String) -> String {
+        !string.isEmpty && string.allSatisfy { $0.isLetter || $0.isNumber || "/._-".contains($0) }
+            ? string : "'" + string.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

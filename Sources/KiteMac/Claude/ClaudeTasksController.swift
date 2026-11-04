@@ -355,7 +355,7 @@ final class ClaudeTasksController {
         Task.detached { [weak self] in
             // Jev sizes the goal while Claude Code is found: a quick lookup runs on the fast model.
             async let model = Self.model(for: goal, jev: jev)
-            let claude = ClaudeCommand.find()
+            let claude = await ClaudeCommand.find()
             let chosen = await model
             let arguments = ClaudeInvocation.arguments(kiteCLI: cli, profile: profile, taskID: id, resume: resume, model: chosen,
                                                        systemPrompt: systemPrompt)

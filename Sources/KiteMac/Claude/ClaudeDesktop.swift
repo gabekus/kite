@@ -12,7 +12,7 @@ enum ClaudeDesktop {
     static var isInstalled: Bool { appURL != nil }
 
     /// False on a test profile: it never hands requests to, opens or relaunches the user's own Claude app.
-    nonisolated static var mayDrive: Bool { !ClaudeConnect.isTestProfile }
+    nonisolated static var mayDrive: Bool { !ClaudeProcessEnvironment.isTestProfile(ProcessInfo.processInfo.environment) }
 
     static var isRunning: Bool {
         !NSRunningApplication.runningApplications(withBundleIdentifier: ClaudeDesktopLink.bundleIdentifier).isEmpty

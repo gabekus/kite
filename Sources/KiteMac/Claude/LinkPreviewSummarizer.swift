@@ -16,11 +16,17 @@ enum LinkPreviewSummarizer {
         init(_ summary: LinkPreviewSummary?) { self.summary = summary }
     }
 
-    /// Claude Code with its environment, looked up once, off the main thread (nil inside: not installed).
-    private static var claude: ClaudeCommand??
+    /// Claude Code with its environment, once found. Not found is never kept: it's looked for again
+    /// `LoginShellCache.retryInterval` later (the login shell may just have been slow).
+    private static var claude: ClaudeCommand?
+    private static var missingSince: Date?
 
-    /// False once Claude Code is known to be missing: cards then show no summary at all.
-    static var mayBeAvailable: Bool { claude.map { $0 != nil } ?? true }
+    /// False while Claude Code was just found missing: cards then show no summary at all.
+    static var mayBeAvailable: Bool { claude != nil || !recentlyMissing }
+
+    private static var recentlyMissing: Bool {
+        missingSince.map { Date().timeIntervalSince($0) < LoginShellCache.retryInterval } ?? false
+    }
 
     static func cached(_ url: URL) -> LinkPreviewSummary?? {
         cache.object(forKey: url as NSURL).map(\.summary)
@@ -30,10 +36,11 @@ enum LinkPreviewSummarizer {
     /// task stops Claude Code.
     static func summary(for url: URL, metadata: LinkPreviewMetadata?, pageText: String) async -> LinkPreviewSummary? {
         if let cached = cached(url) { return cached }
-        if claude == nil {
-            claude = await Task.detached { ClaudeCommand.find() }.value
+        if claude == nil, !recentlyMissing {
+            claude = await ClaudeCommand.find()
+            missingSince = claude == nil ? Date() : nil
         }
-        guard let claude = claude ?? nil else { return nil }
+        guard let claude else { return nil }
         let prompt = LinkPreviewSummary.prompt(url: url, metadata: metadata, pageText: pageText,
                                                language: LinkPreviewSummary.languageName())
         guard !Task.isCancelled else { return nil }

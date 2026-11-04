@@ -55,7 +55,7 @@ enum ClaudeConnect {
         let directory = linkDirectory
         Task.detached {
             let linked = desktop ? ClaudeDesktop.link(cli: cli, profile: profile) : nil
-            let lines = register(cli: cli, profile: profile, linkDirectory: directory) + (linked.map { [$0.line] } ?? [])
+            let lines = await register(cli: cli, profile: profile, linkDirectory: directory) + (linked.map { [$0.line] } ?? [])
             await MainActor.run {
                 // The user asked for this, so reload Desktop now rather than leave it without Kite.
                 if linked == .added, ClaudeDesktop.mayDrive, ClaudeDesktop.isRunning { ClaudeDesktop.relaunch() }
@@ -68,8 +68,8 @@ enum ClaudeConnect {
     }
 
     /// Links `kite` and adds Kite's MCP server to Claude Code. Returns what happened, a line per step.
-    nonisolated static func register(cli: String, profile: String?, linkDirectory directory: URL) -> [String] {
-        [linkCommand(cli: cli, into: directory), registerWithClaudeCode(cli: cli, profile: profile)]
+    nonisolated static func register(cli: String, profile: String?, linkDirectory directory: URL) async -> [String] {
+        [linkCommand(cli: cli, into: directory), await registerWithClaudeCode(cli: cli, profile: profile)]
     }
 
     nonisolated private static func linkCommand(cli: String, into directory: URL) -> String {
@@ -90,8 +90,8 @@ enum ClaudeConnect {
         }
     }
 
-    nonisolated private static func registerWithClaudeCode(cli: String, profile: String?) -> String {
-        guard let claude = ClaudeCommand.find() else {
+    nonisolated private static func registerWithClaudeCode(cli: String, profile: String?) async -> String {
+        guard let claude = await ClaudeCommand.find() else {
             return "Couldn't find the claude command. Install Claude Code, then run:\nclaude mcp add -s user kite -- \(cli) mcp"
         }
         var add = ["mcp", "add", "-s", "user", "kite"]
@@ -107,12 +107,12 @@ enum ClaudeConnect {
             : "claude mcp add failed: \(output.trimmingCharacters(in: .whitespacesAndNewlines))"
     }
 
-    /// Whether this is a test profile (`ClaudeProcessEnvironment.isTestProfile`).
-    nonisolated static var isTestProfile: Bool { ClaudeProcessEnvironment.isTestProfile(ProcessInfo.processInfo.environment) }
+    /// The login shell's PATH and `claude` (`LoginShellCache`). AppDelegate warms it at launch.
+    nonisolated static let loginShell = LoginShellCache()
 
-    /// GUI apps don't get the shell's PATH, so look where Claude Code installs, then ask a login shell.
-    /// Only `ClaudeCommand.find` calls it, so the executable never goes out without its environment.
-    nonisolated fileprivate static func findClaude() -> String? {
+    /// GUI apps don't get the shell's PATH, so look where Claude Code installs, then ask the login shell.
+    /// Only `ClaudeCommand.lookUp` calls it, so the executable never goes out without its environment.
+    nonisolated fileprivate static func findClaude(_ shell: LoginShellCache.Snapshot) -> String? {
         let environment = ProcessInfo.processInfo.environment
         if let override = environment["KITE_CLAUDE_BIN"] { return override }
         let userHome = FileManager.default.homeDirectoryForCurrentUser
@@ -123,37 +123,29 @@ enum ClaudeConnect {
         where FileManager.default.isExecutableFile(atPath: candidate) {
             return candidate
         }
-        let path = loginShell("command -v claude")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return path.hasPrefix("/") ? path : nil
+        return shell.answers.claude
     }
 
-    /// The environment of every `claude` Kite starts (`ClaudeProcessEnvironment`): GUI apps get a bare
-    /// PATH and Claude Code may be a Node script, so it has the login shell's. Worked out once per
-    /// test-profile state, on the first caller's thread, which is never the main one. On a test
-    /// profile HOME and CLAUDE_CONFIG_DIR are the test Claude home, never the user's own `~/.claude`.
-    nonisolated fileprivate static func environment() -> [String: String] {
-        let base = ProcessInfo.processInfo.environment
+    /// The environment for `executable` (`ClaudeProcessEnvironment`), built for each run so it follows
+    /// the test-profile state: GUI apps get a bare PATH and Claude Code may be a Node script, so it has
+    /// the login shell's PATH, or, when the shell gave none, Kite's with `claude`'s own folder and the
+    /// usual install folders in front. On a test profile HOME and CLAUDE_CONFIG_DIR are the test
+    /// Claude home, never the user's own `~/.claude`.
+    nonisolated fileprivate static func environment(for executable: String, _ shell: LoginShellCache.Snapshot) -> [String: String] {
         let userHome = FileManager.default.homeDirectoryForCurrentUser
-        return environments.environment(for: .init(environment: base, userHome: userHome)) {
-            ClaudeProcessEnvironment.make(base, loginPath: loginShell("printf %s \"$PATH\""), userHome: userHome)
-        }
+        let folder = URL(fileURLWithPath: executable).deletingLastPathComponent().path
+        return ClaudeProcessEnvironment.make(ProcessInfo.processInfo.environment, loginPath: shell.answers.path, userHome: userHome,
+                                             fallbackDirectories: [folder] + ClaudeProcessEnvironment.fallbackDirectories(userHome: userHome))
     }
 
-    nonisolated private static let environments = ClaudeProcessEnvironment.Cache()
-
-    /// How long a login shell may take: a `.zshrc` that hangs mustn't hold up every `claude`.
-    nonisolated static let loginShellTimeout: TimeInterval = 10
-
-    /// What a login `zsh -lc script` prints, or nil when it failed or ran past the timeout.
-    nonisolated private static func loginShell(_ script: String) -> String? {
-        let shell = OneShotProcess(executable: "/bin/zsh", arguments: ["-lc", script])
-        guard let result = shell.run(input: Data(), timeout: loginShellTimeout), result.status == 0 else { return nil }
-        return String(decoding: result.output, as: UTF8.self)
+    /// Runs `script` in a login shell to the end (the Claude Code installer): its status and output.
+    nonisolated static func runLoginShell(_ script: String) -> (Int32, String) {
+        run("/bin/zsh", ["-lc", script])
     }
 
     /// Runs `executable` to the end. `environment` replaces Kite's own (nil inherits it).
-    nonisolated static func run(_ executable: String, _ arguments: [String],
-                                environment: [String: String]? = nil) -> (Int32, String) {
+    nonisolated fileprivate static func run(_ executable: String, _ arguments: [String],
+                                            environment: [String: String]? = nil) -> (Int32, String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -172,16 +164,37 @@ enum ClaudeConnect {
     }
 }
 
-/// Claude Code and the environment to run it in (`ClaudeConnect.environment`). The only way Kite
-/// gets the `claude` executable, so no run of it can miss a test profile's Claude home.
+/// Claude Code and the environment to run it in (`ClaudeConnect.environment`). It can't be built
+/// outside this file, and its executable and environment can't be read apart, so no run of `claude`
+/// can miss a test profile's Claude home.
 struct ClaudeCommand: Sendable {
-    let executable: String
-    let environment: [String: String]
+    private let executable: String
+    private let environment: [String: String]
 
-    /// Nil when Claude Code isn't installed. May run a login shell: never on the main thread.
-    nonisolated static func find() -> ClaudeCommand? {
-        guard let executable = ClaudeConnect.findClaude() else { return nil }
-        return ClaudeCommand(executable: executable, environment: ClaudeConnect.environment())
+    private init(executable: String, environment: [String: String]) {
+        self.executable = executable
+        self.environment = environment
+    }
+
+    enum Lookup: Sendable {
+        case found(ClaudeCommand)
+        /// Not installed.
+        case missing
+        /// The login shell ran past its timeout, so Kite couldn't look everywhere.
+        case unknown
+    }
+
+    /// Where Claude Code is. Awaits the login shell's answers the first time (`LoginShellCache`).
+    static func lookUp() async -> Lookup {
+        let shell = await ClaudeConnect.loginShell.snapshot()
+        guard let executable = ClaudeConnect.findClaude(shell) else { return shell.timedOut ? .unknown : .missing }
+        return .found(ClaudeCommand(executable: executable, environment: ClaudeConnect.environment(for: executable, shell)))
+    }
+
+    /// Nil when Claude Code isn't installed, or couldn't be looked for.
+    static func find() async -> ClaudeCommand? {
+        if case .found(let command) = await lookUp() { return command }
+        return nil
     }
 
     /// The same command without `keys` in its environment (a feature's own test switches).
@@ -207,7 +220,20 @@ struct ClaudeCommand: Sendable {
     }
 
     /// A quick call (`claude auth status`, `claude mcp add`) run to the end: its status and output.
+    /// It blocks, so never on the main thread.
     func run(_ arguments: [String]) -> (Int32, String) {
-        ClaudeConnect.run(executable, arguments, environment: environment)
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        return ClaudeConnect.run(executable, arguments, environment: environment)
+    }
+
+    /// `claude auth login` as shell lines: on a test profile it first exports the test Claude home.
+    var signInCommand: String {
+        ClaudeProcessEnvironment.exports(environment, kite: ProcessInfo.processInfo.environment)
+            + "\(Shell.quote(executable)) auth login\n"
+    }
+
+    /// A Terminal script (`.command`) that signs in to Claude Code.
+    func signInScript() -> String {
+        "#!/bin/zsh -l\n" + signInCommand
     }
 }

@@ -47,51 +47,130 @@ struct ClaudeProcessEnvironmentTests {
         #expect(!environment.values.contains { $0.hasPrefix("/Users/me") })
     }
 
-    @Test func keysFollowTheTestProfile() {
-        let real = ClaudeProcessEnvironment.Key(environment: [:], userHome: user)
-        let empty = ClaudeProcessEnvironment.Key(environment: ["KITE_SUPPORT_PATH": ""], userHome: user)
-        let test = ClaudeProcessEnvironment.Key(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1"], userHome: user)
-        let fixture = ClaudeProcessEnvironment.Key(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1",
-                                                                 "KITE_TEST_CLAUDE_HOME": "/tmp/fixture"], userHome: user)
-        #expect(!real.isTestProfile)
-        #expect(empty.isTestProfile && empty != real)
-        #expect(test.isTestProfile && test != real && test != empty)
-        #expect(fixture != test)
-        #expect(fixture.home == "/tmp/fixture")
+    @Test func withoutALoginPathTheUsualFoldersGoFirst() {
+        let base = ["HOME": "/Users/me", "PATH": "/usr/bin:/bin:/usr/local/bin"]
+        let folders = ["/Users/me/.nvm/bin"] + ClaudeProcessEnvironment.fallbackDirectories(userHome: user)
+        #expect(ClaudeProcessEnvironment.make(base, loginPath: nil, userHome: user, fallbackDirectories: folders)["PATH"]
+                == "/Users/me/.nvm/bin:/Users/me/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/local/bin")
+        // A login PATH wins over the fallback.
+        #expect(ClaudeProcessEnvironment.make(base, loginPath: "/x/bin", userHome: user, fallbackDirectories: folders)["PATH"] == "/x/bin")
+        #expect(ClaudeProcessEnvironment.prepending(["/a", "/a", ""], to: nil) == "/a")
     }
 
-    @Test func theCacheWorksOutEachProfileOnce() {
-        let cache = ClaudeProcessEnvironment.Cache()
-        let real = ClaudeProcessEnvironment.Key(environment: [:], userHome: user)
-        let test = ClaudeProcessEnvironment.Key(environment: ["KITE_SUPPORT_PATH": "/tmp/k.1"], userHome: user)
-        var made = 0
-        let first = cache.environment(for: real) { made += 1; return ["HOME": "/Users/me"] }
-        let again = cache.environment(for: real) { made += 1; return ["HOME": "wrong"] }
-        let other = cache.environment(for: test) { made += 1; return ["HOME": "/tmp/k.1"] }
-        #expect(first == again)
-        #expect(other["HOME"] == "/tmp/k.1")
-        #expect(made == 2)
-    }
-
-    @Test func theSignInScriptExportsOnlyWhatDiffers() {
-        let base = ["HOME": "/Users/me", "PATH": "/usr/bin"]
-        #expect(ClaudeProcessEnvironment.exports(base, base: base) == "")
-        #expect(ClaudeProcessEnvironment.exports(ClaudeProcessEnvironment.make(base, loginPath: nil, userHome: user), base: base) == "")
-        let test = ["HOME": "/tmp/k.1", "CLAUDE_CONFIG_DIR": "/tmp/k.1/.claude", "PATH": "/opt/bin"]
-        #expect(ClaudeProcessEnvironment.exports(test, base: base)
+    @Test func theSignInScriptExportsTheTestHomeOnlyOnATestProfile() {
+        let real = ["HOME": "/Users/me", "PATH": "/usr/bin"]
+        #expect(ClaudeProcessEnvironment.exports(ClaudeProcessEnvironment.make(real, loginPath: nil, userHome: user), kite: real) == "")
+        let kite = real.merging(["KITE_SUPPORT_PATH": "/tmp/k.1"]) { _, new in new }
+        let test = ClaudeProcessEnvironment.make(kite, loginPath: nil, userHome: user)
+        #expect(ClaudeProcessEnvironment.exports(test, kite: kite)
                 == "export HOME=/tmp/k.1\nexport CLAUDE_CONFIG_DIR=/tmp/k.1/.claude\n")
-        let spaced = ["HOME": "/tmp/it's here", "CLAUDE_CONFIG_DIR": "/Users/me/.claude"]
-        #expect(ClaudeProcessEnvironment.exports(spaced, base: base + ["CLAUDE_CONFIG_DIR": "/Users/me/.claude"])
-                == "export HOME='/tmp/it'\\''s here'\n")
+        // Exported even when Kite's own HOME already matches: the script's login shell may set its own.
+        #expect(ClaudeProcessEnvironment.exports(test, kite: kite.merging(["HOME": "/tmp/k.1"]) { _, new in new })
+                .hasPrefix("export HOME=/tmp/k.1\n"))
+        let quoted = ["HOME": "/tmp/it's here", "CLAUDE_CONFIG_DIR": "/tmp/it's here/.claude"]
+        #expect(ClaudeProcessEnvironment.exports(quoted, kite: kite)
+                == "export HOME='/tmp/it'\\''s here'\nexport CLAUDE_CONFIG_DIR='/tmp/it'\\''s here/.claude'\n")
     }
 
     @Test func shellQuoting() {
-        #expect(ClaudeProcessEnvironment.shellQuote("/usr/local/bin/claude") == "/usr/local/bin/claude")
-        #expect(ClaudeProcessEnvironment.shellQuote("/Applications/My App") == "'/Applications/My App'")
-        #expect(ClaudeProcessEnvironment.shellQuote("") == "''")
+        #expect(Shell.quote("/usr/local/bin/claude") == "/usr/local/bin/claude")
+        #expect(Shell.quote("/Applications/My App") == "'/Applications/My App'")
+        #expect(Shell.quote("") == "''")
     }
 }
 
-private func + (lhs: [String: String], rhs: [String: String]) -> [String: String] {
-    lhs.merging(rhs) { _, new in new }
+struct LoginShellTests {
+    /// A clock the test moves.
+    final class Clock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var time = Date(timeIntervalSince1970: 1_000_000)
+        var now: Date { lock.withLock { time } }
+        func advance(_ seconds: TimeInterval) { lock.withLock { time += seconds } }
+    }
+
+    /// A probe that answers from a list and counts its calls.
+    final class Probe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var outcomes: [LoginShellProbe.Outcome]
+        private(set) var calls = 0
+        init(_ outcomes: [LoginShellProbe.Outcome]) { self.outcomes = outcomes }
+        func run() -> LoginShellProbe.Outcome {
+            lock.withLock {
+                calls += 1
+                return outcomes.count > 1 ? outcomes.removeFirst() : outcomes[0]
+            }
+        }
+        var count: Int { lock.withLock { calls } }
+    }
+
+    @Test func readsThePathAndClaude() {
+        #expect(LoginShellProbe.Answers("/opt/homebrew/bin:/usr/bin\n/opt/homebrew/bin/claude\n")
+                == .init(path: "/opt/homebrew/bin:/usr/bin", claude: "/opt/homebrew/bin/claude"))
+        #expect(LoginShellProbe.Answers("/usr/bin\n") == .init(path: "/usr/bin", claude: nil))
+        #expect(LoginShellProbe.Answers("\nclaude not found") == .init())
+    }
+
+    @Test func aFailedProbeIsntKept() async {
+        let clock = Clock()
+        let probe = Probe([.timedOut, .answer("/usr/bin:/bin\n/usr/local/bin/claude\n")])
+        let cache = LoginShellCache(probe: { probe.run() }, now: { clock.now })
+        let first = await cache.snapshot()
+        #expect(first.answers == .init() && first.timedOut)
+        // Within the retry interval it doesn't ask again (no 30 s wait on every claude)...
+        clock.advance(LoginShellCache.retryInterval - 1)
+        #expect(await cache.snapshot().answers == .init())
+        #expect(probe.count == 1)
+        // ...but after it, it does, and keeps the answer for good.
+        clock.advance(2)
+        let second = await cache.snapshot()
+        #expect(second.answers == .init(path: "/usr/bin:/bin", claude: "/usr/local/bin/claude") && !second.timedOut)
+        clock.advance(LoginShellCache.retryInterval * 100)
+        #expect(await cache.snapshot().answers.path == "/usr/bin:/bin")
+        #expect(probe.count == 2)
+    }
+
+    @Test func aMissingClaudeIsAskedAgainAndAfterAnInstall() async {
+        let clock = Clock()
+        let probe = Probe([.answer("/usr/bin\n"), .answer("/usr/bin\n/Users/me/.local/bin/claude\n")])
+        let cache = LoginShellCache(probe: { probe.run() }, now: { clock.now })
+        #expect(await cache.snapshot().answers == .init(path: "/usr/bin", claude: nil))
+        #expect(await cache.snapshot().answers.claude == nil)
+        #expect(probe.count == 1)
+        cache.invalidate()
+        #expect(await cache.snapshot().answers.claude == "/Users/me/.local/bin/claude")
+        #expect(probe.count == 2)
+    }
+
+    @Test func callersShareOneProbe() async {
+        let probe = Probe([.answer("/usr/bin\n/usr/bin/claude\n")])
+        let cache = LoginShellCache(probe: { Thread.sleep(forTimeInterval: 0.2); return probe.run() })
+        await withTaskGroup(of: LoginShellCache.Snapshot.self) { group in
+            for _ in 0..<8 { group.addTask { await cache.snapshot() } }
+            for await snapshot in group { #expect(snapshot.answers.claude == "/usr/bin/claude") }
+        }
+        #expect(probe.count == 1)
+    }
+
+    #if !os(Windows)
+    @Test func theProbeAnswersThroughAFileAndTimesOut() {
+        #expect(LoginShellProbe.run(LoginShellProbe.script, shell: "/bin/sh", flags: ["-c"]) != .noAnswer)
+        #expect(LoginShellProbe.run(#"printf hi > "$1""#, shell: "/bin/sh", flags: ["-c"]) == .answer("hi"))
+        #expect(LoginShellProbe.run("exit 3", shell: "/bin/sh", flags: ["-c"]) == .noAnswer)
+        let start = Date()
+        #expect(LoginShellProbe.run("sleep 5", shell: "/bin/sh", flags: ["-c"], timeout: 0.3) == .timedOut)
+        #expect(Date().timeIntervalSince(start) < 3)
+    }
+
+    @Test func aBackgroundJobNeitherHoldsTheProbeNorDies() throws {
+        let marker = FileManager.default.temporaryDirectory.appendingPathComponent("kite-probe-job-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: marker) }
+        let start = Date()
+        // Like `nohup x &` in .zprofile: a job that outlives the shell.
+        let script = "(sleep 1; touch \(Shell.quote(marker.path))) & printf ok > \"$1\""
+        #expect(LoginShellProbe.run(script, shell: "/bin/sh", flags: ["-c"]) == .answer("ok"))
+        #expect(Date().timeIntervalSince(start) < 0.9)
+        Thread.sleep(forTimeInterval: 2)
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+    }
+    #endif
 }

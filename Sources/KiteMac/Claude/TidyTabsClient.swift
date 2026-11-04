@@ -12,12 +12,12 @@ enum TidyTabsClient {
 
     /// Claude's reply text. Gives up after `timeout` seconds.
     static func ask(_ prompt: String, timeout: TimeInterval = 90) async throws -> String {
-        try await Task.detached(priority: .userInitiated) { try run(prompt, timeout: timeout) }.value
+        guard let claude = await ClaudeCommand.find() else { throw Failure.noClaude }
+        return try await Task.detached(priority: .userInitiated) { try run(claude, prompt, timeout: timeout) }.value
     }
 
     /// Blocks until Claude Code exits, so it runs off the main thread.
-    private static func run(_ prompt: String, timeout: TimeInterval) throws -> String {
-        guard let claude = ClaudeCommand.find() else { throw Failure.noClaude }
+    private static func run(_ claude: ClaudeCommand, _ prompt: String, timeout: TimeInterval) throws -> String {
         let process = claude.process(arguments: TidyTabs.claudeArguments, directory: FileManager.default.temporaryDirectory)
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
