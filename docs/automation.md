@@ -307,8 +307,9 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
     folder holding one gets the dot too.
   - **The card.** Over the bottom centre of the page: Claude's mark, "Claude needs you", the session, "Step n of m",
     the reason, the step, and **Skip**, **Next** and **Done**; a terminal step shows its command with **Copy**. ⋯ has
-    Dismiss All Steps. The chevron folds it to a pill ("Claude needs you · 3 steps"); with no step on the tab in
-    front it's the pill, which brings up the next step (switching tab). sign_in's pill takes precedence on its tab.
+    Dismiss All Steps. The chevron folds it to a pill ("Claude needs you · 3 steps"). A step on another open tab shows
+    nothing at the bottom (the sidebar's dot already marks that tab); the pill shows only for a step the sidebar
+    can't (one outside the browser, or on a closed tab), and brings it up. sign_in's pill takes precedence on its tab.
     Kite bounces its Dock icon once if it isn't in front.
   - **Back to Claude.** `handoff` returns at once (or after `wait` seconds, up to 600) with an id. `handoff_status`
     (`id`, default the session's latest; `wait`; `cancel` to withdraw the rest) lists each step as done, skipped or
