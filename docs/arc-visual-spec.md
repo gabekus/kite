@@ -3764,3 +3764,37 @@ runs the importer on the browser window, and File › Import from Arc… closes 
 
 Deliberate differences from Arc: Kite's Help › Getting Started reopens onboarding (Arc's reopens its "basics"
 cards, which Kite doesn't have), and it stays enabled in incognito windows.
+
+## Sidebar tab and folder context menus → `SidebarContextMenu.swift` (KiteCore), `TabRowCell` / `FolderRowCell` menus, `BrowserWindowController+SidebarMenus` (Arc 1.169 disassembly and strings, 4 Nov 2026)
+
+Sources: **[str]** arc-strings.txt 84890–85005; **[dis]** `~/rea-arc/decomp/arc.s`, string loads and small-string immediates read
+in code order. Arc wasn't driven. Code order inside one builder is taken as menu order; items built through generic helpers
+weren't all identified, so the order is **partial**.
+
+- **Tab menu** [dis, `SidebarMenu+TabContextMenu.swift`, builder @102ec5d80]: Copy Link (@102ebec78), Copy … as Arc Object link,
+  —, Copy PR…, Share ▸, —, …, —, Change Icon…, Rename…, Mute (@102ec18e8), six items not identified, Edit Pinned Page ▸
+  (@102eb73c0), —, Open in Split View (@102ebea8c), Duplicate, Move to ▸ (@102ebf3b4), …, —, …, Archive Other Tabs, Archive Tabs
+  Below, Archive Tabs Above, Tidy Tab Title Feedback, Debug Web Lifecycle, —, Customize Page…, Live Calendar items, Show Hover
+  Preview / Time to Next Meeting / Next Meeting Link. Add Split View ("Add a new split view", @102eba2e0) is built in
+  `PlatformGeneration`; where it lands wasn't traced. The live split row menu (Separate All Tabs section above) has Copy Link
+  then Copy link as Markdown, and the archive trio after Archive Item, Above disabled on the top row.
+- **Move to** [dis @102ebf3b4, @102ec118c, @102ec13ec]: a "Move to" submenu of the root spaces; "New Folder with N Items" is added
+  only when two or more items are selected (`cmp count, #2; b.lo`).
+- **Folder menu** [dis, `listContextMenu(listItemIDs:canArchiveFolders:)` @102ea8e80]: Share Folder…, —, …, —, …, —, Duplicate, —,
+  **Archive Folder or Delete** (`tbz` on `canArchiveFolders` @102ea9da0: one or the other), —, New Nested Folder…, Turn “<name>”
+  into Space, Copy All Links, Copy All Links as Markdown, Rename…. No separator marker between the last five.
+- **Space menu** [dis @102ecdc94]: Change Space Icon…, Rename Space…, Edit Theme Color…, Set Profile ▸, —, New Folder, Live
+  Folders ▸, —, Share Space…, —, Show/Hide Space Header, Manage Spaces…, —, Delete Space…; "Export “%@” into Folder" elsewhere.
+- **Kite tab menu:** Add to Favorites, Pin/Unpin, Back to Pinned URL / Separate, Edit Pinned Page ▸, Copy Link, Copy link as
+  Markdown, Rename…, Mute, —, Add Split View (on the tab on screen) or Open in Split View (others), Duplicate, Move to ▸ (spaces,
+  the current one disabled), —, Close/Unload Tab, Archive Other Tabs / Below / Above (Today tabs; disabled when there's nothing
+  to archive). **Inferred:** Add vs Open by whether the tab is on screen; the archive trio counts a split row as one row and
+  covers Today only; a moved pinned tab stays pinned in the other space; the Kite items whose place Arc's builder didn't show
+  (Favorites, Pin, Back to Pinned URL) keep their old place.
+- **Kite folder menu:** Duplicate, —, Delete, —, New Nested Folder…, Turn “<name>” into Space, Copy All Links, Copy All Links
+  as Markdown, Rename…. Kite takes the Delete branch: its archive holds tabs, not folders, and Delete archives the tabs inside.
+  **Inferred:** the copy keeps the name and sits right after the original; the nested folder goes at the end, opens its parent and
+  starts a rename; the new space keeps the old one's theme and profile, has no icon, and is switched to; Markdown links one per line.
+- **Not built:** Share / Share Folder… / Share Space… and Copy as Arc Object link (Arc's servers), Copy PR…, Change Icon… on a tab,
+  New Folder with N Items (needs multi-select), Live Calendar and meeting items, Customize Page… (Boost editor from the sidebar),
+  Show/Hide Space Header (Kite has no hidden-header state), Manage Spaces… (no page yet), Export into Folder (destination not traced).

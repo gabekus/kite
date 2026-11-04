@@ -642,14 +642,43 @@ final class TabRowCell: SidebarRowCell {
         if t.isPinned && t.tab.pinnedURL != nil {
             menu.addEditPinnedPage(onEdit: { actions.editPinnedURL(id) }, onReplace: { actions.replacePinnedURL(id) })
         }
-        let url = t.tab.url
+        let url = t.tab.url, title = t.tab.displayTitle
         menu.add("Copy Link") { if let url { copyToPasteboard(url.absoluteString) } }
+        menu.add("Copy link as Markdown", enabled: url != nil) {
+            if let url { copyToPasteboard(LinkFormat.markdown(title: title, url: url)) }
+        }
         menu.add("Rename…") { actions.renameTab(id) }
         if TabAudioButton.isShown(isAudible: t.isAudible, isMuted: t.isMuted) {
             menu.add(TabAudioButton.menuTitle(isMuted: t.isMuted)) { actions.toggleMute(id) }
         }
         menu.addSeparator()
+        // Arc's PlatformGeneration items: Add Split View ("Add a new split view") on the tab that's on
+        // screen, Open in Split View ("Open item in split view") on one that isn't.
+        let state = store.state
+        if state.visibleTabs.contains(where: { $0.id == id }) {
+            menu.add("Add Split View", enabled: (state.selectedSplit?.tabIDs.count ?? 0) < SplitView.maxPanes) {
+                actions.addSplitViewWith(id)
+            }
+        } else {
+            let canOpen = state.selectedTab.map { state.canDropSidebarItems([state.sidebarDragID(for: id)], besidePane: $0.id) } ?? false
+            menu.add("Open in Split View", enabled: canOpen) { actions.openInSplitView(id) }
+        }
+        menu.add("Duplicate") { store.mutate { _ = $0.duplicate(tab: id) } }
+        // SidebarMenu+MoveMenu: the root spaces. "New Folder with N Items" is only built for two or more
+        // selected items, which Kite's sidebar can't select.
+        menu.addSubmenu("Move to") { sub in
+            for space in state.spaces {
+                sub.add(space.labelWithIcon, enabled: space.id != t.space) { actions.moveTab(id, space.id) }
+            }
+        }
+        menu.addSeparator()
         menu.add(t.isPinned ? "Unload Tab" : "Close Tab") { actions.closeTab(id) }
+        if !t.isPinned {
+            for (title, which) in [("Archive Other Tabs", ArchiveTabsRelative.others), ("Archive Tabs Below", .below),
+                                   ("Archive Tabs Above", .above)] {
+                menu.add(title, enabled: !state.tabsToArchive(which, relativeTo: id).isEmpty) { actions.archiveTabs(id, which) }
+            }
+        }
         return menu
     }
 
@@ -919,13 +948,21 @@ final class FolderRowCell: SidebarRowCell {
                 menu.add("Stop Claude") { [weak self] in self?.stopClaude() }
                 menu.addSeparator()
             }
+            menu.add("Duplicate") { actions.duplicateFolder(folder.id) }
+            menu.addSeparator()
+            // Arc builds Archive Folder or Delete (`canArchiveFolders`); Kite's archive holds tabs, not
+            // folders, so it's Delete, which archives the tabs inside.
             menu.add("Delete") { actions.deleteFolder(folder.id) }
             menu.addSeparator()
-            let urls = folder.items.tabs.compactMap(\.url)
-            menu.add("Copy All Links", enabled: !urls.isEmpty) {
-                copyToPasteboard(urls.map(\.absoluteString).joined(separator: "\n"))
+            menu.add("New Nested Folder…") { actions.newNestedFolder(folder.id) }
+            menu.add("Turn \u{201C}\(folder.name)\u{201D} into Space") { actions.turnFolderIntoSpace(folder.id) }
+            let tabs = folder.items.tabs.filter { $0.url != nil }
+            menu.add("Copy All Links", enabled: !tabs.isEmpty) {
+                copyToPasteboard(tabs.compactMap(\.url?.absoluteString).joined(separator: "\n"))
             }
-            menu.addSeparator()
+            menu.add("Copy All Links as Markdown", enabled: !tabs.isEmpty) {
+                copyToPasteboard(LinkFormat.markdownList(tabs))
+            }
             menu.add("Rename…") { actions.renameFolder(folder.id) }
         }
         return menu
