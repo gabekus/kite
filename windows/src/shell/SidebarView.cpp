@@ -33,6 +33,7 @@ constexpr float kHeaderTextX = 41;   // in the window
 constexpr float kHeaderFontSize = 13;
 constexpr float kHeaderTextOpacity = 0.45f;
 constexpr float kHeaderIconFontSize = 15;  // SpaceIconImageView's size in the header: emoji, symbols, pictures
+constexpr float kDoneFontSize = kHeaderFontSize - 1;  // the rename's Done (SidebarDoneButton)
 constexpr float kIconSize = 18;
 constexpr float kIconTextGap = 8;
 constexpr float kNestingIndent = 16;
@@ -131,6 +132,7 @@ std::unique_ptr<SidebarView> SidebarView::Create(HWND window, Favicons* favicons
     };
     if (FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kUrlFieldFontSize, view->addressFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kHeaderFontSize, view->headerFormat_)) ||
+        FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kDoneFontSize, view->doneFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_REGULAR, M::kTabFontSize, view->tabFormat_)) ||
         FAILED(hr = format(text, DWRITE_FONT_WEIGHT_SEMI_BOLD, M::kTabFontSize, view->folderFormat_)) ||
         FAILED(hr = format(L"Segoe UI Emoji", DWRITE_FONT_WEIGHT_REGULAR, M::kHeaderIconFontSize, view->emojiFormat_)) ||
@@ -166,6 +168,7 @@ void SidebarView::UseCompositor(Compositor* compositor) {
     ReleaseGpu();
     bar_->UseCompositor(compositor, compositor ? compositor->Chrome() : nullptr);
     tip_->UseCompositor(compositor);
+    if (rename_) rename_->UseCompositor(compositor, compositor ? compositor->Chrome() : nullptr);
     compositor_ = compositor;
     deviceLost_ = false;
     dirty_ = true;
@@ -194,6 +197,7 @@ bool SidebarView::CreateGpu(std::wstring& error) {
 void SidebarView::ReleaseGpu() {
     faviconBitmaps_.clear();
     if (tip_) tip_->UseCompositor(nullptr);
+    if (rename_) rename_->UseCompositor(nullptr, nullptr);
     if (icons_) icons_->ReleaseDevice();
     for (auto& [id, page] : pages_) {
         if (page.visual && strip_) {
@@ -222,6 +226,10 @@ void SidebarView::ReleaseGpu() {
 }
 
 void SidebarView::Update(const BrowserState& state, const std::optional<std::string>& anchor) {
+    // A rename ends with the space it's for no longer the one shown (another space selected,
+    // or this one deleted), keeping what was typed, as leaving the field does. First: renaming
+    // changes the session, and the update that brings comes before this one goes on.
+    if (rename_ && (!state.SpaceIndex(rename_->SpaceID()) || state.SelectedSpace().id != rename_->SpaceID())) EndRenaming(true);
     Model next;
     const size_t selected = state.SelectedSpaceIndex();
     next.dark = !PrefersDarkForeground(state.SelectedSpace().theme);
@@ -468,6 +476,11 @@ bool SidebarView::HandleMessage(UINT message, WPARAM wParam) {
         ShowTip();
         return true;
     }
+    if (message == WM_TIMER && wParam == kDropTimer) {
+        FinishDrop();
+        return true;
+    }
+    if (message == WM_TIMER && rename_ && rename_->HandleTimer(wParam)) return true;
     if (message != kRedrawMessage) return false;
     redrawPosted_ = false;
     if (NeedsDraw() && compositor_) {
@@ -622,6 +635,8 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     // The space bar under them.
     Pixels bar;
     if (error = bar_->Draw(static_cast<UINT>(client.bottom), readBack ? &bar : nullptr); !error.empty()) return error;
+    // The rename's caret where its field drew.
+    if (rename_) rename_->UpdateCaret();
 
     if (readBack) {
         // As the screen shows it: the pages over the address field where the strip has them
@@ -739,6 +754,22 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
     DrawGlyph(context, kGlobe, side / kGlyphInk, box, Primary(kLabelAlpha * kGlobeOpacity));
 }
 
+void SidebarView::PlaceRenameField(float x, float top) {
+    // SpaceHeaderRowCell.layout while renaming: no chevron; from the cell's end, a gap and the
+    // icon inset, Done (its label's width), a gap, then the field takes the room from the name's
+    // place. The field's line and Done's label each sit in the 26pt row, rounded down.
+    const float right = width_ - M::kPadding;
+    const float rowTop = top + M::kHeaderIconTop;
+    float end = right - (kHeaderGap + (M::kIconInset - M::kPadding));
+    end -= rename_->DoneWidth();
+    const D2D1_RECT_F done = Rect(end, rowTop, end + rename_->DoneWidth(), rowTop + M::kHeaderIconSize);
+    end -= kHeaderGap;
+    const float line = LineHeight(M::kHeaderFontSize);
+    const float lineTop = rowTop + std::floor((M::kHeaderIconSize - line) / 2);
+    const float doneBaseline = rowTop + std::floor((M::kHeaderIconSize - LineHeight(M::kDoneFontSize)) / 2) + M::kDoneFontSize * kAscender;
+    rename_->Place(x, std::max(end, x), lineTop, line, lineTop + M::kHeaderFontSize * kAscender, done, doneBaseline, dpi_);
+}
+
 void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, float top, bool hovered) {
     const float left = M::kPadding, right = width_ - M::kPadding;  // the row, in window points
     // The pill sits 2.5pt into its row: whole pixels at 2x as on the Mac's screens, snapped to
@@ -789,6 +820,12 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
                 }
             }
             x = M::kHeaderTextX;
+        }
+        if (rename_ && rename_->SpaceID() == row.id) {
+            // Renaming: the field and Done where the name and the chevron were.
+            PlaceRenameField(x, top);
+            rename_->Draw(context, brush_.Get(), model_.dark);
+            break;
         }
         float end = right;
         if (row.hasPinned) {
@@ -961,8 +998,144 @@ void SidebarView::ForgetActivation() {
     activating_ = false;
 }
 
+// Dragging a space's cell ------------------------------------------------------------------
+
+void SidebarView::DragSpaceTo(D2D1_POINT_2F b) {
+    // cellDragged: the first move past 4pt picks it up (not with one space, or while another
+    // drop is still landing), and each one after moves it.
+    if (!barDragging_ && barPress_) barDragging_ = bar_->BeginDrag(*barPress_);
+    if (!barDragging_) return;
+    bar_->MoveDrag(b.x, b.y);
+    if (bar_->NeedsDraw()) ScheduleDraw();
+}
+
+void SidebarView::DropSpace(D2D1_POINT_2F b) {
+    // cellDragEnded: it settles into its slot, and the space moves once it's there.
+    barDragging_ = false;
+    bar_->DropDrag(b.x, b.y);
+    SetTimer(window_, kDropTimer, static_cast<UINT>(std::ceil(space_bar_metrics::kReorderSlide * 1000)), nullptr);
+    if (bar_->NeedsDraw()) ScheduleDraw();
+}
+
+void SidebarView::FinishDrop() {
+    KillTimer(window_, kDropTimer);
+    const std::optional<SpaceDrag> drag = bar_->Drag();
+    if (!drag || !drag->landing) return;
+    // The completion handler: the cells back on the layout, then the move (which updates the
+    // bar with the new order before anything draws).
+    bar_->EndDrag();
+    ScheduleDraw();
+    if (actions_.moveSpace) actions_.moveSpace(drag->spaceID, drag->target.value_or(drag->from));
+    RefreshHover();
+}
+
+std::optional<POINT> SidebarView::SpaceCellCentre(size_t index) const {
+    const SpaceBarLayout& layout = bar_->Geometry();
+    if (index >= layout.cells.size()) return std::nullopt;
+    const BarRect& cell = layout.cells[index];
+    const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+    const float top = SpaceBarTop(Height());
+    return POINT{std::lround((cell.left + cell.right) / 2 * scale), std::lround(((cell.top + cell.bottom) / 2 + top) * scale)};
+}
+
+// Renaming a space ---------------------------------------------------------------------------
+
+void SidebarView::BeginRenaming(const std::string& spaceID, const std::string& name) {
+    if (rename_ && rename_->SpaceID() == spaceID) return;
+    if (rename_) EndRenaming(true);
+    std::wstring error;
+    rename_ = SpaceRenameField::Create(window_, dwrite_.Get(), headerFormat_.Get(), doneFormat_.Get(), spaceID, name, error);
+    if (!rename_) {
+        OutputDebugStringW((L"Kite: the rename field couldn't open: " + error + L"\n").c_str());
+        return;
+    }
+    if (compositor_) rename_->UseCompositor(compositor_, compositor_->Chrome());
+    HideTip();
+    InvalidateSelectedPage();
+}
+
+void SidebarView::EndRenaming(bool commit) {
+    if (!rename_) return;
+    const std::string id = rename_->SpaceID(), text = rename_->Text();
+    renamePressed_ = false;
+    rename_.reset();
+    if (GetCapture() == window_ && !press_ && !barPress_) ReleaseCapture();
+    InvalidateSelectedPage();
+    if (compositor_) compositor_->Commit();  // the caret's visual goes
+    // The Mac's commitRename: a blank name keeps the old one (renameSpace).
+    if (commit && actions_.renameSpace) actions_.renameSpace(id, text);
+}
+
+std::optional<std::string> SidebarView::Renaming() const {
+    if (!rename_) return std::nullopt;
+    return rename_->SpaceID();
+}
+
+void SidebarView::TypeInRename(std::string_view text) {
+    if (!rename_) return;
+    for (wchar_t c : Widen(std::string(text))) rename_->Character(c);
+    InvalidateSelectedPage();
+}
+
+bool SidebarView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
+    if (!rename_) return false;
+    using Outcome = SpaceRenameField::Outcome;
+    const auto apply = [this](Outcome outcome) {
+        if (outcome == Outcome::Commit) EndRenaming(true);
+        else if (outcome == Outcome::Cancel) EndRenaming(false);
+        else if (outcome == Outcome::Changed) InvalidateSelectedPage();
+    };
+    switch (message) {
+    case WM_KEYDOWN: {
+        // AltGr is Ctrl+Alt: its characters come as WM_CHAR, never as a Ctrl shortcut.
+        const bool alt = GetKeyState(VK_MENU) < 0;
+        const bool ctrl = GetKeyState(VK_CONTROL) < 0 && !alt;
+        const bool shift = GetKeyState(VK_SHIFT) < 0;
+        const std::optional<Outcome> outcome = rename_->KeyDown(static_cast<UINT>(wParam), ctrl, shift);
+        if (!outcome) return false;
+        apply(*outcome);
+        return true;
+    }
+    case WM_CHAR:
+        apply(rename_->Character(static_cast<wchar_t>(wParam)));
+        return true;
+    case WM_IME_STARTCOMPOSITION:
+        rename_->PlaceImeWindow();
+        return false;  // Windows' composition window draws it; the result comes as WM_CHAR
+    case WM_SETFOCUS:
+        rename_->SetFocused(true);
+        InvalidateSelectedPage();
+        return false;
+    case WM_KILLFOCUS:
+        // The page taking the keyboard ends it, as the web view becoming first responder ends
+        // the Mac's field editor; another app's doesn't (AppKit keeps a field's editing).
+        if (wParam && IsChild(window_, reinterpret_cast<HWND>(wParam))) {
+            EndRenaming(true);
+        } else {
+            rename_->SetFocused(false);
+            InvalidateSelectedPage();
+        }
+        return false;
+    case WM_SETCURSOR: {
+        if (LOWORD(lParam) != HTCLIENT) return false;
+        POINT cursor{};
+        GetCursorPos(&cursor);
+        ScreenToClient(window_, &cursor);
+        const D2D1_POINT_2F p = OnPage(PointOf(cursor));
+        if (!rename_->InField(p.x, p.y)) return false;
+        SetCursor(LoadCursorW(nullptr, IDC_IBEAM));
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 void SidebarView::ClearHover() {
     pointer_.reset();
+    // A cell being dragged goes back where it came from.
+    if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
+    renamePressed_ = false;
     // A press it drops lets go of the mouse too.
     if ((press_ || barPress_) && GetCapture() == window_) {
         press_.reset();
@@ -1048,10 +1221,16 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             trackingLeave_ = TrackMouseEvent(&track) != FALSE;
         }
         pointer_ = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (renamePressed_ && rename_) {
+            const D2D1_POINT_2F q = OnPage(PointOf(*pointer_));
+            if (rename_->Move(q.x, q.y) != SpaceRenameField::Outcome::None) InvalidateSelectedPage();
+            return true;
+        }
         if (barPress_) {
             // In the bar's points, wherever the pointer has gone.
             const D2D1_POINT_2F p = PointOf(*pointer_);
             SpaceBarMove(*barPress_, p.x, p.y - SpaceBarTop(Height()));
+            if (barPress_->dragged) DragSpaceTo(D2D1_POINT_2F{p.x, p.y - SpaceBarTop(Height())});
             // A drag takes the tip away (cellDragged's setDragging), but not with one space,
             // which can't be dragged (it returns first).
             // The hover stays (no tracking-area events during a drag), so a release over the
@@ -1084,6 +1263,18 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         lastClickTime_ = time;
         lastClickAt_ = at;
         pointer_ = at;
+        // While a space is renamed, a press in its field edits it, on Done commits it on release,
+        // and anywhere else ends it (keeping what was typed) and goes on as a press.
+        if (rename_) {
+            const D2D1_POINT_2F q = OnPage(p);
+            if (rename_->Press(q.x, q.y, (wParam & MK_SHIFT) != 0)) {
+                renamePressed_ = true;
+                SetCapture(window_);
+                InvalidateSelectedPage();
+                return true;
+            }
+            EndRenaming(true);
+        }
         RefreshHover();
         // A space's cell, which takes the click that brings the window forward too (the Mac's
         // acceptsFirstMouse).
@@ -1098,10 +1289,26 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         return true;
     }
     case WM_LBUTTONUP: {
+        if (renamePressed_) {
+            renamePressed_ = false;
+            if (GetCapture() == window_) ReleaseCapture();
+            const D2D1_POINT_2F q = OnPage(PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}));
+            if (rename_ && rename_->Release(q.x, q.y) == SpaceRenameField::Outcome::Commit) EndRenaming(true);
+            return true;
+        }
         if (barPress_) {
             const SpaceBarPress press = *barPress_;
             barPress_.reset();
+            const bool dragging = barDragging_;
+            barDragging_ = false;  // before the capture goes, so its WM_CAPTURECHANGED doesn't drop it again
             if (GetCapture() == window_) ReleaseCapture();
+            if (dragging) {
+                const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+                barDragging_ = true;
+                DropSpace(D2D1_POINT_2F{p.x, p.y - SpaceBarTop(Height())});
+                RefreshHover();
+                return true;
+            }
             // Let go inside the cell it pressed, without dragging: that space (mouseUp's
             // bounds.contains).
             const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
@@ -1125,12 +1332,40 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         return true;
     }
     case WM_CAPTURECHANGED:
+        // The mouse went elsewhere mid-drag (another window took it): the cell goes back.
+        if (barDragging_) DropSpace(D2D1_POINT_2F{-1, -1});
+        renamePressed_ = false;
         if (press_ || barPress_) {
             press_.reset();
             barPress_.reset();
             RefreshHover();
         }
         return false;
+    case WM_RBUTTONDOWN: {
+        const D2D1_POINT_2F p = PointOf(POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+        return p.x >= 0 && p.x < width_ && !press_ && !barPress_;
+    }
+    case WM_RBUTTONUP: {
+        // The space's menu, from its cell in the bar or its header (menu(for:) and the header's
+        // contextMenu(at:)), on release as Windows' context menus open.
+        if (press_ || barPress_) return true;
+        const POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        const D2D1_POINT_2F p = PointOf(at);
+        if (p.x < 0 || p.x >= width_) return false;
+        std::optional<std::string> space;
+        if (const auto b = BarPoint(p)) {
+            space = bar_->SpaceAt(b->x, b->y);
+        } else if (const SidebarHit hit = HitAt(p); hit.target == SidebarHit::Target::Row && hit.row < model_.rows.size() &&
+                                                  model_.rows[hit.row].kind == SidebarRow::Kind::Header) {
+            space = model_.rows[hit.row].id;
+        }
+        if (!space || !actions_.spaceMenu) return true;
+        HideTip();
+        POINT screen = at;
+        ClientToScreen(window_, &screen);
+        actions_.spaceMenu(*space, screen);
+        return true;
+    }
     case WM_MOUSEHWHEEL: {
         // Sideways over the space bar: its strip, when the spaces don't fit (an NSScrollView).
         POINT at{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};

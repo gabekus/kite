@@ -39,6 +39,7 @@ add_library(KiteCoreWin STATIC
   src/core/OKLab.cpp
   src/core/SessionStore.cpp
   src/core/SpaceBar.cpp
+  src/core/SpaceEditing.cpp
   src/core/SpaceIcon.cpp
   src/core/SymbolShape.cpp
   src/core/PictureLoads.cpp
@@ -103,6 +104,9 @@ if(WIN32)
     src/shell/main.cpp
     src/shell/BackdropTest.cpp
     src/shell/BrowserWindowController.cpp
+    src/shell/BrowserWindowController+Chromium.cpp
+    src/shell/BrowserWindowController+Spaces.cpp
+    src/shell/BrowserWindowController+Tests.cpp
     src/shell/CaptionButtonsView.cpp
     src/shell/Capture.cpp
     src/shell/CommandBarView.cpp
@@ -115,12 +119,15 @@ if(WIN32)
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
     src/shell/SpaceIconPainter.cpp
+    src/shell/SpaceMenu.cpp
+    src/shell/SpaceRenameField.cpp
     src/shell/SpaceTipView.cpp
+    src/shell/TextEditing.cpp
     src/shell/TouchpadInput.cpp
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
-  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp)
+  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp comctl32)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -178,6 +185,7 @@ add_executable(KiteCoreTests
   tests/LiveTabPolicyTests.cpp
   tests/SidebarTests.cpp
   tests/SpaceBarTests.cpp
+  tests/SpaceEditingTests.cpp
   tests/SpaceIconTests.cpp
   tests/PictureLoadsTests.cpp
   tests/SpaceSwipeTests.cpp

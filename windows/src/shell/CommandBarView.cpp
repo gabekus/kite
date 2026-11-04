@@ -115,49 +115,6 @@ HRESULT MakeAlphaStrip(ID2D1DeviceContext* context, const std::vector<float>& al
     return context->CreateBitmap(size, pixels.data(), row ? count * 4 : 4, &props, out.ReleaseAndGetAddressOf());
 }
 
-
-bool IsHighSurrogate(wchar_t c) { return c >= 0xD800 && c < 0xDC00; }
-// What would start a second line in the field (DirectWrite breaks at these even without
-// wrapping): control characters, NEL, and the line and paragraph separators.
-bool BreaksLine(wchar_t c) { return c < 0x20 || c == 0x7F || c == 0x85 || c == 0x2028 || c == 0x2029; }
-bool IsLowSurrogate(wchar_t c) { return c >= 0xDC00 && c < 0xE000; }
-
-char32_t CodePointAt(const std::wstring& text, size_t at) {
-    const wchar_t c = text[at];
-    if (IsHighSurrogate(c) && at + 1 < text.size() && IsLowSurrogate(text[at + 1])) {
-        return 0x10000 + ((static_cast<char32_t>(c) - 0xD800) << 10) + (static_cast<char32_t>(text[at + 1]) - 0xDC00);
-    }
-    return c;
-}
-
-// Where characters (grapheme clusters, as the core's matching and Swift count them) start,
-// per UTF-16 unit, plus one past the end: the caret only ever sits between characters.
-std::vector<bool> Utf16CharacterStarts(const std::wstring& text) {
-    std::u32string codePoints;
-    std::vector<size_t> offsets;
-    for (size_t i = 0; i < text.size();) {
-        const char32_t c = CodePointAt(text, i);
-        codePoints.push_back(c);
-        offsets.push_back(i);
-        i += c > 0xFFFF ? 2 : 1;
-    }
-    const std::vector<bool> starts = unicode::CharacterStarts(codePoints);
-    std::vector<bool> out(text.size() + 1, false);
-    for (size_t k = 0; k < codePoints.size(); ++k) {
-        if (starts[k]) out[offsets[k]] = true;
-    }
-    out[text.size()] = true;
-    return out;
-}
-
-// Ctrl+Left and Ctrl+Right stop between runs of these, as in Windows' own text boxes.
-enum class WordClass { Space, Word, Other };
-WordClass Classify(char32_t c) {
-    if (c == ' ' || c == '\t' || c == 0xA0 || c == 0x3000 || (c >= 0x2000 && c <= 0x200A)) return WordClass::Space;
-    if (unicode::IsLetter(c) || unicode::IsNumber(c) || c == '_') return WordClass::Word;
-    return WordClass::Other;
-}
-
 D2D1_COLOR_F Color(float r, float g, float b, float a) { return D2D1_COLOR_F{r, g, b, a}; }
 D2D1_COLOR_F WithAlpha(D2D1_COLOR_F color, float alpha) {
     color.a *= alpha;
@@ -477,7 +434,6 @@ void CommandBarView::Show(CommandBarMode mode, const std::string& text, const Lo
     selecting_ = false;
     composing_ = false;
     pressed_ = kPressedNothing;
-    highSurrogate_ = 0;
     hoveredRow_ = -1;
     // Laid out and filled before anything can draw (taking the focus below draws).
     ComputeGeometry();
@@ -494,7 +450,7 @@ void CommandBarView::Show(CommandBarMode mode, const std::string& text, const Lo
 }
 
 void CommandBarView::Type(std::string_view text) {
-    if (open_) Insert(Widen(text));
+    if (open_) Apply(edit_.Insert(Widen(text)));
 }
 
 void CommandBarView::Hide() {
@@ -513,9 +469,7 @@ void CommandBarView::Hide() {
     if (caretAdded_ && visual_) visual_->RemoveVisual(caretVisual_.Get());
     caretAdded_ = false;
     if (composition_) composition_->Commit();
-    text_.clear();
-    characterStarts_.assign(1, true);
-    caret_ = anchor_ = 0;
+    edit_.SetText(std::wstring(), 0, 0);
     textLayout_.Reset();
     rows_.clear();
     rowText_.clear();
@@ -546,7 +500,7 @@ void CommandBarView::Layout() {
 
 void CommandBarView::Refresh() {
     if (!open_) return;
-    std::vector<CommandSuggestion> rows = callbacks_.suggestions ? callbacks_.suggestions(Narrow(text_), mode_) : std::vector<CommandSuggestion>{};
+    std::vector<CommandSuggestion> rows = callbacks_.suggestions ? callbacks_.suggestions(Narrow(edit_.Text()), mode_) : std::vector<CommandSuggestion>{};
     if (rows.size() > kMaxRows) rows.resize(kMaxRows);
     if (rows == rows_) return;
     const bool hadHighlight = highlighted_ >= 0 && static_cast<size_t>(highlighted_) < rows_.size();
@@ -600,20 +554,18 @@ void CommandBarView::BuildRowText() {
 // Text editing ---------------------------------------------------------------------------
 
 void CommandBarView::SetText(std::wstring text, size_t caret, size_t anchor) {
-    text_ = std::move(text);
-    caret_ = std::min(caret, text_.size());
-    anchor_ = std::min(anchor, text_.size());
+    edit_.SetText(std::move(text), caret, anchor);
     TextChanged();
 }
 
 void CommandBarView::TextChanged() {
-    characterStarts_ = Utf16CharacterStarts(text_);
+    const std::wstring& text = edit_.Text();
     textLayout_.Reset();
-    dwrite_->CreateTextLayout(text_.c_str(), static_cast<UINT32>(text_.size()), fieldFormat_.Get(), 100000, C::kFieldHeight,
+    dwrite_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), fieldFormat_.Get(), 100000, C::kFieldHeight,
                               textLayout_.GetAddressOf());
     // As the Mac's onChange(of: query): the rows again, the first highlighted.
     highlighted_ = 0;
-    SetRows(callbacks_.suggestions ? callbacks_.suggestions(Narrow(text_), mode_) : std::vector<CommandSuggestion>{});
+    SetRows(callbacks_.suggestions ? callbacks_.suggestions(Narrow(text), mode_) : std::vector<CommandSuggestion>{});
     KeepCaretVisible();
     Invalidate();  // first, so the caret waits for the text's draw
     RestartCaretBlink();
@@ -625,102 +577,12 @@ void CommandBarView::SelectionChanged() {
     RestartCaretBlink();
 }
 
-void CommandBarView::Insert(std::wstring_view text) {
-    const size_t start = SelectionStart();
-    text_.replace(start, SelectionEnd() - start, text);
-    caret_ = anchor_ = start + text.size();
-    // What's inserted can join the character after it (a combining mark, a ZWJ, a second
-    // flag letter): the caret goes to the end of that character, never inside it.
-    characterStarts_ = Utf16CharacterStarts(text_);
-    while (caret_ < text_.size() && !characterStarts_[caret_]) ++caret_;
-    anchor_ = caret_;
-    TextChanged();
-}
-
-void CommandBarView::DeleteRange(size_t from, size_t to) {
-    if (from >= to) return;
-    text_.erase(from, to - from);
-    caret_ = anchor_ = from;
-    TextChanged();
-}
-
-size_t CommandBarView::PreviousCharacter(size_t at) const {
-    while (at > 0) {
-        if (characterStarts_[--at]) return at;
-    }
-    return 0;
-}
-
-size_t CommandBarView::NextCharacter(size_t at) const {
-    while (at < text_.size()) {
-        if (characterStarts_[++at]) return at;
-    }
-    return text_.size();
-}
-
-size_t CommandBarView::PreviousWord(size_t at) const {
-    while (at > 0 && Classify(CodePointAt(text_, PreviousCharacter(at))) == WordClass::Space) at = PreviousCharacter(at);
-    if (at == 0) return 0;
-    const WordClass run = Classify(CodePointAt(text_, PreviousCharacter(at)));
-    while (at > 0 && Classify(CodePointAt(text_, PreviousCharacter(at))) == run) at = PreviousCharacter(at);
-    return at;
-}
-
-size_t CommandBarView::NextWord(size_t at) const {
-    if (at < text_.size()) {
-        const WordClass run = Classify(CodePointAt(text_, at));
-        if (run != WordClass::Space) {
-            while (at < text_.size() && Classify(CodePointAt(text_, at)) == run) at = NextCharacter(at);
-        }
-    }
-    while (at < text_.size() && Classify(CodePointAt(text_, at)) == WordClass::Space) at = NextCharacter(at);
-    return at;
-}
-
-void CommandBarView::Copy() const {
-    if (!HasSelection() || !OpenClipboard(window_)) return;
-    const std::wstring selected = text_.substr(SelectionStart(), SelectionEnd() - SelectionStart());
-    EmptyClipboard();
-    if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, (selected.size() + 1) * sizeof(wchar_t))) {
-        if (auto* out = static_cast<wchar_t*>(GlobalLock(memory))) {
-            std::copy(selected.begin(), selected.end(), out);
-            out[selected.size()] = L'\0';
-            GlobalUnlock(memory);
-            if (!SetClipboardData(CF_UNICODETEXT, memory)) GlobalFree(memory);
-        } else {
-            GlobalFree(memory);
-        }
-    }
-    CloseClipboard();
-}
-
-void CommandBarView::Paste() {
-    if (!OpenClipboard(window_)) return;
-    std::wstring pasted;
-    if (HANDLE data = GetClipboardData(CF_UNICODETEXT)) {
-        if (const auto* text = static_cast<const wchar_t*>(GlobalLock(data))) {
-            // Up to the terminating NUL, but never past the clipboard's own memory.
-            const size_t most = GlobalSize(data) / sizeof(wchar_t);
-            size_t length = 0;
-            while (length < most && text[length]) ++length;
-            pasted.assign(text, length);
-            GlobalUnlock(data);
-        }
-    }
-    CloseClipboard();
-    // One line: each line break (CR LF, CR or LF) and other control character becomes a space.
-    std::wstring line;
-    line.reserve(pasted.size());
-    for (size_t i = 0; i < pasted.size(); ++i) {
-        const wchar_t c = pasted[i];
-        if (c == L'\r' && i + 1 < pasted.size() && pasted[i + 1] == L'\n') continue;
-        line.push_back(BreaksLine(c) ? L' ' : c);
-    }
-    if (!line.empty()) Insert(line);
+void CommandBarView::Apply(TextEditing::Change change) {
+    if (change == TextEditing::Change::Text) TextChanged();
+    else if (change == TextEditing::Change::Selection) SelectionChanged();
 }
 
 bool CommandBarView::KeyDown(UINT key, bool ctrl, bool shift) {
-    const size_t end = text_.size();
     switch (key) {
     case VK_ESCAPE:
         Hide();
@@ -734,86 +596,24 @@ bool CommandBarView::KeyDown(UINT key, bool ctrl, bool shift) {
     case VK_DOWN:
         SetHighlighted(std::min(highlighted_ + 1, std::max(static_cast<int>(rows_.size()) - 1, 0)));
         return true;
-    case VK_LEFT:
-    case VK_RIGHT:
-    case VK_HOME:
-    case VK_END: {
-        size_t to = caret_;
-        if (key == VK_HOME) to = 0;
-        else if (key == VK_END) to = end;
-        else if (HasSelection() && !shift && !ctrl) to = key == VK_LEFT ? SelectionStart() : SelectionEnd();
-        else if (key == VK_LEFT) to = ctrl ? PreviousWord(caret_) : PreviousCharacter(caret_);
-        else to = ctrl ? NextWord(caret_) : NextCharacter(caret_);
-        caret_ = to;
-        if (!shift) anchor_ = to;
-        SelectionChanged();
-        return true;
-    }
-    case VK_BACK:
-        if (HasSelection()) DeleteRange(SelectionStart(), SelectionEnd());
-        else if (caret_ > 0) DeleteRange(ctrl ? PreviousWord(caret_) : PreviousCharacter(caret_), caret_);
-        return true;
-    case VK_DELETE:
-        if (shift && !ctrl) {  // Shift+Delete: cut
-            Copy();
-            DeleteRange(SelectionStart(), SelectionEnd());
-        } else if (HasSelection()) {
-            DeleteRange(SelectionStart(), SelectionEnd());
-        } else if (caret_ < end) {
-            DeleteRange(caret_, ctrl ? NextWord(caret_) : NextCharacter(caret_));
+    case 'W':
+        // The Mac's closeTab closes an open bar rather than the tab.
+        if (ctrl && !shift) {
+            Hide();
+            return true;
         }
-        return true;
-    case VK_INSERT:
-        if (ctrl && !shift) Copy();
-        else if (shift && !ctrl) Paste();
-        return true;
+        break;
     default:
         break;
     }
-    if (!ctrl || shift) return false;
-    switch (key) {
-    case 'A':
-        anchor_ = 0;
-        caret_ = end;
-        SelectionChanged();
-        return true;
-    case 'C':
-        Copy();
-        return true;
-    case 'X':
-        Copy();
-        DeleteRange(SelectionStart(), SelectionEnd());
-        return true;
-    case 'V':
-        Paste();
-        return true;
-    case 'W':  // the Mac's closeTab closes an open bar rather than the tab
-        Hide();
-        return true;
-    default:
-        return false;  // Ctrl+T and the rest go on to the window's shortcuts
-    }
+    // Ctrl+T and the rest go on to the window's shortcuts.
+    const std::optional<TextEditing::Change> change = edit_.KeyDown(key, ctrl, shift);
+    if (!change) return false;
+    Apply(*change);
+    return true;
 }
 
-void CommandBarView::Character(wchar_t c) {
-    if (IsHighSurrogate(c)) {
-        highSurrogate_ = c;
-        return;
-    }
-    if (IsLowSurrogate(c)) {
-        if (!highSurrogate_) return;
-        const wchar_t pair[2] = {highSurrogate_, c};
-        highSurrogate_ = 0;
-        Insert(std::wstring_view(pair, 2));
-        return;
-    }
-    highSurrogate_ = 0;
-    // Control characters (Ctrl+A's 0x01, Backspace's 0x08, Enter's 0x0D, Ctrl+Backspace's
-    // 0x7F) are the keys KeyDown already handled; a line separator would start a second line.
-    if (c < 0x20 || c == 0x7F) return;
-    if (BreaksLine(c)) c = L' ';
-    Insert(std::wstring_view(&c, 1));
-}
+void CommandBarView::Character(wchar_t c) { Apply(edit_.Character(c)); }
 
 void CommandBarView::ForwardKey(UINT key, bool ctrl, bool shift) {
     // Ctrl+T among them finds the bar open already, so it's dropped.
@@ -880,20 +680,18 @@ float CommandBarView::LineHeight() const {
 }
 
 size_t CommandBarView::TextIndexAt(float x) const {
-    if (!textLayout_ || text_.empty()) return 0;
+    if (!textLayout_ || edit_.Text().empty()) return 0;
     BOOL trailing = FALSE, inside = FALSE;
     DWRITE_HIT_TEST_METRICS hit{};
     textLayout_->HitTestPoint(x - C::kTextX + scrollX_, 0, &trailing, &inside, &hit);
-    size_t index = std::min<size_t>(hit.textPosition + (trailing ? hit.length : 0), text_.size());
-    while (index > 0 && !characterStarts_[index]) --index;
-    return index;
+    return edit_.CharacterStartAtOrBefore(hit.textPosition + (trailing ? hit.length : 0));
 }
 
 float CommandBarView::CaretX() const {
     if (!textLayout_) return 0;
     FLOAT x = 0, y = 0;
     DWRITE_HIT_TEST_METRICS hit{};
-    textLayout_->HitTestTextPosition(static_cast<UINT32>(caret_), FALSE, &x, &y, &hit);
+    textLayout_->HitTestTextPosition(static_cast<UINT32>(edit_.Caret()), FALSE, &x, &y, &hit);
     return x;
 }
 
@@ -956,7 +754,7 @@ void CommandBarView::UpdateCaret() {
     const Geometry& g = geometry_;
     const float x = C::kTextX - scrollX_ + CaretX();
     // Only in the window with the keyboard, not over a selection, and inside the field.
-    const bool wanted = open_ && swapChain_ && focused_ && caretOn_ && !HasSelection() && x >= C::kTextX - 1 &&
+    const bool wanted = open_ && swapChain_ && focused_ && caretOn_ && !edit_.HasSelection() && x >= C::kTextX - 1 &&
                         x <= g.width - C::kIconX;
     if (wanted) {
         const UINT width = static_cast<UINT>(std::max(1L, std::lround(g.scale)));  // 1pt
@@ -1103,9 +901,7 @@ bool CommandBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, L
         } else if (InField(p)) {
             SetCapture(window_);
             selecting_ = true;
-            caret_ = TextIndexAt(p.x);
-            if (!(wParam & MK_SHIFT)) anchor_ = caret_;
-            SelectionChanged();
+            Apply(edit_.Select(TextIndexAt(p.x), (wParam & MK_SHIFT) != 0));
         } else if (const int row = RowAt(p); row >= 0) {
             pressed_ = row;
         }
@@ -1114,9 +910,8 @@ bool CommandBarView::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam, L
     case WM_MOUSEMOVE: {
         const D2D1_POINT_2F p = PanelPoint(lParam);
         if (selecting_) {
-            if (const size_t at = TextIndexAt(p.x); at != caret_) {
-                caret_ = at;
-                SelectionChanged();
+            if (const size_t at = TextIndexAt(p.x); at != edit_.Caret()) {
+                Apply(edit_.Select(at, true));
             }
             return true;
         }
@@ -1270,15 +1065,15 @@ void CommandBarView::DrawField(ID2D1DeviceContext* context) {
     const float top = TextTop();
     const D2D1_POINT_2F origin{C::kTextX - scrollX_, top};
     context->PushAxisAlignedClip(D2D1::RectF(C::kTextX - 1, 0, width - C::kIconX, C::kFieldHeight), D2D1_ANTIALIAS_MODE_ALIASED);
-    if (text_.empty()) {
+    if (edit_.Text().empty()) {
         // Not under an IME's composition, which Windows draws over the field at the caret.
         brush_->SetColor(WithAlpha(Primary(), C::kPlaceholderOpacity));
         if (placeholderLayout_ && !composing_) context->DrawTextLayout(origin, placeholderLayout_.Get(), brush_.Get());
     } else if (textLayout_) {
-        if (HasSelection()) {
+        if (edit_.HasSelection()) {
             UINT32 count = 0;
-            const auto start = static_cast<UINT32>(SelectionStart());
-            const auto length = static_cast<UINT32>(SelectionEnd() - SelectionStart());
+            const auto start = static_cast<UINT32>(edit_.SelectionStart());
+            const auto length = static_cast<UINT32>(edit_.SelectionEnd() - edit_.SelectionStart());
             textLayout_->HitTestTextRange(start, length, 0, 0, nullptr, 0, &count);
             std::vector<DWRITE_HIT_TEST_METRICS> ranges(count);
             if (count && SUCCEEDED(textLayout_->HitTestTextRange(start, length, 0, 0, ranges.data(), count, &count))) {

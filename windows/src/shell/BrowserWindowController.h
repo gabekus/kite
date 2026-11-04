@@ -2,7 +2,9 @@
 // The browser window and what's in it, as the Mac's BrowserWindowController: the backdrop,
 // the sidebar, the caption buttons, the command bar, the pages (Chromium) and Kite's
 // shortcuts, wired to the session (core/Models.h). main.cpp parses the command line, loads and
-// saves the session, and runs one of these.
+// saves the session, and runs one of these. Like the Mac's BrowserWindowController+*.swift, its
+// parts have files of their own: +Spaces.cpp (editing spaces: the space menu, renaming,
+// deleting, reordering), +Chromium.cpp (the pages) and +Tests.cpp (--smoke-test and --capture).
 //
 // Everything here is on Kite's UI thread. The session is the caller's, borrowed for the
 // window's life; the window changes it and the caller saves it as the window closes
@@ -20,6 +22,7 @@
 
 #include "core/KeyBindings.h"
 #include "core/Models.h"
+#include "core/SpaceEditing.h"
 #include "core/SpaceSwipe.h"
 #include "core/SpaceSwipeGesture.h"
 #include "core/ThemeBackdrop.h"
@@ -104,6 +107,15 @@ public:
     // For a capture: two fingers over the sidebar have dragged its content `dx` points sideways
     // and are held there (the pages, the bar's light and the theme as they follow).
     std::wstring HoldSwipe(double dx);
+    // For a capture: space `index`'s cell (from 0) pressed and dragged along the bar to `x` (bar
+    // points), held there; with `drop`, let go there and settled (the space moved).
+    std::wstring HoldSpaceDrag(size_t index, float x, bool drop);
+    // For a capture: space `index`'s name being renamed in its header (Rename Space…), with
+    // `text` typed over it when given.
+    std::wstring HoldRename(size_t index, const std::optional<std::string>& text);
+    // For a capture: what Capture composes over the frame next, space `index`'s menu opened
+    // over its cell in the bar (Windows' own menu, read back as it shows).
+    void HoldSpaceMenu(size_t index) { heldMenu_ = index; }
 
     // Runs messages until WM_QUIT, rebuilding the GPU when its device is removed.
     void RunMessageLoop();
@@ -113,6 +125,18 @@ private:
     // (BrowserWindowController's Layout.defaultSidebarWidth and ArcMetrics.Content.inset).
     static constexpr int kSidebarWidth = 240;
     static constexpr int kContentInset = 10;
+    // The window's timers and posted messages.
+    static constexpr UINT_PTR kSmokeTimer = 1;
+    // The auto-archive's pass, every 15 minutes as on the Mac (AppDelegate's archiveTimer).
+    static constexpr UINT_PTR kArchiveTimer = 2;
+    static constexpr UINT kArchiveIntervalMs = 15 * 60 * 1000;
+    // When the pages' slide on the compositor has ended (its duration and a frame, rounded up).
+    static constexpr UINT_PTR kSettleTimer = 3;
+    // Posted by the favicon worker when icons arrive (Favicons.h).
+    static constexpr UINT kFaviconsMessage = WM_APP + 4;
+    // Posted by the frame clock once a composition frame while something animates.
+    static constexpr UINT kFrameMessage = WM_APP + 5;
+    static constexpr UINT kSpaceIconsMessage = WM_APP + 6;
 
     BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
                             std::function<void()> save, std::unique_ptr<Renderer> renderer);
@@ -160,6 +184,12 @@ private:
     // while the touchpad's frames go on. And with one space (the others set aside meanwhile).
     std::wstring SmokeTestSwipeThreeSpaces();
     std::wstring SmokeTestSwipeOneSpace();
+    // The smoke test's space edits: drags in the bar that move a space and bring it back and one
+    // let go off the strip, the menu's items, a rename committed, one cancelled and one left,
+    // New Folder and Delete Space, all undone after.
+    std::wstring SmokeTestSpaceEditing();
+    // Runs the timer a drop's landing waits on until the space has moved (2 s at most).
+    std::wstring WaitForDrop();
     // The clock's frames and the slide's timer, until the theme and the pages are at rest.
     std::wstring RunToRest(const wchar_t* what);
     // The clock's frames and the window's timers until `done` (or `seconds` go by): whether it was.
@@ -187,6 +217,19 @@ private:
     // A tab's close button and Ctrl+W (the Mac's close(tab:)). The id by value: Ctrl+W's is the
     // tab's own, which closing erases.
     void CloseTab(std::string id);
+    // MARK: Editing spaces (BrowserWindowController+Spaces.cpp)
+    // A right-click on a space's cell or header: its menu at `screen` (px), then what it chose.
+    void ShowSpaceMenu(const std::string& spaceID, POINT screen);
+    void RunSpaceMenuItem(const std::string& spaceID, SpaceMenuItem::Command command);
+    // The Mac's beginRenaming(space:): that space selected, its header's name field open with
+    // the name all selected. Return or Done renames it, Escape leaves it.
+    void BeginRenaming(const std::string& spaceID);
+    void RenameSpace(const std::string& spaceID, const std::string& name);
+    // Delete Space (the Mac's deleteSpace(_:)): a beep for the last space, at once for one with
+    // no tabs, else after asking; its pages close with it.
+    void DeleteSpace(std::string spaceID);
+    // A space dropped in the bar at `index` among the others (the Mac's moveSpace).
+    void MoveSpace(const std::string& spaceID, size_t index);
     void ArchiveTab();
     void ReopenClosedTab();
     void MakeCommands();
@@ -263,6 +306,9 @@ private:
     size_t touchpadLogDropped_ = 0;          // and how many didn't fit (kMaxTouchpadLog)
     std::wstring touchpadError_;            // why there's no touchpad_, when there isn't one
     size_t frameCount_ = 0;  // frames delivered, logged or not (the smoke test checks them)
+
+    // A capture's space menu, composed over the frame (HoldSpaceMenu).
+    std::optional<size_t> heldMenu_;
 
     // What each shortcut's command does, by id (MainMenu.swift's items).
     std::map<std::string, std::function<void()>, std::less<>> commands_;
