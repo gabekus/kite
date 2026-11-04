@@ -75,7 +75,8 @@ their own PR, never as a side effect of a checkpoint.
   `--chromium-switches`) run only with `KITE_SUPPORT_PATH` set to a test
   profile: one that holds a `kite-test-profile` marker file (kiteperf and CI
   make it), never the default one (`%LOCALAPPDATA%\Kite`), and one that
-  resolves.
+  resolves. The marker guards against mistakes, such as a script pointed at
+  the real profile, not against another program running as the same user.
   Off, they cost at most one predictable bool check on a hot path and
   allocate nothing. `--chromium-switches` takes only the switches on its
   allow-list (`shell/PerfProtocol.h`): nothing that weakens the sandbox, site
