@@ -448,5 +448,7 @@ Off Windows, the model and its tests build natively, and MinGW cross-compiles th
 
 ```bash
 cmake -S windows -B /tmp/kite-core && cmake --build /tmp/kite-core -j && ctest --test-dir /tmp/kite-core
+# The same tests under ASan and UBSan, as CI runs them (KITE_WERROR=OFF: the build above gates warnings):
+cmake -S windows -B /tmp/kite-asan -DCMAKE_BUILD_TYPE=Debug -DKITE_WERROR=OFF -DCMAKE_CXX_FLAGS="-O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" && cmake --build /tmp/kite-asan --target KiteCoreTests -j && ctest --test-dir /tmp/kite-asan -R KiteCoreTests
 cmake -S windows -B /tmp/kite-mingw -DCMAKE_TOOLCHAIN_FILE="$PWD/windows/cmake/mingw-w64.cmake" && cmake --build /tmp/kite-mingw -j
 ```
