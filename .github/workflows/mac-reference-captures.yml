@@ -4,7 +4,8 @@ name: Mac reference captures
 # headless on the Mac runner so a Windows checkpoint's gate can run without Gabe at his Mac.
 # Push a branch review/<id>-mac-request holding review/<id>-mac-request/request.json (and this workflow: branch
 # it from main once this is merged). GitHub runs the workflow file from the pushed branch, so it works before the
-# workflow reaches main. The results go to branch review/<id>-mac and to the run's artifact.
+# workflow reaches main. The Mac job only reads the repository; a separate GitHub-hosted job pushes the results
+# to review/<id>-mac, so no write token ever reaches the Mac.
 on:
   push:
     branches: ['review/*-mac-request']
@@ -21,8 +22,7 @@ concurrency:
   group: mac-reference-captures
   cancel-in-progress: false
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   capture:
@@ -30,8 +30,14 @@ jobs:
     if: github.repository == 'gabekus/kite' && github.event.deleted != true
     runs-on: ${{ vars.MACOS_RUNNER || 'macos-15' }}
     timeout-minutes: 60
+    permissions:
+      contents: read
     env:
       REQUEST_BRANCH: ${{ inputs.request_branch || github.ref_name }}
+    outputs:
+      id: ${{ steps.request.outputs.id }}
+      sha: ${{ steps.base.outputs.sha }}
+      request_sha: ${{ steps.base.outputs.request_sha }}
     steps:
       - name: Read the request's id
         id: request
@@ -42,6 +48,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.REQUEST_BRANCH }}
+          # No token is left in the Mac's checkout (the repository is public; later fetches are anonymous).
+          persist-credentials: false
           # Every branch (a request's sessions can come from any of them), without old file contents.
           fetch-depth: 0
           filter: blob:none
@@ -57,63 +65,124 @@ jobs:
           cp "review/$ID-mac-request/request.json" "$WORK/request.json" \
             || { echo "::error::no review/$ID-mac-request/request.json on $REQUEST_BRANCH"; exit 1; }
           cp scripts/mac-reference-captures.sh "$WORK/"
-          git rev-parse HEAD > "$WORK/request-sha"
+          echo "request_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           BASE="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("base") or "origin/main")' "$WORK/request.json")"
           [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ && "$BASE" != -* ]] || { echo "::error::bad base $BASE"; exit 1; }
-          SHA="$(git rev-parse --verify "$BASE^{commit}")"
+          # Resolved without fetching: a raw SHA in a blobless clone could otherwise pull a commit from the fork network.
+          SHA="$(GIT_NO_LAZY_FETCH=1 git rev-parse --verify --quiet --end-of-options "$BASE^{commit}")" \
+            || { echo "::error::no commit $BASE"; exit 1; }
+          [[ -n "$(GIT_NO_LAZY_FETCH=1 git for-each-ref --contains "$SHA" --count=1 refs/remotes/origin)" ]] \
+            || { echo "::error::$BASE ($SHA) isn't on any of origin's branches"; exit 1; }
+          # The script's SAFE_FLOOR: older Kites lack test-safe mode (real windows, alerts, keychain prompts).
+          FLOOR="$(sed -n 's/^SAFE_FLOOR=\([0-9a-f]\{40\}\)$/\1/p' "$WORK/mac-reference-captures.sh")"
+          [[ -n "$FLOOR" ]] || { echo "::error::no SAFE_FLOOR in the script"; exit 1; }
+          GIT_NO_LAZY_FETCH=1 git merge-base --is-ancestor "$FLOOR" "$SHA" \
+            || { echo "::error::$BASE ($SHA) is older than SAFE_FLOOR $FLOOR"; exit 1; }
           git checkout --detach --force "$SHA"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "work=$WORK" >> "$GITHUB_OUTPUT"
       - name: Take the captures (headless)
         env:
           WORK: ${{ steps.base.outputs.work }}
-        run: bash "$WORK/mac-reference-captures.sh" "$WORK/request.json" "$WORK/out"
-      - name: Quit test Kites and remove the build's bundle
-        if: always()
+          MACCAP_PROFILE_LIST: ${{ runner.temp }}/maccap-profiles
         run: |
-          APP="$GITHUB_WORKSPACE/build/Kite.app"
+          bash "$WORK/mac-reference-captures.sh" "$WORK/request.json" "$WORK/out"
+          cp "$WORK/request.json" "$WORK/out/request.json"
+      - name: Quit test Kites, remove the build's bundle and the test profiles
+        if: always()
+        env:
+          PROFILES: ${{ runner.temp }}/maccap-profiles
+        run: |
+          ROOT="$(cd "$GITHUB_WORKSPACE" && pwd -P)"
+          APP="$ROOT/build/Kite.app"
           pkill -KILL -f "^$APP/Contents/" 2>/dev/null || true
-          if [[ -d "$APP" ]]; then
+          if [[ -L "$ROOT/build" || -L "$APP" ]]; then
+            echo "::warning::$ROOT/build or $APP is a symlink: left alone"
+          elif [[ -e "$ROOT/build" && "$(cd "$ROOT/build" && pwd -P)" != "$ROOT/build" ]]; then
+            echo "::warning::$ROOT/build resolves outside the workspace: left alone"
+          elif [[ -d "$APP" ]]; then
             LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
             find "$APP" -name '*.app' -type d -prune -print | while read -r b; do "$LSREGISTER" -u "$b" || true; done
             "$LSREGISTER" -u "$APP" || true
             rm -rf "$APP"
+          fi
+          if [[ -f "$PROFILES" ]]; then
+            while read -r p; do
+              if [[ "$p" =~ ^/tmp/k\.[A-Za-z0-9]{4}$ && -d "$p" && ! -L "$p" && -O "$p" ]]; then rm -rf "$p"; fi
+            done < "$PROFILES"
+            rm -f "$PROFILES"
           fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: mac-reference-${{ steps.request.outputs.id }}
           path: ${{ steps.base.outputs.work }}/out
+          retention-days: 7
           if-no-files-found: ignore
-      - name: Push the results to review/${{ steps.request.outputs.id }}-mac
-        env:
-          ID: ${{ steps.request.outputs.id }}
-          WORK: ${{ steps.base.outputs.work }}
-          BASE_SHA: ${{ steps.base.outputs.sha }}
+      # Kite's logs and full trees can hold page text: kept a week, never pushed.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-reference-${{ steps.request.outputs.id }}-logs
+          path: ${{ steps.base.outputs.work }}/out-logs
+          retention-days: 7
+          if-no-files-found: ignore
+
+  publish:
+    needs: capture
+    if: github.repository == 'gabekus/kite'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      ID: ${{ needs.capture.outputs.id }}
+      BASE_SHA: ${{ needs.capture.outputs.sha }}
+      REQUEST_SHA: ${{ needs.capture.outputs.request_sha }}
+      REQUEST_BRANCH: ${{ inputs.request_branch || github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mac-reference-${{ needs.capture.outputs.id }}
+          path: ${{ runner.temp }}/out
+      - name: Check the results are only the files a reference folder holds
+        run: |
+          OUT="$RUNNER_TEMP/out"
+          [[ "$ID" =~ ^[a-z0-9][a-z0-9._-]*$ && "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::bad id or sha"; exit 1; }
+          bad=0
+          while IFS= read -r -d '' f; do
+            name="${f#"$OUT"/}"
+            if [[ -L "$f" || ! -f "$f" || ! "$name" =~ ^[a-z0-9][a-z0-9._-]*\.(png|txt|md|json)$ ]]; then
+              echo "::error::unexpected $name"; bad=1
+            elif [[ "$name" == *.png && "$(head -c 8 "$f" | od -An -tx1 | tr -d ' \n')" != 89504e470d0a1a0a ]]; then
+              echo "::error::$name isn't a PNG"; bad=1
+            fi
+          done < <(find "$OUT" -mindepth 1 -print0)
+          [[ -f "$OUT/NOTES.md" ]] || { echo "::error::no NOTES.md"; bad=1; }
+          [[ "$(du -sk "$OUT" | cut -f1)" -lt 102400 ]] || { echo "::error::over 100 MB"; bad=1; }
+          exit $bad
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.capture.outputs.sha }}
+          fetch-depth: 1
+      - name: Push the results to review/${{ needs.capture.outputs.id }}-mac
         run: |
           OUT_BRANCH="review/$ID-mac"
-          TREE="$WORK/push"
-          if git fetch --quiet origin "+refs/heads/$OUT_BRANCH:refs/remotes/origin/$OUT_BRANCH" 2>/dev/null; then
-            START="origin/$OUT_BRANCH"   # a rerun adds a commit on top
-          else
-            START="$BASE_SHA"            # like the hand-made ones: the build's commit plus the folder
-          fi
-          git worktree prune
-          git worktree add --detach "$TREE" "$START"
-          trap 'git worktree remove --force "$TREE"' EXIT
-          rm -rf "$TREE/review/$ID-mac"
-          mkdir -p "$TREE/review/$ID-mac"
-          find "$WORK/out" -maxdepth 1 -type f -exec cp {} "$TREE/review/$ID-mac/" \;
-          cp "$WORK/request.json" "$TREE/review/$ID-mac/request.json"
-          git -C "$TREE" add -A "review/$ID-mac"
-          if git -C "$TREE" diff --cached --quiet; then echo "nothing changed"; exit 0; fi
-          git -C "$TREE" -c user.name="Gabe Kuslansky" -c user.email=gabe@komadolab.com commit --quiet -F - <<EOF
+          if git fetch --quiet --depth 1 origin "+refs/heads/$OUT_BRANCH:refs/remotes/origin/$OUT_BRANCH" 2>/dev/null; then
+            git checkout --quiet --detach "origin/$OUT_BRANCH"   # a rerun adds a commit on top
+          fi                                                     # else: the build's commit plus the folder
+          rm -rf "review/$ID-mac"
+          mkdir -p "review/$ID-mac"
+          cp "$RUNNER_TEMP/out/"* "review/$ID-mac/"
+          git add -A "review/$ID-mac"
+          if git diff --cached --quiet; then echo "nothing changed"; exit 0; fi
+          git -c user.name="Gabe Kuslansky" -c user.email=gabe@komadolab.com commit --quiet -F - <<EOF
           Mac references for $ID, taken headless by CI
 
-          From $REQUEST_BRANCH $(cut -c1-7 "$WORK/request-sha"), built from $(echo "$BASE_SHA" | cut -c1-7).
+          From $REQUEST_BRANCH ${REQUEST_SHA:0:7}, built from ${BASE_SHA:0:7}.
           Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
           Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
           EOF
-          git -C "$TREE" push origin "HEAD:refs/heads/$OUT_BRANCH"
-          echo "pushed $(git -C "$TREE" rev-parse HEAD) to $OUT_BRANCH" | tee -a "$GITHUB_STEP_SUMMARY"
+          git push origin "HEAD:refs/heads/$OUT_BRANCH"
+          echo "pushed $(git rev-parse HEAD) to $OUT_BRANCH" | tee -a "$GITHUB_STEP_SUMMARY"

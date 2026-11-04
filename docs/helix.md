@@ -94,8 +94,8 @@ PNGs, `NAME.tree.txt` frames and a NOTES.md to `review/<id>-mac` (logs go to the
 
 Each state gets a fresh profile with its `session` (`ref` + `path` from any branch, or `inline`),
 `defaults delete dev.gabek.Kite.dev SidebarWidth`, and `KITE_DIAGNOSTICS=1 KITE_WINDOW_SIZE=W,H`
-plus its `env` (`KITE_TEST_*` hooks only) and `profile_files` (`test-*`). Its `steps` are `kite ui`
-actions (`{"ui": ACTION, "args": {…}}`) and pauses (`{"wait": s}`). The capture comes `settle`
+plus its `env` (only the hooks the script's `HOOKS` list allows) and `profile_files` (`test-*`). Its
+`steps` are `kite ui` actions (`{"ui": ACTION, "args": {…}}`) and pauses (`{"wait": s}`). The capture comes `settle`
 seconds after the last step (default 1), or straight away when `hold` says the steps hold the state
 that long. It's `kite ui capture '{"source":"in-process"}'` at 2×, with the tree's `tree_match`
 frames read before and after. `expect_frames` are the frames your points assume, and NOTES.md
@@ -104,8 +104,19 @@ flags any the tree didn't show. `"capture": false` runs a state for its hook log
 
 Everything is headless: the build opens behind other windows and is never activated, input goes to
 its window only, nothing records the screen. What needs a real screen (a real right-click menu,
-`screencapture`, focus) isn't taken and is listed in NOTES.md as unverified. A right-click step is
-refused unless the state sets `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it.
+`screencapture`, focus) isn't taken and is listed in NOTES.md as unverified. The script refuses a
+request that could reach past that, before anything runs:
+- a `base` older than its `SAFE_FLOOR` (test-safe mode) or not on one of origin's branches;
+- a hook outside `HOOKS` (Gabe's Claude home, Messages, media, pasteboard, imports, a global hotkey
+  and the stand-ins for real services are refused; test paths always point inside the profile);
+- a session URL that isn't public http(s) or `about:`, or a path-like value (`profileSettings` is
+  dropped, and every profile gets a fresh WebKit store that's deleted afterwards);
+- keys, text or modifier flags; a click or drag that doesn't start on a visible view in
+  `SAFE_TARGETS` (checked against the tree just before the step); a right- or ⌃-click without
+  `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it.
+
+The Mac job only reads the repository (no token left in its checkout); a GitHub-hosted job pushes
+`review/<id>-mac`. Raise `SAFE_FLOOR` whenever new test-safety work lands in Kite.
 
 ## Evidence
 

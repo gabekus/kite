@@ -6,15 +6,18 @@
 #
 # Usage: scripts/mac-reference-captures.sh REQUEST.json OUTDIR
 #   Builds the checkout it runs in (scripts/bundle-app.sh debug, so dev.gabek.Kite.dev), then takes every state in
-#   REQUEST.json and writes OUTDIR/NAME.png, NAME.tree.txt and NOTES.md, with full logs in OUTDIR/logs/.
+#   REQUEST.json and writes OUTDIR/NAME.png, NAME.tree.txt, NAME.steps.txt and NOTES.md (what gets published).
+#   Kite's logs, full trees and the build log go to OUTDIR-logs/, which is never published.
 #   KITE_ROOT overrides the checkout (default: the git top level of the current directory).
-#   Exits non-zero if the build fails or a state that should have been captured wasn't.
+#   MACCAP_PROFILE_LIST names a file each test profile's path is appended to, so a cancelled run's profiles
+#   can still be deleted (the workflow's cleanup step).
+#   Exits non-zero if the build fails, a request is refused, or a state that should have been captured wasn't.
 #
 # REQUEST.json (the format is in docs/helix.md, "Requesting Mac references"):
 # {
 #   "id": "w9d",                                    lower case, the branch is review/<id>-mac-request
 #   "title": "W9d Mac references: …",               NOTES.md's heading
-#   "base": "origin/main",                          what the workflow builds (default origin/main)
+#   "base": "origin/main",                          what the workflow builds (default origin/main; SAFE_FLOOR or newer)
 #   "window_size": [1280, 820],                     points, KITE_WINDOW_SIZE (default 1280,820)
 #   "session": {"ref": "origin/BRANCH", "path": "windows/helix/states/x.json"},   default session for every state
 #   "tree_match": "SpaceCellView",                  what NAME.tree.txt reads (kite ui tree {"match": …})
@@ -23,10 +26,10 @@
 #     "name": "drag",                               NAME.png; [a-z0-9._-]
 #     "holds": "what the capture should show",
 #     "session": {"ref": …, "path": …} | {"inline": {…session.json…}},           default: the top-level one
-#     "env": {"KITE_TEST_CONTEXT_MENU": "1"},       KITE_TEST_* only
+#     "env": {"KITE_TEST_CONTEXT_MENU": "1"},       only the hooks in HOOKS below
 #     "profile_files": {"test-context-menu-pick": "Rename Space…"},              test-* files in the profile
 #     "steps": [{"ui": "input", "args": {"from": [86,795], "to": [150,795], "steps": 10, "hold": 10}},
-#               {"wait": 1}],                       kite ui ACTION ARGS (any action but capture), or a pause
+#               {"wait": 1}],                       kite ui ACTION ARGS (see STEPS below), or a pause
 #     "settle": 1,                                  seconds between the last step and the capture (default 1;
 #                                                   0 when "hold" is set)
 #     "hold": 10,                                   the steps hold the state this long: capture inside it
@@ -36,13 +39,39 @@
 #     "skip": "why"                                 don't run it at all (listed as unverified)
 #   }]
 # }
+#
+# Safety rules this script enforces (Gabe's rules for his Mac; a refused request runs nothing):
+# - Builds only from SAFE_FLOOR or newer: older Kites lack test-safe mode and could show real windows, alerts or
+#   keychain prompts on Gabe's screen.
+# - HOOKS: a request's env may only set the KITE_TEST_* hooks classified as safe below. The test paths are always
+#   inside the profile.
+# - Sessions: URLs must be public http(s) (or about:), no path-like values, profileSettings stripped, and every
+#   profile's WebKit dataStoreID replaced with a fresh one whose store is deleted afterwards.
+# - STEPS: clicks and drag starts must land on a visible view in SAFE_TARGETS (from the tree, just before the step);
+#   right- and ⌃-clicks also need KITE_TEST_CONTEXT_MENU. No keys, text or modifier flags.
+# - Every test Kite is quit; the build's bundles are unregistered from Launch Services and deleted (never through a
+#   symlink, never outside the checkout).
 set -euo pipefail
+
+# The oldest Kite this builds. Test-safe mode (WindowPresenter, d291111 and 811b5fb, 2026-11-04) keeps every window,
+# alert and app launch off Gabe's screen; 7161b7d (KITE_SIGN_IDENTITY, the test keychain) is older and included.
+# Raise it whenever new test-safety work lands in Kite. The workflow reads it from here.
+SAFE_FLOOR=811b5fbaeeee6c0f5187661ecba992f5795e5623
+
+# Views a click, right-click (through showSidebarMenu's KITE_TEST_CONTEXT_MENU hook) or drag may start on. Each was
+# read in the Mac source: no hookless NSMenu, no window drag. Add one only after the same check. Not safe, for
+# example: the sidebar header's Developer and More buttons (SidebarHeader.swift, menu.popUp without the hook), the
+# link preview's Share button (LinkPreviewCard.swift, popUpAtPointer at the REAL pointer), and the window background
+# and page-top band (isMovableByWindowBackground, PageTopWindowDragger: a window-server drag follows the real
+# pointer).
+SAFE_TARGETS="SpaceCellView"
 
 [[ $# == 2 ]] || { echo "usage: $0 REQUEST.json OUTDIR" >&2; exit 2; }
 REQUEST="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 [[ -f "$REQUEST" ]] || { echo "no request at $1" >&2; exit 2; }
 mkdir -p "$2"
 OUT="$(cd "$2" && pwd)"
+LOGS="$OUT-logs"
 ROOT="${KITE_ROOT:-$(git rev-parse --show-toplevel)}"
 ROOT="$(cd "$ROOT" && pwd -P)"
 cd "$ROOT"
@@ -54,21 +83,44 @@ for own in "$HOME/dev/kite" "$HOME/dev/kite-release" "$HOME/dev/kite-cef"; do
         exit 2
     fi
 done
+if ! GIT_NO_LAZY_FETCH=1 git merge-base --is-ancestor "$SAFE_FLOOR" HEAD 2>/dev/null; then
+    echo "refusing to build $(git rev-parse --short HEAD): it's older than SAFE_FLOOR $SAFE_FLOOR (no test-safe mode)" >&2
+    exit 2
+fi
 
 APP="$ROOT/build/Kite.app"
 CLI="$APP/Contents/Helpers/kite"
 BUNDLE_ID=dev.gabek.Kite.dev
-LOGS="$OUT/logs"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/maccap.XXXXXX")"
 mkdir -p "$LOGS" "$WORK/plan"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+PROFILE_LIST="${MACCAP_PROFILE_LIST:-}"
+
+# Every launch (Kite, check-test-defaults.sh) starts from the runner's environment minus anything Kite reads.
+SCRUB=(env -u KITE_SUPPORT_PATH)
+while IFS='=' read -r key _; do
+    if [[ "$key" =~ ^(KITE_|TYPESAFE_)[A-Za-z0-9_]*$ ]]; then SCRUB+=(-u "$key"); fi
+done < <(env)
 
 # tmo SECONDS CMD…: runs CMD, killed after SECONDS (macOS has no timeout(1)). 142 means it timed out.
 tmo() { local s=$1; shift; perl -e 'alarm shift; exec @ARGV or die "exec $ARGV[0]: $!\n"' "$s" "$@"; }
 
+# The build may only be deleted where bundle-app.sh puts it: not through a symlink, not outside the checkout.
+build_path_ok() {
+    if [[ -L "$ROOT/build" || -L "$APP" ]]; then
+        echo "refusing: $ROOT/build or $APP is a symlink" >&2; return 1
+    fi
+    if [[ -e "$ROOT/build" && "$(cd "$ROOT/build" && pwd -P)" != "$ROOT/build" ]]; then
+        echo "refusing: $ROOT/build resolves outside $ROOT" >&2; return 1
+    fi
+    return 0
+}
+
 KITE_PID=""
 PROFILE=""
-# Quits the running test Kite, then any other Kite from this build (never another Kite).
+STORES=""
+# Quits the running test Kite, then any other Kite from this build (never another Kite), and deletes its profile
+# and the WebKit stores its session named.
 stop_kite() {
     if [[ -n "$KITE_PID" ]] && kill -0 "$KITE_PID" 2>/dev/null; then
         kill -TERM "$KITE_PID" 2>/dev/null || true
@@ -78,28 +130,50 @@ stop_kite() {
     fi
     KITE_PID=""
     pkill -KILL -f "^$APP/Contents/" 2>/dev/null || true
-    if [[ -n "$PROFILE" && "$PROFILE" == /tmp/k.* ]]; then rm -rf "$PROFILE"; fi
+    if [[ -n "$PROFILE" && "$PROFILE" =~ ^/tmp/k\.[A-Za-z0-9]{4}$ && -d "$PROFILE" && ! -L "$PROFILE" ]]; then
+        rm -rf "$PROFILE"
+    fi
     PROFILE=""
+    if [[ -n "$STORES" && -s "$STORES" ]]; then remove_stores "$STORES"; fi
+    STORES=""
+}
+# Deletes the WebKit data stores named by the UUIDs in FILE (the session's randomized dataStoreIDs), only inside the
+# test bundle's own WebKit folders.
+remove_stores() {
+    local root uuid found
+    while IFS= read -r uuid; do
+        [[ "$uuid" =~ ^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$ ]] || continue
+        for root in "$HOME/Library/WebKit/$BUNDLE_ID" "$HOME/Library/HTTPStorages/$BUNDLE_ID" "$HOME/Library/Caches/$BUNDLE_ID"; do
+            [[ -d "$root" && ! -L "$root" ]] || continue
+            while IFS= read -r found; do
+                if [[ "$found" == "$root/"* && ! -L "$found" ]]; then
+                    rm -rf "$found"
+                    echo "removed WebKit store $found" >>"$LOGS/datastores.txt"
+                fi
+            done < <(find "$root" -maxdepth 4 -type d -iname "$uuid" -prune -print 2>/dev/null)
+        done
+    done <"$1"
 }
 # One Kite only: the build's bundles are unregistered from Launch Services and deleted.
 remove_build() {
     stop_kite
+    build_path_ok || return 1
     if [[ -d "$APP" ]]; then
         while IFS= read -r bundle; do "$LSREGISTER" -u "$bundle" 2>/dev/null || true; done \
             < <(find "$APP" -name '*.app' -type d -prune -print; echo "$APP")
         rm -rf "$APP"
     fi
 }
-cleanup() { remove_build; rm -rf "$WORK"; }
+cleanup() { remove_build || echo "the build was left in place (see above)" >&2; rm -rf "$WORK"; }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 # --- Plan: validate the request and lay each state out as files for the loop below. ---
-python3 -I - "$REQUEST" "$WORK/plan" "$ROOT" <<'PY'
-import json, os, re, subprocess, sys
-request_path, plan, root = sys.argv[1:4]
+python3 -I - "$REQUEST" "$WORK/plan" "$ROOT" "$SAFE_TARGETS" <<'PY'
+import copy, ipaddress, json, os, re, subprocess, sys, urllib.parse, uuid
+request_path, plan, root, safe_targets = sys.argv[1:5]
 def fail(message):
-    sys.exit(f"request.json: {message}")
+    sys.exit(f"request.json refused: {message}")
 try:
     request = json.load(open(request_path, encoding="utf-8"))
 except Exception as error:
@@ -110,6 +184,39 @@ NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 if not NAME.match(str(request.get("id", ""))):
     fail("\"id\" must be lower case letters, digits, . _ or -")
 
+# HOOKS: every KITE_TEST_* the Mac sources read (git grep -o 'KITE_TEST_[A-Z0-9_]*' Sources), classified.
+#   value kinds: "text" one line; "flag" exactly 1; "number"; "name" a file name, given to Kite as $PROFILE/name;
+#   "url" a public http(s) URL (the session rule).
+HOOKS = {
+    "KITE_TEST_CONTEXT_MENU": "text",          # logs a context menu instead of showing it; text = the item to pick
+    "KITE_TEST_BOOST_MENU": "text",            # presses the Boost editor's menu items without the menu
+    "KITE_TEST_ZAP_PICKER": ("1", "copy"),     # opens the Zap picker in its own (test-safe) window
+    "KITE_TEST_LITTLE_PROFILE_PICK": "text",   # logs Little Kite's profile menu (KITE_TEST_LITTLE_PROFILE_MENU:) and picks
+    "KITE_TEST_LITTLE_EXTENSIONS_BUTTON": "flag",
+    "KITE_TEST_TIDY_TITLE": "text",            # a stand-in reply instead of asking Claude
+    "KITE_TEST_ASSUME_VISIBLE": "flag",
+    "KITE_TEST_REOPEN_MAIN_AFTER": "number",   # reopens the main window behind the user's
+    "KITE_TEST_EXPORT_DATA_PATH": "name",      # Export Data writes here instead of a save panel
+    "KITE_TEST_OPEN_URL": "url",               # opens a link as another app would
+}
+# Set by this script for every launch, never by a request.
+OWNED = {"KITE_TEST_BLOCK_VIEWS_WINDOWS", "KITE_TEST_DOWNLOADS_PATH", "KITE_TEST_APPS_DIR", "KITE_TEST_DEFAULTS_PROBE"}
+# Refused: they reach outside the profile or stand in for a real service.
+REFUSED = {
+    "KITE_TEST_GLOBAL_HOTKEY": "registers a system-wide hotkey",
+    "KITE_TEST_IMPORT": "reads another browser's or Arc's data",
+    "KITE_TEST_IMPORT_SIGNINS": "imports sign-ins (cookies)",
+    "KITE_TEST_CLAUDE_HOME": "points Kite at a Claude home (Gabe's real ~/.claude by default)",
+    "KITE_TEST_MESSAGES_DB": "reads a Messages database",
+    "KITE_TEST_MEDIA_HOME": "reads a media folder",
+    "KITE_TEST_PASTEBOARD": "reads and writes a pasteboard",
+    "KITE_TEST_INSTANT_LINKS_SEARCH_URL": "sends queries to a search endpoint",
+    "KITE_TEST_LIVE_FOLDER_URL": "fetches a feed endpoint",
+    "KITE_TEST_MAIL_ORIGIN": "fetches a mail feed endpoint",
+    "KITE_TEST_SUGGEST_URL": "sends typing to a suggestion endpoint",
+}
+# KITE_TEST_MODAL and KITE_TEST_LITTLE_PROFILE_MENU are log-line prefixes Kite writes, not settings.
+
 def size(value, where):
     if value is None:
         return None
@@ -117,8 +224,101 @@ def size(value, where):
         fail(f"{where}: window_size is [width, height] in points")
     return [int(v) for v in value]
 
-def git(*args):
-    return subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, encoding="utf-8")
+def git(*args, lazy=True):
+    env = dict(os.environ)
+    if not lazy:
+        env["GIT_NO_LAZY_FETCH"] = "1"
+    return subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, encoding="utf-8", env=env)
+
+# --- URLs and sessions ---
+BAD_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home", ".corp", ".intranet", ".arpa", ".test",
+                ".invalid", ".onion")
+LABEL = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
+def public_url(value):
+    """None if value is a public http(s) URL or about:, else why not."""
+    try:
+        parts = urllib.parse.urlsplit(value)
+        parts.port
+    except ValueError:
+        return "isn't a URL"
+    scheme = parts.scheme.lower()
+    if scheme == "about":
+        return None
+    if scheme not in ("http", "https"):
+        return f"scheme {scheme or '(none)'} isn't http(s) or about"
+    if parts.username is not None or parts.password is not None:
+        return "has credentials"
+    host = (parts.hostname or "").rstrip(".").lower()
+    if not host:
+        return "has no host"
+    try:
+        address = ipaddress.ip_address(host)
+        return None if address.is_global else "is a private, loopback or reserved address"
+    except ValueError:
+        pass
+    labels = host.split(".")
+    if len(labels) < 2 or host == "localhost" or host.endswith(BAD_SUFFIXES) or not all(LABEL.match(l) for l in labels):
+        return "isn't a public host name"
+    return None
+
+URLISH = re.compile(r"^([a-z][a-z0-9+.-]*://|(https?|file|ftp|data|javascript|blob|wss?|chrome|chrome-extension|"
+                    r"view-source|filesystem|about|kite[a-z-]*):)", re.I)
+PATHKEY = re.compile(r"(path|directory|folder|file|dir|profile)$", re.I)
+def check_session(node, key, where, problems):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            check_session(v, str(k), f"{where}.{k}", problems)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            check_session(v, key, f"{where}[{i}]", problems)
+    elif isinstance(node, str):
+        if node and (key.lower().endswith("url") or URLISH.match(node)):
+            why = public_url(node)
+            if why:
+                problems.append(f"{where} = {node[:80]!r} {why}")
+        if PATHKEY.search(key) and ("/" in node or "\\" in node or node.startswith((".", "~"))):
+            problems.append(f"{where} = {node[:80]!r} looks like a path")
+
+def sanitize(data, where):
+    """Checks a session and returns (copy with fresh dataStoreIDs and no profileSettings, the new IDs, notes)."""
+    if not isinstance(data, dict):
+        fail(f"{where}: the session isn't a JSON object")
+    data = copy.deepcopy(data)
+    notes = []
+    for holder in (data, data.get("state") if isinstance(data.get("state"), dict) else {}):
+        if "profileSettings" in holder:
+            del holder["profileSettings"]      # per-profile download folders
+            notes.append("profileSettings stripped")
+    problems = []
+    check_session(data, "", "session", problems)
+    if problems:
+        fail(f"{where}: " + "; ".join(problems[:5]))
+    old = set()
+    def collect(node):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "dataStoreID" and isinstance(v, str):
+                    old.add(v)
+                collect(v)
+        elif isinstance(node, list):
+            for v in node:
+                collect(v)
+    collect(data)
+    fresh = {o: str(uuid.uuid4()).upper() for o in sorted(old)}
+    def swap(node):
+        if isinstance(node, dict):
+            return {fresh.get(k, k): swap(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [swap(v) for v in node]
+        return fresh.get(node, node) if isinstance(node, str) else node
+    data = swap(data)
+    if fresh:
+        notes.append(f"{len(fresh)} dataStoreID(s) made fresh")
+    return data, list(fresh.values()), notes
+
+def on_origin(sha):
+    out = git("for-each-ref", "--contains", sha, "--count=1", "refs/remotes/origin", lazy=False)
+    return out.returncode == 0 and out.stdout.strip() != ""
 
 def session(spec, where):
     if spec is None:
@@ -130,23 +330,79 @@ def session(spec, where):
             fail(f"{where}: inline session must be an object")
         return spec["inline"], "inline in request.json"
     ref, path = spec.get("ref"), spec.get("path")
-    if not (isinstance(ref, str) and isinstance(path, str)) or ref.startswith("-") or ".." in path:
-        fail(f"{where}: session needs a \"ref\" and a \"path\"")
-    if git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode != 0 and ref.startswith("origin/"):
+    if not (isinstance(ref, str) and isinstance(path, str)) or ref.startswith("-") or ".." in path or path.startswith("/"):
+        fail(f"{where}: session needs a \"ref\" and a relative \"path\"")
+    if not re.match(r"^[A-Za-z0-9._/-]+$", ref):
+        fail(f"{where}: bad ref {ref}")
+    if git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", lazy=False).returncode != 0 and ref.startswith("origin/"):
         branch = ref[len("origin/"):]
         if git("check-ref-format", "--branch", branch).returncode == 0:
             git("fetch", "--quiet", "--filter=blob:none", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
-    sha = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    sha = git("rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}", lazy=False)
     if sha.returncode != 0:
         fail(f"{where}: no ref {ref}")
-    shown = git("show", f"{sha.stdout.strip()}:{path}")
+    sha = sha.stdout.strip()
+    if not on_origin(sha):
+        fail(f"{where}: {ref} ({sha[:7]}) isn't on any of origin's branches")
+    shown = git("show", f"{sha}:{path}")
     if shown.returncode != 0:
         fail(f"{where}: no {path} on {ref}")
     try:
         data = json.loads(shown.stdout)
     except ValueError:
         fail(f"{where}: {path} on {ref} isn't JSON")
-    return data, f"`{path}` from `{ref}` ({sha.stdout.strip()[:7]})"
+    return data, f"`{path}` from `{ref}` ({sha[:7]})"
+
+# --- Steps ---
+MODIFIERS = {"cmd", "command", "meta", "super", "win", "ctrl", "control", "⌃", "alt", "option", "opt", "shift"}
+CONTROL = {"ctrl", "control", "⌃"}
+def modifier_tokens(text, where):
+    # As KeyChord.parse reads them: "+"-separated, case-insensitive.
+    if not isinstance(text, str):
+        fail(f"{where}: modifiers is a string like \"shift\"")
+    tokens = [t.strip().lower() for t in text.split("+") if t.strip()]
+    unknown = [t for t in tokens if t not in MODIFIERS]
+    if unknown:
+        fail(f"{where}: unknown modifier {unknown[0]!r}")
+    return set(tokens)
+
+def point(value, where):
+    if not (isinstance(value, list) and len(value) == 2 and all(isinstance(v, (int, float)) for v in value)):
+        fail(f"{where}: a point is [x, y]")
+    return [value[0], value[1]]
+
+INPUT_KEYS = {"click", "button", "count", "modifiers", "from", "to", "steps", "hold", "scroll", "dx", "dy", "phase", "window"}
+def check_step(action, args, menu_hook, where):
+    """Returns the points that must land on a SAFE_TARGETS view when the step runs."""
+    if action == "trace" and "keys" in args:
+        fail(f"{where}: trace keys aren't allowed (keys aren't reviewed for headless safety)")
+    if action != "input":
+        return []
+    extra = set(args) - INPUT_KEYS
+    if extra:
+        fail(f"{where}: input {sorted(extra)[0]!r} isn't allowed (keys, text and flags aren't reviewed for headless safety)")
+    kinds = [k for k in ("click", "from", "scroll") if k in args]
+    if len(kinds) != 1:
+        fail(f"{where}: an input step is one click, one drag (from/to) or one scroll")
+    if "click" in args:
+        at = point(args["click"], where)
+        button = args.get("button", "left")
+        if button not in ("left", "right"):
+            fail(f"{where}: button is left or right")
+        if args.get("count", 1) != 1:
+            fail(f"{where}: only single clicks")
+        mods = modifier_tokens(args.get("modifiers", ""), where)
+        if (button == "right" or mods & CONTROL) and not menu_hook:
+            fail(f"{where}: a right- or ⌃-click needs KITE_TEST_CONTEXT_MENU in env (a real menu needs a real screen)")
+        return [{"point": at, "what": f"{button} click"}]
+    if "from" in args:
+        start = point(args["from"], where)
+        point(args.get("to"), where)
+        if "modifiers" in args:
+            fail(f"{where}: drags take no modifiers")
+        return [{"point": start, "what": "drag start"}]
+    point(args["scroll"], where)
+    return []
 
 default_size = size(request.get("window_size"), "top level") or [1280, 820]
 default_session = session(request.get("session"), "top level")
@@ -178,11 +434,31 @@ for i, state in enumerate(request["states"]):
     env = state.get("env") or {}
     if not isinstance(env, dict):
         fail(f"{where}: env is an object")
+    env_lines = []
     for key, value in env.items():
-        if not re.match(r"^KITE_TEST_[A-Z0-9_]+$", key) or key == "KITE_TEST_BLOCK_VIEWS_WINDOWS":
-            fail(f"{where}: env may only set KITE_TEST_* hooks, not {key}")
-        if not isinstance(value, str) or "\n" in value or "\0" in value:
-            fail(f"{where}: env {key} must be a one-line string")
+        if key in REFUSED:
+            fail(f"{where}: {key} is refused ({REFUSED[key]})")
+        if key in OWNED:
+            fail(f"{where}: {key} is set by the script")
+        kind = HOOKS.get(key)
+        if kind is None:
+            fail(f"{where}: env {key} isn't a hook this script allows (see HOOKS)")
+        if not isinstance(value, str) or "\n" in value or "\0" in value or len(value) > 200:
+            fail(f"{where}: env {key} must be a short one-line string")
+        if isinstance(kind, tuple):
+            if value not in kind:
+                fail(f"{where}: {key} is one of {', '.join(kind)}")
+        elif kind == "flag" and value != "1":
+            fail(f"{where}: {key} is 1")
+        elif kind == "number" and not re.match(r"^\d{1,3}(\.\d+)?$", value):
+            fail(f"{where}: {key} is a number of seconds")
+        elif kind == "url" and public_url(value):
+            fail(f"{where}: {key} {public_url(value)}")
+        elif kind == "name":
+            if not NAME.match(value):
+                fail(f"{where}: {key} is a file name inside the profile ([a-z0-9._-])")
+            value = "@profile/" + value
+        env_lines.append(f"{key}={value}")
     files = state.get("profile_files") or {}
     if not isinstance(files, dict) or not all(re.match(r"^test-[a-z0-9-]+$", k) and isinstance(v, str) for k, v in files.items()):
         fail(f"{where}: profile_files maps test-* names to text")
@@ -198,7 +474,7 @@ for i, state in enumerate(request["states"]):
             seconds = step["wait"]
             if not isinstance(seconds, (int, float)) or not 0 <= seconds <= 30:
                 fail(f"{where}: wait is 0–30 seconds")
-            lines.append(f"wait\t{seconds}")
+            lines.append(f"wait\t{seconds}\t\t")
             shown.append(f"wait {number(seconds)} s")
             continue
         action, args = step.get("ui"), step.get("args") or {}
@@ -206,13 +482,9 @@ for i, state in enumerate(request["states"]):
             fail(f"{where}: steps[{j}] is {{\"ui\": ACTION, \"args\": {{…}}}} (not capture) or {{\"wait\": s}}")
         if not isinstance(args, dict) or "action" in args or "save" in args:
             fail(f"{where}: steps[{j}].args is the action's JSON object, without action or save")
-        # A real context menu is modal and would come up on the screen: only the logging hook may take one.
-        opens_menu = action == "input" and "click" in args and (
-            args.get("button") == "right" or "ctrl" in str(args.get("modifiers", "")))
-        if opens_menu and not menu_hook:
-            fail(f"{where}: a right-click needs KITE_TEST_CONTEXT_MENU in env (a real menu needs a real screen)")
+        checks = check_step(action, args, menu_hook, f"{where} steps[{j}]")
         encoded = json.dumps(args, ensure_ascii=False, separators=(",", ":"))
-        lines.append(f"ui\t{action}\t{encoded}")
+        lines.append(f"ui\t{action}\t{encoded}\t{json.dumps(checks, separators=(',', ':')) if checks else ''}")
         shown.append(f"`kite ui {action} '{encoded}'`")
     hold = state.get("hold")
     if hold is not None and (not isinstance(hold, (int, float)) or not 0 < hold <= 10):
@@ -223,6 +495,9 @@ for i, state in enumerate(request["states"]):
     data, source = session(state.get("session"), where) if "session" in state else default_session
     if data is None and not state.get("skip"):
         fail(f"{where}: no session (give one here or at the top level)")
+    stores, notes = [], []
+    if data is not None:
+        data, stores, notes = sanitize(data, where)
     width, height = size(state.get("window_size"), where) or default_size
     folder = os.path.join(plan, f"{i:02d}")
     os.makedirs(os.path.join(folder, "files"))
@@ -230,14 +505,16 @@ for i, state in enumerate(request["states"]):
         with open(os.path.join(folder, file), "w", encoding="utf-8") as f:
             f.write(text)
     write("session.json", json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-    write("env", "".join(f"{k}={v}\n" for k, v in env.items()))
+    write("datastores", "".join(s + "\n" for s in stores))
+    write("env", "".join(line + "\n" for line in env_lines))
     write("steps", "".join(line + "\n" for line in lines))
     for k, v in files.items():
         write(os.path.join("files", k), v)
     expect = frames(state["expect_frames"], where) if "expect_frames" in state else default_expect
     write("expect.json", json.dumps(expect, ensure_ascii=False))
     write("meta.json", json.dumps({
-        "name": name, "holds": str(state.get("holds", "")), "session": source, "env": env,
+        "name": name, "holds": str(state.get("holds", "")),
+        "session": (source or "") + (f" ({', '.join(notes)})" if notes else ""), "env": env,
         "profile_files": files, "steps": shown, "settle": settle, "hold": hold,
         "capture": bool(state.get("capture", True)) and not state.get("skip"),
         "unverified": str(state.get("unverified") or ""), "skip": str(state.get("skip") or ""),
@@ -255,19 +532,41 @@ with open(os.path.join(plan, "request.json"), "w", encoding="utf-8") as f:
 PY
 
 TREE_MATCH="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["tree_match"] or "")' "$WORK/plan/request.json")"
+match_json() { python3 -I -c 'import json,sys; print(json.dumps({"match": sys.argv[1]}))' "$1"; }
+
+# on_safe_target CHECKS TREEFILE: prints nothing if every point lands on a visible SAFE_TARGETS view, else why not.
+on_safe_target() {
+    python3 -I - "$1" "$2" "$SAFE_TARGETS" <<'PY'
+import json, re, sys
+checks, tree, safe = json.loads(sys.argv[1]), open(sys.argv[2], encoding="utf-8", errors="replace").read(), sys.argv[3].split()
+LINE = re.compile(r"^\S+ (\S+) \[(-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+)\](.*)$")
+frames = []
+for line in tree.splitlines():
+    m = LINE.match(line.strip())
+    if m and m.group(1) in safe and not re.search(r"\b(hidden=true|alpha=0|opacity=0)(\s|$)", m.group(6)):
+        frames.append([float(m.group(i)) for i in range(2, 6)])
+for check in checks:
+    x, y = check["point"]
+    if not any(fx <= x < fx + fw and fy <= y < fy + fh for fx, fy, fw, fh in frames):
+        print(f"the {check['what']} at {x:g},{y:g} isn't on a visible {' or '.join(safe)}")
+        break
+PY
+}
 
 # --- Build once. Ad-hoc signed, so codesign never asks the keychain (its prompt would be on Gabe's screen). ---
 echo "== building $(git rev-parse --short HEAD) as $BUNDLE_ID"
+build_path_ok || exit 1
 remove_build
-env -u KITE_BUNDLE_ID -u KITE_UPDATE_FEED -u KITE_HARDENED_RUNTIME -u KITE_PROVISIONING_PROFILE \
-    KITE_SIGN_IDENTITY=- scripts/bundle-app.sh debug >"$LOGS/build.log" 2>&1 || { tail -40 "$LOGS/build.log" >&2; exit 1; }
-[[ "$(cd "$APP" && pwd -P)" != /Applications/* ]] || { echo "refusing to test $APP" >&2; exit 1; }
+"${SCRUB[@]}" KITE_SIGN_IDENTITY=- scripts/bundle-app.sh debug >"$LOGS/build.log" 2>&1 || { tail -40 "$LOGS/build.log" >&2; exit 1; }
+build_path_ok || exit 1
+[[ "$(cd "$APP" && pwd -P)" == "$ROOT/build/Kite.app" ]] || { echo "refusing to test $APP" >&2; exit 1; }
 built_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
 [[ "$built_id" == "$BUNDLE_ID" ]] || { echo "built $built_id, not $BUNDLE_ID" >&2; exit 1; }
 ENGINE="WebKit (no CEF in ThirdParty/cef, as in CI)"
-[[ -d "$APP/Contents/Frameworks/Chromium Embedded Framework.framework" ]] && ENGINE="Chromium (CEF)"
+if [[ -d "$APP/Contents/Frameworks/Chromium Embedded Framework.framework" ]]; then ENGINE="Chromium (CEF)"; fi
 # Its settings stay in dev.gabek.Kite.dev, never the installed Kite's dev.gabek.Kite.
-scripts/check-test-defaults.sh "$APP" >"$LOGS/check-test-defaults.log" 2>&1 || { cat "$LOGS/check-test-defaults.log" >&2; exit 1; }
+"${SCRUB[@]}" scripts/check-test-defaults.sh "$APP" >"$LOGS/check-test-defaults.log" 2>&1 \
+    || { cat "$LOGS/check-test-defaults.log" >&2; exit 1; }
 {
     echo "sha=$(git rev-parse HEAD)"
     echo "engine=$ENGINE"
@@ -286,18 +585,19 @@ while IFS= read -r folder <&3; do
 
     defaults delete "$BUNDLE_ID" SidebarWidth >/dev/null 2>&1 || true
     PROFILE="$(mktemp -d /tmp/k.XXXX)"
-    [[ -d "$PROFILE" ]] || { echo "profile isn't a directory" >&2; exit 1; }
+    [[ -d "$PROFILE" && ! -L "$PROFILE" ]] || { echo "profile isn't a directory" >&2; exit 1; }
+    if [[ -n "$PROFILE_LIST" ]]; then echo "$PROFILE" >>"$PROFILE_LIST"; fi
+    STORES="$folder/datastores"
     cp "$folder/session.json" "$PROFILE/session.json"
     cp "$folder/files/"* "$PROFILE/" 2>/dev/null || true
+    mkdir -p "$PROFILE/Downloads" "$PROFILE/browsers"
 
-    # Only this run's settings reach Kite: every inherited KITE_* is dropped first.
-    launch_env=(env)
-    while IFS='=' read -r key _; do
-        if [[ "$key" == KITE_* || "$key" == TYPESAFE_* ]]; then launch_env+=(-u "$key"); fi
-    done < <(env)
-    launch_env+=(KITE_SUPPORT_PATH="$PROFILE" KITE_DIAGNOSTICS=1 KITE_TEST_BLOCK_VIEWS_WINDOWS=1 TYPESAFE_API_KEY=x
-                 KITE_WINDOW_SIZE="$WIDTH,$HEIGHT")
+    launch_env=("${SCRUB[@]}" KITE_SUPPORT_PATH="$PROFILE" KITE_DIAGNOSTICS=1 KITE_TEST_BLOCK_VIEWS_WINDOWS=1
+                TYPESAFE_API_KEY=x KITE_WINDOW_SIZE="$WIDTH,$HEIGHT"
+                KITE_TEST_DOWNLOADS_PATH="$PROFILE/Downloads" KITE_TEST_APPS_DIR="$PROFILE/apps"
+                KITE_BROWSER_DATA_PATH="$PROFILE/browsers")
     while IFS= read -r line; do
+        if [[ "$line" == *=@profile/* ]]; then line="${line%%=*}=$PROFILE/${line#*=@profile/}"; fi
         if [[ -n "$line" ]]; then launch_env+=("$line"); fi
     done <"$folder/env"
     "${launch_env[@]}" "$APP/Contents/MacOS/Kite" </dev/null >"$PROFILE/kite.log" 2>&1 &
@@ -319,8 +619,7 @@ while IFS= read -r folder <&3; do
 
     # The steps' coordinates assume these frames; the tree says whether they're right.
     if [[ -n "$TREE_MATCH" ]]; then
-        tmo 60 "$CLI" ui tree "$(python3 -I -c 'import json,sys; print(json.dumps({"match": sys.argv[1]}))' "$TREE_MATCH")" \
-            >"$folder/tree-launch.txt" 2>&1 || true
+        tmo 60 "$CLI" ui tree "$(match_json "$TREE_MATCH")" >"$folder/tree-launch.txt" 2>&1 || true
         python3 -I -c '
 import json, sys
 expect = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -329,20 +628,34 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
     fi
 
     step_status=0
+    refused=""
     : >"$folder/steps.out"
-    while IFS=$'\t' read -r kind action args <&4; do
+    while IFS=$'\t' read -r kind action args checks <&4; do
         [[ -n "$kind" ]] || continue
         if [[ "$kind" == wait ]]; then sleep "$action"; continue; fi
+        if [[ -n "$checks" ]]; then
+            : >"$folder/targets.txt"
+            for target in $SAFE_TARGETS; do
+                tmo 60 "$CLI" ui tree "$(match_json "$target")" >>"$folder/targets.txt" 2>&1 || true
+            done
+            refused="$(on_safe_target "$checks" "$folder/targets.txt")"
+            if [[ -n "$refused" ]]; then echo "refused: $refused" >>"$folder/steps.out"; break; fi
+        fi
         echo "\$ kite ui $action '$args'" >>"$folder/steps.out"
         tmo 60 "$CLI" ui "$action" "$args" >>"$folder/steps.out" 2>&1 || { step_status=$?; echo "(exit $step_status)" >>"$folder/steps.out"; }
     done 4<"$folder/steps"
+    if [[ -n "$refused" ]]; then
+        echo "failed: refused a step: $refused" >"$folder/status"
+        cp "$PROFILE/kite.log" "$LOGS/$NAME.kite.log" 2>/dev/null || true
+        stop_kite; unset KITE_SUPPORT_PATH; failed=1; continue
+    fi
     held_from=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
     sleep "$SETTLE"
 
-    match_json='{}'
-    [[ -n "$TREE_MATCH" ]] && match_json="$(python3 -I -c 'import json,sys; print(json.dumps({"match": sys.argv[1]}))' "$TREE_MATCH")"
+    tree_args='{}'
+    if [[ -n "$TREE_MATCH" ]]; then tree_args="$(match_json "$TREE_MATCH")"; fi
     if [[ "$CAPTURE" == 1 ]]; then
-        tmo 60 "$CLI" ui tree "$match_json" >"$folder/tree-before.txt" 2>&1 || true
+        tmo 60 "$CLI" ui tree "$tree_args" >"$folder/tree-before.txt" 2>&1 || true
         if tmo 90 "$CLI" ui capture '{"source":"in-process"}' -o "$OUT/$NAME.png" >"$folder/capture.txt" 2>&1 && [[ -s "$OUT/$NAME.png" ]]; then
             echo captured >"$folder/status"
         else
@@ -350,21 +663,20 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
             rm -f "$OUT/$NAME.png"; failed=1
         fi
         perl -MTime::HiRes=time -e 'printf "%.1f", time - shift' "$held_from" >"$folder/elapsed"
-        tmo 60 "$CLI" ui tree "$match_json" >"$folder/tree-after.txt" 2>&1 || true
+        tmo 60 "$CLI" ui tree "$tree_args" >"$folder/tree-after.txt" 2>&1 || true
         if [[ -f "$OUT/$NAME.png" ]]; then
             sips -g pixelWidth -g pixelHeight "$OUT/$NAME.png" 2>/dev/null \
                 | awk '/pixelWidth/ {w=$2} /pixelHeight/ {h=$2} END {print w "×" h}' >"$folder/pixels"
         fi
     else
-        tmo 60 "$CLI" ui tree "$match_json" >"$folder/tree-before.txt" 2>&1 || true
+        tmo 60 "$CLI" ui tree "$tree_args" >"$folder/tree-before.txt" 2>&1 || true
         echo "logged" >"$folder/status"
     fi
     tmo 60 "$CLI" ui tree '{"depth":40}' >"$LOGS/$NAME.tree-full.txt" 2>&1 || true
-    [[ "$step_status" == 0 ]] || echo "a step exited $step_status (see $NAME.steps.txt)" >"$folder/step-warning"
+    if [[ "$step_status" != 0 ]]; then echo "a step exited $step_status (see $NAME.steps.txt)" >"$folder/step-warning"; fi
 
-    stop_kite_log="$PROFILE/kite.log"
-    grep -E '^KITE_TEST_[A-Z_]+:' "$stop_kite_log" >"$folder/test-lines" 2>/dev/null || true
-    cp "$stop_kite_log" "$LOGS/$NAME.kite.log" 2>/dev/null || true
+    grep -E '^KITE_TEST_[A-Z_]+:' "$PROFILE/kite.log" >"$folder/test-lines" 2>/dev/null || true
+    cp "$PROFILE/kite.log" "$LOGS/$NAME.kite.log" 2>/dev/null || true
     stop_kite
     unset KITE_SUPPORT_PATH
 done 3<"$WORK/plan/index"
@@ -399,7 +711,6 @@ for folder in folders:
     if steps_out:
         open(os.path.join(out, f"{name}.steps.txt"), "w", encoding="utf-8").write(steps_out + "\n")
 
-size = states[0][1]["size"] if states else [1280, 820]
 lines = [f"# {request['title']}", ""]
 lines.append(f"Taken headless by `.github/workflows/mac-reference-captures.yml` (`scripts/mac-reference-captures.sh`) "
              f"on {build.get('host', 'the Mac runner')}, macOS {build.get('macos', '?')}.")
@@ -408,8 +719,8 @@ lines.append(f"Build: a debug test bundle (dev.gabek.Kite.dev, ad-hoc signed) fr
              f"{build.get('sha', '?')[:7]} (`{build.get('sha', '?')}`), engine {build.get('engine', '?')}. Each state "
              f"used a fresh `mktemp -d /tmp/k.XXXX` profile with its session as session.json, "
              f"`defaults delete dev.gabek.Kite.dev SidebarWidth` first, `KITE_DIAGNOSTICS=1 KITE_TEST_BLOCK_VIEWS_WINDOWS=1 "
-             f"TYPESAFE_API_KEY=x KITE_WINDOW_SIZE=W,H`, and Kite in the background throughout (never activated, input "
-             f"posted to its window only), quit afterwards.")
+             f"TYPESAFE_API_KEY=x KITE_WINDOW_SIZE=W,H` (downloads, web apps and browser data inside the profile), and "
+             f"Kite in the background throughout (never activated, input posted to its window only), quit afterwards.")
 lines.append("")
 pixels = sorted({read(f, "pixels") for f, m in states if read(f, "pixels")})
 capture_notes = []
@@ -492,7 +803,7 @@ if unverified:
         lines.append(f"- {name}: unverified: needs a real screen. {why}")
     lines.append("")
 lines.append("Each state's `kite ui` step output is in `NAME.steps.txt`. Kite's logs, full trees and the build log are "
-             "in the workflow run's artifact, not on this branch.")
+             "in the workflow run's logs artifact (kept 7 days), not on this branch.")
 open(os.path.join(out, "NOTES.md"), "w", encoding="utf-8").write("\n".join(lines) + "\n")
 PY
 
