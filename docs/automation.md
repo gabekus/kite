@@ -177,6 +177,10 @@ What works with Kite in the background (checked on a test build behind other win
 - Command bars: SwiftUI shares one field editor between windows, so with several windows' bars open only one
   holds it. `input` gives its window's bar the field first, as becoming key would. Escape doesn't close a bar
   in a background window (SwiftUI's exit command needs a key window).
+- `input` `text` on a test-safe run goes straight into the command bar's field editor (`insertText`), with no
+  key events: those pass through the input method, and a Japanese input source would mark the text and draw its
+  candidate window on the user's screen. With anything else as the first responder it's refused
+  (`UITextEntry`). Element full screen is off on a test-safe run, since a page's full screen takes over the display.
 - `trace`: animation `from`/`to` values are the layer's own (position in its superlayer, bottom-left), while
   the sampled frames are window points. SwiftUI's accessibility frames follow the model, not the animation, so
   `match` shows only start and end; the layers show the curve.

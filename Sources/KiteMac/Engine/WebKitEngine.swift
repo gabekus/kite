@@ -27,7 +27,8 @@ final class WebKitEngine: WebEngine {
         configuration.websiteDataStore = dataStore
         // Without a Safari token some sites serve a degraded page to WKWebView.
         configuration.applicationNameForUserAgent = "Version/18.6 Safari/605.1.15"
-        configuration.preferences.isElementFullscreenEnabled = true
+        // A page's element full screen takes over the display, so a test-safe run (behind the user's windows) has none.
+        configuration.preferences.isElementFullscreenEnabled = !WindowPresenter.testSafe
         configuration.preferences.isFraudulentWebsiteWarningEnabled = true
         configuration.allowsAirPlayForMediaPlayback = true
         Self.allowFullRefreshRate(configuration.preferences)
