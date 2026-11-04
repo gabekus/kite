@@ -434,8 +434,13 @@ hiddenAnim (the same in a background tab, 20 s), covered (shown under kiteperf's
 seconds of each of open, idle, switchSpaces and hover. Nothing takes the focus or sends real
 input: Kite opens behind other windows, the moves are posted to it, the cover never activates and
 sits just over Kite in the z-order (not topmost), and Kite is minimized with `SW_SHOWMINNOACTIVE`.
-A foreground run (Kite in front, real input) would measure what a person sees, and needs a
-machine nobody is using; `--foreground` is refused until then.
+One thing still does: Chromium activates a top-level `Chrome_WidgetWin_1` of Kite's as the
+first page's browser is made, so when nobody has used the machine for longer than Windows'
+foreground lock timeout, Kite comes to the front anyway. A run that ends with Kite in front says
+so (`tookFocus`, and `kiteInFront` per phase), and then the real pointer can reach the window, as
+it can hover the caption buttons during idle. A foreground run (Kite in front, real input) would
+measure what a person sees, and needs a machine nobody is using; `--foreground` is refused until
+then.
 
 ## Plan
 

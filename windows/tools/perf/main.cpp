@@ -449,7 +449,10 @@ void Run::RunPhase(const std::string& name, const std::function<void(Phase&)>& b
     // A run must never take the focus from whoever is using the machine.
     DWORD foreground = 0;
     GetWindowThreadProcessId(GetForegroundWindow(), &foreground);
-    if (foreground == kiteProcess_.dwProcessId) kiteTookFocus_ = true;
+    if (foreground == kiteProcess_.dwProcessId) {
+        kiteTookFocus_ = true;
+        phase.extra["kiteInFront"] = true;
+    }
     phases_.push_back(std::move(phase));
 }
 
@@ -620,6 +623,12 @@ std::wstring Run::Go(Value& result, bool& kiteFailed) {
     WaitFor(30, [&] { return log_->Find("load-end", 0, &first) != nullptr; });
     loaded_.insert(first);
     WaitFor(2);
+    DWORD foreground = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &foreground);
+    if (foreground == kiteProcess_.dwProcessId) {
+        kiteTookFocus_ = true;
+        Say("Kite is the foreground window after launch");
+    }
 
     Scenario();
 
