@@ -51,7 +51,8 @@
 # - STEPS: clicks and drag starts must land on a visible view in SAFE_TARGETS (from the tree, just before the step);
 #   right- and ⌃-clicks also need a non-empty KITE_TEST_CONTEXT_MENU. No keys or modifier flags. Text only as
 #   [A-Za-z0-9 ._-]{1,40}, straight after a click on a COMMAND_BAR_OPENERS view, into a visible CommandBarField
-#   (Kite's own command bar, which acts only on Return, and Return can't be sent).
+#   (Kite's own command bar, which acts only on Return, and Return can't be sent), and only on a base that has
+#   TEXT_FLOOR (the build inserts test-safe text without key events, so no input method).
 # - Every test Kite is quit; the build's bundles are unregistered from Launch Services and deleted (never through a
 #   symlink, never outside the checkout).
 set -euo pipefail
@@ -60,6 +61,13 @@ set -euo pipefail
 # alert and app launch off Gabe's screen; 7161b7d (KITE_SIGN_IDENTITY, the test keychain) is older and included.
 # Raise it whenever new test-safety work lands in Kite. The workflow reads it from here.
 SAFE_FLOOR=811b5fbaeeee6c0f5187661ecba992f5795e5623
+
+# The oldest Kite a text step may run on: fix/test-safe-text-input (#374), where a test-safe `ui input` text goes
+# straight into the command bar's field editor (insertText) and nowhere else. Before it, text was real key events
+# through the input method, whose candidate window (a Japanese input source) could draw on Gabe's screen. A base
+# without it can still take requests, just not text steps. If #374 lands by squash or rebase, set this to the commit
+# it landed as on main.
+TEXT_FLOOR=235b56ee38f5b6ae5b02932232e3c4b5062aead5
 
 # Views a click, right-click (through showSidebarMenu's KITE_TEST_CONTEXT_MENU hook) or drag may start on. Each was
 # read in the Mac source: no hookless NSMenu, no window drag. Add one only after the same check. Not safe, for
@@ -175,9 +183,9 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 # --- Plan: validate the request and lay each state out as files for the loop below. ---
-python3 -I - "$REQUEST" "$WORK/plan" "$ROOT" "$SAFE_TARGETS" <<'PY'
+python3 -I - "$REQUEST" "$WORK/plan" "$ROOT" "$SAFE_TARGETS" "$TEXT_FLOOR" <<'PY'
 import copy, ipaddress, json, os, re, subprocess, sys, urllib.parse, uuid
-request_path, plan, root, safe_targets = sys.argv[1:5]
+request_path, plan, root, safe_targets, text_floor = sys.argv[1:6]
 def fail(message):
     sys.exit(f"request.json refused: {message}")
 try:
@@ -385,6 +393,11 @@ def point(value, where):
 # No "window": the target check reads the front browser window's tree, so input goes there too.
 INPUT_KEYS = {"click", "button", "count", "modifiers", "from", "to", "steps", "hold", "scroll", "dx", "dy", "phase", "text"}
 TEXT = re.compile(r"[A-Za-z0-9 ._-]{1,40}")
+_text_fix = []
+def has_text_fix():
+    if not _text_fix:
+        _text_fix.append(git("merge-base", "--is-ancestor", text_floor, "HEAD", lazy=False).returncode == 0)
+    return _text_fix[0]
 def check_step(action, args, menu_hook, where, previous):
     """Returns what must be true when the step runs: points on SAFE_TARGETS views, or (text) the command bar open."""
     if action == "trace" and "keys" in args:
@@ -403,6 +416,10 @@ def check_step(action, args, menu_hook, where, previous):
         if not (previous and previous[0] == "input" and "click" in previous[1]
                 and previous[1].get("button", "left") == "left" and not previous[1].get("modifiers")):
             fail(f"{where}: text must come straight after a plain left click on a command-bar opener")
+        # Text needs the build to insert it without key events (TEXT_FLOOR): checked once, on the checkout's HEAD.
+        if not has_text_fix():
+            fail(f"{where}: text steps need a base with fix/test-safe-text-input ({text_floor[:7]}), which this "
+                 "base doesn't contain: without it the text goes through the input method")
         return [{"what": "text", "needs": "command bar"}]
     if "click" in args:
         at = point(args["click"], where)
@@ -585,12 +602,15 @@ on_safe_target() {
     python3 -I - "$1" "$2" "$3" <<'PY'
 import json, re, sys
 checks, tree, safe = json.loads(sys.argv[1]), open(sys.argv[2], encoding="utf-8", errors="replace").read(), sys.argv[3].split()
-LINE = re.compile(r"\S+ (\S+) \[(-?[\d.]+),(-?[\d.]+) ([\d.]+)×([\d.]+)\](.*)")
+# A tree line (UINode.line): path, class, then optional #identifier and "quoted label" (\" and \\ escaped, so a
+# label can't fake a frame), then [x,y w×h] and attributes.
+LINE = re.compile(r'\S+ (?P<cls>\S+)(?: #\S+)?(?: "(?:[^"\\]|\\.)*")? '
+                  r'\[(?P<x>-?[\d.]+),(?P<y>-?[\d.]+) (?P<w>[\d.]+)×(?P<h>[\d.]+)\](?P<rest>.*)')
 frames = []
 for line in tree.splitlines():
     m = LINE.fullmatch(line.strip())
-    if m and m.group(1) in safe and not re.search(r"\b(hidden=true|alpha=0|opacity=0)(\s|\Z)", m.group(6)):
-        frames.append((m.group(1), [float(m.group(i)) for i in range(2, 6)]))
+    if m and m["cls"] in safe and not re.search(r"\b(hidden=true|alpha=0|opacity=0)(\s|\Z)", m["rest"]):
+        frames.append((m["cls"], [float(m[k]) for k in ("x", "y", "w", "h")]))
 hit = None
 for check in checks:
     if "point" not in check:

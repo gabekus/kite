@@ -119,7 +119,9 @@ request that could reach past that, before anything runs:
   `KITE_TEST_CONTEXT_MENU`, which logs the menu instead of showing it;
 - text, except 1–40 of `A-Z a-z 0-9 space . _ -` straight after a plain click on a command-bar
   opener (`NewTabRowCell`), into a visible `CommandBarField`: Kite's own command bar, which acts
-  only on Return, and Return can't be sent.
+  only on Return, and Return can't be sent. Text also needs a base with the script's `TEXT_FLOOR`
+  (fix/test-safe-text-input), where a test-safe run inserts it into the bar's field editor without
+  key events, so the input method (and a Japanese input source's candidate window) never sees it.
 
 The Mac job only reads the repository (no token left in its checkout); a GitHub-hosted job pushes
 `review/<id>-mac`. Raise `SAFE_FLOOR` whenever new test-safety work lands in Kite.
