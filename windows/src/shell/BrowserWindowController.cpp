@@ -37,6 +37,8 @@ constexpr UINT kFaviconsMessage = WM_APP + 4;
 // Posted by the frame clock once a composition frame while something animates.
 constexpr UINT kFrameMessage = WM_APP + 5;
 constexpr UINT kSpaceIconsMessage = WM_APP + 6;
+// Posted by shell/Occlusion when its verdict changes.
+constexpr UINT kOcclusionMessage = WM_APP + 7;
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -213,9 +215,12 @@ std::wstring BrowserWindowController::Init() {
     window_.filter = [this](UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
         return Filter(message, wParam, lParam, result);
     };
+    // Whether the window can be seen. Not for a capture, which draws one frame and goes.
+    if (!options_.capture) occlusion_ = Occlusion::Start(window_.Handle(), kOcclusionMessage, options_.occlusionLog);
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
     // reported runs first (titles, addresses), then the caller saves.
     window_.onClose = [this] {
+        occlusion_.reset();  // its thread reads the window
         clock_->Stop();
         RunPending();
         if (save_) save_();
@@ -238,6 +243,15 @@ void BrowserWindowController::SetTheme(const Theme& theme) {
     // Nothing on screen to fade: it's simply the new theme when the window shows again.
     if (!IsWindowVisible(window_.Handle()) || IsIconic(window_.Handle())) {
         if (theme != theme_.to || theme_.Fading()) theme_.Snap(theme);
+        return;
+    }
+    // Covered, locked, display off, another desktop: no one sees a fade, so it lands at once
+    // (one draw, not a frame clock), and is right even if the window is seen after all.
+    if (occluded_) {
+        if (theme != theme_.to || theme_.Fading()) {
+            theme_.Snap(theme);
+            Draw();
+        }
         return;
     }
     if (theme_.Set(theme, FrameClock::Now())) clock_->Start();
@@ -307,6 +321,30 @@ void BrowserWindowController::Frame(double time) {
         clock_->Stop();
         lastFrameTime_.reset();
     }
+}
+
+void BrowserWindowController::OcclusionChanged() {
+    const bool hidden = occlusion_ && occlusion_->Verdict() != occlusion::Hidden::No;
+    if (hidden == occluded_) return;
+    occluded_ = hidden;
+#ifdef KITE_HAS_CEF
+    if (chromium_) chromium_->SetOccluded(hidden);
+#endif
+    if (hidden) {
+        // A crossfade under way lands now and the clock stops.
+        if (theme_.Fading()) {
+            theme_.Snap(theme_.to);
+            clock_->Stop();
+            lastFrameTime_.reset();
+            if (!IsIconic(window_.Handle())) Draw();
+        }
+        return;
+    }
+#ifdef KITE_HAS_CEF
+    // Hidden under the keyboard (locked, or the display went off, with Kite in front): the
+    // page that showed again takes it back, unless the command bar has it.
+    if (chromium_ && GetForegroundWindow() == window_.Handle() && (!commandBar_ || !commandBar_->IsOpen())) chromium_->Focus();
+#endif
 }
 
 std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& file) const {
@@ -625,6 +663,16 @@ void BrowserWindowController::OnSize() {
 // MARK: The window's messages
 
 bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) {
+    if (occlusion_) {
+        if (occlusion_->HandleMessage(message, wParam, lParam, result)) return true;
+        // Moved, resized, minimized, restored or shown: Kite's own rect changed (seen, not
+        // handled: the window's own WM_SIZE and WM_MOVE follow).
+        if (message == WM_WINDOWPOSCHANGED) occlusion_->WindowChanged();
+    }
+    if (message == kOcclusionMessage) {
+        OcclusionChanged();
+        return true;
+    }
     // The caption buttons' presses, whatever else is open.
     if (caption_->HandleMessage(message, wParam, lParam, result)) return true;
 #ifdef KITE_HAS_CEF

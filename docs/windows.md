@@ -376,6 +376,29 @@ Windows that means:
   a 60Hz timer.
 - **DirectComposition animations** run at the compositor's rate.
 - The windowed CEF fallback (child HWND) renders at the monitor's rate on its own.
+- **A window no one can see draws nothing** (`shell/Occlusion.h`, P2), as the
+  Mac's AppKit occlusion stops a covered window's page and its `ThemeView`
+  crossfade. Kite counts as hidden while the session is locked
+  (`WTSRegisterSessionNotification`), the display is off
+  (`GUID_SESSION_DISPLAY_STATUS`; dimmed still shows), its window is cloaked on
+  another virtual desktop (`DWMWA_CLOAKED`), or opaque windows cover it (fewer
+  than 64 of its pixels left, `core/Occlusion.h`). Then the shown page's widget
+  is hidden as when minimized, so Chromium stops drawing it, and a theme
+  crossfade lands at once with the frame clock stopped. Covered is worked out
+  as Chromium's `NativeWindowOcclusionTrackerWin` does: out-of-context WinEvent
+  hooks and an `EnumWindows` pass that subtracts the windows above Kite's from
+  its rect, skipping layered see-through, click-through, acrylic, cloaked,
+  minimized and tool windows, owned popups and shaped windows. It errs towards
+  visible: Kite in front, a screen recorder or Zoom's sharing host running, a
+  window over it being dragged, or a taskbar thumbnail, Alt+Tab or Task View up
+  all count as seen. The hooks run on their own thread, so other apps' windows
+  moving never wake Kite's UI thread; `--occlusion-log FILE` (test profiles)
+  writes each verdict and the thread's counters. Known gaps: a window whose
+  DirectComposition content is see-through (Windows Terminal below 100%
+  opacity) counts as opaque, as in Chromium; a Kite captured as a window by an
+  app not on the recorder list (a meeting app sharing it while covered) shows
+  its card, not the page; and a recorder that quits leaves a covered Kite
+  drawing until the next window event.
 
 ## Plan
 

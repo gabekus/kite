@@ -173,6 +173,22 @@ function(evict_checks)
 endfunction()
 evict_checks()
 
+# shell/Occlusion's sum: a window half under another shows half its pixels; under two that
+# tile over it, none (covered); one off the monitor shows only its part on it.
+kitecore(half occlusion 0,0,1000,800 0,0,500,800)
+kitecore(tiled occlusion 0,0,1000,800 -10,-10,600,900 600,-10,1100,900)
+kitecore(offscreen occlusion -500,0,500,800 --monitor 0,0,1920,1080)
+string(JSON halfPixels GET "${half}" visiblePixels)
+string(JSON halfCovered GET "${half}" covered)
+string(JSON tiledCovered GET "${tiled}" covered)
+string(JSON offscreenPixels GET "${offscreen}" visiblePixels)
+if(NOT halfPixels EQUAL 400000 OR halfCovered OR NOT tiledCovered OR NOT offscreenPixels EQUAL 400000)
+  message(FATAL_ERROR "occlusion gave '${half}', '${tiled}', '${offscreen}'")
+endif()
+expect_exit_early(1 occlusion)
+expect_exit_early(1 occlusion 0,0,10)
+expect_exit_early(1 occlusion 0,0,10,10 --monitor)
+
 # Folders and the pinned section, on the UI gate's sidebar session (Personal: pinned Docs,
 # the Work stuff folder holding Renamed and the closed Old projects, then today's tabs).
 set(SIDEBAR "${WORK}-sidebar")

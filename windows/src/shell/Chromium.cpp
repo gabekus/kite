@@ -124,6 +124,7 @@ struct Chromium::Shared {
     std::map<std::string, CefRefPtr<CefRequestContext>> contexts;  // by profile directory
     std::string shown;
     bool minimized = false;
+    bool occluded = false;  // SetOccluded
     LiveTabPolicy policy;  // at most six live pages, as the Mac's PagePool
     ULONGLONG closingSince = 0;  // when MayCloseWindow started closing
     bool closeForced = false;    // the deadline closed the window before every browser was ready
@@ -173,7 +174,7 @@ struct Chromium::Shared {
         for (auto& [id, page] : pages) {
             if (!page.hwnd) continue;
             Placement wanted;
-            wanted.visible = id == shown && !minimized;
+            wanted.visible = id == shown && !minimized && !occluded;
             wanted.rect = wanted.visible ? card : page.placed.rect;
             if (wanted == page.placed) continue;
             page.placed = wanted;
@@ -871,6 +872,12 @@ void Chromium::SetBounds(const RECT& bounds) {
 
 void Chromium::Minimized() {
     shared_->minimized = true;
+    shared_->Layout();
+}
+
+void Chromium::SetOccluded(bool occluded) {
+    if (shared_->occluded == occluded) return;
+    shared_->occluded = occluded;
     shared_->Layout();
 }
 

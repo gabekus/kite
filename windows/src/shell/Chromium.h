@@ -105,6 +105,9 @@ public:
     void SetBounds(const RECT& bounds);
     // The window was minimized: the shown page is hidden too, so Chromium stops drawing it.
     void Minimized();
+    // The window can't be seen (locked, display off, on another desktop, covered: shell/
+    // Occlusion): the shown page is hidden as when minimized, and shown again with false.
+    void SetOccluded(bool occluded);
     // The window is being moved or resized: open <select> and autofill popups follow it.
     void WindowMoved();
     // Gives the shown page keyboard focus (the window was activated), unless input is blocked.

@@ -44,6 +44,7 @@ add_library(KiteCoreWin STATIC
   src/core/PictureLoads.cpp
   src/core/SpaceSwipe.cpp
   src/core/LiveTabPolicy.cpp
+  src/core/Occlusion.cpp
   src/core/Sidebar.cpp
   src/core/TabClosing.cpp
   src/core/SupportDirectory.cpp
@@ -109,6 +110,7 @@ if(WIN32)
     src/shell/FrameClock.cpp
     src/shell/Keys.cpp
     src/shell/MainWindow.cpp
+    src/shell/Occlusion.cpp
     src/shell/Renderer.cpp
     src/shell/SidebarView.cpp
     src/shell/SpaceBarView.cpp
@@ -117,7 +119,7 @@ if(WIN32)
     ${KITE_SHADER_HEADERS}
   )
   target_include_directories(Kite PRIVATE "${KITE_SHADER_DIR}")
-  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp)
+  target_link_libraries(Kite PRIVATE KiteCoreWin user32 dwmapi shell32 ole32 windowscodecs d3d11 dcomp d2d1 dxguid dwrite imm32 winhttp wtsapi32)
 
   # Chromium (CEF), from windows/scripts/fetch-cef.ps1. Without it (no download yet, or the
   # MinGW check, which can't link CEF's MSVC wrapper) Kite.exe builds without pages.
@@ -137,7 +139,7 @@ if(WIN32)
     # CEF's own CEF_EXE_LINKER_FLAGS) it gets an 8 MiB main-thread stack, which deep pages
     # need, and loads the window's graphics DLLs only in the process that draws the window.
     target_link_options(Kite PRIVATE /STACK:0x800000
-      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll)
+      /DELAYLOAD:d3d11.dll /DELAYLOAD:dcomp.dll /DELAYLOAD:dwmapi.dll /DELAYLOAD:d2d1.dll /DELAYLOAD:dwrite.dll /DELAYLOAD:imm32.dll /DELAYLOAD:winhttp.dll /DELAYLOAD:wtsapi32.dll)
     # libcef.dll and its resources go next to Kite.exe, where Chromium looks for them.
     add_custom_command(TARGET Kite POST_BUILD
       COMMAND ${CMAKE_COMMAND} -DCEF_ROOT=${KITE_CEF_ROOT} -DDEST=$<TARGET_FILE_DIR:Kite>
@@ -173,6 +175,7 @@ add_executable(KiteCoreTests
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp
   tests/LiveTabPolicyTests.cpp
+  tests/OcclusionTests.cpp
   tests/SidebarTests.cpp
   tests/SpaceBarTests.cpp
   tests/SpaceIconTests.cpp

@@ -11,6 +11,7 @@
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
+//   kitecore occlusion WINDOW [--monitor RECT]... [OCCLUDER...]
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
@@ -24,6 +25,9 @@
 // its pixels, under 1px from these at a fractional scale). `click` in the bar's 50pt along the
 // bottom selects the space whose cell it hits.
 // `collapse` is View → Collapse / Expand Pinned Tabs for a space.
+// `occlusion` is shell/Occlusion's sum: how many of the window's pixels show on the monitors
+// (default one 1920×1080 at 0,0) past the occluders, and whether that's covered. Rects are
+// screen pixels LEFT,TOP,RIGHT,BOTTOM.
 
 #include <algorithm>
 #include <charconv>
@@ -41,6 +45,7 @@
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
+#include "core/Occlusion.h"
 #include "core/SessionStore.h"
 #include "core/Sidebar.h"
 #include "core/SpaceBar.h"
@@ -202,6 +207,19 @@ void AddLook(json::Object& o, const SpaceIconLook& look, LookIn in = LookIn::Bar
     if (look.kind == SpaceIconLook::Kind::Symbol) o.emplace("accent", Hex(look.accent));
 }
 
+// "LEFT,TOP,RIGHT,BOTTOM" in screen pixels; nullopt unless it's four whole numbers.
+std::optional<occlusion::Rect> ParseRect(const std::string& text) {
+    int32_t v[4] = {};
+    const char* at = text.data();
+    const char* end = text.data() + text.size();
+    for (int i = 0; i < 4; ++i) {
+        auto [next, error] = std::from_chars(at, end, v[i]);
+        if (error != std::errc() || (i < 3 ? next == end || *next != ',' : next != end)) return std::nullopt;
+        at = next + (i < 3 ? 1 : 0);
+    }
+    return occlusion::Rect{v[0], v[1], v[2], v[3]};
+}
+
 // Ids typed in either case, like UUID(uuidString:).
 std::string Id(const std::string& text) { return NormalizeUuid(text).value_or(text); }
 
@@ -230,6 +248,25 @@ int main(int argc, char** argv) {
         --i;
     }
     if (args.empty()) return Usage();
+
+    if (args[0] == "occlusion") {
+        // Needs no profile: the sum shell/Occlusion runs over the screen's windows.
+        if (args.size() < 2) return Usage();
+        const auto window = ParseRect(args[1]);
+        if (!window) return Usage();
+        std::vector<occlusion::Rect> monitors, occluders;
+        for (size_t i = 2; i < args.size(); ++i) {
+            const bool monitor = args[i] == "--monitor";
+            if (monitor && ++i >= args.size()) return Usage();
+            const auto rect = ParseRect(args[i]);
+            if (!rect) return Usage();
+            (monitor ? monitors : occluders).push_back(*rect);
+        }
+        if (monitors.empty()) monitors.push_back({0, 0, 1920, 1080});
+        const int64_t visible = occlusion::VisiblePixels(*window, monitors, occluders);
+        std::puts(json::Write(json::Object{{"visiblePixels", visible}, {"covered", occlusion::Covered(visible)}}).c_str());
+        return kOk;
+    }
 
     auto resolved = ResolveSupportDirectory(profile ? profile : EnvironmentPath("KITE_SUPPORT_PATH"), EnvironmentPath("LOCALAPPDATA"));
     if (auto* error = std::get_if<SupportDirectoryError>(&resolved)) {
