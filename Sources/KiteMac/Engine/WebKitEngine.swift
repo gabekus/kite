@@ -31,8 +31,18 @@ final class WebKitEngine: WebEngine {
         configuration.preferences.isElementFullscreenEnabled = !WindowPresenter.testSafe
         configuration.preferences.isFraudulentWebsiteWarningEnabled = true
         configuration.allowsAirPlayForMediaPlayback = true
+        // Picture in picture floats over every app, so a test-safe run has none either. macOS has no public
+        // allowsPictureInPictureMediaPlayback (it's iOS's), so it's WebKit's preference, looked up defensively.
+        if WindowPresenter.testSafe { Self.disablePictureInPicture(configuration.preferences) }
         Self.allowFullRefreshRate(configuration.preferences)
         self.configuration = configuration
+    }
+
+    private static func disablePictureInPicture(_ preferences: WKPreferences) {
+        let set = NSSelectorFromString("_setAllowsPictureInPictureMediaPlayback:")
+        guard preferences.responds(to: set) else { return }
+        typealias SetBool = @convention(c) (AnyObject, Selector, Bool) -> Void
+        unsafeBitCast(preferences.method(for: set), to: SetBool.self)(preferences, set, false)
     }
 
     /// Shares the ad blocker's compiled rules; only the website data is kept in memory.

@@ -17,6 +17,10 @@ struct UIInputSender {
     func send(_ event: UIInputEvent) async throws -> String {
         switch event {
         case .keys(let chords):
+            // A key that types a character goes through the input method like typed text (UITextEntry).
+            if WindowPresenter.testSafe, let chord = chords.first(where: UITextEntry.typesCharacter) {
+                throw AutomationError(.unsupported, UITextEntry.keysRefusal(AutomationController.keyName(chord)))
+            }
             var pressed: [(chord: KeyChord, entry: Int, route: String)] = []
             for chord in chords {
                 let (entry, route) = try press(chord)
@@ -158,6 +162,12 @@ struct UIInputSender {
         switch UITextEntry.decide(testSafe: true, firstResponderIsCommandBarEditor: inCommandBar) {
         case .insertIntoCommandBar:
             guard let editor else { throw AutomationError(.failed, UITextEntry.refusal) }
+            // The field editor's own text checking could show a correction, completion or prediction panel.
+            editor.isAutomaticSpellingCorrectionEnabled = false
+            editor.isAutomaticTextReplacementEnabled = false
+            editor.isAutomaticTextCompletionEnabled = false
+            editor.isContinuousSpellCheckingEnabled = false
+            editor.inlinePredictionType = .no
             editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
             return "Inserted \(text.count) characters into the command bar of window \(window.windowNumber) "
                 + "(test-safe: no key events, no input method)."
