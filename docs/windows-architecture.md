@@ -15,7 +15,8 @@ their own PR, never as a side effect of a checkpoint.
 - `windows/src/cli`: `kitecore`, a thin command layer over `core`. It may use
   Win32 for process plumbing (UTF-16 arguments, the console's UTF-8 output) and
   nothing else.
-- `windows/resources`: the process manifest both executables embed.
+- `windows/resources`: the process manifest and the app icon both executables
+  embed, through `Kite.rc`, which both toolchains build.
 - No third-party code except CEF. No WinUI or Windows App SDK, no .NET, no
   Swift runtime, no Boost, no JSON or test libraries. First-party Windows APIs
   (WIC, DirectWrite, UI Automation, WinHTTP) are fine.

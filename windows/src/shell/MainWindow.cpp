@@ -21,8 +21,7 @@ constexpr WORD kAppIcon = 1;
 
 // The app icon at `size` px: the .ico's image of that size, or the nearest one scaled. The .ico
 // has the small and large icon sizes at 100% to 300% (16 to 48, 64, 96), so most scales get an
-// exact image. (LoadIconWithScaleDown would always scale down, but it's only in comctl32 v6,
-// which Kite's manifest doesn't ask for.) Null if the resource is missing.
+// exact image, and LoadImageW needs nothing beyond user32. Null if the resource is missing.
 HICON LoadAppIcon(int size) {
     return static_cast<HICON>(LoadImageW(reinterpret_cast<HINSTANCE>(&__ImageBase), MAKEINTRESOURCEW(kAppIcon), IMAGE_ICON,
                                          size, size, LR_DEFAULTCOLOR));
