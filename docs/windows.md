@@ -376,6 +376,10 @@ Windows that means:
   a 60Hz timer.
 - **DirectComposition animations** run at the compositor's rate.
 - The windowed CEF fallback (child HWND) renders at the monitor's rate on its own.
+- **Chromium's Energy Saver** caps pages at 30fps on battery below 20% by
+  default. As on the Mac (`KCRuntime.mm`), Kite sets
+  `performance_tuning.battery_saver_mode.state` to 0 unless the user turns it
+  on (`core/EnergySaver.h`); `--smoke-test` reads it back.
 
 ## Plan
 

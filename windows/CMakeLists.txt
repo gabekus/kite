@@ -33,6 +33,7 @@ endif()
 # The model (the Windows counterpart of KiteCore): standard C++ only, unit-tested headless.
 add_library(KiteCoreWin STATIC
   src/core/CommandBar.cpp
+  src/core/EnergySaver.cpp
   src/core/Json.cpp
   src/core/KeyBindings.cpp
   src/core/Models.cpp
@@ -169,6 +170,7 @@ enable_testing()
 add_executable(KiteCoreTests
   tests/main.cpp
   tests/CommandBarTests.cpp
+  tests/EnergySaverTests.cpp
   tests/JsonTests.cpp
   tests/KeyBindingsTests.cpp
   tests/ModelTests.cpp

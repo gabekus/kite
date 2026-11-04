@@ -953,6 +953,12 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         } else if (pageLoading_ && !pageLoaded_) {
             pageLoaded_ = true;
             if (options_.smokeTest) {
+                // Asked before the close, so the answer comes ahead of the browsers' DoClose
+                // and so before the window can go.
+                chromium_->ReadEnergySaver([this](std::optional<int> state) {
+                    energySaverRead_ = true;
+                    energySaverState_ = state;
+                });
                 closeAskedAt_ = GetTickCount64();
                 PostMessageW(window_.Handle(), WM_CLOSE, 0, 0);
             }
@@ -1002,7 +1008,8 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
-    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), chromium_, error);
+    // Windows has no Settings toggle for Energy Saver yet: the Mac's default, off.
+    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, EnergySaver{}, std::move(events), chromium_, error);
         started != Chromium::StartResult::Started) {
         return started;
     }
@@ -1032,6 +1039,12 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     if (!closedCleanly) return L"a browser didn't close in time; Chromium shut down under it";
     if (!pageLoaded_) return L"the first page didn't finish loading within 30 s";
     if (!chromium_->PagesCanBeHidden()) return L"a page had no Chromium widget window to hide: background tabs would keep drawing";
+    // Chromium's default would cap pages at 30 fps on a low battery (core/EnergySaver.h).
+    if (!energySaverRead_) return L"Chromium's Energy Saver preference was never read back";
+    if (!energySaverState_) return L"Chromium has no Energy Saver preference to turn off";
+    if (*energySaverState_ != static_cast<int>(BatterySaverModeState::Disabled)) {
+        return L"Chromium's Energy Saver is " + std::to_wstring(*energySaverState_) + L", not off (0)";
+    }
     // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
     // would otherwise hide a close that hangs.
     if (GetTickCount64() - closeAskedAt_ > 5'000) {

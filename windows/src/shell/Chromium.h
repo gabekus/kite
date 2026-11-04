@@ -25,8 +25,10 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
+#include "core/EnergySaver.h"
 #include "core/KeyBindings.h"
 
 namespace kite {
@@ -84,8 +86,9 @@ public:
     // Starts Chromium with its profiles under `root` (the Mac's <support>/Chromium): the
     // default profile in root\Default, a space's other profile in root\<directory>.
     // AlreadyRunning: another Kite has this profile and has been told to come forward.
-    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
-                             std::unique_ptr<Chromium>& out, std::wstring& error);
+    // `energySaver` goes into Chromium's preferences as it starts (core/EnergySaver.h).
+    static StartResult Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, EnergySaver energySaver,
+                             PageEvents events, std::unique_ptr<Chromium>& out, std::wstring& error);
     // Shuts Chromium down (or does nothing if it already has); the destructor calls it too.
     ~Chromium();
     Chromium(const Chromium&) = delete;
@@ -135,6 +138,10 @@ public:
     // False when a page's Chromium widget window wasn't where Kite looks for it, so hidden
     // tabs would keep drawing (a CEF update moved it). --smoke-test fails on it.
     bool PagesCanBeHidden() const;
+    // For --smoke-test: Chromium's Energy Saver preference as Chromium has it (nullopt: it has
+    // none), read on CEF's thread; `done` runs on Kite's UI thread, ahead of anything a page
+    // reports after this call.
+    void ReadEnergySaver(std::function<void(std::optional<int> state)> done);
     // After the main window is gone: waits (at most 10 s) for every browser to close, then
     // shuts Chromium down. False when a browser didn't close in time, here or within the
     // window's 5 s close deadline, so Chromium went down under it. --smoke-test fails on it.
