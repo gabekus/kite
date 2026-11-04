@@ -241,6 +241,40 @@ import JavaScriptCore
         #expect(context.evaluateScript("try { new Function(\(Self.quoted(CosmeticResources.drainScript("__kite_q")))); 'ok' } catch (e) { String(e) }")?.toString() == "ok")
     }
 
+    /// The class/id observer stops once drains stop coming, and the next drain rescans the page, so
+    /// classes added while it rested still arrive.
+    @Test func classObserverRestsBetweenDrainsAndRescans() throws {
+        let script = CosmeticResources().documentStartScript(host: "a.example", styleID: "k1", drain: "__kite_q")
+        let context = try #require(JSContext())
+        context.exceptionHandler = { _, error in Issue.record("JS: \(error?.toString() ?? "?")") }
+        context.evaluateScript("""
+            var observing = 0, timers = [];
+            var elements = [{ nodeType: 1, id: '', classList: ['first'] }];
+            var root = { nodeType: 1, id: '', classList: [], querySelectorAll: () => elements,
+                         appendChild: () => {} };
+            var window = this, location = { hostname: 'a.example' };
+            var document = { readyState: 'complete', documentElement: root, head: root,
+                             createElement: () => ({ setAttribute() {}, isConnected: true }), addEventListener() {} };
+            function addEventListener() {}
+            function MutationObserver() {}
+            MutationObserver.prototype.observe = function () { observing++; };
+            MutationObserver.prototype.disconnect = function () { observing--; };
+            function setTimeout(f) { timers.push(f); return timers.length; }
+            function clearTimeout(id) { timers[id - 1] = null; }
+            function fireTimers() { const due = timers; timers = []; due.forEach(f => f && f()); }
+            """)
+        context.evaluateScript(script)
+        let drain = CosmeticResources.drainScript("__kite_q")
+        #expect(context.evaluateScript("observing")?.toInt32() == 1)
+        #expect(context.evaluateScript(drain)?.toString() == #"{"classes":["first"],"ids":[]}"#)
+        context.evaluateScript("fireTimers()")
+        #expect(context.evaluateScript("observing")?.toInt32() == 0)
+        context.evaluateScript("elements.push({ nodeType: 1, id: 'late', classList: ['second'] })")
+        #expect(context.evaluateScript(drain)?.toString() == #"{"classes":["second"],"ids":["late"]}"#)
+        #expect(context.evaluateScript("observing")?.toInt32() == 1)
+        #expect(context.evaluateScript(drain)?.isNull == true)
+    }
+
     private static func quoted(_ s: String) -> String {
         String(decoding: try! JSONSerialization.data(withJSONObject: [s]), as: UTF8.self).dropFirst().dropLast().description
     }

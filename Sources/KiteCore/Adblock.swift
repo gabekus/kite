@@ -217,9 +217,14 @@ public struct CosmeticResources: Decodable, Equatable, Sendable {
     /// Queues classes and ids not seen before. Polling from the browser (rather
     /// than a Runtime binding) keeps the DevTools Runtime domain off, which bot
     /// checks can detect.
+    ///
+    /// The browser drains only for a few seconds after each load, so the observer stops
+    /// after `restAfter` ms without a drain (Gmail and Slack change their DOM all day), and
+    /// the next drain rescans the page and starts it again: nothing is missed.
     static let classIDObserver = """
-        const seen = new Set();
-        let classes = [], ids = [];
+        const seen = new Set(), restAfter = 20000;
+        const Observer = MutationObserver, later = setTimeout, cancel = clearTimeout;
+        let classes = [], ids = [], observer = null, resting = null;
         const add = (el) => {
           if (el.id && !seen.has('#' + el.id)) { seen.add('#' + el.id); ids.push(el.id); }
           const list = el.classList;
@@ -230,18 +235,25 @@ public struct CosmeticResources: Decodable, Equatable, Sendable {
           add(root);
           for (const el of root.querySelectorAll('[id],[class]')) add(el);
         };
+        const rest = () => {
+          cancel(resting);
+          resting = later(() => { if (observer) observer.disconnect(); observer = null; }, restAfter);
+        };
         const start = () => {
           scan(document.documentElement);
-          new MutationObserver((records) => {
+          observer = new Observer((records) => {
             for (const r of records) {
               if (r.type === 'attributes') add(r.target);
               else for (const n of r.addedNodes) scan(n);
             }
-          }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'id'] });
+          });
+          observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'id'] });
+          rest();
         };
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
         else start();
         Object.defineProperty(window, drainName, { configurable: true, value: () => {
+          if (document.readyState !== 'loading') { if (observer) rest(); else start(); }
           if (!classes.length && !ids.length) return null;
           const batch = JSON.stringify({ classes, ids });
           classes = []; ids = [];
