@@ -580,7 +580,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         sidebarHost.appearance = appearance
         libraryContainer.appearance = appearance
         materialView.appearance = appearance
-        peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil)
+        // Hidden, it would run its own crossfade frames for nobody; it just takes the new theme.
+        peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil && !peekCard.isHiddenOrHasHiddenAncestor)
         peekCard.material.appearance = appearance
         if let shownSpaceID, shownSpaceID != space.id, let old = state.spaceIndex(shownSpaceID) {
             spaceSwipe.spaceChanged(from: old, to: state.selectedSpaceIndex)
