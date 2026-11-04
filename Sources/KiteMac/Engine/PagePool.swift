@@ -90,6 +90,12 @@ final class PagePool {
     /// A linked window is closing: take back what this window shows a placeholder for from its pool.
     var onLinkedWindowClosing: ((PagePool) -> Void)?
 
+    /// The live pages of this window and the windows it shares tabs with: each tab's page is in one of them.
+    var linkedLivePages: [UUID: WebPage] {
+        guard let shared else { return pages }
+        return shared.livePages.merging(pages) { _, own in own }
+    }
+
     func join(_ shared: SharedPages) {
         self.shared = shared
         shared.add(self)
@@ -330,6 +336,8 @@ final class PagePool {
             if !isLoading {
                 markInstalledExtensions(in: id)
                 onLoadFinished?(id)
+                // For whoever watches every window's pages (Claude's handoffs), not just this window's.
+                NotificationCenter.default.post(name: .kitePageFinishedLoading, object: self, userInfo: ["tab": id])
             }
             if let page = pages[id] { onLoadingChanged?(id, page, isLoading) }
         case .addExtension(let extensionID):
@@ -456,6 +464,13 @@ final class SharedPages {
         pools.removeAll { $0.pool == nil || $0.pool === pool }
     }
 
+    /// Every linked window's live pages.
+    var livePages: [UUID: WebPage] {
+        var all: [UUID: WebPage] = [:]
+        for case let pool? in pools.map(\.pool) { all.merge(pool.livePages) { first, _ in first } }
+        return all
+    }
+
     /// The pool holding tab `id`'s page, other than `pool`.
     fileprivate func livePage(_ id: UUID, excluding pool: PagePool) -> (owner: PagePool, page: WebPage)? {
         for case let other? in pools.map(\.pool) where other !== pool {
@@ -470,4 +485,11 @@ final class SharedPages {
         }
         return nil
     }
+}
+
+extension Notification.Name {
+    /// A page finished loading, in any window's pool (`userInfo["tab"]`: the tab's UUID).
+    static let kitePageFinishedLoading = Notification.Name("KitePageFinishedLoading")
+    /// A browser window put pages on screen (a tab came forward there, or a split changed).
+    static let kitePagesShown = Notification.Name("KitePagesShown")
 }

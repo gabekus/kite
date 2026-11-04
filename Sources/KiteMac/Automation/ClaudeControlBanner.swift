@@ -72,7 +72,8 @@ extension BrowserWindowController: AutomationHost {
         return page
     }
 
-    var livePages: [UUID: WebPage] { pool.livePages }
+    /// Every normal window's pages, so a handoff step shown in a linked window is looked at there too.
+    var livePages: [UUID: WebPage] { pool.linkedLivePages }
 
     func closeAutomatedTab(_ id: UUID) {
         close(tab: id)

@@ -241,7 +241,12 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
 - **Local only.** A Unix socket at `<profile>/Automation/kite.sock`. Its folder is 0700 and the socket 0600, and the
   peer uid is checked. A profile too deep for a socket path (over 103 bytes, e.g. a test profile in a nested temp
   folder) uses `/tmp/kite-<uid>/<hash of the profile path>.sock` instead. The app refuses that folder unless it can
-  make it 0700, and the CLI only connects to a socket the user owns.
+  make it 0700, and the CLI only connects to a socket the user owns. Kite watches the socket's folder and the one
+  above it (file-system event sources, no timer) and reopens the socket if its file is deleted or replaced, or either
+  folder is removed or renamed; it checks again whenever Kite comes to the front, and every 30 s only while it has no
+  socket (another Kite answering, or a socket a crashed one left). Sockets never block: a client that stops reading a
+  response (a suspended CLI, a stuck MCP host) is dropped after 10 s with nothing read, or once 64 MB of responses
+  wait for it, and other clients and the main thread carry on meanwhile.
 - **Confirmation sheet.** Kite selects the tab and asks. Deny is the default button; after 2 minutes the answer is
   Deny. A denial comes back to Claude as a tool error. Kite asks before:
   - submitting a form;
@@ -276,15 +281,20 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   their Mac), it calls `handoff` with `reason` (why it stopped) and `steps`. Each step has an `instruction` and either
   a tab and its control (`ref`, `selector`, or the control's visible `text`), a tab alone, a `command` for the
   terminal, or nothing (a note); `why` overrides the reason for one step. Kite shows them where they happen:
-  - **The ring.** On the tab's page, the control gets a 2pt ring in Claude's orange, pulsing, with a tag above it:
-    "Claude needs you · 1. Approve Apple". It scrolls into view once. Steps on one tab come one after another. The
+  - **The ring.** On the tab's page, the control gets a 2pt ring in Claude's orange, which pulses four times and then holds still, with a tag above it:
+    "Claude needs you · 1. Approve Apple". It scrolls into view once, and follows the control frame by frame only while it moves (a scroll, a resize, a change to the page, a transition or animation ending), so a waiting ring costs the page nothing. A move none of those announce (a transition still running, a scroller inside a shadow root) is caught by the ring's next look, within 2 s. Steps on one tab come one after another. The
     ring lives in a closed shadow root on a host that takes no clicks, run in an isolated world
     (`Page.createIsolatedWorld`, `kite-handoff`), so the page's scripts can't see, restyle or fake it. A click (or a
     change) inside the control with `isTrusted` ends the step; it reports through `Runtime.addBinding`, scoped to that
     world, so a click that navigates away still counts. A ref is marked with `data-kite-handoff` when Claude calls,
     and its label finds it again if the page redraws it; `text` matches buttons, links, labels and other controls,
-    exact first. Kite looks at the pages on screen twice a second (only while a step waits), so the ring follows
-    navigations. Only the top frame is searched.
+    exact first. Kite looks at the pages when a tab comes forward (in any normal window) or closes, a step tab's
+    address changes (a load, or a single-page app's route), a browser window becomes key or visible, Kite comes to
+    the front, or the ring hears a click; a look that finds the control missing is followed by one more after
+    1.5 s, so a page left is noticed. Between those it looks twice a second only while a step's page is on screen in
+    a visible window, so the ring follows a page that redraws, and only for a day after the handoff
+    (`UserHandoff.watchLimit`): older steps keep their card, dot and ring but wait for one of those events, so steps
+    left waiting cost an idle Kite nothing. Only the top frame is searched.
   - **The sidebar.** A tab with a step waiting gets an orange dot at its row's end (tooltip: the step); a folded
     folder holding one gets the dot too.
   - **The card.** Over the bottom centre of the page: Claude's mark, "Claude needs you", the session, "Step n of m",

@@ -21,12 +21,16 @@ public enum UserHandoff {
     public static let maxCommandLength = 4_000
     /// The longest one call waits for the user, in seconds. Claude calls handoff_status again to wait longer.
     public static let maxWait: Double = 600
-    /// How often Kite looks at the page in front while a step waits on it.
+    /// How often Kite looks at the page in front while a step waits on it and the page is on screen.
     public static let pollInterval: TimeInterval = 0.5
     /// How close together a click on a step's control and a tab its page opens must be to count as the click's doing.
     public static let openedTabWindow: TimeInterval = 5
     /// How long after such a click a report waits for the tab it may be opening.
     public static let clickSettle: TimeInterval = 1
+    /// How long after a handoff Kite keeps looking at its steps' pages twice a second. Older steps stay (card,
+    /// sidebar, ring), but Kite only looks when the user switches to the tab, the page loads or the ring hears a
+    /// click, so steps left waiting for days cost nothing while Kite sits idle.
+    public static let watchLimit: TimeInterval = 24 * 3600
     /// How many looks, half a second apart, Kite takes at a new step's control before telling Claude it's missing.
     public static let probeAttempts = 3
     /// How long a step's control must be missing, on a tab at another address, before the card offers Take Me Back.
@@ -266,6 +270,19 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
     }
 
     public var waiting: [Step] { steps.filter(\.isWaiting) }
+
+    /// Whether Kite still looks at the steps' pages twice a second while they're on screen (`UserHandoff.watchLimit`).
+    public func isWatched(now: Date = Date()) -> Bool {
+        !isFinished && now.timeIntervalSince(created) < UserHandoff.watchLimit
+    }
+
+    /// Whether Kite should look at the pages twice a second: a watched handoff has a waiting step whose tab
+    /// `isShown` (its page on screen in a window the user can see). Otherwise Kite only looks on events.
+    public static func needsPolling(_ handoffs: [Handoff], now: Date = Date(), isShown: (UUID) -> Bool) -> Bool {
+        handoffs.contains { handoff in
+            handoff.isWatched(now: now) && handoff.waiting.contains { step in step.tab.map(isShown) ?? false }
+        }
+    }
 
     /// A waiting step whose control is turned off while no earlier step of the handoff waits: the user is stuck on
     /// it. (While an earlier one waits, that step may be what turns the control on.)
@@ -784,6 +801,8 @@ extension UserHandoff {
             K.clear = () => {
               K.step = null; K.el = null; K.cand = null; K.cfg = null; K.done = null; K.retry = 0; K.idle = 0;
               if (K.raf) cancelAnimationFrame(K.raf);
+              if (K.checkRaf) cancelAnimationFrame(K.checkRaf);
+              K.checkRaf = 0;
               if (K.timer) clearTimeout(K.timer);
               K.raf = 0; K.timer = 0;
               // Stop watching the pages: nothing is looked for until the next step.
@@ -813,14 +832,28 @@ extension UserHandoff {
               const click = report('click'), change = report('change');
               d.addEventListener('click', click, true);
               d.addEventListener('change', change, true);
+              // The ring follows the control's box only while something may move it (see place): a scroll, a resize,
+              // the end of a transition or animation, and any change to the page (classes and styles too), which costs
+              // one frame to see whether the box moved.
+              const moved = () => follow();
+              const view = d.defaultView;
+              d.addEventListener('scroll', moved, { capture: true, passive: true });
+              for (const name of ['transitionend', 'animationend']) d.addEventListener(name, moved, true);
+              if (view) view.addEventListener('resize', moved);
+              const mover = new MutationObserver(() => checkMoved());
+              mover.observe(d, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'] });
               // While the control is missing, a page that never stops changing (Gmail) still gets the idle backoff.
               const observer = new MutationObserver(() => soon(K.el ? 1000 : Math.max(150, K.idle || 150)));
               observer.observe(d, { subtree: true, childList: true, characterData: true,
                 attributes: true, attributeFilter: ['disabled', 'aria-disabled', 'inert', 'hidden', 'aria-hidden', 'aria-label'] });
               K.watching.push(() => {
                 observer.disconnect();
+                mover.disconnect();
+                for (const name of ['transitionend', 'animationend']) d.removeEventListener(name, moved, true);
                 d.removeEventListener('click', click, true);
                 d.removeEventListener('change', change, true);
+                d.removeEventListener('scroll', moved, { capture: true });
+                if (view) view.removeEventListener('resize', moved);
               });
             }
           };
@@ -828,7 +861,7 @@ extension UserHandoff {
           // Kite asks for a scroll on its first look at a step only; the control may settle after a later one.
           if (K.step !== cfg.step) {
             K.step = cfg.step; K.el = null; K.cand = null; K.done = null; K.scrolled = false; K.retry = 0; K.idle = 0;
-            K.wantScroll = cfg.scroll;
+            K.wantScroll = cfg.scroll; K.pulse = true;
           }
           K.cfg = cfg;
           watch();
@@ -839,7 +872,7 @@ extension UserHandoff {
             root.innerHTML = '<style>'
               + ':host{all:initial}'
               + '.ring{position:fixed;display:none;box-sizing:border-box;border:2px solid #D97757;border-radius:8px;'
-              + 'box-shadow:0 0 0 4px rgba(217,119,87,.25);animation:kh 1.6s ease-in-out infinite;pointer-events:none}'
+              + 'box-shadow:0 0 0 4px rgba(217,119,87,.25);animation:kh 1.6s ease-in-out 4;pointer-events:none}'
               + '.ring.off{border:2px dashed #8E8E93;box-shadow:none;animation:none}'
               + '@keyframes kh{50%{box-shadow:0 0 0 8px rgba(217,119,87,.12)}}'
               + '.tag{position:fixed;display:none;max-width:320px;padding:4px 9px;border-radius:7px;background:#D97757;color:#fff;'
@@ -850,6 +883,13 @@ extension UserHandoff {
               + '</style><div class="ring"></div><div class="tag"></div>';
             (document.documentElement || document.body).appendChild(host);
             K.host = host; K.ring = root.querySelector('.ring'); K.tag = root.querySelector('.tag');
+            K.pulse = false;
+          }
+          // The ring pulses a few times for each new step, then holds still: an endless pulse repaints the page every
+          // frame for as long as the step waits (hours, days), which kept the renderer and GPU busy.
+          if (K.pulse && K.ring) {
+            K.pulse = false;
+            for (const a of K.ring.getAnimations ? K.ring.getAnimations() : []) { a.cancel(); a.play(); }
           }
           // Looks the control up again (it walks the page, so on a timer, never in a frame), and keeps the tag's words
           // and the ring's style in step with it.
@@ -881,9 +921,29 @@ extension UserHandoff {
             // A hidden page needs no looks; Kite's own look starts them again when it's back on screen.
             if (!K.cfg || document.hidden) return;
             const el = look();
+            // Frames again only if the box moved (or the control came or went, or the tag changed its words).
+            if (placedAt(el) !== K.placedAt || (el && !K.tagSize)) follow();
             K.idle = el || K.cand !== K.el ? 0 : Math.min(1000, Math.max(150, (K.idle || 75) * 2));
             soon(K.cand !== K.el ? settle / 2 : el ? 2000 : K.idle);
           };
+          // Where the ring goes for el (its box, or nothing), to tell whether it moved.
+          function placedAt(el) {
+            const r = el && el.isConnected && shown(el) ? box(el) : null;
+            return r ? r.left + ',' + r.top + ',' + r.width + ',' + r.height : '';
+          }
+          // On the next frame, follow again if the box moved since the ring last held still (once per frame at most).
+          function checkMoved() {
+            if (K.raf || K.checkRaf || !K.cfg || !K.host) return;
+            K.checkRaf = requestAnimationFrame(() => {
+              K.checkRaf = 0;
+              if (K.cfg && placedAt(K.el) !== K.placedAt) follow();
+            });
+          }
+          // Follow the control's box again, frame by frame, until it holds still (a scroll, a resize, a look).
+          function follow() {
+            K.still = 0;
+            if (K.cfg && K.host && !K.raf) K.raf = requestAnimationFrame(place);
+          }
           function soon(ms) {
             if (!K.cfg) return;
             const at = Date.now() + ms;
@@ -892,7 +952,9 @@ extension UserHandoff {
             K.timerAt = at;
             K.timer = setTimeout(tick, ms);
           }
-          // Every frame, only follows the control's box.
+          // Every frame while the control's box moves: it follows the box, and stops asking for frames once the box has
+          // held still for half a second (a page with nothing moving then draws nothing). Scrolls, resizes and the
+          // looks start it again (follow).
           const place = () => {
             K.raf = 0;
             if (!K.cfg || !K.host) return;
@@ -933,11 +995,15 @@ extension UserHandoff {
             } else {
               K.ring.style.display = 'none'; K.tag.style.display = 'none';
             }
-            K.raf = requestAnimationFrame(place);
+            const at = r ? r.left + ',' + r.top + ',' + r.width + ',' + r.height : '';
+            K.still = at === K.placedAt ? (K.still || 0) + 1 : 0;
+            K.placedAt = at;
+            K.raf = K.still < 30 ? requestAnimationFrame(place) : 0;
           };
-          // Kite's own look (twice a second while the tab is on screen) keeps things going in a page that gets no
-          // frames or timers. A control still settling counts as found.
+          // Kite's own looks (on tab switches and loads, and twice a second while a fresh step's page is shown) keep things
+          // going in a page that gets no frames or timers. A control still settling counts as found.
           const el = look() || (K.cand && K.cand.isConnected ? K.cand : null);
+          K.still = 0;
           if (!K.raf) place();
           soon(K.cand !== K.el ? settle / 2 : 150);
           return state(el);

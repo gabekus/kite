@@ -370,4 +370,41 @@ import Testing
         #expect(kept.contains { $0.id == "h3" })
         #expect(kept.last?.id == "h25")
     }
+
+    @Test func stopsWatchingOldHandoffs() {
+        let now = Date()
+        let tab = UUID()
+        var fresh = Handoff(id: "h1", reason: "R", created: now.addingTimeInterval(-3600),
+                            steps: [.init(id: "h1.1", number: 1, instruction: "Do", tab: tab)])
+        let old = Handoff(id: "h2", reason: "R", created: now.addingTimeInterval(-UserHandoff.watchLimit - 1),
+                          steps: [.init(id: "h2.1", number: 1, instruction: "Do", tab: tab)])
+        #expect(fresh.isWatched(now: now))
+        // A day on, the step still waits on its tab (card, sidebar, ring), but Kite no longer looks twice a second.
+        #expect(!old.isWatched(now: now))
+        #expect(!old.isFinished && old.current(on: tab)?.id == "h2.1")
+        #expect(old.report { _ in nil }.contains("[waiting]"))
+        fresh.finishAll(.done, how: "the user pressed Done")
+        #expect(!fresh.isWatched(now: now))
+    }
+
+    @Test func pollsOnlyForAFreshStepOnAShownTab() {
+        let now = Date()
+        let shownTab = UUID(), hiddenTab = UUID()
+        func handoff(_ id: String, age: TimeInterval, tab: UUID?) -> Handoff {
+            Handoff(id: id, reason: "R", created: now.addingTimeInterval(-age),
+                    steps: [.init(id: id + ".1", number: 1, instruction: "Do", tab: tab)])
+        }
+        let shown: (UUID) -> Bool = { $0 == shownTab }
+        // Nothing waiting, or waiting only on a tab nobody can see, or with no tab: no polling.
+        #expect(!Handoff.needsPolling([], now: now, isShown: shown))
+        #expect(!Handoff.needsPolling([handoff("h1", age: 60, tab: hiddenTab)], now: now, isShown: shown))
+        #expect(!Handoff.needsPolling([handoff("h1", age: 60, tab: nil)], now: now, isShown: shown))
+        // A fresh step on the shown tab polls; the same step past the watch limit doesn't.
+        #expect(Handoff.needsPolling([handoff("h1", age: 60, tab: shownTab)], now: now, isShown: shown))
+        #expect(!Handoff.needsPolling([handoff("h1", age: UserHandoff.watchLimit + 1, tab: shownTab)], now: now, isShown: shown))
+        // A finished step on the shown tab doesn't.
+        var done = handoff("h2", age: 60, tab: shownTab)
+        done.finishAll(.done, how: "the user pressed Done")
+        #expect(!Handoff.needsPolling([done, handoff("h3", age: 60, tab: hiddenTab)], now: now, isShown: shown))
+    }
 }

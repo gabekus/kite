@@ -108,6 +108,7 @@ final class ExtensionTabsBridge {
         healthCheck = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pushState(force: true) }
         }
+        healthCheck?.tolerance = 5
     }
 
     /// Tabs, selection or the window changed: tell the workers (once per run loop turn).

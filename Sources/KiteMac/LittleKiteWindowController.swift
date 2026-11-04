@@ -78,6 +78,11 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
 
     /// When the window was last in use, for "Archive Little Kites after:" (`archiveIfStale`).
     private(set) var lastActiveAt = Date()
+    /// Fires when the window will have gone unused for the setting's time (`scheduleArchive`).
+    private var archiveTimer: Timer?
+    private var appActivation: [NSObjectProtocol] = []
+    private var wakeObserver: NSObjectProtocol?
+    private var isClosed = false
     /// Why the window is closing, for its archive entry: Auto-Closed when "Archive Little Kites after:" closed it.
     private var closeReason = ArchiveReason.manual
 
@@ -113,6 +118,8 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         buildViews()
         applyDestination()
         if let url { load(url) } else { pill.beginEditing(text: "") }
+        watchAppActivation()
+        scheduleArchive()
     }
 
     @available(*, unavailable)
@@ -510,6 +517,13 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
     // MARK: Window
 
     func windowWillClose(_ notification: Notification) {
+        isClosed = true
+        archiveTimer?.invalidate()
+        archiveTimer = nil
+        appActivation.forEach(NotificationCenter.default.removeObserver)
+        appActivation = []
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+        wakeObserver = nil
         window?.saveFrame(usingName: Self.frameName)
         showPermissionPrompt(nil)
         if let page {
@@ -524,19 +538,63 @@ final class LittleKiteWindowController: NSWindowController, NSWindowDelegate, NS
         didClose?(self)
     }
 
-    func windowDidBecomeKey(_ notification: Notification) { lastActiveAt = Date() }
-    func windowDidResignKey(_ notification: Notification) { lastActiveAt = Date() }
+    func windowDidBecomeKey(_ notification: Notification) { useChanged() }
+    func windowDidResignKey(_ notification: Notification) { useChanged() }
+
+    /// The window starts or stops being in use: its unused time counts from now.
+    private func useChanged() {
+        lastActiveAt = Date()
+        scheduleArchive()
+    }
 
     /// Settings › Links › "Archive Little Kites after:": closes the window once it has gone unused that
     /// long (Arc's `autoArchiveLittleArcTimeThreshold`). In use means key while Kite is the active app.
     @discardableResult
     func archiveIfStale(_ threshold: LittleKite.ArchiveThreshold, now: Date = Date()) -> Bool {
-        let inUse = window?.isKeyWindow == true && NSApp.isActive
+        let inUse = isInUse
         if inUse { lastActiveAt = now }
         guard threshold.isStale(lastActive: lastActiveAt, inUse: inUse, now: now) else { return false }
         closeReason = .auto
         close()
         return true
+    }
+
+    private var isInUse: Bool { window?.isKeyWindow == true && NSApp.isActive }
+
+    /// Archives the window now if it's stale, or sets a timer for when it will be. Called when the window or Kite
+    /// gains or loses focus (the window stops or starts being in use) and when the setting changes, instead of a
+    /// once-a-minute check. A window in use has no timer: it's never stale.
+    func scheduleArchive(now: Date = Date()) {
+        archiveTimer?.invalidate()
+        archiveTimer = nil
+        let threshold = LittleKite.ArchiveThreshold.current(in: .standard)
+        guard window != nil, !isClosed, !archiveIfStale(threshold, now: now), !isInUse else { return }
+        let timer = Timer(fire: lastActiveAt.addingTimeInterval(threshold.seconds), interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleArchive() }
+        }
+        // Hours away: a minute late is fine (the old check ran once a minute).
+        timer.tolerance = 60
+        RunLoop.main.add(timer, forMode: .common)
+        archiveTimer = timer
+    }
+
+    private func watchAppActivation() {
+        let names = [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification]
+        appActivation = names.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    // Only the key window starts or stops being in use.
+                    guard let self, self.window?.isKeyWindow == true else { return }
+                    self.useChanged()
+                }
+            }
+        }
+        // A timer can come due while the Mac sleeps: check on waking, as the old once-a-minute check would have.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleArchive() }
+        }
     }
 
     func windowDidEnterFullScreen(_ notification: Notification) { trafficLights?.fullScreenChanged() }

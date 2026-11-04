@@ -1,0 +1,62 @@
+[
+  {
+    "created": "__NOW_MINUS_25H__",
+    "id": "h1",
+    "reason": "Fixture: only you can approve this.",
+    "steps": [
+      {
+        "id": "h1.1",
+        "instruction": "Approve the change",
+        "locator": {
+          "text": {
+            "_0": "Approve"
+          }
+        },
+        "number": 1,
+        "state": "waiting",
+        "tab": "E6723A05-AC15-4B01-A752-58886C189384",
+        "url": "http://127.0.0.1:18765/p10.html"
+      }
+    ]
+  },
+  {
+    "created": "__NOW_MINUS_25H__",
+    "id": "h2",
+    "reason": "Fixture: a choice only you can make.",
+    "steps": [
+      {
+        "id": "h2.1",
+        "instruction": "Save the settings",
+        "locator": {
+          "text": {
+            "_0": "Save changes"
+          }
+        },
+        "number": 1,
+        "state": "waiting",
+        "tab": "477C9417-429D-4022-8200-1E2DC4894BC7",
+        "url": "http://127.0.0.1:18765/p9.html"
+      }
+    ]
+  },
+  {
+    "created": "__NOW_MINUS_25H__",
+    "id": "h3",
+    "reason": "Fixture: needs your password manager.",
+    "steps": [
+      {
+        "id": "h3.1",
+        "instruction": "Approve the sign-in",
+        "locator": {
+          "text": {
+            "_0": "Approve"
+          }
+        },
+        "number": 1,
+        "state": "waiting",
+        "tab": "7F5589CB-B45B-4189-AA6A-48B189E31F37",
+        "url": "http://127.0.0.1:18765/p8.html"
+      }
+    ]
+  }
+]
