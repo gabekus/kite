@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 
 #include "Check.h"
@@ -120,6 +121,19 @@ TEST(makeDefaultHasPersonalAndWork) {
     CHECK(state.SelectedTab() && state.SelectedTab()->url == std::optional<std::string>("https://www.wikipedia.org"));
     CHECK(IsUuid(state.spaces[0].id) && state.spaces[0].id != state.spaces[1].id);
     CHECK(BrowserState::MakeDefault(std::nullopt).SelectedTab() == nullptr);
+}
+
+// Ids are the model's identity, so a generator that repeats (Zen 5's RDSEED handing back zeros)
+// breaks everything that looks a tab up. Every id stays a valid v4 UUID and none repeats.
+TEST(newUuidsAreDistinct) {
+    std::set<std::string> ids;
+    bool allValid = true;
+    for (int i = 0; i < 1000; ++i) {
+        std::string id = NewUuid();
+        allValid = allValid && IsUuid(id) && id[14] == '4';
+        ids.insert(id);
+    }
+    CHECK(allValid && ids.size() == 1000);
 }
 
 // KiteCoreTests.swift BrowserStateTests.openTabSelectsAndGoesOnTop

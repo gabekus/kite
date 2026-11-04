@@ -32,6 +32,17 @@ jobs:
           cmake -S windows -B /tmp/kite-core
           cmake --build /tmp/kite-core -j
           ctest --test-dir /tmp/kite-core --output-on-failure --timeout 120
+      - name: Core tests under ASan and UBSan (GCC, Linux)
+        # Undefined behaviour MSVC hides (a dangling view, a read past an end, signed overflow)
+        # fails here instead of flaking. The runner's 32-bit mmap randomization breaks ASan's
+        # shadow memory, so it's narrowed first.
+        run: |
+          sudo sysctl -q vm.mmap_rnd_bits=28
+          cmake -S windows -B /tmp/kite-asan -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build /tmp/kite-asan --target KiteCoreTests -j
+          /tmp/kite-asan/KiteCoreTests
       - name: Golden backdrop fixture is current
         # The CPU reference must write exactly the file the Mac's Kite.metal is tested against;
         # after a deliberate shader change, regenerate it with this target.
