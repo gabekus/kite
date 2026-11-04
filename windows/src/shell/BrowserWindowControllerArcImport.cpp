@@ -2,7 +2,8 @@
 // ArcImportController.swift is the Mac's: the "importFromArc" command (also in the window's
 // system menu, Alt+Space) reads Arc's folder on a worker thread, asks for Arc's folder with the
 // system's folder picker when it can't, confirms what it found, imports into the session and
-// saves it, then writes the shortcut changes and routes.
+// saves it, then writes the shortcut changes and routes, and merges Arc's history into the
+// profiles' history stores.
 //
 // Arc's own import screens aren't ported: the confirmation is a message box with the Mac's
 // text, and its "Include unnamed spaces" checkbox is the box's Yes/No. Arc shuts down on
@@ -98,10 +99,13 @@ void BrowserWindowController::ReadArc(std::optional<std::filesystem::path> picke
     job->picked = picked.has_value();
     arcJob_ = job;
     const HWND window = window_.Handle();
-    arcThread_ = std::thread([job, picked = std::move(picked), window] {
+    // No history to put Arc's in (the Mac's incognito windows): its History files aren't read.
+    const bool history = history_ != nullptr;
+    arcThread_ = std::thread([job, picked = std::move(picked), window, history] {
         const auto folder = ArcFolder();
         arc_import::ReadOptions options;
         options.cancel = &job->cancel;
+        options.history = history;
         job->result = picked ? arc_import::ReadPicked(*picked, folder, options) : arc_import::ReadAuto(folder, options);
         if (!job->cancel) PostMessageW(window, kArcReadMessage, 0, 0);
         job->done.set_value();
@@ -183,6 +187,12 @@ void BrowserWindowController::ArcRead() {
                     L"Import from Arc", MB_OK | MB_ICONWARNING);
     } else {
         arc_import::WriteProfileFiles(imported, options_.supportDirectory);
+    }
+    // Each Arc profile's history into the Kite profile it went to, as the Mac's perform: the
+    // stores save it at once, on their worker.
+    if (history_) {
+        arc_import::MergeHistories(imported, *history_);
+        ArmHistorySave();
     }
     if (!stillOpen()) return;
     OutputDebugStringW((L"Kite: Arc import: " + Widen(json::Write(arc_import::Summary(imported))) + L"\n").c_str());

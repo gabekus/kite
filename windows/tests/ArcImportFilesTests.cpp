@@ -1,5 +1,5 @@
 // Ports of KiteCore's ArcArchiveSettingsImportTests (the archive and settings cases; its
-// history cases wait for a history store), ArcKeyBindingsImportTests and
+// history cases are in HistoryTests.cpp, and the history import in ArcHistoryImportTests.cpp), ArcKeyBindingsImportTests and
 // ArcLinkRoutingImportTests, case for case, each named after its Swift test. Then what Kite for
 // Windows adds: Arc for Windows' settings plist, the Web Data reader behind Site Search (the
 // Mac uses the system's SQLite), and ArcImportController's folder handling and import, on the
@@ -807,7 +807,7 @@ TEST(ArcImportController_importsTheFixtureFolder) {
     CHECK(!IncludesUntitled(plan, {}));  // the fixture has a named space: the Mac's default
     const auto lines = ConfirmLines(plan, state, false);
     CHECK(lines.size() >= 3 && lines[0] == "Found 1 space, 1 favorite, 6 tabs, 1 folder and 1 split view.");
-    CHECK(lines[1] == "Also imports 2 archived tabs, 6 Site Search shortcuts, 2 keyboard shortcut changes, 1 Air Traffic Control route and "
+    CHECK(lines[1] == "Also imports 2 archived tabs, 86 history pages, 6 Site Search shortcuts, 2 keyboard shortcut changes, 1 Air Traffic Control route and "
                       "2 Arc settings (Warn before quitting, Archive tabs after: 7 days).");
     CHECK(UntitledCounts(plan) == std::make_pair(1, 1));
 
@@ -829,7 +829,7 @@ TEST(ArcImportController_importsTheFixtureFolder) {
         return 0;
     };
     CHECK(skippedKind("unnamedSpaces") == 1 && skippedKind("routesToProfiles") == 1 && skippedKind("sidebarItem:easel") == 1 &&
-          skippedKind("history") == -1);
+          skippedKind("historyHidden") == 1 && skippedKind("history") == 0);
     // The one icon Kite has no match for is the unnamed space's, which stayed out.
     CHECK(skippedKind("spaceIcons") == 0);
 

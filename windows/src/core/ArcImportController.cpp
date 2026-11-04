@@ -10,6 +10,7 @@
 #include <thread>
 
 #include "core/AirTrafficControl.h"
+#include "core/ArcHistoryImport.h"
 #include "core/Files.h"
 #include "core/Plist.h"
 #include "core/Profiles.h"
@@ -81,20 +82,6 @@ std::optional<std::string> ReadArcFile(const fs::path& file, const ReadOptions& 
     return std::nullopt;
 }
 
-// Whether SQLite is in the middle of writing the database `journal` sits beside: a hot journal
-// (IsHotJournal, its first 8 bytes). One that's there but can't be read counts as hot, so a
-// half-written database is never trusted.
-bool JournalIsHot(const fs::path& journal) {
-    std::error_code error;
-    if (!fs::exists(journal, error)) return static_cast<bool>(error);
-    if (!fs::is_regular_file(journal, error)) return true;
-    const auto size = fs::file_size(journal, error);
-    if (error) return true;
-    if (size == 0) return false;
-    auto head = ReadFilePrefix(journal, 8);
-    return !head || sqlite::IsHotJournal(*head);
-}
-
 std::string FileProblemText(const FileProblem& p) { return p.reason.empty() ? p.file : p.file + " (" + p.reason + ")"; }
 
 // When a file was last written, as a Timestamp.
@@ -131,6 +118,16 @@ std::vector<std::string> ImportedProfiles(const Plan& plan, bool includeUntitled
         if (std::find(out.begin(), out.end(), profile) == out.end()) out.push_back(profile);
     }
     return out;
+}
+
+// The history pages an import of `profiles`' spaces brings: theirs and Default's (the Mac's
+// withDefault).
+size_t HistoryPages(const Plan& plan, const std::vector<std::string>& profiles) {
+    size_t pages = 0;
+    for (const std::string& profile : WithDefault(profiles)) {
+        if (auto it = plan.histories.find(profile); it != plan.histories.end()) pages += it->second.entries.size();
+    }
+    return pages;
 }
 
 int CountFolders(const std::vector<PinnedItem>& items) {
@@ -331,6 +328,21 @@ Plan ReadPlan(Sidebar sidebar, const fs::path& folder, const ReadOptions& option
         else plan.unreadable.push_back({PathText(file.filename()), ""});
         break;
     }
+    // Each profile's history (the Mac reads every profile the sidebar's spaces use, and Default),
+    // last: a History can be hundreds of MB.
+    if (!options.history) return plan;
+    HistoryReadOptions historyOptions;
+    historyOptions.maxEntries = plan.historyCap = options.maxHistoryEntries;
+    historyOptions.cancel = options.cancel;
+    for (const std::string& profile : WithDefault(plan.sidebar.result.profiles)) {
+        if (Cancelled(options)) return plan;
+        ProfileHistory history = ReadArcHistory(folder, profile, options.maxFileBytes, historyOptions);
+        const std::string name = profile + "/History";
+        if (history.read) plan.histories.emplace(profile, std::move(*history.read));
+        else if (!history.problem.empty()) plan.unreadable.push_back({name, history.problem});
+        else if (history.tooLarge) plan.unreadable.push_back({name, TooLarge(*history.tooLarge, options.maxFileBytes)});
+        else if (history.unreadable) plan.unreadable.push_back({name, ""});
+    }
     return plan;
 }
 
@@ -385,6 +397,7 @@ std::vector<std::string> ConfirmLines(const Plan& plan, const BrowserState& stat
     const auto shownRoutes = ShownRoutes(plan, state, includeUntitled);
     std::vector<std::string> extras;
     if (!plan.archive.empty()) extras.push_back(Count(plan.archive.size(), "archived tab"));
+    if (const size_t pages = HistoryPages(plan, brought); pages > 0) extras.push_back(Count(pages, "history page"));
     if (!plan.siteSearches.empty()) extras.push_back(Count(plan.siteSearches.size(), "Site Search shortcut"));
     if (!plan.keyBindings.empty()) extras.push_back(Count(plan.keyBindings.size(), "keyboard shortcut change"));
     if (shownRoutes && !shownRoutes->rules.empty()) extras.push_back(Count(shownRoutes->rules.size(), "Air Traffic Control route"));
@@ -437,7 +450,7 @@ std::vector<std::string> ConfirmLines(const Plan& plan, const BrowserState& stat
     if (!includeUntitled && std::any_of(result.profiles.begin(), result.profiles.end(), [&](const std::string& p) {
             return std::find(brought.begin(), brought.end(), p) == brought.end();
         })) {
-        lines.push_back("A profile only unnamed spaces use comes over, with its favorites, only if you include them.");
+        lines.push_back("A profile only unnamed spaces use comes over, with its favorites and history, only if you include them.");
     }
     if (!plan.unreadable.empty()) {
         std::vector<std::string> files;
@@ -535,7 +548,36 @@ Imported Import(BrowserState& state, const Plan& plan, ImportOptions options) {
         json::Object o{{"kind", "file"}, {"file", p.file}, {"reason", p.reason.empty() ? std::string("doesn't read") : p.reason}};
         out.skipped.push_back(json::Value(std::move(o)));
     }
-    out.skipped.push_back(Skipped("history", std::nullopt, "Kite for Windows has no history yet"));
+    // Each Arc profile's history goes to the Kite profile it went to (MergeHistories). What the
+    // read left out is counted for the profiles that come over.
+    HistoryRead left;
+    size_t historyPages = 0, historyRows = 0, profilesLeftOut = 0;
+    for (const auto& [arc, read] : plan.histories) {
+        historyRows += read.rows;
+        historyPages += read.entries.size();
+        auto kite = merged.profiles.find(arc);
+        if (kite == merged.profiles.end()) {
+            profilesLeftOut += read.entries.size();
+            continue;
+        }
+        left.hidden += read.hidden;
+        left.neverVisited += read.neverVisited;
+        left.beyondCap += read.beyondCap;
+        left.notWebPages += read.notWebPages;
+        left.tooLong += read.tooLong;
+        if (!read.entries.empty()) out.histories.push_back({arc, kite->second, read.entries});
+    }
+    auto skippedHistory = [&](const char* kind, uint64_t count, const std::string& reason) {
+        if (count > 0) out.skipped.push_back(Skipped(kind, static_cast<size_t>(count), reason));
+    };
+    skippedHistory("historyHidden", left.hidden, "subframes and redirects, which Chromium's history page leaves out too");
+    skippedHistory("historyNeverVisited", left.neverVisited, "no last visit");
+    skippedHistory("historyBeyondCap", left.beyondCap,
+                   "older than the newest " + std::to_string(plan.historyCap) +
+                       " in their profile, the most Kite's history keeps");
+    skippedHistory("historyNotWebPages", left.notWebPages, "not a web page (http or https), which Kite's history keeps only");
+    skippedHistory("historyTooLong", left.tooLong, "a row too long to be one Chromium wrote");
+    skippedHistory("historyProfilesLeftOut", profilesLeftOut, "from a profile only unnamed spaces use; --include-unnamed brings them");
     out.skipped.push_back(Skipped("signIns", std::nullopt, "Arc's cookies aren't imported on Windows yet"));
     out.skipped.push_back(Skipped("extensions", std::nullopt, "Kite for Windows has no extensions yet"));
     out.notes.insert(out.notes.end(), result.notes.begin(), result.notes.end());
@@ -563,7 +605,9 @@ Imported Import(BrowserState& state, const Plan& plan, ImportOptions options) {
                              {"archivedTabs", plan.archive.size()},
                              {"siteSearches", plan.siteSearches.size()},
                              {"keyBindings", plan.keyBindings.size()},
-                             {"routes", plan.routes ? plan.routes->rules.size() : size_t{0}}};
+                             {"routes", plan.routes ? plan.routes->rules.size() : size_t{0}},
+                             {"historyRows", historyRows},
+                             {"historyPages", historyPages}};
     out.imported = json::Object{{"spaces", merged.added + merged.updated},
                                 {"spacesAdded", merged.added},
                                 {"spacesUpdated", merged.updated},
@@ -579,6 +623,8 @@ Imported Import(BrowserState& state, const Plan& plan, ImportOptions options) {
                                 {"siteSearches", siteSearches},
                                 {"keyBindings", 0},
                                 {"routes", 0},
+                                {"historyPages", 0},
+                                {"historyPagesNew", 0},
                                 {"settings", json::Value(std::move(settings))}};
     out.source = json::Object{{"file", plan.sidebar.file}, {"backup", plan.sidebar.isBackup}};
     return out;
@@ -625,6 +671,30 @@ void WriteProfileFiles(Imported& out, const fs::path& profileDirectory) {
     }
     out.keyBindings.clear();
     out.routes.reset();
+}
+
+void MergeHistories(Imported& out, HistoryStores& stores, std::chrono::milliseconds waitForLoads) {
+    if (out.histories.empty()) return;
+    std::vector<HistoryStore*> targets;
+    for (const Imported::PendingHistory& history : out.histories) targets.push_back(&stores.ForProfile(history.kiteProfile));
+    if (waitForLoads > std::chrono::milliseconds::zero()) stores.WaitForLoads(waitForLoads);
+    size_t merged = 0, added = 0, dropped = 0;
+    for (size_t i = 0; i < out.histories.size(); ++i) {
+        HistoryStore& store = *targets[i];
+        const size_t before = store.Get().Count();
+        const size_t fresh = store.Merge(out.histories[i].entries);
+        merged += out.histories[i].entries.size();
+        added += fresh;
+        // Past the cap, the oldest pages went (Arc's or Kite's own).
+        dropped += before + fresh - store.Get().Count();
+    }
+    out.imported.insert_or_assign("historyPages", merged);
+    out.imported.insert_or_assign("historyPagesNew", added);
+    if (dropped > 0) {
+        out.skipped.push_back(Skipped("historyPruned", dropped,
+                                      "Kite's history keeps the latest " + std::to_string(History::kMaxEntries) + " pages a profile, so the oldest went"));
+    }
+    out.histories.clear();
 }
 
 json::Value Summary(const Imported& imported) {

@@ -411,8 +411,8 @@ the page you're on or the Open row's URL; each entry keeps its title, URL and
 host lowercased and decomposed, so a keystroke's search is a byte search with
 Swift's Character rules checked only where it hits. `kitecore history`
 lists, searches, adds and clears; `kitecore history-bench` measures it. Not
-yet: the history page (`kite://history`), Delete browsing data, Import from
-Arc (W25b), and the bar's favicons.
+yet: the history page (`kite://history`), Delete browsing data, and the bar's
+favicons. Import from Arc brings Arc's history (W33a, below).
 ## Import from Arc
 
 Arc stops working on 2026-12-22, so Kite for Windows imports Arc for Windows'
@@ -446,8 +446,29 @@ runs it headless and prints the counts per kind and what was skipped and why;
 `kitecore profile list|add|rename|delete` manages the profiles it makes. In the
 app it's the `importFromArc` command, also in the window's system menu
 (Alt+Space): the system folder picker stands in for the Mac's open panel, and
-a message box with the Mac's text for its dialog. Not yet: history, sign-ins
-(cookies) and extensions, and the Little Kite setting (no Little Kite).
+a message box with the Mac's text for its dialog. Not yet: sign-ins (cookies)
+and extensions, and the Little Kite setting (no Little Kite).
+
+Arc's browsing history comes too (W33a; `core/ArcHistoryImport`, ported from
+KiteMac's `ArcHistoryImport.swift` and `BrowserHistoryImport.chromium`): each
+profile's `User Data\<profile>\History`, Chromium's database, read as the
+Mac's query reads its `urls` table (`hidden = 0 AND last_visit_time > 0`, the
+newest 20,000 by last visit, then the web pages among them, "" for no title, a
+count of at least 1), and merged with `History.merge` into the history of the
+Kite profile that Arc profile's spaces went to; Kite's 20,000-page cap applies
+after the merge, and importing again doubles nothing. The Mac copies the file
+and opens the copy with the system's SQLite. Kite for Windows reads it in place
+with its own reader, a page at a time (`sqlite::FilePages`, `ScanTable`), keeping
+the newest rows in a heap as they stream past: a synthetic 200 MB History
+(360,000 pages, `scripts/make-history.py --synthetic`) imports in 0.4 s with a
+42 MB peak working set (warm cache). Since it isn't a copy, a profile's history
+is left out, with the reason in the confirmation and the summary, while Arc may
+be changing it: Arc running (Chromium's `User Data\lockfile`), a hot
+`History-journal`, a `History-wal` that isn't empty (the reader doesn't read
+write-ahead log frames; Arc for Windows keeps a rollback journal), or the file
+changing during the read. Merging 20,000 pages costs the UI thread about 40 ms,
+once, after the confirmation. `kitecore import-arc` prints the history counts:
+rows found, pages imported and new, and what was left out by reason.
 
 ## Refresh rate
 
