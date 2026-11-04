@@ -40,8 +40,8 @@ public struct MCPServer: Sendable {
         it needs their judgment, a secret only they hold, or a command on their computer), call handoff instead of \
         listing steps in chat: give the reason you stopped and each step with its tab and the control to click (ref, \
         selector or visible text) or the command to run. Kite shows the steps on the pages themselves, so the user \
-        never has to come back to the chat to see what to do. Then call handoff_status with wait to hear when they're \
-        done, and carry on. \
+        never has to come back to the chat to see what to do. Then call handoff_status with wait 600, again and again, \
+        until they're done, and carry on: don't end your turn while steps wait, or nothing tells you they're done. \
         To check Kite's own interface (sidebar, command bar, menus, cursors, animations), use the ui tool, not \
         screenshots of the screen or the user's mouse. \
         When the user's VPN needs to reconnect, or its SSO sign-in keeps opening tabs, use the vpn tool: \

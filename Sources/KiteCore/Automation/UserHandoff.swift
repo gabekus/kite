@@ -8,7 +8,7 @@ import Foundation
 /// - rings the control to click on the page itself, with the step's text beside it;
 /// - marks those tabs, and the Claude folders holding them, in the sidebar;
 /// - shows a card over the page with the reason, the step, a copyable command for steps outside the browser,
-///   and Done, Skip and Next;
+///   and Back, Skip, Next and Done;
 /// - tells Claude which steps the user did when it asks (`handoff_status`), or when its wait ends.
 ///
 /// A step on a page is done when the user clicks (or changes) the ringed control, or presses Done. Only real
@@ -23,6 +23,10 @@ public enum UserHandoff {
     public static let maxWait: Double = 600
     /// How often Kite looks at the page in front while a step waits on it.
     public static let pollInterval: TimeInterval = 0.5
+    /// How close together a click on a step's control and a tab its page opens must be to count as the click's doing.
+    public static let openedTabWindow: TimeInterval = 5
+    /// How long after such a click a report waits for the tab it may be opening.
+    public static let clickSettle: TimeInterval = 1
     /// How many looks, half a second apart, Kite takes at a new step's control before telling Claude it's missing.
     public static let probeAttempts = 3
     /// How long a step's control must be missing, on a tab at another address, before the card offers Take Me Back.
@@ -228,6 +232,19 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         enum CodingKeys: String, CodingKey { case id, number, instruction, why, command, tab, locator, url, state, how }
     }
 
+    /// A tab a step's click opened (a link to a new tab, a popup): a wait ends for it, and Claude carries on there
+    /// (the report's list of opened tabs, `AutomationController.openedReport`, names it).
+    public struct Opened: Hashable, Sendable {
+        /// The number of the step whose click opened it.
+        public var step: Int
+        public var tab: UUID
+
+        public init(step: Int, tab: UUID) {
+            self.step = step
+            self.tab = tab
+        }
+    }
+
     /// "h1", "h2": short enough for Claude to pass back.
     public let id: String
     public var reason: String
@@ -235,6 +252,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
     public var session: String?
     public var created: Date
     public var steps: [Step]
+    /// Tabs the user's clicks opened, oldest first. News for the next report only, so not saved.
+    public var opened: [Opened] = []
+
+    enum CodingKeys: String, CodingKey { case id, reason, session, created, steps }
 
     public init(id: String, reason: String, session: String? = nil, created: Date = Date(), steps: [Step]) {
         self.id = id
@@ -271,6 +292,24 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         return true
     }
 
+    /// The step before this one, for the card's Back.
+    public func previous(before stepID: String) -> Step? {
+        guard let step = steps.first(where: { $0.id == stepID }) else { return nil }
+        return steps.last { $0.number < step.number }
+    }
+
+    /// Back on the card: an ended step waits on the user again, with a word for Claude that it had ended. What the
+    /// last look saw is forgotten, so the ring looks for its control afresh.
+    @discardableResult
+    public mutating func reopen(_ stepID: String) -> Bool {
+        guard let index = steps.firstIndex(where: { $0.id == stepID }), !steps[index].isWaiting else { return false }
+        steps[index].how = "the user went back to it after it was \(steps[index].state.rawValue)"
+        steps[index].state = .waiting
+        steps[index].found = nil
+        steps[index].blocker = nil
+        return true
+    }
+
     /// Ends every waiting step (the user dismissed the handoff, or Claude withdrew it).
     public mutating func finishAll(_ state: Step.State, how: String, where include: (Step) -> Bool = { _ in true }) {
         for index in steps.indices where steps[index].isWaiting && include(steps[index]) {
@@ -299,6 +338,10 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
             }
             lines.append(line)
         }
+        if steps.contains(where: { $0.isWaiting && $0.how != nil }) {
+            // A reopened step is the only waiting one with a how.
+            lines.append("The user went back to a step that had ended: it waits again, so don't count it as done or skipped.")
+        }
         if left == 0 {
             lines.append(skipped == 0
                 ? "The user did every step. Read the pages to check they took, then carry on."
@@ -308,13 +351,63 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
                 + "handoff (handoff_status cancel) and hand over the steps again in order, with what turns the control on "
                 + "first. Then call handoff_status with id \"\(id)\" and wait.")
         } else if waitedOut {
-            lines.append("The steps stay in Kite for the user. Call handoff_status with id \"\(id)\" and wait to keep waiting, "
-                + "or carry on with work that doesn't need them.")
+            lines.append("The steps stay in Kite for the user. Call handoff_status with id \"\(id)\" and wait "
+                + "\(Int(UserHandoff.maxWait)) again, or carry on with work that doesn't need them. "
+                + Self.dontStop)
         } else {
-            lines.append("Kite is showing these to the user. Call handoff_status with id \"\(id)\" (and wait, up to "
-                + "\(Int(UserHandoff.maxWait)) seconds) to hear when they're done.")
+            lines.append("Kite is showing these to the user. Now call handoff_status with id \"\(id)\" and wait "
+                + "\(Int(UserHandoff.maxWait)) to hear when they're done. " + Self.dontStop)
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Why Claude keeps waiting: once its turn ends, nothing reaches it when the user is done.
+    static let dontStop = "Don't end your turn while steps wait: Kite can't tell you when the user is done once you've "
+        + "stopped, and they're left waiting on you. A wait also ends early when a step's click opens a new tab."
+}
+
+/// The card's word when the user hands back to Claude: they ended the last step, or a step's click opened a new tab.
+/// Whether Claude hears it depends on whether it's waiting (handoff_status with wait). Plain MCP can't start a turn in
+/// a Claude client that has stopped; Claude Code's channels (a research preview behind a launch flag) and MCP tasks
+/// can, but not in the Claude desktop app (code.claude.com/docs channels, mcp; checked 4 Nov 2026).
+public struct HandoffHandback: Hashable, Sendable {
+    public enum Kind: Hashable, Sendable {
+        case finished
+        case openedTab(UUID)
+    }
+
+    public var handoff: String
+    public var kind: Kind
+    /// A handoff or handoff_status call was waiting on this handoff when it happened.
+    public var claudeWaiting: Bool
+    public var at: Date
+
+    public init(handoff: String, kind: Kind, claudeWaiting: Bool, at: Date = Date()) {
+        self.handoff = handoff
+        self.kind = kind
+        self.claudeWaiting = claudeWaiting
+        self.at = at
+    }
+
+    /// How long the card says so while Claude takes over. Without Claude waiting, it stays until closed.
+    public static let shownFor: TimeInterval = 4
+
+    public var message: String {
+        switch (kind, claudeWaiting) {
+        case (.finished, true): "You're done. Claude is taking over again."
+        case (.openedTab, true): "That opened a new tab. Claude is taking over from there."
+        case (.finished, false): "You're done, but Claude isn't waiting for this. Tell it in your Claude chat."
+        case (.openedTab, false): "That opened a new tab, but Claude isn't waiting for this. Tell it in your Claude chat."
+        }
+    }
+
+    /// What the user pastes into the Claude chat when Claude isn't waiting.
+    public var note: String {
+        switch kind {
+        case .finished: "I've done the steps in Kite (handoff \(handoff)). Check handoff_status for \(handoff) and carry on."
+        case .openedTab(let tab): "I've done the steps in Kite (handoff \(handoff)), and it opened a new tab (\(tab.uuidString)). "
+            + "Check handoff_status for \(handoff) and carry on there."
+        }
     }
 }
 

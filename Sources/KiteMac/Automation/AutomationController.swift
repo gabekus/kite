@@ -71,6 +71,14 @@ final class AutomationController {
     var focusedHandoffFront: UUID?
     /// The card is folded down to its pill.
     var handoffCardCollapsed = false
+    /// The card's word that the user handed back to Claude (the last step ended, or a step's click opened a tab).
+    var handback: HandoffHandback?
+    /// handoff and handoff_status calls waiting on each handoff, so the card can say whether Claude hears the handback.
+    @ObservationIgnored var handoffWaiters: [String: Int] = [:]
+    /// The last step each tab's click ended, and the last tab each tab's page opened, so a click that opens a tab
+    /// is told apart from one that doesn't (whichever of the two Kite hears first).
+    @ObservationIgnored var handoffClicks: [UUID: (step: String, at: Date)] = [:]
+    @ObservationIgnored var handoffOpens: [UUID: (tab: UUID, at: Date)] = [:]
     @ObservationIgnored var handoffPoller: Task<Void, Never>?
     /// Which step's ring each tab's page shows, so Kite takes it off when the step ends.
     @ObservationIgnored var ringShown: [UUID: String] = [:]
@@ -409,6 +417,7 @@ final class AutomationController {
             controlledTabs[child] = ControlledTab(lastActive: Date(), connections: entry.connections)
         }
         if claudeOpened.contains(opener) { claudeOpened.insert(child) }
+        handoffTabOpened(child, by: opener)
     }
 
     /// The tabs `opener` opened since `date`, for a tool's result. Nil when there are none.
