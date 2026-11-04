@@ -65,10 +65,15 @@ final class ExtensionTabsBridge {
     init(host: ExtensionTabsHost) {
         self.host = host
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
-                     NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.didMoveNotification,
-                     NSWindow.didResizeNotification] {
+                     NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.setNeedsUpdate() }
+            })
+        }
+        // A drag or live resize moves the window every frame: the workers hear where it ended up.
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setNeedsUpdateAfterGeometry() }
             })
         }
     }
@@ -108,6 +113,17 @@ final class ExtensionTabsBridge {
         healthCheck = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pushState(force: true) }
         }
+        // It wakes every extension's worker; any moment within a few seconds will do.
+        healthCheck?.tolerance = 5
+    }
+
+    private var geometryUpdate: DispatchWorkItem?
+
+    private func setNeedsUpdateAfterGeometry() {
+        geometryUpdate?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.setNeedsUpdate() }
+        geometryUpdate = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 
     /// Tabs, selection or the window changed: tell the workers (once per run loop turn).
