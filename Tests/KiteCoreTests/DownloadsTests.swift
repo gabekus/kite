@@ -48,6 +48,139 @@ import Testing
         #expect(restored.apply(update(1)).isNew)
     }
 
+    @Test func idsAreKeyedByBrowserContext() {
+        var list = DownloadList()
+        list.apply(DownloadUpdate(engineID: 1, url: "https://a/x", path: "/d/x", state: .complete, receivedBytes: 5, totalBytes: 5))
+        // Another profile's and an incognito window's first downloads are new rows, not the first one finishing again.
+        #expect(list.apply(DownloadUpdate(engineID: 1, engineContext: "Profile 1", url: "https://b/y", path: "/d/y",
+                                          state: .inProgress, receivedBytes: 0, totalBytes: 9)).isNew)
+        #expect(list.apply(DownloadUpdate(engineID: 1, engineContext: "incognito-1", isIncognito: true, url: "https://c/z",
+                                          path: "/d/z", state: .inProgress, receivedBytes: 0, totalBytes: 9)).isNew)
+        list.apply(DownloadUpdate(engineID: 1, engineContext: "Profile 1", url: "https://b/y", path: "/d/y",
+                                  state: .inProgress, receivedBytes: 4, totalBytes: 9))
+        #expect(list.items.count == 3)
+        #expect(list.item(engineID: 1, context: "")?.state == .complete)
+        #expect(list.item(engineID: 1, context: "Profile 1")?.receivedBytes == 4)
+        #expect(list.item(engineID: 1, context: "incognito-1")?.isIncognito == true)
+        #expect(list.item(engineID: 1, context: "Profile 2") == nil)
+    }
+
+    @Test func incognitoDownloadsAreNeverSaved() throws {
+        var list = DownloadList()
+        list.apply(update(1, .complete))
+        list.apply(DownloadUpdate(engineID: 1, engineContext: "incognito-1", isIncognito: true, url: "https://secret/a",
+                                  path: "/d/secret.pdf", state: .complete, receivedBytes: 1, totalBytes: 1))
+        #expect(list.items.count == 2)
+        let data = try JSONEncoder().encode(DownloadsFile(downloads: list))
+        #expect(!String(decoding: data, as: UTF8.self).contains("secret"))
+        let restored = try JSONDecoder().decode(DownloadsFile.self, from: data).downloads
+        #expect(restored.items.count == 1)
+        #expect(restored.items.allSatisfy { !$0.isIncognito })
+    }
+
+    @Test func readsFilesFromBeforeContexts() throws {
+        // downloads.json as Kite wrote it before engineContext and isIncognito.
+        let json = """
+        {"version":1,"downloads":{"items":[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","engineID":3,
+        "url":"https://a/x","path":"/d/x","state":"complete","receivedBytes":5,"totalBytes":5,"speed":0,
+        "startedAt":700000000}]}}
+        """
+        let file = try JSONDecoder().decode(DownloadsFile.self, from: Data(json.utf8))
+        #expect(file.downloads.items.count == 1)
+        #expect(file.downloads.items[0].isIncognito == false)
+        #expect(file.downloads.items[0].engineContext == nil)
+    }
+
+    @Test func anUnreadableFileIsMovedAsideNotOverwritten() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("kite-downloads-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("downloads.json")
+
+        // No file: an empty list, nothing moved.
+        let empty = try #require(DownloadsFile.load(file))
+        #expect(empty.list.items.isEmpty && empty.movedAside == nil)
+
+        // A good file restores, with nothing live.
+        var list = DownloadList()
+        list.apply(update(1, received: 10))
+        try JSONEncoder().encode(DownloadsFile(downloads: list)).write(to: file)
+        let good = try #require(DownloadsFile.load(file))
+        #expect(good.list.items.map(\.state) == [.interrupted])
+        #expect(good.movedAside == nil)
+
+        // A damaged one is kept beside it, and the path is free for the next save.
+        try Data("{\"version\":1,\"downl".utf8).write(to: file)
+        let bad = try #require(DownloadsFile.load(file))
+        #expect(bad.list.items.isEmpty)
+        let aside = try #require(bad.movedAside)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(try Data(contentsOf: aside) == Data("{\"version\":1,\"downl".utf8))
+    }
+
+    @Test func oneBadItemIsDroppedNotTheList() throws {
+        let json = """
+        {"version":1,"downloads":{"items":[{"id":"not-a-uuid","url":"https://a/x"},
+        {"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","url":"https://a/y","path":"/d/y","state":"complete",
+        "receivedBytes":5,"totalBytes":5,"startedAt":700000000}]}}
+        """
+        let file = try JSONDecoder().decode(DownloadsFile.self, from: Data(json.utf8))
+        #expect(file.downloads.items.map(\.fileName) == ["y"])
+    }
+
+    @Test func aFileWithAnUnreadableItemIsCopiedAsideBeforeTheNextSave() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("kite-downloads-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("downloads.json")
+        let original = Data("""
+        {"version":1,"downloads":{"items":[{"id":"not-a-uuid","url":"https://a/x","newField":1},
+        {"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","url":"https://a/y","path":"/d/y","state":"complete",
+        "receivedBytes":5,"totalBytes":5,"startedAt":700000000}]}}
+        """.utf8)
+        try original.write(to: file)
+        let loaded = try #require(DownloadsFile.load(file))
+        #expect(loaded.list.items.count == 1)
+        #expect(loaded.dropped == 1)
+        #expect(loaded.canSave)
+        let aside = try #require(loaded.copiedAside)
+        #expect(aside.lastPathComponent.hasPrefix("downloads.corrupt-"))
+        #expect(try Data(contentsOf: aside) == original)
+        #expect(try Data(contentsOf: file) == original)
+        // A clean file is left alone.
+        try JSONEncoder().encode(DownloadsFile(downloads: loaded.list)).write(to: file)
+        let clean = try #require(DownloadsFile.load(file))
+        #expect(clean.dropped == 0 && clean.copiedAside == nil)
+    }
+
+    @Test func closingAnIncognitoWindowDropsOnlyItsDownloads() {
+        var list = DownloadList()
+        list.apply(update(1, .complete))
+        for context in ["incognito-1", "incognito-2"] {
+            list.apply(DownloadUpdate(engineID: 1, engineContext: context, isIncognito: true, url: "https://a/x",
+                                      path: "/d/x", state: .complete, receivedBytes: 1, totalBytes: 1))
+        }
+        list.removeIncognito(context: "incognito-1")
+        #expect(list.items.map(\.engineContext) == ["incognito-2", ""])
+    }
+
+    @Test func readsTheBridgesNotification() throws {
+        let info: [AnyHashable: Any] = [
+            "id": NSNumber(value: 3), "context": "Profile 1", "incognito": NSNumber(value: false),
+            "profileDirectory": "Profile 1", "url": "https://a/x", "path": "/d/x", "state": "in-progress",
+            "receivedBytes": NSNumber(value: 10), "totalBytes": NSNumber(value: 20), "speed": NSNumber(value: 5),
+        ]
+        let update = try #require(DownloadUpdate(notificationInfo: info))
+        #expect(update == DownloadUpdate(engineID: 3, engineContext: "Profile 1", profileDirectory: "Profile 1",
+                                         url: "https://a/x", path: "/d/x", state: .inProgress,
+                                         receivedBytes: 10, totalBytes: 20, speed: 5))
+        #expect(DownloadUpdate.name(of: update.state) == "in-progress")
+        let incognito = try #require(DownloadUpdate(notificationInfo: ["id": NSNumber(value: 1), "context": "incognito-2",
+                                                                       "incognito": NSNumber(value: true)]))
+        #expect(incognito.isIncognito && incognito.profileDirectory == nil && incognito.totalBytes == -1)
+        #expect(DownloadUpdate(notificationInfo: ["url": "https://a/x"]) == nil)
+    }
+
     @Test func activeFractionCombinesBytes() {
         var list = DownloadList()
         list.apply(update(1, received: 50, total: 100))

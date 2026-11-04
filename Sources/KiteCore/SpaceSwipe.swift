@@ -85,6 +85,38 @@ public struct SpaceSwipe: Equatable, Sendable {
         return abs(x) < 0.1 ? 0 : x
     }
 
+    /// The spaces a swipe pages between, by id, as they were when it began. The spaces can change under a
+    /// swipe (automation's `switch_space`, another window, a deleted space), so the controller looks them up
+    /// by id on every event rather than by the index it started from.
+    public struct Neighbours: Equatable, Sendable {
+        public let previous: UUID?
+        public let current: UUID
+        public let next: UUID?
+
+        /// Nil when there's no selected space to swipe from.
+        public init?(spaces: [UUID], selected: Int) {
+            guard spaces.indices.contains(selected) else { return nil }
+            previous = selected > 0 ? spaces[selected - 1] : nil
+            current = spaces[selected]
+            next = selected < spaces.count - 1 ? spaces[selected + 1] : nil
+        }
+
+        /// The space `direction` (-1, 0 or +1, as `SpaceSwipe.direction` and `landing`) points at.
+        public func space(towards direction: Int) -> UUID? {
+            direction < 0 ? previous : direction > 0 ? next : current
+        }
+
+        /// The space towards `direction` while the swipe still holds: nil once the selection has moved off
+        /// the space it began on, or the space it points at has gone or no longer sits next to it on that
+        /// side (the pages on screen would be the wrong ones), when the swipe is cancelled.
+        public func target(towards direction: Int, spaces: [UUID], selected: UUID?) -> UUID? {
+            guard selected == current, let here = spaces.firstIndex(of: current),
+                  let id = space(towards: direction), spaces.firstIndex(of: id) == here + direction.signum()
+            else { return nil }
+            return id
+        }
+    }
+
     /// The spaces whose pages are built, by index: the selected one and its neighbours, so a swipe has
     /// both sides ready the moment it starts (Arc's collection view keeps them too: its list is three
     /// pages wide). While the pages settle after a switch they stay those of `anchor`, the space the

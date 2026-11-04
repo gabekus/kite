@@ -188,7 +188,8 @@ enum UIMenuReader {
                 let title = item.title.isEmpty ? (item.isHidden ? "(hidden alternate)" : "(untitled)") : item.title
                 let itemPath = path + [title]
                 if let submenu = item.submenu {
-                    visit(submenu, path: itemPath)
+                    // AppKit's Services: not Kite's commands, so neither listed nor checked for conflicts.
+                    if submenu !== NSApp.servicesMenu { visit(submenu, path: itemPath) }
                     continue
                 }
                 var key = item.keyEquivalent

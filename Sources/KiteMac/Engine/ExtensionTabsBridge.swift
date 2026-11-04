@@ -27,7 +27,8 @@ protocol ExtensionTabsHost: AnyObject {
     func activateTabForExtension(_ id: UUID)
 }
 
-/// Makes Kite's tabs visible to extensions (tabs.query, windows.*, tabs.create, …).
+/// Makes Kite's tabs visible to extensions (tabs.query, windows.*, tabs.create, …), and
+/// opens their popups when they ask (action.openPopup).
 ///
 /// Chromium doesn't count Kite's Alloy-style tabs as being in any window, so it can't
 /// answer those calls itself (see ExtensionTabsScript). Kite's in-process DevTools can
@@ -42,11 +43,14 @@ final class ExtensionTabsBridge {
     static let windowID = 1
 
     private weak var host: ExtensionTabsHost?
+    private weak var engine: WebEngine?
     private var helper: ChromiumPage?
     private var helperReady = false
     private var profile: String?
     /// Worker session ids by DevTools target id.
     private var sessions: [String: String] = [:]
+    /// Each worker session's extension, as `chrome-extension://<id>`.
+    private var origins: [String: String] = [:]
     private var nextMessageID = 1
     private var replies: [Int: ([String: Any]?, String?) -> Void] = [:]
     /// Chromium's tab id for each page's DevTools target, and each page's target.
@@ -79,6 +83,7 @@ final class ExtensionTabsBridge {
     }
 
     func start(engine: WebEngine) {
+        self.engine = engine
         profile = engine.profileDirectory
         guard helper == nil,
               let url = URL(string: "chrome-extension://\(KiteHelperExtension.id)/\(KiteHelperExtension.pagePath)"),
@@ -103,6 +108,7 @@ final class ExtensionTabsBridge {
         healthCheck = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pushState(force: true) }
         }
+        healthCheck?.tolerance = 5
     }
 
     /// Tabs, selection or the window changed: tell the workers (once per run loop turn).
@@ -122,6 +128,7 @@ final class ExtensionTabsBridge {
         guard let info = params["targetInfo"] as? [String: Any], let targetID = info["targetId"] as? String else {
             if method == "Target.detachedFromTarget", let session = params["sessionId"] as? String {
                 sessions = sessions.filter { $0.value != session }
+                origins[session] = nil
             }
             return
         }
@@ -153,6 +160,7 @@ final class ExtensionTabsBridge {
     /// worker restarted and needs the script again.
     private func prepare(_ session: String, origin: String?) {
         if let origin {
+            origins[session] = origin
             send(session, "Network.enable")
             send(session, "Network.setExtraHTTPHeaders", ["headers": ["Origin": origin]])
         }
@@ -192,7 +200,7 @@ final class ExtensionTabsBridge {
             guard let payload = (params["payload"] as? String)?.data(using: .utf8),
                   let call = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
                   let id = call["id"] as? Int, let op = call["op"] as? String else { return }
-            perform(op, call["args"] as? [String: Any] ?? [:]) { [weak self] value, error in
+            perform(op, call["args"] as? [String: Any] ?? [:], origin: origins[session]) { [weak self] value, error in
                 self?.resolve(session, id, value, error)
             }
         default:
@@ -209,7 +217,8 @@ final class ExtensionTabsBridge {
 
     // MARK: Requests from extensions
 
-    private func perform(_ op: String, _ args: [String: Any], completion: @escaping (Any?, String?) -> Void) {
+    /// `origin` is the asking worker's extension.
+    private func perform(_ op: String, _ args: [String: Any], origin: String?, completion: @escaping (Any?, String?) -> Void) {
         guard let host else { return completion(nil, "No current window") }
         switch op {
         case "create":
@@ -238,6 +247,18 @@ final class ExtensionTabsBridge {
                 guard let data = result?["data"] as? String else { return completion(nil, error ?? "Couldn't capture the tab") }
                 completion("data:image/\(format);base64,\(data)", nil)
             }
+        case "openPopup":
+            // Only the asking extension's own pages.
+            guard let url = (args["url"] as? String).flatMap({ URL(string: $0) }), let origin,
+                  ExtensionOrigin.origin(of: url) == origin, let engine else {
+                return completion(nil, "Extension does not have a popup on the active tab.")
+            }
+            // The window in front, which needn't be this bridge's host.
+            guard let (view, rect) = ExtensionsMenuBar.anchor() else {
+                return completion(nil, "Could not find an active browser window.")
+            }
+            ExtensionPopover.show(url, engine: engine, relativeTo: rect, of: view)
+            completion(nil, nil)
         default:
             completion(nil, "Kite doesn't support \(op)")
         }

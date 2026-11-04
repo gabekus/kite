@@ -520,6 +520,10 @@ enum SymbolOrigins {
         Key("link", 11.0, .medium, 14.5, 16.0): (0.0, 0.5), // max 34
         Key("desktopcomputer.and.arrow.down", 12.0, .semibold, 24.0, 24.0): (3.0, 3.5), // max 22
         Key("xmark", 13.0, .medium, 37.0, 32.0): (12.0, 9.5), // max 101 (reload while loading)
+        // Site Controls', measured on 2x in-process captures against its SwiftUI popover (3 Nov 2026, half-point
+        // search; max channel delta left).
+        Key("square.and.arrow.up", 14.0, .medium, 49.0, 33.0): (16.5, 7.0), // max 38
+        Key("wand.and.stars", 14.0, .medium, 49.0, 33.0): (15.5, 8.5), // max 1
     ]
 }
 

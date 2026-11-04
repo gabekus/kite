@@ -45,6 +45,12 @@ with `scripts/bundle-app.sh debug`, whose bundle is `dev.gabek.Kite.dev`, never 
 `dev.gabek.Kite` bundle (release builds, /Applications/Kite.app), which would
 change the installed Kite's settings. `scripts/check-test-defaults.sh` checks it.
 
+Connect Claude and Set Up Claude leave Gabe's Claude setup alone on a test
+profile or a worktree build (`ClaudeSetupGuard`): otherwise they point Claude at
+a build that gets deleted and his `kite` server stops connecting. To test those
+steps, redirect them with `KITE_CLAUDE_BIN` (a fake `claude`),
+`KITE_CLAUDE_DESKTOP_CONFIG` and `KITE_BIN_DIR`.
+
 ## Reading Kite and Arc without the screen
 
 Don't switch apps, record the screen or drive Gabe's mouse and keyboard to see

@@ -9,10 +9,16 @@ extension BrowserWindowController {
         favoritePreviews.hover(tab, anchor: anchor)
     }
 
-    /// Keeps Gmail favorites' mail fetched, so their cards open with it (Arc's periodic updates).
+    /// Fetches Gmail favorites' mail when Kite comes to the front, so their cards open with it.
     func startFavoritePreviews() {
         guard !isIncognito else { return }
         favoritePreviews.startPrefetching { [weak self] in self?.store.state.favorites ?? [] }
+    }
+
+    /// The pointer came onto the favorites tray: a card may open soon.
+    func prefetchFavoritePreviews() {
+        guard !isIncognito else { return }
+        favoritePreviews.prefetch()
     }
 
     /// A row or button in a favorite's preview: the favorite shows it.

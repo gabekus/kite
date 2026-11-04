@@ -69,7 +69,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Posted on the main thread as a download progresses. `object` is the KCBrowser; userInfo has
 /// id, url, path, state (in-progress, complete, canceled, interrupted), receivedBytes, totalBytes,
-/// speed (bytes per second).
+/// speed (bytes per second), and where it came from: context (the browser context the id is
+/// unique within, as Chromium counts each profile's and incognito window's downloads from 1:
+/// "" for the default profile, the folder name for another, "incognito-N"), incognito (NSNumber
+/// BOOL) and profileDirectory (only for a non-default profile).
 extern NSString * const KCDownloadDidUpdateNotification;
 
 /// Posted on the main thread when Chromium opened a page outside Kite's tabs (an
@@ -125,6 +128,9 @@ NS_SWIFT_UI_ACTOR
 /// profile path: its own cookies, storage, history and extensions. One object per folder.
 + (instancetype)contextForProfileDirectory:(NSString *)directory NS_SWIFT_NAME(init(profileDirectory:));
 - (instancetype)init NS_UNAVAILABLE;
+/// The "context" KCDownloadDidUpdateNotification gives this context's downloads: "incognito-N"
+/// for an incognito context, the folder name for a profile's ("" for "Default").
+@property (nonatomic, readonly, copy) NSString *downloadContextKey;
 /// Sets cookies in this profile (first used by Import from Arc's sign-ins). Each is a dictionary: "url" (NSURL it's
 /// set for), "name", "value", "path" (NSString), optional "domain" (with its leading dot, for a domain
 /// cookie), "secure", "httpOnly" (NSNumber BOOL), "expires" (NSNumber, microseconds since 1601 UTC;
@@ -154,8 +160,9 @@ typedef NS_ENUM(NSInteger, KCJavaScriptDialogKind) {
 - (void)browser:(KCBrowser *)browser mediaAccessDidChange:(BOOL)inUse;
 /// ⌘-click and middle-click.
 - (void)browser:(KCBrowser *)browser openURLInNewTab:(NSURL *)url foreground:(BOOL)foreground;
-/// window.open / target=_blank. The popup keeps window.opener, so OAuth works.
-- (void)browser:(KCBrowser *)browser didCreatePopup:(KCBrowser *)popup url:(nullable NSURL *)url;
+/// window.open / target=_blank. The popup keeps window.opener, so OAuth works. NO when nothing took it
+/// (a page with no window of its own): the popup is cancelled.
+- (BOOL)browser:(KCBrowser *)browser didCreatePopup:(KCBrowser *)popup url:(nullable NSURL *)url;
 /// The page called window.close().
 - (void)browserDidRequestClose:(KCBrowser *)browser;
 @optional
@@ -170,6 +177,8 @@ typedef NS_ENUM(NSInteger, KCJavaScriptDialogKind) {
 /// Asked before each main-frame navigation; the script runs at document start
 /// in every new document until the next navigation.
 - (nullable NSString *)browser:(KCBrowser *)browser documentStartScriptForURL:(NSURL *)url;
+/// The main frame's document started loading (it has committed).
+- (void)browserMainFrameDidStartLoading:(KCBrowser *)browser;
 /// Find-in-page results; `activeMatch` is 1-based. Arrives several times per search.
 - (void)browser:(KCBrowser *)browser findResultCount:(int)count activeMatch:(int)activeMatch final:(BOOL)final;
 /// The page's renderer crashed or was killed; `code` is its exit code (11 for a segfault).
@@ -217,6 +226,11 @@ typedef NS_ENUM(NSInteger, KCJavaScriptDialogKind) {
              completion:(void (NS_SWIFT_UI_ACTOR ^)(BOOL ok, NSString *_Nullable text))completion;
 /// Chromium dropped the page's dialog (it navigated or closed); its completion does nothing now.
 - (void)browserDismissJavaScriptDialogs:(KCBrowser *)browser;
+/// The page let a close started with `beginUnloadClose` go ahead; Chromium is closing it.
+- (void)browserDidLetGo:(KCBrowser *)browser;
+/// The page is being closed without asking (quitting answers its "Leave site?" itself): a close the
+/// person asked for is over, as superseded, not as Cancel.
+- (void)browserWillCloseWithoutAsking:(KCBrowser *)browser;
 @end
 
 /// One Chromium browser (one tab), hosted in `view`.
@@ -264,6 +278,11 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, readonly) BOOL focusBlocked;
 /// Tells Chromium the tab is offscreen so it throttles rendering and timers.
 - (void)setHidden:(BOOL)hidden;
+/// Lays the page out at its content's size, between `minSize` and `maxSize`, as Chrome sizes
+/// extension popups; each new size goes to `autoResizeHandler`. Takes effect once the browser exists.
+- (void)enableAutoResizeWithMinSize:(NSSize)minSize maxSize:(NSSize)maxSize;
+/// The page's size in points under auto-resize; the view's owner resizes the view to it.
+@property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^autoResizeHandler)(NSSize size);
 /// Opens (or brings forward) Chrome DevTools in its own window, then runs `frontendScript` in the DevTools
 /// frontend page: on its load event when it opens, right away when it's already open.
 - (void)showDevToolsRunningFrontendScript:(nullable NSString *)frontendScript;
@@ -314,10 +333,26 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, copy, nullable) void (NS_SWIFT_UI_ACTOR ^sessionMessageHandler)(NSDictionary *message);
 /// Sends a raw DevTools message, such as one to an attached session.
 - (void)sendDevToolsMessage:(NSDictionary<NSString *, id> *)message;
+/// Starts the close a person asks for: not forced, so Chromium runs the page's beforeunload first and
+/// the page may ask "Leave site?" (the delegate's KCJavaScriptDialogKindLeave dialog), as Chrome does
+/// when you close a tab. If the page lets go, the delegate hears `browserDidLetGo:` on a later turn and
+/// then calls `close`; if it stays, call `cancelUnloadClose`. Kite's `PageClose` (KiteCore) drives it.
+/// NO when there's nothing to ask (the browser doesn't exist yet, or is closing): close it at once.
+- (BOOL)beginUnloadClose;
+- (void)cancelUnloadClose;
+/// Stops the page's running script (CDP Runtime.terminateExecution) if the browser still hasn't
+/// closed: for a page still stuck in beforeunload or unload well after it was closed.
+- (void)stopScriptOfClosingPage;
 - (void)close;
-/// Cancels a live download by the id in KCDownloadDidUpdateNotification. Returns NO when
-/// Chromium no longer has it.
-+ (BOOL)cancelDownloadWithID:(NSInteger)downloadID;
+/// Cancels a live download by the id and context in KCDownloadDidUpdateNotification. Returns NO
+/// when Chromium no longer has it.
++ (BOOL)cancelDownloadWithID:(NSInteger)downloadID contextKey:(NSString *)contextKey;
+/// An incognito session ended (its window closed): cancels its downloads, interrupted ones too,
+/// and stops following them, so nothing keeps its in-memory profile alive. Later downloads from
+/// it are canceled unlisted. Returns how many it was following.
++ (NSInteger)endDownloadsForContextKey:(NSString *)contextKey;
+/// How many downloads under `contextKey` Kite still follows (for diagnostics).
++ (NSInteger)liveDownloadCountForContextKey:(NSString *)contextKey;
 /// Where downloads go, asked as each one starts: the folder for the profile in
 /// `profileDirectory` (nil for the default profile's own context or an incognito one), and
 /// whether to show Chromium's Save panel there (`prompt`). Unset, downloads go to Downloads.

@@ -76,7 +76,7 @@ final class VPNSignInController {
                     self.finish(running, .signedIn)
                 case .needsUser(let reason):
                     self.host?.showInBackground(page, look.url ?? running.run.start, look.title, running.spaceID, profileDirectory)
-                    NSApp.requestUserAttention(.informationalRequest)
+                    WindowPresenter.requestAttention()
                     self.finish(running, .shown(reason))
                 }
             }

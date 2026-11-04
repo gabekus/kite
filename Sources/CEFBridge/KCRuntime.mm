@@ -204,11 +204,14 @@ NSString* KCRootCachePath() {
     }
     // Copy: closing mutates the set.
     std::set<CefRefPtr<CefBrowser>> browsers = *gBrowsers;
+    KCAcceptPendingBeforeUnload(nullptr);
     for (auto& browser : browsers) browser->GetHost()->CloseBrowser(true);
 }
 
 + (void)shutdown {
     if (!gInitialized) return;
+    KCClearLiveDownloads();
+    KCForgetPendingBeforeUnload();
     CefShutdown();
     gInitialized = false;
     gLibraryLoader.reset();

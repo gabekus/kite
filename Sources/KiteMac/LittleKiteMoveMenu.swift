@@ -56,7 +56,7 @@ final class LittleMoveMenuController: NSObject, NSWindowDelegate, NSTextFieldDel
         refresh(resize: true)
         parent.addChildWindow(panel, ordered: .above)
         // Key without ordering front: a background test window stays behind the user's windows.
-        if UIDiagnostics.enabledByEnvironment { panel.makeKey() } else { panel.makeKeyAndOrderFront(nil) }
+        WindowPresenter.makeKey(childPanel: panel)
         panel.makeFirstResponder(content.field)
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self else { return event }

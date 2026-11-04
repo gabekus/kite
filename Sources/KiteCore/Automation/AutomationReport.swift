@@ -11,21 +11,25 @@ public enum AutomationReport {
         /// "favorite", "pinned" or "tab".
         public var section: String
         public var isFront: Bool
+        /// The tab whose page opened it (a popup, a link to a new tab), while that's known.
+        public var openedBy: UUID?
 
-        public init(id: UUID, title: String, url: URL?, space: String, section: String, isFront: Bool) {
+        public init(id: UUID, title: String, url: URL?, space: String, section: String, isFront: Bool, openedBy: UUID? = nil) {
             self.id = id
             self.title = title
             self.url = url
             self.space = space
             self.section = section
             self.isFront = isFront
+            self.openedBy = openedBy
         }
     }
 
     public static func tabs(_ tabs: [Tab]) -> String {
         guard !tabs.isEmpty else { return "No tabs are open." }
         let lines = tabs.map { tab in
-            let flags = [tab.isFront ? "front" : nil, tab.section == "tab" ? nil : tab.section].compactMap { $0 }
+            let flags = [tab.isFront ? "front" : nil, tab.section == "tab" ? nil : tab.section,
+                         tab.openedBy.map { "opened by tab \($0.uuidString)" }].compactMap { $0 }
             let title = AccessibilityOutline.clean(tab.title, limit: 160)
             return "- tab \(tab.id.uuidString) [\(([tab.space] + flags).joined(separator: ", "))] "
                 + AccessibilityOutline.quote(title) + " " + (tab.url?.absoluteString ?? "about:blank")

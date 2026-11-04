@@ -91,15 +91,21 @@ enum MainMenu {
         }
 
         submenu("Kite", [
-            item("About Kite", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), toTarget: false, id: "aboutKite"),
+            item("About Kite", #selector(AppDelegate.showAbout(_:)), toTarget: false, id: "aboutKite"),
             .separator(),
             // Arc's app menu: Settings… ⌘, right after About and its separator (read from Arc's menu bar);
             // "viewPreferences" is the item's arcKeyBindingID in Arc's MainMenu.nib.
             item("Settings…", #selector(AppDelegate.showSettings(_:)), ",", toTarget: false, id: "viewPreferences"),
+            // Arc 1.171: Settings…, Share Arc, Set as Default Browser, then a separator (Kite has no Share Kite).
+            item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:)), id: "defaultBrowser"),
+            .separator(),
             // Claude's chat bubble at the bottom of the page; the menu item only carries the shortcut.
             item("Ask Claude", #selector(BrowserWindowController.toggleClaudeBubble(_:)), "j", id: "askClaude"),
             // The user's own Claude Code sessions (terminal and the Claude app's Code tab), in the same bar.
             item("Claude Code Sessions", #selector(BrowserWindowController.toggleClaudeCode(_:)), "j", [.command, .control], id: "claudeCodeSessions"),
+            // Shown only while the front tab is a Linear issue.
+            item("Test This Ticket", #selector(BrowserWindowController.testThisTicket(_:))),
+            item("Open in Spool", #selector(BrowserWindowController.openInSpool(_:))),
             .separator(),
             item("Allow Claude to Control the Browser", #selector(AppDelegate.toggleClaudeControl(_:)), toTarget: false),
             item("Open Claude’s Tabs in a Claude Folder", #selector(AppDelegate.toggleClaudeSpace(_:)), toTarget: false),
@@ -109,7 +115,6 @@ enum MainMenu {
             item("Connect Claude…", #selector(AppDelegate.connectClaudeCode(_:)), toTarget: false),
             // Lets Claude read Kite's own interface (the ui tool) while debugging Kite.
             item("Diagnostics for Claude", #selector(AppDelegate.toggleClaudeDiagnostics(_:)), toTarget: false),
-            item("Set as Default Browser", #selector(BrowserWindowController.setAsDefaultBrowser(_:)), id: "defaultBrowser"),
             // Until there's a Settings window.
             item("Open Links from Other Apps in Little Kite", #selector(AppDelegate.toggleLittleKiteLinks(_:)), toTarget: false),
             item("Air Traffic Control…", #selector(AppDelegate.showAirTrafficControl(_:)), toTarget: false, id: "openAirTrafficControl"),
@@ -131,10 +136,19 @@ enum MainMenu {
             submenuItem("Archive tabs after", ArchiveInterval.allCases.enumerated().map { i, interval in
                 item(interval.title, #selector(AppDelegate.setArchiveInterval(_:)), tag: i, toTarget: false)
             }),
+            .separator(),
             // Arc's Arc menu: "Import from Another Browser…", no shortcut, just before Check for Updates (read from its menu bar).
             item("Import from Another Browser…", #selector(BrowserWindowController.importFromAnotherBrowser(_:)), id: "importFromAnotherBrowser"),
             // Arc's Arc menu: "Check for Updates…", no shortcut, last item before Services (read from its menu bar).
             item("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)), toTarget: false, id: "checkForUpdates"),
+            .separator(),
+            // Arc 1.171: Services between Check for Updates… and Hide. AppKit fills it; Kite's own key matching,
+            // shortcut overrides and `ui menu` skip it (NSApp.servicesMenu).
+            {
+                let services = submenuItem("Services", [])
+                NSApp.servicesMenu = services.submenu
+                return services
+            }(),
             .separator(),
             item("Hide Kite", #selector(NSApplication.hide(_:)), "h", toTarget: false, id: "hideKite"),
             // Arc 1.171: "Hide Other Windows" (MainMenu.nib title; "Hide Others" is its type-travel trigger).
@@ -170,7 +184,10 @@ enum MainMenu {
             // Temporary: remove with ArcImportController.swift after Arc shuts down (2026-12-22).
             item("Import from Arc…", #selector(BrowserWindowController.importFromArc(_:)), id: "importFromArc"),
             .separator(),
-            item("Archive Tab", #selector(BrowserWindowController.closeTab(_:)), "w", id: "archiveTab"),
+            // Arc 1.171's File menu shows only Close Window ⇧⌘W: Archive Tab ⌘W is in its MainMenu.nib but hidden,
+            // with these type-travel triggers.
+            commandBarOnly(item("Archive Tab", #selector(BrowserWindowController.closeTab(_:)), "w", id: "archiveTab"),
+                           keywords: ["Exit Tab", "Unload", "Deselect", "Close"]),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w", [.command, .shift], toTarget: false, id: "closeWindow"),
             .separator(),
             item("Share…", #selector(BrowserWindowController.share(_:)), id: "share"),
@@ -198,14 +215,14 @@ enum MainMenu {
             .separator(),
             item("Cut", #selector(NSText.cut(_:)), "x", toTarget: false, id: "cut"),
             item("Copy", #selector(NSText.copy(_:)), "c", toTarget: false, id: "copy"),
+            // Arc 1.171: the Copy URL items right after Copy, before Paste.
+            item("Copy URL", #selector(BrowserWindowController.copyURL(_:)), "c", [.command, .shift], id: "copyCurrentURL"),
+            item("Copy URL as Markdown", #selector(BrowserWindowController.copyURLAsMarkdown(_:)), "c", [.command, .shift, .option], id: "copyCurrentURLAsMarkdown"),
+            item("Copy URL as Quote", #selector(BrowserWindowController.copyURLAsQuote(_:)), "c", [.command, .shift, .control], id: "copyCurrentURLAsQuote"),
             item("Paste", #selector(NSText.paste(_:)), "v", toTarget: false, id: "paste"),
             item("Paste and Match Style", #selector(BrowserWindowController.pasteMatchingStyle(_:)), "v", [.command, .shift], id: "pasteAndMatchStyle"),
             item("Delete", #selector(NSText.delete(_:)), toTarget: false, id: "delete"),
             item("Select All", #selector(NSText.selectAll(_:)), "a", toTarget: false, id: "selectAll"),
-            .separator(),
-            item("Copy URL", #selector(BrowserWindowController.copyURL(_:)), "c", [.command, .shift], id: "copyCurrentURL"),
-            item("Copy URL as Markdown", #selector(BrowserWindowController.copyURLAsMarkdown(_:)), "c", [.command, .shift, .option], id: "copyCurrentURLAsMarkdown"),
-            item("Copy URL as Quote", #selector(BrowserWindowController.copyURLAsQuote(_:)), "c", [.command, .shift, .control], id: "copyCurrentURLAsQuote"),
             .separator(),
             submenuItem("Find", [
                 item("Find…", #selector(BrowserWindowController.showFind(_:)), "f", id: "find"),
@@ -217,6 +234,9 @@ enum MainMenu {
                 item("Find Next", #selector(BrowserWindowController.findNext(_:)), "g", id: "findNext"),
                 item("Find Previous", #selector(BrowserWindowController.findPrevious(_:)), "g", [.command, .shift], id: "findPrevious"),
                 item("Use Selection to Find", #selector(BrowserWindowController.useSelectionForFind(_:)), "e", id: "useSelectionForFind"),
+                // Arc's MainMenu.nib: jumpToSelection, ⌘J there, with its type-travel triggers. No key here: ⌘J is Ask Claude.
+                keywords(item("Jump to Selection", #selector(BrowserWindowController.jumpToSelection(_:)), id: "jumpToSelection"),
+                         ["Jump to Selected", "Selection"]),
             ]),
             submenuItem("Spelling and Grammar", [
                 item("Show Spelling and Grammar", #selector(NSText.showGuessPanel(_:)), ":", toTarget: false),
@@ -291,8 +311,9 @@ enum MainMenu {
             // Arc 1.171's titles; the old ones are its type-travel triggers.
             keywords(item("Refresh the Page", #selector(BrowserWindowController.reload(_:)), "r", id: "reloadPage"), ["Reload Page"]),
             keywords(item("Force Refresh the Page", #selector(BrowserWindowController.forceReload(_:)), "r", [.command, .shift], id: "forceReloadPage"), ["Force Reload", "Force Refresh"]),
-            item("Clear Cookies and Refresh", #selector(BrowserWindowController.clearCookiesAndRefresh(_:)), id: "clearCookiesAndRefresh"),
-            item("Clear Cache and Refresh", #selector(BrowserWindowController.clearCacheAndRefresh(_:)), id: "clearCacheAndRefresh"),
+            // In Arc's MainMenu.nib (clearCookiesAndRefresh:, clearCacheAndRefresh:) but not in its View menu.
+            commandBarOnly(item("Clear Cookies and Refresh", #selector(BrowserWindowController.clearCookiesAndRefresh(_:)), id: "clearCookiesAndRefresh")),
+            commandBarOnly(item("Clear Cache and Refresh", #selector(BrowserWindowController.clearCacheAndRefresh(_:)), id: "clearCacheAndRefresh")),
             .separator(),
             // Arc's names and IDs from its MainMenu.nib. ⌘L is Gabe's binding; ⌃⇧= (Arc's default) still works.
             item("Add Split View", #selector(BrowserWindowController.addSplitView(_:)), "l", id: "addSplitView"),
@@ -343,12 +364,12 @@ enum MainMenu {
             submenuItem("Developer", [
                 item("View Source", #selector(BrowserWindowController.viewSource(_:)), "u", [.command, .option], id: "viewSource"),
                 item("Developer Tools", #selector(BrowserWindowController.showDevTools(_:)), "i", [.command, .option], id: "developerTools"),
-                // Arc 1.171: after Network Inspector, no shortcut and no identifier in its MainMenu.nib.
-                // Lets AppleScript's `execute` run JavaScript in tabs; off by default.
-                item("Allow JavaScript from Apple Events", #selector(AppDelegate.toggleJavaScriptFromAppleEvents(_:)), toTarget: false),
                 item("Inspect Elements", #selector(BrowserWindowController.inspectElements(_:)), "c", [.command, .option], id: "inspectElements"),
                 item("JavaScript Console", #selector(BrowserWindowController.showJavaScriptConsole(_:)), "j", [.command, .option], id: "javaScriptConsole"),
                 item("Network Inspector", #selector(BrowserWindowController.showNetworkInspector(_:)), id: "networkInspector"),
+                // Arc 1.171: after Network Inspector, no shortcut and no identifier in its MainMenu.nib.
+                // Lets AppleScript's `execute` run JavaScript in tabs; off by default.
+                item("Allow JavaScript from Apple Events", #selector(AppDelegate.toggleJavaScriptFromAppleEvents(_:)), toTarget: false),
                 // Arc 1.169: ⌃D, no ⌘ (its menu's AXMenuItemCmdModifiers is 12).
                 item("Turn on Developer Mode for this site", #selector(BrowserWindowController.toggleDeveloperMode(_:)), "d", [.control], id: "toggleDeveloperMode"),
             ]),
@@ -356,16 +377,49 @@ enum MainMenu {
             item("Enter Full Screen", #selector(BrowserWindowController.toggleFullScreenMode(_:)), "f", [.command, .control], id: "fullscreen"),
         ])
 
+        // Arc 1.171's menu bar: Spaces, then Tabs.
+        submenu("Spaces", [
+            item("New Space…", #selector(BrowserWindowController.newSpace(_:)), id: "newSpace"),
+            item("Edit Theme…", #selector(BrowserWindowController.editTheme(_:)), id: "editTheme"),
+            item("Rename Space", #selector(BrowserWindowController.renameSpace(_:)), id: "renameSpace"),
+            // Arc's MainMenu.nib: "Change Profile", action changeProfileForCurrentSpace:.
+            item("Change Profile", #selector(BrowserWindowController.changeProfileForCurrentSpace(_:)), id: "changeProfile"),
+            item("Profiles…", #selector(BrowserWindowController.showProfiles(_:)), id: "showProfiles"),
+            .separator(),
+            // ⇧⌘S is Gabe's Arc binding; ⌥⌘→ is Arc's default.
+            item("Next Space", #selector(BrowserWindowController.nextSpace(_:)), "s", [.command, .shift], id: "nextSpace"),
+            alternate(#selector(BrowserWindowController.nextSpace(_:)), right, [.command, .option]),
+            item("Previous Space", #selector(BrowserWindowController.previousSpace(_:)), left, [.command, .option], id: "previousSpace"),
+            .separator(),
+        ] + (1...9).map { n in
+            let space = item("Space \(n)", #selector(BrowserWindowController.selectSpaceNumber(_:)), "\(n)", .control, tag: n, id: "space\(n)")
+            // Hidden while there's no such space, but ⌃n still reaches validation once there is.
+            space.allowsKeyEquivalentWhenHidden = true
+            return space
+        }
+        // Arc's command bar moves the current tab: "Move to Today in <space>", "Move to Pinned in <space>"
+        // (Arc 1.169 strings). Titled per space when validated.
+        + (1...9).flatMap { n in [
+            commandBarOnly(item("Move to Today in Space \(n)", #selector(BrowserWindowController.moveTabToToday(_:)), tag: n)),
+            commandBarOnly(item("Move to Pinned in Space \(n)", #selector(BrowserWindowController.moveTabToPinned(_:)), tag: n)),
+        ] }
+        // Arc's "Move to Top Apps" / "Remove from Top Apps" (its old name for Favorites).
+        + [commandBarOnly(item("Add to Favorites", #selector(BrowserWindowController.toggleFavoriteTab(_:)), id: "toggleFavorite"),
+                          keywords: ["Move to Top Apps", "Remove from Top Apps", "Favorite"])])
+
         submenu("Tabs", [
             // Arc 1.171's Tabs menu opens with File's New Tab… ⌘T again. One command: the copy has no ID and
             // follows the File item's shortcut (KeyBindingsStore).
             ShortcutMirror.copy(of: item("New Tab…", #selector(BrowserWindowController.newTab(_:)), "t"), id: "newTab"),
             // Arc's Pin/Unpin Tab, retitled "Pin Tab" or "Unpin Tab" when validated.
             item("Pin Tab", #selector(BrowserWindowController.togglePin(_:)), "d", id: "pinTab"),
-            item("Duplicate Tab", #selector(BrowserWindowController.duplicateTab(_:)), id: "duplicate"),
-            // Arc's command-bar action (no menu bar item or default shortcut there); here so the
-            // command bar and shortcut overrides find it.
-            item("Rename Current Tab…", #selector(BrowserWindowController.renameCurrentTab(_:)), id: "renameCurrentTab"),
+            // Arc 1.171's Tabs menu: New Folder…, no shortcut, after Pin Tab (MainMenu.nib: newList:, id newFolder).
+            item("New Folder…", #selector(BrowserWindowController.newFolder(_:)), id: "newFolder"),
+            // Arc's command-bar actions, hidden from its menu bar (MainMenu.nib "Duplicate", "Rename Current Item");
+            // here so the command bar and shortcut overrides find them.
+            commandBarOnly(item("Duplicate Tab", #selector(BrowserWindowController.duplicateTab(_:)), id: "duplicate"), keywords: ["Duplicate"]),
+            commandBarOnly(item("Rename Current Tab…", #selector(BrowserWindowController.renameCurrentTab(_:)), id: "renameCurrentTab"),
+                           keywords: ["Rename Current Item"]),
             .separator(),
             item("Next Tab", #selector(BrowserWindowController.nextTab(_:)), down, [.command, .option], id: "nextTab"),
             item("Previous Tab", #selector(BrowserWindowController.previousTab(_:)), up, [.command, .option], id: "previousTab"),
@@ -395,39 +449,11 @@ enum MainMenu {
             // Arc's command-bar actions muteAllTabs / unmuteAllTabs: not in its menu bar, so hidden here.
             commandBarOnly(item(MuteAllTabs.title(mute: true), #selector(BrowserWindowController.muteAllTabs(_:)), id: "muteAllTabs")),
             commandBarOnly(item(MuteAllTabs.title(mute: false), #selector(BrowserWindowController.unmuteAllTabs(_:)), id: "unmuteAllTabs")),
-            .separator(),
         ] + (1...9).map { n in
-            item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n, id: n == 9 ? "lastTab" : "tab\(n)")
+            // Not in Arc 1.171's Tabs menu (its menu ends at Reset all tabs in this Space): hidden, but ⌘1–9 and
+            // the command bar still find them.
+            commandBarOnly(item(n == 9 ? "Last Tab" : "Tab \(n)", #selector(BrowserWindowController.selectTabNumber(_:)), "\(n)", tag: n, id: n == 9 ? "lastTab" : "tab\(n)"))
         })
-
-        submenu("Spaces", [
-            item("New Space…", #selector(BrowserWindowController.newSpace(_:)), id: "newSpace"),
-            item("Edit Theme…", #selector(BrowserWindowController.editTheme(_:)), id: "editTheme"),
-            item("Rename Space", #selector(BrowserWindowController.renameSpace(_:)), id: "renameSpace"),
-            // Arc's MainMenu.nib: "Change Profile", action changeProfileForCurrentSpace:.
-            item("Change Profile", #selector(BrowserWindowController.changeProfileForCurrentSpace(_:)), id: "changeProfile"),
-            item("Profiles…", #selector(BrowserWindowController.showProfiles(_:)), id: "showProfiles"),
-            .separator(),
-            // ⇧⌘S is Gabe's Arc binding; ⌥⌘→ is Arc's default.
-            item("Next Space", #selector(BrowserWindowController.nextSpace(_:)), "s", [.command, .shift], id: "nextSpace"),
-            alternate(#selector(BrowserWindowController.nextSpace(_:)), right, [.command, .option]),
-            item("Previous Space", #selector(BrowserWindowController.previousSpace(_:)), left, [.command, .option], id: "previousSpace"),
-            .separator(),
-        ] + (1...9).map { n in
-            let space = item("Space \(n)", #selector(BrowserWindowController.selectSpaceNumber(_:)), "\(n)", .control, tag: n, id: "space\(n)")
-            // Hidden while there's no such space, but ⌃n still reaches validation once there is.
-            space.allowsKeyEquivalentWhenHidden = true
-            return space
-        }
-        // Arc's command bar moves the current tab: "Move to Today in <space>", "Move to Pinned in <space>"
-        // (Arc 1.169 strings). Titled per space when validated.
-        + (1...9).flatMap { n in [
-            commandBarOnly(item("Move to Today in Space \(n)", #selector(BrowserWindowController.moveTabToToday(_:)), tag: n)),
-            commandBarOnly(item("Move to Pinned in Space \(n)", #selector(BrowserWindowController.moveTabToPinned(_:)), tag: n)),
-        ] }
-        // Arc's "Move to Top Apps" / "Remove from Top Apps" (its old name for Favorites).
-        + [commandBarOnly(item("Add to Favorites", #selector(BrowserWindowController.toggleFavoriteTab(_:)), id: "toggleFavorite"),
-                          keywords: ["Move to Top Apps", "Remove from Top Apps", "Favorite"])])
 
         // Arc's "Archive" menu (history), after Spaces and Tabs.
         submenu("Archive", [
@@ -471,6 +497,8 @@ enum MainMenu {
             // Arc: Getting Started, then Essential Keyboard Shortcuts.
             item("Getting Started", #selector(AppDelegate.showGettingStarted(_:)), toTarget: false, id: "gettingStarted"),
             item("Essential Keyboard Shortcuts", #selector(BrowserWindowController.showKeyboardShortcuts(_:)), id: "essentialKeyboardShortcuts"),
+            // Arc 1.171: Restore Data (no ellipsis, no shortcut) after Visit Help Center, in the same group.
+            item("Restore Data", #selector(AppDelegate.showRestoreData(_:)), toTarget: false, id: "restoreData"),
             .separator(),
             submenuItem("Troubleshooting", [
                 // Arc: Record Trace, Open Task Manager, —, Reveal Arc Data, Copy Arc Info (no shortcuts).

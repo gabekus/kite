@@ -15,7 +15,6 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
 
     private let popover = NSPopover()
     private let page: WebPage
-    private var sizePolls = 0
     private var observers: [NSObjectProtocol] = []
     private static var shown: ExtensionPopover?
 
@@ -35,7 +34,7 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
         let popover = ExtensionPopover(url: url, engine: engine)
         popover.anchor = (rect, view)
         shown = popover
-        // Shown once the page has loaded and been measured, or after a moment at most.
+        // Shown once the page has loaded and Chromium has sized it, or after a moment at most.
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.longestWait) { [weak popover] in popover?.present() }
         return popover
     }
@@ -44,6 +43,8 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
     static let longestWait: TimeInterval = 0.8
     private var anchor: (rect: NSRect, view: NSView)?
     private var presented = false
+    private var loaded = false
+    private var sized = false
 
     /// Puts the popover on screen with the page hidden, and reveals the page once
     /// Chromium has painted it: before its first frame a page is a blank white
@@ -69,6 +70,12 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
         popover.behavior = .transient
         popover.animates = false
         popover.delegate = self
+        // Chromium lays the popup out at its content's size, as Chrome does, and reports it again
+        // whenever that changes (popups often render after loading).
+        if let browser = (page as? ChromiumPage)?.browser {
+            browser.autoResizeHandler = { [weak self] size in self?.resize(to: size) }
+            browser.enableAutoResize(withMinSize: Self.minimumSize, maxSize: Self.maximumSize)
+        }
         // A permission prompt the popup asked for (Bitwarden's "Unlock with biometrics")
         // belongs to the popup's page: clicking it mustn't close the popup and so cancel it,
         // and the popup mustn't cover it. The popup steps aside until it's answered.
@@ -80,7 +87,9 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
         }
         page.onEvent = { [weak self] event in
             switch event {
-            case let .navigationState(isLoading, _, _) where !isLoading: self?.fitToPage()
+            case let .navigationState(isLoading, _, _) where !isLoading:
+                self?.loaded = true
+                if self?.sized == true { self?.present() }
             case .closeRequested: self?.popover.close()
             // Links and window.open in the popup ("Add account", "Open 1Password") open as a
             // tab in front, and the popup closes, as in Chrome.
@@ -95,20 +104,10 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Popups size themselves after they load (often after an async render), so measure a
-    /// few times.
-    private func fitToPage() {
-        let measure = "JSON.stringify([document.documentElement.scrollWidth, document.documentElement.scrollHeight])"
-        page.evaluateJavaScript(measure) { [weak self] result in
-            guard let self, let json = (result as? String)?.data(using: .utf8),
-                  let size = try? JSONSerialization.jsonObject(with: json) as? [Double], size.count == 2 else { return }
-            self.popover.contentSize = Self.clamped(NSSize(width: size[0], height: size[1]))
-            self.present()
-            self.sizePolls += 1
-            if self.sizePolls < 4 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15 * Double(self.sizePolls)) { [weak self] in self?.fitToPage() }
-            }
-        }
+    private func resize(to size: NSSize) {
+        popover.contentSize = Self.clamped(size)
+        sized = true
+        if loaded { present() }
     }
 
     /// The rect's bottom edge, so the popover hangs below its anchor.
@@ -124,7 +123,7 @@ final class ExtensionPopover: NSObject, NSPopoverDelegate {
     private func setPrompting(_ prompting: Bool) {
         guard popover.isShown, let window = popover.contentViewController?.view.window else { return }
         popover.behavior = prompting ? .applicationDefined : .transient
-        if prompting { window.orderOut(nil) } else { window.orderFront(nil) }
+        if prompting { window.orderOut(nil) } else { WindowPresenter.orderFront(window, anchor: anchor?.view.window) }
     }
 
     func popoverDidClose(_ notification: Notification) {

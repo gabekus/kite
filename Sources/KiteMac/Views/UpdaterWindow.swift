@@ -12,7 +12,7 @@ final class UpdaterWindow {
     static let shared = UpdaterWindow()
 
     /// Opens a URL in a new Kite tab.
-    var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    var openURL: (URL) -> Void = { WindowPresenter.open($0) }
 
     private var window: NSWindow?
     private let model = UpdaterModel()
@@ -22,7 +22,7 @@ final class UpdaterWindow {
         let window = window ?? makeWindow()
         self.window = window
         window.center()
-        window.makeKeyAndOrderFront(nil)
+        WindowPresenter.show(window)
         check()
     }
 

@@ -174,8 +174,9 @@ candidates:)` in the binary), so these are its orders for items it hadn't learne
 Not observed in Arc, so Kite's own choice: a menu command and a tab matching together (strong commands stay on
 top); several matching tabs (all go above the engine's suggestions; with a short query only the best goes above
 the search); short word or host prefixes of a favorite; an open tab's address past three letters (Kite keeps it under the
-search); the address-edit mode (same order as before, but the tab
-you're on is now left out of tabs and history there too); a URL-looking query on the tab you're on (left out);
+search); the address-edit mode and a new split pane's bar (⌘L): the same leading tab as ⌘T goes above the search,
+so Return switches to it rather than searching in the tab or pane you're on, then the old order (the tab you're on
+is left out of tabs and history there too); a URL-looking query on the tab you're on (left out);
 panes of the current split (offered); weak short matches such as "ai" inside a title (kept under the search).
 A Site Search shortcut's inline completion ("gi" + "thub.com") makes the query URL-like: the Open row leads unless
 a favorite's host starts with what was typed, as Arc did while completing a favorite's host inline (not checked with
@@ -184,7 +185,9 @@ whose address is being typed leads even over stronger title matches ("ma" with a
 letter; a favorite also leads by its pinned page's host (a Gmail favorite sent to accounts.google.com to sign in still
 leads for "mail"); with a Site Search completion for another site in the field ("m" + "usic.apple.com") no favorite
 leads, so the row matches the field; a whole host typed only rules out that favorite ("x.co" still leads to an x.com favorite);
-"www." and schemes aren't matched against the host ("www.goo" gets no leader). History is left out by exact
+"www." and schemes aren't matched against the host ("www.goo" gets no leader). A site's well-known name counts as
+its address (`TabSearch.siteNames`: "gmail" for mail.google.com, "yt", "gh", "gcal"…, from two letters): it ranks
+any tab like a host prefix and makes a favorite lead, so "gmail" finds a Workspace inbox titled "… - Komado Lab Mail". History is left out by exact
 URL, so the current page under another fragment still shows.
 
 Kite also learns ⌘T picks, which Arc doesn't do this way (one pick left Arc's order unchanged): the tab you picked
@@ -3189,7 +3192,11 @@ doing it: a live folder needs a signed-in GitHub session, which an incognito win
 - **Filter.** Option set 1 "Created by Me", 2 "Review Requests", 4 "Team Review Requests"; any other mix reads "Mixed".
 - **Refresh.** Event-driven (`LiveFolderFetchReason`: app foregrounded, space focused, item selected/unselected,
   filter change, manual, sign-in). Automatic ones are throttled by `automatic-live-folders-min-refresh-interval-in-seconds`,
-  10. No periodic timer was found. New items arrive unread (`showNewItemsAsUnread`; items carry `isRead`).
+  10. No periodic timer was found. Kite **[differs]**: launch, coming to the front and switching spaces wait 5 minutes
+  after the last successful refresh (each loads github.com in a hidden 1280×2000 page); opening or leaving a folder's
+  tab keeps Arc's 10 seconds; Refresh, a filter change and a pull request made or reviewed refresh at once (one that comes
+  mid-refresh runs again after it); after a failure the next automatic try waits only Arc's 10 seconds, except
+  signed out, which waits for a forced refresh. New items arrive unread (`showNewItemsAsUnread`; items carry `isRead`).
 - **Removed rows.** A row the user deletes goes into `hiddenItems` and later refreshes leave it out.
 - **Folder menu.** "Refresh"; a status line "Initializing...", "Last fetch: …" or "Failed to update"; a "Repositories"
   submenu of per-repo toggles ending "This list is generated based on your currently active pull requests."; the three
@@ -3726,8 +3733,11 @@ accessibility frames and pixel colours only (no screenshot of the mail was looke
   reaches the tile, fully in within about 0.05–0.09s; it stays while the pointer is on the card and goes within
   about 0.1s of leaving both. Kite: 0.38s delay, 0.08s fades.
 - Data ready before the hover (binary: `PreviewsDataClient.setPeriodicUpdatesEnabled`, `refreshTimer`; measured: Arc's
-  card had the mail in its first frame). Kite reads Gmail favorites' mail 3s after a window opens and every minute,
-  from one hidden page per profile, so the card opens with it rather than after a network round trip.
+  card had the mail in its first frame). Kite reads Gmail favorites' mail when it comes to the front and when the
+  pointer comes onto the sidebar or the favorites tray (ahead of the 0.38s hover delay before a card opens), each
+  time only if the last read is over 50s old, from one hidden page per profile that closes after 10 minutes without
+  a read while Kite is in front, 2 behind **[differs]**: no background timer, for battery. A card opened before a
+  read lands shows the last mail if it's under 3 minutes old, otherwise loading.
 - Scrolling: the list is as tall as its rows up to the 272 cap and scrolls inside the card (a legacy scroller shows
   with Gabe's scroller setting, as on Arc's).
 - Click (Kite): a row opens the message in the favorite. **[unverified]** what Arc does on click.
@@ -3761,3 +3771,45 @@ runs the importer on the browser window, and File › Import from Arc… closes 
 
 Deliberate differences from Arc: Kite's Help › Getting Started reopens onboarding (Arc's reopens its "basics"
 cards, which Kite doesn't have), and it stays enabled in incognito windows.
+
+## Sidebar tab and folder context menus → `SidebarContextMenu.swift` (KiteCore), `TabRowCell` / `FolderRowCell` menus, `BrowserWindowController+SidebarMenus` (Arc 1.169 disassembly and strings, 4 Nov 2026)
+
+Sources: **[str]** arc-strings.txt 84890–85005; **[dis]** `~/rea-arc/decomp/arc.s`, string loads and small-string immediates read
+in code order. Arc wasn't driven. Code order inside one builder is taken as menu order; items built through generic helpers
+weren't all identified, so the order is **partial**.
+
+- **Tab menu** [dis, `SidebarMenu+TabContextMenu.swift`, builder @102ec5d80]: Copy Link (@102ebec78), Copy … as Arc Object link,
+  —, Copy PR…, Share ▸, —, …, —, Change Icon…, Rename…, Mute (@102ec18e8), six items not identified, Edit Pinned Page ▸
+  (@102eb73c0), —, Open in Split View (@102ebea8c), Duplicate, Move to ▸ (@102ebf3b4), …, —, …, Archive Other Tabs, Archive Tabs
+  Below, Archive Tabs Above, Tidy Tab Title Feedback, Debug Web Lifecycle, —, Customize Page…, Live Calendar items, Show Hover
+  Preview / Time to Next Meeting / Next Meeting Link. Add Split View ("Add a new split view", @102eba2e0) is built in
+  `PlatformGeneration`; where it lands wasn't traced. The live split row menu (Separate All Tabs section above) has Copy Link
+  then Copy link as Markdown, and the archive trio after Archive Item, Above disabled on the top row.
+- **Move to** [dis @102ebf3b4, @102ec118c, @102ec13ec]: a "Move to" submenu of the root spaces; "New Folder with N Items" is added
+  only when two or more items are selected (`cmp count, #2; b.lo`).
+- **Folder menu** [dis, `listContextMenu(listItemIDs:canArchiveFolders:)` @102ea8e80]: Share Folder…, —, …, —, …, —, Duplicate, —,
+  **Archive Folder or Delete** (`tbz` on `canArchiveFolders` @102ea9da0: one or the other), —, New Nested Folder…, Turn “<name>”
+  into Space, Copy All Links, Copy All Links as Markdown, Rename…. No separator marker between the last five.
+- **Space menu** [dis @102ecdc94]: Change Space Icon…, Rename Space…, Edit Theme Color…, Set Profile ▸, —, New Folder, Live
+  Folders ▸, —, Share Space…, —, Show/Hide Space Header, Manage Spaces…, —, Delete Space…; "Export “%@” into Folder" elsewhere.
+- **Kite tab menu:** Add to Favorites, Pin/Unpin, Back to Pinned URL / Separate, Edit Pinned Page ▸, Copy Link, Copy link as
+  Markdown, Rename…, Mute, —, Add Split View (on the tab on screen) or Open in Split View (others), Duplicate, Move to ▸ (spaces,
+  the current one disabled), —, Close/Unload Tab, Archive Other Tabs / Below / Above (Today tabs; disabled when there's nothing
+  to archive). **Inferred:** Add vs Open by whether the tab is on screen; the archive trio counts a split row as one row and
+  covers Today only; a moved pinned tab stays pinned in the other space; the Kite items whose place Arc's builder didn't show
+  (Favorites, Pin, Back to Pinned URL) keep their old place. Copy Link and Copy link as Markdown are greyed out without a page,
+  and every Copy … as Markdown uses the row's title (a Rename… name wins). Move to goes through the cross-profile warning (#325)
+  and shares the command bar's Move to Today / Pinned helper; menu moves don't play the drop haptic.
+- **Kite split row menu:** Arc's Archive Other Tabs / Below / Above after Archive Item, from the same builder as the tab menu.
+  Not built: the split row's Duplicate, Change Icon… and Rename….
+- **Kite folder menu:** Duplicate, —, Delete, —, New Nested Folder…, Turn “<name>” into Space, Copy All Links, Copy All Links
+  as Markdown, —, Rename…. Kite takes the Delete branch: its archive holds tabs, not folders, and Delete archives the tabs inside.
+  Claude's (ephemeral) folders get neither Duplicate nor Turn into Space, and neither does a folder named Claude or holding a
+  Claude or live folder: Kite never makes a Claude space. Turn into Space is greyed out for a folder with no tabs.
+  **Inferred:** the copy keeps the name and sits right after the original, and live folders inside it are left out (a space has
+  one per source); the nested folder goes at the end, opens its parent and starts a rename; the new space keeps the old one's
+  theme and profile, has no icon (a dot), and is switched to; Markdown links one per line; the separator before Rename… (no
+  marker in the builder, but Arc's live split menu shows grouping separators the markers don't).
+- **Not built:** Share / Share Folder… / Share Space… and Copy as Arc Object link (Arc's servers), Copy PR…, Change Icon… on a tab,
+  New Folder with N Items (needs multi-select), Live Calendar and meeting items, Customize Page… (Boost editor from the sidebar),
+  Show/Hide Space Header (Kite has no hidden-header state), Manage Spaces… (no page yet), Export into Folder (destination not traced).

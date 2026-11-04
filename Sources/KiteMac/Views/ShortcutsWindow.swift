@@ -13,7 +13,7 @@ enum ShortcutsWindow {
             textView.textStorage?.setAttributedString(listing(menu))
             textView.scroll(.zero)
         }
-        panel.makeKeyAndOrderFront(nil)
+        WindowPresenter.show(panel)
     }
 
     private static func makePanel() -> NSPanel {
@@ -63,11 +63,20 @@ enum ShortcutsWindow {
     }
 
     private static func shortcuts(in menu: NSMenu) -> [(String, String)] {
-        menu.items.flatMap { item -> [(String, String)] in
-            if let submenu = item.submenu { return shortcuts(in: submenu) }
-            guard !item.isHidden, !item.keyEquivalent.isEmpty else { return [] }
+        // Validated first: a hidden command counts only while it applies (Spaces › Space 7 with no seventh space doesn't).
+        menu.update()
+        return menu.items.flatMap { item -> [(String, String)] in
+            if let submenu = item.submenu { return submenu === NSApp.servicesMenu ? [] : shortcuts(in: submenu) }
+            guard !item.keyEquivalent.isEmpty, !item.isHidden || hiddenCommand(item) else { return [] }
             return [(item.title, describe(item.keyEquivalent, item.keyEquivalentModifierMask))]
         }
+    }
+
+    /// A command kept out of the menu bar whose shortcut still works (Archive Tab ⌘W, Tab 1–9), as
+    /// KeyBindingsStore lists it: a Kite ID, not a hidden ⌥ alternate.
+    private static func hiddenCommand(_ item: NSMenuItem) -> Bool {
+        guard item.allowsKeyEquivalentWhenHidden, item.isEnabled, let id = item.identifier?.rawValue else { return false }
+        return !id.contains(":")
     }
 
     static func describe(_ key: String, _ modifiers: NSEvent.ModifierFlags) -> String {

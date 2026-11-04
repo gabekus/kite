@@ -74,7 +74,7 @@ final class KeyBindingsStore {
         var seen = Set<String>()
         func walk(_ menu: NSMenu, _ path: [String]) -> [ShortcutEntry] {
             menu.items.flatMap { item -> [ShortcutEntry] in
-                if let submenu = item.submenu { return walk(submenu, path + [item.title]) }
+                if let submenu = item.submenu { return submenu === NSApp.servicesMenu ? [] : walk(submenu, path + [item.title]) }
                 // AppKit names items without an ID after their action ("toggleClaudeSpace:"); Kite's IDs have no colon.
                 guard let id = item.identifier?.rawValue, !id.contains(":"), !item.title.isEmpty, item.hasDescribableShortcut,
                       seen.insert(id).inserted
@@ -137,7 +137,8 @@ final class KeyBindingsStore {
 
     private static func items(in menu: NSMenu) -> [NSMenuItem] {
         menu.items.flatMap { item in
-            item.submenu.map { items(in: $0) } ?? (item.isSeparatorItem ? [] : [item])
+            // AppKit's Services items aren't Kite's to rebind.
+            item.submenu.map { $0 === NSApp.servicesMenu ? [] : items(in: $0) } ?? (item.isSeparatorItem ? [] : [item])
         }
     }
 }

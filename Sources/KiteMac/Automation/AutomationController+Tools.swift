@@ -86,12 +86,16 @@ extension AutomationController {
             }
         }
 
+        let started = Date()
         let output = try await pageAction(command, tab: tab, page: page, driver: driver, actions: actions)
         // After something that can change the page, say what changed since Claude's last read
-        // (only when there is a last read, so a tab that's never been read costs nothing extra).
+        // (only when there is a last read, so a tab that's never been read costs nothing extra),
+        // and where the work went if it opened tabs.
         switch command {
         case .click, .type, .formInput, .handleDialog, .navigate, .computer(_, .click), .computer(_, .key), .computer(_, .type):
-            return await withChanges(output, tab: tab.id, driver: driver)
+            var result = await withChanges(output, tab: tab.id, driver: driver)
+            if let opened = openedReport(by: tab.id, since: started) { result.content.append(.text(opened)) }
+            return result
         default:
             return output
         }
@@ -290,7 +294,9 @@ extension AutomationController {
         case let .click(location, button, count, modifiers):
             let (point, element) = try await resolve(location)
             // Right-clicks only open a menu; the rest go through the same checks as click.
-            if button != .right, let element { try await authorize(.click(element.description), tab: tab) }
+            if button != .right {
+                if let element { try await authorize(.click(element.description), tab: tab) } else { try authorizeUndescribed(tab: tab) }
+            }
             try await untilDialog(tab.id) {
                 if case .target = location, let element, !element.isHittable, button == .left, count == 1, modifiers.isEmpty {
                     try await actions.click(element)
@@ -311,6 +317,7 @@ extension AutomationController {
             try? await Task.sleep(for: .milliseconds(150))
             return report("Scrolled \(direction.rawValue) \(amount).", tab.id)
         case let .drag(from, to):
+            try authorizeUndescribed(tab: tab)
             try await actions.drag(from: scale.toPage(from), to: scale.toPage(to))
             return report("Dragged from \(describe(.point(from))) to \(describe(.point(to))).", tab.id)
         case let .key(chords, times):
@@ -429,13 +436,19 @@ extension AutomationController {
     // MARK: Tabs and windows
 
     private func openTab(_ string: String?, active: Bool, placement: TabPlacement, connection: Int) async throws -> ToolOutput {
-        guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
+        // `host` is read again after each wait: the window may close meanwhile, and the tools move on.
+        guard host != nil else { throw AutomationError(.failed, "Kite has no window open.") }
         // A session's Claude-folder tabs share its Claude › Session folder: remember the name it gave,
         // and use it for its later tabs that don't repeat it.
         var placement = placement
         switch placement {
         case .claudeSessionFolder(_, let session): sessionFolders[connection] = session
-        case .claudeFolder(let space): if let session = sessionFolders[connection] { placement = .claudeSessionFolder(space: space, session: session) }
+        case .claudeFolder(let space) where Self.agentTask == nil:
+            // A session that never names one still gets a folder of its own, so its tabs don't scatter.
+            let session = sessionFolders[connection]
+                ?? BrowserState.automaticSessionFolderName(for: string.flatMap { try? resolveURL($0) })
+            sessionFolders[connection] = session
+            placement = .claudeSessionFolder(space: space, session: session)
         default: break
         }
         let url = try string.map(resolveURL)
@@ -516,9 +529,10 @@ extension AutomationController {
             do {
                 try await authorize(.navigate(url), tab: tab)
             } catch {
-                host.closeAutomatedTab(id)
+                host?.closeAutomatedTab(id)
                 throw error
             }
+            guard let host else { throw AutomationError(.failed, "Kite has no window open.") }
             _ = host.automationPage(for: tab)
             await settle(id, startDelay: 0.3)
         }
@@ -652,6 +666,7 @@ extension AutomationController {
     private func moveToClaudeFolder(_ string: String?, session: String?, connection: Int) throws -> ToolOutput {
         let tab = try resolveTab(string)
         let session = session ?? sessionFolders[connection]
+            ?? (Self.agentTask == nil ? BrowserState.automaticSessionFolderName(for: tab.url) : nil)
         if let session { sessionFolders[connection] = session }
         let moved = store.mutateWithoutUndo { state -> String? in
             guard let space = state.location(of: tab.id)?.space else { return nil }
@@ -693,25 +708,31 @@ extension AutomationController {
 
     private func downloadsReport() -> String {
         guard !downloads.isEmpty else { return "No downloads since Claude was allowed to control Kite." }
-        let lines = downloads.values.sorted { $0.id < $1.id }.map { download -> String in
+        let lines = downloads.values.sorted { $0.sequence < $1.sequence }.map { entry -> String in
+            let download = entry.update
             let size = download.totalBytes > 0 ? "\(download.receivedBytes)/\(download.totalBytes) bytes" : "\(download.receivedBytes) bytes"
-            return "- \(download.state), \(size): \(download.path) (from \(download.url))"
+            let profile = download.profileDirectory.map { ", profile \($0)" } ?? ""
+            return "- \(DownloadUpdate.name(of: download.state)), \(size)\(profile): \(download.path) (from \(download.url))"
         }
         return UntrustedContent.wrap(lines.joined(separator: "\n"), source: "downloads")
     }
 
     func tabList() -> [AutomationReport.Tab] {
         let state = store.state
+        func opener(_ id: UUID) -> UUID? { openedTabs.opener(of: id).flatMap { state.tab($0) == nil ? nil : $0 } }
         let front = state.selectedTab?.id
         var tabs = state.favorites.map {
-            AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: "Favorites", section: "favorite", isFront: $0.id == front)
+            AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: "Favorites", section: "favorite", isFront: $0.id == front,
+                                 openedBy: opener($0.id))
         }
         for space in state.spaces {
             tabs += space.pinned.map {
-                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "pinned", isFront: $0.id == front)
+                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "pinned", isFront: $0.id == front,
+                                     openedBy: opener($0.id))
             }
             tabs += space.tabs.map {
-                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "tab", isFront: $0.id == front)
+                AutomationReport.Tab(id: $0.id, title: $0.displayTitle, url: $0.url, space: space.name, section: "tab", isFront: $0.id == front,
+                                     openedBy: opener($0.id))
             }
         }
         return tabs

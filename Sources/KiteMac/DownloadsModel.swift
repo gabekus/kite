@@ -22,6 +22,10 @@ final class DownloadsModel {
     @ObservationIgnored private var nextWebKitID = -1
     /// The title of the tab each live download came from, for Tidy Downloads.
     @ObservationIgnored private var sourceTitles: [UUID: String] = [:]
+    /// Each live WebKit download's engine context (see WebEngine.downloadContextKey).
+    @ObservationIgnored private var webKitContexts: [Int: String] = [:]
+    /// Incognito sessions whose window has closed.
+    @ObservationIgnored private var endedIncognitoContexts: Set<String> = []
     /// The front window's current tab title: where a Chromium download most likely started.
     @ObservationIgnored var currentTabTitle: () -> String? = { nil }
 
@@ -30,30 +34,22 @@ final class DownloadsModel {
     /// puts its own window's downloads in its tray.
     static let didStartDownload = Notification.Name("KiteDownloadDidStart")
 
-    private struct File: Codable {
-        var version: Int
-        var downloads: DownloadList
-    }
-
     /// Loads the profile's list and starts listening to Chromium.
     func start(fileURL: URL) {
-        self.fileURL = fileURL
-        if let data = try? Data(contentsOf: fileURL), let file = try? JSONDecoder().decode(File.self, from: data) {
-            list = file.downloads
-            list.markRestored()
+        if let loaded = DownloadsFile.load(fileURL) {
+            if loaded.canSave { self.fileURL = fileURL } else { NSLog("Kite: not saving downloads over \(fileURL.path) this launch") }
+            list = loaded.list
+            if let aside = loaded.movedAside { NSLog("Kite: couldn't read downloads, moved them to \(aside.path)") }
+            if let aside = loaded.copiedAside {
+                NSLog("Kite: couldn't read \(loaded.dropped) of the downloads, kept the original at \(aside.path)")
+            }
+        } else {
+            NSLog("Kite: couldn't read or move downloads; not saving over \(fileURL.path) this launch")
         }
         #if canImport(CEFBridge)
         guard observer == nil else { return }
         observer = NotificationCenter.default.addObserver(forName: .KCDownloadDidUpdate, object: nil, queue: .main) { note in
-            guard let info = note.userInfo, let id = (info["id"] as? NSNumber)?.intValue else { return }
-            let update = DownloadUpdate(
-                engineID: id,
-                url: info["url"] as? String ?? "",
-                path: info["path"] as? String ?? "",
-                state: DownloadUpdate.state(named: info["state"] as? String ?? ""),
-                receivedBytes: (info["receivedBytes"] as? NSNumber)?.int64Value ?? 0,
-                totalBytes: (info["totalBytes"] as? NSNumber)?.int64Value ?? -1,
-                speed: (info["speed"] as? NSNumber)?.int64Value ?? 0)
+            guard let info = note.userInfo, let update = DownloadUpdate(notificationInfo: info) else { return }
             let source = (note.object as? KCBrowser)?.view
             MainActor.assumeIsolated { DownloadsModel.shared.apply(update, source: source) }
         }
@@ -61,37 +57,48 @@ final class DownloadsModel {
     }
 
     func apply(_ update: DownloadUpdate, sourceTitle: String? = nil, source: NSView? = nil) {
-        let previous = list.items.first { $0.engineID == update.engineID }?.state
+        // Its incognito window has closed: a late update mustn't bring the row back.
+        if update.isIncognito, endedIncognitoContexts.contains(update.engineContext) { return }
+        let previous = list.item(engineID: update.engineID, context: update.engineContext)?.state
         // A finished download is final: a late progress tick (WebKit's KVO hops to the main queue)
         // would mark it in progress again, and a late repeat would put back a path Tidy Downloads
         // has since renamed.
         if previous == .complete { return }
         let (item, isNew) = list.apply(update)
-        if isNew, let title = sourceTitle ?? currentTabTitle(), !title.isEmpty { sourceTitles[item.id] = title }
+        // Incognito downloads never leave Kite: no tab title kept, no Tidy Downloads (it sends
+        // names to Claude), nothing written to downloads.json.
+        if isNew, !item.isIncognito, let title = sourceTitle ?? currentTabTitle(), !title.isEmpty { sourceTitles[item.id] = title }
         if isNew { NotificationCenter.default.post(name: Self.didStartDownload, object: source, userInfo: ["id": item.id]) }
         if update.state != .inProgress {
             let title = sourceTitles.removeValue(forKey: item.id)
             // Arc Max's Tidy Downloads: a finished download gets a readable name.
-            if update.state == .complete, previous != .complete { DownloadTidier.shared.tidy(item, sourceTitle: title) }
+            if update.state == .complete, previous != .complete, !item.isIncognito {
+                DownloadTidier.shared.tidy(item, sourceTitle: title)
+            }
         }
+        if item.isIncognito { return }
         // Progress ticks don't need a write each; a download starting or finishing does.
         if previous != update.state { saveSoon(after: .milliseconds(200)) } else { saveSoon(after: .seconds(5)) }
     }
 
     // MARK: WebKit
 
-    func track(_ download: WKDownload, destination: URL, sourceTitle: String?) {
+    /// `context` is the WebKit engine's downloadContextKey.
+    func track(_ download: WKDownload, destination: URL, sourceTitle: String?, context: String, incognito: Bool) {
         let id = nextWebKitID
         nextWebKitID -= 1
         webKitDownloads[id] = download
+        webKitContexts[id] = context
         let url = download.originalRequest?.url?.absoluteString ?? ""
         let report: @MainActor (DownloadItem.State) -> Void = { [weak self] state in
             let progress = download.progress
-            self?.apply(DownloadUpdate(engineID: id, url: url, path: destination.path, state: state,
+            self?.apply(DownloadUpdate(engineID: id, engineContext: context, isIncognito: incognito, url: url,
+                                       path: destination.path, state: state,
                                        receivedBytes: progress.completedUnitCount, totalBytes: progress.totalUnitCount))
         }
         let progress = download.progress
-        apply(DownloadUpdate(engineID: id, url: url, path: destination.path, state: .inProgress,
+        apply(DownloadUpdate(engineID: id, engineContext: context, isIncognito: incognito, url: url,
+                             path: destination.path, state: .inProgress,
                              receivedBytes: progress.completedUnitCount, totalBytes: progress.totalUnitCount),
               sourceTitle: sourceTitle, source: download.webView)
         webKitProgress[id] = download.progress.observe(\.completedUnitCount) { _, _ in
@@ -102,8 +109,10 @@ final class DownloadsModel {
     func webKitDownload(_ download: WKDownload, finished state: DownloadItem.State) {
         guard let id = webKitDownloads.first(where: { $0.value === download })?.key else { return }
         let progress = download.progress
-        if let item = list.items.first(where: { $0.engineID == id }) {
-            apply(DownloadUpdate(engineID: id, url: item.url, path: item.path, state: state,
+        let context = webKitContexts.removeValue(forKey: id) ?? ""
+        if let item = list.item(engineID: id, context: context) {
+            apply(DownloadUpdate(engineID: id, engineContext: context, isIncognito: item.isIncognito,
+                                 url: item.url, path: item.path, state: state,
                                  receivedBytes: progress.completedUnitCount,
                                  totalBytes: state == .complete ? max(progress.completedUnitCount, progress.totalUnitCount) : progress.totalUnitCount))
         }
@@ -119,12 +128,12 @@ final class DownloadsModel {
 
     func open(_ item: DownloadItem) {
         guard item.state == .complete, fileExists(item) else { return reveal(item) }
-        NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
+        WindowPresenter.open(URL(fileURLWithPath: item.path))
     }
 
     func reveal(_ item: DownloadItem) {
         guard fileExists(item) else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
+        WindowPresenter.revealInFinder([URL(fileURLWithPath: item.path)])
     }
 
     /// The file itself on the pasteboard, as Finder's Copy puts it.
@@ -142,10 +151,35 @@ final class DownloadsModel {
             return
         }
         #if canImport(CEFBridge)
-        if !KCBrowser.cancelDownload(withID: id) {
+        let context = item.engineContext ?? ""
+        if !KCBrowser.cancelDownload(withID: id, contextKey: context) {
             // Chromium already forgot it (finished between the click and now): show it as it is.
-            list.apply(DownloadUpdate(engineID: id, url: item.url, path: item.path, state: .canceled,
+            list.apply(DownloadUpdate(engineID: id, engineContext: context, isIncognito: item.isIncognito,
+                                      url: item.url, path: item.path, state: .canceled,
                                       receivedBytes: item.receivedBytes, totalBytes: item.totalBytes))
+        }
+        #endif
+    }
+
+    /// An incognito window closed (`context` is its engine's downloadContextKey): its downloads
+    /// stop and leave the list, as Chrome drops them with the incognito profile. Files stay.
+    func endIncognitoSession(context: String) {
+        endedIncognitoContexts.insert(context)
+        let items = list.items.filter { $0.isIncognito && $0.engineContext == context }
+        for item in items {
+            if item.state == .inProgress, let id = item.engineID, let download = webKitDownloads[id] {
+                download.cancel { _ in }
+                webKitDownload(download, finished: .canceled)
+            }
+            sourceTitles[item.id] = nil
+        }
+        list.removeIncognito(context: context)
+        #if canImport(CEFBridge)
+        // Chromium's side: every download it follows for the session, interrupted ones too, is
+        // canceled and let go, so none keeps the incognito profile in memory.
+        let ended = KCBrowser.endDownloads(forContextKey: context)
+        if UIDiagnostics.enabledByEnvironment {
+            NSLog("Kite: incognito session \(context) ended: \(ended) downloads let go, \(KCBrowser.liveDownloadCount(forContextKey: context)) still followed")
         }
         #endif
     }
@@ -200,7 +234,7 @@ final class DownloadsModel {
         guard let fileURL else { return }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(File(version: DownloadList.currentVersion, downloads: list))
+            let data = try JSONEncoder().encode(DownloadsFile(downloads: list))
             try data.write(to: fileURL, options: .atomic)
         } catch {
             NSLog("Kite: couldn't save downloads: \(error)")

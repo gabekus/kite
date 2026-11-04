@@ -180,6 +180,13 @@ swaps the shown page, theme, command bar and sidebar. Page events flow from the 
   `CefBrowserProcessHandler::GetDefaultClient()`'s client, and their windows are `BrowserNativeWidgetWindow`.
   Kite routes them into background tabs (`KCDefaultClient.mm`) and never orders those windows in (`KCExtensionWindows.mm`).
   A hidden Chrome-style "anchor" browser would make `tabs.create` work, but its window couldn't be hidden reliably.
+- **`chrome.action.openPopup` fails with "Could not find an active browser window."** for the same reason, so 1Password's
+  "Unlock 1Password" did nothing. `ExtensionTabsScript` replaces it, and Kite shows the popup in its own popover
+  (`scripts/test-extension-open-popup.sh`).
+- **Extension popups size themselves with Chromium's auto-resize**, as Chrome's do: `KCBrowser`'s
+  `enableAutoResizeWithMinSize:maxSize:` (CEF's `SetAutoResizeEnabled`) between Chrome's 25×25 and 800×600, and
+  `OnAutoResize` reports each size. Measuring `documentElement.scrollWidth/Height` can't work: it never drops below the
+  viewport, and a new `KCBrowser` view starts at 800×600, so every popup opened at the maximum.
 - **Chrome's install dialog can't be hidden or replaced** without patching CEF: its NSWindow title is empty (the "Add …?" text is
   only its accessibility title), Chrome fades it in itself (alpha steps 0.29 → 1, bypassing `-setAlphaValue:`), and
   "Add extension" stays disabled while the dialog isn't really visible (its anti-clickjacking delay). So Kite attaches Chrome's
@@ -196,6 +203,22 @@ swaps the shown page, theme, command bar and sidebar. Page events flow from the 
   it at launch via `--load-extension`, i.e. after a restart, and Chromium then reports it as installType `development`.
 - **`DoClose` must return `true`** for tab browsers. Returning false sends `performClose:` to the *whole window*.
   We remove the browser's NSView ourselves (`dispatch_async` → `removeFromSuperview`) to complete the close.
+- **beforeunload on close (measured Nov 2026, CEF 156; `KCBrowser beginUnloadClose`, KiteCore `PageClose`).**
+  - `CloseBrowser(false)` runs the page's beforeunload. Without a handler, `DoClose` runs *inside* the call. With one,
+    `OnBeforeUnloadDialog` comes first, and `DoClose` follows only on Leave.
+  - After Cancel the browser stays open, and a later `CloseBrowser(false)` asks again.
+  - A second `CloseBrowser(false)` while the dialog is up shows no second dialog (CEF ignores a close while one is
+    pending).
+  - `OnResetDialogState` fires *inside* `CefJSDialogCallback::Continue`. Record the person's answer before calling
+    `Continue`, or the reset looks like a dropped dialog.
+  - A forced `CloseBrowser(true)` still calls `OnBeforeUnloadDialog` for a page with a handler and waits for the
+    answer: returning false hangs the close, and so does showing Kite's dialog, which is how quitting with a dirty page
+    hung. Kite answers `Continue(true)` on a later turn when the close is forced (quitting, hibernation).
+  - Chromium's own beforeunload hang timer doesn't run while a DevTools client is attached, and Kite always attaches
+    one. `PageClose` keeps its own 1.5 s deadline, then sends `Runtime.terminateExecution` and force-closes.
+  - `CefShutdown` can sit 3–6 s in a polling sleep on the first launches after `bundle-app.sh` re-signs the app, with
+    a plain page as well, and Chromium's 10 s "Teardown watchdog" then ends the process (exit 2). That has nothing to
+    do with beforeunload.
 - When quitting, `closeAllBrowsersAndQuit` closes every browser. `browserDidClose` must **not** report `browserDidRequestClose`
   while quitting (checked with `KCRuntimeIsQuitting()`), or the tabs get removed from the saved session.
 - The app must run as `KCApplication` (it implements `CefAppProtocol` with a `CefScopedSendingEvent` in `sendEvent:`).

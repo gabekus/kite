@@ -6,7 +6,9 @@ import KiteCore
 /// tab (Arc's `HTMLClient`), rather than through a GitHub token. Refreshes follow events, as Arc's
 /// do (`LiveFolderFetchReason`): launch, Kite coming to the front, switching to the folder's space,
 /// opening or leaving one of its tabs, a filter change, and Refresh. Arc throttles automatic ones to
-/// one every 10 seconds (`automatic-live-folders-min-refresh-interval-in-seconds`).
+/// one every 10 seconds (`automatic-live-folders-min-refresh-interval-in-seconds`); Kite keeps that for
+/// a folder's tabs and waits 5 minutes for the rest (`LiveFolder.RefreshReason`), since each loads a
+/// hidden github.com page.
 @MainActor
 final class LiveFoldersController {
     /// The app's controller, for the sidebar's menus.
@@ -18,11 +20,12 @@ final class LiveFoldersController {
     /// Where the hidden pages live: Chromium's browsers want a window.
     private let host: () -> NSView?
     private var fetches: [UUID: GitHubPullRequestFetch] = [:]
-    private var lastStarted: [UUID: Date] = [:]
-    private var lastSelection: (space: UUID?, tab: UUID?) = (nil, nil)
+    /// Each folder's attempts and successes, for the refresh floors (`LiveFolder.RefreshRecord`).
+    private var records: [UUID: LiveFolder.RefreshRecord] = [:]
+    /// Folders whose forced refresh came while one was running: they refresh again once it ends.
+    private var rerun: Set<UUID> = []
+    private var lastFocus = BrowserState.Focus()
     private var activeObserver: NSObjectProtocol?
-
-    static let minimumInterval: TimeInterval = 10
 
     init(store: BrowserStore, engine: WebEngine, host: @escaping () -> NSView?) {
         self.store = store
@@ -31,8 +34,9 @@ final class LiveFoldersController {
         activeObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshCurrentSpace() }
+            MainActor.assumeIsolated { self?.refreshCurrentSpace(.background) }
         }
+        lastFocus = store.focus
         observeSelection()
         // After launch, once the window and its pages are up.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.refreshAll() }
@@ -51,6 +55,8 @@ final class LiveFoldersController {
 
     func delete(_ id: UUID) {
         fetches.removeValue(forKey: id)?.cancel()
+        rerun.remove(id)
+        records[id] = nil
         store.mutateWithoutUndo { $0.deleteLiveFolder(id) }
     }
 
@@ -68,32 +74,48 @@ final class LiveFoldersController {
 
     /// A tab's page changed in `window` (any normal window's store). A pull request the user just made
     /// or reviewed goes into the space's Pull Requests folder, made for it if need be, as in Arc; a new
-    /// folder shows its intro popover the first time, 0.1 s later (Arc's presenter delay).
+    /// folder shows its intro popover the first time, 0.1 s later (Arc's presenter delay). Either way
+    /// (filed now or already there) the space's folder refreshes straight away.
     func tabURLChanged(_ id: UUID, from old: URL?, to new: URL, in window: BrowserStore) {
-        guard window === store || window.link != nil, BrowserState.isPullRequestCreatedOrReviewed(from: old, to: new),
-              let filed = store.mutateWithoutUndo({ $0.filePullRequest(tab: id) }) else { return }
+        guard window === store || window.link != nil, BrowserState.isPullRequestCreatedOrReviewed(from: old, to: new) else { return }
+        let filed = store.mutateWithoutUndo { $0.filePullRequest(tab: id) }
+        let state = store.state
+        let space = state.location(of: id)?.space
+        let folders = filed.map { [$0.folder] } ?? state.liveFolders
+            .filter { $0.folder.live?.source == .github && (space == nil || $0.space == space) }.map(\.folder.id)
         // Not from inside the engine's navigation callback: a page made there never loads.
-        DispatchQueue.main.async { self.refresh(filed.folder, force: true) }
-        guard filed.created, !store.state.hasSeenLiveFolderIntro else { return }
+        DispatchQueue.main.async { for folder in folders { self.refresh(folder, reason: .forced) } }
+        guard let filed, filed.created, !store.state.hasSeenLiveFolderIntro else { return }
         store.mutateWithoutUndo { $0.hasSeenLiveFolderIntro = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { window.liveFolderIntroID = filed.folder }
     }
 
     func refreshAll() {
-        for (_, folder) in store.state.liveFolders { refresh(folder.id, force: false) }
+        for (_, folder) in store.state.liveFolders { refresh(folder.id, reason: .background) }
     }
 
-    private func refreshCurrentSpace() {
+    private func refreshCurrentSpace(_ reason: LiveFolder.RefreshReason) {
         let s = store.state.selectedSpaceIndex
-        for folder in store.state.folders(inSpace: s) where folder.live != nil { refresh(folder.id, force: false) }
+        for folder in store.state.folders(inSpace: s) where folder.live != nil { refresh(folder.id, reason: reason) }
     }
 
-    /// Starts a refresh unless one is running, or (for an automatic one) one started in the last 10 seconds.
+    /// The menus' Refresh (forced) and automatic refreshes.
     func refresh(_ id: UUID, force: Bool) {
-        guard fetches[id] == nil, let found = store.state.liveFolders.first(where: { $0.folder.id == id }),
-              let live = found.folder.live else { return }
-        if !force, let last = lastStarted[id], Date().timeIntervalSince(last) < Self.minimumInterval { return }
-        lastStarted[id] = Date()
+        refresh(id, reason: force ? .forced : .background)
+    }
+
+    /// Starts a refresh unless `reason`'s floor says not yet (`LiveFolder.RefreshRecord`). A forced one
+    /// that comes while one is running runs once that one ends, since what changed may postdate it.
+    func refresh(_ id: UUID, reason: LiveFolder.RefreshReason) {
+        guard let found = store.state.liveFolders.first(where: { $0.folder.id == id }), let live = found.folder.live else { return }
+        guard fetches[id] == nil else {
+            if case .forced = reason { rerun.insert(id) }
+            return
+        }
+        guard records[id, default: .init()].allows(reason) else { return }
+        let started = Date()
+        records[id, default: .init()].started(at: started)
+        if UIDiagnostics.enabledByEnvironment { NSLog("Kite: live folder refresh (\(reason))") }
         let state = store.state
         let profileEngine = engine.profileDirectory == nil
             ? engine : engine.forProfile(state.profile(state.spaces[found.space].profile))
@@ -103,9 +125,14 @@ final class LiveFoldersController {
                 guard let self else { return }
                 self.fetches[id] = nil
                 switch result {
-                case .success(let items): self.store.mutateWithoutUndo { $0.applyLiveFolderResult(id, items: items) }
-                case .failure(let error): self.store.mutateWithoutUndo { $0.failLiveFolder(id, error: error.message) }
+                case .success(let items):
+                    self.records[id, default: .init()].succeeded(startedAt: started)
+                    self.store.mutateWithoutUndo { $0.applyLiveFolderResult(id, items: items) }
+                case .failure(let error):
+                    self.records[id, default: .init()].failed(signedOut: error.isSignedOut)
+                    self.store.mutateWithoutUndo { $0.failLiveFolder(id, error: error.message) }
                 }
+                if self.rerun.remove(id) != nil { self.refresh(id, reason: .forced) }
             }
             fetches[id] = fetch
             fetch.start()
@@ -113,12 +140,14 @@ final class LiveFoldersController {
     }
 
     /// Switching spaces, or opening or leaving one of a live folder's tabs, refreshes that space's folders.
+    /// Only the selection is watched (`BrowserStore.focus`), not every change to the state.
     private func observeSelection() {
         withObservationTracking {
-            _ = store.state
+            _ = store.focus
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 guard let self else { return }
+                if UIDiagnostics.enabledByEnvironment { NSLog("Kite: live folders saw the selection change") }
                 self.selectionChanged()
                 self.observeSelection()
             }
@@ -127,14 +156,13 @@ final class LiveFoldersController {
 
     private func selectionChanged() {
         let state = store.state
-        let space = state.spaces[state.selectedSpaceIndex]
-        let now = (space: Optional(space.id), tab: space.selectedTabID)
-        defer { lastSelection = now }
-        guard now.space != lastSelection.space || now.tab != lastSelection.tab else { return }
-        if now.space != lastSelection.space { return refreshCurrentSpace() }
-        let touched = [lastSelection.tab, now.tab].compactMap { $0 }
+        let now = store.focus
+        defer { lastFocus = now }
+        guard now != lastFocus else { return }
+        if now.space != lastFocus.space { return refreshCurrentSpace(.background) }
+        let touched = [lastFocus.tab, now.tab].compactMap { $0 }
         for folder in state.folders(inSpace: state.selectedSpaceIndex) where folder.live != nil {
-            if folder.items.contains(where: { touched.contains($0.id) }) { refresh(folder.id, force: false) }
+            if folder.items.contains(where: { touched.contains($0.id) }) { refresh(folder.id, reason: .tabSelection) }
         }
     }
 }
@@ -147,6 +175,7 @@ final class GitHubPullRequestFetch {
         let message: String
         static let signedOut = Failure(message: "Not signed in to GitHub")
         static let unreachable = Failure(message: "We're having trouble connecting to GitHub")
+        var isSignedOut: Bool { message == Self.signedOut.message }
     }
 
     private var queries: [String]
@@ -202,8 +231,9 @@ final class GitHubPullRequestFetch {
         tearDown()
         let page = engine.makePage(url: url, restoring: nil)
         if let host {
-            // Window-sized: GitHub only renders the rows that fit, so a 1×1 page lists two.
-            page.view.frame = NSRect(x: 0, y: 0, width: 1280, height: 4000)
+            // Window-sized: GitHub only renders the rows that fit, so a 1×1 page lists two. 2000 tall
+            // holds a full results page (25 rows); a public repository's list read all 25 even at 280.
+            page.view.frame = NSRect(x: 0, y: 0, width: 1280, height: 2000)
             page.view.isHidden = true
             host.addSubview(page.view, positioned: .below, relativeTo: nil)
         }

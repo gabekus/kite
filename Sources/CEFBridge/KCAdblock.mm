@@ -1,6 +1,7 @@
 #import "CEFBridge.h"
 #import "KCInternal.h"
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -32,6 +33,7 @@ struct AdblockState {
     bool enabled = true;
     std::set<std::string> allowedHosts;
     /// `$redirect` bodies chosen in OnBeforeResourceLoad, served by GetResourceHandler.
+    /// OnResourceLoadComplete drops any a cancelled request never collected.
     std::map<uint64_t, std::string> redirects;
 };
 
@@ -151,6 +153,19 @@ class AdblockHandler : public CefResourceRequestHandler {
         return new RedirectHandler(mime, stream, data);
     }
 
+    void OnResourceLoadComplete(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame,
+                                CefRefPtr<CefRequest> request,
+                                CefRefPtr<CefResponse> response,
+                                URLRequestStatus status,
+                                int64_t received_content_length) override {
+        // A request cancelled between the check and GetResourceHandler (navigation, tab
+        // close) never collects its redirect body.
+        AdblockState& state = State();
+        std::lock_guard<std::mutex> guard(state.lock);
+        if (!state.redirects.empty()) state.redirects.erase(request->GetIdentifier());
+    }
+
  private:
     /// Keeps the decoded body alive as long as the stream reading it.
     class RedirectHandler : public CefStreamResourceHandler {
@@ -161,14 +176,24 @@ class AdblockHandler : public CefResourceRequestHandler {
         std::shared_ptr<std::string> data_;
     };
 
+    /// Counts here on the IO thread and tells the tab at most every 100 ms: an
+    /// ad-heavy page blocks hundreds of requests per load, and one main-thread
+    /// block each kept the main thread awake through the load.
     void NoteBlocked() {
-        __weak KCBrowser* owner = owner_;
-        if (!owner) return;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [owner noteBlockedRequest];
+        if (!owner_) return;
+        unblocked_.fetch_add(1, std::memory_order_relaxed);
+        if (scheduled_.exchange(true, std::memory_order_acq_rel)) return;
+        CefRefPtr<AdblockHandler> self(this);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            self->scheduled_.store(false, std::memory_order_release);
+            NSInteger count = self->unblocked_.exchange(0, std::memory_order_acq_rel);
+            KCBrowser* owner = self->owner_;
+            if (owner && count) [owner noteBlockedRequests:count];
         });
     }
 
+    std::atomic<NSInteger> unblocked_{0};
+    std::atomic<bool> scheduled_{false};
     __weak KCBrowser* owner_;
     IMPLEMENT_REFCOUNTING(AdblockHandler);
 };

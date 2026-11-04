@@ -277,7 +277,7 @@ private struct ShortcutRecorder: View {
 
     private func install() {
         remove()
-        ShortcutRecording.begin { event in
+        ShortcutRecording.begin { event in // presenter-exempt: not a panel
             if event.keyCode == 53 && event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function]).isEmpty {
                 remove()
                 finish(nil)

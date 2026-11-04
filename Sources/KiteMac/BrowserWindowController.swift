@@ -96,9 +96,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     /// The focused tab: the selected one, or the focused pane of its split.
     private var shownTabID: UUID?
     private var shownSpaceID: UUID?
+    /// The appearance last given to the sidebar, Library and materials.
+    private var shownAppearanceName: NSAppearance.Name?
     private(set) weak var shownPage: WebPage?
     /// Every tab on screen in pane order, and its page: one, or a split's panes.
-    private var shownTabIDs: [UUID] = []
+    private(set) var shownTabIDs: [UUID] = []
     private var shownPages: [UUID: WebPage] = [:]
     /// The pages on screen: the shown tab's, or each pane's of its split.
     var visiblePages: [WebPage] { Array(shownPages.values) }
@@ -203,22 +205,60 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     /// True while closing the window should only hide it: Claude tasks are working in its tabs.
     var hidesInsteadOfClosing: (() -> Bool)?
+    /// Every page in the window let it close (`windowShouldClose`).
+    var closeConfirmed = false
+    /// The window's pages are being asked whether it may close.
+    var isConfirmingClose = false
+    /// The window has closed (the app may still hold its controller), and hasn't been shown again since.
+    private(set) var hasClosed = false
+    /// The window is closing, before its pages close: what follows this window (Claude's tools) moves on and
+    /// takes the pages it's using along (BrowserWindows).
+    var willClose: ((BrowserWindowController) -> Void)?
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard !isIncognito, hidesInsteadOfClosing?() == true else { return true }
-        sender.orderOut(nil)
-        return false
+        if !isIncognito, hidesInsteadOfClosing?() == true {
+            sender.orderOut(nil)
+            return false
+        }
+        return shouldCloseAfterAsking(sender)
     }
 
     func windowWillClose(_ notification: Notification) {
+        hasClosed = true
+        willClose?(self)
         closeLinkPeek(animated: false)
         discardParkedLinkPeeks(keeping: nil)
         if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
         paneClickMonitor = nil
         store.saveNow()
-        if isIncognito { pool.retain(live: [], restorable: []) }
-        // Windows showing a placeholder for one of this window's pages take it back.
-        pool.leaveShared()
+        // Windows showing a placeholder for one of this window's pages take it back; the rest close.
+        pool.closeForWindow()
+        // The app keeps the main window's controller and may show it again (`reopenAfterClose`): nothing
+        // here points at a closed page meanwhile.
+        removePaneViews()
+        shownPages = [:]
+        placeholders = [:]
+        shownPage = nil
+    }
+
+    /// The closed window is shown again (the Dock icon, a link from another app, Claude's notification):
+    /// it rejoins the other windows and its shown tabs load again.
+    private func reopenAfterClose() {
+        guard hasClosed else { return }
+        hasClosed = false
+        closeConfirmed = false
+        if !isIncognito { pool.rejoinShared() }
+        installPaneClickMonitor()
+        reloadShownTabs()
+    }
+
+    /// Clicking into a pane focuses it. Web views take their own clicks, so watch from outside.
+    private func installPaneClickMonitor() {
+        guard paneClickMonitor == nil else { return }
+        paneClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            self?.focusPane(under: event)
+            return event
+        }
     }
 
     /// `ui input` is about to send this background window keys: what becoming key would do first.
@@ -262,7 +302,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             developerReload: { [weak self] setting in self?.developerReload(setting) },
             clearCookiesAndRefresh: { [weak self] in self?.clearCookiesAndRefresh(nil) },
             toggleSidebar: { [weak self] in self?.store.toggleSidebar() },
-            closeTab: { [weak self] id in self?.close(tab: id) },
+            closeTab: { [weak self] id in self?.closeAsking(tab: id) },
+            closeTabs: { [weak self] ids in self?.closeAsking(tabs: ids) },
             addSplitView: { [weak self] in self?.addSplitView(nil) },
             editTheme: { [weak self] id in self?.editTheme(ofSpace: id) },
             changeSpaceIcon: { [weak self] id in self?.changeIcon(ofSpace: id) },
@@ -278,13 +319,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             describeSpace: { [weak self] id in self?.describeSpace(id) },
             clearToday: { [weak self] id in self?.clearFromTodayDivider(inSpace: id) },
             removeTabGroupHeader: { [weak self] id in self?.removeTabGroupHeader(id) },
+            addSplitViewWith: { [weak self] id in self?.addSplitView(with: id) },
+            openInSplitView: { [weak self] id in self?.openInSplitView(id) },
+            moveTab: { [weak self] id, space in self?.moveTab(id, toSpace: space) },
+            archiveTabs: { [weak self] id, which in self?.archiveTabs(which, relativeTo: id) },
             toggleMute: { [weak self] id in self?.toggleMute(id) },
             setProfile: { [weak self] id, profile in self?.setProfile(profile, forSpace: id) },
             newProfile: { [weak self] id in self?.presentCreateProfile(for: id) },
             showsProfiles: !isIncognito,
             dismissInstantLinks: { [weak self] id in self?.instantLinks.dismiss(id) },
-            didDrop: { [weak self] outcome in self?.sidebarDropped(outcome) },
-            previewFavorite: { [weak self] tab, anchor in self?.previewFavorite(tab, anchor: anchor) }
+            drop: { [weak self] ids, target in self?.dropSidebarItems(ids, on: target) },
+            previewFavorite: { [weak self] tab, anchor in self?.previewFavorite(tab, anchor: anchor) },
+            prefetchFavoritePreviews: { [weak self] in self?.prefetchFavoritePreviews() }
         )
         spaceSwipe = SpaceSwipeController(
             store: store,
@@ -346,6 +392,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         claudeBubbleHost.sizingOptions = []
         claudeBubbleContainer = DetachingContainer(host: claudeBubbleHost)
         claudeBubble.onOpenChange = { [weak self] open in self?.claudeBubbleOpened(open) }
+        claudeBubble.window = window
         claudeBubble.postToProject = { [weak self] page, message in self?.postToClaudeProject(page, message: message) }
         libraryHost = LibraryHostingView(rootView: makeLibraryView())
         libraryHost.onEscape = { [weak self] in self?.library.close() }
@@ -479,7 +526,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         libraryContainer.layer?.zPosition = 13
         peekCard.isHidden = true
         peekEdge.onHover = { [weak self] inside in self?.edgeHovered(inside) }
-        sidebarHoverZone.onHover = { [weak self] inside in self?.sidebarHover.isHovered = inside }
+        sidebarHoverZone.onHover = { [weak self] inside in
+            self?.sidebarHover.isHovered = inside
+            // The pointer heading for the favorites: their previews get a head start.
+            if inside { self?.prefetchFavoritePreviews() }
+        }
         // Unclipped (macOS 14's default), its visible rect, and so its tracking area, would be the whole window.
         sidebarHoverZone.clipsToBounds = true
         sidebarHoverZone.isActive = true
@@ -495,12 +546,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             store.mutate { $0.moveSplitDivider(split.id, index: index, fraction: fraction, minimum: minimum) }
         }
         installSplitPaneMenu()
-        // Clicking into a pane focuses it. Web views take their own clicks, so watch from outside.
-        paneClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
-            self?.focusPane(under: event)
-            return event
-        }
+        installPaneClickMonitor()
         if let window = window as? BrowserWindow {
+            window.willOrderIn = { [weak self] in self?.reopenAfterClose() }
             spaceSwipe.install(in: window)
             pageTopDragger.install(in: window)
         }
@@ -576,29 +624,32 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         themeView.setTheme(space.theme, animated: shownSpaceID != nil)
         glowView.setTheme(space.theme)
         pool.updateThemeCSS()
-        let appearance = NSAppearance(named: space.theme.prefersDarkForeground ? .aqua : .darkAqua)
-        sidebarHost.appearance = appearance
-        libraryContainer.appearance = appearance
-        materialView.appearance = appearance
+        // Setting an appearance, even the same one, makes AppKit redo every subview's: only on a change.
+        let appearanceName: NSAppearance.Name = space.theme.prefersDarkForeground ? .aqua : .darkAqua
+        if appearanceName != shownAppearanceName {
+            shownAppearanceName = appearanceName
+            let appearance = NSAppearance(named: appearanceName)
+            sidebarHost.appearance = appearance
+            libraryContainer.appearance = appearance
+            materialView.appearance = appearance
+            peekCard.material.appearance = appearance
+        }
         peekCard.theme.setTheme(space.theme, animated: shownSpaceID != nil)
-        peekCard.material.appearance = appearance
         if let shownSpaceID, shownSpaceID != space.id, let old = state.spaceIndex(shownSpaceID) {
             spaceSwipe.spaceChanged(from: old, to: state.selectedSpaceIndex)
         }
         shownSpaceID = space.id
         // Hidden in the titlebar, but it names the window in the Window menu and Mission Control.
         let title = state.selectedTab?.title ?? ""
-        if isIncognito {
-            window?.title = title.isEmpty ? "Incognito" : title + " (Incognito)"
-        } else {
-            window?.title = title.isEmpty ? space.name : title
-        }
+        let windowTitle = isIncognito ? (title.isEmpty ? "Incognito" : title + " (Incognito)") : (title.isEmpty ? space.name : title)
+        if let window, window.title != windowTitle { window.title = windowTitle }
 
         let selected = state.selectedTab
         let visible = state.visibleTabs
         // A Peek belongs to the tab it opened over: it waits out of sight while another tab is shown.
         if let linkPeek, linkPeek.sourceTabID != selected?.id { parkLinkPeek() }
-        if selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
+        // A closed window makes no pages; it loads its tabs when it's shown again.
+        if !hasClosed, selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
             // A page coming forward (⌘T, a tab opened from the Archive, another space) leaves the Library.
             if library.isOpen, shownTabID != nil { library.close() }
             show(visible, focused: selected?.id)
@@ -623,6 +674,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         updateToolbar()
         updateInternalPages()
         didSync?()
+    }
+
+    /// Puts the selected tabs on screen again, making their pages afresh (pages closed under them).
+    func reloadShownTabs() {
+        shownTabIDs = []
+        sync()
     }
 
     /// The edge strips for dropping a link into a split: over everything in the content card, but they
@@ -666,6 +723,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return
         }
         pool.didShow(ids)
+        // Under the Library (its first tab opened while it's up): on screen once it closes.
+        if library.isOpen { for page in shownPages.values where page.view.window === window { page.setVisible(false) } }
         restoreAskConversation(focused)
         // A new split pane's command bar is about to open and takes the focus.
         if store.commandBar == nil, store.pendingSplitPane == nil {
@@ -703,6 +762,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         } else {
             contentClip.page = nil
         }
+        NotificationCenter.default.post(name: .kitePagesShown, object: window)
     }
 
     /// Another normal window took tab `id`'s page to show it there (Arc's normal windows share one
@@ -940,6 +1000,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         for view in [sidebarHost!, contentFrame, glowView, resizeHandle, peekCard] as [NSView] {
             view.alphaValue = open ? 0 : 1
         }
+        // Faded out, the pages are still in the window and would keep drawing at full rate.
+        for page in shownPages.values where page.view.window === window { page.setVisible(!open) }
+        linkPeek?.page.setVisible(!open)
         if open {
             window?.makeFirstResponder(libraryHost)
         } else {
@@ -1213,6 +1276,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         }
     }
 
+    /// Archive Tab without asking the page: automation (Claude's tabs_close), AppleScript and the tab
+    /// switcher. The person's own closes go through `closeAsking(tab:)`.
     func close(tab id: UUID) {
         let wasSelected = store.state.selectedTab?.id == id
         // Arc's Edit menu: "Undo Archive Tab" ⌘Z, Redo ⇧⌘Z. A tab that leaves the sidebar is a
@@ -1231,7 +1296,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     private func undoUnload(tab id: UUID, reselect: Bool) {
         guard store.state.location(of: id) != nil else { return }
         if reselect { store.mutate { $0.select(tab: id) } }
-        window?.undoManager?.registerUndo(withTarget: self) { controller in controller.close(tab: id) }
+        window?.undoManager?.registerUndo(withTarget: self) { controller in controller.closeAsking(tab: id) }
         window?.undoManager?.setActionName("Archive Tab")
     }
 
@@ -1259,7 +1324,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         } else if store.commandBar != nil {
             store.hideCommandBar()
         } else if let id = store.state.selectedTab?.id {
-            close(tab: id)
+            closeAsking(tab: id)
         } else {
             NSSound.beep()
         }
@@ -1350,6 +1415,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         if let valid = validateBoostItem(item) { return valid }
         if let valid = validateSplitLayoutItem(item) { return valid }
         if let valid = validateSplitSideItem(item) { return valid }
+        if let valid = validateTicketItem(item) { return valid }
         switch item.action {
         case #selector(setDarkPagesMode(_:)):
             let modes = DarkPagesMode.allCases
@@ -1432,7 +1498,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         case #selector(renameCurrentTab(_:)):
             return store.state.selectedTab != nil
         case #selector(toggleStayOnTop(_:)):
-            item.state = window?.level == .floating ? .on : .off
+            item.state = window.map(WindowPresenter.level(of:)) == .floating ? .on : .off
         case #selector(importFromAnotherBrowser(_:)):
             // An incognito window keeps nothing, so there's nowhere to put the import.
             return !isIncognito
@@ -1445,6 +1511,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):
             return shownPage?.isLoading ?? false
+        case #selector(jumpToSelection(_:)):
+            return shownPage != nil
         case #selector(showPasswordManager(_:)):
             #if canImport(CEFBridge)
             let manager = PasswordManagerIntegration.current

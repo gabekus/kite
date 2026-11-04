@@ -134,7 +134,9 @@ All numbers come from release builds bundled with the test bundle ID
   (`python3 -m http.server 18765` over `p1.html`…`p10.html`), closes the fresh profile's own tab, waits 30 s,
   then samples the main Kite process (not renderers or helpers) with `proc_pid_rusage`
   (`scripts/perf/rusage.c`): CPU milliseconds per second, interrupt wakeups per second, billed energy and
-  the footprint. `top`'s IDLEW column turned out to be a running total (it showed a fixed 799 for a live
+  the footprint, and bytes written to disk. `ALL=1` sums the main process and every Kite Helper child instead;
+  `STATE=dir` seeds the profile with the dir's `session.json`, `Claude Handoffs.json` and `automation.json`
+  (fixtures with fake data in `scripts/perf/fixtures/`). `top`'s IDLEW column turned out to be a running total (it showed a fixed 799 for a live
   Kite), and `powermetrics` needs a password, so neither is used. `HOVER=1` first sweeps the pointer over
   the sidebar and scrolls it; `SETTLE=1 … 10` samples while Claude's rings still show (every tab `kite open`
   opens is driven by Claude for 15 s after the last call).
@@ -607,9 +609,8 @@ never touching the screen, the real pointer or another app.
 2. **Mini Player: works, and a bug found.** With `--autoplay-policy=no-user-gesture-required`, a local page playing a
    looping tone, then another tab selected: the Mini Player shows (AXGroup "Mini Player" [8,690 224×66], "Tone",
    "Pause"), and a posted click on Pause paused the page's audio (`paused` true) and turned the button to "Play".
-   **Bug:** a tab opened straight onto a page that starts playing never reports its media: no speaker button, no Mini
-   Player. The media scripts are added with `Page.addScriptToEvaluateOnNewDocument`, asynchronously, while the
-   tab's first document is already loading; the same page loaded again in the tab reports normally. Planned as M1e.
+   **Bug:** a tab opened straight onto a page that starts playing never reported its media: no speaker button, no Mini
+   Player (0 of 5); a tab navigated to the page reported (5 of 5). Cause and fix: Helix M1e, below.
 3. **The 1Password key: checked in M1** (#289): a posted click logs the action it would take ("would add 1Password"),
    and its frame and label match main (AXButton "Add 1Password to this profile" [260,49 30×30]). Opening Gabe's real
    1Password can only be confirmed on his real profile.
@@ -645,3 +646,109 @@ Picking through the hook: Pin Tab on a Today tab pins it (3 → 4 pinned items);
 - Spring-loaded folders: a tab held 1.2 s over a collapsed folder opens it and drops in (closed, 1 tab → open, 2).
 
 Still not verified: edge-of-list space switching during a drag, a real two-finger swipe, VoiceOver.
+
+## Helix M1e: a tab's first document gets Kite's page scripts
+
+**Cause, measured:** Chromium answers a new tab's DevTools calls only once its first document has a renderer (a
+`Page.getFrameTree` sent before the first load was never answered), so every script ChromiumPage registers with
+`Page.addScriptToEvaluateOnNewDocument` (the verification-code world, the media world and its page hook, the mail
+handler) missed the tab's first document. A trace of execution contexts showed no `kite-media` or `kite-codes` world
+in any tab's first document, and both in every later one. `runImmediately` didn't help: the call isn't handled
+until the document exists.
+
+**Fix:** the scripts are one table (`ChromiumPage.documentScripts`). As the first document starts loading (a new
+optional `browserMainFrameDidStartLoading:` from the bridge), Kite asks the renderer for nothing (`Runtime.evaluate
+"0"`), which it answers after any report already sent; with no media report, the scripts run late: main-world ones
+after their bindings are added again, isolated worlds made with `Page.createIsolatedWorld` and given their binding by
+context id (by world name it didn't reach them: measured 0 of 1, by id 1 of 1). The media script picks up what's
+already playing.
+
+**Measured (bundled test builds, headless):**
+- A tab opened straight onto a playing page reports: 5 of 5 (was 0 of 5). Navigated to it: 5 of 5, as before; the
+  direct-opened tab navigated again: 5 of 5.
+- A tab restored on relaunch reports. The Mini Player showed for the hidden tab on the first build of the fix; on the
+  final build accessibility returned 0×0 frames for every app (Finder, Arc), so it wasn't read again.
+- A first document that calls `registerProtocolHandler` 1.5 s in gets Kite's prompt (its popover window).
+- Not affected: the ad blocker's main-frame script (run by CEF, not DevTools, plus the bridge's load-start replay:
+  its `style[data-kite]` is in the first document) and the Google results buttons (1 on a results page opened
+  directly, 3 after navigating; registered with `runImmediately` once the address is known).
+
+**Limits:** what the page does before load start isn't seen: Media Session handlers or a `registerProtocolHandler`
+call made while it parses. An element that played and paused before then isn't picked up. Not checked: the code
+world on a first document (it's made the same way as the media world), and FrameAdblock's `Target.setAutoAttach`,
+also sent at init, for iframes in a first document.
+
+## Helix M3: Site Controls in AppKit
+
+The popover's content (`SiteControlsView`) was a SwiftUI view in an `NSHostingController`; it's a plain view now,
+laid out as SwiftUI did: each frame from the running total of the sizes and gaps above it, rounded to the pixel grid
+as SwiftUI rounds each piece from its exact position. It started from a draft in the AppKit thread's worktree and was
+finished here. `SiteControlsModel` and `SiteControlsPopover` are unchanged.
+
+How it matches SwiftUI:
+- **Symbols in rows, the pencil, the pin and the lock** are centred by their glyph's content height, which SwiftUI
+  uses and NSImage rounds up to the whole point (hammer.fill is 15.5pt high, its image 16pt). The heights are a
+  measured table (`symbolContentHeights`, read from CoreUI's vector glyphs on macOS 15.6, offline: nothing private
+  runs in Kite); a symbol missing from it asserts in debug. With this one rule every row matches in both the default
+  layout and below Boosts and extensions; a per-symbol half-point nudge fitted to one layout didn't.
+- The tiles' symbols use `SymbolOrigins` (Share and New Boost measured).
+- The "More" hint is trailing-aligned from the text's exact width, rounded down to the pixel.
+- The pin's circle resolves `windowBackgroundColor` in plain dark/light (#323232), not the popover's vibrant
+  appearance (#212121).
+- An extension's own icon keeps its colours (`place` returns a template image; only the puzzle piece is tinted).
+
+**Rebuilds:** a change rebuilds the controls only when a snapshot of what they show changes (the window re-reads every
+property after each change, and an assignment notifies even when equal). Each control is reused by its identity
+(a Boost's id, a permission, an action's slot) and its closures set again; whatever wasn't built in a pass is
+removed. The observation stops while the popover is closed.
+
+**Keyboard:** with Keyboard navigation on, Tab moves through the actions, headers, rows, tiles and the footer, Space
+presses the focused control (once, not on key repeat), a focus ring follows its wash, and a rebuild keeps the focus
+on the control in the same place. VoiceOver: each control is one element (its label and image aren't read on their
+own), Show Menu opens a row's or tile's menu, and a Boost row has an "Edit Boost" action.
+
+UI match (2x captures of the popover window, main 020e97f vs M3, debug bundles, the region below the action row; max
+channel delta):
+
+| State | dark | light |
+|---|---|---|
+| default layout: idle, hovered action, row, header, "…" | 40 | 40 |
+| Boosts and an extension: idle, hovered Boost row, hovered tile (pin) | 44 | |
+| an extension and no Boosts: idle, hovered tile | 40 / 44 | |
+
+40 is text anti-aliasing (SwiftUI's fractional text widths). The action row itself: max 34 apart from main's focus ring
+(below). Geometry isn't compared through `ui tree`: main's SwiftUI tree has no views to pair with M3's, so the pixel
+diffs stand in for it.
+
+CPU, main process, release builds with the test bundle ID, ms/s (main → M3):
+
+| Scenario | main | M3 |
+|---|---|---|
+| toggling a permission row every 0.5 s, three 20 s runs | 33.7 / 40.5 / 34.2 | 17.1 / 15.2 / 18.1 |
+| popover open, resting, two 30 s runs | 4.9 / 3.6 | 4.3 / 7.7 |
+
+Interrupt wakeups while toggling are higher (about 17.8/s against 12.7/s) at similar billed energy. The popover's view
+tree has 71 views against main's 86.
+
+Behaviour, with posted events on background test Kites, the same script on both: the footer menu (same items, through
+`KITE_TEST_CONTEXT_MENU`), toggling a Boost and a permission, the Boost pencil and the Settings header (both dismiss;
+the header opens Site Settings), New Boost (creates one for the site), and the address field's button closing an open
+popover all do the same on main and M3. Two Boosts with the same name (Kite's default name is the domain) keep 8 rows
+over three toggles. M3's ⌃-click menus read "Allow | Block | Ask (Default)" and "Pin to Toolbar | Turn Off | --- |
+Remove…", the items and order main declares.
+
+Differences from main:
+- At open, keyboard focus starts on the first control (Share). Main's SwiftUI popover started on the second (New
+  Boost), visible as a focus ring for anyone with Keyboard navigation on.
+- Hover follows the pointer: under synthetic pointer moves main's SwiftUI rows and tiles sometimes stayed hovered
+  after the pointer left.
+- No pressed-state dimming: SwiftUI's plain buttons dim while pressed; the amount isn't measured.
+- The Boost pencil is in the view only while its row is hovered, so the keyboard reaches it only then (VoiceOver has
+  the row's action). Whether main's hidden SwiftUI pencil took focus isn't verified.
+
+Not verified: a real pointer and the focus ring as drawn (a background test window isn't key, so AppKit doesn't draw
+it); where the "…" menu opens (a menu is modal and can't be captured; the 4pt gap is the draft's); Copy URL (no
+Boosts), Portrait Mode (⌥ held), the WebKit note and Default Mail App rows, which weren't captured.
+
+Follow-up: `SiteControlsLabel` overlaps `SidebarLabel`, and the exact-top symbol placement sits beside SidebarKit's;
+both can move into SidebarKit when M4–M6 need them.

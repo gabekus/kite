@@ -241,12 +241,11 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         let looksLikeURL = URLInput.looksLikeURL(text)
         // The tab above the rest, from what was typed, not a Site Search completion after it ("gi" + "thub.com").
         let typedText = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        // When the leader comes from outside the five tab rows, it makes a sixth.
-        let lead = mode == .newTab
-            ? CommandBarOrder.leader(typedText, shown: text, in: state,
-                                     typedMatches: typedText == text ? matches : TabSearch.switchTargets(typedText, in: state),
-                                     looksLikeURL: looksLikeURL)
-            : nil
+        // When the leader comes from outside the five tab rows, it makes a sixth. In the address bar too (and a new
+        // split pane's, ⌘L): otherwise Return there runs the search in the tab you're on, as "gmail" once did.
+        let lead = CommandBarOrder.leader(typedText, shown: text, in: state,
+                                          typedMatches: typedText == text ? matches : TabSearch.switchTargets(typedText, in: state),
+                                          looksLikeURL: looksLikeURL)
         let leader = lead.map(CommandSuggestion.switchTab)
         let tabs = matches.filter { $0.tab.id != lead?.id }.map { CommandSuggestion.switchTab($0.tab) }
         let search = CommandSuggestion.search(text, state.searchEngine.searchURL(for: text))
@@ -270,8 +269,8 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         let engine = SearchSuggestions.lingering(engineSuggestions.items, for: text).map {
             CommandSuggestion.search($0, state.searchEngine.searchURL(for: $0))
         }
-        // Arc's ⌘T order; editing the address keeps tabs under the engine's suggestions (not observed in Arc).
-        guard mode == .newTab else { return [search] + engine + tabs + history }
+        // Arc's ⌘T order; editing the address keeps the other tabs under the engine's suggestions (not observed in Arc).
+        guard mode == .newTab else { return [leader].compactMap { $0 } + [search] + engine + tabs + history }
         return CommandBarOrder.arrange(leader: leader, strongCommands: strong, search: search, tabs: tabs,
                                        engine: engine, history: history, weakCommands: weak)
     }
@@ -401,10 +400,10 @@ final class CommandBarPanelView: NSView, NSTextFieldDelegate {
         field.currentEditor()?.selectedRange = NSRange(location: (text as NSString).length, length: 0)
     }
 
-    /// Learns ⌘T picks, so what was typed leads to the same tab next time.
+    /// Learns picks, so what was typed leads to the same tab next time.
     private func commit(_ item: CommandSuggestion) {
         // Not in a Site Search, whose query is for the site, nor while a completion shows (no pick leads then).
-        if mode == .newTab, site == nil, completed == nil {
+        if site == nil, completed == nil {
             let tab: UUID? = if case .switchTab(let tab) = item { tab.id } else { nil }
             if store.state.commandBarPickChanges(typed: typed, tab: tab) {
                 store.mutateWithoutUndo { $0.recordCommandBarPick(typed: typed, tab: tab) }

@@ -41,12 +41,8 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         let onboarding = shown ?? OnboardingWindow(browser: browser)
         shown = onboarding
         onboarding.go(to: 0, animated: false)
-        if UIDiagnostics.enabledByEnvironment {
-            // Test runs stay behind the user's windows.
-            onboarding.window.orderBack(nil)
-        } else {
-            onboarding.window.makeKeyAndOrderFront(nil)
-        }
+        // A test-safe run keeps it behind the user's windows.
+        WindowPresenter.show(onboarding.window)
     }
 
     enum Metrics {
@@ -384,7 +380,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
         guard browserWindow.attachedSheet == nil else { return }
         // The next turn, once onboarding is gone, so the importer's sheet is the only thing up.
         DispatchQueue.main.async {
-            if !UIDiagnostics.enabledByEnvironment { browserWindow.makeKeyAndOrderFront(nil) }
+            WindowPresenter.show(browserWindow)
             controller.importFromArc(nil)
         }
     }

@@ -329,3 +329,63 @@ extension BrowserState {
         }
     }
 }
+
+extension LiveFolder {
+    /// Why a refresh starts (Arc's `LiveFolderFetchReason`, grouped by how often each may run).
+    public enum RefreshReason: Sendable {
+        /// Launch, Kite coming to the front, switching to the folder's space.
+        case background
+        /// Opening or leaving one of the folder's tabs (a pull request just looked at or reviewed).
+        case tabSelection
+        /// Refresh, a filter or repository change, a pull request just made or reviewed.
+        case forced
+
+        /// The least time since the last successful refresh. Arc throttles every automatic reason to
+        /// 10 seconds (`automatic-live-folders-min-refresh-interval-in-seconds`); Kite keeps that for
+        /// tab selection, and waits 5 minutes for the background reasons, since each refresh loads
+        /// github.com in a hidden page.
+        public var minimumInterval: TimeInterval {
+            switch self {
+            case .background: 5 * 60
+            case .tabSelection: 10
+            case .forced: 0
+            }
+        }
+    }
+
+    /// Arc's floor between any two automatic attempts, failed ones included.
+    public static let minimumAttemptInterval: TimeInterval = 10
+
+    /// One folder's refresh history, for throttling (in memory, not saved).
+    public struct RefreshRecord: Equatable, Sendable {
+        /// When the last refresh, whatever came of it, started.
+        public var lastAttempt: Date?
+        /// When the last successful refresh started: the reasons' floors count from here, so a
+        /// failure doesn't hold the next try back for minutes.
+        public var lastSuccess: Date?
+        /// The last refresh found GitHub signed out: only a forced one tries again.
+        public var signedOut = false
+
+        public init() {}
+
+        public mutating func started(at date: Date) { lastAttempt = date }
+
+        public mutating func succeeded(startedAt date: Date) {
+            lastSuccess = date
+            signedOut = false
+        }
+
+        public mutating func failed(signedOut: Bool) { self.signedOut = signedOut }
+
+        /// Whether a refresh may start now. A forced one always may. Any other waits Arc's 10 seconds
+        /// after the last attempt (failed or not), its reason's floor after the last success, and for a
+        /// forced refresh once GitHub was found signed out.
+        public func allows(_ reason: RefreshReason, now: Date = Date()) -> Bool {
+            if case .forced = reason { return true }
+            if signedOut { return false }
+            if let lastAttempt, now.timeIntervalSince(lastAttempt) < LiveFolder.minimumAttemptInterval { return false }
+            guard let lastSuccess else { return true }
+            return now.timeIntervalSince(lastSuccess) >= reason.minimumInterval
+        }
+    }
+}

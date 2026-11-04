@@ -26,7 +26,7 @@ final class TidyTabTitlesController {
                     self?.pending.remove(id)
                     return
                 }
-                let name = await Task.detached { Self.ask(prompt) }.value
+                let name = await Task.detached { await Self.ask(prompt) }.value
                 self?.finish(id, name: name, store: store)
             }
         }
@@ -57,31 +57,15 @@ final class TidyTabTitlesController {
 
     /// Runs Claude Code once and reads the name from its reply. Nil if it isn't set up, fails or
     /// takes too long.
-    nonisolated private static func ask(_ prompt: String) -> String? {
+    nonisolated private static func ask(_ prompt: String) async -> String? {
         if let stub = testReply() {
             Thread.sleep(forTimeInterval: 1)
             return stub
         }
-        guard let claude = ClaudeConnect.findClaude() else { return nil }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = TidyTabTitles.arguments()
-        process.environment = ClaudeTasksController.environment()
-        process.currentDirectoryURL = FileManager.default.temporaryDirectory
-        let input = Pipe(), output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let handle = input.fileHandleForWriting
-        try? handle.write(contentsOf: Data(prompt.utf8))
-        try? handle.close()
-        let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        timer.cancel()
-        guard process.terminationStatus == 0 else { return nil }
-        return TidyTabTitles.title(fromReply: String(decoding: data, as: UTF8.self))
+        guard let claude = await ClaudeCommand.find() else { return nil }
+        // Its own process group, ended whole at the timeout: a child left holding stdout can't hang the read.
+        let process = claude.oneShot(arguments: TidyTabTitles.arguments(), directory: FileManager.default.temporaryDirectory)
+        guard let result = await process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
+        return TidyTabTitles.title(fromReply: String(decoding: result.output, as: UTF8.self))
     }
 }

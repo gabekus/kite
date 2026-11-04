@@ -150,13 +150,25 @@ public struct ClaudeRoutes: Codable, Equatable, Sendable {
         supportDirectory.appendingPathComponent("Claude", isDirectory: true).appendingPathComponent("routes.json")
     }
 
+    private enum CodingKeys: String, CodingKey { case spaces, projects }
+
+    /// A space's route of a kind this build doesn't know (from a newer one) falls back to a new chat,
+    /// rather than failing every space's route.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        spaces = try container.decode([String: Lossy<ClaudeRoute>].self, forKey: .spaces).compactMapValues(\.value)
+        projects = try container.decode([Lossy<Project>].self, forKey: .projects).compactMap(\.value)
+    }
+
+    /// Through `StoreFile`: a file that won't decode is moved aside (or, when it can't be, never saved
+    /// over), and one read leniently is copied aside.
     public static func load(from url: URL) -> ClaudeRoutes {
-        guard let data = try? Data(contentsOf: url),
-              let routes = try? JSONDecoder().decode(ClaudeRoutes.self, from: data) else { return ClaudeRoutes() }
+        guard let routes = StoreFile.load(ClaudeRoutes.self, from: url).value else { return ClaudeRoutes() }
         return routes
     }
 
     public func save(to url: URL) throws {
+        try StoreFile.checkWritable(url)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,

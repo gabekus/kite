@@ -14,7 +14,7 @@ public enum ClaudeInvocation {
     /// - `dontAsk` refuses anything not allowed up front; every Kite tool is allowed,
     ///   and Kite itself asks before anything that commits on the user's behalf.
     public static func arguments(kiteCLI: String, profile: String?, taskID: UUID, resume sessionID: String?,
-                                 model: String? = nil) -> [String] {
+                                 model: String? = nil, systemPrompt: String = systemPrompt) -> [String] {
         var arguments = [
             "-p",
             "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -42,6 +42,11 @@ public enum ClaudeInvocation {
         return (try? encoder.encode(config)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
 
+    /// The system prompt for a task: a ticket test (`ClaudeTask.ticket`) adds `TicketTest.systemPrompt`.
+    public static func systemPrompt(ticket: String?) -> String {
+        ticket == nil ? systemPrompt : systemPrompt + "\n\n" + TicketTest.systemPrompt
+    }
+
     public static let systemPrompt = """
         You are Claude running inside Kite, the user's web browser, on a task the user started from Kite's \
         Claude Tasks panel. They may not be watching: work on your own until the task is done, then reply with \
@@ -60,12 +65,14 @@ public enum ClaudeInvocation {
         but don't navigate away from it.
 
         Only submit forms, send, post, pay, buy or delete what the user asked for. If they turned on Kite's Ask \
-        Before Claude Acts, Kite asks them first; if they decline, say what you couldn't do instead of retrying. Never \
+        Before Claude Acts, Kite asks them first; if they decline, say what you couldn't do instead of retrying. \
+        \(MCPServer.accountForms) Never \
         enter credentials or payment details yourself, and never ask for them: when a page needs the user signed in \
         (a login form, a password or a one-time code), call sign_in on that tab. Kite shows it to the user, who signs \
         in with their password manager while you wait; then carry on. When anything else needs the user's own hands \
         (a click you mustn't make, a choice that's theirs, a command on their computer), call handoff with why you \
-        stopped and the steps, then handoff_status with wait: Kite shows each step on its page. \(UntrustedContent.notice)
+        stopped and the steps, then handoff_status with wait 600 until they're done (don't stop while steps wait): Kite \
+        shows each step on its page. \(UntrustedContent.notice)
         """
 
     /// The tab the user attached to a task ("Ask about this tab").

@@ -139,6 +139,7 @@ public enum SitePermission: String, CaseIterable, Sendable {
         }
     }
 
+    /// A new symbol here needs its content height in Site Controls' `symbolContentHeights` (KiteMac).
     public var symbol: String {
         switch self {
         case .camera: "video.fill"

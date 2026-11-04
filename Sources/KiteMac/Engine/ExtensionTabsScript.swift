@@ -10,10 +10,12 @@ import KiteCore
 /// nothing belongs to a window, so tabs.query finds nothing, windows.getCurrent and
 /// tabs.create fail with "No current window", and nothing is ever active. 1Password asks
 /// for the active tab to fill it, so this answers those calls from Kite's tab list.
+/// With no window there's no toolbar either, so action.openPopup fails too (1Password's
+/// "Unlock 1Password" button did nothing): Kite opens the popup itself.
 ///
 /// In the worker, Kite sends the list with `__kite.update(state)` whenever it changes;
-/// calls that need Kite (open a tab, switch to one, capture it) go out through the
-/// `__kiteTabsBridge` binding and come back with `__kite.resolve(id, value, error)`.
+/// calls that need Kite (open a tab, switch to one, capture it, open the popup) go out
+/// through the `__kiteTabsBridge` binding and come back with `__kite.resolve(id, value, error)`.
 /// Pages have no binding: they ask their worker over a BroadcastChannel.
 enum ExtensionTabsScript {
     static let bindingName = "__kiteTabsBridge"
@@ -218,6 +220,12 @@ enum ExtensionTabsScript {
           if (!w) throw new Error('No current window');
           return describeWindow(w, info.populate);
         }),
+        // The active tab's popup as it is now (action.setPopup can change it, for one tab or all);
+        // Kite checks it's this extension's.
+        openPopup: withState(async () => {
+          const tab = activeEntry();
+          await ask('openPopup', { url: await chrome.action.getPopup(tab ? { tabId: tab.id } : {}) });
+        }),
       };
 
       // Chromium never fires tab events for Kite's tabs, so the worker fires them from
@@ -291,6 +299,7 @@ enum ExtensionTabsScript {
       windows.get = callable(impl.windowsGet);
       windows.getCurrent = callable(impl.windowsGetCurrent);
       windows.getLastFocused = windows.getCurrent;
+      if (chrome.action) chrome.action.openPopup = callable(impl.openPopup);
 
       // Only listeners added after this script runs can be reached.
       const watch = (event, name) => {

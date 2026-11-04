@@ -13,6 +13,11 @@
 void KCRegisterBrowser(CefRefPtr<CefBrowser> browser);
 void KCUnregisterBrowser(CefRefPtr<CefBrowser> browser);
 bool KCRuntimeIsQuitting();
+/// Answers Leave to a "Leave site?" dialog still waiting in `browser` (every browser when null), so a
+/// forced close can finish: Chromium keeps the page until its beforeunload hears back.
+void KCAcceptPendingBeforeUnload(CefRefPtr<CefBrowser> browser);
+/// Drops the record of those dialogs before CefShutdown.
+void KCForgetPendingBeforeUnload();
 /// CefSettings.root_cache_path: every profile folder sits directly inside it.
 NSString* KCRootCachePath();
 
@@ -24,6 +29,10 @@ bool KCHasChromiumCreatedBrowsers();
 // Chrome's extension windows: install dialog, "added" bubble (KCExtensionWindows.mm).
 void KCInstallExtensionWindowHooks();
 
+/// Drops the downloads KCBrowser follows (KCBrowser.mm), and the CEF references they hold.
+/// KCRuntime calls it before CefShutdown.
+void KCClearLiveDownloads();
+
 // The ad blocker (KCAdblock.mm). Both return null when Kite is built without it.
 CefRefPtr<CefResourceRequestHandler> KCAdblockRequestHandler(KCBrowser* owner);
 /// The context every tab uses, so requests no tab makes are checked too.
@@ -32,6 +41,6 @@ CefRefPtr<CefRequestContext> KCAdblockRequestContext();
 CefRefPtr<CefRequestContextHandler> KCAdblockContextHandler();
 
 @interface KCBrowser (Internal)
-/// Called on the main thread for each blocked request.
-- (void)noteBlockedRequest;
+/// Called on the main thread with the requests blocked since the last call.
+- (void)noteBlockedRequests:(NSInteger)count;
 @end

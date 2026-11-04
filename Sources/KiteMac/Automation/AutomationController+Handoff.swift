@@ -24,9 +24,10 @@ extension AutomationController {
         handoffs = Handoff.pruned(handoffs + [handoff])
         saveHandoffs()
         handoffCardCollapsed = false
+        handback = nil
         // The tab in front may be one of them: show its step at once rather than on the next look.
-        startHandoffPoller()
-        if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
+        pollHandoffsSoon()
+        if !NSApp.isActive { WindowPresenter.requestAttention() }
         await lookAtSteps(id, attempts: UserHandoff.probeAttempts)
         // A step Claude handed over blocked is news now, not after the wait. One that turns off later, during the
         // wait, may only be the page checking what the user just did: it waits out the usual delay.
@@ -42,7 +43,7 @@ extension AutomationController {
                 ?? "There's no handoff. Call handoff first.")
         }
         if cancel {
-            update(handoff.id) { $0.finishAll(.skipped, how: "Claude withdrew it") }
+            update(handoff.id, byUser: false) { $0.finishAll(.skipped, how: "Claude withdrew it") }
             pollHandoffsSoon()
         } else {
             // A fresh look first, so a step Claude just unblocked (or the page did) isn't reported from an old one.
@@ -53,18 +54,32 @@ extension AutomationController {
 
     /// Waits up to `wait` seconds for the user to end every step, then reports. A step that has been blocked for
     /// `reportBlockedAfter` ends the wait early (once per step), so Claude can fix what's in the way instead of
-    /// waiting on a user who can't go on.
+    /// waiting on a user who can't go on; so does a click that opens a new tab, for Claude to carry on there.
     private func handoffReport(_ id: String, wait: Double, reportBlockedAfter delay: TimeInterval) async throws -> ToolOutput {
         let deadline = Date().addingTimeInterval(wait)
         var watch = HandoffBlockWatch(reported: reportedBlockedSteps)
+        let openedBefore = handoffs.first { $0.id == id }?.opened.count ?? 0
+        if wait > 0 { handoffWaiters[id, default: 0] += 1 }
+        defer { if wait > 0 { handoffWaiters[id, default: 1] -= 1 } }
         while Date() < deadline, let handoff = handoffs.first(where: { $0.id == id }), !handoff.isFinished,
-              !watch.shouldReport(handoff, delay: delay) {
+              handoff.opened.count == openedBefore, !watch.shouldReport(handoff, delay: delay) {
             try await Task.sleep(for: .milliseconds(250))
+        }
+        // A click that just ended a step may also be opening a tab: give it a moment to arrive, so the report has it.
+        if wait > 0, let click = handoffClicks.values.filter({ handoffID(of: $0.step) == id }).map(\.at).max() {
+            let left = UserHandoff.clickSettle - Date().timeIntervalSince(click)
+            if left > 0 { try await Task.sleep(for: .seconds(left)) }
         }
         guard let handoff = handoffs.first(where: { $0.id == id }) else { throw AutomationError(.notFound, "Handoff \(id) is gone.") }
         reportedBlockedSteps.formUnion(handoff.blockedSteps.map(\.id))
-        let text = handoff.report(waitedOut: wait > 0 && !handoff.isFinished) { [store] tab in
+        // Claude is back: the card no longer needs to ask the user to tell it.
+        if handback?.handoff == id, handback?.claudeWaiting == false { handback = nil }
+        var text = handoff.report(waitedOut: wait > 0 && !handoff.isFinished) { [store] tab in
             store.state.tab(tab).map { (url: $0.url?.absoluteString, title: $0.displayTitle) }
+        }
+        // What the user's steps opened (a popup from a button they pressed), so Claude carries on there.
+        for tab in Set(handoff.steps.compactMap(\.tab)) {
+            if let opened = openedReport(by: tab, since: handoff.created) { text += "\n\n" + opened }
         }
         return .text(text)
     }
@@ -126,6 +141,8 @@ extension AutomationController {
         let now = Date()
         if state.found { controlMissingSince[stepID] = nil } else if controlMissingSince[stepID] == nil { controlMissingSince[stepID] = now }
         let missing = controlMissingSince[stepID].map { now.timeIntervalSince($0) >= UserHandoff.offPageDelay } ?? false
+        // Missing, but not for long enough yet to tell: make sure a second look comes.
+        if !state.found, !missing { scheduleHandoffFollowUp() }
         update(handoffID(of: stepID)) { h in
             guard let i = h.steps.firstIndex(where: { $0.id == stepID }), h.steps[i].isWaiting else { return }
             if state.found, let current, current == at, Handoff.canReturn(to: current), h.steps[i].url != current.absoluteString {
@@ -138,10 +155,13 @@ extension AutomationController {
         }
     }
 
-    private func update(_ id: String, _ change: (inout Handoff) -> Void) {
+    /// Changes a handoff. `byUser` false is Claude's doing: the user ending the last step hands back to Claude, Claude
+    /// withdrawing it doesn't.
+    private func update(_ id: String, byUser: Bool = true, _ change: (inout Handoff) -> Void) {
         guard let index = handoffs.firstIndex(where: { $0.id == id }) else { return }
         let before = handoffs[index]
         change(&handoffs[index])
+        if byUser, !before.isFinished, handoffs[index].isFinished { handBack(id, .finished) }
         // Saved: what the user or Claude did, and the steps' pages and tabs; not what the ring found.
         if handoffs[index].steps.map({ [$0.state.rawValue, $0.url, $0.tab?.uuidString] }) != before.steps.map({ [$0.state.rawValue, $0.url, $0.tab?.uuidString] }) {
             saveHandoffs()
@@ -197,6 +217,62 @@ extension AutomationController {
         // On to the next step of the same tab (the ring moves there), or the next one anywhere.
         let front = store.state.selectedTab?.id
         if cardStep(front: front) == nil, !waitingHandoffSteps.isEmpty { showNextHandoffStep(after: stepID) }
+    }
+
+    /// Back on the card: the step before this one comes up again, waiting on the user even if it was done or skipped
+    /// (Claude hears so from handoff_status), on its own tab when it has one.
+    func showPreviousHandoffStep(before stepID: String) {
+        let id = handoffID(of: stepID)
+        guard let previous = handoffs.first(where: { $0.id == id })?.previous(before: stepID) else { return }
+        update(id) { $0.reopen(previous.id) }
+        handoffCardCollapsed = false
+        if let tab = previous.tab, store.state.tab(tab) != nil, tab != store.state.selectedTab?.id {
+            store.mutateWithoutUndo { $0.select(tab: tab) }
+        }
+        // Held up over the tab's own step: one left waiting before it (passed with Next) would come up instead.
+        focusedHandoffStep = previous.id
+        focusedHandoffFront = store.state.selectedTab?.id
+        pollHandoffsSoon()
+    }
+
+    /// The card says the user handed back to Claude: for a few seconds while Claude waits on the handoff and takes
+    /// over, or until closed when it doesn't (Claude can't be woken: the user tells it in the chat).
+    private func handBack(_ id: String, _ kind: HandoffHandback.Kind) {
+        let note = HandoffHandback(handoff: id, kind: kind, claudeWaiting: (handoffWaiters[id] ?? 0) > 0)
+        handback = note
+        handoffCardCollapsed = false
+        guard note.claudeWaiting else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + HandoffHandback.shownFor) { [weak self] in
+            MainActor.assumeIsolated { if self?.handback == note { self?.handback = nil } }
+        }
+    }
+
+    /// The handback's close button.
+    func closeHandback() { handback = nil }
+
+    /// A step on `tab` ended with a click on its control: a tab that page opens (or just opened) is the click's doing.
+    private func stepClicked(_ stepID: String, on tab: UUID) {
+        let now = Date()
+        handoffClicks[tab] = (stepID, now)
+        if let open = handoffOpens[tab], now.timeIntervalSince(open.at) < UserHandoff.openedTabWindow { stepOpened(open.tab, by: stepID) }
+    }
+
+    /// The page in `opener` opened `tab` (a link to a new tab, or a popup: `tabOpened`). Right after a click on a step's
+    /// control, it's where the user went next: a wait ends for it, and the card hands back to Claude.
+    func handoffTabOpened(_ tab: UUID, by opener: UUID) {
+        let now = Date()
+        handoffOpens[opener] = (tab, now)
+        if let click = handoffClicks[opener], now.timeIntervalSince(click.at) < UserHandoff.openedTabWindow {
+            stepOpened(tab, by: click.step)
+        }
+    }
+
+    private func stepOpened(_ tab: UUID, by stepID: String) {
+        let id = handoffID(of: stepID)
+        guard let number = handoffs.first(where: { $0.id == id })?.steps.first(where: { $0.id == stepID })?.number,
+              handoffs.first(where: { $0.id == id })?.opened.contains(where: { $0.tab == tab }) == false else { return }
+        update(id) { $0.opened.append(.init(step: number, tab: tab)) }
+        handBack(id, .openedTab(tab))
     }
 
     /// Dismiss on the card's menu: the user won't do the rest.
@@ -276,24 +352,124 @@ extension AutomationController {
 
     // MARK: Watching the pages
 
-    /// While any step waits on a tab, Kite looks at the pages on screen twice a second: it puts the ring up for
-    /// their step, follows it through navigations, and hears a click the binding missed.
-    func startHandoffPoller() {
-        guard handoffPoller == nil else { return pollHandoffsSoon() }
+    /// Kite looks at the pages when something the user sees could have changed: a tab comes forward or closes, a
+    /// page finishes loading, a window becomes key or visible, Kite comes to the front, or the ring hears a click.
+    /// It puts the ring up for the step a page shows, follows it through reloads, and notes what's in the way.
+    /// Between those, it looks twice a second only while a step's page is on screen in a visible window (to follow
+    /// a page that redraws without loading, and hear a click the binding missed), and only for handoffs under
+    /// `UserHandoff.watchLimit` old: older steps keep their card, sidebar dot and ring, but wait for one of those
+    /// events. An idle Kite with steps left waiting doesn't wake for them.
+    func watchHandoffEvents() {
+        guard handoffObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        // Browser windows only: popovers, tooltips and panels come and go without changing what a page shows.
+        let windowNames = [NSWindow.didBecomeKeyNotification, NSWindow.didChangeOcclusionStateNotification,
+                           NSWindow.didDeminiaturizeNotification, .kitePagesShown]
+        handoffObservers = windowNames.map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard (note.object as? NSWindow)?.windowController is BrowserWindowController else { return }
+                    self?.handoffEvent()
+                }
+            }
+        }
+        handoffObservers.append(center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) {
+            [weak self] _ in
+            MainActor.assumeIsolated { self?.handoffEvent() }
+        })
+        // A reload (or a slept tab waking) took the ring with the old page, in whichever window: put it back now.
+        handoffObservers.append(center.addObserver(forName: .kitePageFinishedLoading, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let tab = note.userInfo?["tab"] as? UUID, self.waitingStep(on: tab) != nil else { return }
+                self.pollHandoffsSoon()
+            }
+        })
+        watchHandoffTabs()
+    }
+
+    func stopWatchingHandoffEvents() {
+        handoffObservers.forEach(NotificationCenter.default.removeObserver)
+        handoffObservers = []
+        handoffPoller?.cancel()
+        handoffFollowUp?.cancel()
+    }
+
+    /// A page of a step's tab moved within the document (a single-page app's route): look again.
+    func handoffPageNavigated(_ tab: UUID) {
+        if waitingStep(on: tab) != nil { pollHandoffsSoon() }
+    }
+
+    /// One more look once `UserHandoff.offPageDelay` has passed, after a look found a waiting step's control missing:
+    /// it takes two looks that far apart to call the page left (`setLook`), and an old step, or a page on screen in a
+    /// covered window, gets no twice-a-second looks to make the second.
+    func scheduleHandoffFollowUp() {
+        guard handoffFollowUp == nil else { return }
+        handoffFollowUp = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(UserHandoff.offPageDelay + 0.1))
+            guard let self, !Task.isCancelled else { return }
+            self.handoffFollowUp = nil
+            await self.pollHandoffs()
+        }
+    }
+
+    /// The tab in front, and which steps' tabs are open: a switch or a close changes what the ring and card show.
+    /// `generation` is the store watch's (`handoffTabsWatch`): when the tools move to another window's store
+    /// (`attach`), the old store's observation is dropped and this runs again on the new one.
+    func watchHandoffTabs(generation: Int? = nil) {
+        let generation = generation ?? handoffTabsWatch.generation
+        guard handoffTabsWatch.isCurrent(generation) else { return }
+        let key = withObservationTracking { handoffTabsKey } onChange: { [weak self] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.watchHandoffTabs(generation: generation) } }
+        }
+        if handoffTabsWatch.saw(key, generation: generation) { handoffEvent() }
+    }
+
+    /// The front tab, and each open step tab with its address (a step's page can change without a load finishing).
+    /// Linked windows' own front tabs come through `kitePagesShown`.
+    private var handoffTabsKey: [String] {
+        guard !handoffs.allSatisfy(\.isFinished) else { return [] }
+        let state = store.state
+        let live = state.allTabIDs
+        let tabs = handoffTabs.filter(live.contains).sorted { $0.uuidString < $1.uuidString }
+        return [state.selectedTab?.id.uuidString ?? ""] + tabs.map { "\($0.uuidString) \(state.tab($0)?.url?.absoluteString ?? "")" }
+    }
+
+    private func handoffEvent() {
+        guard !handoffs.allSatisfy(\.isFinished) || !ringShown.isEmpty else { return }
+        pollHandoffsSoon()
+    }
+
+    /// A look now, for a change the user made (a tab switch, Done), then the twice-a-second looks if a step's page
+    /// is on screen.
+    func pollHandoffsSoon() {
+        Task { [weak self] in
+            await self?.pollHandoffs()
+            self?.startHandoffPoller()
+        }
+    }
+
+    private func startHandoffPoller() {
+        guard handoffPoller == nil, needsHandoffPolling else { return }
         handoffPoller = Task { [weak self] in
-            while let self, !Task.isCancelled {
-                await self.pollHandoffs()
-                if self.handoffs.allSatisfy(\.isFinished) && self.ringShown.isEmpty { break }
+            while let self, !Task.isCancelled, self.needsHandoffPolling {
                 try? await Task.sleep(for: .seconds(UserHandoff.pollInterval))
+                await self.pollHandoffs()
             }
             self?.handoffPoller = nil
         }
     }
 
-    /// A look now, for a change the user made (a tab switch, Done), instead of on the next tick.
-    func pollHandoffsSoon() {
-        guard handoffPoller != nil else { return startHandoffPoller() }
-        Task { [weak self] in await self?.pollHandoffs() }
+    /// Whether a step under `UserHandoff.watchLimit` old has its page on screen in a visible window.
+    var needsHandoffPolling: Bool {
+        guard let host else { return false }
+        let pages = host.livePages
+        return Handoff.needsPolling(handoffs) { tab in pages[tab].map(isShown) ?? false }
+    }
+
+    /// On screen in a window the user can see: not covered, minimised or on another space.
+    private func isShown(_ page: WebPage) -> Bool {
+        guard isOnScreen(page), let window = page.view.window else { return false }
+        return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
     }
 
     private func pollHandoffs() async {
@@ -354,6 +530,9 @@ extension AutomationController {
                 let handoff = handoffID(of: step.id)
                 if let done = state.done {
                     update(handoff) { $0.finish(step.id, .done, how: UserHandoff.describe(done)) }
+                    stepClicked(step.id, on: id)
+                    // Again at once: the tab's next step gets the ring, or the ring goes.
+                    handoffPollAgain = true
                 } else {
                     setLook(step.id, state, tab: id, at: at)
                 }
@@ -372,6 +551,7 @@ extension AutomationController {
               let payload = params["payload"]?.stringValue, let event = UserHandoff.RingEvent(json: payload),
               let step = waitingStep(on: tab), step.id == event.step else { return }
         update(handoffID(of: step.id)) { $0.finish(step.id, .done, how: UserHandoff.describe(event.how)) }
+        stepClicked(step.id, on: tab)
         pollHandoffsSoon()
     }
 }

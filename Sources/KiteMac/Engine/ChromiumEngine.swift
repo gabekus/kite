@@ -17,6 +17,7 @@ final class ChromiumEngine: WebEngine {
     /// Incognito pages don't run Boosts.
     private var appliesBoosts = true
     let profileDirectory: String?
+    var downloadContextKey: String { context?.downloadContextKey ?? "" }
     /// The default profile's engine keeps the others, so every window gets the same one.
     private var profileEngines: [String: ChromiumEngine] = [:]
     private weak var defaultEngine: ChromiumEngine?
@@ -86,6 +87,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     let browser: KCBrowser
     /// The page's alert, confirm or prompt on screen (`PageDialogs`).
     private var pageDialog: ArcDialog?
+    /// A close the person asked for, as the page's beforeunload decides it (`requestClose`).
+    private var closeFlow = PageClose()
+    /// Each pending request's answer, by generation.
+    private var closeAnswers: [Int: (PageClose.Outcome) -> Void] = [:]
+    private var closeTimer: DispatchWorkItem?
     var onEvent: ((PageEvent) -> Void)?
     var linkPeekPolicy: ((URL, Bool) -> Bool)?
     var contextMenuHost: (() -> PageContextMenu.Host)?
@@ -113,7 +119,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         self.appliesBoosts = appliesBoosts
         super.init()
         browser.delegate = self
-        prepareVerificationCodes()
+        prepareDocumentScripts()
         if let adblocker, KCRuntime.supportsAdblock {
             frameAdblock = FrameAdblock(browser: browser, adblocker: adblocker, pageURL: { [weak self] in self?.address })
         }
@@ -130,50 +136,93 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         )
     }
 
-    /// Every page gets Kite's code-field script in its own world (VerificationCodeScript);
-    /// the binding exists only there, so pages can't ask for codes themselves.
-    private func prepareVerificationCodes() {
-        browser.pageFeatureEventHandler = { [weak self] method, params in self?.handlePageFeatureEvent(method, params) }
-        browser.executeDevToolsMethod(
-            "Runtime.addBinding",
-            params: ["name": VerificationCodeScript.bindingName, "executionContextName": VerificationCodeScript.worldName],
-            completion: nil
-        )
-        browser.executeDevToolsMethod("Page.enable", params: nil, completion: nil)
-        browser.executeDevToolsMethod(
-            "Page.addScriptToEvaluateOnNewDocument",
-            params: ["source": VerificationCodeScript.source, "worldName": VerificationCodeScript.worldName],
-            completion: nil
-        )
-        prepareMediaState()
-        prepareMailHandler()
-    }
-
-    /// The page's registerProtocolHandler reports to a main-world binding (MailHandlers.script),
-    /// which the script takes off the page's global object.
-    private func prepareMailHandler() {
-        browser.executeDevToolsMethod("Runtime.addBinding", params: ["name": Self.mailBindingName], completion: nil)
-        let send = "(() => { const b = globalThis.\(Self.mailBindingName); try { delete globalThis.\(Self.mailBindingName); } catch (e) {} "
-            + "return typeof b === 'function' ? (s) => b(s) : null; })()"
-        browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: ["source": MailHandlers.script(send: send)], completion: nil)
+    /// A script Kite runs in every document's main frame: in the page's world, or in an isolated
+    /// `world`; `binding` is how it reports.
+    private struct DocumentScript {
+        let source: String
+        var world: String?
+        var binding: String?
     }
 
     private static let mailBindingName = "kiteMailHandler"
 
-    /// The media script reports what the page plays (MediaStateScript) from its own world;
-    /// the page hook runs in the page's world to reach its Media Session handlers.
-    private func prepareMediaState() {
-        browser.executeDevToolsMethod(
-            "Runtime.addBinding",
-            params: ["name": MediaStateScript.bindingName, "executionContextName": MediaStateScript.worldName],
-            completion: nil
-        )
-        browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: ["source": MediaStateScript.pageHook], completion: nil)
-        browser.executeDevToolsMethod(
-            "Page.addScriptToEvaluateOnNewDocument",
-            params: ["source": MediaStateScript.source, "worldName": MediaStateScript.worldName],
-            completion: nil
-        )
+    private static let documentScripts = [
+        // Kite's code-field script (VerificationCodeScript); the binding exists only in its world,
+        // so pages can't ask for codes themselves.
+        DocumentScript(source: VerificationCodeScript.source, world: VerificationCodeScript.worldName,
+                       binding: VerificationCodeScript.bindingName),
+        // What the page plays (MediaStateScript); the page hook runs in the page's world to reach its
+        // Media Session handlers.
+        DocumentScript(source: MediaStateScript.source, world: MediaStateScript.worldName, binding: MediaStateScript.bindingName),
+        DocumentScript(source: MediaStateScript.pageHook),
+        // The page's registerProtocolHandler reports to a main-world binding (MailHandlers.script),
+        // which the script takes off the page's global object.
+        DocumentScript(
+            source: MailHandlers.script(
+                send: "(() => { const b = globalThis.\(mailBindingName); try { delete globalThis.\(mailBindingName); } catch (e) {} "
+                    + "return typeof b === 'function' ? (s) => b(s) : null; })()"
+            ),
+            binding: mailBindingName
+        ),
+    ]
+
+    private func prepareDocumentScripts() {
+        browser.pageFeatureEventHandler = { [weak self] method, params in self?.handlePageFeatureEvent(method, params) }
+        browser.executeDevToolsMethod("Page.enable", params: nil, completion: nil)
+        for script in Self.documentScripts {
+            addBinding(for: script)
+            var params: [String: Any] = ["source": script.source]
+            if let world = script.world { params["worldName"] = world }
+            browser.executeDevToolsMethod("Page.addScriptToEvaluateOnNewDocument", params: params, completion: nil)
+        }
+    }
+
+    private func addBinding(for script: DocumentScript) {
+        guard let binding = script.binding else { return }
+        var params: [String: Any] = ["name": binding]
+        if let world = script.world { params["executionContextName"] = world }
+        browser.executeDevToolsMethod("Runtime.addBinding", params: params, completion: nil)
+    }
+
+    // MARK: The first document
+
+    private var firstDocumentChecked = false
+    /// Whether the media script has reported in this page: it reports as each document starts.
+    private var mediaReported = false
+
+    /// Chromium handles a new tab's DevTools calls only once its first document has a renderer, so
+    /// that document starts without the document scripts: no media reports, codes or mail handler
+    /// until the tab navigates. Checked as that document starts loading: if the scripts ran, the media
+    /// script has reported, and the renderer answers the evaluate only after that report. Without
+    /// one, they run now; what the page did before then (a handler it set while parsing) they miss.
+    private func checkFirstDocument() {
+        guard !firstDocumentChecked else { return }
+        firstDocumentChecked = true
+        browser.callDevToolsMethod("Runtime.evaluate", params: ["expression": "0"]) { [weak self] _, error in
+            // An error (the document already gone) says nothing about the scripts.
+            guard let self, error == nil, !mediaReported else { return }
+            browser.callDevToolsMethod("Page.getFrameTree", params: nil) { [weak self] result, _ in
+                guard let self, let frame = (result?["frameTree"] as? [String: Any])?["frame"] as? [String: Any],
+                      let frameID = frame["id"] as? String else { return }
+                for script in Self.documentScripts { runLate(script, frame: frameID) }
+            }
+        }
+    }
+
+    private func runLate(_ script: DocumentScript, frame: String) {
+        guard let world = script.world else {
+            // Added again: one added before the renderer existed may not reach this document.
+            addBinding(for: script)
+            return browser.executeDevToolsMethod("Runtime.evaluate", params: ["expression": script.source], completion: nil)
+        }
+        browser.callDevToolsMethod("Page.createIsolatedWorld", params: ["frameId": frame, "worldName": world]) { [weak self] result, _ in
+            guard let self, let context = result?["executionContextId"] as? Int else { return }
+            // A world made here doesn't get bindings added by world name.
+            if let binding = script.binding {
+                browser.executeDevToolsMethod("Runtime.addBinding", params: ["name": binding, "executionContextId": context], completion: nil)
+            }
+            browser.executeDevToolsMethod("Runtime.evaluate", params: ["expression": script.source, "contextId": context], completion: nil)
+        }
     }
 
     /// The media script's execution context, from its latest report; commands run there.
@@ -390,7 +439,88 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         browser.evaluateJavaScript(Self.playingMediaScript) { completion(($0 as? Bool) ?? false) }
     }
 
+    func requestClose(_ completion: @escaping (PageClose.Outcome) -> Void) {
+        let (generation, effects) = closeFlow.request()
+        closeAnswers[generation] = completion
+        perform(effects)
+    }
+
+    /// Whether the page registered beforeunload: the main frame's listeners (DOMDebugger lists `onbeforeunload`
+    /// too). A page with iframes counts as having one, since a frame can ask as well; so does a page that
+    /// doesn't answer within the close deadline. Those get asked (and timed out).
+    func hasBeforeUnloadHandler(_ completion: @escaping (Bool) -> Void) {
+        var answered = false
+        let answer = { (has: Bool) in
+            guard !answered else { return }
+            answered = true
+            completion(has)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + PageClose.unresponsiveTimeout) { answer(true) }
+        let group = "kite-close-check"
+        browser.callDevToolsMethod("Runtime.evaluate", params: ["expression": "window.frames.length", "returnByValue": true]) {
+            [weak self] result, _ in
+            guard let self else { return answer(false) }
+            if let frames = (result?["result"] as? [String: Any])?["value"] as? Int, frames > 0 { return answer(true) }
+            browser.callDevToolsMethod("Runtime.evaluate", params: ["expression": "window", "objectGroup": group]) {
+                [weak self] result, _ in
+                guard let self, let objectID = (result?["result"] as? [String: Any])?["objectId"] as? String else {
+                    return answer(false)
+                }
+                browser.callDevToolsMethod("DOMDebugger.getEventListeners", params: ["objectId": objectID]) { [weak self] result, _ in
+                    self?.browser.executeDevToolsMethod("Runtime.releaseObjectGroup", params: ["objectGroup": group], completion: nil)
+                    let listeners = result?["listeners"] as? [[String: Any]] ?? []
+                    answer(listeners.contains { $0["type"] as? String == "beforeunload" })
+                }
+            }
+        }
+    }
+
+    private func perform(_ effects: [PageClose.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .startUnload:
+                // A page that doesn't exist yet (or is closing) has nothing to ask.
+                if !browser.beginUnloadClose() { perform(closeFlow.pageLetGo()) }
+            case .armTimer(let generation):
+                closeTimer?.cancel()
+                let timer = DispatchWorkItem { [weak self] in
+                    guard let self else { return }
+                    perform(closeFlow.timerFired(generation: generation))
+                }
+                closeTimer = timer
+                DispatchQueue.main.asyncAfter(deadline: .now() + PageClose.unresponsiveTimeout, execute: timer)
+            case .cancelTimer:
+                closeTimer?.cancel()
+                closeTimer = nil
+            case .forceClose:
+                // The page didn't answer in time: close it without asking, as Chrome does a hung tab. A slow
+                // background renderer that only now gets to its beforeunload loses its "Leave site?" (the
+                // forced close answers it Leave): deliberate, so a busy page can't hold a close up.
+                pageDialog?.dismiss()
+                pageDialog = nil
+                browser.close()
+                // Its script is stopped only if it's still running well after that (a page truly stuck in
+                // beforeunload or unload), so a slow page's save gets its chance.
+                let closing = browser
+                DispatchQueue.main.asyncAfter(deadline: .now() + PageClose.stuckScriptTimeout) {
+                    closing.stopScriptOfClosingPage()
+                }
+            case let .finish(outcome, generation):
+                if outcome != .close, closeFlow.pending == nil { browser.cancelUnloadClose() }
+                guard let answer = closeAnswers.removeValue(forKey: generation) else { continue }
+                // Never inside the engine's callback. Not while quitting: closing the tab would change the
+                // saved session and show another tab, making a page the quit then waits for.
+                DispatchQueue.main.async {
+                    if (NSApp.delegate as? AppDelegate)?.isTerminating == true { return }
+                    answer(outcome)
+                }
+            }
+        }
+    }
+
     func close() {
+        // The request goes first, so dismissing its dialog can't answer it as Cancel.
+        perform(closeFlow.forced())
         pageDialog?.dismiss()
         browser.close()
         browser.view.removeFromSuperview()
@@ -435,6 +565,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         case "Runtime.executionContextsCleared":
             kiteContexts.removeAll()
         case "Runtime.bindingCalled" where params["name"] as? String == MediaStateScript.bindingName:
+            mediaReported = true
             if let call = CallControls.parse(params["payload"] as? String ?? "") {
                 if let context = params["executionContextId"] as? Int { mediaContext = context }
                 return onEvent?(.callControls(call)) ?? ()
@@ -496,6 +627,11 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
     func browser(_ browser: KCBrowser, faviconDidChange url: URL?) { onEvent?(.favicon(url)) }
     func browser(_ browser: KCBrowser, progressDidChange progress: Double) { onEvent?(.progress(progress)) }
 
+    @objc(browserMainFrameDidStartLoading:)
+    func browserMainFrameDidStartLoading(_ browser: KCBrowser) {
+        checkFirstDocument()
+    }
+
     func browserLoadingStateDidChange(_ browser: KCBrowser) {
         onEvent?(.navigationState(isLoading: browser.isLoading, canGoBack: browser.canGoBack, canGoForward: browser.canGoForward))
         cosmeticGeneration += 1
@@ -509,7 +645,7 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         for delay in Self.cosmeticPolls {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self, self.cosmeticGeneration == generation else { return }
-                self.browser.evaluateJavaScript(adblocker.drainScript) { [weak self] result in
+                self.browser.evaluateJavaScript(adblocker.drainScript(last: delay == Self.cosmeticPolls.last)) { [weak self] result in
                     guard let self, self.cosmeticGeneration == generation, let payload = result as? String,
                           let script = adblocker.genericHidingScript(payload: payload, pageURL: self.address) else { return }
                     self.browser.evaluateJavaScript(script) { _ in }
@@ -539,14 +675,50 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         let kinds: [JavaScriptDialogKind: PageDialogs.Kind] = [
             .alert: .alert, .confirm: .confirm, .prompt: .prompt, .leave: .leave, .reload: .reload,
         ]
-        pageDialog = PageDialogs.present(kinds[kind] ?? .alert, message: message, defaultText: defaultText,
-                                         origin: origin, in: browser.view) { [weak self] ok, text in
-            self?.pageDialog = nil
-            completion(ok, text)
+        let request = kind == .leave ? closeFlow.pending : nil
+        if request != nil { perform(closeFlow.dialogShown()) }
+        let present = { [weak self] in
+            guard let self else { return completion(false, nil) }
+            pageDialog = PageDialogs.present(kinds[kind] ?? .alert, message: message, defaultText: defaultText,
+                                             origin: origin, in: browser.view) { [weak self] ok, text in
+                guard let self else { return completion(ok, text) }
+                pageDialog = nil
+                // Before the engine hears it: answering resets the page's dialog state on the way.
+                if request != nil { perform(closeFlow.answered(leave: ok)) }
+                completion(ok, text)
+            }
+        }
+        guard request != nil, !isOnScreen else { return present() }
+        // Closing a background tab: its tab comes forward first, then the dialog shows on it.
+        onEvent?(.showForLeaveDialog)
+        presentWhenOnScreen(attempts: 20, present: present, cancel: { completion(false, nil) })
+    }
+
+    /// A background tab's page can sit in the window as a hidden view.
+    private var isOnScreen: Bool { browser.view.window != nil && !browser.view.isHiddenOrHasHiddenAncestor }
+
+    /// Runs `present` once the page's view is on screen, checking every 50 ms, while a close is still waiting
+    /// for it (a newer request, a second click on the close button, takes the same dialog's answer); it gets
+    /// Cancel (PageDialogs, without a window) when the view never arrives.
+    private func presentWhenOnScreen(attempts: Int, present: @escaping () -> Void, cancel: @escaping () -> Void) {
+        guard closeFlow.pending != nil else { return cancel() }
+        guard !isOnScreen, attempts > 0 else { return present() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self else { return cancel() }
+            presentWhenOnScreen(attempts: attempts - 1, present: present, cancel: cancel)
         }
     }
 
+    func browserDidLetGo(_ browser: KCBrowser) {
+        perform(closeFlow.pageLetGo())
+    }
+
+    func browserWillCloseWithoutAsking(_ browser: KCBrowser) {
+        perform(closeFlow.forced())
+    }
+
     func browserDismissJavaScriptDialogs(_ browser: KCBrowser) {
+        perform(closeFlow.dialogReset())
         pageDialog?.dismiss()
         pageDialog = nil
     }
@@ -570,8 +742,13 @@ final class ChromiumPage: NSObject, WebPage, KCBrowserDelegate {
         onEvent?(.openInNewTab(url, foreground: foreground))
     }
 
-    func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) {
-        onEvent?(.popup(ChromiumPage(browser: popup, adblocker: adblocker, appliesBoosts: appliesBoosts)))
+    func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) -> Bool {
+        guard let onEvent else { return false }
+        let page = ChromiumPage(browser: popup, adblocker: adblocker, appliesBoosts: appliesBoosts)
+        onEvent(.popup(page))
+        // Whatever keeps a popup gives it a handler (`PagePool.register`); a background page's handler
+        // (a reader, an install, a verification page) lets it go.
+        return page.onEvent != nil
     }
 
     func browserDidRequestClose(_ browser: KCBrowser) { onEvent?(.closeRequested) }
@@ -710,7 +887,7 @@ private final class ChromiumDelegateProxy: NSObject, KCBrowserDelegate {
     func browserLoadingStateDidChange(_ browser: KCBrowser) {}
     func browser(_ browser: KCBrowser, mediaAccessDidChange inUse: Bool) {}
     func browser(_ browser: KCBrowser, openURLInNewTab url: URL, foreground: Bool) {}
-    func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) {}
+    func browser(_ browser: KCBrowser, didCreatePopup popup: KCBrowser, url: URL?) -> Bool { false }
     func browserDidRequestClose(_ browser: KCBrowser) {}
 }
 #endif

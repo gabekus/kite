@@ -75,10 +75,19 @@ public struct History: Codable, Sendable, Equatable {
         }
     }
 
-    /// A page's title usually arrives after its URL.
-    public mutating func updateTitle(_ url: URL, _ title: String) {
-        guard !title.isEmpty else { return }
+    /// A page's title usually arrives after its URL. Returns whether the entry changed: pages
+    /// that set `document.title` on a timer mostly repeat it, and a repeat needn't be saved.
+    @discardableResult
+    public mutating func updateTitle(_ url: URL, _ title: String) -> Bool {
+        guard updatesTitle(url, title) else { return false }
         entries[url.absoluteString]?.title = title
+        return true
+    }
+
+    /// Whether `updateTitle` would change anything, without touching the history.
+    public func updatesTitle(_ url: URL, _ title: String) -> Bool {
+        guard !title.isEmpty, let entry = entries[url.absoluteString] else { return false }
+        return entry.title != title
     }
 
     public mutating func removeAll() {

@@ -15,10 +15,7 @@ struct NewItemMenu: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             item("New Space", symbol: "plus.square.on.square") { store.beginNewSpace() }
-            item("New Folder", symbol: "folder") {
-                let index = store.state.selectedSpaceIndex
-                store.mutate { _ = $0.createFolder(name: "New Folder", inSpace: index) }
-            }
+            item("New Folder", symbol: "folder") { store.mutate { $0.createNewFolder() } }
             divider
             item("New Split", symbol: "rectangle.split.2x1", shortcut: "⌘L", action: actions.addSplitView)
             item("New Tab", symbol: "plus.square", shortcut: "⌘T") { store.showCommandBar(.newTab) }

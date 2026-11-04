@@ -40,8 +40,16 @@ final class WebKitEngine: WebEngine {
         engine.contentRules = contentRules
         engine.appliesBoosts = false
         engine.profileDirectory = nil
+        Self.incognitoEngines += 1
+        engine.downloads.contextKey = "webkit-incognito-\(Self.incognitoEngines)"
         return engine
     }
+
+    /// WebKit download ids are Kite's own and unique across engines; only incognito sessions
+    /// need a context of their own, to drop their downloads when the window closes.
+    static let persistentDownloadContext = "webkit"
+    private static var incognitoEngines = 0
+    var downloadContextKey: String { downloads.contextKey }
 
     /// WebKit keeps each profile in a data store named by the profile's `dataStoreID`.
     func forProfile(_ profile: Profile) -> WebEngine {
@@ -196,7 +204,7 @@ final class WebKitPage: NSObject, WebPage {
             let alert = NSAlert()
             alert.messageText = "Web Inspector"
             alert.informativeText = "On the WebKit engine, right-click the page and choose Inspect Element."
-            alert.runModal()
+            _ = WindowPresenter.runModal(alert)
             return
         }
         func call(_ name: String) {
@@ -419,7 +427,7 @@ extension WebKitPage: WKNavigationDelegate {
         }
         if let scheme = url.scheme?.lowercased(), !Self.inPageSchemes.contains(scheme) {
             // zoommtg:, etc. belong to other apps.
-            NSWorkspace.shared.open(url)
+            WindowPresenter.open(url)
             return decisionHandler(.cancel)
         }
 
@@ -685,7 +693,7 @@ extension WebKitPage: WKUIDelegate {
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseDirectories = parameters.allowsDirectories
         panel.canChooseFiles = true
-        completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+        completionHandler(WindowPresenter.runModal(panel) == .OK ? panel.urls : nil)
     }
 }
 
@@ -749,6 +757,8 @@ final class WebKitMailBridge: NSObject, WKScriptMessageHandler {
 final class DownloadCoordinator: NSObject, WKDownloadDelegate {
     /// The profile whose Download location applies; nil (incognito) uses the default profile's.
     var profileDirectory: String? = Profile.defaultDirectory
+    /// The engine's downloadContextKey.
+    var contextKey = WebKitEngine.persistentDownloadContext
 
     func download(
         _ download: WKDownload,
@@ -761,7 +771,9 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
         let start = { (destination: URL?) in
             // No destination cancels the download.
             if let destination {
-                DownloadsModel.shared.track(download, destination: destination, sourceTitle: download.webView?.title)
+                // Only the incognito engine has no profile.
+                DownloadsModel.shared.track(download, destination: destination, sourceTitle: download.webView?.title,
+                                            context: self.contextKey, incognito: self.profileDirectory == nil)
             }
             completionHandler(destination)
         }
@@ -780,12 +792,12 @@ final class DownloadCoordinator: NSObject, WKDownloadDelegate {
         if let window = download.webView?.window {
             panel.beginSheetModal(for: window, completionHandler: finish)
         } else {
-            panel.begin(completionHandler: finish)
+            WindowPresenter.begin(panel, completion: finish)
         }
     }
 
     func downloadDidFinish(_ download: WKDownload) {
-        NSApp.requestUserAttention(.informationalRequest)
+        WindowPresenter.requestAttention()
         DownloadsModel.shared.webKitDownload(download, finished: .complete)
     }
 

@@ -9,6 +9,10 @@ import CEFBridge
 @MainActor
 protocol AutomationHost: AnyObject {
     var window: NSWindow? { get }
+    /// The window's store: its selection is the front space and tab the tools act on.
+    var store: BrowserStore { get }
+    /// The window has closed (and hasn't been shown again).
+    var hasClosed: Bool { get }
     /// Pages that exist right now (shown or in the background), for recording the network.
     var livePages: [UUID: WebPage] { get }
     /// The tab's page, created in the background if it isn't live.
@@ -38,12 +42,10 @@ final class AutomationController {
     }
 
     struct Download: Equatable {
-        var id: Int
-        var url: String
-        var path: String
-        var state: String
-        var receivedBytes: Int64
-        var totalBytes: Int64
+        /// Its latest update: Chromium's id is unique only within `update.engineContext`.
+        var update: DownloadUpdate
+        /// Order seen, for the report.
+        var sequence: Int
     }
 
     private(set) var settings: AutomationSettings
@@ -54,6 +56,7 @@ final class AutomationController {
         didSet {
             let ids = Set(controlledTabs.keys)
             if ids != controlledTabIDs { controlledTabIDs = ids }
+            if !controlledTabs.isEmpty, expiryTimer == nil { startExpiryTimer() }
         }
     }
     /// The tabs Claude is driving: the sidebar marks their rows and the Claude folders that hold them,
@@ -71,6 +74,14 @@ final class AutomationController {
     var focusedHandoffFront: UUID?
     /// The card is folded down to its pill.
     var handoffCardCollapsed = false
+    /// The card's word that the user handed back to Claude (the last step ended, or a step's click opened a tab).
+    var handback: HandoffHandback?
+    /// handoff and handoff_status calls waiting on each handoff, so the card can say whether Claude hears the handback.
+    @ObservationIgnored var handoffWaiters: [String: Int] = [:]
+    /// The last step each tab's click ended, and the last tab each tab's page opened, so a click that opens a tab
+    /// is told apart from one that doesn't (whichever of the two Kite hears first).
+    @ObservationIgnored var handoffClicks: [UUID: (step: String, at: Date)] = [:]
+    @ObservationIgnored var handoffOpens: [UUID: (tab: UUID, at: Date)] = [:]
     @ObservationIgnored var handoffPoller: Task<Void, Never>?
     /// Which step's ring each tab's page shows, so Kite takes it off when the step ends.
     @ObservationIgnored var ringShown: [UUID: String] = [:]
@@ -80,19 +91,53 @@ final class AutomationController {
     /// When each step's control was last seen missing, so a page still drawing it isn't taken for another page.
     @ObservationIgnored var controlMissingSince: [String: Date] = [:]
     @ObservationIgnored var handoffPolling = false
+    /// Window and app notifications that call for a look (`watchHandoffEvents`), and the last tabs it saw.
+    @ObservationIgnored var handoffObservers: [NSObjectProtocol] = []
+    /// The handoff card's watch on the tools' store, re-armed when they move to another window (`attach`).
+    @ObservationIgnored var handoffTabsWatch = StoreWatch<[String]>()
+    /// The one look after `UserHandoff.offPageDelay` (`scheduleHandoffFollowUp`).
+    @ObservationIgnored var handoffFollowUp: Task<Void, Never>?
     @ObservationIgnored var handoffPollAgain = false
 
-    @ObservationIgnored weak var host: AutomationHost?
-    @ObservationIgnored let store: BrowserStore
+    /// The normal window the tools work in, and its store. It moves when that window closes (`attach`).
+    @ObservationIgnored private weak var attachedHost: AutomationHost?
+    @ObservationIgnored private var attachedStore: BrowserStore
+    /// The window and store a tool call works in: the ones it started with, so one call doesn't act on two
+    /// windows' selections, until that window closes under it; then the window the tools moved to.
+    var host: AutomationHost? { target.host }
+    var store: BrowserStore { target.store }
+    private var target: Target {
+        if let started = Self.commandTarget, let host = started.host, !host.hasClosed { return started }
+        return Target(host: attachedHost, store: attachedStore)
+    }
+    struct Target: @unchecked Sendable {
+        weak var host: AutomationHost?
+        let store: BrowserStore
+    }
+    @TaskLocal static var commandTarget: Target?
+    /// Before a tool call that needs a window: AppDelegate moves the tools to a live normal window,
+    /// opening one if none is left, so they never drive a window that has closed.
+    @ObservationIgnored var ensureWindow: (() -> Void)?
     @ObservationIgnored let supportDirectory: URL
     @ObservationIgnored private var server: AutomationServer?
     /// Tabs the user pressed Stop on. Cleared when the setting is turned off and on again.
     @ObservationIgnored private var revoked: Set<UUID> = []
     @ObservationIgnored private var pendingConfirmations: [UUID: [NSAlert]] = [:]
+    /// Runs only while Claude drives a tab, to end the indicator once it's idle.
     @ObservationIgnored private var expiryTimer: Timer?
-    /// While the setting is on: reopens the socket if it couldn't open at launch or its file went away.
-    @ObservationIgnored private var socketWatchdog: Timer?
-    /// The last reason the socket didn't open, so the watchdog logs each reason once.
+    /// While the setting is on: watches the socket's folder, to reopen the socket if it couldn't open at launch or
+    /// its file went away. App activation checks too. No timer: an idle Kite shouldn't wake for it.
+    @ObservationIgnored private var socketFolderWatch: DispatchSourceFileSystemObject?
+    /// The folder above it, for that folder (the profile, or /tmp/kite-<uid>) being moved or deleted.
+    @ObservationIgnored private var socketParentWatch: DispatchSourceFileSystemObject?
+    /// Only while the socket couldn't open (another Kite answering, or a socket a crashed one left with no folder
+    /// change to tell): a slow retry.
+    @ObservationIgnored private var socketRetry: Timer?
+    /// When the socket last failed to open. A failed bind unlinks the path, which the folder watch sees; retries it
+    /// prompts within `socketRetryPause` are skipped, so a failure can't loop through the watch.
+    @ObservationIgnored private var lastSocketFailure: Date?
+    @ObservationIgnored private var activationObserver: NSObjectProtocol?
+    /// The last reason the socket didn't open, so each reason is logged once.
     @ObservationIgnored private var lastSocketError: String?
     /// Console, network and dialog state of tabs Claude has touched, and the page each was collected from.
     @ObservationIgnored var activities: [UUID: TabActivity] = [:]
@@ -113,7 +158,10 @@ final class AutomationController {
     /// The session folder name each connection (one Claude session) last used, so its later Claude-folder
     /// tabs land in the same Claude › Session folder without repeating it.
     @ObservationIgnored var sessionFolders: [Int: String] = [:]
-    @ObservationIgnored private(set) var downloads: [Int: Download] = [:]
+    /// Which tab's page opened which, so results can say where an action's new tabs went.
+    @ObservationIgnored var openedTabs = OpenedTabs()
+    /// By "context#id".
+    @ObservationIgnored private(set) var downloads: [String: Download] = [:]
     @ObservationIgnored private var downloadObserver: NSObjectProtocol?
     /// Each tab's last read, the baseline for change-only reads.
     @ObservationIgnored var snapshots: [UUID: PageDiff.Snapshot] = [:]
@@ -133,6 +181,10 @@ final class AutomationController {
     @ObservationIgnored var isRunningTask: ((UUID) -> Bool)?
     /// `session` is the short name Claude gave its work (tabs_create's `session`), which names the task's folder.
     @ObservationIgnored var taskOpenedTab: ((_ task: UUID, _ tab: UUID, _ session: String?) -> Void)?
+    /// Ticket tests (`TicketTest`): which tasks are one, so Kite keeps them from posting on Linear, and
+    /// `kite test-ticket` starting one (`TicketTest.wireTool`, never an MCP tool).
+    @ObservationIgnored var isTicketTest: ((UUID) -> Bool)?
+    @ObservationIgnored var startTicketTest: ((JSONValue) -> ToolOutput)?
 
     struct NeedsConfirmation: Error {
         let request: ConfirmationRequest
@@ -152,23 +204,42 @@ final class AutomationController {
     }
 
     init(store: BrowserStore, supportDirectory: URL) {
-        self.store = store
+        attachedStore = store
         self.supportDirectory = supportDirectory
         settings = AutomationSettings.load(from: AutomationSettings.fileURL(supportDirectory: supportDirectory))
         handoffs = Handoff.load(from: Handoff.fileURL(supportDirectory: supportDirectory))
         handoffCount = Handoff.lastNumber(in: handoffs)
     }
 
+    /// Points the tools at `host`'s window and store.
+    func attach(_ host: AutomationHost) {
+        let moved = host.store !== attachedStore
+        attachedHost = host
+        attachedStore = host.store
+        guard moved else { return }
+        // The handoff card watched the old store's front tab: watch this one's.
+        let generation = handoffTabsWatch.rebind()
+        if !handoffObservers.isEmpty { watchHandoffTabs(generation: generation) }
+        // Pages already live in this window's pool (and its linked ones) get recorded too.
+        if isRecordingNetwork { for (id, page) in host.livePages { Task { await record(id, page: page) } } }
+    }
+
+    /// Tabs whose pages Claude is using: when the tools' window closes, they move to the next one rather than
+    /// close and reload there.
+    var tabsKeptLive: Set<UUID> { Set(controlledTabs.keys).union(claudeOpened).union(trackedPages.keys) }
+
     var socketURL: URL { AutomationWire.socketURL(supportDirectory: supportDirectory) }
 
     /// Opens the socket if the setting is on. Call once the window exists.
     ///
-    /// A socket that can't open at launch never turns the setting off: the
-    /// watchdog keeps retrying, so "Allow Claude to Control the Browser" stays
-    /// on across restarts and updates until the user turns it off.
+    /// A socket that can't open at launch never turns the setting off: Kite
+    /// tries again when the socket's folder changes, when Kite comes to the front,
+    /// and every 30 s while it has no socket, so "Allow Claude to Control the
+    /// Browser" stays on across restarts and updates until the user turns it off.
     func start() {
         // Steps Claude handed over before Kite quit show again, whether or not Claude is connected now.
-        if handoffs.contains(where: { !$0.isFinished }) { startHandoffPoller() }
+        watchHandoffEvents()
+        if handoffs.contains(where: { !$0.isFinished }) { pollHandoffsSoon() }
         if isEnabled {
             if !openSocket(interactive: false) {
                 NSLog("Kite: Claude's connection didn't open at launch; retrying.")
@@ -179,20 +250,79 @@ final class AutomationController {
     }
 
     private func startWatchdog() {
-        socketWatchdog?.invalidate()
-        socketWatchdog = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        watchSocketFolder()
+        guard activationObserver == nil else { return }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkSocket() }
         }
     }
 
+    private func stopWatchdog() {
+        socketFolderWatch?.cancel()
+        socketFolderWatch = nil
+        socketParentWatch?.cancel()
+        socketParentWatch = nil
+        stopSocketRetry()
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+        activationObserver = nil
+    }
+
+    private static let socketRetryPause: TimeInterval = 2
+
+    /// Watches the socket's folder for the socket being deleted or replaced (`.write`) and for the folder itself
+    /// being deleted or renamed, and the folder above for being deleted or renamed. After either moves, the watches
+    /// are on the old folders: they follow the path to the new ones (which checkSocket made).
+    private func watchSocketFolder() {
+        socketFolderWatch?.cancel()
+        socketParentWatch?.cancel()
+        let folder = socketURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        socketFolderWatch = watch(folder, [.write, .delete, .rename])
+        socketParentWatch = watch(folder.deletingLastPathComponent(), [.delete, .rename])
+    }
+
+    private func watch(_ folder: URL, _ events: DispatchSource.FileSystemEvent) -> DispatchSourceFileSystemObject? {
+        let fd = Darwin.open(folder.path, O_EVTONLY)
+        guard fd >= 0 else {
+            NSLog("Kite: can't watch \(folder.path) for Claude's socket.")
+            return nil
+        }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: events, queue: .main)
+        source.setEventHandler { [weak self, weak source] in
+            MainActor.assumeIsolated {
+                guard let self, let source, source === self.socketFolderWatch || source === self.socketParentWatch else { return }
+                let moved = !source.data.isDisjoint(with: [.delete, .rename])
+                self.checkSocket(fromWatch: true)
+                if moved, self.isEnabled { self.watchSocketFolder() }
+            }
+        }
+        source.setCancelHandler { Darwin.close(fd) }
+        source.resume()
+        return source
+    }
+
+    private func startSocketRetry() {
+        guard socketRetry == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkSocket() }
+        }
+        timer.tolerance = 10
+        socketRetry = timer
+    }
+
+    private func stopSocketRetry() {
+        socketRetry?.invalidate()
+        socketRetry = nil
+    }
+
     /// Something else can take the socket away from a running Kite: another Kite
     /// on the same profile quitting, or a crashed launch's cleanup. Reopen it.
-    private func checkSocket() {
-        guard isEnabled else {
-            socketWatchdog?.invalidate()
-            socketWatchdog = nil
-            return
-        }
+    /// Never waits on the server's queue (see `AutomationServer`).
+    private func checkSocket(fromWatch: Bool = false) {
+        guard isEnabled else { return stopWatchdog() }
+        if fromWatch, server == nil, let lastSocketFailure, Date().timeIntervalSince(lastSocketFailure) < Self.socketRetryPause { return }
         if let server, server.isListening, server.ownsSocketFile { return }
         if let server {
             NSLog("Kite: Claude's socket file at \(server.socketURL.path) went away; reopening it.")
@@ -208,8 +338,7 @@ final class AutomationController {
             guard openSocket(interactive: true) else { return }
             startWatchdog()
         } else {
-            socketWatchdog?.invalidate()
-            socketWatchdog = nil
+            stopWatchdog()
             server?.stop()
             server = nil
             stop(tabs: Set(controlledTabs.keys).union(pendingConfirmations.keys).union(trackedPages.keys))
@@ -242,6 +371,7 @@ final class AutomationController {
     func pageCreated(_ id: UUID, _ page: WebPage) {
         guard isRecordingNetwork, let actions = page.automation as? PageActions else { return }
         // Not in a Task: the page loads its first URL as soon as Chromium attaches it.
+        if recordedPages[id] == nil { forgetClosedTabs(live: store.state.allTabIDs) }
         recordedPages[id] = (ObjectIdentifier(page), actions)
         actions.startEventsNow(domains: ["Network"]) { [weak self] method, params in
             self?.received(method, params, tab: id)
@@ -250,8 +380,6 @@ final class AutomationController {
 
     /// Ends page loads Chromium answered but never reported finished (see `NetworkLog.finishAnsweredDocuments`).
     func pageFinishedLoading(_ id: UUID) {
-        // A reload (or a slept tab waking) took the ring with the old page: put it back now, not on the next look.
-        if waitingStep(on: id) != nil { pollHandoffsSoon() }
         guard isEnabled else { return }
         let finished = network.finishAnsweredDocuments(tab: id.uuidString)
         if isRecordingNetwork { networkStore.append(finished) }
@@ -299,8 +427,8 @@ final class AutomationController {
     }
 
     func shutdown() {
-        socketWatchdog?.invalidate()
-        socketWatchdog = nil
+        stopWatchdog()
+        stopWatchingHandoffEvents()
         server?.stop()
         server = nil
         if settings.recordNetwork { networkStore.flush() }
@@ -312,7 +440,8 @@ final class AutomationController {
         for id in tabs {
             controlledTabs[id] = nil
             for alert in pendingConfirmations.removeValue(forKey: id) ?? [] {
-                host?.window?.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
+                // The window it's on, which may not be the tools' window any more.
+                alert.window.sheetParent?.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
             }
             for waiter in waiters.removeValue(forKey: id) ?? [] { waiter.finish(false) }
             if let tracked = trackedPages.removeValue(forKey: id) {
@@ -349,20 +478,20 @@ final class AutomationController {
                 let reason = "\(error)"
                 if reason != lastSocketError { NSLog("Kite: couldn't open Claude's socket: \(reason)") }
                 lastSocketError = reason
+                lastSocketFailure = Date()
+                startSocketRetry()
                 return false
             }
             let alert = NSAlert()
             alert.messageText = "Kite couldn't start Claude's connection"
             alert.informativeText = "\(error)"
-            alert.runModal()
+            _ = WindowPresenter.runModal(alert)
             return false
         }
         self.server = server
         lastSocketError = nil
-        expiryTimer?.invalidate()
-        expiryTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.expireIdleTabs() }
-        }
+        lastSocketFailure = nil
+        stopSocketRetry()
         watchDownloads()
         return true
     }
@@ -372,11 +501,13 @@ final class AutomationController {
         guard downloadObserver == nil else { return }
         downloadObserver = NotificationCenter.default.addObserver(forName: .KCDownloadDidUpdate, object: nil, queue: .main) {
             [weak self] note in
-            guard let info = note.userInfo, let id = (info["id"] as? NSNumber)?.intValue else { return }
-            let download = Download(
-                id: id, url: info["url"] as? String ?? "", path: info["path"] as? String ?? "", state: info["state"] as? String ?? "",
-                receivedBytes: (info["receivedBytes"] as? NSNumber)?.int64Value ?? 0, totalBytes: (info["totalBytes"] as? NSNumber)?.int64Value ?? -1)
-            MainActor.assumeIsolated { self?.downloads[id] = download }
+            // Claude stays out of incognito: its downloads (URLs, paths) are never listed.
+            guard let info = note.userInfo, let update = DownloadUpdate(notificationInfo: info), !update.isIncognito else { return }
+            let key = "\(update.engineContext)#\(update.engineID)"
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.downloads[key] = Download(update: update, sequence: self.downloads[key]?.sequence ?? self.downloads.count)
+            }
         }
         #endif
     }
@@ -395,6 +526,30 @@ final class AutomationController {
         controlledTabs[id]?.connections.sorted().compactMap { sessionFolders[$0] }.first
     }
 
+    /// A tab's page opened `child`. When Claude drives the opener, it drives the child too: the border and the
+    /// sidebar's mark go with the work, and it may close the child (a copy, a popup it's done with) without asking.
+    func tabOpened(_ child: UUID, by opener: UUID) {
+        openedTabs.record(child: child, opener: opener)
+        if let entry = controlledTabs[opener] {
+            controlledTabs[child] = ControlledTab(lastActive: Date(), connections: entry.connections)
+        }
+        if claudeOpened.contains(opener) { claudeOpened.insert(child) }
+        handoffTabOpened(child, by: opener)
+    }
+
+    /// The tabs `opener` opened since `date`, for a tool's result. Nil when there are none.
+    func openedReport(by opener: UUID, since date: Date) -> String? {
+        let state = store.state
+        let front = state.selectedTab?.id
+        let tabs = openedTabs.opened(by: opener, since: date).compactMap { id in
+            state.tab(id).map { tab in
+                AutomationReport.OpenedTab(id: id, title: tab.displayTitle, url: tab.url, isFront: id == front,
+                                           copyOf: openedTabs.earlierCopy(of: id) { state.tab($0)?.url })
+            }
+        }
+        return AutomationReport.opened(tabs, by: opener)
+    }
+
     /// Refreshes a controlled tab's idle clock without adding a connection.
     func touchControlled(_ id: UUID) {
         controlledTabs[id]?.lastActive = Date()
@@ -408,13 +563,33 @@ final class AutomationController {
         expireIdleTabs()
     }
 
+    /// Every 5 s while Claude drives a tab; stops once none is left.
+    private func startExpiryTimer() {
+        expiryTimer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.expireIdleTabs() }
+        }
+        timer.tolerance = 1
+        expiryTimer = timer
+    }
+
     private func expireIdleTabs(now: Date = Date()) {
         let live = store.state.allTabIDs
         for (id, entry) in controlledTabs {
             let idle = entry.connections.isEmpty ? Timing.idleAfterDisconnect : Timing.idleWhileConnected
             if now.timeIntervalSince(entry.lastActive) > idle || !live.contains(id) { controlledTabs[id] = nil }
         }
-        // Closed tabs take their logs with them.
+        forgetClosedTabs(live: live)
+        if !isEnabled || controlledTabs.isEmpty {
+            expiryTimer?.invalidate()
+            expiryTimer = nil
+        }
+    }
+
+    /// Closed tabs take their logs with them. Runs with the expiry timer, and whenever a tab's log starts, so logs of
+    /// closed tabs don't pile up while no timer runs.
+    private func forgetClosedTabs(live: Set<UUID>) {
+        openedTabs.retain(live: live)
         for id in Array(snapshots.keys) where !live.contains(id) { snapshots[id] = nil }
         for id in Array(activities.keys) where !live.contains(id) {
             activities[id] = nil
@@ -424,7 +599,6 @@ final class AutomationController {
             recordedPages[id] = nil
             network.forget(tab: id.uuidString)
         }
-        if !isEnabled { expiryTimer?.invalidate() }
     }
 
     // MARK: Events and waiting
@@ -433,6 +607,7 @@ final class AutomationController {
     func track(_ id: UUID, page: WebPage, actions: PageActions) async throws {
         let identity = ObjectIdentifier(page)
         guard trackedPages[id]?.page != identity else { return }
+        if trackedPages[id] == nil { forgetClosedTabs(live: store.state.allTabIDs) }
         trackedPages[id] = (identity, actions)
         if activities[id] == nil { activities[id] = TabActivity() }
         try await actions.startEvents(domains: ["Page", "Runtime", "Log", "Network"]) { [weak self] method, params in
@@ -445,6 +620,7 @@ final class AutomationController {
             handoffBindingCalled(params, tab: id)
             return
         }
+        if method == "Page.navigatedWithinDocument" { handoffPageNavigated(id) }
         if method.hasPrefix("Network.") {
             let finished = network.ingest(method: method, params: params, tab: id.uuidString)
             if isRecordingNetwork { networkStore.append(finished) }
@@ -525,10 +701,19 @@ final class AutomationController {
 
     func perform(_ request: AutomationWire.Request, connection: Int) async -> ToolOutput {
         guard isEnabled else { return .failure(.disabled) }
+        if request.tool == TicketTest.wireTool {
+            // Only the user's own `kite test-ticket`: a Claude task can't start another task.
+            guard request.task == nil else { return .failure(AutomationError(.denied, "A Claude task can't start a ticket test.")) }
+            return startTicketTest?(request.arguments) ?? .failure(AutomationError(.unsupported, "This Kite can't run ticket tests."))
+        }
         do {
             let command = try AutomationCommand(tool: request.tool, arguments: request.arguments)
+            if command.needsWindow { ensureWindow?() }
             let task = request.task.flatMap(UUID.init(uuidString:)).flatMap { isRunningTask?($0) == true ? $0 : nil }
-            return try await Self.$agentTask.withValue(task) { try await run(command, connection: connection) }
+            let started = Target(host: attachedHost, store: attachedStore)
+            return try await Self.$commandTarget.withValue(started) {
+                try await Self.$agentTask.withValue(task) { try await run(command, connection: connection) }
+            }
         } catch let error as AutomationError {
             return .failure(error)
         } catch let error as AutomationCommand.InvalidArguments {
@@ -568,7 +753,21 @@ final class AutomationController {
 
     // MARK: Confirmation
 
+    /// A pointer action Kite can't describe: a coordinate click with nothing hit-testable under it, or a
+    /// drag. A ticket test refuses it on Linear, since the guard can't tell what it would press.
+    func authorizeUndescribed(tab: BrowserTab) throws {
+        if let task = Self.agentTask, isTicketTest?(task) == true,
+           TicketTest.isLinear(store.state.tab(tab.id)?.url?.host()) {
+            throw AutomationError(.denied, TicketTest.postingRefusal)
+        }
+    }
+
     func authorize(_ action: AutomationAction, tab: BrowserTab) async throws {
+        // A ticket test drafts its report on Linear; only the user posts it.
+        if let task = Self.agentTask, isTicketTest?(task) == true,
+           let refusal = TicketTest.blocksPosting(action, host: store.state.tab(tab.id)?.url?.host()) {
+            throw AutomationError(.denied, refusal)
+        }
         switch AutomationPolicy.evaluate(action, host: store.state.tab(tab.id)?.url?.host()) {
         case .allow:
             // Ask Before Claude Acts: Jev takes a second look at clicks the word list let through.
@@ -609,8 +808,7 @@ final class AutomationController {
     private func confirm(_ request: ConfirmationRequest, tab id: UUID) async -> Bool {
         guard let window = host?.window else { return false }
         store.mutateWithoutUndo { $0.select(tab: id) }
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        WindowPresenter.show(window, activate: true)
 
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -653,8 +851,5 @@ final class AutomationController {
         return command + " -- \(Self.shellQuote(cliPath)) mcp"
     }
 
-    static func shellQuote(_ string: String) -> String {
-        string.allSatisfy { $0.isLetter || $0.isNumber || "/._-".contains($0) }
-            ? string : "'" + string.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
+    static func shellQuote(_ string: String) -> String { Shell.quote(string) }
 }

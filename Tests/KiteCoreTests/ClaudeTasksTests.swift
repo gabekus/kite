@@ -80,7 +80,7 @@ import Testing
         try ClaudeTaskList(tasks: [ClaudeTask(goal: "running"), done]).save(to: url)
         let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
         #expect(mode == 0o600)
-        let loaded = ClaudeTaskList.load(from: url).tasks
+        let loaded = try #require(ClaudeTaskList.load(from: url).value).tasks
         #expect(loaded.map(\.status) == [.stopped, .done])
         #expect(loaded[1].lastReply == "ok")
     }

@@ -19,7 +19,8 @@ final class DownloadTidier {
     private var originals: [UUID: (original: String, renamed: String)] = [:]
 
     func tidy(_ item: DownloadItem, sourceTitle: String?) {
-        guard TidyDownloads.isEnabled(), !item.path.isEmpty,
+        // An incognito download's name and tab title never go to Claude.
+        guard !item.isIncognito, TidyDownloads.isEnabled(), !item.path.isEmpty,
               FileManager.default.fileExists(atPath: item.path) else { return }
         let fileName = (item.path as NSString).lastPathComponent
         let prompt = TidyDownloads.prompt(fileName: fileName, tabTitle: sourceTitle, domain: item.sourceHost,
@@ -29,7 +30,7 @@ final class DownloadTidier {
         Task.detached(priority: .utility) { [weak self] in
             // A name that already says what the file is stays, without a Claude run.
             if let jev = JevClient.shared, await Jev.skipsTidy(check, ask: jev.ask) { return }
-            guard let output = Self.askClaude(prompt, timeout: timeout),
+            guard let output = await Self.askClaude(prompt, timeout: timeout),
                   let proposed = TidyDownloads.name(fromClaudeOutput: output),
                   let name = TidyDownloads.tidiedName(proposed, original: fileName) else { return }
             await self?.rename(item.id, from: item.path, to: name)
@@ -93,42 +94,15 @@ final class DownloadTidier {
     // MARK: Claude
 
     /// One `claude -p` run with no tools or MCP servers, in an empty folder. Nil on any failure.
-    nonisolated private static func askClaude(_ prompt: String, timeout: TimeInterval) -> String? {
-        guard let claude = ClaudeConnect.findClaude() else { return nil }
+    nonisolated private static func askClaude(_ prompt: String, timeout: TimeInterval) async -> String? {
+        // Without the test switches Tidy Downloads itself reads.
+        guard let claude = await ClaudeCommand.find()?.removing(["KITE_SUPPORT_PATH", "KITE_TEST_DOWNLOADS_PATH"]) else { return nil }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("KiteTidyDownloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = TidyDownloads.arguments()
-        process.environment = environment
-        process.currentDirectoryURL = directory
-        let input = Pipe(), output = Pipe()
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let timer = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
-        try? input.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
-        try? input.fileHandleForWriting.close()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        timer.cancel()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        // Its own process group, ended whole at the timeout: a child left holding stdout can't hang the read.
+        let process = claude.oneShot(arguments: TidyDownloads.arguments(), directory: directory)
+        guard let result = await process.run(input: Data(prompt.utf8), timeout: timeout), result.status == 0 else { return nil }
+        return String(decoding: result.output, as: UTF8.self)
     }
-
-    /// GUI apps get a bare PATH and Claude Code may be a Node script: the login shell's PATH, once.
-    nonisolated private static let environment: [String: String] = {
-        var environment = ProcessInfo.processInfo.environment
-        let (status, output) = ClaudeConnect.run("/bin/zsh", ["-lc", "printf %s \"$PATH\""])
-        let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        if status == 0, path.contains("/") { environment["PATH"] = path }
-        // Kite's own test switches mustn't leak into Claude Code.
-        environment["KITE_DIAGNOSTICS"] = nil
-        environment["KITE_SUPPORT_PATH"] = nil
-        environment["KITE_TEST_DOWNLOADS_PATH"] = nil
-        return environment
-    }()
 }

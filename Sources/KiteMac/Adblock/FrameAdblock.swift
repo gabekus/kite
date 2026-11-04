@@ -36,6 +36,10 @@ final class FrameAdblock {
         "filter": [["type": "iframe", "exclude": false]],
     ]
 
+    /// Frames let go untouched: Cloudflare's challenge (Turnstile) never passes while
+    /// DevTools is attached to its frame as it loads, even with nothing injected.
+    private static let untouchedHosts: Set<String> = ["challenges.cloudflare.com"]
+
     /// An event from the tab's own session (or, via the session handler, a frame's).
     func handle(_ method: String?, _ params: [AnyHashable: Any]) {
         switch method {
@@ -59,6 +63,13 @@ final class FrameAdblock {
         let target = info?["targetId"] as? String
         let reported = (info?["url"] as? String).flatMap(URL.init(string:))
         let url = reported?.host() != nil ? reported : target.flatMap { destinations.removeValue(forKey: $0) }
+        if let host = url?.host()?.lowercased(), Self.untouchedHosts.contains(host) {
+            // Resume it and detach before it runs; its own iframes then don't attach either.
+            send(session, "Runtime.runIfWaitingForDebugger")
+            nextID += 1
+            browser?.sendDevToolsMessage(["id": nextID, "method": "Target.detachFromTarget", "params": ["sessionId": session]])
+            return
+        }
         // Page events name the destinations of the frame's own iframes; document-start
         // scripts also need the Page domain.
         send(session, "Page.enable")

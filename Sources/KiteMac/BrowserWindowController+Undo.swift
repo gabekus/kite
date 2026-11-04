@@ -9,35 +9,7 @@ import KiteCore
 /// this a page with focus would swallow every sidebar undo.
 extension BrowserWindowController {
     /// What a page reports about its focus: whether ⌘Z there would undo the page's own editing.
-    /// A focused frame Kite can't look into (another site's iframe) counts as editing, so typing
-    /// there is never lost to a sidebar undo.
-    static let pageEditingFocusScript = """
-    (() => {
-      const editing = (doc) => {
-        if (!doc) return true;
-        if (doc.designMode === 'on') return true;
-        let e = doc.activeElement;
-        while (e && e.shadowRoot && e.shadowRoot.activeElement) e = e.shadowRoot.activeElement;
-        if (!e || e === doc.body || e === doc.documentElement) return false;
-        if (e.isContentEditable) return true;
-        const tag = e.tagName;
-        if (tag === 'IFRAME' || tag === 'FRAME') {
-          let inner = null;
-          try { inner = e.contentDocument; } catch (_) {}
-          return editing(inner);
-        }
-        if (e.disabled || e.readOnly) return false;
-        if (tag === 'TEXTAREA') return true;
-        if (tag === 'INPUT') {
-          const type = (e.getAttribute('type') || 'text').toLowerCase();
-          return ['text', 'search', 'url', 'tel', 'email', 'password', 'number', 'date', 'datetime-local',
-                  'month', 'time', 'week'].includes(type);
-        }
-        return false;
-      };
-      return editing(document);
-    })()
-    """
+    static let pageEditingFocusScript = PageFocusScript.editingFocus
 
     /// The page that has the keyboard (a tab's, a split pane's or a Peek's), with the view inside
     /// it that's first responder; nil when the keyboard is anywhere else.

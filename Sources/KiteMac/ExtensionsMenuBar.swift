@@ -124,8 +124,8 @@ final class ExtensionsMenuBar: NSObject, NSMenuDelegate, NSMenuItemValidation {
     }
 
     /// The top-right corner of the front browser window's page, where the toolbar's
-    /// extensions button would be.
-    private static func anchor() -> (NSView, NSRect)? {
+    /// extensions button would be. Also where an extension's action.openPopup opens.
+    static func anchor() -> (NSView, NSRect)? {
         guard let view = frontController()?.contentFrame else { return nil }
         let bounds = view.bounds
         let y = view.isFlipped ? bounds.minY + 4 : bounds.maxY - 5

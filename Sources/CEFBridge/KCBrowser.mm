@@ -1,9 +1,11 @@
 #import "CEFBridge.h"
 #import "KCInternal.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <map>
+#include <vector>
 
 #include "include/cef_client.h"
 #include "include/cef_cookie.h"
@@ -25,6 +27,9 @@
 - (instancetype)initPopupWithDelegate:(id<KCBrowserDelegate>)delegate NS_DESIGNATED_INITIALIZER;
 - (void)attachBrowser:(CefRefPtr<CefBrowser>)browser;
 - (void)browserDidClose;
+- (void)pageDidLetGo;
+/// `close` was called: nothing may ask the person any more.
+@property (nonatomic, readonly) BOOL isForceClosing;
 - (void)deliverDevToolsResult:(int)messageID success:(bool)success data:(NSData *)data;
 - (void)willNavigateMainFrame:(CefRefPtr<CefRequest>)request;
 - (void)mainFrameDidStartLoading;
@@ -44,6 +49,50 @@
 @end
 
 NSString* const KCDownloadDidUpdateNotification = @"KCDownloadDidUpdateNotification";
+
+namespace {
+
+/// A beforeunload dialog Kite is showing, waiting for Leave or Cancel.
+struct PendingUnloadDialog {
+    CefRefPtr<CefJSDialogCallback> callback;
+    __weak KCBrowser* owner;
+};
+
+/// Each browser's unanswered beforeunload dialog, by browser identifier.
+std::map<int, PendingUnloadDialog>& PendingBeforeUnload() {
+    static auto* pending = new std::map<int, PendingUnloadDialog>();
+    return *pending;
+}
+
+}  // namespace
+
+void KCAcceptPendingBeforeUnload(CefRefPtr<CefBrowser> browser) {
+    // Collected first: answering runs Chromium code that may touch the map.
+    std::vector<PendingUnloadDialog> answered;
+    auto& pending = PendingBeforeUnload();
+    for (auto it = pending.begin(); it != pending.end();) {
+        if (browser && it->first != browser->GetIdentifier()) { ++it; continue; }
+        answered.push_back(it->second);
+        it = pending.erase(it);
+    }
+    for (auto& dialog : answered) {
+        // First, so the reset Continue brings doesn't read as the person staying.
+        KCBrowser* closing = dialog.owner;
+        if ([closing.delegate respondsToSelector:@selector(browserWillCloseWithoutAsking:)]) {
+            [closing.delegate browserWillCloseWithoutAsking:closing];
+        }
+        dialog.callback->Continue(true, CefString());
+        // Then take Kite's sheet down; its late Cancel reaches a callback that has already run.
+        KCBrowser* owner = dialog.owner;
+        if ([owner.delegate respondsToSelector:@selector(browserDismissJavaScriptDialogs:)]) {
+            [owner.delegate browserDismissJavaScriptDialogs:owner];
+        }
+    }
+}
+
+void KCForgetPendingBeforeUnload() {
+    PendingBeforeUnload().clear();
+}
 
 namespace {
 
@@ -128,31 +177,124 @@ class NetworkCountingHandler : public CefResourceRequestHandler {
     IMPLEMENT_REFCOUNTING(NetworkCountingHandler);
 };
 
-// Live downloads' callbacks, by Chromium's download id, so the downloads list can cancel them.
-// Download callbacks run on the main (UI) thread.
-std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>>& DownloadCallbacks() {
-    static std::map<uint32_t, CefRefPtr<CefDownloadItemCallback>> callbacks;
-    return callbacks;
-}
-
 /// The on-disk profiles' contexts, by folder name (see contextForProfileDirectory:).
 NSMutableDictionary<NSString*, KCRequestContext*>* ProfileContexts() {
     static NSMutableDictionary<NSString*, KCRequestContext*>* contexts = [NSMutableDictionary dictionary];
     return contexts;
 }
 
+/// Incognito contexts whose KCRequestContext is still around (weakly held: an incognito
+/// window's engine goes when the window closes).
+NSHashTable<KCRequestContext*>* IncognitoContexts() {
+    static NSHashTable<KCRequestContext*>* contexts = [NSHashTable weakObjectsHashTable];
+    return contexts;
+}
+
+/// Where a download came from: `key` names its browser context ("" for the default profile, the
+/// folder name for another profile, "incognito-N" for an incognito window), `profile` is the
+/// folder for a non-default profile.
+struct DownloadSource {
+    NSString* key = @"";
+    NSString* profile = nil;
+    bool incognito = false;
+};
+
+DownloadSource DownloadSourceOf(CefRefPtr<CefRequestContext> context) {
+    DownloadSource source;
+    if (!context) return source;
+    // The default profile: the global context, or one sharing its storage (the ad blocker's).
+    // An Arc sign-in import can also open a "Default" profile context; that's this one too.
+    CefRefPtr<CefRequestContext> global = CefRequestContext::GetGlobalContext();
+    if (global && (context->IsSame(global) || context->IsSharingWith(global))) return source;
+    for (NSString* directory in ProfileContexts()) {
+        if ([directory isEqualToString:@"Default"]) continue;
+        if (ProfileContexts()[directory].cefContext->IsSame(context)) {
+            source.key = directory;
+            source.profile = directory;
+            return source;
+        }
+    }
+    // An empty cache path is an in-memory (incognito) profile.
+    if (context->GetCachePath().empty()) {
+        source.incognito = true;
+        for (KCRequestContext* incognito in IncognitoContexts()) {
+            if (incognito.cefContext->IsSame(context)) { source.key = incognito.downloadContextKey; return source; }
+        }
+        // Its window has closed and its KCRequestContext has gone with the engine: the session is over.
+        source.key = nil;
+    }
+    return source;
+}
+
+/// Incognito sessions whose window has closed (endDownloadsForContextKey:). Their downloads are
+/// canceled and never followed again, so nothing keeps their in-memory profile alive.
+NSMutableSet<NSString*>* EndedDownloadContexts() {
+    static NSMutableSet<NSString*>* keys = [NSMutableSet set];
+    return keys;
+}
+
+/// An incognito download whose session is over: cancel it, and don't follow or list it.
+bool IsEndedSession(const DownloadSource& source) {
+    return source.incognito && (!source.key || [EndedDownloadContexts() containsObject:source.key]);
+}
+
+/// A download Kite has handed a path to and is still following. Chromium's id restarts at 1 in
+/// every browser context (each profile, each incognito window), so a download is its id plus its
+/// context. Its source is worked out once, when it starts, and reused for every update: the
+/// incognito window's KCRequestContext can go while the download carries on.
+/// Download callbacks run on the main (UI) thread.
+struct LiveDownload {
+    /// Held strongly while followed: an incognito session's are dropped when it ends.
+    CefRefPtr<CefRequestContext> context;
+    uint32_t id;
+    DownloadSource source;
+    /// The path it saves to, held so no other download is given it until this one completes
+    /// or is canceled (an interrupted one can resume into the same file).
+    NSString* path;
+    /// Set until it completes or is canceled (interrupted too), so the downloads list or an ending
+    /// incognito session can cancel it. Nil only before its first update.
+    CefRefPtr<CefDownloadItemCallback> callback;
+    bool interrupted;
+};
+
+std::vector<LiveDownload>& LiveDownloads() {
+    static std::vector<LiveDownload> downloads;
+    return downloads;
+}
+
+/// Interrupted downloads stay followed (they can resume) and a destroyed browser may never send
+/// a final update, so past this many the oldest interrupted one goes, else the oldest.
+constexpr size_t kMaxLiveDownloads = 200;
+
+LiveDownload* FindLiveDownload(CefRefPtr<CefRequestContext> context, uint32_t id) {
+    for (LiveDownload& download : LiveDownloads()) {
+        if (download.id == id && context && download.context && download.context->IsSame(context)) return &download;
+    }
+    return nullptr;
+}
+
+LiveDownload& AddLiveDownload(CefRefPtr<CefRequestContext> context, uint32_t id, const DownloadSource& source) {
+    std::vector<LiveDownload>& downloads = LiveDownloads();
+    while (downloads.size() >= kMaxLiveDownloads) {
+        auto stale = std::find_if(downloads.begin(), downloads.end(), [](const LiveDownload& d) { return d.interrupted; });
+        downloads.erase(stale != downloads.end() ? stale : downloads.begin());
+    }
+    downloads.push_back({context, id, source, nil, nullptr, false});
+    return downloads.back();
+}
+
+void RemoveLiveDownload(LiveDownload* download) {
+    std::vector<LiveDownload>& downloads = LiveDownloads();
+    downloads.erase(downloads.begin() + (download - downloads.data()));
+}
+
 NSURL* _Nullable (^gDownloadFolderProvider)(NSString* _Nullable, BOOL*);
 
-/// The folder a download from `browser` saves into, and whether to ask where first: the
-/// app's answer for the browser's profile, else Downloads.
-NSURL* DownloadFolder(CefRefPtr<CefBrowser> browser, BOOL* prompt) {
+/// The folder a download from `profile` (nil: the default profile or incognito) saves into, and
+/// whether to ask where first: the app's answer for the profile, else Downloads.
+NSURL* DownloadFolder(NSString* profile, BOOL* prompt) {
     *prompt = NO;
     if (gDownloadFolderProvider) {
-        CefRefPtr<CefRequestContext> context = browser->GetHost()->GetRequestContext();
-        NSString* profile = nil;
-        for (NSString* directory in ProfileContexts()) {
-            if (ProfileContexts()[directory].cefContext->IsSame(context)) { profile = directory; break; }
-        }
         if (NSURL* folder = gDownloadFolderProvider(profile, prompt)) return folder;
     }
     NSURL* directory = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
@@ -167,8 +309,15 @@ NSURL* DownloadFolder(CefRefPtr<CefBrowser> browser, BOOL* prompt) {
 NSURL* UniqueDownloadURL(NSString* name, NSURL* directory) {
     NSString* base = name.stringByDeletingPathExtension;
     NSString* extension = name.pathExtension;
+    // Paths given to downloads still running: Chromium creates the file only once data arrives,
+    // so two same-name downloads that start together would both find the name free.
+    NSMutableSet<NSString*>* reserved = [NSMutableSet set];
+    for (const LiveDownload& download : LiveDownloads()) if (download.path) [reserved addObject:download.path];
+    auto taken = [&](NSURL* url) {
+        return [reserved containsObject:url.path] || [NSFileManager.defaultManager fileExistsAtPath:url.path];
+    };
     NSURL* candidate = [directory URLByAppendingPathComponent:name];
-    for (int n = 2; [NSFileManager.defaultManager fileExistsAtPath:candidate.path]; n++) {
+    for (int n = 2; taken(candidate); n++) {
         NSString* numbered = extension.length ? [NSString stringWithFormat:@"%@ %d.%@", base, n, extension]
                                               : [NSString stringWithFormat:@"%@ %d", base, n];
         candidate = [directory URLByAppendingPathComponent:numbered];
@@ -247,6 +396,30 @@ static bool RouteMailto(KCBrowser* owner, CefRefPtr<CefFrame> frame, const CefSt
     return true;
 }
 
+/// Chromium's own schemes, which load in the page; anything else may belong to another app.
+static bool IsInPageScheme(NSString* scheme) {
+    static NSSet<NSString*>* schemes = [NSSet setWithArray:@[
+        @"http", @"https", @"about", @"blob", @"data", @"file", @"javascript", @"chrome", @"chrome-extension",
+        @"devtools", @"view-source", @"ws", @"wss", @"filesystem"
+    ]];
+    return [schemes containsObject:scheme.lowercaseString];
+}
+
+/// t3code:, zoommtg:, etc. go to the app that claims them, as in WebKitEngine (an OAuth callback
+/// is a redirect to one). Chromium would show ERR_UNKNOWN_URL_SCHEME instead.
+static bool RouteExternalScheme(const CefString& target) {
+    NSURL* url = ToNSURL(target);
+    if (!url.scheme || IsInPageScheme(url.scheme)) return false;
+    NSURL* app = [NSWorkspace.sharedWorkspace URLForApplicationToOpenURL:url];
+    if (!app || [[NSBundle bundleWithURL:app].bundleIdentifier isEqualToString:NSBundle.mainBundle.bundleIdentifier]) {
+        return false;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSWorkspace.sharedWorkspace openURL:url];
+    });
+    return true;
+}
+
 /// Whether the delegate opens a clicked link in Arc's Peek card instead (it reports the link itself).
 static bool AskLinkPeek(KCBrowser* owner, const CefString& target, bool shift) {
     id<KCBrowserDelegate> delegate = owner.delegate;
@@ -297,7 +470,7 @@ class KCClient : public CefClient,
                  public CefJSDialogHandler,
                  public CefDevToolsMessageObserver {
  public:
-    explicit KCClient(KCBrowser* owner) : owner_(owner), requests_(new NetworkCountingHandler(owner, KCAdblockRequestHandler(owner))) {}
+    explicit KCClient(KCBrowser* owner) : owner_(owner), container_(owner.view), requests_(new NetworkCountingHandler(owner, KCAdblockRequestHandler(owner))) {}
 
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -391,19 +564,34 @@ class KCClient : public CefClient,
                               const CefString& message_text,
                               bool is_reload,
                               CefRefPtr<CefJSDialogCallback> callback) override {
+        KCBrowser* owner = owner_;
+        // A forced close (quitting, hibernation) still asks: the page leaves without a dialog,
+        // which would hold up the quit. Answered on a later turn: answering inside this call
+        // slowed Chromium's teardown.
+        if (KCRuntimeIsQuitting() || !owner || owner.isForceClosing) {
+            dispatch_async(dispatch_get_main_queue(), ^{ callback->Continue(true, CefString()); });
+            return true;
+        }
         NSURL* origin = ToNSURL(browser->GetMainFrame()->GetURL());
-        return RunDialog(is_reload ? KCJavaScriptDialogKindReload : KCJavaScriptDialogKindLeave, @"", @"", origin, callback);
+        int identifier = browser->GetIdentifier();
+        // Recorded before the dialog shows, so quitting can answer it.
+        PendingBeforeUnload()[identifier] = {callback, owner};
+        bool shown = RunDialog(is_reload ? KCJavaScriptDialogKindReload : KCJavaScriptDialogKindLeave, @"", @"", origin, callback,
+                               ^(bool) { PendingBeforeUnload().erase(identifier); });
+        if (!shown) PendingBeforeUnload().erase(identifier);
+        return shown;
     }
 
     void OnResetDialogState(CefRefPtr<CefBrowser> browser) override {
         KCBrowser* owner = owner_;
+        PendingBeforeUnload().erase(browser->GetIdentifier());
         if ([owner.delegate respondsToSelector:@selector(browserDismissJavaScriptDialogs:)]) {
             [owner.delegate browserDismissJavaScriptDialogs:owner];
         }
     }
 
     bool RunDialog(KCJavaScriptDialogKind kind, NSString* message, NSString* defaultText, NSURL* origin,
-                   CefRefPtr<CefJSDialogCallback> callback) {
+                   CefRefPtr<CefJSDialogCallback> callback, void (^answered_)(bool ok) = nil) {
         KCBrowser* owner = owner_;
         id<KCBrowserDelegate> delegate = owner.delegate;
         SEL run = @selector(browser:runJavaScriptDialog:message:defaultText:origin:completion:);
@@ -413,6 +601,7 @@ class KCClient : public CefClient,
                    origin:origin completion:^(BOOL ok, NSString* text) {
             if (answered) return;
             answered = true;
+            if (answered_) answered_(ok);
             callback->Continue(ok, CefString(text.UTF8String ?: ""));
         }];
         return true;
@@ -451,7 +640,10 @@ class KCClient : public CefClient,
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
         KCRegisterBrowser(browser);
         devtools_registration_ = browser->GetHost()->AddDevToolsMessageObserver(this);
-        [owner_ attachBrowser:browser];
+        KCBrowser* owner = owner_;
+        // Its KCBrowser went away while Chromium was making it: nothing would ever close it.
+        if (!owner) return browser->GetHost()->CloseBrowser(true);
+        [owner attachBrowser:browser];
     }
 
     bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
@@ -469,26 +661,33 @@ class KCClient : public CefClient,
                        bool* no_javascript_access) override {
         KCBrowser* owner = owner_;
         id<KCBrowserDelegate> delegate = owner.delegate;
-        if (!delegate) return true;
+        if (!delegate || KCRuntimeIsQuitting()) return true;
         // A target=_blank link (or ⇧-click) the delegate opens in Arc's Peek card: no popup. Not a named
         // window (window.open(url, "AppleAuthentication")): a Peek has no window.opener, so the result of
         // a sign-in popup would never reach the page.
         bool linkClick = (target_disposition == CEF_WOD_NEW_FOREGROUND_TAB || target_disposition == CEF_WOD_NEW_WINDOW) &&
                          target_frame_name.empty();
         if (user_gesture && linkClick && AskLinkPeek(owner, target_url, target_disposition == CEF_WOD_NEW_WINDOW)) return true;
-        // Host the popup in a Kite tab instead of a separate native window.
+        // Host the popup in a Kite tab instead of a separate native window. Asked first: a page nobody
+        // shows (a background reader, an install or verification page) has nowhere to put one, so the
+        // popup is cancelled (window.open returns null) rather than built into a view that's going away.
         KCBrowser* popup = [[KCBrowser alloc] initPopupWithDelegate:delegate];
+        if (![delegate browser:owner didCreatePopup:popup url:ToNSURL(target_url)]) {
+            [popup close];
+            return true;
+        }
         NSRect bounds = owner.view.bounds;
         windowInfo.SetAsChild((__bridge CefWindowHandle)popup.view,
                               CefRect(0, 0, (int)NSWidth(bounds), (int)NSHeight(bounds)));
         client = new KCClient(popup);
         settings.background_color = KCPageBackdropColor;
-        [delegate browser:owner didCreatePopup:popup url:ToNSURL(target_url)];
         [popup prepareFirstPage:ToNSURL(target_url)];
         return false;
     }
 
     bool DoClose(CefRefPtr<CefBrowser> browser) override {
+        // The page's beforeunload let a close the person asked for go ahead.
+        [owner_ pageDidLetGo];
         // Returning false would send performClose: to the whole window. Tear down
         // just this tab's view instead, which completes the close.
         NSView* view = (__bridge NSView*)browser->GetHost()->GetWindowHandle();
@@ -500,8 +699,10 @@ class KCClient : public CefClient,
 
     void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
         devtools_registration_ = nullptr;
+        PendingBeforeUnload().erase(browser->GetIdentifier());
         [owner_ browserDidClose];
         KCUnregisterBrowser(browser);
+        container_ = nil;
     }
 
     // CefDisplayHandler
@@ -517,6 +718,13 @@ class KCClient : public CefClient,
 
     void OnFaviconURLChange(CefRefPtr<CefBrowser> browser, const std::vector<CefString>& icon_urls) override {
         [owner_.delegate browser:owner_ faviconDidChange:icon_urls.empty() ? nil : ToNSURL(icon_urls.front())];
+    }
+
+    bool OnAutoResize(CefRefPtr<CefBrowser> browser, const CefSize& new_size) override {
+        KCBrowser* owner = owner_;
+        if (!owner.autoResizeHandler) return false;
+        owner.autoResizeHandler(NSMakeSize(new_size.width, new_size.height));
+        return true;
     }
 
     void OnLoadingProgressChange(CefRefPtr<CefBrowser> browser, double progress) override {
@@ -557,6 +765,7 @@ class KCClient : public CefClient,
                         bool user_gesture,
                         bool is_redirect) override {
         if (RouteMailto(owner_, frame, request->GetURL())) return true;
+        if (RouteExternalScheme(request->GetURL())) return true;
         if (frame->IsMain() && user_gesture && !is_redirect &&
             (request->GetTransitionType() & TT_SOURCE_MASK) == TT_LINK &&
             AskLinkPeek(owner_, request->GetURL(), false)) {
@@ -617,10 +826,27 @@ class KCClient : public CefClient,
             callback->Continue([directory stringByAppendingPathComponent:name].UTF8String, false);
             return true;
         }
+        CefRefPtr<CefRequestContext> context = browser->GetHost()->GetRequestContext();
+        LiveDownload* live = FindLiveDownload(context, download_item->GetId());
+        if (!live) {
+            DownloadSource source = DownloadSourceOf(context);
+            if (IsEndedSession(source)) {
+                // Its incognito window has closed: canceled at its first update, never followed.
+                NSString* name = [NSString stringWithFormat:@"KiteEndedIncognito-%@", NSUUID.UUID.UUIDString];
+                callback->Continue([NSTemporaryDirectory() stringByAppendingPathComponent:name].UTF8String, false);
+                return true;
+            }
+            live = &AddLiveDownload(context, download_item->GetId(), source);
+        }
+        // Asked again for the same download (Chromium restarting an interrupted one): its own
+        // reservation doesn't count against it.
+        live->path = nil;
         BOOL prompt = NO;
-        NSURL* folder = DownloadFolder(browser, &prompt);
+        NSURL* folder = DownloadFolder(live->source.profile, &prompt);
+        NSString* path = UniqueDownloadURL(ToNSString(suggested_name), folder).path;
+        live->path = path;
         // With `prompt`, Chromium's Save panel opens in the folder with the name filled in.
-        callback->Continue(UniqueDownloadURL(ToNSString(suggested_name), folder).path.UTF8String, prompt);
+        callback->Continue(path.UTF8String, prompt);
         return true;
     }
 
@@ -629,21 +855,43 @@ class KCClient : public CefClient,
                            CefRefPtr<CefDownloadItemCallback> callback) override {
         // A store install's package isn't the user's download: no bounce, not listed.
         if (IsExtensionPackage(download_item, download_item->GetSuggestedFileName())) return;
+        CefRefPtr<CefRequestContext> context = browser->GetHost()->GetRequestContext();
+        LiveDownload* live = FindLiveDownload(context, download_item->GetId());
+        // A repeat after the download finished (Kite already let it go): nothing new to report.
+        if (!live && !download_item->IsInProgress() && !download_item->IsInterrupted()) return;
+        if (!live) {
+            DownloadSource source = DownloadSourceOf(context);
+            if (IsEndedSession(source)) {
+                if (download_item->IsInProgress() || download_item->IsInterrupted()) callback->Cancel();
+                return;
+            }
+            live = &AddLiveDownload(context, download_item->GetId(), source);
+        }
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
-        if (download_item->IsInProgress()) DownloadCallbacks()[download_item->GetId()] = callback;
-        else DownloadCallbacks().erase(download_item->GetId());
+        DownloadSource source = live->source;
+        // The Save panel may have put it somewhere else: hold the path it really uses.
+        NSString* fullPath = ToNSString(download_item->GetFullPath());
+        if (fullPath.length) live->path = fullPath;
+        bool finished = download_item->IsComplete() || download_item->IsCanceled();
+        live->callback = callback;
+        live->interrupted = download_item->IsInterrupted();
+        if (finished) RemoveLiveDownload(live);
         NSString* state = download_item->IsComplete() ? @"complete"
             : download_item->IsCanceled() ? @"canceled"
             : download_item->IsInterrupted() ? @"interrupted" : @"in-progress";
-        [NSNotificationCenter.defaultCenter postNotificationName:KCDownloadDidUpdateNotification object:owner_ userInfo:@{
+        NSMutableDictionary* info = [@{
             @"id": @(download_item->GetId()),
+            @"context": source.key,
+            @"incognito": @(source.incognito),
             @"url": ToNSString(download_item->GetOriginalUrl()),
-            @"path": ToNSString(download_item->GetFullPath()),
+            @"path": fullPath,
             @"state": state,
             @"receivedBytes": @(download_item->GetReceivedBytes()),
             @"totalBytes": @(download_item->GetTotalBytes()),
             @"speed": @(download_item->GetCurrentSpeed()),
-        }];
+        } mutableCopy];
+        if (source.profile) info[@"profileDirectory"] = source.profile;
+        [NSNotificationCenter.defaultCenter postNotificationName:KCDownloadDidUpdateNotification object:owner_ userInfo:info];
     }
 
     bool IsExtensionPackage(CefRefPtr<CefDownloadItem> item, const CefString& suggested_name) {
@@ -805,6 +1053,10 @@ class KCClient : public CefClient,
 
  private:
     __weak KCBrowser* owner_;
+    /// The view Chromium builds the browser into (`SetAsChild`), which holds Chromium's own view: kept
+    /// until the browser closes, so a KCBrowser released early (a page dropped without `close`, or
+    /// before Chromium made it) never leaves Chromium with a freed parent.
+    NSView* container_;
     /// Ids for getUserMedia prompts, counting down so they never meet Chromium's prompt ids.
     NSInteger media_prompt_id_ = 0;
     CefRefPtr<CefRegistration> devtools_registration_;
@@ -818,14 +1070,22 @@ class KCClient : public CefClient,
 
 @implementation KCRequestContext {
     CefRefPtr<CefRequestContext> _context;
+    NSString* _downloadKey;
 }
 
 + (instancetype)incognitoContext {
+    static NSInteger count = 0;
     KCRequestContext* context = [[self alloc] initPrivate];
     // An empty cache_path makes Chromium keep this profile in memory only.
     CefRequestContextSettings settings;
     context->_context = CefRequestContext::CreateContext(settings, KCAdblockContextHandler());
+    context->_downloadKey = [NSString stringWithFormat:@"incognito-%ld", (long)++count];
+    [IncognitoContexts() addObject:context];
     return context;
+}
+
+- (NSString*)downloadContextKey {
+    return _downloadKey;
 }
 
 + (instancetype)contextForProfileDirectory:(NSString*)directory {
@@ -838,6 +1098,8 @@ class KCClient : public CefClient,
     // per folder, with its own extensions, prefs and history.
     CefString(&settings.cache_path) = [KCRootCachePath() stringByAppendingPathComponent:directory].UTF8String;
     context->_context = CefRequestContext::CreateContext(settings, KCAdblockContextHandler());
+    // "Default" (an Arc sign-in import's) is the default profile, whose downloads are keyed "".
+    context->_downloadKey = [directory isEqualToString:@"Default"] ? @"" : directory;
     contexts[directory] = context;
     return context;
 }
@@ -919,11 +1181,19 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
     double _zoomFactor;
     BOOL _audioMuted;
     BOOL _forceDark;
+    BOOL _autoResize;
+    NSSize _autoResizeMinSize;
+    NSSize _autoResizeMaxSize;
     BOOL _closed;
+    /// beginUnloadClose started a close the page hasn't answered yet.
+    BOOL _unloadClosing;
+    /// The page let that close go ahead and Chromium is closing it already.
+    BOOL _closeApproved;
+    /// `close` was called.
+    BOOL _forceClosed;
     int _nextMessageID;
     std::map<int, void (^)(NSDictionary*, NSString*)>* _pendingDevTools;
     NSInteger _blockedCount;
-    BOOL _blockedCountPending;
     /// Network bytes so far (NetworkCountingHandler adds to it on Chromium's IO thread).
     std::atomic<uint64_t> _networkBytes;
     /// Page.addScriptToEvaluateOnNewDocument identifiers to remove when the script changes.
@@ -955,6 +1225,8 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
         // Start empty and load once attached: DevTools calls (dark pages, the ad
         // blocker's document-start script) need the browser before the first navigation.
         _pendingURL = url ?: [NSURL URLWithString:@"about:blank"];
+        // Quitting waits for every browser to close: a new one would hold it up for good.
+        if (KCRuntimeIsQuitting()) return self;
         CefBrowserHost::CreateBrowser(windowInfo, new KCClient(self), "", settings, nullptr,
                                       context ? context.cefContext : KCAdblockRequestContext());
     }
@@ -976,6 +1248,14 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 }
 
 - (void)dealloc {
+    // Dropped without `close` (no tab took it): close it now, or its renderer keeps running, and
+    // playing, with nothing on screen. The client keeps the container view until Chromium is done.
+    if (_browser && !_closed && !KCRuntimeIsQuitting()) {
+        CefRefPtr<CefBrowser> browser = _browser;
+        _browser = nullptr;
+        KCAcceptPendingBeforeUnload(browser);
+        browser->GetHost()->CloseBrowser(true);
+    }
     delete _pendingDevTools;
 }
 
@@ -1023,13 +1303,26 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
     }
     if (_zoomFactor != 1) self.zoomFactor = _zoomFactor;
     if (_audioMuted) browser->GetHost()->SetAudioMuted(true);
+    if (_autoResize) [self enableAutoResizeWithMinSize:_autoResizeMinSize maxSize:_autoResizeMaxSize];
     if (_forceDark) [self applyForceDark];
-    if (_hidden) browser->GetHost()->WasHidden(true);
+    if (_hidden) {
+        browser->GetHost()->WasHidden(true);
+        [self applyHidden];
+    }
     if (_pendingFocus) [self focus];
 }
 
 - (void)browserDidClose {
     _browser = nullptr;
+    // Nothing answers DevTools calls any more. Answered on a later turn, out of OnBeforeClose.
+    NSMutableArray<void (^)(NSDictionary*, NSString*)>* unanswered = [NSMutableArray array];
+    for (auto& [messageID, completion] : *_pendingDevTools) [unanswered addObject:completion];
+    _pendingDevTools->clear();
+    if (unanswered.count) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            for (void (^completion)(NSDictionary*, NSString*) in unanswered) completion(nil, @"closed");
+        });
+    }
     // Not closed by us, so the page closed itself (window.close()).
     // Quitting closes every browser; that mustn't close the tabs in the saved session.
     if (!_closed && !KCRuntimeIsQuitting()) [_delegate browserDidRequestClose:self];
@@ -1068,7 +1361,17 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 
 - (void)setHidden:(BOOL)hidden {
     _hidden = hidden;
-    if (_browser) _browser->GetHost()->WasHidden(hidden);
+    if (!_browser) return;
+    _browser->GetHost()->WasHidden(hidden);
+    [self applyHidden];
+}
+
+/// WasHidden only counts for windowless browsers (cef_browser.h). A windowed one goes by its view:
+/// Chromium reports a hidden view (or one with a hidden ancestor) as hidden and throttles it, as it does
+/// a tab out of the window. So a page still in the window but covered (under the Library) stops drawing.
+- (void)applyHidden {
+    NSView* browserView = (__bridge NSView*)_browser->GetHost()->GetWindowHandle();
+    if (browserView && browserView.hidden != _hidden) browserView.hidden = _hidden;
 }
 
 - (double)zoomFactor {
@@ -1088,6 +1391,15 @@ NSString* CookieString(NSDictionary* cookie, NSString* key) {
 - (void)setAudioMuted:(BOOL)audioMuted {
     _audioMuted = audioMuted;
     if (_browser) _browser->GetHost()->SetAudioMuted(audioMuted);
+}
+
+- (void)enableAutoResizeWithMinSize:(NSSize)minSize maxSize:(NSSize)maxSize {
+    _autoResize = YES;
+    _autoResizeMinSize = minSize;
+    _autoResizeMaxSize = maxSize;
+    if (!_browser) return;
+    _browser->GetHost()->SetAutoResizeEnabled(true, CefSize((int)minSize.width, (int)minSize.height),
+                                              CefSize((int)maxSize.width, (int)maxSize.height));
 }
 
 - (void)showDevToolsRunningFrontendScript:(NSString*)frontendScript {
@@ -1350,6 +1662,7 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
 - (void)callDevToolsMethod:(NSString*)method
                     params:(NSDictionary<NSString*, id>*)params
                 completion:(void (^)(NSDictionary*, NSString*))completion {
+    if (_closed && _attached) return completion(nil, @"closed");
     if (!_browser) {
         if (_attached || _closed) {
             completion(nil, @"not-ready");
@@ -1412,17 +1725,12 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
     return _blockedCount;
 }
 
-- (void)noteBlockedRequest {
-    _blockedCount++;
-    // Pages block in bursts; tell the delegate once per run loop turn.
-    if (_blockedCountPending) return;
-    _blockedCountPending = YES;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        self->_blockedCountPending = NO;
-        if ([self.delegate respondsToSelector:@selector(browser:blockedCountDidChange:)]) {
-            [self.delegate browser:self blockedCountDidChange:self->_blockedCount];
-        }
-    });
+- (void)noteBlockedRequests:(NSInteger)count {
+    // The ad blocker already batches these per burst (KCAdblock.mm).
+    _blockedCount += count;
+    if ([self.delegate respondsToSelector:@selector(browser:blockedCountDidChange:)]) {
+        [self.delegate browser:self blockedCountDidChange:_blockedCount];
+    }
 }
 
 /// Popups load their first page as soon as Chromium creates them, possibly before
@@ -1437,6 +1745,7 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
 }
 
 - (void)mainFrameDidStartLoading {
+    if ([_delegate respondsToSelector:@selector(browserMainFrameDidStartLoading:)]) [_delegate browserMainFrameDidStartLoading:self];
     if (!_runScriptAtLoadStart) return;
     _runScriptAtLoadStart = NO;
     if (_documentScriptSource) [self evaluateJavaScript:_documentScriptSource completion:^(id) {}];
@@ -1495,10 +1804,57 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
     if (self.devToolsEventHandler) self.devToolsEventHandler(method, params);
 }
 
+- (BOOL)beginUnloadClose {
+    if (!_browser || _closed) return NO;
+    _unloadClosing = YES;
+    // Not forced: Chromium runs beforeunload (OnBeforeUnloadDialog) and calls DoClose only if the
+    // page lets go. Without a handler that's right away, inside this call. A second call while one
+    // is pending is ignored by CEF.
+    _browser->GetHost()->CloseBrowser(false);
+    return YES;
+}
+
+- (void)stopScriptOfClosingPage {
+    if (!_browser) return;
+    _browser->GetHost()->ExecuteDevToolsMethod(_nextMessageID++, "Runtime.terminateExecution", nullptr);
+}
+
+- (void)cancelUnloadClose {
+    if (!_closeApproved) _unloadClosing = NO;
+}
+
+- (void)pageDidLetGo {
+    if (!_unloadClosing || _closed) return;
+    // Closed by us: OnBeforeClose mustn't report the page closing itself.
+    _closed = YES;
+    _closeApproved = YES;
+    // Out of DoClose before Kite tears the tab down.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ([self->_delegate respondsToSelector:@selector(browserDidLetGo:)]) [self->_delegate browserDidLetGo:self];
+    });
+}
+
+- (BOOL)isForceClosing {
+    return _forceClosed && !_closeApproved;
+}
+
 - (void)close {
     _closed = YES;
+    _forceClosed = YES;
     _delegate = nil;
-    if (_browser) _browser->GetHost()->CloseBrowser(true);
+    if (_browser && !_closeApproved) {
+        KCAcceptPendingBeforeUnload(_browser);
+        _browser->GetHost()->CloseBrowser(true);
+    }
+    // Calls waiting for a browser that may never come (a cancelled popup) answer on a later turn;
+    // until then they hold this object.
+    if (!_attached && _queuedDevTools.count) {
+        NSArray<void (^)(void)>* queued = [_queuedDevTools copy];
+        [_queuedDevTools removeAllObjects];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            for (void (^call)(void) in queued) call();
+        });
+    }
 }
 
 + (NSURL* _Nullable (^)(NSString* _Nullable, BOOL*))downloadFolderProvider {
@@ -1509,11 +1865,42 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
     gDownloadFolderProvider = [provider copy];
 }
 
-+ (BOOL)cancelDownloadWithID:(NSInteger)downloadID {
-    auto it = DownloadCallbacks().find((uint32_t)downloadID);
-    if (it == DownloadCallbacks().end()) return NO;
-    it->second->Cancel();
-    return YES;
++ (BOOL)cancelDownloadWithID:(NSInteger)downloadID contextKey:(NSString*)contextKey {
+    for (LiveDownload& download : LiveDownloads()) {
+        if (download.id != (uint32_t)downloadID || ![download.source.key isEqualToString:contextKey]) continue;
+        if (!download.callback) return NO;
+        download.callback->Cancel();
+        return YES;
+    }
+    return NO;
+}
+
++ (NSInteger)endDownloadsForContextKey:(NSString*)contextKey {
+    [EndedDownloadContexts() addObject:contextKey];
+    // Copy: a cancel can call back into OnDownloadUpdated, which edits the list.
+    std::vector<LiveDownload> ending;
+    std::vector<LiveDownload>& downloads = LiveDownloads();
+    for (auto it = downloads.begin(); it != downloads.end();) {
+        if ([it->source.key isEqualToString:contextKey]) {
+            ending.push_back(*it);
+            it = downloads.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (LiveDownload& download : ending) if (download.callback) download.callback->Cancel();
+    return (NSInteger)ending.size();
+}
+
++ (NSInteger)liveDownloadCountForContextKey:(NSString*)contextKey {
+    NSInteger count = 0;
+    for (const LiveDownload& download : LiveDownloads()) count += [download.source.key isEqualToString:contextKey];
+    return count;
 }
 
 @end
+
+/// Drops the downloads Kite follows, and their CEF references, before CefShutdown.
+void KCClearLiveDownloads() {
+    LiveDownloads().clear();
+}

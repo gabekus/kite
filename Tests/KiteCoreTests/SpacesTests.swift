@@ -50,6 +50,37 @@ import Testing
         #expect(swipe.offset == -120)
         #expect(swipe.landing == 0)
     }
+
+    @Test func neighboursAreCapturedByID() throws {
+        let ids = [UUID(), UUID(), UUID()]
+        let first = try #require(SpaceSwipe.Neighbours(spaces: ids, selected: 0))
+        #expect(first.previous == nil && first.current == ids[0] && first.next == ids[1])
+        let last = try #require(SpaceSwipe.Neighbours(spaces: ids, selected: 2))
+        #expect(last.space(towards: -1) == ids[1] && last.space(towards: 1) == nil)
+        #expect(SpaceSwipe.Neighbours(spaces: ids, selected: 3) == nil)
+        #expect(SpaceSwipe.Neighbours(spaces: [], selected: 0) == nil)
+    }
+
+    @Test func aSwipeWhoseSpacesChangedHasNoTarget() throws {
+        let ids = [UUID(), UUID(), UUID()]
+        let swipe = try #require(SpaceSwipe.Neighbours(spaces: ids, selected: 2))
+        #expect(swipe.target(towards: -1, spaces: ids, selected: ids[2]) == ids[1])
+        // The neighbour was deleted mid-swipe: the old index would now be out of range.
+        #expect(swipe.target(towards: -1, spaces: [ids[0], ids[2]], selected: ids[2]) == nil)
+        // The space it started on was deleted.
+        #expect(swipe.target(towards: 0, spaces: [ids[0], ids[1]], selected: ids[1]) == nil)
+        // Something else switched space (automation, another window).
+        #expect(swipe.target(towards: 0, spaces: ids, selected: ids[0]) == nil)
+        // Moved but still its neighbour on that side: found by id.
+        #expect(swipe.target(towards: -1, spaces: [ids[1], ids[2], ids[0]], selected: ids[2]) == ids[1])
+        // Moved to the other side, or away: the pages on screen are no longer its neighbours.
+        #expect(swipe.target(towards: -1, spaces: [ids[2], ids[1], ids[0]], selected: ids[2]) == nil)
+        #expect(swipe.target(towards: -1, spaces: [ids[1], ids[0], ids[2]], selected: ids[2]) == nil)
+        // A space inserted between them.
+        #expect(swipe.target(towards: -1, spaces: [ids[0], ids[1], UUID(), ids[2]], selected: ids[2]) == nil)
+        // Towards nothing (rubber-banding): the current space, while it's still there.
+        #expect(swipe.target(towards: 0, spaces: [ids[1], ids[0], ids[2]], selected: ids[2]) == ids[2])
+    }
 }
 
 @Suite struct SpaceEditingTests {

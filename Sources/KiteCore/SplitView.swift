@@ -203,7 +203,7 @@ extension BrowserState {
     private mutating func insertNextTo(_ neighbor: UUID, _ tab: BrowserTab, in s: Int) {
         if let i = spaces[s].tabs.firstIndex(where: { $0.id == neighbor }) {
             spaces[s].tabs.insert(tab, at: i + 1)
-        } else if !spaces[s].pinnedItems.insertTab(tab, after: neighbor) {
+        } else if !spaces[s].pinnedItems.insertItem(.tab(tab), after: neighbor) {
             spaces[s].tabs.insert(tab, at: 0)
         }
     }
@@ -320,21 +320,16 @@ extension BrowserState {
 }
 
 extension [PinnedItem] {
-    /// Inserts `tab` just after the tab `neighbor`, at whatever depth it is.
-    mutating func insertTab(_ tab: BrowserTab, after neighbor: UUID) -> Bool {
+    /// Inserts `item` just after the item `neighbor` (a tab or folder), at whatever depth it is.
+    mutating func insertItem(_ item: PinnedItem, after neighbor: UUID) -> Bool {
         for i in indices {
-            switch self[i] {
-            case .tab(let existing) where existing.id == neighbor:
-                insert(.tab(tab), at: i + 1)
+            if self[i].id == neighbor {
+                insert(item, at: i + 1)
                 return true
-            case .folder(var folder):
-                if folder.items.insertTab(tab, after: neighbor) {
-                    self[i] = .folder(folder)
-                    return true
-                }
-            default:
-                continue
             }
+            guard case .folder(var folder) = self[i], folder.items.insertItem(item, after: neighbor) else { continue }
+            self[i] = .folder(folder)
+            return true
         }
         return false
     }

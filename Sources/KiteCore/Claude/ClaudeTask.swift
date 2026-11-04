@@ -11,6 +11,15 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
         case running, done, failed, stopped
 
         public var isFinished: Bool { self != .running }
+
+        /// A status from a newer build reads as stopped, rather than failing the whole list.
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            if let status = Status(rawValue: raw) { self = status } else {
+                self = .stopped
+                decoder.noteLenient()
+            }
+        }
     }
 
     public struct Entry: Hashable, Codable, Sendable {
@@ -26,6 +35,15 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
             /// Something about the run itself: couldn't start, Kite turned control on, stopped.
             case note
             case error
+
+            /// A kind from a newer build shows as a note, rather than failing the whole list.
+            public init(from decoder: Decoder) throws {
+                let raw = try decoder.singleValueContainer().decode(String.self)
+                if let kind = Kind(rawValue: raw) { self = kind } else {
+                    self = .note
+                    decoder.noteLenient()
+                }
+            }
         }
 
         public var kind: Kind
@@ -61,6 +79,9 @@ public struct ClaudeTask: Identifiable, Hashable, Codable, Sendable {
     /// The folder Claude Code runs in, when the space routes ⌘J to one (see `ClaudeRoute`).
     /// Kept so a follow-up resumes there: Claude Code keeps a session with its folder.
     public var directory: String?
+    /// The Linear ticket a "Test This Ticket" task tests ("PRO-1234"): its tabs go in Claude › PRO-1234, its
+    /// turns get `TicketTest.systemPrompt`, and Kite keeps it from posting on Linear. nil for other tasks.
+    public var ticket: String?
     public var costUSD: Double
     /// Finished since the user last looked at it.
     public var unread: Bool
@@ -197,17 +218,29 @@ public struct ClaudeTaskList: Codable, Sendable {
         supportDirectory.appendingPathComponent("Claude", isDirectory: true).appendingPathComponent("tasks.json")
     }
 
-    /// A list saved while a task ran comes back with that task stopped: its process is gone.
-    public static func load(from url: URL) -> ClaudeTaskList {
-        guard let data = try? Data(contentsOf: url) else { return ClaudeTaskList() }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard var list = try? decoder.decode(ClaudeTaskList.self, from: data) else { return ClaudeTaskList() }
+    private enum CodingKeys: String, CodingKey { case tasks }
+
+    /// A task that doesn't decode is left out rather than failing the list.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tasks = try container.decode([Lossy<ClaudeTask>].self, forKey: .tasks).compactMap(\.value)
+    }
+
+    /// A list saved while a task ran comes back with that task stopped: its process is gone. Through
+    /// `StoreFile`: a file that won't decode is moved aside, one read leniently (tasks dropped, kinds
+    /// coerced) is copied aside, and `.unmovable` means don't save.
+    public static func load(from url: URL, now: Date = Date()) -> StoreFile.Load<ClaudeTaskList> {
+        let result = StoreFile.load(ClaudeTaskList.self, from: url, makeDecoder: {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return decoder
+        }, now: now)
+        guard case .loaded(var list, let lenient) = result else { return result }
         for i in list.tasks.indices where list.tasks[i].status == .running {
             list.tasks[i].status = .stopped
             list.tasks[i].append(ClaudeTask.Entry(.note, "Stopped when Kite quit."))
         }
-        return list
+        return .loaded(list, lenient: lenient)
     }
 
     /// Only the user can read it: it holds what they asked Claude to do.
@@ -215,6 +248,7 @@ public struct ClaudeTaskList: Codable, Sendable {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
+        try StoreFile.checkWritable(url)
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
