@@ -36,6 +36,10 @@ namespace {
 // no background of its own still gets white (the DevTools override in OnAfterCreated).
 constexpr cef_color_t kPageBackdrop = 0xFF323232;
 
+// The Mac's kEnergySaverPref. Chromium's BatterySaverModeState: 0 = disabled, 1 = on battery
+// below 20% (Chrome's default).
+constexpr char kEnergySaverPref[] = "performance_tuning.battery_saver_mode.state";
+
 // How long closing the window waits for the browsers before it goes ahead anyway.
 constexpr UINT kCloseDeadlineMs = 5'000;
 constexpr UINT_PTR kCloseDeadlineTimer = 0x4B43;  // 'KC'; BrowserWindowController's timers are small numbers
@@ -84,10 +88,8 @@ struct Chromium::Shared {
     std::atomic<bool> keysToKite{false};
     // Use Both's "second press" bookkeeping, on CEF's UI thread only (OnPreKeyEvent, OnKeyEvent).
     ShortcutPriorityGate gate;
-    // The user's Energy Saver setting, fixed once Chromium starts.
-    EnergySaver energySaver;
-    // CEF's UI thread only: Chromium's global preferences were there to set it in (ApplyEnergySaver).
-    bool energySaverApplied = false;
+    // The Mac's gEnergySaverEnabled: off unless the user turns it on (SetEnergySaverEnabled).
+    std::atomic<bool> energySaverEnabled{false};
 
     // Both threads, under the mutex.
     std::mutex mutex;
@@ -295,23 +297,20 @@ struct Chromium::Shared {
 
 namespace {
 
-// The Mac's ApplyEnergySaver, on CEF's UI thread. It needs the browser context, which may not
-// exist yet right after CefInitialize, so it's tried again when the first browser is created.
-// Energy Saver is a local-state preference, one for all profiles: only the global preferences
-// have it, as on the Mac, and no request context's (a space's own profile) does.
-void ApplyEnergySaver(Chromium::Shared& shared) {
+// The Mac's ApplyEnergySaver, on CEF's UI thread. Energy Saver is a local-state preference, one
+// for all profiles: only the global preferences have it, as on the Mac, and no request
+// context's (a space's own profile) does.
+void ApplyEnergySaver(const Chromium::Shared& shared) {
     CefRefPtr<CefPreferenceManager> prefs = CefPreferenceManager::GetGlobalPreferenceManager();
     if (!prefs) return;
-    shared.energySaverApplied = true;
-    const CefString name{std::string(kEnergySaverPreference)};
-    if (!prefs->HasPreference(name)) {
+    if (!prefs->HasPreference(kEnergySaverPref)) {
         OutputDebugStringW(L"Kite: Chromium has no Energy Saver preference; left as is\n");
         return;
     }
     CefRefPtr<CefValue> value = CefValue::Create();
-    value->SetInt(static_cast<int>(shared.energySaver.State()));
+    value->SetInt(shared.energySaverEnabled ? 1 : 0);
     CefString error;
-    if (!prefs->SetPreference(name, value, error)) {
+    if (!prefs->SetPreference(kEnergySaverPref, value, error)) {
         OutputDebugStringW((L"Kite: couldn't set Energy Saver: " + error.ToWString() + L"\n").c_str());
     }
 }
@@ -322,6 +321,12 @@ class KiteApp : public CefApp, public CefBrowserProcessHandler {
 public:
     explicit KiteApp(std::shared_ptr<Chromium::Shared> shared) : shared_(std::move(shared)) {}
     CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+
+    // Where the Mac applies Energy Saver after CefInitialize, and again at its first browser in
+    // case the context wasn't ready: here the global preferences exist, and no browser does
+    // yet, so one try covers both, and the browsers Chromium makes itself (the Mac's
+    // KCDefaultClient) too.
+    void OnContextInitialized() override { ApplyEnergySaver(*shared_); }
 
     bool OnAlreadyRunningAppRelaunch(CefRefPtr<CefCommandLine>, const CefString&) override {
         shared_->Post([shared = shared_] {
@@ -373,7 +378,6 @@ public:
     // CefLifeSpanHandler
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
-        if (!shared_->energySaverApplied) ApplyEnergySaver(*shared_);
         // As the Mac's attachBrowser: the dark backdrop covers only the moments before a page
         // draws; a page with no background of its own is white, as in Chrome.
         CefRefPtr<CefDictionaryValue> color = CefDictionaryValue::Create();
@@ -720,8 +724,8 @@ int RunChromiumSubprocess(HINSTANCE instance) {
     return CefExecuteProcess(args, nullptr, nullptr);
 }
 
-Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, EnergySaver energySaver,
-                                      PageEvents events, std::unique_ptr<Chromium>& out, std::wstring& error) {
+Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std::filesystem::path& root, PageEvents events,
+                                      std::unique_ptr<Chromium>& out, std::wstring& error) {
     // Chromium wants root_cache_path absolute and every cache_path inside it, else it keeps
     // that profile in memory only; built from the resolved path, like the Mac (realpath).
     std::error_code ec;
@@ -733,7 +737,6 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
     shared->window = window;
     shared->wakeTarget = window;
     shared->events = std::move(events);
-    shared->energySaver = energySaver;
     shared->root = resolved;
     shared->allClosed = CreateEventW(nullptr, TRUE, TRUE, nullptr);
     if (!shared->allClosed) {
@@ -762,8 +765,6 @@ Chromium::StartResult Chromium::Start(HINSTANCE instance, HWND window, const std
         error = L"CefInitialize failed (exit code " + std::to_wstring(code) + L")";
         return StartResult::Failed;
     }
-    // Before any browser asks for one (the preferences are CEF's UI thread's).
-    RunOnCefUIThread([shared] { ApplyEnergySaver(*shared); });
     out.reset(new Chromium(std::move(shared)));
     return StartResult::Started;
 }
@@ -1013,13 +1014,18 @@ bool Chromium::MayCloseWindow() {
 
 bool Chromium::PagesCanBeHidden() const { return !shared_->widgetMissing; }
 
-void Chromium::ReadEnergySaver(std::function<void(std::optional<int>)> done) {
-    RunOnCefUIThread([shared = shared_, done = std::move(done)] {
+void Chromium::SetEnergySaverEnabled(bool enabled) {
+    shared_->energySaverEnabled = enabled;
+    RunOnCefUIThread([shared = shared_] { ApplyEnergySaver(*shared); });
+}
+
+void Chromium::ReadEnergySaver(std::function<void(std::optional<int> state)> done) {
+    RunOnCefUIThread([shared = shared_, done = std::move(done)]() mutable {
         std::optional<int> state;
         CefRefPtr<CefPreferenceManager> prefs = CefPreferenceManager::GetGlobalPreferenceManager();
-        CefRefPtr<CefValue> value = prefs ? prefs->GetPreference(std::string(kEnergySaverPreference)) : nullptr;
+        CefRefPtr<CefValue> value = prefs ? prefs->GetPreference(kEnergySaverPref) : nullptr;
         if (value && value->GetType() == VTYPE_INT) state = value->GetInt();
-        shared->Post([done, state] { done(state); });
+        shared->Post([done = std::move(done), state] { done(state); });
     });
 }
 

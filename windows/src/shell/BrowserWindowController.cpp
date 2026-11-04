@@ -1008,8 +1008,7 @@ Chromium::StartResult BrowserWindowController::StartChromium(const std::filesyst
         if (IsIconic(window_.Handle())) ShowWindow(window_.Handle(), SW_RESTORE);
         SetForegroundWindow(window_.Handle());
     };
-    // Windows has no Settings toggle for Energy Saver yet: the Mac's default, off.
-    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, EnergySaver{}, std::move(events), chromium_, error);
+    if (const auto started = Chromium::Start(instance_, window_.Handle(), root, std::move(events), chromium_, error);
         started != Chromium::StartResult::Started) {
         return started;
     }
@@ -1039,10 +1038,10 @@ std::wstring BrowserWindowController::ShutDownChromium() {
     if (!closedCleanly) return L"a browser didn't close in time; Chromium shut down under it";
     if (!pageLoaded_) return L"the first page didn't finish loading within 30 s";
     if (!chromium_->PagesCanBeHidden()) return L"a page had no Chromium widget window to hide: background tabs would keep drawing";
-    // Chromium's default would cap pages at 30 fps on a low battery (core/EnergySaver.h).
+    // Chromium's default would cap pages at 30 fps on a low battery (Chromium::SetEnergySaverEnabled).
     if (!energySaverRead_) return L"Chromium's Energy Saver preference was never read back";
     if (!energySaverState_) return L"Chromium has no Energy Saver preference to turn off";
-    if (*energySaverState_ != static_cast<int>(BatterySaverModeState::Disabled)) {
+    if (*energySaverState_ != 0) {
         return L"Chromium's Energy Saver is " + std::to_wstring(*energySaverState_) + L", not off (0)";
     }
     // One WM_CLOSE must close the window (the browsers first); the 30 s timer's second one
