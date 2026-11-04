@@ -1503,6 +1503,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             // An incognito window keeps nothing, so there's nowhere to put the import.
             return !isIncognito
         case #selector(setAsDefaultBrowser(_:)):
+            item.isHidden = !Self.canBeDefaultBrowser
             item.state = Self.isDefaultBrowser ? .on : .off
         case #selector(capturePage(_:)), #selector(captureFullPage(_:)), #selector(capturePortraitMode(_:)):
             return shownPage != nil && store.state.selectedTab?.url != nil
