@@ -714,8 +714,13 @@ print("\n".join(f for f in expect if f not in tree))' "$folder/expect.json" "$fo
             if [[ -z "$last_hit" || " $COMMAND_BAR_OPENERS " != *" $last_hit "* ]]; then
                 refused="the text step doesn't follow a click on a command-bar opener (${last_hit:-no safe click})"
             else
-                tmo 60 "$CLI" ui tree "$(match_json CommandBarField)" >"$folder/targets.txt" 2>&1 || true
-                result="$(on_safe_target "$checks" "$folder/targets.txt" CommandBarField)"
+                # The bar opens a moment after the click: look for its field for up to 3 s.
+                for _ in $(seq 15); do
+                    tmo 60 "$CLI" ui tree "$(match_json CommandBarField)" >"$folder/targets.txt" 2>&1 || true
+                    result="$(on_safe_target "$checks" "$folder/targets.txt" CommandBarField)"
+                    if [[ "$result" == "hit "* ]]; then break; fi
+                    sleep 0.2
+                done
                 if [[ "$result" != "hit "* ]]; then refused="$result"; fi
             fi
             last_hit=""
