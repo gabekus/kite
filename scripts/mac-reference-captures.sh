@@ -371,7 +371,7 @@ done 3<"$WORK/plan/index"
 
 # --- NOTES.md and the per-state frame files. ---
 python3 -I - "$WORK/plan" "$OUT" <<'PY'
-import json, os, sys
+import json, os, re, sys
 plan, out = sys.argv[1:3]
 def read(*parts, default=""):
     try:
@@ -415,7 +415,7 @@ pixels = sorted({read(f, "pixels") for f, m in states if read(f, "pixels")})
 capture_notes = []
 for folder, meta in states:
     for line in read(folder, "capture.txt").replace(out + "/", "").splitlines():
-        line = line.replace(meta["name"] + ".png", "NAME.png")
+        line = re.sub(r"^Window \d+ ", "Window N ", line.replace(meta["name"] + ".png", "NAME.png"))
         if line and line not in capture_notes:
             capture_notes.append(line)
 lines.append(f"**Capture path:** in-process, `kite ui capture '{{\"source\":\"in-process\"}}' -o NAME.png`, 2× "
