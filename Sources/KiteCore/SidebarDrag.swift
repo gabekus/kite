@@ -317,7 +317,7 @@ extension BrowserState {
             for id in split.tabIDs {
                 if let tab = tabs.first(where: { $0.id == id }) {
                     if let previous {
-                        _ = spaces[s].pinnedItems.insertTab(tab, after: previous)
+                        _ = spaces[s].pinnedItems.insertItem(.tab(tab), after: previous)
                     } else {
                         _ = spaces[s].pinnedItems.insertTab(tab, before: members[0])
                     }

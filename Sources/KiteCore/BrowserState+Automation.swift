@@ -195,7 +195,8 @@ extension BrowserState {
         var tab = BrowserTab(id: id, url: url, lastActiveAt: now)
         tab.openedByPage = true
         let after = split(containing: opener)?.split.tabIDs.last ?? opener
-        guard spaces[s].pinnedItems.insertTab(tab, after: after) || spaces[s].pinnedItems.insertTab(tab, after: opener) else {
+        guard spaces[s].pinnedItems.insertItem(.tab(tab), after: after)
+                || spaces[s].pinnedItems.insertItem(.tab(tab), after: opener) else {
             return openTab(id: id, url: url, select: select, now: now)
         }
         if select {
