@@ -53,7 +53,7 @@ branch `helix/M<n>-<slug>` from main.
 | Mv | Headless checks of what's unverified: the two-finger space swipe, the Mini Player, the 1Password key's click, an accessibility audit of the sidebar and command bar against main's, and edge-of-list space switching during a drag; each in a background test Kite, or the exact reason it can't be | none (checks; diagnostics-only test hooks where needed) | done (#310) |
 | M1e | A tab opened straight onto a playing page never reports its media (no speaker, no Mini Player): find the cause, fix it, 5 of 5 on direct open with no regression on navigate | none (ChromiumEngine.swift, MediaStateScript.swift, the bridge's load-start callback) | in review |
 | M2 | Page toolbar and its extension icons: the bar, its buttons, the address, the install icon, pinned extensions and the extensions button | PageToolbar.swift, ExtensionsToolbar.swift (ToolbarExtensionItems, was ExtensionsToolbarItems) | done (#300) |
-| M3 | Site Controls popover | SiteControlsView.swift | in review |
+| M3 | Site Controls popover | SiteControlsView.swift | in review (#322) |
 | M4 | The extensions popover | ExtensionsToolbar.swift (ExtensionsMenu) | planned [first fold SiteControlsLabel into SidebarLabel and move Site Controls' exact-top symbol placement into SidebarKit, rather than copying them (M3 review)] |
 | M5 | Link preview card | LinkPreviewCard.swift | planned |
 | M6 | Favorite preview card | FavoritePreviewCard.swift | planned |
