@@ -553,19 +553,19 @@ bool BrowserWindowController::QueuePerfRequest(const COPYDATASTRUCT* data) {
         const json::Value* value = request->Find(key);
         return value ? value->AsInt() : std::nullopt;
     };
-    PerfRequest queued{};
+    PerfRequest queued{PerfRequest::Kind::Mark, {}, 0, 0, 0};
     if (const std::string* command = text("command")) {
         if (!commands_.contains(*command) || !CommandEnabled(*command)) return false;
         queued = {PerfRequest::Kind::Command, *command, 0, 0, number("qpc").value_or(perf::Now())};
     } else if (const std::string* mark = text("mark")) {
-        queued = {PerfRequest::Kind::Mark, *mark};
+        queued = {PerfRequest::Kind::Mark, *mark, 0, 0, 0};
     } else if (const std::string* url = text("open")) {
         // Web pages only: nothing of the machine's (file:, view-source:, kite: or a script).
         if (!url->starts_with("http://") && !url->starts_with("https://")) return false;
-        queued = {PerfRequest::Kind::Open, *url};
+        queued = {PerfRequest::Kind::Open, *url, 0, 0, 0};
     } else if (const std::string* input = text("input")) {
         if (*input == "leave") {
-            queued = {PerfRequest::Kind::Leave};
+            queued = {PerfRequest::Kind::Leave, {}, 0, 0, 0};
         } else {
             const auto x = number("x"), y = number("y");
             if (*input != "move" || !x || !y || *x < 0 || *y < 0 || *x > 0x7FFF || *y > 0x7FFF) return false;
