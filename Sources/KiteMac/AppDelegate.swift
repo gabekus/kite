@@ -108,6 +108,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windows.didMakeController = { [weak self] controller in self?.followProfiles(of: controller) }
         #endif
         windows.restore()
+        if let backup = store.recoveredFromBackup {
+            let date = DateFormatter.localizedString(from: backup.date, dateStyle: .medium, timeStyle: .short)
+            windowController.showToast("Kite restored your tabs from a backup made \(date)")
+        }
         setUpWebApps()
         setUpVPNSignIn()
 

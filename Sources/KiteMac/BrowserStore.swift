@@ -112,7 +112,9 @@ final class BrowserStore {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     /// Set when session.json couldn't be read or moved aside: saving would overwrite the only copy.
     @ObservationIgnored private var savesBlocked = false
-    /// Backups are written here, off the main thread.
+    /// The backup session.json was unusable and the session came from, at launch; AppDelegate says so once.
+    @ObservationIgnored private(set) var recoveredFromBackup: SessionBackups.Backup?
+    /// Backups are written here, off the main thread, one at a time.
     private static let backupQueue = DispatchQueue(label: "dev.gabek.Kite.session-backups", qos: .utility)
     /// The default profile's browsing history, which leads to the other profiles'; nil for an
     /// incognito window, which records none.
@@ -172,17 +174,21 @@ final class BrowserStore {
     init(session: SessionStore) {
         self.session = session
         do {
-            state = try session.load() ?? .makeDefault()
+            let loaded = try session.loadRecovering()
+            state = loaded?.state ?? .makeDefault()
+            if let backup = loaded?.recoveredFrom {
+                recoveredFromBackup = backup
+                NSLog("Kite: session.json was unreadable and was moved aside; restored the session from backup \(backup.url.lastPathComponent)")
+            }
             // Arc backs up its stores once per launch: keep the session as found, unless the newest backup has it.
-            let loaded = state
-            Self.backupQueue.async { try? session.backups.backUp(SessionStore.encode(loaded), minimumInterval: 0) }
+            let found = state
+            Self.backupQueue.async { try? session.backups.backUp(SessionStore.encode(found), kind: .launch) }
         } catch {
             state = .makeDefault()
             savesBlocked = FileManager.default.fileExists(atPath: session.fileURL.path)
             NSLog("Kite: couldn't read session, starting fresh\(savesBlocked ? " without saving over it" : ""): \(error)")
         }
-        // A Create a Space page left open at quit leaves a nameless, empty space behind.
-        for space in state.spaces where space.name.isEmpty && space.allTabs.isEmpty { state.deleteSpace(space.id) }
+        state.dropUnnamedEmptySpaces()
     }
 
     // MARK: Undo
@@ -530,13 +536,17 @@ final class BrowserStore {
     /// session.json's backups; nil for incognito, blank and linked windows' stores.
     var sessionBackups: SessionBackups? { session?.backups }
 
-    /// Help › Restore Data: swaps `backup` in for every window's sidebar, keeping the current state as a backup first.
+    /// Help › Restore Data: swaps `backup`'s sidebar in for every normal window's, keeping the current
+    /// state as a backup first. Settings stay as they are.
     func restoreSession(from backup: SessionBackups.Backup) throws {
         guard let session else { return }
         saveTask?.cancel()
-        let restored = try session.restore(backup, current: state)
+        let current = state
+        // On the backup queue, so it never writes Backups alongside a save's backup.
+        let restored = try Self.backupQueue.sync { try session.restore(backup, current: current) }
         savesBlocked = false
-        undoManager?()?.removeAllActions()
+        // Every window's undo holds snapshots of the old sidebar; ⌘Z there would put it back over the restore.
+        for store in [self] + (link?.all ?? []) { store.undoManager?()?.removeAllActions() }
         // Like `adopt`, not `mutate`: the swap isn't an undo step, and pinned tabs aren't newly pinned.
         state = restored
         onChange?()

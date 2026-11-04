@@ -29,21 +29,7 @@ final class BrowserWindows {
     /// While the app quits, windows closing don't drop out of the saved list.
     private var isTerminating = false
 
-    struct SavedWindow: Codable {
-        enum Kind: String, Codable { case normal, blank }
-        var kind: Kind
-        /// x, y, width, height in screen points.
-        var frame: [Double]
-        /// A normal window's selection in the shared sidebar.
-        var selection: WindowSelection?
-        /// A blank window's own tabs.
-        var state: BrowserState?
-    }
-
-    private struct File: Codable {
-        var version = 1
-        var windows: [SavedWindow]
-    }
+    typealias SavedWindow = SavedWindows.Window
 
     init(main: BrowserStore, mainController: BrowserWindowController, engine: WebEngine, adblocker: Adblocker,
          history: HistoryStore, fileURL: URL) {
@@ -79,8 +65,9 @@ final class BrowserWindows {
     /// Arc opens one window (the sidebar's spaces and tabs come back either way).
     func restore() {
         guard WindowRestore.isEnabled() else { return }
-        guard let data = try? Data(contentsOf: fileURL),
-              let file = try? JSONDecoder().decode(File.self, from: data) else { return }
+        // Window by window: one that doesn't decode is dropped alone, and the file is kept aside first.
+        guard let file = SavedWindows.load(from: fileURL) else { return }
+        if file.dropped > 0 { NSLog("Kite: left out \(file.dropped) unreadable window(s) from windows.json; a copy is kept beside it") }
         for saved in file.windows {
             let frame = saved.frame.count == 4 ? NSRect(x: saved.frame[0], y: saved.frame[1], width: saved.frame[2], height: saved.frame[3]) : nil
             switch saved.kind {
@@ -182,7 +169,7 @@ final class BrowserWindows {
             if windows.isEmpty {
                 try? FileManager.default.removeItem(at: fileURL)
             } else {
-                let data = try JSONEncoder().encode(File(windows: windows))
+                let data = try JSONEncoder().encode(SavedWindows(windows: windows))
                 try data.write(to: fileURL, options: .atomic)
             }
         } catch {
