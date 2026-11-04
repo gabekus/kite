@@ -157,21 +157,42 @@ final class PagePool {
     /// Settings › Advanced › "Allow websites to get your theme data": each live page gets its
     /// space's theme as CSS (favorites, which are in every space, the current space's), or none
     /// when the switch is off. Pages that already have it are left alone.
+    /// Runs after every store change, so it builds CSS only when a page's theme (or the switch) changed.
     func updateThemeCSS() {
         let ids = Set(pages.keys)
+        let allowed = ThemeCSS.isAllowed()
+        let key = ThemeCSSKey(allowed: allowed, themes: allowed ? themes(forTabs: ids) : [:], pages: ids)
+        guard key != themeCSSKey else { return }
+        themeCSSKey = key
         guard !ids.isEmpty else { return }
         for (id, css) in themeCSS(forTabs: ids) where pages[id]?.themeCSS != css {
             pages[id]?.themeCSS = css
         }
     }
 
-    private func themeCSS(forTabs ids: Set<UUID>) -> [UUID: String?] {
+    /// What the pages' theme CSS was last made from.
+    private struct ThemeCSSKey: Equatable {
+        var allowed: Bool
+        var themes: [UUID: Theme]
+        var pages: Set<UUID>
+    }
+    private var themeCSSKey: ThemeCSSKey?
+
+    /// Each tab's space's theme; favorites, which are in every space, get the current space's.
+    private func themes(forTabs ids: Set<UUID>) -> [UUID: Theme] {
         let state = store.state
-        guard ThemeCSS.isAllowed() else { return Dictionary(uniqueKeysWithValues: ids.map { ($0, nil) }) }
         var themes: [UUID: Theme] = [:]
         for space in state.spaces {
             for tab in space.allTabs where ids.contains(tab.id) { themes[tab.id] = space.theme }
         }
+        let current = state.selectedSpace.theme
+        for id in ids where themes[id] == nil { themes[id] = current }
+        return themes
+    }
+
+    private func themeCSS(forTabs ids: Set<UUID>) -> [UUID: String?] {
+        guard ThemeCSS.isAllowed() else { return Dictionary(uniqueKeysWithValues: ids.map { ($0, nil) }) }
+        let themes = themes(forTabs: ids)
         var cache: [Theme: String] = [:]
         func css(_ theme: Theme) -> String {
             if let known = cache[theme] { return known }
@@ -179,8 +200,7 @@ final class PagePool {
             cache[theme] = made
             return made
         }
-        let current = state.selectedSpace.theme
-        return Dictionary(uniqueKeysWithValues: ids.map { ($0, css(themes[$0] ?? current)) })
+        return Dictionary(uniqueKeysWithValues: ids.map { ($0, themes[$0].map(css)) })
     }
 
     /// Pages whose tab now belongs to another profile (its space moved): they're closed, and
@@ -298,6 +318,9 @@ final class PagePool {
 
     private func register(_ page: WebPage, id: UUID) {
         pages[id] = page
+        // A different page under a known tab id (claimed from another window, or made again) may
+        // not have this window's theme CSS yet.
+        themeCSSKey = nil
         lastShown[id] = Date()
         page.onEvent = { [weak self] event in self?.handle(event, from: id) }
         page.contextMenuHost = { [weak self] in self?.contextMenuHost?() ?? PageContextMenu.Host() }

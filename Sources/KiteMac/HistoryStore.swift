@@ -8,27 +8,22 @@ import Observation
 @Observable
 final class HistoryStore {
     private(set) var history = History()
-    @ObservationIgnored private let fileURL: URL
+    @ObservationIgnored private let file: HistoryFile
     /// Other profiles' histories, made from the default profile's store.
     @ObservationIgnored private var profileStores: [String: HistoryStore] = [:]
     @ObservationIgnored private var saveTask: Task<Void, Never>?
-
-    private struct File: Codable {
-        var version: Int
-        var history: History
-    }
+    /// Changed since the last save: a save leaves clean stores alone.
+    @ObservationIgnored private var isDirty = false
+    /// Every store's writes, in order, off the main thread.
+    private static let writes = DispatchQueue(label: "dev.gabek.Kite.history-writes", qos: .utility)
 
     init(fileURL: URL) {
-        self.fileURL = fileURL
-        guard let data = try? Data(contentsOf: fileURL) else { return }
+        file = HistoryFile(fileURL: fileURL)
         do {
-            history = try JSONDecoder().decode(File.self, from: data).history
+            if let loaded = try file.load() { history = loaded }
         } catch {
-            // Keep the unreadable file for a bug report rather than overwriting it.
+            // HistoryFile kept the unreadable file for a bug report rather than overwriting it.
             NSLog("Kite: couldn't read history, starting fresh: \(error)")
-            let backup = fileURL.deletingPathExtension()
-                .appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970)).json")
-            try? FileManager.default.moveItem(at: fileURL, to: backup)
         }
     }
 
@@ -37,22 +32,27 @@ final class HistoryStore {
     func forProfile(_ directory: String) -> HistoryStore {
         if directory == Profile.defaultDirectory { return self }
         if let store = profileStores[directory] { return store }
-        let file = fileURL.deletingLastPathComponent()
+        let url = file.fileURL.deletingLastPathComponent()
             .appendingPathComponent("Chromium", isDirectory: true)
             .appendingPathComponent(directory, isDirectory: true)
             .appendingPathComponent("Kite History.json")
-        let store = HistoryStore(fileURL: file)
+        let store = HistoryStore(fileURL: url)
         profileStores[directory] = store
         return store
     }
 
     func recordVisit(_ url: URL, title: String) {
         history.recordVisit(url, title: title)
+        isDirty = true
         scheduleSave()
     }
 
+    /// A title the entry already has (a page re-setting `document.title`) changes nothing and saves nothing.
     func updateTitle(_ url: URL, _ title: String) {
+        // Checked first so a repeat doesn't touch `history` and wake its observers.
+        guard history.updatesTitle(url, title) else { return }
         history.updateTitle(url, title)
+        isDirty = true
         scheduleSave()
     }
 
@@ -64,31 +64,37 @@ final class HistoryStore {
     @discardableResult
     func merge(_ entries: [HistoryEntry]) -> Int {
         let added = history.merge(entries)
+        isDirty = true
         saveNow()
         return added
     }
 
     func removeAll() {
         history.removeAll()
+        isDirty = true
         saveNow()
     }
 
     func remove(_ urls: [URL]) {
         history.remove(urls)
+        isDirty = true
         saveNow()
     }
 
     /// Delete browsing data's history: pages visited at or after `since` (nil: all).
     func removeVisits(since: Date?) {
         history.removeVisits(since: since)
+        isDirty = true
         saveNow()
     }
 
-    /// Debounced: a page load sends its URL and title in quick succession.
+    /// Debounced: a page load sends its URL and title in quick succession. A page whose title
+    /// keeps ticking still gets saved every 30 s.
     private func scheduleSave() {
+        let delay = debounce.changed(at: ProcessInfo.processInfo.systemUptime)
         saveTask?.cancel()
         saveTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             self?.saveNow()
         }
@@ -99,15 +105,51 @@ final class HistoryStore {
         profileStores.removeValue(forKey: directory)?.saveTask?.cancel()
     }
 
+    /// Saves this store and the other profiles' that changed. The encoding and the write happen
+    /// on a background queue, from a snapshot taken now. A write that fails leaves the store
+    /// changed, so the next save or the quit flush tries again.
     func saveNow() {
         saveTask?.cancel()
+        debounce.saved()
         profileStores.values.forEach { $0.saveNow() }
+        guard isDirty else { return }
+        isDirty = false
+        let file = file, snapshot = history, status = writeStatus
+        Self.writes.async { [weak self] in
+            status.failed = !Self.write(snapshot, to: file)
+            guard status.failed else { return }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.isDirty = true } }
+        }
+    }
+
+    /// Quit: waits for the writes under way, then writes what's still unsaved (a failed write
+    /// included) before returning.
+    func flush() {
+        saveTask?.cancel()
+        debounce.saved()
+        profileStores.values.forEach { $0.flush() }
+        let status = writeStatus
+        let failed = Self.writes.sync { status.failed }
+        guard isDirty || failed else { return }
+        isDirty = false
+        let file = file, snapshot = history
+        Self.writes.sync { status.failed = !Self.write(snapshot, to: file) }
+    }
+
+    /// Whether this store's last write failed. Only touched on `writes`.
+    private final class WriteStatus: @unchecked Sendable {
+        var failed = false
+    }
+    @ObservationIgnored private let writeStatus = WriteStatus()
+    @ObservationIgnored private var debounce = CappedDebounce(quiet: 3, maxWait: 30)
+
+    nonisolated private static func write(_ history: History, to file: HistoryFile) -> Bool {
         do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(File(version: History.currentVersion, history: history))
-            try data.write(to: fileURL, options: .atomic)
+            try file.save(history)
+            return true
         } catch {
             NSLog("Kite: couldn't save history: \(error)")
+            return false
         }
     }
 }
