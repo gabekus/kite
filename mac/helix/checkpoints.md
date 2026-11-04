@@ -54,7 +54,7 @@ branch `helix/M<n>-<slug>` from main.
 | M1e | A tab opened straight onto a playing page never reports its media (no speaker, no Mini Player): find the cause, fix it, 5 of 5 on direct open with no regression on navigate | none (ChromiumEngine.swift, MediaStateScript.swift, the bridge's load-start callback) | done (#314) |
 | M1f | The address field's dark-page button crashed Kite on every click (an overlapping access to `store.state` inside `store.mutate`): read what it needs before mutating | none (SidebarHeaderView) | done (#316) |
 | M2 | Page toolbar and its extension icons: the bar, its buttons, the address, the install icon, pinned extensions and the extensions button | PageToolbar.swift, ExtensionsToolbar.swift (ToolbarExtensionItems, was ExtensionsToolbarItems) | done (#300) |
-| M3 | Site Controls popover | SiteControlsView.swift | in review (#322) |
+| M3 | Site Controls popover | SiteControlsView.swift | done (#322) |
 | M4 | The extensions popover | ExtensionsToolbar.swift (ExtensionsMenu) | planned [first fold SiteControlsLabel into SidebarLabel and move Site Controls' exact-top symbol placement into SidebarKit, rather than copying them (M3 review)] |
 | M5 | Link preview card | LinkPreviewCard.swift | planned |
 | M6 | Favorite preview card | FavoritePreviewCard.swift | planned |
