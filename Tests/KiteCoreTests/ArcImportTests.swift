@@ -365,6 +365,116 @@ import Testing
         #expect(throws: ArcImport.Failure.noSpaces) { try ArcImport.parse(empty) }
     }
 
+    /// One space whose pinned section is item 10 and unpinned section item 11; `items` are the rest.
+    private static func sidebar(_ items: [[String: Any]]) throws -> ArcImport.Result {
+        let space: [String: Any] = ["id": id(1), "title": "Space", "containerIDs": ["pinned", id(10), "unpinned", id(11)]]
+        let root: [String: Any] = ["sidebar": ["containers": [[
+            "spaces": [id(1), space],
+            "items": items.flatMap { [$0["id"]!, $0] },
+        ]]]]
+        return try ArcImport.parse(JSONSerialization.data(withJSONObject: root))
+    }
+
+    private static func folder(_ n: Int, children: [Int]) -> [String: Any] {
+        node(n, kind: ["list": [:]], title: "Folder \(n)", children: children)
+    }
+
+    private static func container(_ n: Int, children: [Int]) -> [String: Any] {
+        node(n, kind: ["itemContainer": [:]], children: children)
+    }
+
+    @Test func aSelfParentingFolderImportsOnce() throws {
+        let result = try Self.sidebar([
+            Self.container(10, children: [100, 101]),
+            Self.tab(100, parent: 10),
+            Self.folder(101, children: [101, 102]),
+            Self.tab(102, parent: 101),
+            Self.container(11, children: []),
+        ])
+        let pinned = result.spaces[0].pinnedItems
+        guard pinned.count == 2, case .folder(let folder) = pinned[1] else {
+            Issue.record("unexpected pinned items: \(pinned)")
+            return
+        }
+        #expect(pinned.tabs.map(\.title) == ["Site 100", "Site 102"])
+        #expect(folder.items.count == 1)
+        #expect(result.folderCount == 1)
+        #expect(result.tabCount == 2)
+    }
+
+    @Test func aTwoCycleImportsEachFolderOnce() throws {
+        let result = try Self.sidebar([
+            Self.container(10, children: [101]),
+            Self.folder(101, children: [102, 103]),
+            Self.folder(102, children: [101, 104]),
+            Self.tab(103, parent: 101),
+            Self.tab(104, parent: 102),
+            // The same cycle outside the pinned section, where folders flatten.
+            Self.container(11, children: [111]),
+            Self.folder(111, children: [112, 113]),
+            Self.folder(112, children: [111, 114]),
+            Self.tab(113, parent: 111),
+            Self.tab(114, parent: 112),
+        ])
+        let space = result.spaces[0]
+        guard space.pinnedItems.count == 1, case .folder(let outer) = space.pinnedItems[0],
+              outer.items.count == 2, case .folder(let inner) = outer.items[0]
+        else {
+            Issue.record("unexpected pinned items: \(space.pinnedItems)")
+            return
+        }
+        #expect(outer.name == "Folder 101")
+        #expect(inner.name == "Folder 102")
+        #expect(inner.items.tabs.map(\.title) == ["Site 104"])
+        #expect(outer.items.tabs.map(\.title) == ["Site 104", "Site 103"])
+        #expect(space.tabs.map(\.title) == ["Site 114", "Site 113"])
+        #expect(result.folderCount == 2)
+        #expect(result.tabCount == 4)
+    }
+
+    @Test func aChildListedTwiceImportsOnce() throws {
+        // Forty folders that each list the next one twice: 2^40 copies of the last tab if
+        // repeats were followed.
+        let chain = (0..<40).map { Self.folder(200 + $0, children: [201 + $0, 201 + $0]) }
+        let result = try Self.sidebar([
+            Self.container(10, children: [100, 100, 101]),
+            Self.tab(100, parent: 10),
+            Self.folder(101, children: [102, 102, 100]),
+            Self.tab(102, parent: 101),
+            Self.container(11, children: [110, 110, 200]),
+            Self.tab(110, parent: 11),
+            Self.tab(240, parent: 239),
+        ] + chain)
+        let space = result.spaces[0]
+        #expect(space.pinnedItems.count == 2)
+        #expect(space.pinnedItems.tabs.map(\.title) == ["Site 100", "Site 102"])
+        #expect(space.tabs.map(\.title) == ["Site 110", "Site 240"])
+        #expect(Set(space.allTabs.map(\.id)).count == space.allTabs.count)
+        #expect(result.tabCount == 4)
+    }
+
+    @Test func aVeryDeepChainStopsAtTheCap() throws {
+        // Ten thousand folders, each inside the last, with a tab at the bottom.
+        let depth = 10_000
+        let chain = (0..<depth).map { Self.folder(1000 + $0, children: [1001 + $0]) }
+        let result = try Self.sidebar([
+            Self.container(10, children: [1000]),
+            Self.tab(1000 + depth, parent: 999 + depth),
+            Self.container(11, children: [1000 + depth + 1]),
+            Self.tab(1000 + depth + 1, parent: 11),
+        ] + chain)
+        var levels = 0
+        var level = result.spaces[0].pinnedItems
+        while case .folder(let folder)? = level.first {
+            levels += 1
+            level = folder.items
+        }
+        #expect(levels == ArcImport.maxDepth)
+        #expect(level.isEmpty)
+        #expect(result.folderCount == ArcImport.maxDepth)
+        #expect(result.spaces[0].tabs.map(\.title) == ["Site \(1000 + depth + 1)"])
+    }
+
     /// Runs against a real Arc file when KITE_ARC_SIDEBAR points at one. Prints counts only.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["KITE_ARC_SIDEBAR"] != nil))
     func importsRealArcFile() throws {

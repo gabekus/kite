@@ -99,6 +99,10 @@ public enum ArcImport {
         return formatter.date(from: String(stamp))
     }
 
+    /// How many levels of folders and splits the import follows. Real sidebars nest a few;
+    /// a damaged file's endless chain stops here instead of overflowing the stack.
+    static let maxDepth = 64
+
     /// Fills in panes without a stored width; nil (equal widths) if the stored ones don't add up.
     static func splitWidthFactors(_ known: [Double?]) -> [Double]? {
         let stored = known.compactMap { $0 }
@@ -118,6 +122,10 @@ public enum ArcImport {
         var favoritesContainers: [String: String] = [:]
 
         var usedIDs: Set<UUID> = []
+        /// Arc item IDs already placed in the tree. Arc gives each item one parent, so an
+        /// ID seen again is a cycle or a repeat in `childrenIds`, and following it would
+        /// recurse forever (or, for a repeat, multiply).
+        var placedItems: Set<String> = []
         var tabCount = 0
         var folderCount = 0
         var splitCount = 0
@@ -230,27 +238,35 @@ public enum ArcImport {
 
         // MARK: Items
 
-        private func children(of id: String) -> [[String: Any]] {
-            let ids = items[id]?["childrenIds"] as? [String] ?? []
-            return ids.compactMap { items[$0] }
+        /// The children of item `id`, which sit `depth` levels down. Each item comes once,
+        /// so an ID already placed is skipped, and nothing comes past `maxDepth`.
+        private mutating func children(of id: String, depth: Int = 0) -> [[String: Any]] {
+            guard depth < ArcImport.maxDepth else { return [] }
+            placedItems.insert(id)
+            var result: [[String: Any]] = []
+            for childID in items[id]?["childrenIds"] as? [String] ?? [] {
+                guard let child = items[childID], placedItems.insert(childID).inserted else { continue }
+                result.append(child)
+            }
+            return result
         }
 
         /// A pinned tab, a folder, or a split view's tabs side by side (the split itself
         /// is recorded in `spaceSplits`).
-        private mutating func pinnedItems(_ item: [String: Any]) -> [PinnedItem] {
+        private mutating func pinnedItems(_ item: [String: Any], depth: Int = 0) -> [PinnedItem] {
             let data = item["data"] as? [String: Any] ?? [:]
             if data["list"] != nil {
                 folderCount += 1
                 let id = item["id"] as? String ?? ""
-                let contents = children(of: id).flatMap { pinnedItems($0) }
+                let contents = children(of: id, depth: depth + 1).flatMap { pinnedItems($0, depth: depth + 1) }
                 let name = (item["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Folder"
                 return [.folder(TabFolder(id: uniqueID(id), name: name, items: contents))]
             }
-            return flatTabs(item).map(PinnedItem.tab)
+            return flatTabs(item, depth: depth).map(PinnedItem.tab)
         }
 
         /// Tabs in an item, flattening split views and (outside the pinned section) folders.
-        private mutating func flatTabs(_ item: [String: Any]) -> [BrowserTab] {
+        private mutating func flatTabs(_ item: [String: Any], depth: Int = 0) -> [BrowserTab] {
             let data = item["data"] as? [String: Any] ?? [:]
             if let tab = data["tab"] as? [String: Any] {
                 tabCount += 1
@@ -268,10 +284,10 @@ public enum ArcImport {
             }
             let id = item["id"] as? String ?? ""
             if let split = data["splitView"] as? [String: Any] {
-                return splitTabs(id: id, split)
+                return splitTabs(id: id, split, depth: depth)
             }
             if data["list"] != nil {
-                return children(of: id).flatMap { flatTabs($0) }
+                return children(of: id, depth: depth + 1).flatMap { flatTabs($0, depth: depth + 1) }
             }
             if let kind = data.keys.first { skippedKinds.insert(kind) }
             return []
@@ -280,12 +296,12 @@ public enum ArcImport {
         /// A split view's tabs, in pane order, recording the split for the space.
         /// Arc's `itemWidthFactors` is a flat [itemID, factor, ...] list and may leave
         /// panes out; those share what's left.
-        private mutating func splitTabs(id: String, _ split: [String: Any]) -> [BrowserTab] {
+        private mutating func splitTabs(id: String, _ split: [String: Any], depth: Int) -> [BrowserTab] {
             let widths = doublePairs(split["itemWidthFactors"])
             var tabs: [BrowserTab] = []
             var factors: [Double?] = []
-            for child in children(of: id) {
-                let childTabs = flatTabs(child)
+            for child in children(of: id, depth: depth + 1) {
+                let childTabs = flatTabs(child, depth: depth + 1)
                 tabs += childTabs
                 let factor = (child["id"] as? String).flatMap { widths[$0] }
                 factors += childTabs.indices.map { $0 == 0 ? factor : nil }
