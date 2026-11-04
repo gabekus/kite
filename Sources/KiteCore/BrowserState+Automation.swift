@@ -170,6 +170,29 @@ extension BrowserState {
 }
 
 extension BrowserState {
+    /// A tab that tab `opener`'s page opened (a link to a new tab, a popup). As in Arc it goes to the top
+    /// of the unpinned tabs, except from a tab in a Claude folder: there it stays with Claude's work, pinned
+    /// right after its opener (after its split, when it's in one) in the same folder, the session's own
+    /// when the opener has one, so pages a task opens don't land among the user's tabs.
+    @discardableResult
+    public mutating func openTab(id: UUID = UUID(), url: URL?, openedBy opener: UUID, select: Bool = true,
+                                 now: Date = Date()) -> UUID {
+        guard isInEphemeralFolder(opener), let s = location(of: opener)?.space else {
+            return openTab(id: id, url: url, select: select, now: now)
+        }
+        var tab = BrowserTab(id: id, url: url, lastActiveAt: now)
+        tab.openedByPage = true
+        let after = split(containing: opener)?.split.tabIDs.last ?? opener
+        guard spaces[s].pinnedItems.insertTab(tab, after: after) || spaces[s].pinnedItems.insertTab(tab, after: opener) else {
+            return openTab(id: id, url: url, select: select, now: now)
+        }
+        if select {
+            spaces[s].selectedTabID = id
+            selectedSpaceID = spaces[s].id
+        }
+        return id
+    }
+
     /// Whether a tab sits in an ephemeral (Claude) folder, at any depth.
     public func isInEphemeralFolder(_ id: UUID) -> Bool {
         guard let s = location(of: id)?.space else { return false }

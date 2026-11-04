@@ -233,14 +233,17 @@ final class PagePool {
 
     /// A new selected tab showing `page`, which already exists (a popup, or a Peek's page expanded). `url` is
     /// what it shows already: WebKit doesn't report a page's URL again until it changes.
-    /// `opener` is the tab whose page opened it, for a popup.
-    func openTab(with page: WebPage, url: URL? = nil, opener: UUID? = nil) {
+    /// `opener` is the tab whose page opened it, for a popup; `source` the tab it came from otherwise (a
+    /// Peek's), which places it as a tab that page opened (next to it in a Claude folder).
+    func openTab(with page: WebPage, url: URL? = nil, opener: UUID? = nil, source: UUID? = nil) {
         // Register before the tab exists so selecting it reuses this page.
         let newID = UUID()
         register(page, id: newID)
         pageProfiles[newID] = currentEngine.profileDirectory
         if let opener { Self.popupOpeners[newID] = opener }
-        store.mutateWithoutUndo { $0.openTab(id: newID, url: url) }
+        store.mutateWithoutUndo { state in
+            if let from = opener ?? source { state.openTab(id: newID, url: url, openedBy: from) } else { state.openTab(id: newID, url: url) }
+        }
     }
 
     /// A popup and its opener talk through `window.opener` and `postMessage` (Sign in with Apple
@@ -327,7 +330,7 @@ final class PagePool {
                 extensionID: extensionID, storeURL: storeURL, engine: engine(forTab: id), source: source
             ) { [weak self] in self?.extensionInstalls[extensionID] = nil }
         case let .openInNewTab(url, foreground):
-            store.mutateWithoutUndo { $0.openTab(url: url, select: foreground) }
+            store.mutateWithoutUndo { $0.openTab(url: url, openedBy: id, select: foreground) }
         case .popup(let page):
             openTab(with: page, opener: id)
         case .openInLinkPeek(let url):
@@ -357,7 +360,7 @@ final class PagePool {
             }
         case let .openLink(url, target):
             // Chromium opens Open Link in New Tab in the background.
-            if target == .newTab { store.mutateWithoutUndo { $0.openTab(url: url, select: false) } } else { onOpenLink?(id, url, target) }
+            if target == .newTab { store.mutateWithoutUndo { $0.openTab(url: url, openedBy: id, select: false) } } else { onOpenLink?(id, url, target) }
         case .pageCommand(let command):
             onPageCommand?(id, command)
         case .linkHover(let hover):
