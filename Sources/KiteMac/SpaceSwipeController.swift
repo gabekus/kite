@@ -21,8 +21,13 @@ final class SpaceSwipeController {
     /// The release: settle on this theme from wherever the crossfade was.
     private let settleTheme: (Theme) -> Void
     private var swipe: SpaceSwipe?
+    /// The spaces the swipe began between, looked up by id: they can change mid-swipe.
+    private var neighbours: SpaceSwipe.Neighbours?
     /// After the fingers lift, the trackpad's momentum events still belong to the swipe.
     private var swallowingMomentum = false
+    /// A swipe cancelled mid-gesture (`cancel`): the rest of that gesture is swallowed, rather than
+    /// starting a new swipe from whatever space is selected now.
+    private var abandonedGesture = false
     /// A gesture that started vertically scrolls the tab list for its whole length.
     private var verticalGesture = false
     /// The settle under way: where it started, where it ends and when.
@@ -55,6 +60,16 @@ final class SpaceSwipeController {
         // Only trackpad gestures page; a mouse wheel's sideways clicks don't.
         guard event.hasPreciseScrollingDeltas else { return false }
         let phase = event.phase
+        if abandonedGesture {
+            if phase.contains(.ended) || phase.contains(.cancelled) {
+                abandonedGesture = false
+                swallowingMomentum = true
+                return true
+            }
+            // A new gesture (the end of the old one never came) is a swipe of its own.
+            guard phase.contains(.began) || phase.contains(.mayBegin) else { return true }
+            abandonedGesture = false
+        }
 
         if swipe == nil {
             if phase.contains(.mayBegin) || phase.contains(.began) { verticalGesture = false }
@@ -80,6 +95,7 @@ final class SpaceSwipeController {
         if phase.contains(.ended) || phase.contains(.cancelled) {
             finish(cancelled: phase.contains(.cancelled))
             swallowingMomentum = true
+            abandonedGesture = false
         }
         return true
     }
@@ -97,27 +113,47 @@ final class SpaceSwipeController {
         commitLanding()
         if model.anchor != nil { set { $0.anchor = nil } }
         let state = store.state
-        let index = state.selectedSpaceIndex
-        swipe = SpaceSwipe(pageWidth: Double(model.pageWidth), hasPrevious: index > 0,
-                           hasNext: index < state.spaces.count - 1, travel: Double(model.offset))
+        guard let neighbours = SpaceSwipe.Neighbours(spaces: state.spaces.map(\.id),
+                                                     selected: state.selectedSpaceIndex) else { return }
+        self.neighbours = neighbours
+        swipe = SpaceSwipe(pageWidth: Double(model.pageWidth), hasPrevious: neighbours.previous != nil,
+                           hasNext: neighbours.next != nil, travel: Double(model.offset))
+    }
+
+    /// The space towards `direction` among those the swipe began between, while they're all still there.
+    private func space(towards direction: Int) -> Space? {
+        let state = store.state
+        let selected = state.spaces.indices.contains(state.selectedSpaceIndex) ? state.spaces[state.selectedSpaceIndex].id : nil
+        guard let id = neighbours?.target(towards: direction, spaces: state.spaces.map(\.id), selected: selected)
+        else { return nil }
+        return state.spaces.first { $0.id == id }
     }
 
     private func show() {
         guard let swipe else { return }
+        guard let current = space(towards: 0), let neighbour = space(towards: swipe.direction) else {
+            abandonedGesture = true
+            return cancel()
+        }
         set { $0.offset = CGFloat(swipe.offset) }
+        showTheme(current.theme, neighbour.theme, Float(swipe.progress))
+    }
+
+    /// The spaces changed under the swipe: drop it, and the pages settle back on the selected space.
+    private func cancel() {
+        swipe = nil
+        neighbours = nil
         let state = store.state
-        let index = state.selectedSpaceIndex
-        let current = state.spaces[index].theme
-        let neighbour = swipe.direction == 0 ? current : state.spaces[index + swipe.direction].theme
-        showTheme(current, neighbour, Float(swipe.progress))
+        if state.spaces.indices.contains(state.selectedSpaceIndex) { settleTheme(state.spaces[state.selectedSpaceIndex].theme) }
+        settle()
     }
 
     private func finish(cancelled: Bool) {
         guard let swipe else { return }
-        self.swipe = nil
         let landing = cancelled ? 0 : swipe.landing
-        let state = store.state
-        let target = state.spaces[state.selectedSpaceIndex + landing]
+        guard let target = space(towards: landing) else { return cancel() }
+        self.swipe = nil
+        neighbours = nil
         settleTheme(target.theme)
         // The pages slide on to the neighbour's page before the space is selected: selecting it redraws the
         // sidebar and swaps the web page, 30-50ms of work that would stall the first frames of the slide.

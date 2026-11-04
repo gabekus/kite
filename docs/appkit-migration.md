@@ -134,7 +134,9 @@ All numbers come from release builds bundled with the test bundle ID
   (`python3 -m http.server 18765` over `p1.html`…`p10.html`), closes the fresh profile's own tab, waits 30 s,
   then samples the main Kite process (not renderers or helpers) with `proc_pid_rusage`
   (`scripts/perf/rusage.c`): CPU milliseconds per second, interrupt wakeups per second, billed energy and
-  the footprint. `top`'s IDLEW column turned out to be a running total (it showed a fixed 799 for a live
+  the footprint, and bytes written to disk. `ALL=1` sums the main process and every Kite Helper child instead;
+  `STATE=dir` seeds the profile with the dir's `session.json`, `Claude Handoffs.json` and `automation.json`
+  (fixtures with fake data in `scripts/perf/fixtures/`). `top`'s IDLEW column turned out to be a running total (it showed a fixed 799 for a live
   Kite), and `powermetrics` needs a password, so neither is used. `HOVER=1` first sweeps the pointer over
   the sidebar and scrolls it; `SETTLE=1 … 10` samples while Claude's rings still show (every tab `kite open`
   opens is driven by Claude for 15 s after the last call).

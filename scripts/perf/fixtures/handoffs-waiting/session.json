@@ -1,0 +1,280 @@
+{
+ "state": {
+  "adblockAllowedHosts": [],
+  "allowsJavaScriptFromAppleEvents": false,
+  "archiveAfter": "twelveHours",
+  "archived": [],
+  "asksBeforeQuitting": false,
+  "blocksAds": true,
+  "darkPageHosts": [],
+  "darkPages": "matchSystem",
+  "devModeReloadState": "reload",
+  "developerModeEnabledForHosts": [],
+  "favorites": [],
+  "hasSeenLiveFolderIntro": false,
+  "liveFoldersTurnedOff": [],
+  "pageAppearance": "automatic",
+  "recentlyClosed": [],
+  "searchEngine": "google",
+  "selectedSpaceID": "AEF799B4-A2CA-4E8C-919B-D4D53ED55795",
+  "showsToolbar": false,
+  "siteSearchDefaultsSeeded": 2,
+  "siteSearches": [
+   {
+    "color": "0F9D58",
+    "id": "5DE5B09D-463C-4E7C-A856-7D9EB55BC49F",
+    "name": "Google Drive",
+    "shortcut": "drive.google.com",
+    "urlTemplate": "https://drive.google.com/drive/search?q=%s"
+   },
+   {
+    "color": "D44638",
+    "id": "ECC0DC5E-F197-41FF-86ED-46611702A952",
+    "name": "Gmail",
+    "shortcut": "mail.google.com",
+    "urlTemplate": "https://mail.google.com/mail/ca/u/0/#apps/%s"
+   },
+   {
+    "color": "FBBC05",
+    "id": "A13FC5C7-4F74-49F4-B5AE-94490D0CE2F6",
+    "name": "Google Maps",
+    "shortcut": "maps.google.com",
+    "urlTemplate": "https://www.google.com/maps/search/%s"
+   },
+   {
+    "color": "9C27B0",
+    "id": "E484DDA8-9700-4470-AFF1-D774B4E3E2E0",
+    "name": "Google Calendar",
+    "shortcut": "calendar.google.com",
+    "urlTemplate": "https://calendar.google.com/calendar/u/0/r/search?q=%s"
+   },
+   {
+    "color": "4285F4",
+    "id": "98CCC3A0-B928-4906-9A3C-FACD96311221",
+    "name": "Google Docs",
+    "shortcut": "docs.google.com",
+    "urlTemplate": "https://docs.google.com/document/u/0/?q=%s"
+   },
+   {
+    "color": "007EE5",
+    "id": "C7E0AD7A-C536-4DE6-AB2E-1BC1FF3A6CF5",
+    "name": "Dropbox",
+    "shortcut": "dropbox.com",
+    "urlTemplate": "https://www.dropbox.com/search/personal?&query=%s"
+   },
+   {
+    "color": "FF9900",
+    "id": "B36FAFCB-A08D-466F-98C0-E20D92867EFE",
+    "name": "Amazon",
+    "shortcut": "amazon.com",
+    "urlTemplate": "https://www.amazon.com/s?k=%s"
+   },
+   {
+    "color": "743FC7",
+    "id": "E1B70CBC-F1A7-468B-B65C-BB402D16963C",
+    "name": "GitHub",
+    "shortcut": "github.com",
+    "urlTemplate": "https://github.com/search?q=%s"
+   },
+   {
+    "color": "F24E1E",
+    "id": "5B5920E1-756C-4938-82B2-275228619DE7",
+    "name": "Figma",
+    "shortcut": "figma.com",
+    "urlTemplate": "https://www.figma.com/files/search?q=%s"
+   },
+   {
+    "color": "000000",
+    "id": "E9CC8DD8-05AA-460D-980B-B2A4BC8600CA",
+    "name": "X",
+    "shortcut": "x.com",
+    "urlTemplate": "https://x.com/search?q=%s"
+   },
+   {
+    "color": "000000",
+    "id": "AEF80736-34E3-4656-82D8-4361B4F94763",
+    "name": "X",
+    "shortcut": "twitter.com",
+    "urlTemplate": "https://twitter.com/search?q=%s"
+   },
+   {
+    "color": "FF0000",
+    "id": "D56CB2BF-565C-45BC-8B8D-B50104CFB0AF",
+    "name": "YouTube",
+    "shortcut": "youtube.com",
+    "urlTemplate": "https://www.youtube.com/results?search_query=%s"
+   },
+   {
+    "color": "FF4500",
+    "id": "D322C0E1-58D8-42EC-8E75-B12827A64A35",
+    "name": "Wikipedia",
+    "shortcut": "wikipedia.org",
+    "urlTemplate": "https://wikipedia.org/w/index.php?search=%s"
+   },
+   {
+    "color": "FF4500",
+    "id": "5AA47CAF-C572-4D00-8FF3-603E53E77B25",
+    "name": "Reddit",
+    "shortcut": "reddit.com",
+    "urlTemplate": "https://www.reddit.com/search/?q=%s"
+   },
+   {
+    "color": "F85216",
+    "id": "CD4504C4-FAE7-4F38-A2C0-C001CB3BF301",
+    "name": "SoundCloud",
+    "shortcut": "soundcloud.com",
+    "urlTemplate": "https://soundcloud.com/search?q=%s"
+   },
+   {
+    "color": "F06A6A",
+    "id": "8C6AF3EA-EC22-4396-AB7F-E5D1BEB32F47",
+    "name": "Asana",
+    "shortcut": "asana.com",
+    "urlTemplate": "https://app.asana.com/0/search?q=%s"
+   },
+   {
+    "color": "0B66C2",
+    "id": "EF93004B-0E74-42C3-BF69-3A8A6C666BC2",
+    "name": "LinkedIn",
+    "shortcut": "linkedin.com",
+    "urlTemplate": "https://linkedin.com/search/results/all/?keywords=%s"
+   },
+   {
+    "color": "FA2A44",
+    "id": "D9414186-3A49-4ECD-BB83-52B164710B5F",
+    "name": "Apple Music",
+    "shortcut": "music.apple.com",
+    "urlTemplate": "https://music.apple.com/us/search?term=%s"
+   },
+   {
+    "color": "1DB954",
+    "id": "49A374AE-33FB-436E-9FEF-A395A7FD36CF",
+    "name": "Spotify",
+    "shortcut": "spotify.com",
+    "urlTemplate": "https://open.spotify.com/search/%s"
+   }
+  ],
+  "spaces": [
+   {
+    "icon": "\ud83c\udfe0",
+    "id": "AEF799B4-A2CA-4E8C-919B-D4D53ED55795",
+    "name": "Personal",
+    "pinnedItems": [],
+    "selectedTabID": "E6723A05-AC15-4B01-A752-58886C189384",
+    "tabs": [
+     {
+      "faviconURL": "http://127.0.0.1:18765/favicon.ico",
+      "id": "E6723A05-AC15-4B01-A752-58886C189384",
+      "lastActiveAt": 815463211.911158,
+      "title": "Static page 10",
+      "url": "http://127.0.0.1:18765/p10.html"
+     },
+     {
+      "faviconURL": "http://127.0.0.1:18765/favicon.ico",
+      "id": "477C9417-429D-4022-8200-1E2DC4894BC7",
+      "lastActiveAt": 815463065.459683,
+      "title": "Static page 9",
+      "url": "http://127.0.0.1:18765/p9.html"
+     },
+     {
+      "faviconURL": "http://127.0.0.1:18765/favicon.ico",
+      "id": "7F5589CB-B45B-4189-AA6A-48B189E31F37",
+      "lastActiveAt": 815463006.668505,
+      "title": "Static page 8",
+      "url": "http://127.0.0.1:18765/p8.html"
+     },
+     {
+      "faviconURL": "http://127.0.0.1:18765/favicon.ico",
+      "id": "AD257F18-275F-4676-BAF3-FD65FCA4A1A6",
+      "lastActiveAt": 815463006.331648,
+      "title": "Static page 7",
+      "url": "http://127.0.0.1:18765/p7.html"
+     },
+     {
+      "faviconURL": "http://127.0.0.1:18765/favicon.ico",
+      "id": "49543021-59EF-491A-B42D-5CC07DB60337",
+      "lastActiveAt": 815463005.977968,
+      "title": "Static page 6",
+      "url": "http://127.0.0.1:18765/p6.html"
+     },
+     {
+      "faviconURL": "http://127.0.0.1:18765/favicon.ico",
+      "id": "EA58D198-9EBE-4181-AD80-0AA8C2ED13F1",
+      "lastActiveAt": 815463005.65242,
+      "title": "Static page 5",
+      "url": "http://127.0.0.1:18765/p5.html"
+     },
+     {
+      "faviconURL": "http://127.0.0.1:18765/favicon.ico",
+      "id": "FB66F274-0700-40BF-91CF-1D17C115A120",
+      "lastActiveAt": 815463005.318498,
+      "title": "Static page 4",
+      "url": "http://127.0.0.1:18765/p4.html"
+     },
+     {
+      "faviconURL": "http://127.0.0.1:18765/favicon.ico",
+      "id": "29F7BD4C-A72E-49C4-88CB-EE6657625740",
+      "lastActiveAt": 815463004.967311,
+      "title": "Static page 3",
+      "url": "http://127.0.0.1:18765/p3.html"
+     },
+     {
+      "faviconURL": "http://127.0.0.1:18765/favicon.ico",
+      "id": "46DD0F54-1567-4204-9F95-6C418CB6D793",
+      "lastActiveAt": 815463004.624877,
+      "title": "Static page 2",
+      "url": "http://127.0.0.1:18765/p2.html"
+     },
+     {
+      "faviconURL": "http://127.0.0.1:18765/favicon.ico",
+      "id": "0AD7C110-3AC2-4669-9349-00339E9ED77A",
+      "lastActiveAt": 815463004.283304,
+      "title": "Static page 1",
+      "url": "http://127.0.0.1:18765/p1.html"
+     }
+    ],
+    "theme": {
+     "colors": [
+      {
+       "b": 0.1,
+       "g": 0.1,
+       "r": 0.1
+      }
+     ],
+     "grain": 0,
+     "tint": 0.44000003
+    }
+   },
+   {
+    "icon": "\ud83d\udcbc",
+    "id": "733C9251-B7A8-4DB9-BA0C-B31C6915E003",
+    "name": "Work",
+    "pinnedItems": [],
+    "tabs": [],
+    "theme": {
+     "colors": [
+      {
+       "b": 0.42352942,
+       "g": 0.6039216,
+       "r": 1
+      },
+      {
+       "b": 0.60784316,
+       "g": 0.38431373,
+       "r": 0.9411765
+      },
+      {
+       "b": 0.9607843,
+       "g": 0.36078432,
+       "r": 0.5411765
+      }
+     ],
+     "grain": 0.35,
+     "tint": 0.55
+    }
+   }
+  ],
+  "spacesWithCollapsedPinnedSections": []
+ },
+ "version": 1
+}

@@ -14,6 +14,8 @@ struct SidebarActions {
     var clearCookiesAndRefresh: () -> Void
     var toggleSidebar: () -> Void
     var closeTab: (UUID) -> Void
+    /// Several tabs closed together (a tab group's close, Archive Item on a split): asked as one.
+    var closeTabs: ([UUID]) -> Void = { _ in }
     var addSplitView: () -> Void
     /// A space's context menu in the strip.
     var editTheme: (UUID) -> Void
@@ -37,6 +39,13 @@ struct SidebarActions {
     /// The Today divider's Clear button: Clear Today for that space.
     var clearToday: (UUID) -> Void = { _ in }
     var removeTabGroupHeader: (UUID) -> Void = { _ in }
+    /// A tab row's menu items that need the window (the menus change the store inline otherwise):
+    /// Add Split View (selects the tab first), Open in Split View, Move to (tab, space), and Archive
+    /// Other Tabs / Below / Above, which show a toast.
+    var addSplitViewWith: (UUID) -> Void = { _ in }
+    var openInSplitView: (UUID) -> Void = { _ in }
+    var moveTab: (UUID, UUID) -> Void = { _, _ in }
+    var archiveTabs: (UUID, ArchiveTabsRelative) -> Void = { _, _ in }
     /// A tab row's speaker button and Mute / Unmute menu item.
     var toggleMute: (UUID) -> Void = { _ in }
     /// A space's Set Profile (space id, profile folder) and its New Profile….
@@ -51,6 +60,8 @@ struct SidebarActions {
     var drop: ([UUID], SidebarDropTarget) -> Void
     /// The pointer moved onto a favorite's tile (with the tile's view), or off it (nil): its preview card.
     var previewFavorite: (BrowserTab?, NSView?) -> Void = { _, _ in }
+    /// The pointer came onto the favorites tray: previews that may be wanted soon are fetched.
+    var prefetchFavoritePreviews: () -> Void = {}
 }
 
 /// Set from a tracking area over the sidebar's host (`BrowserWindowController`).

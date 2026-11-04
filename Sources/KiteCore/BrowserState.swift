@@ -195,8 +195,13 @@ public struct BrowserState: Hashable, Codable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let spaces = try c.decode([Space].self, forKey: .spaces)
+        // init(spaces:) traps on none: a thrown error lets the session's corrupt-file path take over.
+        guard !spaces.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .spaces, in: c, debugDescription: "A browser needs at least one space")
+        }
         self.init(
-            spaces: try c.decode([Space].self, forKey: .spaces),
+            spaces: spaces,
             selectedSpaceID: try c.decodeIfPresent(UUID.self, forKey: .selectedSpaceID),
             searchEngine: try c.decodeIfPresent(SearchEngine.self, forKey: .searchEngine) ?? .google
         )
@@ -333,6 +338,24 @@ public struct BrowserState: Hashable, Codable, Sendable {
 
     public var selectedSpace: Space { spaces[selectedSpaceIndex] }
 
+    /// The selected space and its selected tab (`selection` has every space's), which can be watched
+    /// apart from the rest of the state.
+    public struct Focus: Equatable, Sendable {
+        public var space: UUID?
+        public var tab: UUID?
+
+        public init(space: UUID? = nil, tab: UUID? = nil) {
+            self.space = space
+            self.tab = tab
+        }
+    }
+
+    public var focus: Focus {
+        guard !spaces.isEmpty else { return Focus() }
+        let space = selectedSpace
+        return Focus(space: space.id, tab: space.selectedTabID)
+    }
+
     public var selectedTab: BrowserTab? {
         guard let id = selectedSpace.selectedTabID else { return nil }
         return sidebarTabs(in: selectedSpaceIndex).first { $0.id == id }
@@ -453,6 +476,7 @@ public struct BrowserState: Hashable, Codable, Sendable {
             if !tab.isBlank {
                 var closed = ClosedTab(tab: tab, spaceID: spaces[s].id, index: 0)
                 closed.tab.splitPane = nil
+                closed.tab.openedByPage = nil
                 recentlyClosed.append(closed)
                 if recentlyClosed.count > Self.recentlyClosedLimit {
                     recentlyClosed.removeFirst(recentlyClosed.count - Self.recentlyClosedLimit)
@@ -491,10 +515,10 @@ public struct BrowserState: Hashable, Codable, Sendable {
     }
 
     /// A pinned tab or favorite that closing removes rather than unloads: a pane Add Split View
-    /// added next to one, or a tab that never had a page.
+    /// added next to one, a tab a page opened into a Claude folder, or a tab that never had a page.
     public func closesForGood(tab id: UUID) -> Bool {
         guard let tab = tab(id) else { return false }
-        return tab.splitPane == true || tab.isBlank
+        return tab.splitPane == true || tab.isBlank || (tab.openedByPage == true && isInEphemeralFolder(id))
     }
 
     /// Whether the sidebar row shows its close button. Tabs Claude opened in its folders don't:

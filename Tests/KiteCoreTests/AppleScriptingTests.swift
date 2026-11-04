@@ -33,6 +33,20 @@ import Testing
         #expect(AppleScripting.newTabURL(42) == nil)
     }
 
+    @Test func scriptURLsNeedJavaScriptFromAppleEvents() throws {
+        let javascript = try #require(URL(string: "javascript:alert(document.cookie)"))
+        let upper = try #require(URL(string: "JavaScript:void(0)"))
+        let data = try #require(URL(string: "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=="))
+        let page = try #require(URL(string: "https://example.com"))
+        for url in [javascript, upper, data] {
+            #expect(AppleScripting.runsScript(url))
+            #expect(!AppleScripting.mayLoad(url, allowsJavaScript: false))
+            #expect(AppleScripting.mayLoad(url, allowsJavaScript: true))
+        }
+        #expect(AppleScripting.mayLoad(page, allowsJavaScript: false))
+        #expect(AppleScripting.mayLoad(try #require(URL(string: "about:blank")), allowsJavaScript: false))
+    }
+
     @Test func javaScriptResultsBecomeText() {
         #expect(AppleScripting.text(fromJavaScriptResult: nil) == "")
         #expect(AppleScripting.text(fromJavaScriptResult: NSNull()) == "")

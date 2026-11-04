@@ -218,13 +218,14 @@ public struct CosmeticResources: Decodable, Equatable, Sendable {
     /// than a Runtime binding) keeps the DevTools Runtime domain off, which bot
     /// checks can detect.
     ///
-    /// The browser drains only for a few seconds after each load, so the observer stops
-    /// after `restAfter` ms without a drain (Gmail and Slack change their DOM all day), and
-    /// the next drain rescans the page and starts it again: nothing is missed.
+    /// Added nodes are scanned when the page is idle, not in the mutation callback.
+    /// The browser drains only for a few seconds after each load, so its last drain
+    /// passes `true` and the observer disconnects: classes and ids that first appear
+    /// after that get no generic rules (site-specific rules and network blocking still
+    /// apply). A later drain without it, after another load, reconnects and rescans.
     static let classIDObserver = """
-        const seen = new Set(), restAfter = 20000;
-        const Observer = MutationObserver, later = setTimeout, cancel = clearTimeout;
-        let classes = [], ids = [], observer = null, resting = null;
+        const seen = new Set();
+        let classes = [], ids = [];
         const add = (el) => {
           if (el.id && !seen.has('#' + el.id)) { seen.add('#' + el.id); ids.push(el.id); }
           const list = el.classList;
@@ -235,26 +236,31 @@ public struct CosmeticResources: Decodable, Equatable, Sendable {
           add(root);
           for (const el of root.querySelectorAll('[id],[class]')) add(el);
         };
-        const rest = () => {
-          cancel(resting);
-          resting = later(() => { if (observer) observer.disconnect(); observer = null; }, restAfter);
+        let pending = [], idle = 0, observer = null;
+        const idleCallback = window.requestIdleCallback || ((f) => setTimeout(f, 50));
+        const flush = () => {
+          idle = 0;
+          const nodes = pending; pending = [];
+          for (const n of nodes) if (n.isConnected) scan(n);
         };
         const start = () => {
-          if (observer) observer.disconnect();
+          if (observer) return;
           scan(document.documentElement);
-          observer = new Observer((records) => {
+          observer = new MutationObserver((records) => {
             for (const r of records) {
-              if (r.type === 'attributes') add(r.target);
-              else for (const n of r.addedNodes) scan(n);
+              if (r.type === 'attributes') pending.push(r.target);
+              else for (const n of r.addedNodes) if (n.nodeType === 1) pending.push(n);
             }
+            if (pending.length && !idle) idle = idleCallback(flush, { timeout: 500 });
           });
           observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'id'] });
-          rest();
         };
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
         else start();
-        Object.defineProperty(window, drainName, { configurable: true, value: () => {
-          if (document.readyState !== 'loading') { if (observer) rest(); else start(); }
+        Object.defineProperty(window, drainName, { configurable: true, value: (last) => {
+          if (document.readyState !== 'loading') start();
+          if (pending.length) flush();
+          if (last && observer) { observer.disconnect(); observer = null; pending = []; }
           if (!classes.length && !ids.length) return null;
           const batch = JSON.stringify({ classes, ids });
           classes = []; ids = [];
@@ -263,10 +269,11 @@ public struct CosmeticResources: Decodable, Equatable, Sendable {
 
         """
 
-    /// Empties the page's class/id queue; evaluates to a JSON string or null.
-    public static func drainScript(_ drain: String) -> String {
+    /// Empties the page's class/id queue; evaluates to a JSON string or null. `last`
+    /// also stops the page collecting more until the next drain.
+    public static func drainScript(_ drain: String, last: Bool = false) -> String {
         let data = try! JSONSerialization.data(withJSONObject: [drain])
-        return "(([name]) => typeof window[name] === 'function' ? window[name]() : null)(\(String(decoding: data, as: UTF8.self)))"
+        return "(([name]) => typeof window[name] === 'function' ? window[name](\(last)) : null)(\(String(decoding: data, as: UTF8.self)))"
     }
 
     /// Script that appends generic hiding CSS to the page's style element.

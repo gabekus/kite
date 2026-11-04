@@ -16,6 +16,10 @@ public struct BrowserTab: Identifiable, Hashable, Codable, Sendable {
     /// but the user opened it, so closing it removes it like an unpinned tab instead of only
     /// unloading it. nil for every other tab, and cleared when the user pins it.
     public var splitPane: Bool?
+    /// A tab a page in a Claude folder opened (a link to a new tab, a popup): it sits pinned with its
+    /// opener (`openTab(url:openedBy:)`), but Claude didn't open it, so while it's in a Claude folder
+    /// closing it removes it like an unpinned tab instead of only unloading it. nil for every other tab.
+    public var openedByPage: Bool?
 
     public init(
         id: UUID = UUID(),

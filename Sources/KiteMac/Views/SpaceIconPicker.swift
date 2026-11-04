@@ -211,7 +211,7 @@ struct SpaceIconPicker: View {
         panel.canChooseDirectories = false
         panel.prompt = "Use Image"
         panel.message = "Choose a picture for this space’s icon"
-        panel.begin { response in
+        WindowPresenter.begin(panel) { response in
             guard response == .OK, let url = panel.url, let icon = SpaceIconImages.store(contentsOf: url) else { return }
             let old = store.state.spaces.first { $0.id == spaceID }?.icon ?? ""
             store.mutate { $0.setSpaceIcon(spaceID, to: icon) }

@@ -29,13 +29,29 @@ final class MediaLibraryModel {
         var onboarded = false
         var hiddenPaths: [String] = []
         var sources: [MediaLibrary.Source]?
+
+        init(onboarded: Bool, hiddenPaths: [String], sources: [MediaLibrary.Source]?) {
+            self.onboarded = onboarded
+            self.hiddenPaths = hiddenPaths
+            self.sources = sources
+        }
+
+        /// A source from a newer build is left out rather than failing the file (and the hidden list with it).
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            onboarded = try container.decodeIfPresent(Bool.self, forKey: .onboarded) ?? false
+            hiddenPaths = try container.decodeIfPresent([String].self, forKey: .hiddenPaths) ?? []
+            sources = try container.decodeIfPresent([Lossy<MediaLibrary.Source>].self, forKey: .sources)?.compactMap(\.value)
+        }
     }
 
     private init() {
         let support = AppDelegate.supportDirectory
         captures = CaptureStore(folder: support.appendingPathComponent("Captures", isDirectory: true))
         settingsURL = support.appendingPathComponent("Media.json")
-        if let data = try? Data(contentsOf: settingsURL), let settings = try? JSONDecoder().decode(Settings.self, from: data) {
+        // A file that won't decode is moved aside (or never saved over, when it can't be), so saving doesn't
+        // write over the hidden files' list; one read leniently is copied aside.
+        if let settings = StoreFile.load(Settings.self, from: settingsURL).value {
             isOnboarded = settings.onboarded
             hidden = Set(settings.hiddenPaths)
             if let sources = settings.sources { self.sources = Set(sources) }
@@ -188,6 +204,7 @@ final class MediaLibraryModel {
     private func save() {
         let settings = Settings(onboarded: isOnboarded, hiddenPaths: hidden.sorted(),
                                 sources: MediaLibrary.Source.allCases.filter(sources.contains))
+        guard (try? StoreFile.checkWritable(settingsURL)) != nil else { return }
         try? FileManager.default.createDirectory(at: settingsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? JSONEncoder().encode(settings).write(to: settingsURL, options: .atomic)
     }

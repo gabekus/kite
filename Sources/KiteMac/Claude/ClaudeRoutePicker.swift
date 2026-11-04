@@ -6,7 +6,10 @@ import KiteCore
 enum ClaudeRoutePicker {
     /// Recent Claude Code folders, with the current route's folder kept in the list.
     static func folders(including route: ClaudeRoute) -> [String] {
-        var folders = ClaudeCodeFolders.recent(home: FileManager.default.homeDirectoryForCurrentUser)
+        // A test profile's fixture home, never the user's own ~/.claude.
+        let home = ClaudeCodeSessions.home(environment: ProcessInfo.processInfo.environment,
+                                           userHome: FileManager.default.homeDirectoryForCurrentUser)
+        var folders = ClaudeCodeFolders.recent(home: home)
         if case let .folder(path) = route, !folders.contains(path) { folders.insert(path, at: 0) }
         return folders
     }
@@ -18,7 +21,7 @@ enum ClaudeRoutePicker {
         panel.allowsMultipleSelection = false
         panel.prompt = "Use Folder"
         panel.message = message
-        return panel.runModal() == .OK ? panel.url?.path : nil
+        return WindowPresenter.runModal(panel) == .OK ? panel.url?.path : nil
     }
 
     /// Asks for a Claude Project's link and a name for it: "Add a Claude Project", in Arc's dialog sheet (`ArcDialog`) on `window`.

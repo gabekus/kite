@@ -135,6 +135,8 @@ final class RecentTabSwitcherController {
 
     private func closeFocused() {
         guard let id = switcher?.focusedID else { return }
+        // Deliberately without asking the page: the switcher is open over the window and holds ⌃,
+        // so a "Leave site?" sheet behind it couldn't be answered.
         owner.close(tab: id)
         if switcher?.remove(id) == false { return dismiss(commit: false) }
         updateView()

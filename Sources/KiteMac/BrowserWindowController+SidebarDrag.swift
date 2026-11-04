@@ -4,10 +4,11 @@ import KiteCore
 extension BrowserWindowController {
     /// After a sidebar drop: Arc's drop haptic and its move toasts (`MoveItemsToastType`; the
     /// wording is from Arc 1.169's strings).
-    func sidebarDropped(_ outcome: SidebarDropOutcome) {
+    /// `haptic` is false for a move picked from a menu, which isn't a drag.
+    func sidebarDropped(_ outcome: SidebarDropOutcome, haptic: Bool = true) {
         // Arc's drop haptic: probably the generic pattern, performed now (binary, not confirmed),
         // unless Settings › Advanced › "Haptic feedback when reordering tabs" is off.
-        if TabReorderHaptics.isEnabled() {
+        if haptic, TabReorderHaptics.isEnabled() {
             NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
         }
         let state = store.state
@@ -29,14 +30,26 @@ extension BrowserWindowController {
         }
     }
 
-    /// A sidebar drop: the move, then its toast.
-    func dropSidebarItems(_ ids: [UUID], on target: SidebarDropTarget) {
+    /// A sidebar drop: the move, then its toast. `haptic` is false for a move picked from a menu.
+    func dropSidebarItems(_ ids: [UUID], on target: SidebarDropTarget, haptic: Bool = true) {
         confirmCrossProfileMove(ids, on: target) { [weak self] in
             guard let self else { return }
             var outcome: SidebarDropOutcome?
             store.mutate { outcome = $0.dropSidebarItems(ids, on: target) }
-            if let outcome { sidebarDropped(outcome) }
+            if let outcome { sidebarDropped(outcome, haptic: haptic) }
         }
+    }
+
+    /// Moves a tab (its split, if it's in one) to another space: to the end of its pinned items when
+    /// `pinned`, else the top of its Today. The command bar's Move to Today / Pinned in <space> and the
+    /// sidebar tab menu's Move to › space.
+    func moveTab(_ id: UUID, toSpace spaceID: UUID, pinned: Bool) {
+        let state = store.state
+        guard let space = state.spaces.first(where: { $0.id == spaceID }) else { return }
+        let target: SidebarDropTarget = pinned
+            ? .pinned(space: space.id, folder: nil, before: nil)
+            : .unpinned(space: space.id, before: space.tabs.first?.id)
+        dropSidebarItems([state.sidebarDragID(for: id)], on: target, haptic: false)
     }
 
     /// Arc's warning when a user's move takes tabs to a space on another profile, where they might
@@ -84,10 +97,6 @@ extension BrowserWindowController {
     private func moveSelectedTab(toSpaceAt index: Int, pinned: Bool) {
         let state = store.state
         guard let tab = state.selectedTab, state.spaces.indices.contains(index) else { return }
-        let space = state.spaces[index]
-        let target: SidebarDropTarget = pinned
-            ? .pinned(space: space.id, folder: nil, before: nil)
-            : .unpinned(space: space.id, before: space.tabs.first?.id)
-        dropSidebarItems([state.sidebarDragID(for: tab.id)], on: target)
+        moveTab(tab.id, toSpace: state.spaces[index].id, pinned: pinned)
     }
 }

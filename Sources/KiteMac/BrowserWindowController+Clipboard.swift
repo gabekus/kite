@@ -16,10 +16,12 @@ extension BrowserWindowController {
     }
 
     @objc func copyURLAsMarkdown(_ sender: Any?) {
-        guard let tab = store.state.selectedTab, let url = tab.url else { return NSSound.beep() }
+        guard let tab = store.state.selectedTab, let url = tab.url, let markdown = LinkFormat.markdown(tab) else {
+            return NSSound.beep()
+        }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(LinkFormat.markdown(title: tab.title, url: url), forType: .string)
+        pasteboard.setString(markdown, forType: .string)
         // Arc shows the same toast as Copy URL.
         showToast("Copied Current URL", shareURL: url)
     }
@@ -32,7 +34,7 @@ extension BrowserWindowController {
             let selection = (result as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             // Like Arc: with nothing selected, nothing happens.
             guard !selection.isEmpty else { return }
-            let text = LinkFormat.quote(selection: selection, title: tab.title, url: url)
+            let text = LinkFormat.quote(selection: selection, title: tab.displayTitle, url: url)
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)

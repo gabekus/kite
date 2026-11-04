@@ -129,6 +129,31 @@ What works with Kite in the background (checked on a test build behind other win
 
 - Nothing activates Kite or takes focus, including clicks and keys. A `KITE_DIAGNOSTICS=1` run opens its
   window behind the user's windows; capture, tree, pointer and trace all work on a covered window.
+- Test-safe windows: on a `KITE_DIAGNOSTICS=1` run every Kite window and panel (browser windows, Settings,
+  onboarding, About, Essential Keyboard Shortcuts and its View All list, Little Kite, web apps, Task Manager,
+  hover cards, popovers) goes through `WindowPresenter` (`WindowPresentation` in KiteCore decides). It never
+  makes a window key or activates Kite. A shown window goes at normal level directly above Kite's frontmost
+  window, which is behind the other apps' windows, so Kite's own stacking order matches real use (code that looks
+  for Kite's front window finds the newest); Kite's first window goes to the back, and child windows and popovers
+  go just above their parent or anchor. Floating levels (Stay On Top, the Essential Keyboard Shortcuts window)
+  aren't applied: Kite keeps the level asked for, so Stay On Top's checkmark still follows it.
+  About Kite: AppKit creates its panel and orders it front in one call, so Kite finds it as the window that
+  appeared (its class only breaks a tie) and moves it behind in the same main-thread turn; if it can't tell which
+  window is the panel, every window that appeared goes to the back.
+  `WindowPresenterGuardTests` (also `scripts/checks/window-presenter.sh`) fails on a direct window, activation,
+  modal or app-launch call anywhere else in KiteMac; a line that must make one says why after `// presenter-exempt:`.
+- `ui windows` lists them front to back in the window server's order, panels included (sheets show under their
+  parent window), none key or main.
+- Modal alerts, open and save panels (modal or not) and the quit dialogs would come to the front, so a test-safe
+  run skips them, answers as if dismissed (no button's action runs) and writes `KITE_TEST_MODAL: alert: title |
+  text | [buttons]` to stderr. "Downloads in progress" answers Close Kite instead (the downloads are cancelled), so
+  a test Kite never blocks a logout or `kite quit`. Code that shows a sheet when it has a window and a modal
+  otherwise (`if let window { beginSheet } else { runModal }`) shows the sheet in a test and waits for an answer,
+  like any sheet: sheets stay on their parent window.
+- Other apps stay where they are: opening a file or URL in another app, launching the Claude app, Show in Finder,
+  Set as Default Browser and Dock bounces are skipped with a `KITE_TEST_MODAL:` line. Pop-up menus (`menu.popUp`,
+  sidebar and Site Controls menus) and the share picker are modal menus over Kite's own window: avoid them in a
+  test (page right-click menus have `KITE_TEST_CONTEXT_MENU`).
 - `tree` gets SwiftUI's elements by asking Kite's own accessibility tree once (SwiftUI builds it only for an
   accessibility client). That needs Accessibility permission for Kite; a test build launched from a terminal or
   Claude inherits the launching app's. Without it the tree says SwiftUI's elements are missing.
@@ -241,7 +266,12 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
 - **Local only.** A Unix socket at `<profile>/Automation/kite.sock`. Its folder is 0700 and the socket 0600, and the
   peer uid is checked. A profile too deep for a socket path (over 103 bytes, e.g. a test profile in a nested temp
   folder) uses `/tmp/kite-<uid>/<hash of the profile path>.sock` instead. The app refuses that folder unless it can
-  make it 0700, and the CLI only connects to a socket the user owns.
+  make it 0700, and the CLI only connects to a socket the user owns. Kite watches the socket's folder and the one
+  above it (file-system event sources, no timer) and reopens the socket if its file is deleted or replaced, or either
+  folder is removed or renamed; it checks again whenever Kite comes to the front, and every 30 s only while it has no
+  socket (another Kite answering, or a socket a crashed one left). Sockets never block: a client that stops reading a
+  response (a suspended CLI, a stuck MCP host) is dropped after 10 s with nothing read, or once 64 MB of responses
+  wait for it, and other clients and the main thread carry on meanwhile.
 - **Confirmation sheet.** Kite selects the tab and asks. Deny is the default button; after 2 minutes the answer is
   Deny. A denial comes back to Claude as a tool error. Kite asks before:
   - submitting a form;
@@ -276,21 +306,27 @@ come only when asked for, and the tools work inside `batch`: a click, `wait_for`
   their Mac), it calls `handoff` with `reason` (why it stopped) and `steps`. Each step has an `instruction` and either
   a tab and its control (`ref`, `selector`, or the control's visible `text`), a tab alone, a `command` for the
   terminal, or nothing (a note); `why` overrides the reason for one step. Kite shows them where they happen:
-  - **The ring.** On the tab's page, the control gets a 2pt ring in Claude's orange, pulsing, with a tag above it:
-    "Claude needs you · 1. Approve Apple". It scrolls into view once. Steps on one tab come one after another. The
+  - **The ring.** On the tab's page, the control gets a 2pt ring in Claude's orange, which pulses four times and then holds still, with a tag above it:
+    "Claude needs you · 1. Approve Apple". It scrolls into view once, and follows the control frame by frame only while it moves (a scroll, a resize, a change to the page, a transition or animation ending), so a waiting ring costs the page nothing. A move none of those announce (a transition still running, a scroller inside a shadow root) is caught by the ring's next look, within 2 s. Steps on one tab come one after another. The
     ring lives in a closed shadow root on a host that takes no clicks, run in an isolated world
     (`Page.createIsolatedWorld`, `kite-handoff`), so the page's scripts can't see, restyle or fake it. A click (or a
     change) inside the control with `isTrusted` ends the step; it reports through `Runtime.addBinding`, scoped to that
     world, so a click that navigates away still counts. A ref is marked with `data-kite-handoff` when Claude calls,
     and its label finds it again if the page redraws it; `text` matches buttons, links, labels and other controls,
-    exact first. Kite looks at the pages on screen twice a second (only while a step waits), so the ring follows
-    navigations. Only the top frame is searched.
+    exact first. Kite looks at the pages when a tab comes forward (in any normal window) or closes, a step tab's
+    address changes (a load, or a single-page app's route), a browser window becomes key or visible, Kite comes to
+    the front, or the ring hears a click; a look that finds the control missing is followed by one more after
+    1.5 s, so a page left is noticed. Between those it looks twice a second only while a step's page is on screen in
+    a visible window, so the ring follows a page that redraws, and only for a day after the handoff
+    (`UserHandoff.watchLimit`): older steps keep their card, dot and ring but wait for one of those events, so steps
+    left waiting cost an idle Kite nothing. Only the top frame is searched.
   - **The sidebar.** A tab with a step waiting gets an orange dot at its row's end (tooltip: the step); a folded
     folder holding one gets the dot too.
   - **The card.** Over the bottom centre of the page: Claude's mark, "Claude needs you", the session, "Step n of m",
     the reason, the step, and **Skip**, **Next** and **Done**; a terminal step shows its command with **Copy**. ⋯ has
-    Dismiss All Steps. The chevron folds it to a pill ("Claude needs you · 3 steps"); with no step on the tab in
-    front it's the pill, which brings up the next step (switching tab). sign_in's pill takes precedence on its tab.
+    Dismiss All Steps. The chevron folds it to a pill ("Claude needs you · 3 steps"). A step on another open tab shows
+    nothing at the bottom (the sidebar's dot already marks that tab); the pill shows only for a step the sidebar
+    can't (one outside the browser, or on a closed tab), and brings it up. sign_in's pill takes precedence on its tab.
     Kite bounces its Dock icon once if it isn't in front.
   - **Back to Claude.** `handoff` returns at once (or after `wait` seconds, up to 600) with an id. `handoff_status`
     (`id`, default the session's latest; `wait`; `cancel` to withdraw the rest) lists each step as done, skipped or

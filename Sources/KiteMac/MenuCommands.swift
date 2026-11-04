@@ -36,7 +36,7 @@ struct MenuCommand: Hashable {
                     walk(submenu, path: path + [item.title])
                 } else if item.action != nil, item.isEnabled, !item.title.isEmpty,
                           // AppKit's window list in the Window menu: titled after pages, not commands.
-                          item.action != #selector(NSWindow.makeKeyAndOrderFront(_:)),
+                          item.action != #selector(NSWindow.makeKeyAndOrderFront(_:)), // presenter-exempt: a selector, not a call
                           !(item.target is NSWindow), !(item.representedObject is NSWindow),
                           let score = ([item.title] + (keywords?.words ?? [])).compactMap({ CommandSearch.score(query, title: $0) }).max() {
                     results.append((MenuCommand(item: item, path: path.joined(separator: " › ")), score))

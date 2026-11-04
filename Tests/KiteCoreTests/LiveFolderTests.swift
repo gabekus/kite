@@ -137,4 +137,48 @@ import Testing
         state.addLiveFolder(.github, inSpace: 0)
         #expect(state.liveFoldersTurnedOff.isEmpty)
     }
+
+    @Test func refreshFloorsFollowTheReason() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        var record = LiveFolder.RefreshRecord()
+        // Never refreshed: anything goes.
+        #expect(record.allows(.background, now: start))
+        record.started(at: start)
+        record.succeeded(startedAt: start)
+        func may(_ reason: LiveFolder.RefreshReason, after seconds: TimeInterval) -> Bool {
+            record.allows(reason, now: start.addingTimeInterval(seconds))
+        }
+        // Launch, activation and space switches wait 5 minutes.
+        #expect(!may(.background, after: 10))
+        #expect(!may(.background, after: 5 * 60 - 1))
+        #expect(may(.background, after: 5 * 60))
+        // Opening or leaving a folder's tab keeps Arc's 10 seconds: leaving a pull request you just
+        // reviewed refreshes even though opening it did too.
+        #expect(!may(.tabSelection, after: 9))
+        #expect(may(.tabSelection, after: 10))
+        // Refresh, filters and a pull request just made or reviewed: always.
+        #expect(may(.forced, after: 0))
+    }
+
+    @Test func failedRefreshesRetryAfterTenSecondsAndSignedOutWaitsForRefresh() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        var record = LiveFolder.RefreshRecord()
+        record.started(at: start)
+        record.failed(signedOut: false)
+        // A failure doesn't start the 5 minutes, but automatic tries still keep Arc's 10 seconds apart.
+        #expect(!record.allows(.background, now: start.addingTimeInterval(5)))
+        #expect(!record.allows(.tabSelection, now: start.addingTimeInterval(9)))
+        #expect(record.allows(.background, now: start.addingTimeInterval(10)))
+        #expect(record.allows(.forced, now: start.addingTimeInterval(1)))
+        // Signed out: no automatic retries at all until a forced refresh succeeds.
+        record.started(at: start.addingTimeInterval(20))
+        record.failed(signedOut: true)
+        #expect(!record.allows(.background, now: start.addingTimeInterval(3600)))
+        #expect(!record.allows(.tabSelection, now: start.addingTimeInterval(3600)))
+        #expect(record.allows(.forced, now: start.addingTimeInterval(21)))
+        record.started(at: start.addingTimeInterval(30))
+        record.succeeded(startedAt: start.addingTimeInterval(30))
+        #expect(record.allows(.tabSelection, now: start.addingTimeInterval(40)))
+        #expect(!record.allows(.background, now: start.addingTimeInterval(40)))
+    }
 }

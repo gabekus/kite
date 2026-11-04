@@ -57,7 +57,11 @@ struct LinkPeekBadge: Equatable {
 @MainActor
 @Observable
 final class BrowserStore {
-    private(set) var state: BrowserState
+    private(set) var state: BrowserState {
+        didSet { syncFocus() }
+    }
+    /// `state.focus`, set only when it changes: watching it doesn't wake on every other change.
+    private(set) var focus = BrowserState.Focus()
     private(set) var pages: [UUID: PageStatus] = [:]
     /// What the sidebar's rows show of each page, kept apart from `pages`: every space's list reads it, and
     /// `pages` changes with each progress step and blocked request of every tab.
@@ -119,6 +123,14 @@ final class BrowserStore {
     /// nil for an incognito window: nothing is written to disk.
     @ObservationIgnored private let session: SessionStore?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// The kind of change the waiting save is for; nil when none is waiting.
+    @ObservationIgnored private var pendingSave = PendingSave()
+    /// Set when session.json couldn't be read or moved aside: saving would overwrite the only copy.
+    @ObservationIgnored private var savesBlocked = false
+    /// The backup session.json was unusable and the session came from, at launch; AppDelegate says so once.
+    @ObservationIgnored private(set) var recoveredFromBackup: SessionBackups.Backup?
+    /// Backups are written here, off the main thread, one at a time.
+    private static let backupQueue = DispatchQueue(label: "dev.gabek.Kite.session-backups", qos: .utility)
     /// The default profile's browsing history, which leads to the other profiles'; nil for an
     /// incognito window, which records none.
     @ObservationIgnored var historyRoot: HistoryStore?
@@ -154,36 +166,52 @@ final class BrowserStore {
 
     /// The normal windows this store's changes are copied to; nil for incognito and blank windows.
     @ObservationIgnored weak var link: WindowLink?
-    /// After every change: AppDelegate saves the extra windows (windows.json).
-    @ObservationIgnored var didChangeState: (() -> Void)?
+    /// After every change: BrowserWindows saves the extra windows (windows.json), as soon as the
+    /// kind of change asks for (SessionSaveDelay).
+    @ObservationIgnored var didChangeState: ((SessionSaveDelay) -> Void)?
     /// Where a sidebar drag that leaves the sidebar can drop: the window's page area (Split View).
     @ObservationIgnored weak var sidebarDragContent: SidebarDragContentTarget?
     /// Tidy Tab Titles names the tabs pinned here; off in incognito, where nothing leaves the window.
     @ObservationIgnored var tidiesPinnedTabs = true
 
     /// Takes a change made in another normal window, keeping this window's selection.
-    func adopt(_ other: BrowserState) {
+    func adopt(_ other: BrowserState, delay: SessionSaveDelay = .soon) {
         state = state.adoptingContent(of: other)
-        scheduleSave()
+        scheduleSave(delay)
         onChange?()
-        didChangeState?()
+        didChangeState?(delay)
     }
 
     private init(state: BrowserState) {
         session = nil
         self.state = state
+        focus = state.focus
+    }
+
+    private func syncFocus() {
+        let now = state.focus
+        if now != focus { focus = now }
     }
 
     init(session: SessionStore) {
         self.session = session
         do {
-            state = try session.load() ?? .makeDefault()
+            let loaded = try session.loadRecovering()
+            state = loaded?.state ?? .makeDefault()
+            if let backup = loaded?.recoveredFrom {
+                recoveredFromBackup = backup
+                NSLog("Kite: session.json was unreadable and was moved aside; restored the session from backup \(backup.url.lastPathComponent)")
+            }
+            // Arc backs up its stores once per launch: keep the session as found, unless the newest backup has it.
+            let found = state
+            Self.backupQueue.async { try? session.backups.backUp(SessionStore.encode(found), kind: .launch) }
         } catch {
-            NSLog("Kite: couldn't read session, starting fresh: \(error)")
             state = .makeDefault()
+            savesBlocked = FileManager.default.fileExists(atPath: session.fileURL.path)
+            NSLog("Kite: couldn't read session, starting fresh\(savesBlocked ? " without saving over it" : ""): \(error)")
         }
-        // A Create a Space page left open at quit leaves a nameless, empty space behind.
-        for space in state.spaces where space.name.isEmpty && space.allTabs.isEmpty { state.deleteSpace(space.id) }
+        state.dropUnnamedEmptySpaces()
+        focus = state.focus
     }
 
     // MARK: Undo
@@ -196,6 +224,8 @@ final class BrowserStore {
     @ObservationIgnored private var undoSuppression = 0
     /// The name for the next undo step, when the caller knows better than the guess from the change.
     @ObservationIgnored private var pendingUndoName: String?
+    /// True while Undo or Redo puts the sidebar back (`registerStep`).
+    @ObservationIgnored private var restoringUndoStep = false
 
     /// Runs `body` with its changes left out of the user's undo.
     @discardableResult
@@ -238,7 +268,9 @@ final class BrowserStore {
     private func registerStep(_ undoManager: UndoManager, restoring target: SidebarSnapshot, other: SidebarSnapshot, name: String) {
         undoManager.registerUndo(withTarget: self) { store in
             guard let manager = store.undoManager?() else { return }
+            store.restoringUndoStep = true
             store.withoutUndo { _ = store.mutate { $0.restoreSidebar(target, other: other) } }
+            store.restoringUndoStep = false
             // Registered while undoing, this lands on the redo stack, and while redoing back on the undo stack.
             store.registerStep(manager, restoring: other, other: target, name: name)
         }
@@ -258,13 +290,28 @@ final class BrowserStore {
         scheduleSave()
         onChange?()
         link?.propagate(from: self)
-        didChangeState?()
-        // Tidy Tab Titles: a tab pinned by any path gets a short name from Claude.
-        if tidiesPinnedTabs, TidyTabTitles.isEnabled() {
+        didChangeState?(.soon)
+        // Tidy Tab Titles: a tab pinned by any path gets a short name from Claude, but not one that Undo
+        // of an unpin (or Redo of a pin) puts back: it was named, or not, when it was first pinned.
+        if tidiesPinnedTabs, !restoringUndoStep, TidyTabTitles.isEnabled() {
             let pinned = TidyTabTitles.newlyPinnedTabs(before: before, after: state)
             if !pinned.isEmpty { TidyTabTitlesController.shared.tabsPinned(pinned, in: self) }
         }
         return result
+    }
+
+    /// A page reporting its title, URL or favicon. Those are left out of undo and can't pin a tab
+    /// (SidebarUndo.Layout and TidyTabTitles.newlyPinnedTabs ignore them), so this skips comparing
+    /// the whole sidebar before and after. Titles and favicons save later (`.pageEvent`); a
+    /// navigation, which is rare next to them, saves as soon as a sidebar change.
+    private func mutatePage(_ delay: SessionSaveDelay, _ body: (inout BrowserState) -> Void) {
+        body(&state)
+        // A pinned tab that had no page yet remembers the first one it reports.
+        state.syncPinnedURLs()
+        scheduleSave(delay)
+        onChange?()
+        link?.propagate(from: self, delay: delay)
+        didChangeState?(delay)
     }
 
     /// Archives unpinned tabs left unused longer than the user's setting.
@@ -361,10 +408,9 @@ final class BrowserStore {
         // Closed without picking a page for the new pane: cancel the split.
         if let pane = pendingSplitPane {
             pendingSplitPane = nil
-            state.cancelSplitPane(pane)
-            scheduleSave()
-            link?.propagate(from: self)
-            didChangeState?()
+            // Through mutate, for its bookkeeping (pinned URLs, tab groups, saving, other windows); it's
+            // Kite tidying up, not a step to undo.
+            mutateWithoutUndo { $0.cancelSplitPane(pane) }
         }
         onChange?()
     }
@@ -421,7 +467,7 @@ final class BrowserStore {
         guard let title, !title.isEmpty, !showsInternalPage(id) else { return }
         if let url = recordedURLs[id] { history(forTab: id)?.updateTitle(url, title) }
         guard state.tab(id)?.title != title else { return }
-        mutate { $0.update(tab: id) { $0.title = title } }
+        mutatePage(.pageEvent) { $0.update(tab: id) { $0.title = title } }
     }
 
     func pageURLChanged(_ id: UUID, _ url: URL?) {
@@ -435,7 +481,7 @@ final class BrowserStore {
         }
         let previous = state.tab(id)?.url
         guard previous != url else { return }
-        mutate { $0.update(tab: id) { $0.url = url } }
+        mutatePage(.soon) { $0.update(tab: id) { $0.url = url } }
         LiveFoldersController.shared?.tabURLChanged(id, from: previous, to: url, in: self)
     }
 
@@ -445,7 +491,7 @@ final class BrowserStore {
 
     func faviconChanged(_ id: UUID, _ url: URL?) {
         guard state.tab(id)?.faviconURL != url else { return }
-        mutate { $0.update(tab: id) { $0.faviconURL = url } }
+        mutatePage(.pageEvent) { $0.update(tab: id) { $0.faviconURL = url } }
     }
 
     func updatePage(_ id: UUID, _ body: (inout PageStatus) -> Void) {
@@ -509,12 +555,13 @@ final class BrowserStore {
 
     // MARK: Persistence
 
-    /// Saves are debounced; title and URL updates arrive in bursts while pages load.
-    private func scheduleSave() {
-        guard session != nil else { return }
+    /// Saves are debounced (SessionSaveDelay): sidebar changes by a second, page titles, URLs and
+    /// favicons by longer. Quitting and closing the window call `saveNow`.
+    private func scheduleSave(_ delay: SessionSaveDelay = .soon) {
+        guard session != nil, let seconds = pendingSave.arm(delay) else { return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
             self?.saveNow()
         }
@@ -522,11 +569,36 @@ final class BrowserStore {
 
     func saveNow() {
         saveTask?.cancel()
+        pendingSave.saved()
+        guard let session, !savesBlocked else { return }
         do {
-            try session?.save(state)
+            let data = try session.save(state)
+            Self.backupQueue.async { try? session.backups.backUp(data) }
         } catch {
             NSLog("Kite: couldn't save session: \(error)")
         }
+    }
+
+    /// session.json's backups; nil for incognito, blank and linked windows' stores.
+    var sessionBackups: SessionBackups? { session?.backups }
+
+    /// Help › Restore Data: swaps `backup`'s sidebar in for every normal window's, keeping the current
+    /// state as a backup first. Settings stay as they are.
+    func restoreSession(from backup: SessionBackups.Backup) throws {
+        guard let session else { return }
+        saveTask?.cancel()
+        pendingSave.saved()
+        let current = state
+        // On the backup queue, so it never writes Backups alongside a save's backup.
+        let restored = try Self.backupQueue.sync { try session.restore(backup, current: current) }
+        savesBlocked = false
+        // Every window's undo holds snapshots of the old sidebar; ⌘Z there would put it back over the restore.
+        for store in [self] + (link?.all ?? []) { store.undoManager?()?.removeAllActions() }
+        // Like `adopt`, not `mutate`: the swap isn't an undo step, and pinned tabs aren't newly pinned.
+        state = restored
+        onChange?()
+        link?.propagate(from: self)
+        didChangeState?(.soon)
     }
 }
 
@@ -550,9 +622,9 @@ final class WindowLink {
         if store.link === self { store.link = nil }
     }
 
-    func propagate(from source: BrowserStore) {
+    func propagate(from source: BrowserStore, delay: SessionSaveDelay = .soon) {
         for other in all where other !== source {
-            other.adopt(source.state)
+            other.adopt(source.state, delay: delay)
         }
     }
 }

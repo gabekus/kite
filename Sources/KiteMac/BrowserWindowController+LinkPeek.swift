@@ -11,6 +11,8 @@ import KiteCore
 final class LinkPeekSession {
     let sourceTabID: UUID
     let page: WebPage
+    /// The profile folder the page was made in: its source tab's.
+    let profileDirectory: String?
     let view: LinkPeekView
     var url: URL?
     var title: String?
@@ -18,9 +20,10 @@ final class LinkPeekSession {
     var keyMonitor: Any?
     var swipe: LinkPeekSwipeController?
 
-    init(sourceTabID: UUID, page: WebPage, url: URL, splitTitle: String?) {
+    init(sourceTabID: UUID, page: WebPage, profileDirectory: String?, url: URL, splitTitle: String?) {
         self.sourceTabID = sourceTabID
         self.page = page
+        self.profileDirectory = profileDirectory
         self.url = url
         self.view = LinkPeekView(page: page.view, splitTitle: splitTitle)
     }
@@ -38,8 +41,11 @@ extension BrowserWindowController {
         let split = store.state.selectedSplit
         let splitTitle: String? = (split?.tabIDs.count ?? 1) < SplitView.maxPanes
             ? (split == nil ? "Create Split View" : "Add to Split View") : nil
-        let page = pool.engine.makePage(url: url, restoring: nil)
-        let session = LinkPeekSession(sourceTabID: tabID, page: page, url: url, splitTitle: splitTitle)
+        // In the source tab's profile, so the Peek has its space's cookies and sign-ins.
+        let engine = pool.engine(forTab: tabID)
+        let page = engine.makePage(url: url, restoring: nil)
+        let session = LinkPeekSession(sourceTabID: tabID, page: page, profileDirectory: engine.profileDirectory,
+                                      url: url, splitTitle: splitTitle)
         linkPeek = session
         updateLinkPeekBadge(session)
         page.onEvent = { [weak self, weak session] event in
@@ -177,8 +183,23 @@ extension BrowserWindowController {
     /// Closes the Peek. `undoable` is for the user's own dismissals (Esc, ⌘W, the close button, a click outside,
     /// the swipe, Redo): like Arc, they register "Close Peek" on the window's undo manager, so Edit › Undo Close
     /// Peek (⌘Z) reopens it. Replacing it or turning it into a tab or pane doesn't.
+    /// The user's own dismissals ask the page first: a page with unsaved changes asks "Leave site?" (Arc's
+    /// `awaitingDismissConfirmation`), and the Peek stays if they cancel.
     func closeLinkPeek(animated: Bool, undoable: Bool = false) {
         guard let session = linkPeek else { return }
+        guard undoable else { return finishClosingLinkPeek(session, animated: animated, undoable: false) }
+        session.page.requestClose { [weak self, weak session] outcome in
+            guard let self, let session, linkPeek === session else { return }
+            switch outcome {
+            case .close: finishClosingLinkPeek(session, animated: animated, undoable: true)
+            // A swipe that let go to dismiss leaves the card tugged aside.
+            case .stay: session.view.springTugBack(velocity: .zero)
+            case .superseded: break
+            }
+        }
+    }
+
+    private func finishClosingLinkPeek(_ session: LinkPeekSession, animated: Bool, undoable: Bool) {
         linkPeek = nil
         if store.linkPeekBadges[session.sourceTabID] != nil { store.linkPeekBadges[session.sourceTabID] = nil }
         if undoable, let url = session.url, let undoManager = window?.undoManager {
@@ -218,7 +239,7 @@ extension BrowserWindowController {
         guard let session = linkPeek, let url = session.url else { return }
         _ = session.view.detachPage()
         closeLinkPeek(animated: false)
-        pool.openTab(with: session.page, url: url)
+        pool.openTab(with: session.page, url: url, source: session.sourceTabID, profileDirectory: session.profileDirectory)
         if let title = session.title, let id = store.state.selectedTab?.id { store.pageTitleChanged(id, title) }
     }
 
@@ -228,7 +249,7 @@ extension BrowserWindowController {
         _ = session.view.detachPage()
         closeLinkPeek(animated: false)
         let id = UUID()
-        pool.register(existing: session.page, id: id)
+        pool.register(existing: session.page, id: id, profileDirectory: session.profileDirectory)
         guard store.mutate({ $0.addSplitPane(id: id) }) == .added(id) else {
             pool.discard(id, keepHistory: false)
             return
@@ -249,19 +270,22 @@ extension BrowserWindowController {
             session.title = title
         case .closeRequested:
             if linkPeek === session { closeLinkPeek(animated: true) } else { discardParkedLinkPeek(of: session.sourceTabID) }
+        case .showForLeaveDialog:
+            break  // Only the Peek on screen is ever asked to close.
+        // The page opening tabs, as PagePool's do: not a step in the user's undo.
         case .openInNewTab(let url, let foreground):
-            store.mutate { $0.openTab(url: url, select: foreground) }
+            pool.openTab(url: url, openedBy: session.sourceTabID, select: foreground)
         case .openInLinkPeek(let url):
-            store.mutate { $0.openTab(url: url) }
+            pool.openTab(url: url, openedBy: session.sourceTabID, select: true)
         case .openInSplit(let url):
             // The Peek's page isn't a pane yet: a ⌥⌘-click in it opens a background tab, like ⌘-click.
-            store.mutate { $0.openTab(url: url, select: false) }
+            pool.openTab(url: url, openedBy: session.sourceTabID, select: false)
         case .openInLittleKite(let url):
             DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.openLittleKiteWindow(url: url) }
         case .popup(let popup):
-            pool.openTab(with: popup)
+            pool.openTab(with: popup, source: session.sourceTabID, profileDirectory: session.profileDirectory)
         case let .openLink(url, target):
-            openLinkFromPageMenu(url, target)
+            openLinkFromPageMenu(url, target, from: session.sourceTabID)
         case .pageCommand(.viewPageSource):
             if let url = session.url, let source = URL(string: "view-source:" + url.absoluteString) {
                 store.mutate { _ = $0.openTab(url: source) }

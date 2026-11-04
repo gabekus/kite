@@ -41,6 +41,9 @@ enum PageEvent {
     /// A link ⌥⌘-clicked in the page opens in Little Kite (Settings › Links, `LinkClick`).
     case openInLittleKite(URL)
     case closeRequested
+    /// The page asks "Leave site?" before a close the person asked for, but isn't on screen (a background tab):
+    /// show its tab so the dialog has somewhere to go, as Chrome brings such a tab forward.
+    case showForLeaveDialog
     /// Requests the ad blocker stopped since the page started loading.
     case blockedCount(Int)
     /// The page's process died; the tab shows the crashed-tab page until it loads again.
@@ -173,7 +176,20 @@ protocol WebPage: AnyObject {
     /// Bytes the page's requests have received and sent so far, for the Task Manager's Network
     /// column; nil when the engine can't count them.
     var networkBytes: UInt64? { get }
+    /// A close the person asked for (⌘W, a close button, closing Peek or a window that ends its tabs): the
+    /// page's beforeunload runs first and may ask "Leave site?". `.close` when it may close (the caller then
+    /// closes it as usual), `.stay` when the person stayed, `.superseded` when a newer request or a forced
+    /// close took over. Automatic and automation closes call `close()`.
+    func requestClose(_ completion: @escaping (PageClose.Outcome) -> Void)
+    /// Whether the page registered a beforeunload handler: only those are asked when a window closes.
+    func hasBeforeUnloadHandler(_ completion: @escaping (Bool) -> Void)
     func close()
+}
+
+extension WebPage {
+    /// WebKit pages close without asking.
+    func requestClose(_ completion: @escaping (PageClose.Outcome) -> Void) { completion(.close) }
+    func hasBeforeUnloadHandler(_ completion: @escaping (Bool) -> Void) { completion(false) }
 }
 
 @MainActor
@@ -194,6 +210,8 @@ protocol WebEngine: AnyObject {
     func forProfile(_ profile: Profile) -> WebEngine
     /// The profile folder this engine's pages use; nil for incognito.
     var profileDirectory: String? { get }
+    /// The context its downloads are listed under (DownloadItem.engineContext).
+    var downloadContextKey: String { get }
     /// What Delete browsing data can delete in this engine's profile, in Chromium's order.
     /// Kite's own history and downloads list count: the caller deletes those.
     var deletableBrowsingData: [BrowsingDataType] { get }

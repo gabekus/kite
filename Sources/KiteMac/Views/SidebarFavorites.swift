@@ -84,6 +84,24 @@ final class FavoritesTrayView: SidebarFlippedView {
 
     override var mouseDownCanMoveWindow: Bool { false }
 
+    /// The pointer coming onto the tray fetches the favorites' previews (Gmail's mail), so a card
+    /// opened after the hover delay has it.
+    private var trayTracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trayTracking { removeTrackingArea(trayTracking) }
+        // assumeInside: an area remade under a resting pointer (a relayout) isn't a new arrival.
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .assumeInside], owner: self)
+        addTrackingArea(area)
+        trayTracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard event.trackingArea === trayTracking else { return super.mouseEntered(with: event) }
+        actions.prefetchFavoritePreviews()
+    }
+
     /// The columns follow the width, and the tray's height the columns.
     override func setFrameSize(_ newSize: NSSize) {
         let changed = newSize.width != frame.width

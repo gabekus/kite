@@ -30,7 +30,10 @@ MainActor.assumeIsolated {
     // Diagnostics runs start as an accessory app, which macOS doesn't bring forward at launch (AppDelegate
     // makes it regular once launched).
     app.setActivationPolicy(UIDiagnostics.enabledByEnvironment ? .accessory : .regular)
-    app.willTerminate = { delegate.saveSession() }
+    app.willTerminate = {
+        delegate.isTerminating = true
+        delegate.saveSession()
+    }
 
     if KCRuntime.isAvailable && environment["KITE_ENGINE"] != "webkit" {
         let settings = KCRuntimeSettings()

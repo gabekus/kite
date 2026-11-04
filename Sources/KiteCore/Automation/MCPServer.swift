@@ -22,23 +22,38 @@ public struct MCPServer: Sendable {
         self.version = version
     }
 
+    /// Forms for an account the user opens (a bank, a carrier, a supplier): what Claude fills in and what it leaves the
+    /// user. Gabe's standing rule (4 Nov 2026); Kite's own Claude prompt and the setup guide carry it too.
+    public static let accountForms = """
+        Forms for an account the user opens (a bank, a carrier, a supplier): fill in the ordinary details they \
+        approve (business or personal name, owner, title, addresses, phone and email, plain choices such as the \
+        account type or "no EIN") in one pass, and don't guess them: ask, or use what the site has on file. Leave \
+        the user every click that creates the account, agrees to terms, authorizes a credit check, verifies \
+        identity or pays, and every field for an SSN, EIN or other ID number, a card or bank number, a password or \
+        a one-time code: hand the account-making click over with handoff and wait on it, then fill the next page.
+        """
+
     public static let instructions = """
         Kite is the user's own web browser. These tools act in their real tabs, signed in as them. \
         Call tabs_context first for tab ids, and read_page or find before click, type or form_input to get element refs; \
         screenshot pixels are the coordinates the computer tool clicks. Tools work on background tabs without switching to them. \
         Opening a link for the user: \(AutomationCommand.Tool.spaceRouting) \
         \(UntrustedContent.notice) \
+        When an action opens new tabs (a popup, a link to a new tab), its result lists them and which is in front: carry \
+        on in that tab. Close a tab that repeats one already open, and a tab once its part of the flow is done, but \
+        keep the tab that opened it while the flow may come back there. \
         Only submit forms, send, post, pay, buy or delete what the user asked for. If they turned on Kite's \
         Ask Before Claude Acts, Kite asks them first; if they decline, the tool returns an error. \
         Don't retry a declined action. \
+        \(accountForms) \
         When a page needs the user signed in, call sign_in: the user signs in (with their password manager) while you wait, and \
         you never see the password. Never ask for a password or type one yourself. \
         When you stop because the user must do something themselves (your safety check or their rules won't let you, \
         it needs their judgment, a secret only they hold, or a command on their computer), call handoff instead of \
         listing steps in chat: give the reason you stopped and each step with its tab and the control to click (ref, \
         selector or visible text) or the command to run. Kite shows the steps on the pages themselves, so the user \
-        never has to come back to the chat to see what to do. Then call handoff_status with wait to hear when they're \
-        done, and carry on. \
+        never has to come back to the chat to see what to do. Then call handoff_status with wait 600, again and again, \
+        until they're done, and carry on: don't end your turn while steps wait, or nothing tells you they're done. \
         To check Kite's own interface (sidebar, command bar, menus, cursors, animations), use the ui tool, not \
         screenshots of the screen or the user's mouse. \
         When the user's VPN needs to reconnect, or its SSO sign-in keeps opening tabs, use the vpn tool: \

@@ -85,7 +85,7 @@ enum ArcExtensionsInstaller {
             queue = found.available
             next(engine: engine, window: window)
         }
-        guard let window else { return answer(alert.runModal()) }
+        guard let window else { return answer(WindowPresenter.runModal(alert)) }
         alert.beginSheetModal(for: window) { response in
             MainActor.assumeIsolated { answer(response) }
         }

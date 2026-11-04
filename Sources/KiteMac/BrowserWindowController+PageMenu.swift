@@ -23,11 +23,12 @@ extension BrowserWindowController {
         }
     }
 
-    func openLinkFromPageMenu(_ url: URL, _ target: PageContextMenu.LinkTarget) {
+    /// `source` is the tab the page belongs to (a Peek's), which a new tab opens next to in a Claude folder.
+    func openLinkFromPageMenu(_ url: URL, _ target: PageContextMenu.LinkTarget, from source: UUID? = nil) {
         let app = NSApp.delegate as? AppDelegate
         switch target {
         case .newTab:
-            store.mutate { $0.openTab(url: url, select: false) }
+            if let source { pool.openTab(url: url, openedBy: source, select: false) } else { store.mutate { $0.openTab(url: url, select: false) } }
         case .newWindow:
             // From an incognito page Chromium opens another incognito window.
             if isIncognito { app?.openIncognitoWindow(url: url) } else { app?.openNewWindow(url: url) }

@@ -111,7 +111,8 @@ final class ClaudeTasksController {
         routes = ClaudeRoutes.load(from: routesURL)
         workDirectory = supportDirectory.appendingPathComponent("Claude", isDirectory: true)
             .appendingPathComponent("Work", isDirectory: true)
-        tasks = ClaudeTaskList.load(from: fileURL).tasks
+        // A file StoreFile couldn't move aside stays unwritten: its saves are refused.
+        tasks = ClaudeTaskList.load(from: fileURL).value?.tasks ?? []
         automation.isRunningTask = { [weak self] id in self?.runs[id] != nil }
         automation.taskOpenedTab = { [weak self] task, tab, session in self?.file(tab, under: task, named: session) }
         automation.isTicketTest = { [weak self] id in self?.task(id)?.ticket != nil }
@@ -211,10 +212,10 @@ final class ClaudeTasksController {
 
     /// Sends a ⌘J request to a new chat in the Claude desktop app, which has Kite's tools,
     /// so it happens in the same Claude as the user's other chats. Returns false when
-    /// Desktop isn't installed (the caller runs it in Kite instead).
+    /// Desktop isn't installed or this is a test profile (the caller runs it in Kite instead).
     func handOffToDesktop(goal: String, tab: BrowserTab?) -> Bool {
         let goal = goal.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !goal.isEmpty, ClaudeDesktop.isInstalled else { return false }
+        guard !goal.isEmpty, ClaudeDesktop.mayDrive, ClaudeDesktop.isInstalled else { return false }
         // Desktop's Claude reaches the browser through Kite's MCP server.
         if !automation.isEnabled { automation.setEnabled(true) }
         if !ClaudeDesktop.isLinked {
@@ -229,7 +230,7 @@ final class ClaudeTasksController {
 
     /// A finished task that ran in Kite can carry on in Desktop's Code tab, as the same session.
     func canOpenInDesktop(_ id: UUID) -> Bool {
-        guard ClaudeDesktop.isInstalled, runs[id] == nil, let task = task(id) else { return false }
+        guard ClaudeDesktop.mayDrive, ClaudeDesktop.isInstalled, runs[id] == nil, let task = task(id) else { return false }
         // Desktop's Kite connection carries no task, so a ticket test continued there would lose the guard
         // that keeps it from posting on Linear (TicketTest.blocksPosting). Its follow-ups stay in Kite.
         return task.sessionID != nil && task.ticket == nil
@@ -305,8 +306,10 @@ final class ClaudeTasksController {
     /// Shows the task's first open tab.
     func showTabs(_ id: UUID) {
         guard let task = task(id), let tab = task.tabIDs.first(where: { store.state.tab($0) != nil }) else { return }
-        store.mutateWithoutUndo { $0.select(tab: tab) }
-        automation.host?.window?.makeKeyAndOrderFront(nil)
+        // Selected in the window that's shown: the tools' window (a live one; a new one if every normal window closed).
+        automation.ensureWindow?()
+        automation.store.mutateWithoutUndo { $0.select(tab: tab) }
+        WindowPresenter.show(automation.host?.window)
     }
 
     /// Closes the task's folder and every tab in it, and the space's Claude folder once it's empty.
@@ -354,13 +357,12 @@ final class ClaudeTasksController {
         Task.detached { [weak self] in
             // Jev sizes the goal while Claude Code is found: a quick lookup runs on the fast model.
             async let model = Self.model(for: goal, jev: jev)
-            let claude = ClaudeConnect.findClaude()
-            let environment = Self.environment()
+            let claude = await ClaudeCommand.find()
             let chosen = await model
             let arguments = ClaudeInvocation.arguments(kiteCLI: cli, profile: profile, taskID: id, resume: resume, model: chosen,
                                                        systemPrompt: systemPrompt)
             await self?.noteModel(chosen, for: id)
-            await self?.spawn(id, claude: claude, arguments: arguments, environment: environment,
+            await self?.spawn(id, claude: claude, arguments: arguments,
                               directory: directory, prompt: prompt, placeholder: placeholder)
         }
     }
@@ -378,7 +380,7 @@ final class ClaudeTasksController {
         tasks[i].append(ClaudeTask.Entry(.note, "Quick lookup, so this runs on the fast model (\(model.capitalized))."))
     }
 
-    private func spawn(_ id: UUID, claude: String?, arguments: [String], environment: [String: String],
+    private func spawn(_ id: UUID, claude: ClaudeCommand?, arguments: [String],
                        directory: URL, prompt: String, placeholder: Run) {
         guard runs[id] === placeholder, !placeholder.stopped else {
             runs[id] = nil
@@ -397,11 +399,7 @@ final class ClaudeTasksController {
         }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = arguments
-        process.environment = environment
-        process.currentDirectoryURL = directory
+        let process = claude.process(arguments: arguments, directory: directory)
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -479,17 +477,6 @@ final class ClaudeTasksController {
         tasks[i].append(ClaudeTask.Entry(.error, message))
         tasks[i].status = .failed
         scheduleSave()
-    }
-
-    /// GUI apps get a bare PATH. Claude Code may be a Node script, so give it the login shell's.
-    nonisolated static func environment() -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
-        let (status, output) = ClaudeConnect.run("/bin/zsh", ["-lc", "printf %s \"$PATH\""])
-        let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        if status == 0, path.contains("/") { environment["PATH"] = path }
-        // Kite's own test switches mustn't leak into Claude Code.
-        environment["KITE_DIAGNOSTICS"] = nil
-        return environment
     }
 
     // MARK: Awake, notifications, badge

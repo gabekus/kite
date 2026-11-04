@@ -28,7 +28,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var archiveTimer: Timer?
     /// Settings › Links: the ⌥⌘N hotkey in any app, and "Archive Little Kites after:".
     private(set) var littleKiteHotkey: LittleKiteHotkey?
-    private var littleArchiveTimer: Timer?
     #if canImport(CEFBridge)
     /// Shows extensions Kite's tabs (tabs.query and friends).
     /// One per Chromium profile in use: its extensions see the tabs in its profile.
@@ -68,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Release builds check for updates (8-hourly, installing on quit); others do nothing.
         SoftwareUpdater.shared.start()
+        // The login shell's PATH and claude, asked once in the background, so the first claude doesn't wait.
+        ClaudeConnect.loginShell.warm()
         // Before the store writes session.json, which tells a new profile from an existing install.
         let showsOnboarding = OnboardingWindow.shouldShowAtLaunch()
         store = BrowserStore(session: SessionStore(fileURL: Self.sessionURL))
@@ -101,22 +102,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Registered after the menu bar is set so AppKit adds Help search and the window list.
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
         NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
-        windowController.showWindow(nil)
+        WindowPresenter.show(windowController)
         windows = BrowserWindows(
             main: store, mainController: windowController, engine: engine, adblocker: adblocker,
             history: history, fileURL: Self.supportDirectory.appendingPathComponent("windows.json")
         )
-        #if canImport(CEFBridge)
-        windows.didMakeController = { [weak self] controller in self?.followProfiles(of: controller) }
-        #endif
+        windows.didMakeController = { [weak self] controller in
+            #if canImport(CEFBridge)
+            self?.followProfiles(of: controller)
+            #endif
+            // Windows restored now are set up once Claude's controllers exist (below).
+            if self?.claudeCode != nil { self?.setUpForClaude(controller) }
+        }
+        windows.normalWindowClosing = { [weak self] controller in self?.normalWindowClosing(controller) }
         windows.restore()
         forgetClosedTabsHistory()
+        if let backup = store.recoveredFromBackup {
+            let date = DateFormatter.localizedString(from: backup.date, dateStyle: .medium, timeStyle: .short)
+            windowController.showToast("Kite restored your tabs from a backup made \(date)")
+        }
         setUpWebApps()
         setUpVPNSignIn()
 
         automation = AutomationController(store: store, supportDirectory: Self.supportDirectory)
-        automation.host = windowController
-        windowController.installAutomationBanner(automation)
+        automation.attach(windowController)
+        automation.ensureWindow = { [weak self] in self?.ensureAutomationWindow() }
         automation.start()
         // A test build on a throwaway profile with KITE_DIAGNOSTICS=1 comes up ready for Claude.
         if UIDiagnostics.enabledByEnvironment && !automation.isEnabled { automation.setEnabled(true) }
@@ -125,32 +135,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         claudeTasks = ClaudeTasksController(store: store, automation: automation, supportDirectory: Self.supportDirectory)
         // A notification clicked: the bubble, on that task.
         claudeTasks.showPanel = { [weak self] id in
-            // A diagnostics run stays behind the user's windows (kite test-ticket opens the bar too).
-            if !UIDiagnostics.enabledByEnvironment {
-                NSApp.activate(ignoringOtherApps: true)
-                self?.windowController.window?.makeKeyAndOrderFront(nil)
-            }
-            self?.windowController.claudeBubble.open(task: id)
+            // The tools' window, where the task's tabs are. A diagnostics run stays behind the user's windows
+            // (kite test-ticket opens the bar too).
+            guard let self, let controller = claudeWindow(opening: .user) else { return }
+            WindowPresenter.show(controller.window, activate: true)
+            controller.claudeBubble.open(task: id)
         }
-        claudeTasks.isPanelVisible = { [weak self] in self?.windowController.claudeBubble.isOpen == true }
-        windowController.claudeBubble.tasks = claudeTasks
+        claudeTasks.isPanelVisible = { [weak self] in self?.browserControllers.contains { $0.claudeBubble.isOpen } == true }
         claudeCode = ClaudeCodeSessionsController(supportDirectory: Self.supportDirectory)
-        windowController.claudeBubble.code = claudeCode
-        windowController.hidesInsteadOfClosing = { [weak self] in
-            self?.claudeTasks.isRunningAny == true || self?.claudeCode.isRunningAny == true
-        }
-        windowController.claudeButton.tasks = claudeTasks
-        windowController.claudeButton.open = { [weak self] in self?.claudeButtonClicked() }
+        // Every normal window, made now or later (didMakeController), gets Claude's hooks and protections once.
+        for controller in [windowController!] + windows.all where windows.isNormal(controller) { setUpForClaude(controller) }
         #if canImport(CEFBridge)
         // Pages extensions open (welcome pages, chrome.windows.create) become background
         // tabs, so installing one doesn't pull you off the page you're on.
         ExtensionPopover.openTab = { [weak self] tab in
-            guard let controller = self?.windowController else { return }
+            guard let controller = self?.windows.currentNormal(opening: .user) else { return }
             switch tab {
             case .url(let url): controller.store.mutateWithoutUndo { _ = $0.openTab(url: url) }
             case .page(let page): controller.pool.openTab(with: page)
             }
-            controller.window?.makeKeyAndOrderFront(nil)
+            WindowPresenter.show(controller.window)
         }
         NotificationCenter.default.addObserver(forName: .KCRuntimeOpenURL, object: nil, queue: .main) { [weak self] note in
             guard let url = note.userInfo?["url"] as? URL else { return }
@@ -182,12 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         // A diagnostics run stays in the background and behind the user's windows, so testing never takes their
         // focus or covers their work (capture reads covered windows).
-        if UIDiagnostics.enabledByEnvironment {
-            windowController.window?.orderBack(nil)
-            NSApp.setActivationPolicy(.regular)
-        } else {
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        if WindowPresenter.testSafe { NSApp.setActivationPolicy(.regular) } else { WindowPresenter.activateApp() }
         // A test run (KITE_DIAGNOSTICS=1 on a throwaway profile) can open a link the way another
         // app would, without going through Launch Services and the user's default browser.
         if UIDiagnostics.enabledByEnvironment, let test = ProcessInfo.processInfo.environment["KITE_TEST_OPEN_URL"],
@@ -196,6 +195,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         open(pendingURLs)
         pendingURLs = []
+        // A test run can show the main window again after it was closed, as the Dock icon does
+        // (`applicationShouldHandleReopen`), KITE_TEST_REOPEN_MAIN_AFTER seconds after launch; behind the user's windows.
+        if UIDiagnostics.enabledByEnvironment, let delay = ProcessInfo.processInfo.environment["KITE_TEST_REOPEN_MAIN_AFTER"].flatMap(Double.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                if self?.windowController.window?.isVisible == false { WindowPresenter.showInBackground(self?.windowController.window) }
+            }
+        }
         // A test run can open the Zap picker directly (users open it from the Boost editor's Zap tool).
         // A test run can open the shown site's Boost editor (Edit Boost) 10 s after launch.
         if UIDiagnostics.enabledByEnvironment, ProcessInfo.processInfo.environment["KITE_TEST_BOOST_MENU"] != nil {
@@ -219,9 +225,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         archiveTimer = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.store.archiveStaleTabs() }
         }
-        littleArchiveTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.archiveStaleLittleKites() }
-        }
+        // Archiving hours-old tabs can wait a few minutes, so the system can batch the wakeup with others.
+        archiveTimer?.tolerance = 3 * 60
         littleKiteHotkey = LittleKiteHotkey(
             menuItem: { NSApp.mainMenu.flatMap { Self.menuItem(withID: "newLittleBrowserWindow", in: $0) } },
             onPress: { [weak self] in self?.openLittleKiteWindow(url: nil) }
@@ -234,9 +239,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showGettingStarted(_ sender: Any?) {
         OnboardingWindow.show { [weak self] in
             guard let self else { return nil }
-            if let open = browserControllers.first(where: { !$0.isIncognito && $0.window?.isVisible == true }) { return open }
-            return windows.openNewWindow()
+            return windows.currentNormal(visibleOnly: true) ?? windows.openNewWindow()
         }
+    }
+
+    /// Help › Restore Data: the main window's store writes the session, so it's the one restored.
+    @objc func showRestoreData(_ sender: Any?) {
+        guard let store, let backups = store.sessionBackups else { return NSSound.beep() }
+        RestoreDataWindow.show(store: store, backups: backups)
     }
 
     /// Links from other apps and opened HTML and PDF files, each in a new tab.
@@ -255,16 +265,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func open(_ urls: [URL]) {
         let little = LittleKite.opensExternalLinks(in: .standard)
         let spaceIDs = Set(store.state.spaces.map(\.id))
-        var openedTab = false
+        // Tabs open in the window in front (a new one if every normal window has closed), never a closed one.
+        var target: BrowserWindowController?
+        func targetStore() -> BrowserStore {
+            if target == nil { target = windows.currentNormal(opening: .user) }
+            return target?.store ?? store
+        }
         for url in urls {
+            // A javascript: or data: URL from another app (`open location`) would be AppleScript's `execute`
+            // by another name: refused, as the scripting dictionary refuses it, unless Allow JavaScript from
+            // Apple Events is on.
+            guard AppleScripting.mayLoad(url, allowsJavaScript: allowsJavaScriptFromAppleEvents) else {
+                NSLog("Kite: refused a \(url.scheme ?? "") URL from another app: Allow JavaScript from Apple Events is off")
+                continue
+            }
             // A web app's launcher (~/Applications/Kite Apps/<Name>.app) opens kite-app://<id>.
             if webApps.handleLaunchURL(url) { continue }
             if MailHandler.isMailto(url) {
                 // Kite as the default mail app (it registers for mailto, as Arc does): the default
                 // web mail app's compose page in a new tab, else the system's mail app if that isn't Kite.
                 if let compose = MailHandlers.shared.destination(for: url) {
-                    store.mutateWithoutUndo { _ = $0.openTab(url: compose) }
-                    openedTab = true
+                    targetStore().mutateWithoutUndo { _ = $0.openTab(url: compose) }
                 } else {
                     MailHandlers.shared.openInSystemMailApp(url)
                 }
@@ -281,14 +302,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .littleKite:
                 openLittleKiteWindow(url: url)
             case .mostRecentSpace:
-                store.mutateWithoutUndo { _ = $0.openTab(url: url) }
-                openedTab = true
+                targetStore().mutateWithoutUndo { _ = $0.openTab(url: url) }
             case .space(let id):
-                store.mutateWithoutUndo { _ = $0.openTab(url: url, in: id) }
-                openedTab = true
+                targetStore().mutateWithoutUndo { _ = $0.openTab(url: url, in: id) }
             }
         }
-        if openedTab { windowController.window?.makeKeyAndOrderFront(nil) }
+        if let target { WindowPresenter.show(target.window) }
     }
 
     /// Quiet VPN sign-in loads in the destination space's profile, and shows a page that needs
@@ -304,28 +323,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let index = spaceID.flatMap(state.spaceIndex) ?? state.selectedSpaceIndex
                 return engine.forProfile(state.profile(state.profileDirectory(ofSpace: index)))
             },
-            showInBackground: { [weak main] page, url, title, spaceID, profile in
-                guard let main else { return page.close() }
-                let id = main.pool.adopt(page, profileDirectory: profile)
-                store.mutate { _ = $0.openTab(id: id, url: url, in: spaceID, select: false) }
-                store.pageTitleChanged(id, title)
+            showInBackground: { [weak self] page, url, title, spaceID, profile in
+                // A live normal window's pool (one opened behind, if none is left), never a closed one's.
+                guard let target = self?.windows.currentNormal(prefer: self?.automation?.host as? BrowserWindowController,
+                                                               opening: .automation) else { return page.close() }
+                let id = target.pool.adopt(page, profileDirectory: profile)
+                // Kite's VPN sign-in, not the user's step to undo.
+                target.store.mutateWithoutUndo { _ = $0.openTab(id: id, url: url, in: spaceID, select: false) }
+                target.store.pageTitleChanged(id, title)
             }
         )
     }
 
-    /// Installed apps' windows send links and popups to the main window, like Little Kite's.
+    /// Installed apps' windows send links and popups to the window in front, like Little Kite's.
     private func setUpWebApps() {
         let main = windowController!
-        let store = self.store!
         webApps.host = WebAppsController.Host(
             engine: { [weak main] in main?.pool.engine ?? self.engine },
-            openTab: { [weak main] url in
-                store.mutateWithoutUndo { _ = $0.openTab(url: url) }
-                if !UIDiagnostics.enabledByEnvironment { main?.window?.makeKeyAndOrderFront(nil) }
+            openTab: { [weak self] url in
+                guard let target = self?.windows.currentNormal(opening: .user) else { return }
+                target.store.mutateWithoutUndo { _ = $0.openTab(url: url) }
+                WindowPresenter.show(target.window)
             },
-            adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) },
-            move: { [weak main] page, url, title in main?.adopt(page, url: url, title: title, in: nil) },
-            mainWindow: { [weak main] in main?.window }
+            adoptPopup: { [weak self] page in self?.windows.currentNormal(opening: .user)?.adopt(page, url: nil, title: nil, in: nil) },
+            move: { [weak self] page, url, title in
+                self?.windows.currentNormal(opening: .user)?.adopt(page, url: url, title: title, in: nil)
+            },
+            mainWindow: { [weak self] in self?.windows.currentNormal()?.window }
         )
         WebAppInstallOffers.shared.isInstalled = { [weak webApps] id in webApps?.state.app(id: id) != nil }
         webApps.menu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu?.item(withTitle: "Web Apps")?.submenu
@@ -353,11 +377,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             profiles: { store.state.allProfiles },
             initialProfile: { store.state.profile(store.state.selectedProfileDirectory) },
             engine: { [weak main] profile in (main?.pool.engine ?? self.engine).forProfile(profile) },
-            move: { [weak main] page, url, title, spaceID, profile in
-                main?.adopt(page, url: url, title: title, in: spaceID, profileDirectory: profile)
+            move: { [weak self] page, url, title, spaceID, profile in
+                self?.windows.currentNormal(opening: .user)?.adopt(page, url: url, title: title, in: spaceID, profileDirectory: profile)
             },
-            openTab: { url in store.mutateWithoutUndo { _ = $0.openTab(url: url) } },
-            adoptPopup: { [weak main] page in main?.adopt(page, url: nil, title: nil, in: nil) },
+            openTab: { [weak self] url in
+                (self?.windows.currentNormal(opening: .user)?.store ?? store).mutateWithoutUndo { _ = $0.openTab(url: url) }
+            },
+            adoptPopup: { [weak self] page in self?.windows.currentNormal(opening: .user)?.adopt(page, url: nil, title: nil, in: nil) },
             archive: { url, title, reason in
                 store.mutateWithoutUndo { _ = $0.archiveLittleKite(url: url, title: title ?? "", reason: reason) }
             }
@@ -369,19 +395,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let previous = littleControllers.dropLast().last?.window, let window = controller.window {
             window.setFrameTopLeftPoint(NSPoint(x: previous.frame.minX + 28, y: previous.frame.maxY - 28))
         }
-        if UIDiagnostics.enabledByEnvironment {
-            // Test runs stay behind the user's windows.
-            controller.window?.orderBack(nil)
-        } else {
-            controller.showWindow(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
+        // A test-safe run keeps it behind the user's windows.
+        WindowPresenter.show(controller, activate: true)
     }
 
-    /// Settings › Links › "Archive Little Kites after:": closes Little Kite windows left unused that long.
+    /// Settings › Links › "Archive Little Kites after:": closes Little Kite windows left unused that long. Each
+    /// window keeps its own timer (`LittleKiteWindowController.scheduleArchive`); a changed setting reschedules them.
     func archiveStaleLittleKites(now: Date = Date()) {
-        let threshold = LittleKite.ArchiveThreshold.current(in: .standard)
-        for controller in littleControllers { controller.archiveIfStale(threshold, now: now) }
+        for controller in littleControllers { controller.scheduleArchive(now: now) }
     }
 
     static func menuItem(withID id: String, in menu: NSMenu) -> NSMenuItem? {
@@ -461,20 +482,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// (the page menu's Open Link in Incognito Window) it shows that page instead of the command bar.
     @discardableResult
     func openIncognitoWindow(url: URL? = nil) -> BrowserWindowController {
+        let ephemeral = engine.makeEphemeral()
+        let downloadContext = ephemeral.downloadContextKey
         let controller = BrowserWindowController(
-            store: .incognito(), engine: engine.makeEphemeral(), adblocker: adblocker, incognito: true
+            store: .incognito(), engine: ephemeral, adblocker: adblocker, incognito: true
         )
         incognitoControllers.append(controller)
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: controller.window, queue: .main
         ) { [weak self, weak controller] _ in
-            MainActor.assumeIsolated { self?.incognitoControllers.removeAll { $0 === controller } }
+            MainActor.assumeIsolated {
+                self?.incognitoControllers.removeAll { $0 === controller }
+                // The window's in-memory profile ends with it, and so do its downloads.
+                DownloadsModel.shared.endIncognitoSession(context: downloadContext)
+            }
         }
         // Offset from the window in front so the two don't stack exactly. Read it
         // before showWindow, which makes the new window main.
         let front = NSApp.mainWindow ?? windowController.window
         // Test runs stay behind the user's windows.
-        if UIDiagnostics.enabledByEnvironment { controller.window?.orderBack(nil) } else { controller.showWindow(nil) }
+        WindowPresenter.show(controller)
         if let front, front !== controller.window {
             controller.window?.setFrameTopLeftPoint(NSPoint(x: front.frame.minX + 28, y: front.frame.maxY - 28))
         }
@@ -488,12 +515,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var scriptControllers: [BrowserWindowController] {
         guard let windowController else { return [] }
         let all = [windowController] + windows.all + incognitoControllers
-        return NSApp.orderedWindows.compactMap { window in all.first { $0.window === window } }
+        let onScreen = Set(NSApp.orderedWindows.map(ObjectIdentifier.init))
+        return BrowserWindows.frontToBack(all).filter { $0.window.map { onScreen.contains(ObjectIdentifier($0)) } == true }
     }
 
     /// `make new window`: File › New Window, or New Incognito Window.
     func openScriptWindow(incognito: Bool) -> BrowserWindowController {
         incognito ? openIncognitoWindow() : windows.openNewWindow()
+    }
+
+    // MARK: Claude's window
+
+    /// Once per normal window, when it's made: Claude's tools can move to any of them, so each reports its
+    /// pages to automation and gets the banner, border and handoff card, the ⌘J bar and the Claude button,
+    /// and hides instead of closing while Claude works in it. Incognito and Blank windows get none of it:
+    /// the tools never work there.
+    private func setUpForClaude(_ controller: BrowserWindowController) {
+        guard let automation, let claudeTasks, let claudeCode, windows.isNormal(controller) else { return }
+        controller.installAutomationBanner(automation)
+        controller.claudeBubble.tasks = claudeTasks
+        controller.claudeBubble.code = claudeCode
+        controller.claudeButton.tasks = claudeTasks
+        controller.claudeButton.open = { [weak self, weak controller] in
+            guard let controller else { return }
+            self?.claudeButtonClicked(in: controller)
+        }
+        controller.hidesInsteadOfClosing = { [weak automation, weak claudeTasks, weak claudeCode, weak controller] in
+            guard let controller, automation?.host === controller else { return false }
+            return claudeTasks?.isRunningAny == true || claudeCode?.isRunningAny == true
+        }
+    }
+
+    /// The window Claude's tools work in, or the one they'd move to; `opening` one if none is left.
+    private func claudeWindow(opening: WindowPresentation.Purpose? = nil) -> BrowserWindowController? {
+        windows?.currentNormal(prefer: automation?.host as? BrowserWindowController, opening: opening)
+    }
+
+    /// Before a tool call that needs a window: the tools' window while it's open (the usual case, no
+    /// lookup), else the frontmost normal window, else a new one behind the user's windows.
+    private func ensureAutomationWindow() {
+        guard let automation else { return }
+        if let host = automation.host as? BrowserWindowController, !host.hasClosed, windows.isNormal(host) { return }
+        if let next = claudeWindow(opening: .automation) { automation.attach(next) }
+    }
+
+    /// A normal window is closing, before its pages close. If it's the tools' window, they move to the frontmost
+    /// normal window still open and take the pages Claude is using along, so those don't close and load again;
+    /// with none left, they wait for the next tool call (which opens one) and those pages close with the window.
+    private func normalWindowClosing(_ closing: BrowserWindowController) {
+        guard !isTerminating, let automation, automation.host === closing, let next = claudeWindow() else { return }
+        next.pool.takeOver(automation.tabsKeptLive, from: closing.pool)
+        automation.attach(next)
     }
 
     var allowsJavaScriptFromAppleEvents: Bool { store?.state.allowsJavaScriptFromAppleEvents ?? false }
@@ -507,11 +579,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The Dock icon brings back the window hidden while Claude tasks ran.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows { windowController?.window?.makeKeyAndOrderFront(nil) }
+        // The window hidden while Claude works, else the frontmost normal one, else a new one: never a closed one.
+        if !hasVisibleWindows { WindowPresenter.show(windows?.currentNormal(opening: .user)?.window) }
         return true
     }
 
+    /// Quitting has begun: nothing makes new pages (a close chain that the quit cut short).
+    var isTerminating = false
+
     func applicationWillTerminate(_ notification: Notification) {
+        isTerminating = true
         claudeTasks?.stopAll()
         claudeTasks?.saveNow()
         claudeCode?.stopAll()
@@ -525,7 +602,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for controller in allBrowserControllers where !controller.isIncognito { controller.pool.saveAllHistory() }
         Self.tabHistory.flush()
         store?.saveNow()
-        history?.saveNow()
+        history?.flush()
         DownloadsModel.shared.saveNow()
         BoostsModel.shared.flush()
     }
@@ -553,6 +630,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for controller in allBrowserControllers { controller.pool.forgetSavedHistory() }
         Self.tabHistory.removeAll()
     }
+
+    /// Kite → About Kite: AppKit's standard panel (WindowPresenter keeps a test-safe run's behind).
+    @objc func showAbout(_ sender: Any?) { WindowPresenter.showAboutPanel() }
 
     // MARK: Settings
 
@@ -586,6 +666,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// (scripts/install-app.sh) and logging out go straight to terminate.
     @objc func quitKite(_ sender: Any?) {
         guard let store, store.state.warnsBeforeQuitting else { return NSApp.terminate(sender) }
+        // Nothing opens a window for itself while the user is asked (Claude's tools, a VPN sign-in).
+        windows?.quitPending = true
+        defer { windows?.quitPending = false }
         switch QuitDialog.run(over: NSApp.keyWindow ?? NSApp.mainWindow) {
         case .quit:
             NSApp.terminate(sender)
@@ -603,7 +686,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let active = DownloadsModel.shared.list.active
         guard !active.isEmpty else { return .terminateNow }
-        guard QuitDialog.runDownloadsInProgress(over: NSApp.keyWindow ?? NSApp.mainWindow) else { return .terminateCancel }
+        windows?.quitPending = true
+        guard QuitDialog.runDownloadsInProgress(over: NSApp.keyWindow ?? NSApp.mainWindow) else {
+            windows?.quitPending = false
+            return .terminateCancel
+        }
         active.forEach { DownloadsModel.shared.cancel($0) }
         return .terminateNow
     }
@@ -653,10 +740,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The sidebar's Claude button: sets Claude up the first time, then toggles the bubble.
-    private func claudeButtonClicked() {
-        guard !claudeTasks.isSetUp else { return windowController.claudeBubble.toggle() }
-        Task { @MainActor in
-            if await claudeTasks.setUp() { windowController.claudeBubble.open() }
+    private func claudeButtonClicked(in controller: BrowserWindowController) {
+        guard !claudeTasks.isSetUp else { return controller.claudeBubble.toggle() }
+        Task { @MainActor [weak controller] in
+            if await claudeTasks.setUp() { controller?.claudeBubble.open() }
         }
     }
 
@@ -689,7 +776,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             """
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Connect Claude…")
-        if alert.runModal() == .alertSecondButtonReturn {
+        if WindowPresenter.runModal(alert) == .alertSecondButtonReturn {
             ClaudeConnect.present(automation)
         }
     }

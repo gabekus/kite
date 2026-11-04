@@ -1,0 +1,11 @@
+[Adblock Plus 2.0]
+! Title: Kite perf fixture
+! A stand-in for EasyList (scripts/perf/idle-measure.sh ADBLOCK=…): blocks the fixture
+! pages' /ads/ requests and hides their ad slots, without any download.
+/ads/banner-
+/ads/tag-
+/ads/pixel-
+##.kite-fixture-ad
+##.kite-fixture-late-ad
+##.kite-fixture-very-late-ad
+##.kite-fixture-carousel-ad

@@ -22,7 +22,7 @@ enum EssentialShortcutsWindow {
         let window = window ?? makeWindow()
         self.window = window
         let keys = rows.map { shortcut(for: $0.action, menu: menu, overrides: overrides) }
-        let host = NSHostingView(rootView: EssentialShortcutsView(keys: keys) {
+        let host = FirstMouseHostingView(rootView: EssentialShortcutsView(keys: keys) {
             ShortcutsWindow.show(for: NSApp.mainMenu)
         })
         // Otherwise the window grows to fit the content below the titlebar.
@@ -35,7 +35,8 @@ enum EssentialShortcutsWindow {
             let visible = screen.visibleFrame
             window.setFrameTopLeftPoint(NSPoint(x: visible.maxX - M.size.width, y: visible.maxY))
         }
-        window.makeKeyAndOrderFront(nil)
+        // A test-safe run puts it behind the user's windows at normal level, not floating.
+        WindowPresenter.show(window)
     }
 
     /// The command's shortcut now: its menu item's, or an override for a command Kite doesn't have yet.
@@ -63,13 +64,20 @@ enum EssentialShortcutsWindow {
         window.titleVisibility = .hidden
         window.title = "Essential Keyboard Shortcuts"
         window.standardWindowButton(.zoomButton)?.isEnabled = false
-        window.level = .floating
+        WindowPresenter.setLevel(.floating, of: window)
         window.isReleasedWhenClosed = false
         window.isMovableByWindowBackground = true
         window.appearance = NSAppearance(named: .darkAqua)
         // Captures as Arc's #1E263D.
         window.backgroundColor = NSColor(displayP3Red: 0x15 / 255, green: 0x19 / 255, blue: 0x2C / 255, alpha: 1)
         return window
+    }
+}
+
+/// A test-safe run's window is never key, so View All takes the first click there (as a `ui input` click needs).
+private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        UIDiagnostics.enabledByEnvironment || super.acceptsFirstMouse(for: event)
     }
 }
 

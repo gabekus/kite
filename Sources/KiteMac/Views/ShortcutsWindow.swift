@@ -13,7 +13,7 @@ enum ShortcutsWindow {
             textView.textStorage?.setAttributedString(listing(menu))
             textView.scroll(.zero)
         }
-        panel.makeKeyAndOrderFront(nil)
+        WindowPresenter.show(panel)
     }
 
     private static func makePanel() -> NSPanel {

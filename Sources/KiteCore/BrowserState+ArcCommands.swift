@@ -14,11 +14,8 @@ extension BrowserState {
     @discardableResult
     public mutating func clearToday(inSpace spaceID: UUID) -> [BrowserTab] {
         guard let s = spaceIndex(spaceID) else { return [] }
-        let cleared = spaces[s].tabs
+        let cleared = archiveToday(spaces[s].tabs.map(\.id), inSpace: s)
         guard !cleared.isEmpty else { return [] }
-        appendToArchive(cleared.enumerated().map { ClosedTab(tab: $1, spaceID: spaces[s].id, index: $0) })
-        spaces[s].tabs = []
-        normalizeSplits()
         if let selected = spaces[s].selectedTabID, cleared.contains(where: { $0.id == selected }) {
             spaces[s].selectedTabID = spaces[s].pinned.first?.id
         }
@@ -42,11 +39,35 @@ extension BrowserState {
         guard todayClearAction(inSpace: spaceID) == .clearOthers, let s = spaceIndex(spaceID),
               let selected = spaces[s].selectedTabID
         else { return clearToday(inSpace: spaceID) }
-        let cleared = spaces[s].tabs.enumerated().filter { $1.id != selected }
-        appendToArchive(cleared.map { ClosedTab(tab: $1, spaceID: spaces[s].id, index: $0) })
-        spaces[s].tabs.removeAll { $0.id != selected }
+        return archiveToday(spaces[s].tabs.map(\.id).filter { $0 != selected }, inSpace: s)
+    }
+
+    /// Clear Today once the pages it ends let it go (the window asks them first): archives exactly
+    /// `ids`, the tabs the person cleared, and puts back the selection they had then (`frontSpace`, and
+    /// `selected` in this space), since asking brings a background tab forward. Tabs opened meanwhile
+    /// stay. A selection that was cleared falls back as in Clear Today.
+    @discardableResult
+    public mutating func archiveToday(_ ids: [UUID], inSpace spaceID: UUID, frontSpace: UUID,
+                                      selected: UUID?) -> [BrowserTab] {
+        guard let s = spaceIndex(spaceID) else { return [] }
+        let cleared = archiveToday(ids, inSpace: s)
+        let current = spaces[s].selectedTabID
+        spaces[s].selectedTabID = [selected, current].compactMap { $0 }.first { location(of: $0) != nil }
+            ?? spaces[s].pinned.first?.id
+        if spaceIndex(frontSpace) != nil { selectedSpaceID = frontSpace }
+        return cleared
+    }
+
+    /// Archives these Today tabs of space `s`, in their sidebar order, and fixes up the splits they
+    /// were in. The caller picks what's selected next.
+    mutating func archiveToday(_ ids: [UUID], inSpace s: Int) -> [BrowserTab] {
+        let ids = Set(ids)
+        let archived = spaces[s].tabs.enumerated().filter { ids.contains($1.id) }
+        guard !archived.isEmpty else { return [] }
+        appendToArchive(archived.map { ClosedTab(tab: $1, spaceID: spaces[s].id, index: $0) })
+        spaces[s].tabs.removeAll { ids.contains($0.id) }
         normalizeSplits()
-        return cleared.map(\.element)
+        return archived.map(\.element)
     }
 
     /// Opens a copy of the tab just below it in the unpinned list and selects it.
@@ -100,12 +121,12 @@ extension BrowserState {
         spaces[s].name = name
     }
 
-    /// Arc puts a new space right after the one you're in, and switches to it.
+    /// Arc puts a new space right after the one you're in (or at `index`), and switches to it.
     @discardableResult
-    public mutating func insertSpace(name: String, icon: String, theme: Theme, profile: String? = nil) -> UUID {
+    public mutating func insertSpace(name: String, icon: String, theme: Theme, profile: String? = nil, at index: Int? = nil) -> UUID {
         var space = Space(name: name, icon: icon, theme: theme)
         space.profile = profile
-        spaces.insert(space, at: selectedSpaceIndex + 1)
+        spaces.insert(space, at: min(max(index ?? selectedSpaceIndex + 1, 0), spaces.count))
         selectedSpaceID = space.id
         return space.id
     }

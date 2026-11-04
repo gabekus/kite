@@ -15,20 +15,20 @@ public struct LiveTabPolicy: Sendable {
     ///   - protected: tabs that must stay alive (the visible tab, tabs playing media).
     /// - Returns: tabs to hibernate, least recently shown first.
     public func tabsToEvict(live: [UUID: Date], protected: Set<UUID>) -> [UUID] {
-        let plan = evictionPlan(live: live, protected: protected)
-        return Array(plan.candidates.prefix(plan.count))
-    }
-
-    /// How many tabs must go, and every tab that may, least recently shown first. Whether a tab is busy
-    /// (playing media, using the camera) is only known by asking its page, so the caller walks the
-    /// candidates and a busy one's place goes to the next: busy tabs count towards the limit.
-    public func evictionPlan(live: [UUID: Date], protected: Set<UUID>) -> (count: Int, candidates: [UUID]) {
         let excess = live.count - max(maxLiveTabs, 1)
-        guard excess > 0 else { return (0, []) }
-        let candidates = live
+        guard excess > 0 else { return [] }
+        return live
             .filter { !protected.contains($0.key) }
             .sorted { $0.value < $1.value }
+            .prefix(excess)
             .map(\.key)
-        return (excess, candidates)
+    }
+
+    /// A tab picked to hibernate waits on an asynchronous busy check (media, camera or mic). When it answers,
+    /// the hibernation still goes ahead only if the tab has the page it had when picked (`samePage`), isn't on
+    /// screen, and hasn't been shown since (`shownAt` is when it was last shown, then and now).
+    public static func stillHibernates(pickedShownAt: Date?, shownAt: Date?, samePage: Bool, visible: Bool) -> Bool {
+        guard samePage, !visible, let pickedShownAt else { return false }
+        return shownAt == pickedShownAt
     }
 }

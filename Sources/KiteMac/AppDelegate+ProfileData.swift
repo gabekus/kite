@@ -17,7 +17,7 @@ extension AppDelegate {
             let id = state.openTab(url: page.url, in: spaceID)
             state.update(tab: id) { $0.title = page.tabTitle }
         }
-        if !UIDiagnostics.enabledByEnvironment { windowController.window?.makeKeyAndOrderFront(nil) }
+        WindowPresenter.show(windowController.window)
     }
 
     /// Passwords and Credit Cards: Kite's Chromium tabs keep neither (Alloy-style tabs have no
@@ -27,7 +27,7 @@ extension AppDelegate {
 
     func openProfilePasswordManager() {
         guard let windowController else { return }
-        if !UIDiagnostics.enabledByEnvironment { windowController.window?.makeKeyAndOrderFront(nil) }
+        WindowPresenter.show(windowController.window)
         if !windowController.openPasswordManager() { NSSound.beep() }
     }
 }

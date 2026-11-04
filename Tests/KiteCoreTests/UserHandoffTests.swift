@@ -113,6 +113,78 @@ import Testing
         #expect(ended.contains("don't do them yourself"))
     }
 
+    @Test func backReopensTheStepBefore() throws {
+        let (start, a, _) = sample()
+        var handoff = start
+        #expect(handoff.previous(before: "h1.1") == nil)
+        #expect(handoff.previous(before: "h1.3")?.id == "h1.2")
+        #expect(handoff.previous(before: "h9.9") == nil)
+        handoff.finish("h1.1", .done, how: "the user clicked the highlighted control")
+        handoff.finish("h1.2", .skipped, how: "the user skipped it")
+        handoff.steps[1].found = true
+        handoff.steps[1].blocker = .offPage
+        // Back from step 3: step 2 waits again, is the one its tab shows, and the ring looks for it afresh.
+        let reopened = handoff.reopen("h1.2")
+        #expect(reopened)
+        #expect(handoff.steps[1].state == .waiting && handoff.steps[1].found == nil && handoff.steps[1].blocker == nil)
+        #expect(handoff.current(on: a)?.id == "h1.2")
+        #expect(handoff.waiting.map(\.id) == ["h1.2", "h1.3", "h1.4"])
+        // A step still waiting (passed with Next) has nothing to reopen.
+        let again = handoff.reopen("h1.3")
+        #expect(!again)
+        // handoff_status tells Claude it's waiting again, and what it had been.
+        let report = handoff.report { _ in nil }
+        #expect(report.hasPrefix("Handoff h1: 1 of 4 done, 3 waiting for the user."))
+        #expect(report.contains("2. [waiting] Click Save (the user went back to it after it was skipped)"))
+        #expect(report.contains("don't count it as done or skipped"))
+        // Done again, it's done, with what did it.
+        handoff.finish("h1.2", .done, how: "the user pressed Done")
+        #expect(handoff.steps[1].how == "the user pressed Done")
+        #expect(!handoff.report { _ in nil }.contains("went back"))
+        // Saved and loaded across a relaunch, it still waits.
+        handoff.reopen("h1.1")
+        let loaded = try JSONDecoder().decode(Handoff.self, from: JSONEncoder().encode(handoff))
+        #expect(loaded.steps[0].state == .waiting && loaded.steps[0].how == "the user went back to it after it was done")
+    }
+
+    @Test func tabsAClickOpenedArentSaved() throws {
+        let (start, _, _) = sample()
+        var handoff = start
+        handoff.finish("h1.1", .done, how: "the user clicked the highlighted control")
+        handoff.opened.append(.init(step: 1, tab: UUID()))
+        // Only news for a wait that's under way: not saved.
+        let loaded = try JSONDecoder().decode(Handoff.self, from: JSONEncoder().encode(handoff))
+        #expect(loaded.opened.isEmpty && loaded.steps.count == 4)
+    }
+
+    @Test func theReportTellsClaudeToKeepWaiting() {
+        let (handoff, _, _) = sample()
+        let now = handoff.report { _ in nil }
+        #expect(now.contains("Now call handoff_status with id \"h1\" and wait 600"))
+        #expect(now.contains("Don't end your turn while steps wait"))
+        #expect(handoff.report(waitedOut: true) { _ in nil }.contains("wait 600 again"))
+        let tools = MCPServer(version: "1").tools.arrayValue ?? []
+        let describe = { (name: String) in tools.first { $0["name"]?.stringValue == name }?["description"]?.stringValue ?? "" }
+        #expect(describe("handoff").contains("don't end your turn while steps wait"))
+        #expect(describe("handoff").contains("opens a new tab"))
+        #expect(describe("handoff_status").contains("don't end your turn while steps wait"))
+        #expect(MCPServer.instructions.contains("don't end your turn while steps wait"))
+        #expect(ClaudeInvocation.systemPrompt.contains("wait 600"))
+    }
+
+    @Test func theHandbackSaysWhetherClaudeIsTakingOver() {
+        let tab = UUID()
+        let waiting = HandoffHandback(handoff: "h3", kind: .finished, claudeWaiting: true)
+        #expect(waiting.message == "You're done. Claude is taking over again.")
+        #expect(HandoffHandback(handoff: "h3", kind: .openedTab(tab), claudeWaiting: true).message.contains("taking over from there"))
+        // Nothing is waiting: Kite can't wake Claude, so the user gets the words to tell it.
+        let idle = HandoffHandback(handoff: "h3", kind: .openedTab(tab), claudeWaiting: false)
+        #expect(idle.message.contains("Claude isn't waiting for this"))
+        #expect(idle.note.contains("handoff_status for h3") && idle.note.contains(tab.uuidString))
+        #expect(HandoffHandback(handoff: "h3", kind: .finished, claudeWaiting: false).note
+            == "I've done the steps in Kite (handoff h3). Check handoff_status for h3 and carry on.")
+    }
+
     @Test func buildsTheRingScript() throws {
         let step = Handoff.Step(id: "h1.2", number: 2, instruction: "Tick “Super Administrator”", tab: UUID(),
                                 locator: .marker("h1.2", label: "Super Administrator"))
@@ -297,5 +369,42 @@ import Testing
         #expect(kept.filter(\.isFinished).count == Handoff.keptFinished)
         #expect(kept.contains { $0.id == "h3" })
         #expect(kept.last?.id == "h25")
+    }
+
+    @Test func stopsWatchingOldHandoffs() {
+        let now = Date()
+        let tab = UUID()
+        var fresh = Handoff(id: "h1", reason: "R", created: now.addingTimeInterval(-3600),
+                            steps: [.init(id: "h1.1", number: 1, instruction: "Do", tab: tab)])
+        let old = Handoff(id: "h2", reason: "R", created: now.addingTimeInterval(-UserHandoff.watchLimit - 1),
+                          steps: [.init(id: "h2.1", number: 1, instruction: "Do", tab: tab)])
+        #expect(fresh.isWatched(now: now))
+        // A day on, the step still waits on its tab (card, sidebar, ring), but Kite no longer looks twice a second.
+        #expect(!old.isWatched(now: now))
+        #expect(!old.isFinished && old.current(on: tab)?.id == "h2.1")
+        #expect(old.report { _ in nil }.contains("[waiting]"))
+        fresh.finishAll(.done, how: "the user pressed Done")
+        #expect(!fresh.isWatched(now: now))
+    }
+
+    @Test func pollsOnlyForAFreshStepOnAShownTab() {
+        let now = Date()
+        let shownTab = UUID(), hiddenTab = UUID()
+        func handoff(_ id: String, age: TimeInterval, tab: UUID?) -> Handoff {
+            Handoff(id: id, reason: "R", created: now.addingTimeInterval(-age),
+                    steps: [.init(id: id + ".1", number: 1, instruction: "Do", tab: tab)])
+        }
+        let shown: (UUID) -> Bool = { $0 == shownTab }
+        // Nothing waiting, or waiting only on a tab nobody can see, or with no tab: no polling.
+        #expect(!Handoff.needsPolling([], now: now, isShown: shown))
+        #expect(!Handoff.needsPolling([handoff("h1", age: 60, tab: hiddenTab)], now: now, isShown: shown))
+        #expect(!Handoff.needsPolling([handoff("h1", age: 60, tab: nil)], now: now, isShown: shown))
+        // A fresh step on the shown tab polls; the same step past the watch limit doesn't.
+        #expect(Handoff.needsPolling([handoff("h1", age: 60, tab: shownTab)], now: now, isShown: shown))
+        #expect(!Handoff.needsPolling([handoff("h1", age: UserHandoff.watchLimit + 1, tab: shownTab)], now: now, isShown: shown))
+        // A finished step on the shown tab doesn't.
+        var done = handoff("h2", age: 60, tab: shownTab)
+        done.finishAll(.done, how: "the user pressed Done")
+        #expect(!Handoff.needsPolling([done, handoff("h3", age: 60, tab: hiddenTab)], now: now, isShown: shown))
     }
 }

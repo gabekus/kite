@@ -77,27 +77,19 @@ final class InstantLinksController {
                 return .fallback(for: input)
             }
         }
-        return await Task.detached { plan(for: input, directory: directory) }.value ?? .fallback(for: input)
+        guard let claude = await ClaudeCommand.find() else { return .fallback(for: input) }
+        return await Task.detached { plan(for: input, claude: claude, directory: directory) }.value ?? .fallback(for: input)
     }
 
     /// One headless Claude Code turn: no tools, no MCP, no saved session, the fast model.
-    nonisolated private static func plan(for input: String, directory: URL) -> InstantLinks.Plan? {
-        guard let claude = ClaudeConnect.findClaude() else { return nil }
+    nonisolated private static func plan(for input: String, claude: ClaudeCommand, directory: URL) -> InstantLinks.Plan? {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: claude)
-        process.arguments = [
+        let process = claude.process(arguments: [
             "-p", "--model", "haiku", "--output-format", "text",
             "--tools", "", "--strict-mcp-config", "--no-session-persistence",
             "--system-prompt", InstantLinks.systemPrompt,
-        ]
-        var environment = ProcessInfo.processInfo.environment
-        let (status, path) = ClaudeConnect.run("/bin/zsh", ["-lc", "printf %s \"$PATH\""])
-        if status == 0, path.contains("/") { environment["PATH"] = path }
-        environment["KITE_DIAGNOSTICS"] = nil
-        process.environment = environment
-        process.currentDirectoryURL = directory
+        ], directory: directory)
         let stdin = Pipe(), output = Pipe()
         process.standardInput = stdin
         process.standardOutput = output

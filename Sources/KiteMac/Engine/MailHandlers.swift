@@ -38,7 +38,7 @@ final class MailHandlers {
     func openInSystemMailApp(_ url: URL) {
         if let app = NSWorkspace.shared.urlForApplication(toOpen: url),
            app.standardizedFileURL == Bundle.main.bundleURL.standardizedFileURL { return }
-        NSWorkspace.shared.open(url)
+        WindowPresenter.open(url)
     }
 
     /// A page at `pageURL` called registerProtocolHandler(scheme, url). Asks once per new handler,

@@ -9,7 +9,7 @@ enum Spool {
     }
 
     static func open(_ ticket: LinearTicket) {
-        NSWorkspace.shared.open(ticket.spoolURL)
+        WindowPresenter.open(ticket.spoolURL)
     }
 }
 

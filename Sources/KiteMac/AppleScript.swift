@@ -80,7 +80,7 @@ final class ScriptWindow: NSObject {
     @objc var isResizable: Bool { window?.styleMask.contains(.resizable) ?? false }
     @objc var isVisible: Bool {
         get { window?.isVisible ?? false }
-        set { newValue ? window?.orderFront(nil) : window?.orderOut(nil) }
+        set { newValue ? WindowPresenter.orderFront(window) : window?.orderOut(nil) }
     }
     @objc var isZoomable: Bool { window?.styleMask.contains(.resizable) ?? false }
     @objc var isZoomed: Bool {
@@ -176,9 +176,22 @@ final class ScriptTab: NSObject {
 
     /// The URL `make new tab` needs, or Arc's error for the script.
     static func requireURL(_ value: Any?) -> URL? {
-        if let url = AppleScripting.newTabURL(value) { return url }
-        fail(Int(errAEParamMissed), AppleScripting.invalidNewTabURLMessage)
-        return nil
+        guard let url = AppleScripting.newTabURL(value) else {
+            fail(Int(errAEParamMissed), AppleScripting.invalidNewTabURLMessage)
+            return nil
+        }
+        return mayLoad(url) ? url : nil
+    }
+
+    /// A `javascript:` or `data:` URL is `execute` by another name: refused the same way unless
+    /// Allow JavaScript from Apple Events is on.
+    static func mayLoad(_ url: URL) -> Bool {
+        let allows = (NSApp.delegate as? AppDelegate)?.allowsJavaScriptFromAppleEvents == true
+        guard AppleScripting.mayLoad(url, allowsJavaScript: allows) else {
+            fail(Int(errAEEventNotPermitted), AppleScripting.javaScriptDisabledMessage)
+            return false
+        }
+        return true
     }
 
     static func fail(_ number: Int, _ message: String, _ command: NSScriptCommand? = NSScriptCommand.current()) {
@@ -204,6 +217,7 @@ final class ScriptTab: NSObject {
             guard let url = Foundation.URL(string: newValue), url.scheme != nil else {
                 return Self.fail(Int(errAEParamMissed), "Not a URL: \(newValue)")
             }
+            guard Self.mayLoad(url) else { return }
             controller.store.mutateWithoutUndo { $0.update(tab: id) { $0.url = url } }
             livePage?.load(url)
         }
