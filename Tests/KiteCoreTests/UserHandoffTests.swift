@@ -147,6 +147,44 @@ import Testing
         #expect(loaded.steps[0].state == .waiting && loaded.steps[0].how == "the user went back to it after it was done")
     }
 
+    @Test func tabsAClickOpenedArentSaved() throws {
+        let (start, _, _) = sample()
+        var handoff = start
+        handoff.finish("h1.1", .done, how: "the user clicked the highlighted control")
+        handoff.opened.append(.init(step: 1, tab: UUID()))
+        // Only news for a wait that's under way: not saved.
+        let loaded = try JSONDecoder().decode(Handoff.self, from: JSONEncoder().encode(handoff))
+        #expect(loaded.opened.isEmpty && loaded.steps.count == 4)
+    }
+
+    @Test func theReportTellsClaudeToKeepWaiting() {
+        let (handoff, _, _) = sample()
+        let now = handoff.report { _ in nil }
+        #expect(now.contains("Now call handoff_status with id \"h1\" and wait 600"))
+        #expect(now.contains("Don't end your turn while steps wait"))
+        #expect(handoff.report(waitedOut: true) { _ in nil }.contains("wait 600 again"))
+        let tools = MCPServer(version: "1").tools.arrayValue ?? []
+        let describe = { (name: String) in tools.first { $0["name"]?.stringValue == name }?["description"]?.stringValue ?? "" }
+        #expect(describe("handoff").contains("don't end your turn while steps wait"))
+        #expect(describe("handoff").contains("opens a new tab"))
+        #expect(describe("handoff_status").contains("don't end your turn while steps wait"))
+        #expect(MCPServer.instructions.contains("don't end your turn while steps wait"))
+        #expect(ClaudeInvocation.systemPrompt.contains("wait 600"))
+    }
+
+    @Test func theHandbackSaysWhetherClaudeIsTakingOver() {
+        let tab = UUID()
+        let waiting = HandoffHandback(handoff: "h3", kind: .finished, claudeWaiting: true)
+        #expect(waiting.message == "You're done. Claude is taking over again.")
+        #expect(HandoffHandback(handoff: "h3", kind: .openedTab(tab), claudeWaiting: true).message.contains("taking over from there"))
+        // Nothing is waiting: Kite can't wake Claude, so the user gets the words to tell it.
+        let idle = HandoffHandback(handoff: "h3", kind: .openedTab(tab), claudeWaiting: false)
+        #expect(idle.message.contains("Claude isn't waiting for this"))
+        #expect(idle.note.contains("handoff_status for h3") && idle.note.contains(tab.uuidString))
+        #expect(HandoffHandback(handoff: "h3", kind: .finished, claudeWaiting: false).note
+            == "I've done the steps in Kite (handoff h3). Check handoff_status for h3 and carry on.")
+    }
+
     @Test func buildsTheRingScript() throws {
         let step = Handoff.Step(id: "h1.2", number: 2, instruction: "Tick “Super Administrator”", tab: UUID(),
                                 locator: .marker("h1.2", label: "Super Administrator"))
