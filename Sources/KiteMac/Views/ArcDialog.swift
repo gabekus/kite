@@ -23,10 +23,12 @@ final class ArcDialog {
     typealias Completion = (_ action: Int?, _ text: String) -> Void
     /// What was picked, and each field's text in order.
     typealias FormCompletion = (_ action: Int?, _ texts: [String]) -> Void
+    /// What was picked, each field's text, and whether the suppression checkbox was ticked.
+    private typealias Result = (_ action: Int?, _ texts: [String], _ suppressed: Bool) -> Void
 
     private let sheet: SheetWindow
     private weak var parent: NSWindow?
-    private var completion: FormCompletion?
+    private var completion: Result?
     private let model: Model
     /// Holds the dialog while it's up, since callers needn't keep it.
     private var retainedWhileShown: ArcDialog?
@@ -48,24 +50,19 @@ final class ArcDialog {
     }
 
     /// A message with a suppression checkbox (Arc's "Don’t ask again"), whose state comes back
-    /// with the choice.
+    /// with the choice. `icon` is an SF Symbol shown above the title.
     @discardableResult
     static func present(
         on window: NSWindow,
         title: String,
         message: String,
+        icon: String? = nil,
         suppression: String,
         actions: [Action],
         completion: @escaping (_ action: Int?, _ suppressed: Bool) -> Void
     ) -> ArcDialog {
-        let dialog = ArcDialog(title: title, message: message, fields: [], actions: actions,
-                               width: ArcDialogMetrics.defaultWidth) { _, _ in }
-        dialog.model.suppressionTitle = suppression
-        dialog.completion = { [model = dialog.model] action, _ in completion(action, model.suppressed) }
-        dialog.parent = window
-        dialog.retainedWhileShown = dialog
-        window.beginSheet(dialog.sheet) { _ in }
-        return dialog
+        show(on: window, title: title, message: message, icon: icon, fields: [], suppression: suppression,
+             actions: actions, width: ArcDialogMetrics.defaultWidth) { action, _, suppressed in completion(action, suppressed) }
     }
 
     /// The same with several fields, stacked (a form).
@@ -79,18 +76,34 @@ final class ArcDialog {
         width: CGFloat = ArcDialogMetrics.defaultWidth,
         completion: @escaping FormCompletion
     ) -> ArcDialog {
-        let dialog = ArcDialog(title: title, message: message, fields: fields, actions: actions, width: width,
-                               completion: completion)
+        show(on: window, title: title, message: message, fields: fields, actions: actions, width: width) { action, texts, _ in
+            completion(action, texts)
+        }
+    }
+
+    private static func show(
+        on window: NSWindow,
+        title: String,
+        message: String?,
+        icon: String? = nil,
+        fields: [Field],
+        suppression: String? = nil,
+        actions: [Action],
+        width: CGFloat,
+        completion: @escaping Result
+    ) -> ArcDialog {
+        let dialog = ArcDialog(title: title, message: message, icon: icon, fields: fields, suppression: suppression,
+                               actions: actions, width: width, completion: completion)
         dialog.parent = window
         dialog.retainedWhileShown = dialog
         window.beginSheet(dialog.sheet) { _ in }
         return dialog
     }
 
-    private init(title: String, message: String?, fields: [Field], actions: [Action], width: CGFloat,
-                 completion: @escaping FormCompletion) {
+    private init(title: String, message: String?, icon: String?, fields: [Field], suppression: String?,
+                 actions: [Action], width: CGFloat, completion: @escaping Result) {
         self.completion = completion
-        model = Model(title: title, message: message, fields: fields, actions: actions)
+        model = Model(title: title, message: message, icon: icon, fields: fields, suppression: suppression, actions: actions)
         sheet = SheetWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: 160),
             styleMask: [.titled, .fullSizeContentView],
@@ -123,7 +136,7 @@ final class ArcDialog {
         let texts = model.texts
         if let parent { parent.endSheet(sheet) } else { sheet.orderOut(nil) }
         retainedWhileShown = nil
-        completion(index, texts)
+        completion(index, texts, model.suppressed)
     }
 
     @Observable
@@ -131,17 +144,20 @@ final class ArcDialog {
     fileprivate final class Model {
         let title: String
         let message: String?
+        let icon: String?
         let fields: [Field]
+        let suppressionTitle: String?
         let actions: [Action]
         var texts: [String]
-        var suppressionTitle: String?
         var suppressed = false
         var choose: (Int) -> Void = { _ in }
 
-        init(title: String, message: String?, fields: [Field], actions: [Action]) {
+        init(title: String, message: String?, icon: String?, fields: [Field], suppression: String?, actions: [Action]) {
             self.title = title
             self.message = message
+            self.icon = icon
             self.fields = fields
+            suppressionTitle = suppression
             self.actions = actions
             texts = fields.map(\.text)
         }
@@ -184,6 +200,10 @@ enum ArcDialogMetrics {
     static let topPadding: CGFloat = 54
     static let bottomPadding: CGFloat = 27
     static let titleSize: CGFloat = 17
+    /// The optional icon above the title. Not measured on Arc (its tab-move dialog draws its own
+    /// artwork there, which Kite doesn't copy); sized to sit with the 17 pt title.
+    static let iconSize: CGFloat = 28
+    static let iconToTitle: CGFloat = 12
     static let detailSize: CGFloat = 14
     static let detailLineSpacing: CGFloat = 4
     static let titleToField: CGFloat = 25
@@ -229,6 +249,13 @@ private struct DialogView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
+                if let icon = model.icon {
+                    Image(systemName: icon)
+                        .font(.system(size: M.iconSize, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .padding(.bottom, M.iconToTitle)
+                        .accessibilityHidden(true)
+                }
                 Text(model.title)
                     .font(.system(size: M.titleSize, weight: .semibold))
                     .foregroundStyle(.white)

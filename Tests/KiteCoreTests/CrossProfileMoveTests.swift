@@ -76,9 +76,22 @@ import Testing
         #expect(state.crossProfileMove([empty], on: .pinned(space: work, folder: nil, before: nil)) == nil)
     }
 
-    @Test func favoritesAndDisallowedDropsNeverWarn() {
-        let (state, _, _, work, t, _, w1) = make()
+    @Test func favoritesWarnForAnotherProfilesTab() throws {
+        var (state, _, _, work, t, _, w1) = make()
+        // Same profile: Home's tab to Home's favorites.
         #expect(state.crossProfileMove([t[0]], on: .favorites(before: nil)) == nil)
+        // The sidebar switched to Home mid-drag (resting at its edge) while carrying Work's tab:
+        // Home's favorites are the default profile's.
+        let move = try #require(state.crossProfileMove([w1], on: .favorites(before: nil)))
+        #expect(move == CrossProfileMove(spaceName: "Home", tabCount: 1))
+        // On Work, its favorites are Profile 1's, so Home's tab crosses.
+        state.selectSpace(work)
+        #expect(state.crossProfileMove([t[0]], on: .favorites(before: nil))?.spaceName == "Work")
+        #expect(state.crossProfileMove([w1], on: .favorites(before: nil)) == nil)
+    }
+
+    @Test func disallowedDropsNeverWarn() {
+        let (state, _, _, work, t, _, w1) = make()
         // Folders can't go to Today, so there's nothing to confirm.
         var withFolder = state
         let folder = withFolder.createFolder(name: "F", inSpace: 0)
@@ -87,10 +100,42 @@ import Testing
         #expect(state.crossProfileMove([t[0]], on: .split(with: w1, side: .right))?.spaceName == "Work")
     }
 
-    @Test func suppressionIsReadFromDefaults() throws {
-        let defaults = try #require(UserDefaults(suiteName: "CrossProfileMoveTests-\(UUID())"))
+    @Test func aSplitCountsBothPanes() throws {
+        var (state, _, _, work, t, _, _) = make()
+        state.dropSidebarItems([t[1]], on: .split(with: t[0], side: .right))
+        let split = state.sidebarDragID(for: t[0])
+        #expect(split != t[0])
+        let move = try #require(state.crossProfileMove([split], on: .unpinned(space: work, before: nil)))
+        #expect(move.tabCount == 2)
+        #expect(move.title == "Move tabs to Work?")
+    }
+
+    @Test func aRemovedProfileCountsAsTheDefault() {
+        var (state, home, _, _, _, _, w1) = make()
+        // Work points at a profile that's gone: it's on the default profile, like Home.
+        state.profiles.removeAll()
+        #expect(state.crossProfileMove([w1], on: .unpinned(space: home, before: nil)) == nil)
+        #expect(state.crossProfileMove([w1], on: .space(home)) == nil)
+    }
+
+    @Test func aDeletedSpaceIsNoTarget() {
+        var (state, home, _, work, t, _, _) = make()
+        state.spaces.removeAll { $0.id == work }
+        for target in [SidebarDropTarget.space(work), .unpinned(space: work, before: nil)] {
+            #expect(!state.canDrop([t[0]], on: target))
+            #expect(state.crossProfileMove([t[0]], on: target) == nil)
+            #expect(state.dropSidebarItems([t[0]], on: target) == nil)
+            #expect(state.location(of: t[0])?.space == state.spaceIndex(home))
+            #expect(state.spaces[0].tabs.map(\.id) == t)
+        }
+    }
+
+    @Test func suppressionIsKeptInDefaults() throws {
+        let suite = "CrossProfileMoveTests-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
         #expect(!CrossProfileMove.isSuppressed(in: defaults))
-        defaults.set(true, forKey: CrossProfileMove.suppressedKey)
+        CrossProfileMove.setSuppressed(in: defaults)
         #expect(CrossProfileMove.isSuppressed(in: defaults))
     }
 }
