@@ -217,7 +217,7 @@ std::variant<Sidebar, LoadError> LoadSidebar(const fs::path& folder, const ReadO
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         current = ReadSidebar(folder / candidates[0], options);
     }
-    if (current.result) return Sidebar{std::move(*current.result), candidates[0], false, std::nullopt};
+    if (current.result) return Sidebar{std::move(*current.result), candidates[0], false, std::nullopt, {}};
     if (!TriesBackup(current.failure)) return NoSpaces();
     for (size_t i = 1; i < candidates.size(); ++i) {
         if (Cancelled(options)) return CancelledError();
@@ -226,7 +226,8 @@ std::variant<Sidebar, LoadError> LoadSidebar(const fs::path& folder, const ReadO
             // When its contents were last written, which can be well before the name's date.
             auto when = Modified(folder / candidates[i]);
             if (!when) when = BackupDate(candidates[i]);
-            return Sidebar{std::move(*backup.result), candidates[i], true, when};
+            return Sidebar{std::move(*backup.result), candidates[i], true, when,
+                           current.tooLarge ? TooLarge(*current.tooLarge, options.maxFileBytes) : std::string()};
         }
     }
     if (current.tooLarge) {
@@ -267,7 +268,7 @@ std::variant<Plan, LoadError> ReadPicked(const fs::path& picked, const std::opti
     } else {
         auto read = ReadSidebar(picked, options);
         if (read.result) {
-            loaded = Sidebar{std::move(*read.result), PathText(picked.filename()), false, std::nullopt};
+            loaded = Sidebar{std::move(*read.result), PathText(picked.filename()), false, std::nullopt, {}};
         } else if (read.tooLarge) {
             return LoadError{std::nullopt, PathText(picked.filename()) + " is too large for Kite to read (" + TooLarge(*read.tooLarge, options.maxFileBytes) + ").",
                              kHelp, true};
@@ -374,7 +375,10 @@ std::vector<std::string> ConfirmLines(const Plan& plan, const BrowserState& stat
                         ", named \xE2\x80\x9C" "Arc Space\xE2\x80\x9D.");
     }
     if (plan.sidebar.isBackup) {
-        lines.push_back("Kite couldn't read Arc's current sidebar file, so this is from the newest backup of it Kite could read, made " +
+        const std::string why = plan.sidebar.currentTooLarge.empty()
+                                    ? "Kite couldn't read Arc's current sidebar file"
+                                    : "Arc's current sidebar file is too large for Kite to read (" + plan.sidebar.currentTooLarge + ")";
+        lines.push_back(why + ", so this is from the newest backup of it Kite could read, made " +
                         (plan.sidebar.backup ? BackupDateText(*plan.sidebar.backup) : std::string("an earlier date")) +
                         ". Changes since then aren't in it.");
     }

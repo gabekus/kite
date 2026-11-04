@@ -44,6 +44,8 @@ struct Sidebar {
     std::string file;
     bool isBackup = false;
     std::optional<Timestamp> backup;
+    // For a backup: why the current file didn't do, when it's too large ("too large: …").
+    std::string currentTooLarge;
 };
 // Arc's files are read whole, up to this: the Mac reads any size, and Arc can't export them
 // again after it shuts down, so the cap is far above any real file (an archive grows with every
