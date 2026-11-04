@@ -270,7 +270,7 @@ final class TraceRecorderWindow: NSObject, NSWindowDelegate {
 
     @objc private func reveal(_ sender: Any?) {
         guard case .saved(let folder) = phase else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([folder])
+        WindowPresenter.revealInFinder([folder])
     }
 
     @objc private func again(_ sender: Any?) {

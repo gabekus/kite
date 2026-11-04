@@ -35,6 +35,9 @@ enum ClaudeDesktop {
     /// Adds Kite's server to `claude_desktop_config.json`, keeping everything else in it.
     /// The file as it was is kept next to it as `claude_desktop_config.json.kite-backup`.
     nonisolated static func link(cli: String, profile: String?) -> ClaudeDesktopLinkResult {
+        if let reason = ClaudeSetupGuard.refusal(.desktop, cli: cli, environment: ProcessInfo.processInfo.environment) {
+            return .skipped(reason)
+        }
         let url = configURL
         let files = FileManager.default
         let existing = try? Data(contentsOf: url)
@@ -63,7 +66,7 @@ enum ClaudeDesktop {
         guard mayDrive, let appURL else { return }
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: ClaudeDesktopLink.bundleIdentifier)
         guard !running.isEmpty else {
-            NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+            WindowPresenter.openApplication(at: appURL)
             return
         }
         running.forEach { $0.terminate() }
@@ -73,7 +76,7 @@ enum ClaudeDesktop {
                 try? await Task.sleep(for: .milliseconds(100))
                 waited += 1
             }
-            NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration(), completionHandler: nil)
+            WindowPresenter.openApplication(at: appURL)
         }
     }
 
@@ -81,7 +84,7 @@ enum ClaudeDesktop {
     @discardableResult
     static func openChat(prompt: String) -> Bool {
         guard mayDrive, isInstalled else { return false }
-        return NSWorkspace.shared.open(ClaudeDesktopLink.chatURL(prompt: prompt))
+        return WindowPresenter.open(ClaudeDesktopLink.chatURL(prompt: prompt))
     }
 
     /// Opens a Claude Code session in Desktop's Code tab. Returns what went wrong, or nil.
@@ -95,7 +98,7 @@ enum ClaudeDesktop {
         guard let url = ClaudeDesktopLink.resumeURL(sessionID: sessionID) else {
             return "This task's session id (\(sessionID)) isn't one Claude can open."
         }
-        return NSWorkspace.shared.open(url) ? nil : "macOS couldn't open the Claude app."
+        return WindowPresenter.open(url) ? nil : "macOS couldn't open the Claude app."
     }
 }
 
@@ -103,12 +106,15 @@ enum ClaudeDesktop {
 enum ClaudeDesktopLinkResult: Equatable, Sendable {
     case added, alreadyLinked
     case failed(String)
+    /// A test build, which leaves the real config alone (`ClaudeSetupGuard`).
+    case skipped(String)
 
     var line: String {
         switch self {
         case .added: "Added Kite to the Claude desktop app. Quit and reopen Claude to load it."
         case .alreadyLinked: "The Claude desktop app already has Kite."
         case let .failed(reason): "Couldn't add Kite to the Claude desktop app: \(reason)"
+        case let .skipped(reason): "Left the Claude desktop app alone: \(reason)."
         }
     }
 }

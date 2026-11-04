@@ -160,8 +160,9 @@ typedef NS_ENUM(NSInteger, KCJavaScriptDialogKind) {
 - (void)browser:(KCBrowser *)browser mediaAccessDidChange:(BOOL)inUse;
 /// ⌘-click and middle-click.
 - (void)browser:(KCBrowser *)browser openURLInNewTab:(NSURL *)url foreground:(BOOL)foreground;
-/// window.open / target=_blank. The popup keeps window.opener, so OAuth works.
-- (void)browser:(KCBrowser *)browser didCreatePopup:(KCBrowser *)popup url:(nullable NSURL *)url;
+/// window.open / target=_blank. The popup keeps window.opener, so OAuth works. NO when nothing took it
+/// (a page with no window of its own): the popup is cancelled.
+- (BOOL)browser:(KCBrowser *)browser didCreatePopup:(KCBrowser *)popup url:(nullable NSURL *)url;
 /// The page called window.close().
 - (void)browserDidRequestClose:(KCBrowser *)browser;
 @optional

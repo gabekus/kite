@@ -158,7 +158,7 @@ struct MediaPageView: View {
     @ViewBuilder
     private func menu(for item: MediaLibrary.Item) -> some View {
         Button("Copy") { Self.copy(item) }
-        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.file]) }
+        Button("Show in Finder") { WindowPresenter.revealInFinder([item.file]) }
         Button("Open in Preview") { Self.openInPreview(item) }
         if let url = item.sourceURL {
             Divider()
@@ -188,10 +188,10 @@ struct MediaPageView: View {
 
     private static func openInPreview(_ item: MediaLibrary.Item) {
         guard let preview = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Preview") else {
-            NSWorkspace.shared.open(item.file)
+            WindowPresenter.open(item.file)
             return
         }
-        NSWorkspace.shared.open([item.file], withApplicationAt: preview, configuration: NSWorkspace.OpenConfiguration())
+        WindowPresenter.open([item.file], withApplicationAt: preview)
     }
 }
 

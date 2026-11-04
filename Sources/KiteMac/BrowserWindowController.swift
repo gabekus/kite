@@ -209,8 +209,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
     var closeConfirmed = false
     /// The window's pages are being asked whether it may close.
     var isConfirmingClose = false
-    /// The window has closed (the app may still hold its controller).
+    /// The window has closed (the app may still hold its controller), and hasn't been shown again since.
     private(set) var hasClosed = false
+    /// The window is closing, before its pages close: what follows this window (Claude's tools) moves on and
+    /// takes the pages it's using along (BrowserWindows).
+    var willClose: ((BrowserWindowController) -> Void)?
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if !isIncognito, hidesInsteadOfClosing?() == true {
@@ -222,14 +225,40 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
 
     func windowWillClose(_ notification: Notification) {
         hasClosed = true
+        willClose?(self)
         closeLinkPeek(animated: false)
         discardParkedLinkPeeks(keeping: nil)
         if let paneClickMonitor { NSEvent.removeMonitor(paneClickMonitor) }
         paneClickMonitor = nil
         store.saveNow()
-        if isIncognito { pool.retain(live: [], restorable: []) }
-        // Windows showing a placeholder for one of this window's pages take it back.
-        pool.leaveShared()
+        // Windows showing a placeholder for one of this window's pages take it back; the rest close.
+        pool.closeForWindow()
+        // The app keeps the main window's controller and may show it again (`reopenAfterClose`): nothing
+        // here points at a closed page meanwhile.
+        removePaneViews()
+        shownPages = [:]
+        placeholders = [:]
+        shownPage = nil
+    }
+
+    /// The closed window is shown again (the Dock icon, a link from another app, Claude's notification):
+    /// it rejoins the other windows and its shown tabs load again.
+    private func reopenAfterClose() {
+        guard hasClosed else { return }
+        hasClosed = false
+        closeConfirmed = false
+        if !isIncognito { pool.rejoinShared() }
+        installPaneClickMonitor()
+        reloadShownTabs()
+    }
+
+    /// Clicking into a pane focuses it. Web views take their own clicks, so watch from outside.
+    private func installPaneClickMonitor() {
+        guard paneClickMonitor == nil else { return }
+        paneClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            self?.focusPane(under: event)
+            return event
+        }
     }
 
     /// `ui input` is about to send this background window keys: what becoming key would do first.
@@ -517,12 +546,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             store.mutate { $0.moveSplitDivider(split.id, index: index, fraction: fraction, minimum: minimum) }
         }
         installSplitPaneMenu()
-        // Clicking into a pane focuses it. Web views take their own clicks, so watch from outside.
-        paneClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
-            self?.focusPane(under: event)
-            return event
-        }
+        installPaneClickMonitor()
         if let window = window as? BrowserWindow {
+            window.willOrderIn = { [weak self] in self?.reopenAfterClose() }
             spaceSwipe.install(in: window)
             pageTopDragger.install(in: window)
         }
@@ -622,7 +648,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let visible = state.visibleTabs
         // A Peek belongs to the tab it opened over: it waits out of sight while another tab is shown.
         if let linkPeek, linkPeek.sourceTabID != selected?.id { parkLinkPeek() }
-        if selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
+        // A closed window makes no pages; it loads its tabs when it's shown again.
+        if !hasClosed, selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
             // A page coming forward (⌘T, a tab opened from the Archive, another space) leaves the Library.
             if library.isOpen, shownTabID != nil { library.close() }
             show(visible, focused: selected?.id)
@@ -696,6 +723,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return
         }
         pool.didShow(ids)
+        // Under the Library (its first tab opened while it's up): on screen once it closes.
+        if library.isOpen { for page in shownPages.values where page.view.window === window { page.setVisible(false) } }
         restoreAskConversation(focused)
         // A new split pane's command bar is about to open and takes the focus.
         if store.commandBar == nil, store.pendingSplitPane == nil {
@@ -971,6 +1000,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         for view in [sidebarHost!, contentFrame, glowView, resizeHandle, peekCard] as [NSView] {
             view.alphaValue = open ? 0 : 1
         }
+        // Faded out, the pages are still in the window and would keep drawing at full rate.
+        for page in shownPages.values where page.view.window === window { page.setVisible(!open) }
+        linkPeek?.page.setVisible(!open)
         if open {
             window?.makeFirstResponder(libraryHost)
         } else {
@@ -1466,7 +1498,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         case #selector(renameCurrentTab(_:)):
             return store.state.selectedTab != nil
         case #selector(toggleStayOnTop(_:)):
-            item.state = window?.level == .floating ? .on : .off
+            item.state = window.map(WindowPresenter.level(of:)) == .floating ? .on : .off
         case #selector(importFromAnotherBrowser(_:)):
             // An incognito window keeps nothing, so there's nowhere to put the import.
             return !isIncognito

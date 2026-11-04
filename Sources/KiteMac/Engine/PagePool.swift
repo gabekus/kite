@@ -19,6 +19,8 @@ final class PagePool {
     /// The profile folder each page was made in, so a space moved to another profile reloads.
     private var pageProfiles: [UUID: String] = [:]
     private var lastShown: [UUID: Date] = [:]
+    /// Hidden tabs whose last busy check found media or capture in use: the live-tab limit skips them.
+    private var busyIDs: Set<UUID> = []
     private var savedState: [UUID: Any] = [:]
     private var visibleIDs: Set<UUID> = []
     private var memoryPressure: DispatchSourceMemoryPressure?
@@ -103,11 +105,37 @@ final class PagePool {
         shared.add(self)
     }
 
-    /// This window is closing: the linked windows take the pages they show placeholders for.
-    func leaveShared() {
-        guard let shared else { return }
-        shared.closing(self)
-        self.shared = nil
+    /// The pages this window shared before it closed (`closeForWindow`).
+    private weak var left: SharedPages?
+
+    /// The closed window is shown again: it shares tabs with the other windows as before.
+    func rejoinShared() {
+        guard shared == nil, let left else { return }
+        join(left)
+    }
+
+    /// This window is closing: the linked windows take the pages they show placeholders for, and every
+    /// page still here closes, without asking (closing one of several windows ends no tabs, #338), so no
+    /// renderer keeps running, or playing, with no window. Their history goes to a linked window, so
+    /// those tabs load where they were when next shown.
+    func closeForWindow() {
+        let heir = shared?.closing(self)
+        if let shared { left = shared }
+        shared = nil
+        for id in Array(pages.keys) { discard(id, keepHistory: heir != nil) }
+        heir?.savedState.merge(savedState) { theirs, _ in theirs }
+        savedState = [:]
+    }
+
+    /// `owner`'s window is about to close (before `closeForWindow`): this window takes the pages of `ids` that
+    /// aren't on screen there, so Claude's background pages carry on here instead of closing and loading again.
+    /// Pages on screen in the closing window close with it (their history comes here).
+    func takeOver(_ ids: Set<UUID>, from owner: PagePool) {
+        guard let shared, owner.shared === shared, owner !== self else { return }
+        for id in ids {
+            guard let page = owner.pages[id], page.view.window == nil, pages[id] == nil, let tab = store.state.tab(id) else { continue }
+            _ = claim(tab)
+        }
     }
 
     /// The tab's page wherever it is, made here when no linked window has one (automation, extensions).
@@ -221,6 +249,7 @@ final class PagePool {
         guard pages.removeValue(forKey: id) != nil else { return nil }
         pageProfiles[id] = nil
         lastShown[id] = nil
+        busyIDs.remove(id)
         visibleIDs.remove(id)
         let request = permissionRequests.removeValue(forKey: id)
         if request != nil { onPermissionRequestsChanged?() }
@@ -248,7 +277,8 @@ final class PagePool {
             pages[id]?.setVisible(true)
             lastShown[id] = now
         }
-        hibernate(policy.tabsToEvict(live: lastShown, protected: shown))
+        evictOverLimit()
+        recheckBusyTabs()
     }
 
     /// Drops pages for tabs that no longer exist, and saved history for tabs that can't come back.
@@ -264,12 +294,13 @@ final class PagePool {
     /// A new selected tab showing `page`, which already exists (a popup, or a Peek's page expanded). `url` is
     /// what it shows already: WebKit doesn't report a page's URL again until it changes.
     /// `opener` is the tab whose page opened it, for a popup; `source` the tab it came from otherwise (a
-    /// Peek's), which places it as a tab that page opened (next to it in a Claude folder).
-    func openTab(with page: WebPage, url: URL? = nil, opener: UUID? = nil, source: UUID? = nil) {
+    /// Peek's), which places it as a tab that page opened (next to it in a Claude folder). `profileDirectory` is
+    /// the profile the page was made in; a popup shares its opener's.
+    func openTab(with page: WebPage, url: URL? = nil, opener: UUID? = nil, source: UUID? = nil, profileDirectory: String? = nil) {
         // Register before the tab exists so selecting it reuses this page.
         let newID = UUID()
         register(page, id: newID)
-        pageProfiles[newID] = currentEngine.profileDirectory
+        pageProfiles[newID] = profileDirectory ?? opener.flatMap { pageProfiles[$0] } ?? currentEngine.profileDirectory
         if let opener { Self.popupOpeners[newID] = opener }
         store.mutateWithoutUndo { state in
             if let from = opener ?? source { state.openTab(id: newID, url: url, openedBy: from) } else { state.openTab(id: newID, url: url) }
@@ -294,10 +325,10 @@ final class PagePool {
         }
     }
 
-    /// Registers `page` (a Peek's) for a tab the caller is about to add with `id`.
-    func register(existing page: WebPage, id: UUID) {
+    /// Registers `page` (a Peek's, made in `profileDirectory`) for a tab the caller is about to add with `id`.
+    func register(existing page: WebPage, id: UUID, profileDirectory: String?) {
         register(page, id: id)
-        pageProfiles[id] = currentEngine.profileDirectory
+        pageProfiles[id] = profileDirectory
     }
 
     func discard(_ id: UUID, keepHistory: Bool) {
@@ -308,6 +339,7 @@ final class PagePool {
         OAuthResumeTracker.forget(id)
         savedState[id] = keepHistory ? page.hibernationState() : nil
         lastShown[id] = nil
+        busyIDs.remove(id)
         page.onEvent = nil
         page.linkPeekPolicy = nil
         page.contextMenuHost = nil
@@ -448,14 +480,45 @@ final class PagePool {
         }
     }
 
-    /// Hibernates tabs unless they're playing media or using the camera or mic.
+    /// Hibernates tabs unless they're playing media or using the camera or mic. A busy tab is remembered
+    /// (`busyIDs`) and the live-tab limit picks again without it, so the next oldest goes instead.
     private func hibernate(_ ids: [UUID]) {
         // A window is asking its pages whether it may close: none may go unasked meanwhile.
         guard !holdsPages else { return }
         for id in ids where !isLinkedToPopup(id) {
-            pages[id]?.checkBusy { [weak self] busy in
-                guard let self, !busy, !self.visibleIDs.contains(id), !self.isLinkedToPopup(id) else { return }
-                self.discard(id, keepHistory: true)
+            guard let page = pages[id] else { continue }
+            let pickedShownAt = lastShown[id]
+            page.checkBusy { [weak self, weak page] busy in
+                guard let self, let page else { return }
+                // The check is asynchronous: the tab may have been shown again, or have another page now.
+                guard LiveTabPolicy.stillHibernates(pickedShownAt: pickedShownAt, shownAt: lastShown[id],
+                                                    samePage: pages[id] === page, visible: visibleIDs.contains(id)),
+                      !isLinkedToPopup(id) else { return }
+                if busy {
+                    if busyIDs.insert(id).inserted { evictOverLimit() }
+                    return
+                }
+                busyIDs.remove(id)
+                discard(id, keepHistory: true)
+            }
+        }
+    }
+
+    /// Hibernates the least recently shown tabs over the live-tab limit, keeping those on screen and busy ones.
+    private func evictOverLimit() {
+        hibernate(policy.tabsToEvict(live: lastShown, protected: visibleIDs.union(busyIDs)))
+    }
+
+    /// Tabs that were busy stop being skipped once they're idle (the music stopped), and the limit applies again.
+    private func recheckBusyTabs() {
+        for id in busyIDs where !visibleIDs.contains(id) {
+            guard let page = pages[id] else {
+                busyIDs.remove(id)
+                continue
+            }
+            page.checkBusy { [weak self, weak page] busy in
+                guard let self, let page, !busy, pages[id] === page, busyIDs.remove(id) != nil else { return }
+                evictOverLimit()
             }
         }
     }
@@ -487,10 +550,11 @@ final class SharedPages {
     }
 
     /// `pool`'s window is closing: the others take back the pages they show placeholders for, then
-    /// it leaves.
-    fileprivate func closing(_ pool: PagePool) {
+    /// it leaves. Returns a window that stays, to keep the history of the pages it closes.
+    fileprivate func closing(_ pool: PagePool) -> PagePool? {
         for case let other? in pools.map(\.pool) where other !== pool { other.onLinkedWindowClosing?(pool) }
         pools.removeAll { $0.pool == nil || $0.pool === pool }
+        return pools.lazy.compactMap(\.pool).first
     }
 
     /// Every linked window's live pages.

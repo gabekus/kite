@@ -11,6 +11,8 @@ protocol AutomationHost: AnyObject {
     var window: NSWindow? { get }
     /// The window's store: its selection is the front space and tab the tools act on.
     var store: BrowserStore { get }
+    /// The window has closed (and hasn't been shown again).
+    var hasClosed: Bool { get }
     /// Pages that exist right now (shown or in the background), for recording the network.
     var livePages: [UUID: WebPage] { get }
     /// The tab's page, created in the background if it isn't live.
@@ -91,14 +93,28 @@ final class AutomationController {
     @ObservationIgnored var handoffPolling = false
     /// Window and app notifications that call for a look (`watchHandoffEvents`), and the last tabs it saw.
     @ObservationIgnored var handoffObservers: [NSObjectProtocol] = []
-    @ObservationIgnored var lastHandoffTabsKey: [String] = []
+    /// The handoff card's watch on the tools' store, re-armed when they move to another window (`attach`).
+    @ObservationIgnored var handoffTabsWatch = StoreWatch<[String]>()
     /// The one look after `UserHandoff.offPageDelay` (`scheduleHandoffFollowUp`).
     @ObservationIgnored var handoffFollowUp: Task<Void, Never>?
     @ObservationIgnored var handoffPollAgain = false
 
     /// The normal window the tools work in, and its store. It moves when that window closes (`attach`).
-    @ObservationIgnored private(set) weak var host: AutomationHost?
-    @ObservationIgnored private(set) var store: BrowserStore
+    @ObservationIgnored private weak var attachedHost: AutomationHost?
+    @ObservationIgnored private var attachedStore: BrowserStore
+    /// The window and store a tool call works in: the ones it started with, so one call doesn't act on two
+    /// windows' selections, until that window closes under it; then the window the tools moved to.
+    var host: AutomationHost? { target.host }
+    var store: BrowserStore { target.store }
+    private var target: Target {
+        if let started = Self.commandTarget, let host = started.host, !host.hasClosed { return started }
+        return Target(host: attachedHost, store: attachedStore)
+    }
+    struct Target: @unchecked Sendable {
+        weak var host: AutomationHost?
+        let store: BrowserStore
+    }
+    @TaskLocal static var commandTarget: Target?
     /// Before a tool call that needs a window: AppDelegate moves the tools to a live normal window,
     /// opening one if none is left, so they never drive a window that has closed.
     @ObservationIgnored var ensureWindow: (() -> Void)?
@@ -188,7 +204,7 @@ final class AutomationController {
     }
 
     init(store: BrowserStore, supportDirectory: URL) {
-        self.store = store
+        attachedStore = store
         self.supportDirectory = supportDirectory
         settings = AutomationSettings.load(from: AutomationSettings.fileURL(supportDirectory: supportDirectory))
         handoffs = Handoff.load(from: Handoff.fileURL(supportDirectory: supportDirectory))
@@ -197,9 +213,20 @@ final class AutomationController {
 
     /// Points the tools at `host`'s window and store.
     func attach(_ host: AutomationHost) {
-        self.host = host
-        store = host.store
+        let moved = host.store !== attachedStore
+        attachedHost = host
+        attachedStore = host.store
+        guard moved else { return }
+        // The handoff card watched the old store's front tab: watch this one's.
+        let generation = handoffTabsWatch.rebind()
+        if !handoffObservers.isEmpty { watchHandoffTabs(generation: generation) }
+        // Pages already live in this window's pool (and its linked ones) get recorded too.
+        if isRecordingNetwork { for (id, page) in host.livePages { Task { await record(id, page: page) } } }
     }
+
+    /// Tabs whose pages Claude is using: when the tools' window closes, they move to the next one rather than
+    /// close and reload there.
+    var tabsKeptLive: Set<UUID> { Set(controlledTabs.keys).union(claudeOpened).union(trackedPages.keys) }
 
     var socketURL: URL { AutomationWire.socketURL(supportDirectory: supportDirectory) }
 
@@ -413,7 +440,8 @@ final class AutomationController {
         for id in tabs {
             controlledTabs[id] = nil
             for alert in pendingConfirmations.removeValue(forKey: id) ?? [] {
-                host?.window?.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
+                // The window it's on, which may not be the tools' window any more.
+                alert.window.sheetParent?.endSheet(alert.window, returnCode: .alertFirstButtonReturn)
             }
             for waiter in waiters.removeValue(forKey: id) ?? [] { waiter.finish(false) }
             if let tracked = trackedPages.removeValue(forKey: id) {
@@ -682,7 +710,10 @@ final class AutomationController {
             let command = try AutomationCommand(tool: request.tool, arguments: request.arguments)
             if command.needsWindow { ensureWindow?() }
             let task = request.task.flatMap(UUID.init(uuidString:)).flatMap { isRunningTask?($0) == true ? $0 : nil }
-            return try await Self.$agentTask.withValue(task) { try await run(command, connection: connection) }
+            let started = Target(host: attachedHost, store: attachedStore)
+            return try await Self.$commandTarget.withValue(started) {
+                try await Self.$agentTask.withValue(task) { try await run(command, connection: connection) }
+            }
         } catch let error as AutomationError {
             return .failure(error)
         } catch let error as AutomationCommand.InvalidArguments {

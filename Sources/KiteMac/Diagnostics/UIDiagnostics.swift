@@ -109,8 +109,14 @@ final class UIDiagnostics {
         // Popovers (Site Controls, extensions, downloads), child panels (Little Kite's Open In menu) and other panels
         // (the Keyboard Shortcuts list, About) aren't in orderedWindows; list them too so `{"window": N}` can reach them.
         windows += NSApp.windows.filter {
-            $0.isVisible && ($0.className.contains("Popover") || $0.parent != nil || $0 is NSPanel) && !windows.contains($0)
+            $0.isVisible && ($0.className.contains("Popover") || $0.parent != nil || $0 is NSPanel)
+                && $0.sheetParent == nil && !windows.contains($0)
         }
+        // Front to back as the window server stacks them (orderedWindows leaves the panels out), minimized last.
+        let stack = (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? [])
+            .compactMap { $0[kCGWindowNumber as String] as? Int }
+        let position = Dictionary(stack.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        windows.sort { (position[$0.windowNumber] ?? Int.max) < (position[$1.windowNumber] ?? Int.max) }
         guard !windows.isEmpty else { return "Kite has no windows open." }
         return windows.map { window in
             var flags: [String] = []
