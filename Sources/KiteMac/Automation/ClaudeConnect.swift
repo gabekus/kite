@@ -74,6 +74,9 @@ enum ClaudeConnect {
 
     nonisolated private static func linkCommand(cli: String, into directory: URL) -> String {
         let link = directory.appendingPathComponent("kite")
+        if let reason = ClaudeSetupGuard.refusal(.commandLink, cli: cli, environment: ProcessInfo.processInfo.environment) {
+            return "Left \(link.path) alone: \(reason)."
+        }
         let files = FileManager.default
         do {
             try files.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -91,6 +94,9 @@ enum ClaudeConnect {
     }
 
     nonisolated private static func registerWithClaudeCode(cli: String, profile: String?) -> String {
+        if let reason = ClaudeSetupGuard.refusal(.claudeCode, cli: cli, environment: ProcessInfo.processInfo.environment) {
+            return "Left Claude Code's kite server alone: \(reason)."
+        }
         guard let claude = findClaude() else {
             return "Couldn't find the claude command. Install Claude Code, then run:\nclaude mcp add -s user kite -- \(cli) mcp"
         }
