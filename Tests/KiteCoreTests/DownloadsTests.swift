@@ -128,6 +128,31 @@ import Testing
         #expect(file.downloads.items.map(\.fileName) == ["y"])
     }
 
+    @Test func aFileWithAnUnreadableItemIsCopiedAsideBeforeTheNextSave() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("kite-downloads-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("downloads.json")
+        let original = Data("""
+        {"version":1,"downloads":{"items":[{"id":"not-a-uuid","url":"https://a/x","newField":1},
+        {"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","url":"https://a/y","path":"/d/y","state":"complete",
+        "receivedBytes":5,"totalBytes":5,"startedAt":700000000}]}}
+        """.utf8)
+        try original.write(to: file)
+        let loaded = try #require(DownloadsFile.load(file))
+        #expect(loaded.list.items.count == 1)
+        #expect(loaded.dropped == 1)
+        #expect(loaded.canSave)
+        let aside = try #require(loaded.copiedAside)
+        #expect(aside.lastPathComponent.hasPrefix("downloads.corrupt-"))
+        #expect(try Data(contentsOf: aside) == original)
+        #expect(try Data(contentsOf: file) == original)
+        // A clean file is left alone.
+        try JSONEncoder().encode(DownloadsFile(downloads: loaded.list)).write(to: file)
+        let clean = try #require(DownloadsFile.load(file))
+        #expect(clean.dropped == 0 && clean.copiedAside == nil)
+    }
+
     @Test func closingAnIncognitoWindowDropsOnlyItsDownloads() {
         var list = DownloadList()
         list.apply(update(1, .complete))

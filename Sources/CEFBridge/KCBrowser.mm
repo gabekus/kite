@@ -173,12 +173,22 @@ DownloadSource DownloadSourceOf(CefRefPtr<CefRequestContext> context) {
         for (KCRequestContext* incognito in IncognitoContexts()) {
             if (incognito.cefContext->IsSame(context)) { source.key = incognito.downloadContextKey; return source; }
         }
-        // Its window has already closed: a key of its own, so it can't be mistaken for another
-        // incognito window's download with the same id.
-        static NSInteger orphans = 0;
-        source.key = [NSString stringWithFormat:@"incognito-orphan-%ld", (long)++orphans];
+        // Its window has closed and its KCRequestContext has gone with the engine: the session is over.
+        source.key = nil;
     }
     return source;
+}
+
+/// Incognito sessions whose window has closed (endDownloadsForContextKey:). Their downloads are
+/// canceled and never followed again, so nothing keeps their in-memory profile alive.
+NSMutableSet<NSString*>* EndedDownloadContexts() {
+    static NSMutableSet<NSString*>* keys = [NSMutableSet set];
+    return keys;
+}
+
+/// An incognito download whose session is over: cancel it, and don't follow or list it.
+bool IsEndedSession(const DownloadSource& source) {
+    return source.incognito && (!source.key || [EndedDownloadContexts() containsObject:source.key]);
 }
 
 /// A download Kite has handed a path to and is still following. Chromium's id restarts at 1 in
@@ -187,14 +197,17 @@ DownloadSource DownloadSourceOf(CefRefPtr<CefRequestContext> context) {
 /// incognito window's KCRequestContext can go while the download carries on.
 /// Download callbacks run on the main (UI) thread.
 struct LiveDownload {
+    /// Held strongly while followed: an incognito session's are dropped when it ends.
     CefRefPtr<CefRequestContext> context;
     uint32_t id;
     DownloadSource source;
     /// The path it saves to, held so no other download is given it until this one completes
     /// or is canceled (an interrupted one can resume into the same file).
     NSString* path;
-    /// Set while in progress, so the downloads list can cancel it.
+    /// Set until it completes or is canceled (interrupted too), so the downloads list or an ending
+    /// incognito session can cancel it. Nil only before its first update.
     CefRefPtr<CefDownloadItemCallback> callback;
+    bool interrupted;
 };
 
 std::vector<LiveDownload>& LiveDownloads() {
@@ -202,8 +215,8 @@ std::vector<LiveDownload>& LiveDownloads() {
     return downloads;
 }
 
-/// Interrupted downloads stay listed (they can resume) and a destroyed browser may never send a
-/// final update, so the oldest finished-or-stuck entries go past this many.
+/// Interrupted downloads stay followed (they can resume) and a destroyed browser may never send
+/// a final update, so past this many the oldest interrupted one goes, else the oldest.
 constexpr size_t kMaxLiveDownloads = 200;
 
 LiveDownload* FindLiveDownload(CefRefPtr<CefRequestContext> context, uint32_t id) {
@@ -213,13 +226,13 @@ LiveDownload* FindLiveDownload(CefRefPtr<CefRequestContext> context, uint32_t id
     return nullptr;
 }
 
-LiveDownload& AddLiveDownload(CefRefPtr<CefRequestContext> context, uint32_t id, NSString* path) {
+LiveDownload& AddLiveDownload(CefRefPtr<CefRequestContext> context, uint32_t id, const DownloadSource& source) {
     std::vector<LiveDownload>& downloads = LiveDownloads();
     while (downloads.size() >= kMaxLiveDownloads) {
-        auto stale = std::find_if(downloads.begin(), downloads.end(), [](const LiveDownload& d) { return !d.callback; });
+        auto stale = std::find_if(downloads.begin(), downloads.end(), [](const LiveDownload& d) { return d.interrupted; });
         downloads.erase(stale != downloads.end() ? stale : downloads.begin());
     }
-    downloads.push_back({context, id, DownloadSourceOf(context), path, nullptr});
+    downloads.push_back({context, id, source, nil, nullptr, false});
     return downloads.back();
 }
 
@@ -740,7 +753,19 @@ class KCClient : public CefClient,
         }
         CefRefPtr<CefRequestContext> context = browser->GetHost()->GetRequestContext();
         LiveDownload* live = FindLiveDownload(context, download_item->GetId());
-        if (!live) live = &AddLiveDownload(context, download_item->GetId(), nil);
+        if (!live) {
+            DownloadSource source = DownloadSourceOf(context);
+            if (IsEndedSession(source)) {
+                // Its incognito window has closed: canceled at its first update, never followed.
+                NSString* name = [NSString stringWithFormat:@"KiteEndedIncognito-%@", NSUUID.UUID.UUIDString];
+                callback->Continue([NSTemporaryDirectory() stringByAppendingPathComponent:name].UTF8String, false);
+                return true;
+            }
+            live = &AddLiveDownload(context, download_item->GetId(), source);
+        }
+        // Asked again for the same download (Chromium restarting an interrupted one): its own
+        // reservation doesn't count against it.
+        live->path = nil;
         BOOL prompt = NO;
         NSURL* folder = DownloadFolder(live->source.profile, &prompt);
         NSString* path = UniqueDownloadURL(ToNSString(suggested_name), folder).path;
@@ -759,14 +784,22 @@ class KCClient : public CefClient,
         LiveDownload* live = FindLiveDownload(context, download_item->GetId());
         // A repeat after the download finished (Kite already let it go): nothing new to report.
         if (!live && !download_item->IsInProgress() && !download_item->IsInterrupted()) return;
-        if (!live) live = &AddLiveDownload(context, download_item->GetId(), nil);
+        if (!live) {
+            DownloadSource source = DownloadSourceOf(context);
+            if (IsEndedSession(source)) {
+                if (download_item->IsInProgress() || download_item->IsInterrupted()) callback->Cancel();
+                return;
+            }
+            live = &AddLiveDownload(context, download_item->GetId(), source);
+        }
         if (download_item->IsComplete()) [NSApp requestUserAttention:NSInformationalRequest];
         DownloadSource source = live->source;
         // The Save panel may have put it somewhere else: hold the path it really uses.
         NSString* fullPath = ToNSString(download_item->GetFullPath());
         if (fullPath.length) live->path = fullPath;
         bool finished = download_item->IsComplete() || download_item->IsCanceled();
-        live->callback = download_item->IsInProgress() ? callback : nullptr;
+        live->callback = callback;
+        live->interrupted = download_item->IsInterrupted();
         if (finished) RemoveLiveDownload(live);
         NSString* state = download_item->IsComplete() ? @"complete"
             : download_item->IsCanceled() ? @"canceled"
@@ -1683,4 +1716,32 @@ static CefRefPtr<CefValue> KCCefValue(id object) {
     return NO;
 }
 
++ (NSInteger)endDownloadsForContextKey:(NSString*)contextKey {
+    [EndedDownloadContexts() addObject:contextKey];
+    // Copy: a cancel can call back into OnDownloadUpdated, which edits the list.
+    std::vector<LiveDownload> ending;
+    std::vector<LiveDownload>& downloads = LiveDownloads();
+    for (auto it = downloads.begin(); it != downloads.end();) {
+        if ([it->source.key isEqualToString:contextKey]) {
+            ending.push_back(*it);
+            it = downloads.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (LiveDownload& download : ending) if (download.callback) download.callback->Cancel();
+    return (NSInteger)ending.size();
+}
+
++ (NSInteger)liveDownloadCountForContextKey:(NSString*)contextKey {
+    NSInteger count = 0;
+    for (const LiveDownload& download : LiveDownloads()) count += [download.source.key isEqualToString:contextKey];
+    return count;
+}
+
 @end
+
+/// Drops the downloads Kite follows, and their CEF references, before CefShutdown.
+void KCClearLiveDownloads() {
+    LiveDownloads().clear();
+}

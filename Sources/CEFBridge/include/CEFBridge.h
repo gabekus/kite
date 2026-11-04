@@ -331,6 +331,12 @@ NS_SWIFT_UI_ACTOR
 /// Cancels a live download by the id and context in KCDownloadDidUpdateNotification. Returns NO
 /// when Chromium no longer has it.
 + (BOOL)cancelDownloadWithID:(NSInteger)downloadID contextKey:(NSString *)contextKey;
+/// An incognito session ended (its window closed): cancels its downloads, interrupted ones too,
+/// and stops following them, so nothing keeps its in-memory profile alive. Later downloads from
+/// it are canceled unlisted. Returns how many it was following.
++ (NSInteger)endDownloadsForContextKey:(NSString *)contextKey;
+/// How many downloads under `contextKey` Kite still follows (for diagnostics).
++ (NSInteger)liveDownloadCountForContextKey:(NSString *)contextKey;
 /// Where downloads go, asked as each one starts: the folder for the profile in
 /// `profileDirectory` (nil for the default profile's own context or an incognito one), and
 /// whether to show Chromium's Save panel there (`prompt`). Unset, downloads go to Downloads.

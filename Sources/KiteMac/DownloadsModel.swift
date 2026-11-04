@@ -37,9 +37,12 @@ final class DownloadsModel {
     /// Loads the profile's list and starts listening to Chromium.
     func start(fileURL: URL) {
         if let loaded = DownloadsFile.load(fileURL) {
-            self.fileURL = fileURL
+            if loaded.canSave { self.fileURL = fileURL } else { NSLog("Kite: not saving downloads over \(fileURL.path) this launch") }
             list = loaded.list
             if let aside = loaded.movedAside { NSLog("Kite: couldn't read downloads, moved them to \(aside.path)") }
+            if let aside = loaded.copiedAside {
+                NSLog("Kite: couldn't read \(loaded.dropped) of the downloads, kept the original at \(aside.path)")
+            }
         } else {
             NSLog("Kite: couldn't read or move downloads; not saving over \(fileURL.path) this launch")
         }
@@ -164,10 +167,21 @@ final class DownloadsModel {
         endedIncognitoContexts.insert(context)
         let items = list.items.filter { $0.isIncognito && $0.engineContext == context }
         for item in items {
-            if item.state == .inProgress { cancel(item) }
+            if item.state == .inProgress, let id = item.engineID, let download = webKitDownloads[id] {
+                download.cancel { _ in }
+                webKitDownload(download, finished: .canceled)
+            }
             sourceTitles[item.id] = nil
         }
         list.removeIncognito(context: context)
+        #if canImport(CEFBridge)
+        // Chromium's side: every download it follows for the session, interrupted ones too, is
+        // canceled and let go, so none keeps the incognito profile in memory.
+        let ended = KCBrowser.endDownloads(forContextKey: context)
+        if UIDiagnostics.enabledByEnvironment {
+            NSLog("Kite: incognito session \(context) ended: \(ended) downloads let go, \(KCBrowser.liveDownloadCount(forContextKey: context)) still followed")
+        }
+        #endif
     }
 
     /// Hide from the list; the file stays.

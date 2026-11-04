@@ -264,25 +264,53 @@ public struct DownloadsFile: Codable, Sendable {
         self.downloads = downloads
     }
 
+    public struct Loaded: Sendable {
+        public var list: DownloadList
+        /// Where an unreadable file was moved.
+        public var movedAside: URL?
+        /// Where the original was copied when some of its items couldn't be read (a newer
+        /// Kite's, say): the next save leaves them out.
+        public var copiedAside: URL?
+        /// How many items couldn't be read.
+        public var dropped = 0
+        /// False when unreadable items couldn't be copied aside: saving would lose them.
+        public var canSave = true
+    }
+
     /// The list in `fileURL`, restored (nothing live). A file that's there but can't be read is
-    /// moved aside first, so the next save doesn't replace the user's history with an empty list.
-    /// Nil when it couldn't be moved either: then nothing should be saved over it.
-    public static func load(_ fileURL: URL, fileManager: FileManager = .default) -> (list: DownloadList, movedAside: URL?)? {
-        guard fileManager.fileExists(atPath: fileURL.path) else { return (DownloadList(), nil) }
+    /// moved aside first, so the next save doesn't replace the user's history with an empty list;
+    /// one with items that can't be read is copied aside and the rest load. Nil when an unreadable
+    /// file couldn't be moved aside: then nothing should be saved over it.
+    public static func load(_ fileURL: URL, fileManager: FileManager = .default) -> Loaded? {
+        guard fileManager.fileExists(atPath: fileURL.path) else { return Loaded(list: DownloadList()) }
         if let data = try? Data(contentsOf: fileURL), let file = try? JSONDecoder().decode(Self.self, from: data) {
-            var list = file.downloads
-            list.markRestored()
-            return (list, nil)
+            var loaded = Loaded(list: file.downloads)
+            loaded.list.markRestored()
+            loaded.dropped = max(0, storedItemCount(data) - file.downloads.items.count)
+            if loaded.dropped > 0 {
+                let aside = asideURL(for: fileURL)
+                if (try? fileManager.copyItem(at: fileURL, to: aside)) != nil { loaded.copiedAside = aside } else { loaded.canSave = false }
+            }
+            return loaded
         }
-        let stamp = Int(Date().timeIntervalSince1970 * 1000)
-        let unique = UUID().uuidString.prefix(8)
-        let aside = fileURL.deletingPathExtension().appendingPathExtension("unreadable-\(stamp)-\(unique).json")
-        do {
-            try fileManager.moveItem(at: fileURL, to: aside)
-            return (DownloadList(), aside)
-        } catch {
-            return nil
-        }
+        let aside = asideURL(for: fileURL)
+        guard (try? fileManager.moveItem(at: fileURL, to: aside)) != nil else { return nil }
+        return Loaded(list: DownloadList(), movedAside: aside)
+    }
+
+    /// Next to the file, named as SessionStore and HistoryStore name theirs ("corrupt-<stamp>"),
+    /// with milliseconds and a few random characters so two in one second can't collide.
+    static func asideURL(for fileURL: URL) -> URL {
+        let stamp = "\(Int(Date().timeIntervalSince1970 * 1000))-\(UUID().uuidString.prefix(8))"
+        return fileURL.deletingPathExtension().appendingPathExtension("corrupt-\(stamp).json")
+    }
+
+    /// The items the file holds, readable or not.
+    private static func storedItemCount(_ data: Data) -> Int {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let downloads = object["downloads"] as? [String: Any],
+              let items = downloads["items"] as? [Any] else { return 0 }
+        return items.count
     }
 }
 
