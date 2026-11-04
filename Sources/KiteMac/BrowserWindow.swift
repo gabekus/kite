@@ -21,6 +21,13 @@ final class BrowserWindow: NSWindow {
     var keyInterceptor: ((NSEvent) -> Bool)?
     /// The modifiers held as of the last modifier change this window saw.
     private(set) var heldModifiers: NSEvent.ModifierFlags = []
+    /// The window is about to come on screen while it isn't (shown again after a close, or first shown).
+    var willOrderIn: (() -> Void)?
+
+    override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+        if place != .out, !isVisible { willOrderIn?() }
+        super.order(place, relativeTo: otherWin)
+    }
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .scrollWheel, scrollInterceptor?(event) == true { return }

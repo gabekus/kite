@@ -229,6 +229,32 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         store.saveNow()
         // Windows showing a placeholder for one of this window's pages take it back; the rest close.
         pool.closeForWindow()
+        // The app keeps the main window's controller and may show it again (`reopenAfterClose`): nothing
+        // here points at a closed page meanwhile.
+        removePaneViews()
+        shownPages = [:]
+        placeholders = [:]
+        shownPage = nil
+    }
+
+    /// The closed window is shown again (the Dock icon, a link from another app, Claude's notification):
+    /// it rejoins the other windows and its shown tabs load again.
+    private func reopenAfterClose() {
+        guard hasClosed else { return }
+        hasClosed = false
+        closeConfirmed = false
+        if !isIncognito { pool.rejoinShared() }
+        installPaneClickMonitor()
+        reloadShownTabs()
+    }
+
+    /// Clicking into a pane focuses it. Web views take their own clicks, so watch from outside.
+    private func installPaneClickMonitor() {
+        guard paneClickMonitor == nil else { return }
+        paneClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            self?.focusPane(under: event)
+            return event
+        }
     }
 
     /// `ui input` is about to send this background window keys: what becoming key would do first.
@@ -516,12 +542,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             store.mutate { $0.moveSplitDivider(split.id, index: index, fraction: fraction, minimum: minimum) }
         }
         installSplitPaneMenu()
-        // Clicking into a pane focuses it. Web views take their own clicks, so watch from outside.
-        paneClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
-            self?.focusPane(under: event)
-            return event
-        }
+        installPaneClickMonitor()
         if let window = window as? BrowserWindow {
+            window.willOrderIn = { [weak self] in self?.reopenAfterClose() }
             spaceSwipe.install(in: window)
             pageTopDragger.install(in: window)
         }
@@ -621,7 +644,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         let visible = state.visibleTabs
         // A Peek belongs to the tab it opened over: it waits out of sight while another tab is shown.
         if let linkPeek, linkPeek.sourceTabID != selected?.id { parkLinkPeek() }
-        if selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
+        // A closed window makes no pages; it loads its tabs when it's shown again.
+        if !hasClosed, selected?.id != shownTabID || visible.map(\.id) != shownTabIDs {
             // A page coming forward (⌘T, a tab opened from the Archive, another space) leaves the Library.
             if library.isOpen, shownTabID != nil { library.close() }
             show(visible, focused: selected?.id)

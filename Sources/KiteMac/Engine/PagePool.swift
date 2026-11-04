@@ -105,12 +105,22 @@ final class PagePool {
         shared.add(self)
     }
 
+    /// The pages this window shared before it closed (`closeForWindow`).
+    private weak var left: SharedPages?
+
+    /// The closed window is shown again: it shares tabs with the other windows as before.
+    func rejoinShared() {
+        guard shared == nil, let left else { return }
+        join(left)
+    }
+
     /// This window is closing: the linked windows take the pages they show placeholders for, and every
     /// page still here closes, without asking (closing one of several windows ends no tabs, #338), so no
     /// renderer keeps running, or playing, with no window. Their history goes to a linked window, so
     /// those tabs load where they were when next shown.
     func closeForWindow() {
         let heir = shared?.closing(self)
+        if let shared { left = shared }
         shared = nil
         for id in Array(pages.keys) { discard(id, keepHistory: heir != nil) }
         heir?.savedState.merge(savedState) { theirs, _ in theirs }
