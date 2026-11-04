@@ -1,0 +1,43 @@
+{
+  "id": "w12",
+  "title": "W12 Mac references: the sidebar's top row and hiding the sidebar",
+  "about": "The top row (the sidebar toggle, back, forward and reload) for helix/W12-top-row. Kite for Mac from origin/main: W12 changes no Mac code. The sessions are windows/helix/states on origin/helix/W12-top-row. The frames below are the top row's SymbolButtons: the toggle at 71, back, forward and reload ending 6pt short of the sidebar's 240.",
+  "base": "origin/main",
+  "window_size": [1280, 820],
+  "session": {"ref": "origin/helix/W12-top-row", "path": "windows/helix/states/three-spaces.json"},
+  "tree_match": "SymbolButton",
+  "expect_frames": [[71, 7.5, 32, 32], [134, 7.5, 32, 32], [168, 7.5, 32, 32], [202, 7.5, 32, 32]],
+  "states": [
+    {
+      "name": "rest",
+      "holds": "the top row at rest on example.com: the toggle at 0.6, back and forward disabled (0.125), reload enabled"
+    },
+    {
+      "name": "loading",
+      "holds": "reload is the X while https://httpbin.org/delay/10 loads (it answers after 10 s; the capture comes about 3 s after launch); back and forward disabled",
+      "session": {"ref": "origin/helix/W12-top-row", "path": "windows/helix/states/top-row-loading.json"},
+      "settle": 1,
+      "unverified": "the X shows only while the runner reaches httpbin.org and it hasn't answered yet: if the capture shows reload's arrow, the page had already loaded (or failed at once)"
+    },
+    {
+      "name": "history",
+      "holds": "back enabled, forward disabled, after the page has gone somewhere",
+      "skip": "needs a page with history: a session can't carry any (Chromium reloads a restored tab without its history), session URLs are public http(s) only, and the steps can't navigate (no keys, no Return, text only into the command bar). Windows' capture holds the state with --page-status back"
+    },
+    {
+      "name": "hover",
+      "holds": "the pointer resting on reload: no change to the button (SymbolButton has no hoverOpacity or hoverWash in the top row), and its Reload tooltip after AppKit's delay",
+      "skip": "the tooltip needs a real pointer resting on the button, and kite ui input has no plain move; the button itself draws no hover"
+    },
+    {
+      "name": "hidden",
+      "holds": "after the toggle (Hide Sidebar): no sidebar, the card from 10pt in, the traffic lights where they were",
+      "skip": "needs a click on the toggle (a SymbolButton, not in SAFE_TARGETS: the class is shared with the header's More and Developer buttons, whose menus have no test hook) or ⌘S (keys are refused). A safe target for the toggle alone (its accessibility label, Toggle Sidebar) would let this run: click [87, 23.5]"
+    },
+    {
+      "name": "shown-again",
+      "holds": "after Hide Sidebar and Show Sidebar: the same as rest",
+      "skip": "as hidden, and the hidden sidebar's toggle is off the window, so showing it again needs ⌘S (keys are refused) or the hover reveal"
+    }
+  ]
+}
