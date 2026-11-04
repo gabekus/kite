@@ -936,6 +936,38 @@ import Testing
         #expect(restored.spaces.map(\.id) == state(tabs: 2).spaces.map(\.id))
         #expect(restored.spaces.flatMap(\.allTabs) == state(tabs: 2).spaces.flatMap(\.allTabs))
     }
+
+    @Test func fallbackSkipsTheStateARestoreReplaced() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let old = try #require(try backUp(state(tabs: 1), at: start))
+        try store.save(state(tabs: 4))
+        _ = try store.restore(old, current: state(tabs: 4), now: start + 60)
+        // The newest backup is the rejected 4-tab state; a damaged session comes back as the restored one.
+        #expect(store.backups.all().first?.kind == .restore)
+        try Data("{nope".utf8).write(to: store.fileURL)
+        #expect(try store.load() == state(tabs: 1))
+    }
+
+    @Test func eachKindKeepsItsOwnCopy() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try backUp(state(tabs: 1), at: start)
+        // The same bytes as the newest hourly backup still get a launch backup, and then a restore one.
+        #expect(try backUp(state(tabs: 1), .launch, at: start + 1) != nil)
+        #expect(try backUp(state(tabs: 1), .launch, at: start + 2) == nil)
+        #expect(try backUp(state(tabs: 1), .restore, at: start + 3) != nil)
+        #expect(store.backups.all().map(\.kind) == [.restore, .launch, .hourly])
+    }
+
+    @Test func stampsRoundTripInUTC() throws {
+        let date = Date(timeIntervalSince1970: 1_700_000_000.257)
+        #expect(SessionBackups.stamp(date) == "2023-11-14-22-13-20-257")
+        let parsed = try #require(SessionBackups.date(from: "2023-11-14-22-13-20-257"))
+        #expect(abs(parsed.timeIntervalSince(date)) < 0.0005)
+        #expect(SessionBackups.stamp(Date(timeIntervalSince1970: 0)) == "1970-01-01-00-00-00-000")
+        for junk in ["2023-11-14-22-13-20", "2023-13-14-22-13-20-000", "2023-11-14-22-13-20-0x0", "+023-11-14-22-13-20-000"] {
+            #expect(SessionBackups.date(from: junk) == nil)
+        }
+    }
 }
 
 @Suite struct SavedWindowsTests {
@@ -953,7 +985,9 @@ import Testing
         let json = #"{"version":1,"windows":["# + goodWindow
             + #",{"kind":"blank","frame":[1,2,3,4],"state":{"spaces":[]}},{"kind":"normal","frame":[5,6,7,8]}]}"#
         try Data(json.utf8).write(to: url)
-        let file = try #require(SavedWindows.load(from: url))
+        let loaded = SavedWindows.load(from: url)
+        #expect(!loaded.stuck)
+        let file = try #require(loaded.file)
         #expect(file.windows.map(\.kind) == [.blank, .normal])
         #expect(file.windows[0].state?.spaces.map(\.name) == ["Explore"])
         #expect(file.dropped == 1)
@@ -966,12 +1000,31 @@ import Testing
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent("windows.json")
-        #expect(SavedWindows.load(from: url) == nil)
+        #expect(SavedWindows.load(from: url).file == nil)
         try Data("{nope".utf8).write(to: url)
-        #expect(SavedWindows.load(from: url) == nil)
+        let loaded = SavedWindows.load(from: url)
+        #expect(loaded.file == nil && !loaded.stuck)
         #expect(!FileManager.default.fileExists(atPath: url.path))
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).contains { $0.hasPrefix("windows.corrupt-") })
     }
+
+    #if !os(Windows)
+    @Test func aFileThatCantBeMovedAsideIsStuck() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let url = dir.appendingPathComponent("windows.json")
+        try Data("{nope".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+        let loaded = SavedWindows.load(from: url)
+        #expect(loaded.file == nil && loaded.stuck)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+    #endif
 }
 
 @Suite struct LinkFormatTests {

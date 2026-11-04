@@ -202,8 +202,8 @@ public final class SessionBackups: @unchecked Sendable {
         return all.filter { $0.date <= now } + all.filter { $0.date > now }
     }
 
-    /// Keeps `data` as a new backup of `kind` unless it holds the same bytes as the newest backup,
-    /// or, for an hourly one, the newest hourly backup is under `interval` old. Then prunes.
+    /// Keeps `data` as a new backup of `kind` unless it holds the same bytes as the newest backup of
+    /// that kind (so each kind's budget holds its own copy), or, for an hourly one, the newest hourly backup is under `interval` old. Then prunes.
     @discardableResult
     public func backUp(_ data: Data, kind: Kind = .hourly, now: Date = Date()) throws -> Backup? {
         lock.lock()
@@ -212,7 +212,7 @@ public final class SessionBackups: @unchecked Sendable {
             if newestHourly == nil { newestHourly = .some(all().first { $0.kind == .hourly && $0.date <= now }?.date) }
             if let last = newestHourly ?? nil, last <= now, now.timeIntervalSince(last) < Self.interval { return nil }
         }
-        if let newest = ordered(now: now).first, (try? Data(contentsOf: newest.url)) == data { return nil }
+        if let newest = ordered(now: now).first(where: { $0.kind == kind }), (try? Data(contentsOf: newest.url)) == data { return nil }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let suffix = kind == .hourly ? "" : ".\(kind.rawValue)"
         let url = directory.appendingPathComponent("session.\(Self.stamp(now))\(suffix).json")
@@ -255,8 +255,10 @@ public final class SessionBackups: @unchecked Sendable {
         try SessionStore.decode(Data(contentsOf: backup.url))
     }
 
+    /// Launch and hourly backups first: a `.restore` one holds a state the user just restored away from.
     public func newestValid(now: Date = Date()) -> (Backup, BrowserState)? {
-        for backup in ordered(now: now) {
+        let ordered = ordered(now: now)
+        for backup in ordered.filter({ $0.kind != .restore }) + ordered.filter({ $0.kind == .restore }) {
             if let state = try? state(of: backup) { return (backup, state) }
         }
         return nil
@@ -269,16 +271,36 @@ public final class SessionBackups: @unchecked Sendable {
         return Summary(backup: backup, spaceCount: state.spaces.count, tabCount: tabs)
     }
 
-    /// Arc's backup stamp, in UTC so names sort the same across time zones and DST. DateFormatter
-    /// is thread-safe; it's only shared, never changed.
-    nonisolated(unsafe) private static let formatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.dateFormat = "yyyy-MM-dd-HH-mm-ss-SSS"
-        return formatter
+    /// Arc's backup stamp (`yyyy-MM-dd-HH-mm-ss-SSS`), in UTC so names sort the same across time
+    /// zones and DST. Built by hand from a Calendar, a Sendable value, rather than a shared
+    /// DateFormatter, whose thread safety is Darwin's promise only.
+    private static let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
     }()
 
-    static func stamp(_ date: Date) -> String { formatter.string(from: date) }
-    static func date(from stamp: String) -> Date? { formatter.date(from: stamp) }
+    static func stamp(_ date: Date) -> String {
+        let milliseconds = Int64((date.timeIntervalSince1970 * 1000).rounded(.down))
+        let seconds = Date(timeIntervalSince1970: TimeInterval(milliseconds.quotientAndRemainder(dividingBy: 1000).quotient))
+        let c = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: seconds)
+        func pad(_ value: Int?, _ width: Int) -> String {
+            let text = String(value ?? 0)
+            return String(repeating: "0", count: max(0, width - text.count)) + text
+        }
+        let ms = Int(((milliseconds % 1000) + 1000) % 1000)
+        return [pad(c.year, 4), pad(c.month, 2), pad(c.day, 2), pad(c.hour, 2), pad(c.minute, 2), pad(c.second, 2), pad(ms, 3)]
+            .joined(separator: "-")
+    }
+
+    static func date(from stamp: String) -> Date? {
+        let parts = stamp.split(separator: "-", omittingEmptySubsequences: false)
+        let widths = [4, 2, 2, 2, 2, 2, 3]
+        guard parts.count == widths.count, zip(parts, widths).allSatisfy({ $0.count == $1 && $0.allSatisfy({ ("0"..."9").contains($0) }) }) else { return nil }
+        let n = parts.compactMap { Int($0) }
+        guard n.count == widths.count else { return nil }
+        let components = DateComponents(year: n[0], month: n[1], day: n[2], hour: n[3], minute: n[4], second: n[5])
+        guard components.isValidDate(in: calendar), let seconds = calendar.date(from: components) else { return nil }
+        return seconds.addingTimeInterval(TimeInterval(n[6]) / 1000)
+    }
 }

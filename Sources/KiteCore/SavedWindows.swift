@@ -47,19 +47,27 @@ public struct SavedWindows: Codable, Sendable {
         dropped = all.count - windows.count
     }
 
+    /// What `load` found. `stuck` means the file couldn't be used or kept aside, and is still the
+    /// only copy: the caller mustn't save over it (or delete it) this run.
+    public struct Loaded: Sendable {
+        public let file: SavedWindows?
+        public let stuck: Bool
+    }
+
     /// The saved windows, or none when there's no file. A file that can't be read or decoded at
     /// all is moved aside (`windows.corrupt-….json`), and one with windows dropped is copied
     /// aside, both before the next save replaces it.
-    public static func load(from url: URL) -> SavedWindows? {
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    public static func load(from url: URL) -> Loaded {
+        guard FileManager.default.fileExists(atPath: url.path) else { return Loaded(file: nil, stuck: false) }
         guard let data = try? Data(contentsOf: url), let file = try? JSONDecoder().decode(SavedWindows.self, from: data) else {
-            try? SessionStore.moveAside(url)
-            return nil
+            return Loaded(file: nil, stuck: (try? SessionStore.moveAside(url)) == nil)
         }
         if file.dropped > 0 {
             let copy = url.deletingPathExtension().appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970)).json")
-            if !FileManager.default.fileExists(atPath: copy.path) { try? data.write(to: copy, options: .atomic) }
+            if !FileManager.default.fileExists(atPath: copy.path), (try? data.write(to: copy, options: .atomic)) == nil {
+                return Loaded(file: file, stuck: true)
+            }
         }
-        return file
+        return Loaded(file: file, stuck: false)
     }
 }

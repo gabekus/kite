@@ -28,6 +28,8 @@ final class BrowserWindows {
     private var saveTask: Task<Void, Never>?
     /// While the app quits, windows closing don't drop out of the saved list.
     private var isTerminating = false
+    /// windows.json couldn't be read or kept aside: saving would overwrite (or delete) the only copy.
+    private var savesBlocked = false
 
     typealias SavedWindow = SavedWindows.Window
 
@@ -66,7 +68,12 @@ final class BrowserWindows {
     func restore() {
         guard WindowRestore.isEnabled() else { return }
         // Window by window: one that doesn't decode is dropped alone, and the file is kept aside first.
-        guard let file = SavedWindows.load(from: fileURL) else { return }
+        let loaded = SavedWindows.load(from: fileURL)
+        if loaded.stuck {
+            savesBlocked = true
+            NSLog("Kite: windows.json can't be read or kept aside; not saving windows this run")
+        }
+        guard let file = loaded.file else { return }
         if file.dropped > 0 { NSLog("Kite: left out \(file.dropped) unreadable window(s) from windows.json; a copy is kept beside it") }
         for saved in file.windows {
             let frame = saved.frame.count == 4 ? NSRect(x: saved.frame[0], y: saved.frame[1], width: saved.frame[2], height: saved.frame[3]) : nil
@@ -155,6 +162,7 @@ final class BrowserWindows {
 
     private func saveNow() {
         saveTask?.cancel()
+        guard !savesBlocked else { return }
         let windows = controllers.compactMap { controller -> SavedWindow? in
             guard let kind = kinds[ObjectIdentifier(controller)], let window = controller.window else { return nil }
             let f = window.frame

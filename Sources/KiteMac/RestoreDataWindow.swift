@@ -78,7 +78,8 @@ final class RestoreDataWindow: NSObject, NSWindowDelegate {
         generation += 1
         let generation = generation, backups = backups
         DispatchQueue.global(qos: .userInitiated).async {
-            let summaries = backups.all().map(backups.summary(of:))
+            // Future-stamped ones (a clock change, a copied folder) last, so they aren't picked by default.
+            let summaries = backups.ordered().map(backups.summary(of:))
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == generation else { return }
                 self.show(summaries)
@@ -138,7 +139,9 @@ final class RestoreDataWindow: NSObject, NSWindowDelegate {
             window.close()
         } catch {
             NSLog("Kite: couldn't restore backup: \(error)")
-            failure = "Backup cannot be restored: \(error)"
+            failure = error is SessionStore.RestoreError
+                ? "Backup cannot be restored: Kite can't move aside the unreadable session it would replace."
+                : "Backup cannot be restored. Details are in the log."
             reload()
         }
     }
