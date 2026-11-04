@@ -747,6 +747,120 @@ import Testing
     }
 }
 
+@Suite struct SessionBackupTests {
+    private let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    private var store: SessionStore { SessionStore(fileURL: dir.appendingPathComponent("session.json")) }
+    private let start = Date(timeIntervalSince1970: 1_700_000_000)
+
+    /// Made once per test: each new state has new ids, and the tests compare them.
+    private let states: [BrowserState] = (0..<40).map { tabs in
+        var state = BrowserState.makeDefault()
+        for i in 0..<tabs { state.openTab(url: URL(string: "https://kite.example/\(i)"), now: Date(timeIntervalSince1970: 1_700_000_000)) }
+        return state
+    }
+
+    private func state(tabs: Int) -> BrowserState { states[tabs] }
+
+    @discardableResult
+    private func backUp(_ state: BrowserState, at date: Date, minimumInterval: TimeInterval = SessionBackups.interval) throws -> SessionBackups.Backup? {
+        try store.backups.backUp(SessionStore.encode(state), now: date, minimumInterval: minimumInterval)
+    }
+
+    @Test func backsUpChangesAtMostOncePerInterval() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(store.backups.directory.lastPathComponent == "Backups")
+        #expect(try backUp(state(tabs: 1), at: start) != nil)
+        // Too soon, then the same bytes, then a change after the interval.
+        #expect(try backUp(state(tabs: 2), at: start + 60) == nil)
+        #expect(try backUp(state(tabs: 1), at: start + SessionBackups.interval) == nil)
+        let second = try #require(try backUp(state(tabs: 2), at: start + SessionBackups.interval))
+        #expect(second.url.lastPathComponent == "session.2023-11-14-23-13-20-000.json")
+        let all = store.backups.all()
+        #expect(all.map(\.date) == [start + SessionBackups.interval, start])
+        #expect(try store.backups.state(of: all[0]) == state(tabs: 2))
+        let summary = store.backups.summary(of: all[0])
+        #expect(summary.spaceCount == BrowserState.makeDefault().spaces.count)
+        #expect(summary.tabCount == state(tabs: 2).spaces.reduce(0) { $0 + $1.allTabs.count })
+    }
+
+    @Test func keepsOnlyTheNewest() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for i in 0..<(SessionBackups.keep + 5) {
+            try backUp(state(tabs: i), at: start + Double(i) * SessionBackups.interval)
+        }
+        let all = store.backups.all()
+        #expect(all.count == SessionBackups.keep)
+        #expect(all.first?.date == start + Double(SessionBackups.keep + 4) * SessionBackups.interval)
+        #expect(all.last?.date == start + 5 * SessionBackups.interval)
+        // Files that aren't backups are left alone.
+        try Data().write(to: store.backups.directory.appendingPathComponent("notes.txt"))
+        store.backups.prune(keeping: 2)
+        #expect(store.backups.all().count == 2)
+        #expect(FileManager.default.fileExists(atPath: store.backups.directory.appendingPathComponent("notes.txt").path))
+    }
+
+    @Test func corruptSessionFallsBackToNewestValidBackup() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try backUp(state(tabs: 1), at: start)
+        try backUp(state(tabs: 2), at: start + SessionBackups.interval)
+        // The newest backup is damaged too, so the one before it is used.
+        try Data("{nope".utf8).write(to: store.backups.directory.appendingPathComponent("session.2023-11-15-00-00-00-000.json"))
+        #expect(store.backups.summary(of: store.backups.all()[0]).isRestorable == false)
+        try Data("{nope".utf8).write(to: store.fileURL)
+        #expect(try store.load() == state(tabs: 2))
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        #expect(leftovers.contains { $0.contains("corrupt") })
+    }
+
+    @Test func sessionWithNoSpacesIsCorruptNotACrash() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let empty = Data(#"{"version":1,"state":{"spaces":[]}}"#.utf8)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try empty.write(to: store.fileURL)
+        #expect(throws: (any Error).self) { try store.load() }
+        try backUp(state(tabs: 1), at: start)
+        try empty.write(to: store.fileURL)
+        #expect(try store.load() == state(tabs: 1))
+    }
+
+    #if !os(Windows)
+    @Test func unreadableSessionIsMovedAsideNotLost() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try store.save(state(tabs: 3))
+        let original = try Data(contentsOf: store.fileURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: store.fileURL.path)
+        #expect(throws: (any Error).self) { try store.load() }
+        // Gone from session.json, so a fresh save can't overwrite it, and kept byte for byte beside it.
+        #expect(!FileManager.default.fileExists(atPath: store.fileURL.path))
+        let aside = try #require(try FileManager.default.contentsOfDirectory(atPath: dir.path).first { $0.contains("corrupt") })
+        let asideURL = dir.appendingPathComponent(aside)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: asideURL.path)
+        #expect(try Data(contentsOf: asideURL) == original)
+    }
+    #endif
+
+    @Test func restoreKeepsTheCurrentStateAsABackup() throws {
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let old = try #require(try backUp(state(tabs: 1), at: start))
+        let current = state(tabs: 4)
+        try store.save(current)
+        // A minute later: under the interval, but a restore always keeps what it replaces.
+        let restored = try store.restore(old, current: current, now: start + 60)
+        #expect(restored == state(tabs: 1))
+        #expect(try store.load() == state(tabs: 1))
+        let all = store.backups.all()
+        #expect(all.count == 2)
+        #expect(try store.backups.state(of: all[0]) == current)
+        // Restoring that one brings the state back.
+        #expect(try store.restore(all[0], current: restored, now: start + 120) == current)
+        // A backup that doesn't decode changes nothing.
+        try Data("{nope".utf8).write(to: store.backups.directory.appendingPathComponent("session.2030-01-01-00-00-00-000.json"))
+        let bad = try #require(store.backups.all().first)
+        #expect(throws: (any Error).self) { try store.restore(bad, current: current, now: start + 180) }
+        #expect(try store.load() == current)
+    }
+}
+
 @Suite struct LinkFormatTests {
     @Test func usesTitleAsLinkText() {
         let url = URL(string: "https://example.com/a")!

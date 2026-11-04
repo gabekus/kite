@@ -236,6 +236,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Help › Restore Data: the main window's store writes the session, so it's the one restored.
+    @objc func showRestoreData(_ sender: Any?) {
+        guard let store, let backups = store.sessionBackups else { return NSSound.beep() }
+        RestoreDataWindow.show(store: store, backups: backups)
+    }
+
     /// Links from other apps and opened HTML and PDF files, each in a new tab.
     func application(_ application: NSApplication, open urls: [URL]) {
         if store == nil {

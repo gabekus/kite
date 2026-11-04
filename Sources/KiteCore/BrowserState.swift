@@ -195,8 +195,13 @@ public struct BrowserState: Hashable, Codable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let spaces = try c.decode([Space].self, forKey: .spaces)
+        // init(spaces:) traps on none: a thrown error lets the session's corrupt-file path take over.
+        guard !spaces.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .spaces, in: c, debugDescription: "A browser needs at least one space")
+        }
         self.init(
-            spaces: try c.decode([Space].self, forKey: .spaces),
+            spaces: spaces,
             selectedSpaceID: try c.decodeIfPresent(UUID.self, forKey: .selectedSpaceID),
             searchEngine: try c.decodeIfPresent(SearchEngine.self, forKey: .searchEngine) ?? .google
         )

@@ -497,6 +497,8 @@ enum MainMenu {
             // Arc: Getting Started, then Essential Keyboard Shortcuts.
             item("Getting Started", #selector(AppDelegate.showGettingStarted(_:)), toTarget: false, id: "gettingStarted"),
             item("Essential Keyboard Shortcuts", #selector(BrowserWindowController.showKeyboardShortcuts(_:)), id: "essentialKeyboardShortcuts"),
+            // Arc 1.171: Restore Data (no ellipsis, no shortcut) after Visit Help Center, in the same group.
+            item("Restore Data", #selector(AppDelegate.showRestoreData(_:)), toTarget: false, id: "restoreData"),
             .separator(),
             submenuItem("Troubleshooting", [
                 // Arc: Record Trace, Open Task Manager, —, Reveal Arc Data, Copy Arc Info (no shortcuts).

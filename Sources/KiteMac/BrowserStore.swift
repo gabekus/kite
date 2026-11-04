@@ -110,6 +110,10 @@ final class BrowserStore {
     /// nil for an incognito window: nothing is written to disk.
     @ObservationIgnored private let session: SessionStore?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// Set when session.json couldn't be read or moved aside: saving would overwrite the only copy.
+    @ObservationIgnored private var savesBlocked = false
+    /// Backups are written here, off the main thread.
+    private static let backupQueue = DispatchQueue(label: "dev.gabek.Kite.session-backups", qos: .utility)
     /// The default profile's browsing history, which leads to the other profiles'; nil for an
     /// incognito window, which records none.
     @ObservationIgnored var historyRoot: HistoryStore?
@@ -169,9 +173,13 @@ final class BrowserStore {
         self.session = session
         do {
             state = try session.load() ?? .makeDefault()
+            // Arc backs up its stores once per launch: keep the session as found, unless the newest backup has it.
+            let loaded = state
+            Self.backupQueue.async { try? session.backups.backUp(SessionStore.encode(loaded), minimumInterval: 0) }
         } catch {
-            NSLog("Kite: couldn't read session, starting fresh: \(error)")
             state = .makeDefault()
+            savesBlocked = FileManager.default.fileExists(atPath: session.fileURL.path)
+            NSLog("Kite: couldn't read session, starting fresh\(savesBlocked ? " without saving over it" : ""): \(error)")
         }
         // A Create a Space page left open at quit leaves a nameless, empty space behind.
         for space in state.spaces where space.name.isEmpty && space.allTabs.isEmpty { state.deleteSpace(space.id) }
@@ -510,11 +518,30 @@ final class BrowserStore {
 
     func saveNow() {
         saveTask?.cancel()
+        guard let session, !savesBlocked else { return }
         do {
-            try session?.save(state)
+            let data = try session.save(state)
+            Self.backupQueue.async { try? session.backups.backUp(data) }
         } catch {
             NSLog("Kite: couldn't save session: \(error)")
         }
+    }
+
+    /// session.json's backups; nil for incognito, blank and linked windows' stores.
+    var sessionBackups: SessionBackups? { session?.backups }
+
+    /// Help › Restore Data: swaps `backup` in for every window's sidebar, keeping the current state as a backup first.
+    func restoreSession(from backup: SessionBackups.Backup) throws {
+        guard let session else { return }
+        saveTask?.cancel()
+        let restored = try session.restore(backup, current: state)
+        savesBlocked = false
+        undoManager?()?.removeAllActions()
+        // Like `adopt`, not `mutate`: the swap isn't an undo step, and pinned tabs aren't newly pinned.
+        state = restored
+        onChange?()
+        link?.propagate(from: self)
+        didChangeState?()
     }
 }
 
