@@ -1,18 +1,18 @@
 # Writes the hand-made Chromium "Web Data" databases the Import from Arc tests read
 # (tests/ArcImportFilesTests.cpp, KitecoreCliTest.cmake). Every value is invented.
 #
-#   py -I windows/tests/fixtures/make-web-data.py
+#   py -I windows/scripts/make-web-data.py
 #
-# web-data.sqlite (in the fixture Arc folder) has Chromium's keywords table written the way an
+# The fixture Arc folder's "User Data/Default/Web Data" has Chromium's keywords table written the way an
 # old profile has it: rows from before `is_active` was added (ALTER TABLE ... ADD COLUMN, so
 # they're shorter records), rows after, a long one that spills onto overflow pages, and enough
 # prepopulated engines on 1 KiB pages for the table's b-tree to have interior pages.
-# legacy-web-data.sqlite is from before Chromium had `is_active` at all.
+# tests/fixtures/legacy-web-data.sqlite is from before Chromium had `is_active` at all.
 
 import os
 import sqlite3
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "fixtures")
 ARC = os.path.join(HERE, "arc-windows", "Packages", "TheBrowserCompany.Arc_kitetest0001", "LocalCache", "Local", "Arc")
 
 OLD_COLUMNS = (

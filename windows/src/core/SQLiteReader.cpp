@@ -63,10 +63,7 @@ public:
     }
 
     // Every row of the table b-tree rooted at `root`: its rowid and record bytes.
-    bool Rows(uint64_t root, std::vector<std::pair<int64_t, std::string>>& out) {
-        std::set<uint64_t> visited;
-        return Walk(root, visited, 0, out);
-    }
+    bool Rows(uint64_t root, std::vector<std::pair<int64_t, std::string>>& out) { return Walk(root, 0, out); }
 
 private:
     std::optional<std::string_view> Page(uint64_t number) const {
@@ -74,8 +71,12 @@ private:
         return file_.substr(static_cast<size_t>(number - 1) * pageSize_, pageSize_);
     }
 
-    bool Walk(uint64_t number, std::set<uint64_t>& visited, int depth, std::vector<std::pair<int64_t, std::string>>& out) {
-        if (depth > 64 || !visited.insert(number).second) return false;
+    // Each page is read once in the whole read, as a b-tree page or an overflow page: a page
+    // reached twice (a loop, a child or overflow chain shared by two cells) is a broken file.
+    bool Use(uint64_t number) { return pages_.insert(number).second; }
+
+    bool Walk(uint64_t number, int depth, std::vector<std::pair<int64_t, std::string>>& out) {
+        if (depth > 64 || !Use(number)) return false;
         auto page = Page(number);
         if (!page) return false;
         const size_t header = number == 1 ? 100 : 0;
@@ -86,12 +87,14 @@ private:
         if (!interior && type != 0x0D) return false;
         const size_t pointers = header + (interior ? 12 : 8);
         if (pointers + cells * 2 > usable_) return false;
+        std::set<size_t> offsets;
         for (size_t i = 0; i < cells; ++i) {
             size_t at = static_cast<size_t>(BigEndian(*page, pointers + i * 2, 2));
-            if (at >= usable_) return false;
+            // Cells sit after the pointer array, each at its own place.
+            if (at < pointers + cells * 2 || at >= usable_ || !offsets.insert(at).second) return false;
             if (interior) {
                 if (at + 4 > usable_) return false;
-                if (!Walk(BigEndian(*page, at, 4), visited, depth + 1, out)) return false;
+                if (!Walk(BigEndian(*page, at, 4), depth + 1, out)) return false;
                 continue;
             }
             std::string_view cellBytes = page->substr(0, usable_);
@@ -101,13 +104,15 @@ private:
             if (!Payload(cellBytes, at, payload, record)) return false;
             out.emplace_back(static_cast<int64_t>(rowid), std::move(record));
         }
-        if (interior) return Walk(BigEndian(*page, header + 8, 4), visited, depth + 1, out);
+        if (interior) return Walk(BigEndian(*page, header + 8, 4), depth + 1, out);
         return true;
     }
 
     // A table leaf cell's payload: what's on the page, then the overflow chain.
-    bool Payload(std::string_view page, size_t at, uint64_t size, std::string& out) const {
-        if (size > file_.size()) return false;
+    bool Payload(std::string_view page, size_t at, uint64_t size, std::string& out) {
+        // Every record together can't be more than the file holds.
+        recordBytes_ += size;
+        if (size > file_.size() || recordBytes_ > file_.size()) return false;
         const uint64_t x = usable_ - 35;
         uint64_t local = size;
         if (size > x) {
@@ -120,10 +125,9 @@ private:
         if (local == size) return true;
         if (at + local + 4 > page.size()) return false;
         uint64_t next = BigEndian(page, static_cast<size_t>(at + local), 4);
-        std::set<uint64_t> seen;
         while (out.size() < size) {
             auto overflow = Page(next);
-            if (!overflow || !seen.insert(next).second) return false;
+            if (!overflow || !Use(next)) return false;
             const size_t take = static_cast<size_t>(std::min<uint64_t>(size - out.size(), usable_ - 4));
             out.append(overflow->substr(4, take));
             next = BigEndian(*overflow, 0, 4);
@@ -132,6 +136,8 @@ private:
     }
 
     std::string_view file_;
+    std::set<uint64_t> pages_;
+    uint64_t recordBytes_ = 0;
     size_t pageSize_ = 0;
     uint64_t usable_ = 0;
     uint64_t pageCount_ = 0;
@@ -311,6 +317,11 @@ std::optional<std::vector<ColumnDefinition>> ParseColumns(std::string_view creat
         def.push_back(t);
     }
     return std::nullopt;
+}
+
+bool IsHotJournal(std::string_view journal) {
+    static constexpr unsigned char kMagic[] = {0xD9, 0xD5, 0x05, 0xF9, 0x20, 0xA1, 0x63, 0xD7};
+    return journal.size() >= sizeof kMagic && std::memcmp(journal.data(), kMagic, sizeof kMagic) == 0;
 }
 
 std::optional<Table> ReadTable(std::string_view file, std::string_view name) {

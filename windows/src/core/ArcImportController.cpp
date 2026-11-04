@@ -4,14 +4,16 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <ctime>
-#include <fstream>
 #include <set>
 #include <thread>
 
 #include "core/AirTrafficControl.h"
+#include "core/Files.h"
 #include "core/Plist.h"
 #include "core/Profiles.h"
+#include "core/SQLiteReader.h"
 
 namespace kite::arc_import {
 
@@ -23,23 +25,15 @@ constexpr const char* kHelp =
     "Choose Arc's folder (%LOCALAPPDATA%\\Packages\\TheBrowserCompany.Arc_\xE2\x80\xA6\\LocalCache\\Local\\Arc), "
     "or StorableSidebar.json in it.";
 
-std::string Text(const fs::path& path) {
-    auto u8 = path.u8string();
-    return std::string(u8.begin(), u8.end());
-}
-
-std::optional<std::string> ReadFile(const fs::path& file) {
+bool Exists(const fs::path& file) {
     std::error_code error;
-    if (!fs::is_regular_file(file, error)) return std::nullopt;
-    std::ifstream in(file, std::ios::binary);
-    if (!in) return std::nullopt;
-    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return fs::exists(file, error);
 }
 
 std::vector<std::string> FileNames(const fs::path& folder) {
     std::vector<std::string> names;
     std::error_code error;
-    for (fs::directory_iterator it(folder, error), end; !error && it != end; it.increment(error)) names.push_back(Text(it->path().filename()));
+    for (fs::directory_iterator it(folder, error), end; !error && it != end; it.increment(error)) names.push_back(PathText(it->path().filename()));
     return names;
 }
 
@@ -74,20 +68,19 @@ std::string List(const std::vector<std::string>& parts) {
     return out;
 }
 
-std::string DateText(Timestamp t) {
-    const std::time_t unix = static_cast<std::time_t>(t + 978307200.0);
-    std::tm local{};
-#ifdef _WIN32
-    if (localtime_s(&local, &unix) != 0) return "an earlier date";
-#else
-    if (!localtime_r(&unix, &local)) return "an earlier date";
-#endif
-    char buffer[64];
-    if (!std::strftime(buffer, sizeof buffer, "%B %d, %Y at %H:%M", &local)) return "an earlier date";
-    return buffer;
-}
-
 bool IsUntitled(const Plan& plan, const Space& space) { return plan.sidebar.result.untitledSpaceIDs.contains(space.id); }
+bool Imports(const Plan& plan, const Space& space, bool includeUntitled) { return includeUntitled || !IsUntitled(plan, space); }
+
+// The Arc profiles of the spaces that import, in the order the spaces use them.
+std::vector<std::string> ImportedProfiles(const Plan& plan, bool includeUntitled) {
+    if (!includeUntitled) return plan.sidebar.result.NamedSpaceProfiles();
+    std::vector<std::string> out;
+    for (const Space& space : plan.sidebar.result.spaces) {
+        const std::string profile = SpaceProfile(space).value_or(Profile::kDefaultDirectory);
+        if (std::find(out.begin(), out.end(), profile) == out.end()) out.push_back(profile);
+    }
+    return out;
+}
 
 int CountFolders(const std::vector<PinnedItem>& items) {
     int n = 0;
@@ -97,36 +90,21 @@ int CountFolders(const std::vector<PinnedItem>& items) {
     return n;
 }
 
-// The routes that will come over: to a named space here or a space Kite already has.
-std::optional<LinkRouting> ShownRoutes(const Plan& plan, const BrowserState& state) {
+// The routes that will come over: to a space that imports or one Kite already has.
+std::optional<LinkRouting> ShownRoutes(const Plan& plan, const BrowserState& state, bool includeUntitled) {
     if (!plan.routes) return std::nullopt;
     std::set<std::string> ids;
     for (const Space& space : plan.sidebar.result.spaces) {
-        if (!IsUntitled(plan, space)) ids.insert(space.id);
+        if (Imports(plan, space, includeUntitled)) ids.insert(space.id);
     }
     for (const Space& space : state.spaces) ids.insert(space.id);
     return plan.routes->Keeping(ids);
 }
 
-std::string WriteAtomically(const fs::path& file, const std::string& text) {
-    std::error_code error;
-    fs::create_directories(file.parent_path(), error);
-    fs::path temp = file;
-    temp += ".tmp";
-    {
-        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
-        if (!out) return "couldn't write " + Text(temp);
-        out.write(text.data(), static_cast<std::streamsize>(text.size()));
-        out.flush();
-        if (!out) return "couldn't write " + Text(temp);
-    }
-    fs::rename(temp, file, error);
-    if (error) {
-        std::error_code ignored;
-        fs::remove(temp, ignored);
-        return "couldn't replace " + Text(file) + ": " + error.message();
-    }
-    return {};
+std::string IconsNote(size_t n) {
+    const bool one = n == 1;
+    return std::to_string(n) + " space icon" + (one ? " is" : "s are") + " from Arc's own icon set, which Kite doesn't have, so " +
+           (one ? "it gets" : "they get") + " a stand-in.";
 }
 
 json::Value Skipped(const std::string& kind, std::optional<size_t> count, const std::string& reason) {
@@ -137,6 +115,25 @@ json::Value Skipped(const std::string& kind, std::optional<size_t> count, const 
 
 }  // namespace
 
+// Date.formatted(date: .long, time: .shortened) in English: "November 1, 2026 at 9:05 PM".
+std::string BackupDateText(Timestamp t) {
+    static constexpr const char* kMonths[] = {"January", "February", "March",     "April",   "May",      "June",
+                                              "July",    "August",   "September", "October", "November", "December"};
+    const std::time_t unix = static_cast<std::time_t>(t + 978307200.0);
+    std::tm local{};
+#ifdef _WIN32
+    if (localtime_s(&local, &unix) != 0) return "an earlier date";
+#else
+    if (!localtime_r(&unix, &local)) return "an earlier date";
+#endif
+    if (local.tm_mon < 0 || local.tm_mon > 11) return "an earlier date";
+    const int hour = local.tm_hour % 12 == 0 ? 12 : local.tm_hour % 12;
+    char minutes[8];
+    std::snprintf(minutes, sizeof minutes, "%02d", local.tm_min);
+    return std::string(kMonths[local.tm_mon]) + " " + std::to_string(local.tm_mday) + ", " + std::to_string(local.tm_year + 1900) + " at " +
+           std::to_string(hour) + ":" + minutes + (local.tm_hour < 12 ? " AM" : " PM");
+}
+
 std::optional<fs::path> ArcDirectory(const std::optional<fs::path>& supportOverride, const std::optional<fs::path>& arcDataOverride,
                                      const std::optional<fs::path>& localAppData) {
     if (supportOverride && arcDataOverride && !arcDataOverride->empty()) return *arcDataOverride;
@@ -144,7 +141,7 @@ std::optional<fs::path> ArcDirectory(const std::optional<fs::path>& supportOverr
     std::vector<fs::path> packages;
     std::error_code error;
     for (fs::directory_iterator it(*localAppData / "Packages", error), end; !error && it != end; it.increment(error)) {
-        if (Text(it->path().filename()).starts_with("TheBrowserCompany.Arc_")) packages.push_back(it->path());
+        if (PathText(it->path().filename()).starts_with("TheBrowserCompany.Arc_")) packages.push_back(it->path());
     }
     std::sort(packages.begin(), packages.end());
     for (const fs::path& package : packages) {
@@ -212,12 +209,12 @@ std::variant<Plan, LoadError> ReadPicked(const fs::path& picked, const std::opti
         loaded = LoadSidebar(folder, now);
     } else {
         auto read = ReadSidebar(picked, now);
-        if (auto* result = std::get_if<Result>(&read)) loaded = Sidebar{std::move(*result), Text(picked.filename()), false, std::nullopt};
+        if (auto* result = std::get_if<Result>(&read)) loaded = Sidebar{std::move(*result), PathText(picked.filename()), false, std::nullopt};
         else loaded = LoadError{std::get<std::optional<Failure>>(read), "", ""};
     }
     if (auto* failed = std::get_if<LoadError>(&loaded)) {
         if (failed->failure == Failure::NoSpaces) return NoSpaces();
-        if (!isFolder) return LoadError{failed->failure, Text(picked.filename()) + " isn't Arc's sidebar.", kHelp};
+        if (!isFolder) return LoadError{failed->failure, PathText(picked.filename()) + " isn't Arc's sidebar.", kHelp};
         return LoadError{failed->failure, "That folder has no Arc sidebar Kite can read.", kHelp};
     }
     return ReadPlan(std::move(std::get<Sidebar>(loaded)), folder);
@@ -228,9 +225,17 @@ Plan ReadPlan(Sidebar sidebar, const fs::path& folder) {
     plan.sidebar = std::move(sidebar);
     plan.folder = folder;
     // Arc keeps Site Search where Chromium does: the keywords table of the profile's Web Data.
-    if (auto webData = ReadFile(folder / "User Data" / "Default" / "Web Data")) {
+    // A hot journal beside it means Arc is writing it, and the file may be half changed.
+    const fs::path webDataFile = folder / "User Data" / "Default" / "Web Data";
+    fs::path journal = webDataFile;
+    journal += "-journal";
+    if (auto hot = ReadFile(journal); hot && sqlite::IsHotJournal(*hot)) {
+        plan.unreadable.push_back("Web Data (Arc is writing it: quit Arc and import again)");
+    } else if (auto webData = ReadFile(webDataFile)) {
         if (auto sites = ParseSiteSearches(*webData)) plan.siteSearches = std::move(*sites);
         else plan.unreadable.push_back("Web Data");
+    } else if (Exists(webDataFile)) {
+        plan.unreadable.push_back("Web Data");
     }
     if (auto text = ReadFile(folder / "StorableKeyBindings.json")) {
         if (auto bindings = ParseKeyBindings(*text)) plan.keyBindings = std::move(*bindings);
@@ -251,7 +256,7 @@ Plan ReadPlan(Sidebar sidebar, const fs::path& folder) {
         if (!text) continue;
         auto defaults = plist::ParseXml(*text);
         if (defaults && defaults->AsObject()) plan.settings = Settings::FromDefaults(*defaults);
-        else plan.unreadable.push_back(Text(file.filename()));
+        else plan.unreadable.push_back(PathText(file.filename()));
         break;
     }
     return plan;
@@ -267,29 +272,42 @@ std::pair<int, int> UntitledCounts(const Plan& plan) {
     return {spaces, tabs};
 }
 
-std::vector<std::string> ConfirmLines(const Plan& plan, const BrowserState& state) {
+bool IncludesUntitled(const Plan& plan, ImportOptions options) {
+    if (options.includeUntitled) return *options.includeUntitled;
     const Result& result = plan.sidebar.result;
-    const auto named = result.NamedSpaceProfiles();
-    // Counts leave out unnamed spaces; their choice gives their own.
-    size_t spaces = 0, tabs = 0, reimported = 0;
+    return result.untitledSpaceIDs.size() == result.spaces.size();
+}
+
+std::vector<std::string> ConfirmLines(const Plan& plan, const BrowserState& state, bool includeUntitled) {
+    const Result& result = plan.sidebar.result;
+    const auto brought = ImportedProfiles(plan, includeUntitled);
+    // Counts leave out unnamed spaces unless they'd come over; the choice gives their own.
+    size_t spaces = 0, tabs = 0, reimported = 0, icons = 0;
     for (const Space& space : result.spaces) {
+        if (!Imports(plan, space, includeUntitled)) continue;
         if (state.SpaceIndex(space.id)) ++reimported;
-        if (IsUntitled(plan, space)) continue;
         ++spaces;
         tabs += space.AllTabs().size();
+        if (result.iconsReplaced.contains(space.id)) ++icons;
     }
     std::vector<std::string> parts{Count(spaces, "space")};
-    if (auto favorites = result.FavoritesIn(named); !favorites.empty()) parts.push_back(Count(favorites.size(), "favorite"));
+    if (auto favorites = result.FavoritesIn(brought); !favorites.empty()) parts.push_back(Count(favorites.size(), "favorite"));
     parts.push_back(Count(tabs, "tab"));
     if (result.folderCount > 0) parts.push_back(Count(static_cast<size_t>(result.folderCount), "folder"));
     if (result.splitCount > 0) parts.push_back(Count(static_cast<size_t>(result.splitCount), "split view"));
     std::vector<std::string> lines{"Found " + List(parts) + "."};
+    const auto [untitledSpaces, untitledTabs] = UntitledCounts(plan);
+    if (untitledSpaces > 0 && includeUntitled && untitledSpaces == static_cast<int>(result.spaces.size())) {
+        lines.push_back("Arc has no named spaces, so " +
+                        std::string(untitledSpaces == 1 ? "its unnamed space comes over" : "its unnamed spaces come over") +
+                        ", named \xE2\x80\x9C" "Arc Space\xE2\x80\x9D.");
+    }
     if (plan.sidebar.isBackup) {
         lines.push_back("Kite couldn't read Arc's current sidebar file, so this is from the newest backup of it Kite could read, made " +
-                        (plan.sidebar.backup ? DateText(*plan.sidebar.backup) : std::string("an earlier date")) +
+                        (plan.sidebar.backup ? BackupDateText(*plan.sidebar.backup) : std::string("an earlier date")) +
                         ". Changes since then aren't in it.");
     }
-    const auto shownRoutes = ShownRoutes(plan, state);
+    const auto shownRoutes = ShownRoutes(plan, state, includeUntitled);
     std::vector<std::string> extras;
     if (!plan.archive.empty()) extras.push_back(Count(plan.archive.size(), "archived tab"));
     if (!plan.siteSearches.empty()) extras.push_back(Count(plan.siteSearches.size(), "Site Search shortcut"));
@@ -328,27 +346,29 @@ std::vector<std::string> ConfirmLines(const Plan& plan, const BrowserState& stat
         }
         if (space) lines.push_back("Links from other apps that no route catches open in " + space->name + ", as in Arc.");
     }
-    if (std::any_of(named.begin(), named.end(), [](const std::string& p) { return p != Profile::kDefaultDirectory; })) {
-        const auto existing = ExistingProfilesForArc(state, named, plan.profileNames);
+    if (std::any_of(brought.begin(), brought.end(), [](const std::string& p) { return p != Profile::kDefaultDirectory; })) {
+        const auto existing = ExistingProfilesForArc(state, brought, plan.profileNames);
         std::vector<std::string> made;
-        for (const std::string& p : named) {
+        for (const std::string& p : brought) {
             if (!existing.contains(p)) made.push_back("\xE2\x80\x9C" + ArcProfileName(p, plan.profileNames) + "\xE2\x80\x9D");
         }
-        std::string line = "Your spaces use " + Count(named.size(), "Arc profile") + ".";
+        std::string line = "Your spaces use " + Count(brought.size(), "Arc profile") + ".";
         if (!made.empty()) line += " Kite makes " + std::string(made.size() == 1 ? "a profile" : "profiles") + " for " + List(made) + ".";
-        if (made.size() < named.size()) {
+        if (made.size() < brought.size()) {
             line += made.empty() ? " They go into Kite profiles you already have." : " The others go into Kite profiles you already have.";
         }
         lines.push_back(line + " Sign-ins don't carry over, so you'll sign in to sites again.");
     }
-    if (std::any_of(result.profiles.begin(), result.profiles.end(),
-                    [&](const std::string& p) { return std::find(named.begin(), named.end(), p) == named.end(); })) {
+    if (!includeUntitled && std::any_of(result.profiles.begin(), result.profiles.end(), [&](const std::string& p) {
+            return std::find(brought.begin(), brought.end(), p) == brought.end();
+        })) {
         lines.push_back("A profile only unnamed spaces use comes over, with its favorites, only if you include them.");
     }
     if (!plan.unreadable.empty()) {
         lines.push_back("Kite couldn't read " + List(plan.unreadable) + ", so what's in " + (plan.unreadable.size() == 1 ? "it" : "them") +
                         " is left out.");
     }
+    if (icons > 0) lines.push_back(IconsNote(icons));
     lines.insert(lines.end(), result.notes.begin(), result.notes.end());
     lines.push_back(reimported > 0 ? Count(reimported, "space") +
                                          " imported before will be replaced with Arc's current version, including changes you made to them in Kite."
@@ -357,97 +377,89 @@ std::vector<std::string> ConfirmLines(const Plan& plan, const BrowserState& stat
     return lines;
 }
 
-json::Value Import(BrowserState& state, const Plan& plan, const fs::path& profileDirectory, ImportOptions options) {
+Imported Import(BrowserState& state, const Plan& plan, ImportOptions options) {
     const Result& result = plan.sidebar.result;
-    json::Array skipped;
+    const bool includeUntitled = IncludesUntitled(plan, options);
+    Imported out;
 
     std::vector<Space> spaces;
+    size_t icons = 0;
     for (const Space& space : result.spaces) {
-        if (options.includeUntitled || !IsUntitled(plan, space)) spaces.push_back(space);
+        if (!Imports(plan, space, includeUntitled)) continue;
+        spaces.push_back(space);
+        if (result.iconsReplaced.contains(space.id)) ++icons;
     }
     const auto [untitledSpaces, untitledTabs] = UntitledCounts(plan);
-    if (!options.includeUntitled && untitledSpaces > 0) {
-        skipped.push_back(Skipped("unnamedSpaces", static_cast<size_t>(untitledSpaces),
-                                  "Arc has no name for " + std::string(untitledSpaces == 1 ? "it" : "them") + " (" +
-                                      Count(static_cast<size_t>(untitledTabs), "tab") + "); --include-unnamed brings them"));
+    if (untitledSpaces > 0 && includeUntitled) {
+        const bool noneNamed = !options.includeUntitled;
+        out.notes.push_back(Count(static_cast<size_t>(untitledSpaces), "unnamed space") + " (" + Count(static_cast<size_t>(untitledTabs), "tab") +
+                            ") came over, named \xE2\x80\x9C" "Arc Space\xE2\x80\x9D, " +
+                            (noneNamed ? "because Arc has no named spaces." : "as asked."));
+    } else if (untitledSpaces > 0) {
+        out.skipped.push_back(Skipped("unnamedSpaces", static_cast<size_t>(untitledSpaces),
+                                      "Arc has no name for " + std::string(untitledSpaces == 1 ? "it" : "them") + " (" +
+                                          Count(static_cast<size_t>(untitledTabs), "tab") + "); --include-unnamed brings them"));
     }
     const ArcMerge merged = MergeArc(state, spaces, result.favoritesByProfile, plan.profileNames);
 
     int siteSearches = 0;
     if (!plan.siteSearches.empty()) {
         if (MergeSiteSearches(state, plan.siteSearches)) siteSearches = static_cast<int>(plan.siteSearches.size());
-        else skipped.push_back(Skipped("siteSearches", plan.siteSearches.size(), "the session's own Site Searches don't read"));
+        else out.skipped.push_back(Skipped("siteSearches", plan.siteSearches.size(), "the session's own Site Searches don't read"));
     }
     const int archived = MergeArchive(state, plan.archive);
     if (static_cast<size_t>(archived) < plan.archive.size()) {
-        skipped.push_back(Skipped("archivedTabs", plan.archive.size() - static_cast<size_t>(archived),
-                                  "imported before, or older than the latest " + std::to_string(BrowserState::kArchiveLimit)));
+        out.skipped.push_back(Skipped("archivedTabs", plan.archive.size() - static_cast<size_t>(archived),
+                                      "imported before, or older than the latest " + std::to_string(BrowserState::kArchiveLimit)));
     }
     Apply(state, plan.settings);
     // Arc's own setting, else its Air Traffic Control default: the Mac keeps it as an app setting.
     if (plan.settings.opensExternalLinksInLittleKite || (plan.routes && plan.routes->defaultOpensInLittleKite)) {
-        skipped.push_back(Skipped("littleKiteSetting", std::nullopt, "Kite for Windows has no Little Kite yet"));
+        out.skipped.push_back(Skipped("littleKiteSetting", std::nullopt, "Kite for Windows has no Little Kite yet"));
     }
 
-    // Shortcut changes, into keybindings.json, as the Mac's KeyBindingsStore.merge.
-    size_t keyBindings = 0;
-    if (!plan.keyBindings.empty()) {
-        const fs::path file = profileDirectory / "keybindings.json";
-        std::optional<KeyBindings> bindings = KeyBindings{};
-        if (auto text = ReadFile(file)) bindings = KeyBindings::FromText(*text);
-        if (!bindings) {
-            skipped.push_back(Skipped("keyBindings", plan.keyBindings.size(), "keybindings.json doesn't read, so it's left as it is"));
-        } else {
-            for (const KeyBindingOverride& o : plan.keyBindings) bindings->Set(o);
-            if (std::string error = WriteAtomically(file, json::Write(bindings->ToJson())); error.empty()) keyBindings = plan.keyBindings.size();
-            else skipped.push_back(Skipped("keyBindings", plan.keyBindings.size(), error));
-        }
-    }
-
-    // Routes to the spaces Kite now has, into LinkRouting.json (AirTrafficControlStore).
-    size_t routes = 0;
+    out.keyBindings = plan.keyBindings;
     if (plan.routes) {
+        // To the spaces Kite has now.
         std::set<std::string> ids;
         for (const Space& space : state.spaces) ids.insert(space.id);
-        const LinkRouting kept = plan.routes->Keeping(ids);
+        LinkRouting kept = plan.routes->Keeping(ids);
         if (plan.routes->profileRoutes > 0) {
-            skipped.push_back(Skipped("routesToProfiles", static_cast<size_t>(plan.routes->profileRoutes), "Kite's routes open in a space or Little Kite"));
+            out.skipped.push_back(Skipped("routesToProfiles", static_cast<size_t>(plan.routes->profileRoutes),
+                                          "Kite's routes open in a space or Little Kite"));
         }
-        if (plan.routes->unreadable > 0) skipped.push_back(Skipped("routesUnreadable", static_cast<size_t>(plan.routes->unreadable), "Kite couldn't read them"));
+        if (plan.routes->unreadable > 0) {
+            out.skipped.push_back(Skipped("routesUnreadable", static_cast<size_t>(plan.routes->unreadable), "Kite couldn't read them"));
+        }
         if (kept.rules.size() < plan.routes->rules.size()) {
-            skipped.push_back(Skipped("routesToOtherSpaces", plan.routes->rules.size() - kept.rules.size(), "their space isn't imported"));
+            out.skipped.push_back(Skipped("routesToOtherSpaces", plan.routes->rules.size() - kept.rules.size(), "their space isn't imported"));
         }
-        if (!kept.IsEmpty()) {
-            const fs::path file = profileDirectory / "LinkRouting.json";
-            std::optional<air_traffic::State> atc = air_traffic::State{};
-            if (auto text = ReadFile(file)) {
-                auto parsed = json::Parse(*text);
-                auto* value = std::get_if<json::Value>(&parsed);
-                atc = value ? air_traffic::State::FromJson(*value) : std::nullopt;
-            }
-            if (!atc) {
-                skipped.push_back(Skipped("routes", kept.rules.size(), "LinkRouting.json doesn't read, so it's left as it is"));
-            } else {
-                Merge(*atc, kept);
-                if (std::string error = WriteAtomically(file, json::Write(atc->ToJson())); error.empty()) routes = kept.rules.size();
-                else skipped.push_back(Skipped("routes", kept.rules.size(), error));
-            }
-        }
+        if (!kept.IsEmpty()) out.routes = std::move(kept);
     }
 
     for (const auto& [kind, count] : result.skippedKinds) {
-        skipped.push_back(Skipped("sidebarItem:" + kind, static_cast<size_t>(count), "Kite has no such sidebar item"));
+        out.skipped.push_back(Skipped("sidebarItem:" + kind, static_cast<size_t>(count), "Kite has no such sidebar item"));
     }
-    if (result.iconsReplaced > 0) {
-        skipped.push_back(Skipped("spaceIcons", static_cast<size_t>(result.iconsReplaced), "from Arc's own icon set, which Kite doesn't have; a stand-in instead"));
+    if (result.repeatedItems > 0) {
+        out.skipped.push_back(Skipped("repeatedSidebarItems", static_cast<size_t>(result.repeatedItems),
+                                      "listed again in childrenIds (a repeat or a loop), or under a parent that isn't its own"));
+    }
+    if (result.itemsTooDeep > 0) {
+        out.skipped.push_back(Skipped("deepSidebarItems", static_cast<size_t>(result.itemsTooDeep),
+                                      "nested more than " + std::to_string(kMaxDepth) + " levels deep"));
+    }
+    if (icons > 0) {
+        out.skipped.push_back(Skipped("spaceIcons", icons, "from Arc's own icon set, which Kite doesn't have; a stand-in instead"));
+        out.notes.push_back(IconsNote(icons));
     }
     if (!merged.fellBack.empty()) {
-        skipped.push_back(Skipped("profiles", merged.fellBack.size(), "no Kite profile could be made for them, so their spaces went to Default"));
+        out.skipped.push_back(Skipped("profiles", merged.fellBack.size(), "no Kite profile could be made for them, so their spaces went to Default"));
     }
-    for (const std::string& file : plan.unreadable) skipped.push_back(Skipped("file", std::nullopt, file + " doesn't read"));
-    skipped.push_back(Skipped("history", std::nullopt, "Kite for Windows has no history yet"));
-    skipped.push_back(Skipped("signIns", std::nullopt, "Arc's cookies aren't imported on Windows yet"));
-    skipped.push_back(Skipped("extensions", std::nullopt, "Kite for Windows has no extensions yet"));
+    for (const std::string& file : plan.unreadable) out.skipped.push_back(Skipped("file", std::nullopt, file + " doesn't read"));
+    out.skipped.push_back(Skipped("history", std::nullopt, "Kite for Windows has no history yet"));
+    out.skipped.push_back(Skipped("signIns", std::nullopt, "Arc's cookies aren't imported on Windows yet"));
+    out.skipped.push_back(Skipped("extensions", std::nullopt, "Kite for Windows has no extensions yet"));
+    out.notes.insert(out.notes.end(), result.notes.begin(), result.notes.end());
 
     // What came over, for the spaces that imported.
     size_t pinned = 0, unpinned = 0, splits = 0;
@@ -462,40 +474,86 @@ json::Value Import(BrowserState& state, const Plan& plan, const fs::path& profil
     for (const std::string& name : plan.settings.Names()) {
         if (name != "Open links from other apps in Little Arc") settings.push_back(name);
     }
-    json::Array newProfiles(merged.newProfiles.begin(), merged.newProfiles.end());
-    json::Array notes(result.notes.begin(), result.notes.end());
-    json::Object source{{"file", plan.sidebar.file}, {"backup", plan.sidebar.isBackup}};
-    return json::Object{
-        {"source", json::Value(std::move(source))},
-        {"found", json::Object{{"spaces", result.spaces.size()},
-                               {"unnamedSpaces", result.untitledSpaceIDs.size()},
-                               {"tabs", result.tabCount},
-                               {"folders", result.folderCount},
-                               {"splits", result.splitCount},
-                               {"favorites", result.Favorites().size()},
-                               {"profiles", result.profiles.size()},
-                               {"archivedTabs", plan.archive.size()},
-                               {"siteSearches", plan.siteSearches.size()},
-                               {"keyBindings", plan.keyBindings.size()},
-                               {"routes", plan.routes ? plan.routes->rules.size() : size_t{0}}}},
-        {"imported", json::Object{{"spaces", merged.added + merged.updated},
-                                  {"spacesAdded", merged.added},
-                                  {"spacesUpdated", merged.updated},
-                                  {"pinnedTabs", pinned},
-                                  {"tabs", unpinned},
-                                  {"folders", folders},
-                                  {"splits", splits},
-                                  {"favorites", merged.favoritesAdded},
-                                  {"profiles", merged.profiles.size()},
-                                  {"newProfiles", json::Value(std::move(newProfiles))},
-                                  {"archivedTabs", archived},
-                                  {"siteSearches", siteSearches},
-                                  {"keyBindings", keyBindings},
-                                  {"routes", routes},
-                                  {"settings", json::Value(std::move(settings))}}},
-        {"skipped", json::Value(std::move(skipped))},
-        {"notes", json::Value(std::move(notes))},
-    };
+    out.found = json::Object{{"spaces", result.spaces.size()},
+                             {"unnamedSpaces", result.untitledSpaceIDs.size()},
+                             {"tabs", result.tabCount},
+                             {"folders", result.folderCount},
+                             {"splits", result.splitCount},
+                             {"favorites", result.Favorites().size()},
+                             {"profiles", result.profiles.size()},
+                             {"archivedTabs", plan.archive.size()},
+                             {"siteSearches", plan.siteSearches.size()},
+                             {"keyBindings", plan.keyBindings.size()},
+                             {"routes", plan.routes ? plan.routes->rules.size() : size_t{0}}};
+    out.imported = json::Object{{"spaces", merged.added + merged.updated},
+                                {"spacesAdded", merged.added},
+                                {"spacesUpdated", merged.updated},
+                                {"unnamedSpaces", includeUntitled ? untitledSpaces : 0},
+                                {"pinnedTabs", pinned},
+                                {"tabs", unpinned},
+                                {"folders", folders},
+                                {"splits", splits},
+                                {"favorites", merged.favoritesAdded},
+                                {"profiles", merged.profiles.size()},
+                                {"newProfiles", json::Array(merged.newProfiles.begin(), merged.newProfiles.end())},
+                                {"archivedTabs", archived},
+                                {"siteSearches", siteSearches},
+                                {"keyBindings", 0},
+                                {"routes", 0},
+                                {"settings", json::Value(std::move(settings))}};
+    out.source = json::Object{{"file", plan.sidebar.file}, {"backup", plan.sidebar.isBackup}};
+    return out;
+}
+
+void WriteProfileFiles(Imported& out, const fs::path& profileDirectory) {
+    // Shortcut changes into keybindings.json, as the Mac's KeyBindingsStore.merge.
+    if (!out.keyBindings.empty()) {
+        const fs::path file = profileDirectory / "keybindings.json";
+        std::optional<KeyBindings> bindings = KeyBindings{};
+        if (auto text = ReadFile(file)) bindings = KeyBindings::FromText(*text);
+        else if (Exists(file)) bindings.reset();
+        if (!bindings) {
+            out.skipped.push_back(Skipped("keyBindings", out.keyBindings.size(), "keybindings.json doesn't read, so it's left as it is"));
+        } else {
+            for (const KeyBindingOverride& o : out.keyBindings) bindings->Set(o);
+            if (std::string error = WriteFileAtomically(file, json::Write(bindings->ToJson())); error.empty()) {
+                out.imported.insert_or_assign("keyBindings", out.keyBindings.size());
+            } else {
+                out.skipped.push_back(Skipped("keyBindings", out.keyBindings.size(), error));
+            }
+        }
+    }
+    // Routes into LinkRouting.json, as the Mac's AirTrafficControlStore.
+    if (out.routes) {
+        const fs::path file = profileDirectory / "LinkRouting.json";
+        std::optional<air_traffic::State> atc = air_traffic::State{};
+        if (auto text = ReadFile(file)) {
+            auto value = json::ParseValue(*text);
+            atc = value ? air_traffic::State::FromJson(*value) : std::nullopt;
+        } else if (Exists(file)) {
+            atc.reset();
+        }
+        if (!atc) {
+            out.skipped.push_back(Skipped("routes", out.routes->rules.size(), "LinkRouting.json doesn't read, so it's left as it is"));
+        } else {
+            Merge(*atc, *out.routes);
+            if (std::string error = WriteFileAtomically(file, json::Write(atc->ToJson())); error.empty()) {
+                out.imported.insert_or_assign("routes", out.routes->rules.size());
+            } else {
+                out.skipped.push_back(Skipped("routes", out.routes->rules.size(), error));
+            }
+        }
+    }
+    out.keyBindings.clear();
+    out.routes.reset();
+}
+
+json::Value Summary(const Imported& imported) {
+    return json::Object{{"source", json::Value(imported.source)},
+                        {"found", json::Value(imported.found)},
+                        {"imported", json::Value(imported.imported)},
+                        {"skipped", json::Value(imported.skipped)},
+                        {"notes", json::Value(imported.notes)}};
 }
 
 }  // namespace kite::arc_import

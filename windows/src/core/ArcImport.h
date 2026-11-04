@@ -11,6 +11,10 @@
 // `newContainerIDs` (`[{"pinned": {}}, id, {"unpinned": {...}}, id]`) next to or instead of
 // `containerIDs`, and its icon may be `customInfo.iconType.icon`, a name from Arc's icon set,
 // rather than an emoji.
+//
+// Arc gives each item one parent, but a stale or sync-damaged file can list one twice, in a
+// loop, or endlessly deep. The walk follows the Mac's fix (PR #362): a pre-pass gives each item
+// its home, each is placed once, and nothing goes past kMaxDepth levels.
 
 #include <map>
 #include <optional>
@@ -23,6 +27,10 @@
 #include "core/Models.h"
 
 namespace kite::arc_import {
+
+// How many levels of folders and splits the import follows (ArcImport.maxDepth). Real sidebars
+// nest a few; a damaged file's endless chain stops here instead of overflowing the stack.
+inline constexpr int kMaxDepth = 64;
 
 struct Result {
     // Each space's extra "profile" is still Arc's profile folder ("Profile 1"; absent for Arc's
@@ -40,7 +48,11 @@ struct Result {
     // Sidebar item kinds Kite skipped ("easel"), with how many of each.
     std::map<std::string, int> skippedKinds;
     // Spaces whose Arc icon Kite has no match for (an Arc for Windows icon name), given a stand-in.
-    int iconsReplaced = 0;
+    std::set<std::string> iconsReplaced;
+    // Items left out as nested past kMaxDepth (each, with all under it), and childrenIds
+    // entries skipped as a repeat, a cycle, or a child whose home is another parent.
+    int itemsTooDeep = 0;
+    int repeatedItems = 0;
     // Things that didn't carry over exactly, in plain words for the user.
     std::vector<std::string> notes;
 
@@ -52,6 +64,9 @@ struct Result {
     std::vector<std::string> NamedSpaceProfiles() const;
 };
 
+// An enum case as Swift's Codable writes it ({"pinned": {}}) or bare ("pinned"): its name.
+std::optional<std::string> SwiftCaseName(const json::Value* value);
+
 // Default, which Kite always has, then `profiles`, without repeats.
 std::vector<std::string> WithDefault(std::vector<std::string> profiles);
 
@@ -60,7 +75,6 @@ enum class Failure {
     NotArcSidebar,  // JSON, but not a sidebar
     NoSpaces,
 };
-const char* Name(Failure failure);
 
 std::variant<Result, Failure> Parse(std::string_view text, Timestamp now = Now());
 
@@ -115,7 +129,7 @@ ArcMerge MergeArc(BrowserState& state, const std::vector<Space>& imported,
 // the first, then gives pinned tabs and favorites their pinned URL. Returns added and updated.
 std::pair<int, int> MergeImported(BrowserState& state, const std::vector<Space>& imported);
 // PinnedURL.swift's syncPinnedURLs: a pinned tab or favorite without a pinned URL takes the
-// page it's on (not about:blank or one of Kite's own pages).
+// page it's on (not about:blank or one of Kite's own pages), and unpinned tabs lose theirs.
 void SyncPinnedURLs(BrowserState& state);
 
 }  // namespace kite

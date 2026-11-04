@@ -11,7 +11,8 @@
 //   kitecore [--profile DIR] select TAB_ID
 //   kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]
 //   kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]
-//   kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed]
+//   kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]
+//   kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY
 //
 // --profile may come anywhere. DIR defaults to KITE_SUPPORT_PATH, then %LOCALAPPDATA%\Kite;
 // an empty or missing DIR is an error, never the real profile. Use it on a profile Kite.exe
@@ -28,9 +29,13 @@
 // `import-arc` is Import from Arc (core/ArcImportController.h): from Arc for Windows' folder
 // (--auto, the default), or PATH (Arc's folder, the folder holding it, or a sidebar file). It
 // prints what came over, per kind, and what was skipped and why: counts only, never Arc's
-// titles or addresses. Arc's unnamed spaces stay out unless --include-unnamed, as the Mac's
-// dialog starts. With --profile or KITE_SUPPORT_PATH, KITE_ARC_DATA_PATH stands in for Arc's
-// folder, as in the Mac's test runs.
+// titles or addresses. Arc's unnamed spaces stay out, as the Mac's dialog starts, unless Arc
+// has no named space (then they're all there is) or --include-unnamed; --leave-out-unnamed
+// leaves them out either way. The session is saved first, then keybindings.json and
+// LinkRouting.json; the summary prints once all of it is written. With --profile or
+// KITE_SUPPORT_PATH, KITE_ARC_DATA_PATH stands in for Arc's folder, as in the Mac's test runs.
+// `profile` lists, makes, renames and deletes Kite profiles (core/Profiles.h). A deleted one's
+// folder name is free again once its Chromium folder is gone, which kitecore never deletes.
 
 #include <algorithm>
 #include <charconv>
@@ -49,6 +54,7 @@
 #include "core/KeyBindings.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
+#include "core/Profiles.h"
 #include "core/SessionStore.h"
 #include "core/Sidebar.h"
 #include "core/SpaceBar.h"
@@ -87,7 +93,8 @@ int Usage() {
         "       kitecore [--profile DIR] evict MAX [--shown TAB_ID] [--popup POPUP_ID=OPENER_ID]... TAB_ID=LAST_SHOWN...\n"
         "       kitecore [--profile DIR] space next|prev|NUMBER|select ID|add NAME [ICON]\n"
         "       kitecore [--profile DIR] theme SPACE_ID [WIDTH HEIGHT]\n"
-        "       kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed]\n",
+        "       kitecore [--profile DIR] import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]\n"
+        "       kitecore [--profile DIR] profile list|add NAME|rename DIRECTORY NAME|delete DIRECTORY\n",
         stderr);
     return kUsage;
 }
@@ -560,7 +567,8 @@ int main(int argc, char** argv) {
         std::optional<std::filesystem::path> picked;
         bool automatic = false;
         for (size_t i = 1; i < args.size(); ++i) {
-            if (args[i] == "--include-unnamed") options.includeUntitled = true;
+            if (args[i] == "--include-unnamed" && !options.includeUntitled) options.includeUntitled = true;
+            else if (args[i] == "--leave-out-unnamed" && !options.includeUntitled) options.includeUntitled = false;
             else if (args[i] == "--auto" && !picked) automatic = true;
             else if (!automatic && !picked && !args[i].starts_with("--")) picked = std::filesystem::path(std::u8string(args[i].begin(), args[i].end()));
             else return Usage();
@@ -572,8 +580,52 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "kitecore: %s %s\n", error->message.c_str(), error->detail.c_str());
             return kNotFound;
         }
-        const json::Value summary = arc_import::Import(state, std::get<arc_import::Plan>(plan), std::get<std::filesystem::path>(resolved), options);
-        std::puts(json::Write(summary).c_str());
+        arc_import::Imported imported = arc_import::Import(state, std::get<arc_import::Plan>(plan), options);
+        // The session first: shortcut changes and routes to spaces it doesn't have would be no use.
+        if (std::string error = store.Save(state); !error.empty()) {
+            std::fprintf(stderr, "kitecore: %s\n", error.c_str());
+            return kSaveFailed;
+        }
+        arc_import::WriteProfileFiles(imported, std::get<std::filesystem::path>(resolved));
+        std::puts(json::Write(arc_import::Summary(imported)).c_str());
+        return kOk;
+    } else if (command == "profile" && args.size() >= 2) {
+        const std::string& action = args[1];
+        if (action == "list" && args.size() == 2) {
+            json::Array rows;
+            for (const Profile& p : AllProfiles(state)) {
+                json::Object o{{"directory", p.directory}, {"name", p.name}, {"dataStoreID", p.dataStoreID}};
+                o.emplace("deletable", CanDeleteProfile(state, p.directory));
+                rows.push_back(json::Value(std::move(o)));
+            }
+            std::puts(json::Write(json::Value(std::move(rows))).c_str());
+            return kOk;
+        } else if (action == "add" && args.size() == 3) {
+            auto made = CreateProfile(state, args[2]);
+            if (auto* error = std::get_if<ProfileNameError>(&made)) {
+                std::fprintf(stderr, "kitecore: %s\n", Message(*error));
+                return kUsage;
+            }
+            std::puts(std::get<Profile>(made).directory.c_str());
+        } else if (action == "rename" && args.size() == 4) {
+            if (ProfileFor(state, args[2]).directory != args[2] || args[2] == Profile::kDefaultDirectory) return kNotFound;
+            if (auto error = RenameProfile(state, args[2], args[3])) {
+                std::fprintf(stderr, "kitecore: %s\n", Message(*error));
+                return kUsage;
+            }
+        } else if (action == "delete" && args.size() == 3) {
+            // Arc's rule: only a profile no space uses, never the default one.
+            if (!DeleteProfile(state, args[2])) return kNotFound;
+            // The shell deletes a profile's Chromium folder; with none, its name is free at once.
+            std::error_code error;
+            if (!std::filesystem::exists(std::get<std::filesystem::path>(resolved) / "Chromium" /
+                                             std::filesystem::path(std::u8string(args[2].begin(), args[2].end())),
+                                         error)) {
+                ForgetRetiredProfiles(state, {args[2]});
+            }
+        } else {
+            return Usage();
+        }
         changed = true;
     } else {
         return Usage();

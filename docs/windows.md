@@ -51,10 +51,11 @@ windows/
   src/shell/    Kite.exe: main.cpp (the command line, the session), BrowserWindowController
                 (the window and what's in it: views, Chromium, shortcuts), composition, input
   src/cli/      kitecore: the model, headless
-  tests/        unit tests (no test framework dependency)
+  tests/        unit tests (no test framework dependency); fixtures/ holds hand-made inputs
+                (an Arc for Windows folder, Chromium Web Data databases)
   helix/        checkpoints.md and states/ (sessions for the UI gate)
   resources/    Kite.manifest (DPI, UTF-8 code page, long paths) and its MinGW .rc
-  scripts/      fetch-cef.ps1, gen-unicode-tables.py
+  scripts/      fetch-cef.ps1, gen-unicode-tables.py, make-web-data.py (the Web Data fixtures)
   cmake/        mingw-w64.cmake (cross-compile check off Windows)
 ```
 
@@ -366,8 +367,15 @@ Spaces, pinned tabs, folders, splits, favorites, profiles, the archive, Site
 Search and Arc's settings go into `session.json`, in the Mac's format;
 shortcut changes into `keybindings.json` (read at launch) and Air Traffic
 Control routes into `LinkRouting.json`, as the Mac's stores keep them.
-`kitecore --profile P import-arc [PATH|--auto] [--include-unnamed]` runs it
-headless and prints the counts per kind and what was skipped and why. In the
+The session is saved first, then the other two files. Arc's unnamed spaces stay
+out, as the Mac's dialog starts, unless Arc has no named space at all (Arc for
+Windows often has one unnamed space holding everything): then they come over, a
+deliberate difference from the Mac. A sidebar item listed twice or in a loop
+is placed once, and nothing nests past 64 levels (the Mac's #362). Site Search
+is left out while Arc is writing Web Data (a hot journal beside it).
+`kitecore --profile P import-arc [PATH|--auto] [--include-unnamed|--leave-out-unnamed]`
+runs it headless and prints the counts per kind and what was skipped and why;
+`kitecore profile list|add|rename|delete` manages the profiles it makes. In the
 app it's the `importFromArc` command, also in the window's system menu
 (Alt+Space): the system folder picker stands in for the Mac's open panel, and
 a message box with the Mac's text for its dialog. Not yet: history, sign-ins

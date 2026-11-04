@@ -55,6 +55,11 @@ public:
         std::filesystem::path spaceIcons;
         // The profile's folder, where Import from Arc puts its shortcut changes and routes.
         std::filesystem::path supportDirectory;
+        // Saving the session now, for Import from Arc, which saves it before writing its other
+        // files (empty on success). False `sessionSaves`: the session didn't read, so it's never
+        // saved and the import is refused. W11's background writer (SessionChanged) replaces this.
+        bool sessionSaves = true;
+        std::function<std::string()> saveSession;
     };
 
     // The window and everything in it, laid out and wired, not yet shown or drawn. Null with
@@ -232,6 +237,7 @@ private:
     std::thread arcThread_;
     std::shared_ptr<ArcJob> arcJob_;
     bool arcReading_ = false;  // from the command until the confirmation's answer
+    bool closing_ = false;     // the window has begun to close (its session saved)
 #ifdef KITE_HAS_CEF
     // Each open popup's tab and the tab that opened it (the Mac's PagePool.popupOpeners).
     std::map<std::string, std::string> popupOpeners_;

@@ -7,6 +7,10 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
+#include <ctime>
+#include <limits>
+#include <variant>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -96,6 +100,13 @@ std::string ArchiveFixture() {
     return json::Write(Object{{"version", 1}, {"items", std::move(items)}});
 }
 
+// The import as kitecore runs it, the session's save aside.
+Value ImportAll(BrowserState& state, const Plan& plan, const fs::path& profile, ImportOptions options = {}) {
+    Imported done = Import(state, plan, options);
+    WriteProfileFiles(done, profile);
+    return Summary(done);
+}
+
 ClosedTab OwnArchived(const std::string& spaceID) {
     ClosedTab closed;
     closed.tab.id = NewUuid();
@@ -166,6 +177,13 @@ TEST(ArcArchiveSettingsImport_arcDefaultsLeaveKiteAlone) {
     CHECK(ArchiveInterval(Value(R"({"thresholds":[{"custom":{}},"thirtyDays"]})")) == "thirtyDays");
     CHECK(!ArchiveInterval(Value("not json")));
     CHECK(!Settings::FromDefaults(Object{{"shouldWarnBeforeQuitting", "yes"}}).warnsBeforeQuitting);
+}
+
+TEST(ArcSettingsWindows_booleansReadAsSwiftsAsBool) {
+    // `raw as? Bool` takes an NSNumber 0 or 1 too (a plist <integer>), nothing else.
+    const Settings s = Settings::FromDefaults(Object{{"shouldWarnBeforeQuitting", 1}, {"openExternalLinksInLittleBrowserEnabled", 2}});
+    CHECK(s.warnsBeforeQuitting == true && !s.opensExternalLinksInLittleKite);
+    CHECK(Settings::FromDefaults(Object{{"shouldWarnBeforeQuitting", 0}}).warnsBeforeQuitting == false);
 }
 
 TEST(ArcSettingsWindows_readsArcForWindowsPlist) {
@@ -350,11 +368,12 @@ TEST(ArcLinkRoutingImport_readsArcRoutes) {
     CHECK(result.defaultOpensInLittleKite == true);
     CHECK(!result.defaultSpace);
 
-    // Routed as in Arc once the space is imported.
+    // Merged, Arc's Little Arc default leaves none stored. (The Mac's check that a link then
+    // routes as in Arc waits for links from other apps: Windows has no routing yet.)
     air_traffic::State state;
     Merge(state, result);
     CHECK(!state.defaultDestination);
-    CHECK(state.DestinationFor("https://open.spotify.com/track/1", {kSpace}, false) == Destination::InSpace(kSpace));
+    CHECK(state.rules.size() == 3 && state.rules[0].destination == Destination::InSpace(kSpace));
 }
 
 TEST(ArcLinkRoutingImport_importingAgainReplacesArcsRoutesAndKeepsKites) {
@@ -423,8 +442,9 @@ TEST(ArcLinkRoutingImport_leavesOutWhatKiteCantReadOrOpen) {
     CHECK(kept.rules.size() == 1 && kept.rules[0].destination == Destination::InSpace(space));
 }
 
-TEST(AirTrafficControl_linkRoutingJsonHasTheMacsShape) {
-    // AirTrafficControlStore's JSONEncoder: synthesized Codable, Swift's enum encoding.
+TEST(AirTrafficControl_linkRoutingJsonHasTheMacsSchema) {
+    // AirTrafficControlStore's schema: synthesized Codable, Swift's enum encoding. (The Mac
+    // writes it pretty-printed with "\/" escapes; JSONDecoder reads either.)
     air_traffic::State state;
     state.rules = {{Id(1), {{Id(2), air_traffic::MatchStyle::Matches, "x.com"}}, Destination::InSpace(Id(3))},
                    {Id(4), {{Id(5), air_traffic::MatchStyle::Contains, "y"}}, Destination::Little()}};
@@ -436,9 +456,9 @@ TEST(AirTrafficControl_linkRoutingJsonHasTheMacsShape) {
     CHECK(json::Write(state.ToJson()) == expected);
     auto parsed = json::Parse(expected);
     CHECK(air_traffic::State::FromJson(std::get<Value>(parsed)) == state);
-    CHECK(state.DestinationFor("https://www.x.com/", {Id(3)}, false) == Destination::InSpace(Id(3)));
-    CHECK(state.DestinationFor("https://www.x.com/", {}, false) == Destination::MostRecent());
-    CHECK(state.DestinationFor("file:///y", {}, true) == Destination::MostRecent());
+    // What the Mac's decoder refuses, this does too.
+    CHECK(!air_traffic::State::FromJson(std::get<Value>(json::Parse(R"({"version":1,"rules":[{"id":"x","components":[],"destination":{"littleKite":{}}}]})"))));
+    CHECK(!air_traffic::State::FromJson(std::get<Value>(json::Parse(R"({"version":1,"rules":[],"defaultDestination":{"window":{}}})"))));
 }
 
 // MARK: Site Search (KiteMac's ArcSiteSearchImport.read, over Kite's own SQLite reader)
@@ -499,6 +519,163 @@ TEST(SQLiteReader_readsTablesAndRefusesWhatIsntOne) {
     for (size_t i = 1024; i < scrambled.size(); ++i) scrambled[i] = static_cast<char>((i * 131) & 0xFF);
     auto garbage = sqlite::ReadTable(scrambled, "keywords");
     CHECK(!garbage || garbage->rows.size() <= 70);
+}
+
+namespace {
+
+// Databases of 512-byte pages built by hand. Page 1's schema names `table` at root page 2, made
+// by `sql`; the test writes page 2 on. Records are of TEXT values.
+constexpr size_t kPage = 512;
+
+void U16(std::string& page, size_t at, unsigned v) {
+    page[at] = static_cast<char>(v >> 8);
+    page[at + 1] = static_cast<char>(v & 0xFF);
+}
+void U32(std::string& page, size_t at, uint32_t v) {
+    for (int i = 0; i < 4; ++i) page[at + i] = static_cast<char>(v >> (24 - 8 * i));
+}
+std::string Varint(uint64_t v) {
+    // Big-endian 7-bit groups, high bit set on all but the last (values here are small).
+    std::string out;
+    std::string groups;
+    do {
+        groups.insert(groups.begin(), static_cast<char>(v & 0x7F));
+        v >>= 7;
+    } while (v);
+    for (size_t i = 0; i + 1 < groups.size(); ++i) groups[i] = static_cast<char>(groups[i] | 0x80);
+    return groups;
+}
+// A record of values, each a string (TEXT) or a double (REAL).
+std::string Record(const std::vector<std::variant<std::string, double, int>>& values) {
+    std::string types, body;
+    for (const auto& v : values) {
+        if (auto* text = std::get_if<std::string>(&v)) {
+            types += Varint(13 + 2 * text->size());
+            body += *text;
+        } else if (auto* d = std::get_if<double>(&v)) {
+            types += Varint(7);
+            uint64_t bits;
+            std::memcpy(&bits, d, 8);
+            for (int i = 7; i >= 0; --i) body += static_cast<char>(bits >> (8 * i));
+        } else {
+            types += Varint(1);
+            body += static_cast<char>(std::get<int>(v));
+        }
+    }
+    return Varint(types.size() + 1) + types + body;
+}
+std::string LeafCell(int64_t rowid, const std::string& record) { return Varint(record.size()) + Varint(static_cast<uint64_t>(rowid)) + record; }
+
+// A table b-tree page: its cells at `offsets` (which may repeat or overlap, as a crafted file's
+// do), and for an interior page the right-most child.
+std::string TablePage(bool interior, const std::vector<std::pair<size_t, std::string>>& cells, uint32_t right = 0, size_t header = 0) {
+    std::string page(kPage, '\0');
+    page[header] = static_cast<char>(interior ? 0x05 : 0x0D);
+    U16(page, header + 3, static_cast<unsigned>(cells.size()));
+    U16(page, header + 5, 0);
+    if (interior) U32(page, header + 8, right);
+    const size_t pointers = header + (interior ? 12 : 8);
+    for (size_t i = 0; i < cells.size(); ++i) {
+        U16(page, pointers + 2 * i, static_cast<unsigned>(cells[i].first));
+        page.replace(cells[i].first, cells[i].second.size(), cells[i].second);
+    }
+    return page;
+}
+
+std::string Database(const std::string& sql, const std::string& table, const std::vector<std::string>& pages) {
+    const std::string schema = LeafCell(1, Record({std::string("table"), table, table, 2, sql}));
+    std::string first = TablePage(false, {{kPage - schema.size(), schema}}, 0, 100);
+    first.replace(0, 16, std::string("SQLite format 3\0", 16));
+    U16(first, 16, kPage);
+    first[18] = first[19] = 1;
+    U32(first, 56, 1);  // UTF-8
+    std::string file = first;
+    for (const std::string& page : pages) file += page;
+    return file;
+}
+
+std::optional<sqlite::Table> ReadT(const std::string& file) { return sqlite::ReadTable(file, "t"); }
+
+const std::string kT = "CREATE TABLE t(x)";
+
+}  // namespace
+
+TEST(SQLiteReader_aHandBuiltTableReads) {
+    const std::string a = LeafCell(1, Record({std::string("one")})), b = LeafCell(2, Record({std::string("two")}));
+    auto table = ReadT(Database(kT, "t", {TablePage(false, {{400, a}, {450, b}})}));
+    CHECK(table && table->rows.size() == 2 && std::get<std::string>(table->rows[1][0]) == "two");
+}
+
+TEST(SQLiteReader_refusesDuplicateAndMisplacedCells) {
+    // Reviewer B's B2: one cell's pointer repeated 200 times read the same 4 MB record 200 times.
+    const std::string a = LeafCell(1, Record({std::string("one")}));
+    CHECK(!ReadT(Database(kT, "t", {TablePage(false, {{400, a}, {400, a}})})));
+    // A cell inside the header and pointer array.
+    CHECK(!ReadT(Database(kT, "t", {TablePage(false, {{9, a}})})));
+}
+
+TEST(SQLiteReader_refusesChildPageLoopsAndPagesOutOfRange) {
+    std::string cell(4, '\0');
+    auto interior = [&](uint32_t left, uint32_t right) {
+        std::string c = cell;
+        U32(c, 0, left);
+        return TablePage(true, {{500, c + Varint(1)}}, right);
+    };
+    const std::string leaf = TablePage(false, {{400, LeafCell(1, Record({std::string("one")}))}});
+    CHECK(ReadT(Database(kT, "t", {interior(3, 3 + 0), leaf})) == std::nullopt);  // the same child twice
+    CHECK(!ReadT(Database(kT, "t", {interior(2, 3), leaf})));                     // a page that's its own child
+    CHECK(!ReadT(Database(kT, "t", {interior(0, 3), leaf})));                     // page 0
+    CHECK(!ReadT(Database(kT, "t", {interior(99, 3), leaf})));                    // past the file
+    auto ok = ReadT(Database(kT, "t", {interior(3, 4), leaf, TablePage(false, {{400, LeafCell(2, Record({std::string("two")}))}})}));
+    CHECK(ok && ok->rows.size() == 2);
+}
+
+TEST(SQLiteReader_refusesOverflowLoopsAndSharedChains) {
+    // A 1200-byte record keeps 184 bytes on its page (512-byte pages) and needs two overflow
+    // pages of 508 bytes each.
+    const std::string big = Record({std::string(1197, 'x')});
+    CHECK(big.size() == 1200);
+    const std::string head = Varint(big.size()) + Varint(1) + big.substr(0, 184);
+    auto cellTo = [&](uint32_t overflow) {
+        std::string c = head + std::string(4, '\0');
+        U32(c, head.size(), overflow);
+        return c;
+    };
+    auto overflowPage = [&](uint32_t next, size_t from) {
+        std::string page(kPage, '\0');
+        U32(page, 0, next);
+        page.replace(4, 508, big.substr(from, std::min<size_t>(508, big.size() - from)));
+        return page;
+    };
+    const std::string cell = cellTo(3);
+    auto good = ReadT(Database(kT, "t", {TablePage(false, {{200, cell}}), overflowPage(4, 184), overflowPage(0, 692)}));
+    CHECK(good && good->rows.size() == 1 && std::get<std::string>(good->rows[0][0]) == std::string(1197, 'x'));
+    // A chain that comes back to itself.
+    CHECK(!ReadT(Database(kT, "t", {TablePage(false, {{200, cell}}), overflowPage(3, 184)})));
+    // Two cells sharing one chain.
+    CHECK(!ReadT(Database(kT, "t", {TablePage(false, {{100, cellTo(3)}, {300, cellTo(3)}}), overflowPage(4, 184), overflowPage(0, 692)})));
+    // A chain into page 0, or past the file.
+    CHECK(!ReadT(Database(kT, "t", {TablePage(false, {{200, cellTo(0)}})})));
+    CHECK(!ReadT(Database(kT, "t", {TablePage(false, {{200, cellTo(77)}})})));
+}
+
+TEST(SQLiteReader_aHotJournalIsSeen) {
+    CHECK(sqlite::IsHotJournal(std::string("\xD9\xD5\x05\xF9\x20\xA1\x63\xD7", 8) + std::string(504, '\0')));
+    CHECK(!sqlite::IsHotJournal(""));
+    CHECK(!sqlite::IsHotJournal(std::string(512, '\0')));  // a finished, zeroed journal
+}
+
+TEST(ArcSiteSearchImport_oddNumbersInTheTableAreNoNumbers) {
+    // A REAL that isn't a whole int64 (NaN, 1e300) is no prepopulate_id: never converted.
+    const std::string sql = "CREATE TABLE keywords (short_name, keyword, url, prepopulate_id, safe_for_autoreplace, date_created)";
+    auto row = [](int64_t id, const std::string& keyword, double prepopulated) {
+        return LeafCell(id, Record({std::string("N"), keyword, std::string("https://") + keyword + ".example/?q={searchTerms}", prepopulated, 0, 1}));
+    };
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::string file =
+        Database(sql, "keywords", {TablePage(false, {{150, row(1, "nan", nan)}, {250, row(2, "huge", 1e300)}, {350, row(3, "zero", 0.0)}})});
+    auto sites = ParseSiteSearches(file);
+    CHECK(sites && Shortcuts(*sites) == std::vector<std::string>{"zero"});
 }
 
 TEST(SQLiteReader_parsesColumnDefinitions) {
@@ -565,7 +742,7 @@ TEST(ArcImportController_fallsBackToTheNewestBackupThatReads) {
     CHECK(sidebar && sidebar->file == "StorableSidebar.2026-10-01-08-00-00-000.json" && sidebar->isBackup && sidebar->backup);
     if (sidebar) {
         auto plan = ReadPlan(*sidebar, dir.path);
-        const auto lines = ConfirmLines(plan, BrowserState::MakeDefault(std::nullopt));
+        const auto lines = ConfirmLines(plan, BrowserState::MakeDefault(std::nullopt), false);
         CHECK(std::any_of(lines.begin(), lines.end(), [](const std::string& l) { return l.find("newest backup") != std::string::npos; }));
     }
 
@@ -597,7 +774,7 @@ TEST(ArcImportController_takesAPickedFolderOrFile) {
     CHECK(read && fs::equivalent(read->folder, ArcFixture()) && read->archive.size() == 2 && read->sidebar.file == "sidebar copy.json" &&
           !read->sidebar.isBackup);
     if (read) {
-        const auto lines = ConfirmLines(*read, BrowserState::MakeDefault(std::nullopt));
+        const auto lines = ConfirmLines(*read, BrowserState::MakeDefault(std::nullopt), false);
         CHECK(std::none_of(lines.begin(), lines.end(), [](const std::string& l) { return l.find("backup") != std::string::npos; }));
     }
     // That isn't Arc's sidebar file.
@@ -625,13 +802,18 @@ TEST(ArcImportController_importsTheFixtureFolder) {
     CHECK((plan.settings == Settings{true, std::nullopt, "sevenDays"}));
 
     BrowserState state = BrowserState::MakeDefault(std::nullopt);
-    const auto lines = ConfirmLines(plan, state);
+    CHECK(!IncludesUntitled(plan, {}));  // the fixture has a named space: the Mac's default
+    const auto lines = ConfirmLines(plan, state, false);
     CHECK(lines.size() >= 3 && lines[0] == "Found 1 space, 1 favorite, 6 tabs, 1 folder and 1 split view.");
     CHECK(lines[1] == "Also imports 2 archived tabs, 6 Site Search shortcuts, 2 keyboard shortcut changes, 1 Air Traffic Control route and "
                       "2 Arc settings (Warn before quitting, Archive tabs after: 7 days).");
     CHECK(UntitledCounts(plan) == std::make_pair(1, 1));
 
-    const Value summary = Import(state, plan, profile.path);
+    Imported done = Import(state, plan);
+    // Nothing in the profile's files until the caller has saved the session.
+    CHECK(!fs::exists(profile.path / "keybindings.json") && !fs::exists(profile.path / "LinkRouting.json"));
+    WriteProfileFiles(done, profile.path);
+    const Value summary = Summary(done);
     const Value* imported = summary.Find("imported");
     CHECK(imported && *imported->Find("spaces") == Value(1) && *imported->Find("pinnedTabs") == Value(4) && *imported->Find("tabs") == Value(2) &&
           *imported->Find("folders") == Value(1) && *imported->Find("splits") == Value(1) && *imported->Find("favorites") == Value(1) &&
@@ -645,7 +827,9 @@ TEST(ArcImportController_importsTheFixtureFolder) {
         return 0;
     };
     CHECK(skippedKind("unnamedSpaces") == 1 && skippedKind("routesToProfiles") == 1 && skippedKind("sidebarItem:easel") == 1 &&
-          skippedKind("spaceIcons") == 1 && skippedKind("history") == -1);
+          skippedKind("history") == -1);
+    // The one icon Kite has no match for is the unnamed space's, which stayed out.
+    CHECK(skippedKind("spaceIcons") == 0);
 
     // The session: the space where it was, Arc's settings, the archive and Site Search.
     CHECK(state.spaces.size() == 3 && state.selectedSpaceID == Id(1));
@@ -667,12 +851,73 @@ TEST(ArcImportController_importsTheFixtureFolder) {
     CHECK(std::holds_alternative<BrowserState>(loaded) && std::get<BrowserState>(loaded) == state);
 
     // Again, with the unnamed space: Arc's Profile 1 becomes a Kite profile with its favorites.
-    const Value again = Import(state, plan, profile.path, {.includeUntitled = true});
+    const Value again = ImportAll(state, plan, profile.path, {.includeUntitled = true});
     CHECK(*again.Find("imported")->Find("spacesAdded") == Value(1) && *again.Find("imported")->Find("spacesUpdated") == Value(1));
     CHECK(Profiles(state).size() == 1 && Profiles(state)[0].name == "Side Project");
     CHECK(state.favoritesByProfile.at(Profiles(state)[0].directory).size() == 1);
     CHECK(*again.Find("imported")->Find("archivedTabs") == Value(0) && SiteSearches(state).size() == SiteSearch::ArcDefaults().size() + 6);
     CHECK(bindings && KeyBindings::FromText(Read(profile.path / "keybindings.json"))->UserOverrides().size() == 2);
+}
+
+TEST(ArcImportController_aHotWebDataJournalLeavesSiteSearchOut) {
+    TempDir dir;
+    fs::copy(ArcFixture(), dir.path / "Arc", fs::copy_options::recursive);
+    Write(dir.path / "Arc" / "User Data" / "Default" / "Web Data-journal", std::string("\xD9\xD5\x05\xF9\x20\xA1\x63\xD7", 8) + std::string(100, 'j'));
+    auto read = ReadAuto(dir.path / "Arc");
+    CHECK(std::holds_alternative<Plan>(read));
+    if (!std::holds_alternative<Plan>(read)) return;
+    const Plan& plan = std::get<Plan>(read);
+    CHECK(plan.siteSearches.empty() && plan.unreadable.size() == 1 && plan.unreadable[0].starts_with("Web Data (Arc is writing it"));
+    // An empty journal is a finished one.
+    Write(dir.path / "Arc" / "User Data" / "Default" / "Web Data-journal", "");
+    read = ReadAuto(dir.path / "Arc");
+    CHECK(std::holds_alternative<Plan>(read) && std::get<Plan>(read).siteSearches.size() == 6);
+}
+
+TEST(ArcImportController_unnamedSpacesComeWhenArcHasNoOther) {
+    // Arc for Windows' sidebar is often one unnamed space: the Mac's default would bring nothing.
+    TempDir dir;
+    const std::string sidebar = Read(ArcFixture() / "StorableSidebar.json");
+    std::string onlyUnnamed = sidebar;
+    const std::string title = "\"title\": \"Reading\",";
+    CHECK(onlyUnnamed.find(title) != std::string::npos);
+    onlyUnnamed.erase(onlyUnnamed.find(title), title.size());
+    fs::create_directories(dir.path / "User Data");
+    Write(dir.path / "StorableSidebar.json", onlyUnnamed);
+    auto read = ReadAuto(dir.path);
+    CHECK(std::holds_alternative<Plan>(read));
+    if (!std::holds_alternative<Plan>(read)) return;
+    const Plan& plan = std::get<Plan>(read);
+    CHECK(IncludesUntitled(plan, {}) && !IncludesUntitled(plan, {.includeUntitled = false}));
+    BrowserState state = BrowserState::MakeDefault(std::nullopt);
+    const auto lines = ConfirmLines(plan, state, true);
+    CHECK(lines[0] == "Found 2 spaces, 2 favorites, 7 tabs, 1 folder and 1 split view.");
+    CHECK(lines[1] == "Arc has no named spaces, so its unnamed spaces come over, named \xE2\x80\x9C" "Arc Space\xE2\x80\x9D.");
+    const Value summary = ImportAll(state, plan, dir.path / "profile");
+    CHECK(*summary.Find("imported")->Find("unnamedSpaces") == Value(2) && *summary.Find("imported")->Find("spacesAdded") == Value(2));
+    const Value* notes = summary.Find("notes");
+    CHECK(std::any_of(notes->AsArray()->begin(), notes->AsArray()->end(),
+                      [](const Value& n) { return n.AsString()->find("because Arc has no named spaces") != std::string::npos; }));
+    // Asked to leave them out, they stay out, and the summary says so.
+    BrowserState other = BrowserState::MakeDefault(std::nullopt);
+    const Value left = ImportAll(other, plan, dir.path / "profile2", {.includeUntitled = false});
+    CHECK(*left.Find("imported")->Find("spaces") == Value(0) && *left.Find("skipped")->AsArray()->front().Find("kind") == Value("unnamedSpaces"));
+}
+
+TEST(ArcImportController_backupDatesReadAsTheMacWritesThem) {
+    std::tm local{};
+    local.tm_year = 2026 - 1900;
+    local.tm_mon = 10;
+    local.tm_mday = 1;
+    local.tm_hour = 21;
+    local.tm_min = 5;
+    local.tm_isdst = -1;
+    const Timestamp t = FromUnixTime(static_cast<double>(std::mktime(&local)));
+    CHECK(BackupDateText(t) == "November 1, 2026 at 9:05 PM");
+    local.tm_hour = 0;
+    local.tm_min = 7;
+    local.tm_isdst = -1;
+    CHECK(BackupDateText(FromUnixTime(static_cast<double>(std::mktime(&local)))) == "November 1, 2026 at 12:07 AM");
 }
 
 TEST(ArcImportController_leavesFilesThatDontReadAlone) {
@@ -682,7 +927,7 @@ TEST(ArcImportController_leavesFilesThatDontReadAlone) {
     CHECK(std::holds_alternative<Plan>(read));
     if (!std::holds_alternative<Plan>(read)) return;
     BrowserState state = BrowserState::MakeDefault(std::nullopt);
-    const Value summary = Import(state, std::get<Plan>(read), profile.path);
+    const Value summary = ImportAll(state, std::get<Plan>(read), profile.path);
     CHECK(Read(profile.path / "keybindings.json") == "{broken");
     CHECK(*summary.Find("imported")->Find("keyBindings") == Value(0));
 }

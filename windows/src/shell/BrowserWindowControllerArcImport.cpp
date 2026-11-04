@@ -1,7 +1,8 @@
 // Import from Arc in the window, the Windows side of core/ArcImportController.h, as KiteMac's
 // ArcImportController.swift is the Mac's: the "importFromArc" command (also in the window's
 // system menu, Alt+Space) reads Arc's folder on a worker thread, asks for Arc's folder with the
-// system's folder picker when it can't, confirms what it found, and imports into the session.
+// system's folder picker when it can't, confirms what it found, imports into the session and
+// saves it, then writes the shortcut changes and routes.
 //
 // Arc's own import screens aren't ported: the confirmation is a message box with the Mac's
 // text, and its "Include unnamed spaces" checkbox is the box's Yes/No. Arc shuts down on
@@ -9,7 +10,6 @@
 
 #include <shobjidl.h>
 
-#include <mutex>
 #include <set>
 
 #include "core/ArcImportController.h"
@@ -19,8 +19,9 @@
 
 namespace kite {
 
+// What the worker read. It's written before the worker posts kArcReadMessage and read after
+// ArcRead joins it, so it needs no lock.
 struct BrowserWindowController::ArcJob {
-    std::mutex mutex;
     std::optional<std::variant<arc_import::Plan, arc_import::LoadError>> result;
     bool picked = false;
 };
@@ -73,7 +74,13 @@ std::optional<std::filesystem::path> PickArcFolder(HWND owner) {
 void BrowserWindowController::ImportFromArc() {
     // Never a dialog in a test run; and reading Arc's files takes a moment, so a second press
     // meanwhile does nothing.
-    if (options_.smokeTest || options_.capture || arcReading_) return;
+    if (options_.smokeTest || options_.capture || arcReading_ || closing_) return;
+    if (!options_.sessionSaves || !options_.saveSession) {
+        // The session didn't read and is never saved: an import would be lost.
+        MessageBoxW(window_.Handle(), L"Kite couldn't read its session, so it doesn't save it, and an import would be lost. Restart Kite and try again.",
+                    L"Import from Arc", MB_OK | MB_ICONWARNING);
+        return;
+    }
     arcReading_ = true;
     ReadArc(std::nullopt);
 }
@@ -86,31 +93,25 @@ void BrowserWindowController::ReadArc(std::optional<std::filesystem::path> picke
     const HWND window = window_.Handle();
     arcThread_ = std::thread([job, picked = std::move(picked), window] {
         const auto folder = ArcFolder();
-        auto result = picked ? arc_import::ReadPicked(*picked, folder) : arc_import::ReadAuto(folder);
-        {
-            std::lock_guard lock(job->mutex);
-            job->result = std::move(result);
-        }
+        job->result = picked ? arc_import::ReadPicked(*picked, folder) : arc_import::ReadAuto(folder);
         PostMessageW(window, kArcReadMessage, 0, 0);
     });
 }
 
 void BrowserWindowController::ArcRead() {
-    if (!arcJob_) return;
-    std::optional<std::variant<arc_import::Plan, arc_import::LoadError>> result;
-    bool picked = false;
-    {
-        std::lock_guard lock(arcJob_->mutex);
-        result = std::move(arcJob_->result);
-        picked = arcJob_->picked;
-    }
-    if (!result) return;
-    arcJob_.reset();
+    // The worker posted as its last step: joining it is quick, and makes its result ours.
+    if (arcThread_.joinable()) arcThread_.join();
+    std::shared_ptr<ArcJob> job = std::move(arcJob_);
+    if (!job || !job->result) return;
     const HWND owner = window_.Handle();
-    if (auto* error = std::get_if<arc_import::LoadError>(&*result)) {
+    // A dialog's own message loop runs the window's messages too: when it returns, the window
+    // may have begun closing (logoff), its session already saved. Nothing more then.
+    auto stillOpen = [&] { return !closing_ && IsWindow(owner); };
+    if (auto* error = std::get_if<arc_import::LoadError>(&*job->result)) {
         // Kite couldn't read Arc's data where it keeps it: ask for the folder.
-        if (!picked && error->failure != arc_import::Failure::NoSpaces) {
-            if (auto folder = PickArcFolder(owner)) return ReadArc(std::move(*folder));
+        if (!job->picked && error->failure != arc_import::Failure::NoSpaces) {
+            auto folder = PickArcFolder(owner);
+            if (folder && stillOpen()) return ReadArc(std::move(*folder));
             arcReading_ = false;
             return;
         }
@@ -118,28 +119,43 @@ void BrowserWindowController::ArcRead() {
         MessageBoxW(owner, Widen(error->detail).c_str(), Widen(error->message).c_str(), MB_OK | MB_ICONWARNING);
         return;
     }
-    const arc_import::Plan& plan = std::get<arc_import::Plan>(*result);
+    const arc_import::Plan& plan = std::get<arc_import::Plan>(*job->result);
+    const bool includeByDefault = arc_import::IncludesUntitled(plan, {});
     std::string text;
-    for (const std::string& line : arc_import::ConfirmLines(plan, state_)) text += (text.empty() ? "" : "\n\n") + line;
+    for (const std::string& line : arc_import::ConfirmLines(plan, state_, includeByDefault)) text += (text.empty() ? "" : "\n\n") + line;
     const auto [untitledSpaces, untitledTabs] = arc_import::UntitledCounts(plan);
     UINT buttons = MB_OKCANCEL;
     if (untitledSpaces > 0) {
-        // The Mac's "Include N unnamed spaces (M tabs)" checkbox, off unless asked.
-        text += "\n\nInclude " + std::to_string(untitledSpaces) + " unnamed space" + (untitledSpaces == 1 ? "" : "s") + " (" +
-                std::to_string(untitledTabs) + " tab" + (untitledTabs == 1 ? "" : "s") +
-                ")? Yes brings them too, No leaves them out. Arc often keeps spaces nobody set up.";
-        buttons = MB_YESNOCANCEL | MB_DEFBUTTON2;
+        // The Mac's "Include N unnamed spaces (M tabs)" checkbox, off unless asked; on when Arc
+        // has no named space, as they're all there is (Kite for Windows' own choice).
+        const std::string spaces = std::to_string(untitledSpaces) + " unnamed space" + (untitledSpaces == 1 ? "" : "s");
+        const std::string tabs = std::to_string(untitledTabs) + " tab" + (untitledTabs == 1 ? "" : "s");
+        text += "\n\nInclude the " + spaces + " (" + tabs + ")? Yes brings them, No leaves them out. " +
+                (includeByDefault ? "Arc has no named space, so they're all of your sidebar." : "Arc often keeps spaces nobody set up.");
+        buttons = MB_YESNOCANCEL | (includeByDefault ? MB_DEFBUTTON1 : MB_DEFBUTTON2);
     }
     const int answer = MessageBoxW(owner, Widen(text).c_str(), L"Import from Arc", buttons | MB_ICONQUESTION);
     arcReading_ = false;
-    if (answer == IDCANCEL) return;
+    if (answer == IDCANCEL || !stillOpen()) return;
 
     std::set<std::string> before;
     for (const Space& space : state_.spaces) {
         for (const Tab* tab : space.AllTabs()) before.insert(tab->id);
     }
-    const json::Value summary = arc_import::Import(state_, plan, options_.supportDirectory, {.includeUntitled = answer == IDYES});
-    OutputDebugStringW((L"Kite: Arc import: " + Widen(json::Write(summary)) + L"\n").c_str());
+    arc_import::ImportOptions options;
+    if (untitledSpaces > 0) options.includeUntitled = answer == IDYES;
+    arc_import::Imported imported = arc_import::Import(state_, plan, options);
+    // The session first, so the shortcut changes and routes never come without the spaces.
+    if (std::string error = options_.saveSession(); !error.empty()) {
+        MessageBoxW(owner, (L"The spaces are in this window, but Kite couldn't save them yet: " + Widen(error) +
+                            L"\n\nKite tries again when the window closes. The shortcut changes and routes weren't written.")
+                               .c_str(),
+                    L"Import from Arc", MB_OK | MB_ICONWARNING);
+    } else {
+        arc_import::WriteProfileFiles(imported, options_.supportDirectory);
+    }
+    if (!stillOpen()) return;
+    OutputDebugStringW((L"Kite: Arc import: " + Widen(json::Write(arc_import::Summary(imported))) + L"\n").c_str());
     // A space imported again replaces its old self: pages of tabs it no longer has go.
     for (const std::string& id : before) {
         if (!state_.FindTabByID(id)) PageGone(id);

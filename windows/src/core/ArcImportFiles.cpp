@@ -4,6 +4,7 @@
 #include "core/ArcImportFiles.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <map>
 
@@ -19,27 +20,6 @@ namespace {
 
 using json::Value;
 
-const Value* Member(const Value* v, std::string_view key) { return v ? v->Find(key) : nullptr; }
-const std::string* StringAt(const Value* v, std::string_view key) {
-    const Value* m = Member(v, key);
-    return m ? m->AsString() : nullptr;
-}
-const Value* ObjectAt(const Value* v, std::string_view key) {
-    const Value* m = Member(v, key);
-    return m && m->AsObject() ? m : nullptr;
-}
-std::optional<Value> ParseJson(std::string_view text) {
-    auto parsed = json::Parse(text);
-    if (auto* v = std::get_if<Value>(&parsed)) return *v;
-    return std::nullopt;
-}
-// An enum case, bare or in Swift's encoding ({"contains": {}}).
-std::optional<std::string> CaseName(const Value* v) {
-    if (!v) return std::nullopt;
-    if (auto* s = v->AsString()) return *s;
-    if (auto* o = v->AsObject(); o && !o->empty()) return o->begin()->first;
-    return std::nullopt;
-}
 
 const std::vector<std::pair<std::string_view, std::string_view>> kIntervals = {
     {"never", "Never"},       {"oneHour", "1 hour"},          {"sixHours", "6 hours"}, {"twelveHours", "12 hours"},
@@ -55,7 +35,7 @@ bool IsInterval(std::string_view raw) {
 // MARK: Archive
 
 std::vector<ClosedTab> ParseArchive(std::string_view text) {
-    auto root = ParseJson(text);
+    auto root = json::ParseValue(text);
     const Value* items = root && root->AsObject() ? root->Find("items") : nullptr;
     if (!items || !items->AsArray()) return {};
     std::set<std::string> seen;
@@ -63,12 +43,12 @@ std::vector<ClosedTab> ParseArchive(std::string_view text) {
     // A flat [id, object, id, object, ...] list, like the rest of Arc's files.
     for (const Value& item : *items->AsArray()) {
         if (!item.AsObject()) continue;
-        const Value* sidebarItem = ObjectAt(&item, "sidebarItem");
-        const Value* tab = ObjectAt(ObjectAt(sidebarItem, "data"), "tab");
-        const std::string* url = StringAt(tab, "savedURL");
+        const Value* sidebarItem = json::ObjectMember(&item, "sidebarItem");
+        const Value* tab = json::ObjectMember(json::ObjectMember(sidebarItem, "data"), "tab");
+        const std::string* url = json::StringMember(tab, "savedURL");
         if (!tab || !url || !IsURL(*url) || !url::Scheme(*url)) continue;
         std::string id;
-        if (const std::string* raw = StringAt(sidebarItem, "id")) id = NormalizeUuid(*raw).value_or("");
+        if (const std::string* raw = json::StringMember(sidebarItem, "id")) id = NormalizeUuid(*raw).value_or("");
         if (id.empty()) id = NewUuid();
         if (!seen.insert(id).second) continue;
         const Value* archived = item.Find("archivedAt");
@@ -76,9 +56,9 @@ std::vector<ClosedTab> ParseArchive(std::string_view text) {
         // Arc's dates are seconds since 2001, as Kite's.
         const Value* active = tab->Find("timeLastActiveAt");
         const double lastActive = active && active->AsNumber() ? *active->AsNumber() : archivedAt;
-        const std::string* customTitle = StringAt(sidebarItem, "title");
-        const std::string* savedTitle = StringAt(tab, "savedTitle");
-        const std::string* space = StringAt(ObjectAt(ObjectAt(&item, "source"), "space"), "_0");
+        const std::string* customTitle = json::StringMember(sidebarItem, "title");
+        const std::string* savedTitle = json::StringMember(tab, "savedTitle");
+        const std::string* space = json::StringMember(json::ObjectMember(json::ObjectMember(&item, "source"), "space"), "_0");
         ClosedTab closed;
         closed.tab.id = id;
         closed.tab.url = *url;
@@ -124,9 +104,13 @@ std::vector<std::string> Settings::Names() const {
 }
 
 Settings Settings::FromDefaults(const Value& defaults) {
+    // `raw as? Bool`: a boolean, or an NSNumber 0 or 1 (a plist <integer>).
     auto boolean = [&](std::string_view key) -> std::optional<bool> {
         const Value* v = defaults.Find(key);
-        return v ? v->AsBool() : std::nullopt;
+        if (!v) return std::nullopt;
+        if (auto b = v->AsBool()) return b;
+        if (auto n = v->AsNumber(); n && (*n == 0 || *n == 1)) return *n == 1;
+        return std::nullopt;
     };
     Settings s;
     s.warnsBeforeQuitting = boolean("shouldWarnBeforeQuitting");
@@ -139,13 +123,13 @@ std::optional<std::string> ArchiveInterval(const Value& raw) {
     // A JSON string: Swift's encoding of a dictionary with non-string keys. Profiles are
     // {"default": {}} or {"custom": {"_0": {...}}}, as in StorableSidebar.json.
     const std::string* text = raw.AsString();
-    auto root = text ? ParseJson(*text) : std::nullopt;
+    auto root = text ? json::ParseValue(*text) : std::nullopt;
     const Value* list = root && root->AsObject() ? root->Find("thresholds") : nullptr;
     if (!list || !list->AsArray()) return std::nullopt;
     const json::Array& a = *list->AsArray();
     std::optional<std::string> fallback;
     for (size_t i = 0; i + 1 < a.size(); i += 2) {
-        auto name = CaseName(&a[i + 1]);
+        auto name = SwiftCaseName(&a[i + 1]);
         if (!name || !IsInterval(*name)) continue;
         if (a[i].AsObject() && a[i].Find("default")) return name;
         if (!fallback) fallback = name;
@@ -187,7 +171,7 @@ struct ArcStoredShortcut {
 
 // JSONDecoder's reading of Arc's Shortcut; nullopt is a decoding error.
 std::optional<ArcStoredShortcut> DecodeShortcut(const Value& v) {
-    const std::string* key = StringAt(&v, "keyEquivalent");
+    const std::string* key = json::StringMember(&v, "keyEquivalent");
     const Value* flags = v.Find("deviceIndependentModifierFlags");
     if (!v.AsObject() || !key || !flags || !flags->AsInt()) return std::nullopt;
     return ArcStoredShortcut{*key, *flags->AsInt()};
@@ -195,7 +179,7 @@ std::optional<ArcStoredShortcut> DecodeShortcut(const Value& v) {
 
 // An optional String member: absent or null is none; another type fails the decode.
 bool OptionalString(const Value* object, std::string_view key, std::optional<std::string>& out) {
-    const Value* v = Member(object, key);
+    const Value* v = json::Member(object, key);
     if (!v || v->IsNull()) return true;
     if (!v->AsString()) return false;
     out = *v->AsString();
@@ -230,15 +214,15 @@ std::optional<KeyShortcut> ArcShortcut(const std::string& keyEquivalent, int64_t
 }
 
 std::optional<std::vector<KeyBindingOverride>> ParseKeyBindings(std::string_view text) {
-    auto root = ParseJson(text);
+    auto root = json::ParseValue(text);
     const Value* list = root && root->AsObject() ? root->Find("userOverrides") : nullptr;
     if (!list || !list->AsArray()) return std::nullopt;
     std::vector<KeyBindingOverride> out;
     for (const Value& entry : *list->AsArray()) {
         if (!entry.AsObject()) return std::nullopt;
-        const Value* action = ObjectAt(&entry, "action");
-        const std::string* identifier = StringAt(action, "identifier");
-        const Value* state = ObjectAt(&entry, "state");
+        const Value* action = json::ObjectMember(&entry, "action");
+        const std::string* identifier = json::StringMember(action, "identifier");
+        const Value* state = json::ObjectMember(&entry, "state");
         if (!identifier || !state) return std::nullopt;
         // state is [String: [String: Shortcut]]: every value must decode, used or not.
         std::optional<ArcStoredShortcut> valid;
@@ -254,7 +238,7 @@ std::optional<std::vector<KeyBindingOverride>> ParseKeyBindings(std::string_view
         }
         std::optional<std::string> priority, defaultPriority;
         if (!OptionalString(&entry, "priority", priority)) return std::nullopt;
-        if (const Value* def = Member(&entry, "default"); def && !def->IsNull()) {
+        if (const Value* def = json::Member(&entry, "default"); def && !def->IsNull()) {
             if (!def->AsObject() || !OptionalString(def, "priority", defaultPriority)) return std::nullopt;
         }
         // A priority comes along only when the user changed it from Arc's default for that command.
@@ -289,41 +273,41 @@ std::optional<air_traffic::Destination> ArcDestination(const Value* raw) {
     if (raw->Find("littleArc")) return air_traffic::Destination::Little();
     if (raw->Find("mostRecent")) return air_traffic::Destination::MostRecent();
     // Imported spaces keep Arc's ids, so the route finds its space in Kite.
-    const std::string* space = StringAt(ObjectAt(ObjectAt(ObjectAt(raw, "space"), "_0"), "space"), "_0");
+    const std::string* space = json::StringMember(json::ObjectMember(json::ObjectMember(json::ObjectMember(raw, "space"), "_0"), "space"), "_0");
     auto id = space ? NormalizeUuid(*space) : std::nullopt;
     if (!id) return std::nullopt;
     return air_traffic::Destination::InSpace(*id);
 }
 
 std::optional<LinkRouting> ParseLinkRouting(std::string_view text) {
-    auto root = ParseJson(text);
+    auto root = json::ParseValue(text);
     if (!root || !root->AsObject()) return std::nullopt;
     LinkRouting result;
     const Value* rules = root->Find("rules");
     for (const Value& raw : rules && rules->AsArray() ? *rules->AsArray() : json::Array{}) {
         const Value* object = raw.AsObject() ? &raw : nullptr;
-        if (ObjectAt(object, "destination") && ObjectAt(object, "destination")->Find("profile")) {
+        if (json::ObjectMember(object, "destination") && json::ObjectMember(object, "destination")->Find("profile")) {
             ++result.profileRoutes;
             continue;
         }
-        const Value* list = Member(object, "sourceComponents");
+        const Value* list = json::Member(object, "sourceComponents");
         const json::Array empty;
         const json::Array& rawComponents = list && list->AsArray() ? *list->AsArray() : empty;
         std::vector<air_traffic::Component> components;
         for (const Value& c : rawComponents) {
-            const Value* match = ObjectAt(ObjectAt(&c, "componentType"), "urlMatch");
-            const std::string* pattern = StringAt(match, "_1");
+            const Value* match = json::ObjectMember(json::ObjectMember(&c, "componentType"), "urlMatch");
+            const std::string* pattern = json::StringMember(match, "_1");
             // A style Kite doesn't know could match far more than Arc did, so it isn't read.
-            auto styleName = CaseName(Member(match, "_0"));
+            auto styleName = SwiftCaseName(json::Member(match, "_0"));
             auto style = styleName ? air_traffic::MatchStyleFromRaw(*styleName) : std::nullopt;
             if (!pattern || !style) continue;
-            const std::string* id = StringAt(&c, "id");
+            const std::string* id = json::StringMember(&c, "id");
             components.push_back({id ? NormalizeUuid(*id).value_or(NewUuid()) : NewUuid(), *style, *pattern});
         }
         // The id is what a second import replaces by, so a route without one is left out.
-        const std::string* id = StringAt(object, "id");
+        const std::string* id = json::StringMember(object, "id");
         auto uuid = id ? NormalizeUuid(*id) : std::nullopt;
-        auto destination = ArcDestination(Member(object, "destination"));
+        auto destination = ArcDestination(json::Member(object, "destination"));
         if (!uuid || components.empty() || components.size() != rawComponents.size() || !destination) {
             ++result.unreadable;
             continue;
@@ -363,7 +347,10 @@ namespace {
 
 std::optional<int64_t> Integer(const sqlite::SqlValue& v) {
     if (auto* i = std::get_if<int64_t>(&v)) return *i;
-    if (auto* d = std::get_if<double>(&v); d && *d == static_cast<double>(static_cast<int64_t>(*d))) return static_cast<int64_t>(*d);
+    // A whole REAL in int64's range; converting anything else (NaN, 1e300) is undefined.
+    if (auto* d = std::get_if<double>(&v); d && std::isfinite(*d) && *d >= -9.2e18 && *d <= 9.2e18 && *d == std::trunc(*d)) {
+        return static_cast<int64_t>(*d);
+    }
     return std::nullopt;
 }
 
@@ -425,11 +412,11 @@ std::optional<std::vector<SiteSearch>> ParseSiteSearches(std::string_view webDat
 
 std::map<std::string, std::string> ParseProfileNames(std::string_view localState) {
     std::map<std::string, std::string> names;
-    auto root = ParseJson(localState);
-    const Value* cache = ObjectAt(ObjectAt(root ? &*root : nullptr, "profile"), "info_cache");
+    auto root = json::ParseValue(localState);
+    const Value* cache = json::ObjectMember(json::ObjectMember(root ? &*root : nullptr, "profile"), "info_cache");
     if (!cache) return names;
     for (const auto& [directory, info] : *cache->AsObject()) {
-        const std::string* name = info.AsObject() ? StringAt(&info, "name") : nullptr;
+        const std::string* name = info.AsObject() ? json::StringMember(&info, "name") : nullptr;
         names[directory] = name && !name->empty() ? *name : directory;
     }
     return names;

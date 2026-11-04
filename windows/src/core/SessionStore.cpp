@@ -6,17 +6,11 @@
 #include <fstream>
 #include <sstream>
 
+#include "core/Files.h"
+
 namespace kite {
 
 namespace fs = std::filesystem;
-
-namespace {
-// UTF-8 for messages; path::string() throws on Windows for names outside the ANSI code page.
-std::string PathText(const fs::path& path) {
-    auto u8 = path.u8string();
-    return std::string(u8.begin(), u8.end());
-}
-}  // namespace
 
 bool SessionStore::MaySave(const LoadResult& result) {
     if (auto* error = std::get_if<Error>(&result)) return error->quarantinedTo.has_value();
@@ -69,30 +63,8 @@ SessionStore::LoadResult SessionStore::Load(Unreadable unreadable) const {
 }
 
 std::string SessionStore::Save(const BrowserState& state) const {
-    std::error_code error;
-    fs::create_directories(file_.parent_path(), error);
-    if (error) return "couldn't create " + PathText(file_.parent_path()) + ": " + error.message();
-
     json::Value root(json::Object{{"state", Encode(state)}, {"version", kCurrentVersion}});
-    std::string text = json::Write(root);
-
-    // Write a sibling temp file, then rename over the session (MoveFileExW with replace on Windows).
-    fs::path temp = file_;
-    temp += ".tmp";
-    {
-        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
-        if (!out) return "couldn't write " + PathText(temp);
-        out.write(text.data(), static_cast<std::streamsize>(text.size()));
-        out.flush();
-        if (!out) return "couldn't write " + PathText(temp);
-    }
-    fs::rename(temp, file_, error);
-    if (error) {
-        std::error_code ignored;
-        fs::remove(temp, ignored);
-        return "couldn't replace " + PathText(file_) + ": " + error.message();
-    }
-    return {};
+    return WriteFileAtomically(file_, json::Write(root));
 }
 
 }  // namespace kite

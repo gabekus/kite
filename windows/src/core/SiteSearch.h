@@ -38,8 +38,6 @@ struct SiteSearch {
 // The session's Site Searches; none when there are none or they don't read (`readable` false then).
 std::vector<SiteSearch> SiteSearches(const BrowserState& state, bool* readable = nullptr);
 void SetSiteSearches(BrowserState& state, const std::vector<SiteSearch>& sites);
-// Adds Arc's defaults that aren't there yet, as the Mac does when it reads any session.
-void SeedDefaultSiteSearches(BrowserState& state);
 // Adds imported shortcuts after seeding the defaults; one with the same shortcut (ignoring
 // case) replaces the entry, keeping its id. False when the session's own entries don't read
 // (they're left as they are).

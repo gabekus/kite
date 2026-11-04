@@ -281,6 +281,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.frameLog = frameLogOption.present;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
     options.supportDirectory = supportDirectory;
+    options.sessionSaves = maySave;
+    // Import from Arc saves at once. W11's background writer (SessionChanged) replaces this
+    // synchronous save on the UI thread.
+    options.saveSession = [&] { return session.Save(state); };
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
     auto save = [&] {
         if (maySave) saveError = session.Save(state);

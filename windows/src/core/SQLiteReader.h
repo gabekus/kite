@@ -6,8 +6,13 @@
 // overflow pages. Read only, and never trusting the file: a page out of range, a loop or a
 // record that runs past its page makes it give up rather than read out of bounds.
 //
+// Each page is read at most once and the records together never exceed the file, so a crafted
+// file costs no more memory than its own size.
+//
 // Not handled, since Chromium's databases don't need them: WITHOUT ROWID tables, a write-ahead
-// log (Chromium keeps a rollback journal; a transaction in progress isn't seen) and UTF-16 text.
+// log and UTF-16 text. Chromium keeps a rollback journal, which this never reads: while a write
+// is in progress (a hot journal beside the file, IsHotJournal) the file may be half written,
+// so callers check for one first and don't read the database then.
 
 #include <cstdint>
 #include <optional>
@@ -45,5 +50,9 @@ struct ColumnDefinition {
     bool rowidAlias = false;
 };
 std::optional<std::vector<ColumnDefinition>> ParseColumns(std::string_view createTable);
+
+// Whether a rollback journal's bytes are a hot journal: one SQLite began (it starts with the
+// journal magic) and hasn't finished. An empty or zeroed journal is a finished one.
+bool IsHotJournal(std::string_view journal);
 
 }  // namespace kite::sqlite

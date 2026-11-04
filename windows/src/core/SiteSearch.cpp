@@ -154,14 +154,6 @@ void Seed(BrowserState& state, std::vector<SiteSearch>& sites) {
 
 }  // namespace
 
-void SeedDefaultSiteSearches(BrowserState& state) {
-    bool readable = true;
-    std::vector<SiteSearch> sites = SiteSearches(state, &readable);
-    if (!readable) return;
-    Seed(state, sites);
-    SetSiteSearches(state, sites);
-}
-
 bool MergeSiteSearches(BrowserState& state, const std::vector<SiteSearch>& imported) {
     bool readable = true;
     std::vector<SiteSearch> sites = SiteSearches(state, &readable);

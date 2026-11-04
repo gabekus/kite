@@ -21,18 +21,9 @@ using json::Value;
 
 constexpr size_t kMaxSplitPanes = 4;  // SplitView.maxPanes
 
-const Value* Member(const Value* object, std::string_view key) { return object ? object->Find(key) : nullptr; }
-const json::Object* ObjectAt(const Value* object, std::string_view key) {
-    const Value* v = Member(object, key);
-    return v ? v->AsObject() : nullptr;
-}
-const std::string* StringAt(const Value* object, std::string_view key) {
-    const Value* v = Member(object, key);
-    return v ? v->AsString() : nullptr;
-}
 // A non-empty string member, as `(x as? String).flatMap { $0.isEmpty ? nil : $0 }`.
 std::optional<std::string> NonEmpty(const Value* object, std::string_view key) {
-    const std::string* s = StringAt(object, key);
+    const std::string* s = json::StringMember(object, key);
     if (!s || s->empty()) return std::nullopt;
     return *s;
 }
@@ -42,18 +33,11 @@ std::optional<std::string> ProfileKey(const Value* raw) {
     if (!raw || !raw->AsObject()) return std::nullopt;
     // Arc's Default profile lives in User Data/Default, as Kite's does.
     if (raw->Find("default")) return std::string(Profile::kDefaultDirectory);
-    const Value* custom = Member(raw, "custom");
+    const Value* custom = json::Member(raw, "custom");
     const Value* inner = custom && custom->AsObject() ? custom->Find("_0") : nullptr;
-    const std::string* basename = inner && inner->AsObject() ? StringAt(inner, "directoryBasename") : nullptr;
+    const std::string* basename = inner && inner->AsObject() ? json::StringMember(inner, "directoryBasename") : nullptr;
     if (!basename) return std::nullopt;
     return *basename;
-}
-
-// An enum case written as Swift encodes it ({"pinned": {}}) or bare ("pinned"): its name.
-std::optional<std::string> CaseName(const Value& v) {
-    if (auto* s = v.AsString()) return *s;
-    if (auto* o = v.AsObject(); o && !o->empty()) return o->begin()->first;
-    return std::nullopt;
 }
 
 constexpr const char* kFallbackIcons[] = {"\xF0\x9F\x8C\x80", "\xF0\x9F\x8C\xBF", "\xF0\x9F\x8E\xA8",
@@ -72,7 +56,7 @@ public:
             if (!container.AsObject()) continue;
             if (const Value* spaces = container.Find("spaces"); spaces && spaces->AsArray()) {
                 for (const Value& space : *spaces->AsArray()) {
-                    const std::string* id = space.AsObject() ? StringAt(&space, "id") : nullptr;
+                    const std::string* id = space.AsObject() ? json::StringMember(&space, "id") : nullptr;
                     if (!id || !seenSpaces.insert(*id).second) continue;
                     spaceObjects_.push_back(&space);
                 }
@@ -80,7 +64,7 @@ public:
             if (const Value* items = container.Find("items"); items && items->AsArray()) {
                 for (const Value& item : *items->AsArray()) {
                     if (!item.AsObject()) continue;
-                    if (const std::string* id = StringAt(&item, "id")) items_[*id] = &item;
+                    if (const std::string* id = json::StringMember(&item, "id")) items_[*id] = &item;
                 }
             }
             if (const Value* favorites = container.Find("topAppsContainerIDs"); favorites && favorites->AsArray()) {
@@ -95,18 +79,33 @@ public:
 
     Result BuildSpaces() {
         Result result;
+        // Where each item a space reaches goes, before any space is built (AssignHomes).
+        std::vector<std::string> roots;
+        for (const Value* object : spaceObjects_) {
+            const auto containers = Containers(*object);
+            for (const char* section : {"pinned", "unpinned"}) {
+                if (auto it = containers.find(section); it != containers.end()) roots.push_back(it->second);
+            }
+        }
+        std::set<std::string> reserved(roots.begin(), roots.end());
+        for (const auto& [profile, container] : favoritesContainers_) reserved.insert(container);
+        home_ = AssignHomes(roots, reserved);
         for (const Value* object : spaceObjects_) {
             if (auto space = BuildSpace(*object, result.spaces.size())) result.spaces.push_back(std::move(*space));
         }
         // Favorites: a grid per profile, in Arc and in Kite. Default's too: Kite always has it.
+        home_.reset();
         for (const std::string& profile : WithDefault(profiles_)) {
             auto container = favoritesContainers_.find(profile);
             if (container == favoritesContainers_.end()) continue;
+            // Each grid is walked on its own: profiles that share a container all get its grid,
+            // and a favorite that's also in a space stays in both.
+            placed_.clear();
             // A split in the favorites grid can't stay one: favorites belong to no space.
             spaceSplits_.clear();
             std::vector<Tab> tabs;
             for (const Value* child : Children(container->second)) {
-                for (Tab& tab : FlatTabs(*child)) tabs.push_back(std::move(tab));
+                for (Tab& tab : FlatTabs(*child, 0)) tabs.push_back(std::move(tab));
             }
             spaceSplits_.clear();
             std::vector<Tab> grid;
@@ -127,11 +126,13 @@ public:
             for (const auto& [kind, count] : skippedKinds_) kinds += (kinds.empty() ? "" : ", ") + kind;
             result.notes.push_back("Skipped unsupported sidebar items: " + kinds + ".");
         }
-        if (iconsReplaced_ > 0) {
-            const bool one = iconsReplaced_ == 1;
-            result.notes.push_back(std::to_string(iconsReplaced_) + " space icon" + (one ? " is" : "s are") +
-                                   " from Arc's own icon set, which Kite doesn't have, so " + (one ? "it gets" : "they get") +
-                                   " a stand-in.");
+        if (tooDeep_ > 0) {
+            result.notes.push_back(std::to_string(tooDeep_) + (tooDeep_ == 1 ? " item" : " items") + " nested more than " +
+                                   std::to_string(kMaxDepth) + " levels deep " + (tooDeep_ == 1 ? "was" : "were") + " left out.");
+        }
+        if (repeated_ > 0) {
+            result.notes.push_back("Skipped " + std::to_string(repeated_) + " repeated or circular sidebar " +
+                                   (repeated_ == 1 ? "entry." : "entries."));
         }
         result.profiles = profiles_;
         result.tabCount = tabCount_;
@@ -140,6 +141,8 @@ public:
         result.untitledSpaceIDs = untitled_;
         result.skippedKinds = skippedKinds_;
         result.iconsReplaced = iconsReplaced_;
+        result.itemsTooDeep = tooDeep_;
+        result.repeatedItems = repeated_;
         return result;
     }
 
@@ -148,14 +151,16 @@ private:
     // "unpinned", id], and Arc for Windows' `newContainerIDs`, whose keys are enum cases.
     static std::map<std::string, std::string> Containers(const Value& object) {
         std::map<std::string, std::string> result;
-        for (const char* key : {"containerIDs", "newContainerIDs"}) {
+        // A key given twice takes its last value, as the Mac's pairs(_:); containerIDs, the Mac's
+        // own list, wins over newContainerIDs.
+        for (const char* key : {"newContainerIDs", "containerIDs"}) {
             const Value* raw = object.Find(key);
             if (!raw || !raw->AsArray()) continue;
             const json::Array& list = *raw->AsArray();
             for (size_t i = 0; i + 1 < list.size(); i += 2) {
                 // containerIDs takes only string keys, as the Mac's pairs(_:).
-                auto name = key[0] == 'c' ? (list[i].AsString() ? std::optional(*list[i].AsString()) : std::nullopt) : CaseName(list[i]);
-                if (name && list[i + 1].AsString()) result.emplace(*name, *list[i + 1].AsString());
+                auto name = key[0] == 'c' ? (list[i].AsString() ? std::optional(*list[i].AsString()) : std::nullopt) : SwiftCaseName(&list[i]);
+                if (name && list[i + 1].AsString()) result.insert_or_assign(*name, *list[i + 1].AsString());
             }
         }
         return result;
@@ -167,13 +172,13 @@ private:
         std::vector<PinnedItem> pinned;
         if (auto it = containers.find("pinned"); it != containers.end()) {
             for (const Value* child : Children(it->second)) {
-                for (PinnedItem& item : PinnedItems(*child)) pinned.push_back(std::move(item));
+                for (PinnedItem& item : PinnedItems(*child, 0)) pinned.push_back(std::move(item));
             }
         }
         std::vector<Tab> unpinned;
         if (auto it = containers.find("unpinned"); it != containers.end()) {
             for (const Value* child : Children(it->second)) {
-                for (Tab& tab : FlatTabs(*child)) unpinned.push_back(std::move(tab));
+                for (Tab& tab : FlatTabs(*child, 0)) unpinned.push_back(std::move(tab));
             }
         }
         const std::string profile = ProfileKey(object.Find("profile")).value_or(Profile::kDefaultDirectory);
@@ -191,8 +196,10 @@ private:
         if (!name) untitled_.insert(space.id);
         space.name = name.value_or("Arc Space");
         const auto& presets = Theme::Presets();
-        space.icon = Icon(Member(customInfo, "iconType")).value_or(kFallbackIcons[index % std::size(kFallbackIcons)]);
-        space.theme = ThemeFrom(Member(customInfo, "windowTheme")).value_or(presets[index % presets.size()]);
+        bool replaced = false;
+        space.icon = Icon(json::Member(customInfo, "iconType"), replaced).value_or(kFallbackIcons[index % std::size(kFallbackIcons)]);
+        if (replaced) iconsReplaced_.insert(space.id);
+        space.theme = ThemeFrom(json::Member(customInfo, "windowTheme")).value_or(presets[index % presets.size()]);
         space.pinnedItems = std::move(pinned);
         space.tabs = std::move(unpinned);
         if (!space.tabs.empty()) space.selectedTabID = space.tabs.front().id;
@@ -201,20 +208,131 @@ private:
         return space;
     }
 
-    std::vector<const Value*> Children(const std::string& id) const {
-        std::vector<const Value*> out;
+    // An item's childrenIds; none when one isn't a string (`as? [String]`).
+    std::vector<std::string> ChildIDs(const std::string& id) const {
         auto item = items_.find(id);
-        if (item == items_.end()) return out;
+        if (item == items_.end()) return {};
         const Value* ids = item->second->Find("childrenIds");
-        if (!ids || !ids->AsArray()) return out;
-        // `as? [String]`: one id that isn't a string and there are none.
+        if (!ids || !ids->AsArray()) return {};
+        std::vector<std::string> out;
         for (const Value& child : *ids->AsArray()) {
             if (!child.AsString()) return {};
-        }
-        for (const Value& child : *ids->AsArray()) {
-            if (auto found = items_.find(*child.AsString()); found != items_.end()) out.push_back(found->second);
+            out.push_back(*child.AsString());
         }
         return out;
+    }
+
+    // Whether the walk goes into an item's children (besides a space's containers): folders and
+    // split views. A tab's, an easel's or an empty item's children stay out (expands).
+    bool Expands(const std::string& id) const {
+        auto item = items_.find(id);
+        if (item == items_.end()) return false;
+        const Value* data = Data(*item->second);
+        return data && (data->Find("list") || data->Find("splitView"));
+    }
+
+    // Whether `childID` goes under `parentID`: under its home in a space, under whatever lists it
+    // in a favorites grid (goesUnder).
+    bool GoesUnder(const std::string& childID, const std::string& parentID) const {
+        if (!home_) return true;
+        auto it = home_->find(childID);
+        return it != home_->end() && it->second == parentID;
+    }
+
+    // The children of item `id` that go here, each placed once (ArcImport.children(of:)). A
+    // listing that repeats an item here or loops back to an ancestor is skipped and counted; one
+    // whose item has its home under another parent is skipped quietly, since that loses nothing.
+    std::vector<const Value*> Children(const std::string& id) {
+        placed_.insert(id);
+        std::vector<const Value*> out;
+        for (const std::string& childID : ChildIDs(id)) {
+            auto child = items_.find(childID);
+            if (child == items_.end()) continue;
+            if (!GoesUnder(childID, id)) {
+                if (home_ && IsAtOrBelow(id, childID, *home_)) ++repeated_;
+                continue;
+            }
+            if (!placed_.insert(childID).second) {
+                ++repeated_;
+                continue;
+            }
+            out.push_back(child->second);
+        }
+        return out;
+    }
+
+    // Each item's home in the spaces whose containers are `roots` (assignHomes): the first parent
+    // that lists it, in the order the walk meets them, so every item a space reaches is placed.
+    // Listed under several (a stale or sync-damaged file), it goes to the parent its parentID
+    // names instead, if that parent is reached, expands, lists it, and isn't the item or below
+    // it. `reserved` ids are never a child. Iterative, so no file overflows the stack here.
+    std::map<std::string, std::string> AssignHomes(const std::vector<std::string>& roots, std::set<std::string> claimed) const {
+        std::map<std::string, std::string> result;
+        std::vector<std::string> order;
+        const std::set<std::string> rootSet(roots.begin(), roots.end());
+        for (const std::string& root : roots) {
+            std::vector<std::string> pending{root};
+            while (!pending.empty()) {
+                const std::string id = std::move(pending.back());
+                pending.pop_back();
+                if (!rootSet.contains(id) && !Expands(id)) continue;
+                // A parent claims all its children before any is walked, as Children does.
+                std::vector<std::string> claimedHere;
+                for (const std::string& childID : ChildIDs(id)) {
+                    if (!items_.contains(childID) || !claimed.insert(childID).second) continue;
+                    result[childID] = id;
+                    claimedHere.push_back(childID);
+                }
+                order.insert(order.end(), claimedHere.begin(), claimedHere.end());
+                pending.insert(pending.end(), claimedHere.rbegin(), claimedHere.rend());
+            }
+        }
+        for (const std::string& childID : order) {
+            const std::string* parent = json::StringMember(items_.at(childID), "parentID");
+            if (!parent || *parent == result[childID]) continue;
+            if (!result.contains(*parent) && !rootSet.contains(*parent)) continue;
+            if (!rootSet.contains(*parent) && !Expands(*parent)) continue;
+            const auto listed = ChildIDs(*parent);
+            if (std::find(listed.begin(), listed.end(), childID) == listed.end()) continue;
+            if (IsAtOrBelow(*parent, childID, result)) continue;
+            result[childID] = *parent;
+        }
+        return result;
+    }
+
+    // Whether `id` is `ancestor` or under it in `home`. Too deep to tell (it would be cut
+    // anyway) counts as under, so the first listing stays.
+    static bool IsAtOrBelow(const std::string& id, const std::string& ancestor, const std::map<std::string, std::string>& home) {
+        std::optional<std::string> current = id;
+        // A walked item sits at most kMaxDepth levels under a container, which has no home.
+        for (int i = 0; i <= kMaxDepth + 1; ++i) {
+            if (!current) return false;
+            if (*current == ancestor) return true;
+            auto up = home.find(*current);
+            current = up == home.end() ? std::nullopt : std::optional(up->second);
+        }
+        return true;
+    }
+
+    // Whether an item `depth` levels down is past kMaxDepth. If so it and everything under it
+    // are counted as left out, without recursing (leavesOut).
+    bool LeavesOut(const Value& item, int depth) {
+        if (depth < kMaxDepth) return false;
+        std::vector<const Value*> pending{&item};
+        while (!pending.empty()) {
+            const Value* next = pending.back();
+            pending.pop_back();
+            ++tooDeep_;
+            const std::string* id = json::StringMember(next, "id");
+            if (!id || !Expands(*id)) continue;
+            for (const std::string& childID : ChildIDs(*id)) {
+                auto child = items_.find(childID);
+                if (child == items_.end()) continue;
+                if (!GoesUnder(childID, *id) || !placed_.insert(childID).second) continue;
+                pending.push_back(child->second);
+            }
+        }
+        return true;
     }
 
     static const Value* Data(const Value& item) {
@@ -224,14 +342,15 @@ private:
 
     // A pinned tab, a folder, or a split view's tabs side by side (the split itself is recorded
     // in spaceSplits_).
-    std::vector<PinnedItem> PinnedItems(const Value& item) {
+    std::vector<PinnedItem> PinnedItems(const Value& item, int depth) {
+        if (LeavesOut(item, depth)) return {};
         const Value* data = Data(item);
         if (data && data->Find("list")) {
             ++folderCount_;
-            const std::string id = StringAt(&item, "id") ? *StringAt(&item, "id") : std::string();
+            const std::string id = json::StringMember(&item, "id") ? *json::StringMember(&item, "id") : std::string();
             std::vector<PinnedItem> contents;
             for (const Value* child : Children(id)) {
-                for (PinnedItem& inner : PinnedItems(*child)) contents.push_back(std::move(inner));
+                for (PinnedItem& inner : PinnedItems(*child, depth + 1)) contents.push_back(std::move(inner));
             }
             Folder folder;
             folder.name = NonEmpty(&item, "title").value_or("Folder");
@@ -240,32 +359,33 @@ private:
             return {PinnedItem{std::move(folder)}};
         }
         std::vector<PinnedItem> out;
-        for (Tab& tab : FlatTabs(item)) out.push_back(PinnedItem{std::move(tab)});
+        for (Tab& tab : FlatTabs(item, depth)) out.push_back(PinnedItem{std::move(tab)});
         return out;
     }
 
     // Tabs in an item, flattening split views and (outside the pinned section) folders.
-    std::vector<Tab> FlatTabs(const Value& item) {
+    std::vector<Tab> FlatTabs(const Value& item, int depth) {
+        if (LeavesOut(item, depth)) return {};
         const Value* data = Data(item);
-        if (ObjectAt(data, "tab")) {
+        if (json::ObjectMember(data, "tab")) {
             ++tabCount_;
             const Value* tabValue = data->Find("tab");
             Tab imported;
             imported.id = UniqueID(item.Find("id"));
-            if (const std::string* saved = StringAt(tabValue, "savedURL"); saved && IsURL(*saved)) imported.url = *saved;
-            if (const std::string* title = StringAt(tabValue, "savedTitle")) imported.title = *title;
+            if (const std::string* saved = json::StringMember(tabValue, "savedURL"); saved && IsURL(*saved)) imported.url = *saved;
+            if (const std::string* title = json::StringMember(tabValue, "savedTitle")) imported.title = *title;
             // Arc's timestamps would trip Kite's 12-hour auto-archive right away.
             imported.lastActiveAt = now_;
             // An item title is the user's rename; it stays when the page's title changes.
             imported.customTitle = NonEmpty(&item, "title");
             return {std::move(imported)};
         }
-        const std::string id = StringAt(&item, "id") ? *StringAt(&item, "id") : std::string();
-        if (const Value* split = Member(data, "splitView"); split && split->AsObject()) return SplitTabs(id, *split);
+        const std::string id = json::StringMember(&item, "id") ? *json::StringMember(&item, "id") : std::string();
+        if (const Value* split = json::Member(data, "splitView"); split && split->AsObject()) return SplitTabs(id, *split, depth);
         if (data && data->Find("list")) {
             std::vector<Tab> out;
             for (const Value* child : Children(id)) {
-                for (Tab& tab : FlatTabs(*child)) out.push_back(std::move(tab));
+                for (Tab& tab : FlatTabs(*child, depth + 1)) out.push_back(std::move(tab));
             }
             return out;
         }
@@ -275,7 +395,7 @@ private:
 
     // A split view's tabs, in pane order, recording the split for the space. Arc's
     // itemWidthFactors is a flat [itemID, factor, ...] list and may leave panes out.
-    std::vector<Tab> SplitTabs(const std::string& id, const Value& split) {
+    std::vector<Tab> SplitTabs(const std::string& id, const Value& split, int depth) {
         std::map<std::string, double> widths;
         if (const Value* list = split.Find("itemWidthFactors"); list && list->AsArray()) {
             const json::Array& a = *list->AsArray();
@@ -286,9 +406,9 @@ private:
         std::vector<Tab> tabs;
         std::vector<std::optional<double>> factors;
         for (const Value* child : Children(id)) {
-            std::vector<Tab> childTabs = FlatTabs(*child);
+            std::vector<Tab> childTabs = FlatTabs(*child, depth + 1);
             std::optional<double> factor;
-            if (const std::string* childID = StringAt(child, "id")) {
+            if (const std::string* childID = json::StringMember(child, "id")) {
                 if (auto it = widths.find(*childID); it != widths.end()) factor = it->second;
             }
             for (size_t i = 0; i < childTabs.size(); ++i) factors.push_back(i == 0 ? factor : std::nullopt);
@@ -303,7 +423,7 @@ private:
         factors.resize(panes);
         if (auto stored = SplitWidthFactors(factors)) view.widthFactors = *stored;
         else view.widthFactors.assign(panes, 1.0 / static_cast<double>(panes));
-        const std::string* orientation = StringAt(&split, "layoutOrientation");
+        const std::string* orientation = json::StringMember(&split, "layoutOrientation");
         view.orientation = orientation && (*orientation == "horizontal" || *orientation == "vertical") ? *orientation : "horizontal";
         spaceSplits_.push_back(std::move(view));
         return tabs;
@@ -320,7 +440,7 @@ private:
         return id;
     }
 
-    std::optional<std::string> Icon(const Value* raw) {
+    std::optional<std::string> Icon(const Value* raw, bool& replaced) {
         if (!raw || !raw->AsObject()) return std::nullopt;
         if (auto emoji = NonEmpty(raw, "emoji_v2")) return emoji;
         if (const Value* code = raw->Find("emoji")) {
@@ -334,7 +454,7 @@ private:
             for (const std::string& candidate : {*name, *name + ".fill"}) {
                 if (SymbolGlyphFor(candidate)) return std::string(kSymbolIconPrefix) + candidate;
             }
-            ++iconsReplaced_;
+            replaced = true;
         }
         return std::nullopt;
     }
@@ -370,7 +490,7 @@ private:
             if (const json::Object* dict = value.AsObject()) {
                 if (const Value* i = value.Find("intensityFactor"); i && i->AsNumber()) intensity = *i->AsNumber();
                 // Either a bare case name or Swift's enum encoding, {"opaque": {}}.
-                if (const Value* t = value.Find("translucencyStyle")) translucency = CaseName(*t);
+                if (const Value* t = value.Find("translucencyStyle")) translucency = SwiftCaseName(t);
                 for (const auto& [key, member] : *dict) self(self, member);
             } else if (const json::Array* list = value.AsArray()) {
                 for (const Value& member : *list) self(self, member);
@@ -387,7 +507,11 @@ private:
     std::map<std::string, const Value*> items_;
     std::map<std::string, std::string> favoritesContainers_;  // Arc profile folder → favorites container id
     std::set<std::string> usedIDs_;
-    int tabCount_ = 0, folderCount_ = 0, splitCount_ = 0, verticalSplits_ = 0, iconsReplaced_ = 0;
+    int tabCount_ = 0, folderCount_ = 0, splitCount_ = 0, verticalSplits_ = 0, tooDeep_ = 0, repeated_ = 0;
+    std::set<std::string> iconsReplaced_;
+    std::set<std::string> placed_;  // Arc item ids already in this walk's tree
+    // The parent each item a space reaches goes under; none while favorites are walked.
+    std::optional<std::map<std::string, std::string>> home_;
     std::vector<SplitView> spaceSplits_;  // splits found while building the current space
     std::set<std::string> untitled_;
     std::map<std::string, int> skippedKinds_;
@@ -395,6 +519,13 @@ private:
 };
 
 }  // namespace
+
+std::optional<std::string> SwiftCaseName(const json::Value* value) {
+    if (!value) return std::nullopt;
+    if (auto* name = value->AsString()) return *name;
+    if (auto* object = value->AsObject(); object && !object->empty()) return object->begin()->first;
+    return std::nullopt;
+}
 
 std::vector<std::string> WithDefault(std::vector<std::string> profiles) {
     if (std::find(profiles.begin(), profiles.end(), Profile::kDefaultDirectory) == profiles.end()) {
@@ -419,15 +550,6 @@ std::vector<std::string> Result::NamedSpaceProfiles() const {
         if (std::find(out.begin(), out.end(), profile) == out.end()) out.push_back(profile);
     }
     return out;
-}
-
-const char* Name(Failure failure) {
-    switch (failure) {
-    case Failure::NotJSON: return "notJSON";
-    case Failure::NotArcSidebar: return "notArcSidebar";
-    case Failure::NoSpaces: return "noSpaces";
-    }
-    return "";
 }
 
 std::variant<Result, Failure> Parse(std::string_view text, Timestamp now) {
@@ -664,7 +786,11 @@ void SyncPinnedURLs(BrowserState& state) {
     for (auto& [profile, tabs] : state.favoritesByProfile) {
         for (Tab& tab : tabs) Adopt(tab);
     }
-    for (Space& space : state.spaces) AdoptAll(space.pinnedItems);
+    for (Space& space : state.spaces) {
+        AdoptAll(space.pinnedItems);
+        // Unpinned tabs keep none, so pinning one again pins the page it's on then.
+        for (Tab& tab : space.tabs) tab.pinnedURL.reset();
+    }
 }
 
 }  // namespace kite

@@ -78,18 +78,39 @@ std::variant<Plan, LoadError> ReadPicked(const std::filesystem::path& picked, co
 // The rest of Arc's files, for a sidebar read from `folder`.
 Plan ReadPlan(Sidebar sidebar, const std::filesystem::path& folder);
 
-// What the Mac's confirmation says: what was found and what will and won't come over, one
-// paragraph a line, before the user picks whether to include the unnamed spaces.
-std::vector<std::string> ConfirmLines(const Plan& plan, const BrowserState& state);
 // The unnamed spaces and their tabs, for the confirmation's choice.
 std::pair<int, int> UntitledCounts(const Plan& plan);
 
 struct ImportOptions {
-    bool includeUntitled = false;
+    // Whether Arc's unnamed spaces come over. None: the Mac's default (left out), except when
+    // Arc has no named space at all, as Arc for Windows often hasn't: then they're all there
+    // is, and they come over (Kite for Windows' own choice).
+    std::optional<bool> includeUntitled;
 };
-// The import (the Mac's perform): spaces, favorites and profiles, Site Search, the archive and
-// Arc's settings into `state`; shortcut changes and routes into `profileDirectory`'s files.
-// Returns the summary: counts per kind of what came over, and what was skipped and why.
-json::Value Import(BrowserState& state, const Plan& plan, const std::filesystem::path& profileDirectory, ImportOptions options = {});
+bool IncludesUntitled(const Plan& plan, ImportOptions options);
+
+// What the Mac's confirmation says: what was found and what will and won't come over, one
+// paragraph a line, counting the unnamed spaces when they'd come over.
+std::vector<std::string> ConfirmLines(const Plan& plan, const BrowserState& state, bool includeUntitled);
+
+// An import done in the session but not yet in the profile's other files.
+struct Imported {
+    json::Object source, found, imported;
+    json::Array skipped, notes;
+    std::vector<KeyBindingOverride> keyBindings;  // for keybindings.json
+    std::optional<LinkRouting> routes;            // for LinkRouting.json, to spaces Kite has
+};
+
+// The import (the Mac's perform), in two steps so the session is saved before anything else is
+// written: Import puts spaces, favorites and profiles, Site Search, the archive and Arc's
+// settings into `state`. The caller saves the session, then WriteProfileFiles merges the
+// shortcut changes and routes into `profileDirectory`'s keybindings.json and LinkRouting.json.
+Imported Import(BrowserState& state, const Plan& plan, ImportOptions options = {});
+void WriteProfileFiles(Imported& imported, const std::filesystem::path& profileDirectory);
+// Counts per kind of what came over, what was skipped and why, and the notes. Never Arc's
+// titles, addresses or names.
+json::Value Summary(const Imported& imported);
+// When a backup was last written, as the Mac's confirmation says it: "November 1, 2026 at 9:05 PM".
+std::string BackupDateText(Timestamp time);
 
 }  // namespace kite::arc_import

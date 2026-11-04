@@ -4,32 +4,14 @@
 
 #include <algorithm>
 
-#include "core/Unicode.h"
-#include "core/Url.h"
 #include "core/Uuid.h"
 
 namespace kite::air_traffic {
 
 namespace {
 
-std::string StripWWW(std::string host) { return host.starts_with("www.") ? host.substr(4) : host; }
-
-std::string Normalized(std::string s) {
-    for (std::string_view prefix : {"https://", "http://"}) {
-        if (s.starts_with(prefix)) s.erase(0, prefix.size());
-    }
-    s = StripWWW(std::move(s));
-    while (!s.empty() && s.back() == '/') s.pop_back();
-    return s;
-}
-
-const std::string* StringAt(const json::Value& v, std::string_view key) {
-    const json::Value* m = v.Find(key);
-    return m ? m->AsString() : nullptr;
-}
-
 std::optional<std::string> UuidAt(const json::Value& v, std::string_view key) {
-    const std::string* text = StringAt(v, key);
+    const std::string* text = json::StringMember(&v, key);
     return text ? NormalizeUuid(*text) : std::nullopt;
 }
 
@@ -42,33 +24,6 @@ std::optional<MatchStyle> MatchStyleFromRaw(std::string_view raw) {
 }
 
 std::string_view RawValue(MatchStyle style) { return style == MatchStyle::Matches ? "matches" : "contains"; }
-
-bool Component::Matches(std::string_view url) const {
-    const std::string needle = unicode::Lowercased(unicode::Trim(pattern));
-    if (needle.empty()) return false;
-    const std::string link = unicode::Lowercased(url);
-    if (style == MatchStyle::Contains) return link.find(needle) != std::string::npos;
-    // "Is equal to" accepts the site ("spotify.com") or the whole link, ignoring scheme, "www."
-    // and a trailing slash.
-    const std::string target = Normalized(needle);
-    if (auto host = url::Host(url); host && StripWWW(unicode::Lowercased(*host)) == target) return true;
-    return Normalized(link) == target;
-}
-
-bool Rule::Matches(std::string_view url) const {
-    return std::any_of(components.begin(), components.end(), [&](const Component& c) { return c.Matches(url); });
-}
-
-Destination State::DestinationFor(std::string_view url, const std::set<std::string>& spaceIDs, bool opensExternalLinksInLittleKite) const {
-    auto scheme = url::Scheme(url);
-    if (scheme != "http" && scheme != "https") return Destination::MostRecent();
-    auto valid = [&](const Destination& d) { return d.kind != Destination::Kind::Space || spaceIDs.contains(d.spaceID); };
-    for (const Rule& rule : rules) {
-        if (rule.Matches(url) && valid(rule.destination)) return rule.destination;
-    }
-    const Destination fallback = defaultDestination.value_or(opensExternalLinksInLittleKite ? Destination::Little() : Destination::MostRecent());
-    return valid(fallback) ? fallback : Destination::MostRecent();
-}
 
 json::Value Encode(const Destination& d) {
     switch (d.kind) {
@@ -123,8 +78,8 @@ std::optional<State> State::FromJson(const json::Value& v) {
         Rule rule{*id, {}, *decoded};
         for (const json::Value& c : *components->AsArray()) {
             auto componentID = UuidAt(c, "id");
-            const std::string* style = StringAt(c, "style");
-            const std::string* pattern = StringAt(c, "pattern");
+            const std::string* style = json::StringMember(&c, "style");
+            const std::string* pattern = json::StringMember(&c, "pattern");
             auto matchStyle = style ? MatchStyleFromRaw(*style) : std::nullopt;
             if (!componentID || !matchStyle || !pattern) return std::nullopt;
             rule.components.push_back({*componentID, *matchStyle, *pattern});

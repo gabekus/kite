@@ -426,10 +426,10 @@ TEST(ArcImport_arcProfileMapSurvivesARelaunch) {
 }
 
 TEST(ArcImport_flagsUntitledSpaces) {
-    Value untitled = Object{{"id", Id(5)}, {"containerIDs", Array{"unpinned", Id(50)}}};
-    std::vector<Value> items{Node(50, Object{{"itemContainer", Object{}}}, {500}), TabItem(500, 50)};
-    Value root = Object{{"sidebar", Object{{"containers", Array{Object{{"spaces", Array{Id(5), untitled}}, {"items", Flat(items)}}}}}}};
-    const auto result = Parsed(json::Write(root));
+    const std::string space = R"({"id": ")" + Id(5) + R"(", "containerIDs": ["unpinned", ")" + Id(50) + R"("]})";
+    const std::string items = json::Write(Value(Flat({Node(50, Object{{"itemContainer", Object{}}}, {500}), TabItem(500, 50)})));
+    const std::string root = R"({"sidebar": {"containers": [{"spaces": [")" + Id(5) + R"(", )" + space + R"(], "items": )" + items + "}]}}";
+    const auto result = Parsed(root);
     CHECK(result.spaces.size() == 1 && result.spaces[0].name == "Arc Space");
     CHECK(result.untitledSpaceIDs == std::set<std::string>{result.spaces[0].id});
     CHECK(Parsed().untitledSpaceIDs.empty());
@@ -473,6 +473,352 @@ TEST(ArcImport_rejectsOtherFiles) {
     // Cut short, as a file read while it's written would be.
     CHECK(FailureOf(Fixture().substr(0, 200)) == arc_import::Failure::NotJSON);
     CHECK(FailureOf(R"({"sidebar":{"containers":[]}})") == arc_import::Failure::NoSpaces);
+}
+
+// MARK: Cycles, repeats and depth (the Mac's PR #362, ArcImportTests.swift, case for case)
+
+namespace {
+
+// Spaces whose pinned section is item n*10 and unpinned section item n*10 + 1, in Arc profile
+// folder `profiles[n]` (Default if none); `items` are the rest (ArcImportTests.sidebar).
+arc_import::Result Sidebar(const std::vector<Value>& items, const std::vector<int>& spaces = {1},
+                           const std::map<int, std::string>& profiles = {}, const Array& favorites = {}) {
+    Array spaceList;
+    for (int n : spaces) {
+        Object profile;
+        if (auto folder = profiles.find(n); folder != profiles.end()) {
+            Object inner;
+            inner.emplace("directoryBasename", folder->second);
+            inner.emplace("machineID", "m");
+            Object custom;
+            custom.emplace("_0", Value(std::move(inner)));
+            profile.emplace("custom", Value(std::move(custom)));
+        } else {
+            profile.emplace("default", Value(true));
+        }
+        Object space;
+        space.emplace("id", Id(n));
+        space.emplace("title", "Space " + std::to_string(n));
+        space.emplace("profile", Value(std::move(profile)));
+        Array containers;
+        containers.push_back(Value("pinned"));
+        containers.push_back(Value(Id(n * 10)));
+        containers.push_back(Value("unpinned"));
+        containers.push_back(Value(Id(n * 10 + 1)));
+        space.emplace("containerIDs", Value(std::move(containers)));
+        spaceList.push_back(Value(Id(n)));
+        spaceList.push_back(Value(std::move(space)));
+    }
+    Object container;
+    container.emplace("spaces", Value(std::move(spaceList)));
+    container.emplace("items", Value(Flat(items)));
+    container.emplace("topAppsContainerIDs", Value(favorites));
+    Array containerList;
+    containerList.push_back(Value(std::move(container)));
+    Object sidebar;
+    sidebar.emplace("containers", Value(std::move(containerList)));
+    Object root;
+    root.emplace("sidebar", Value(std::move(sidebar)));
+    return Parsed(json::Write(Value(std::move(root))));
+}
+
+Value FolderItem(int n, std::vector<int> children, std::optional<int> parent = std::nullopt) {
+    Value folder = Node(n, Object{{"list", Object{}}}, std::move(children), "Folder " + std::to_string(n));
+    if (parent) folder.AsObject()->insert_or_assign("parentID", Id(*parent));
+    return folder;
+}
+Value SplitItem(int n, std::vector<int> children) {
+    return Node(n, Object{{"splitView", Object{{"layoutOrientation", "horizontal"}}}}, std::move(children));
+}
+Value ContainerItem(int n, std::vector<int> children) { return Node(n, Object{{"itemContainer", Object{}}}, std::move(children)); }
+
+using Notes = std::vector<std::string>;
+
+const Folder* FirstFolder(const std::vector<PinnedItem>& items) {
+    return items.empty() ? nullptr : std::get_if<Folder>(&items.front().value);
+}
+
+}  // namespace
+
+TEST(ArcImport_aSelfParentingFolderImportsOnce) {
+    const auto result = Sidebar({
+        ContainerItem(10, {100, 101}),
+        TabItem(100, 10),
+        FolderItem(101, {101, 102}, 101),
+        TabItem(102, 101),
+        ContainerItem(11, {}),
+    });
+    const auto& pinned = result.spaces[0].pinnedItems;
+    const Folder* folder = pinned.size() == 2 ? std::get_if<Folder>(&pinned[1].value) : nullptr;
+    CHECK(folder);
+    CHECK((Titles(TabsIn(pinned)) == std::vector<std::string>{"Site 100", "Site 102"}));
+    CHECK(folder && folder->items.size() == 1);
+    CHECK(result.folderCount == 1);
+    CHECK(result.tabCount == 2);
+    CHECK((result.notes == Notes{"Skipped 1 repeated or circular sidebar entry."}));
+}
+
+TEST(ArcImport_aTwoCycleImportsEachFolderOnce) {
+    const auto result = Sidebar({
+        // Each folder's parentID names the other, so neither may claim the other first.
+        ContainerItem(10, {101}),
+        FolderItem(101, {102, 103}, 102),
+        FolderItem(102, {101, 104}, 101),
+        TabItem(103, 101),
+        TabItem(104, 102),
+        // The same cycle outside the pinned section, where folders flatten.
+        ContainerItem(11, {111}),
+        FolderItem(111, {112, 113}),
+        FolderItem(112, {111, 114}),
+        TabItem(113, 111),
+        TabItem(114, 112),
+    });
+    const Space& space = result.spaces[0];
+    const Folder* outer = space.pinnedItems.size() == 1 ? FirstFolder(space.pinnedItems) : nullptr;
+    const Folder* inner = outer && outer->items.size() == 2 ? FirstFolder(outer->items) : nullptr;
+    CHECK(outer && inner);
+    if (!outer || !inner) return;
+    CHECK(outer->name == "Folder 101");
+    CHECK(inner->name == "Folder 102");
+    CHECK((Titles(TabsIn(inner->items)) == std::vector<std::string>{"Site 104"}));
+    CHECK((Titles(TabsIn(outer->items)) == std::vector<std::string>{"Site 104", "Site 103"}));
+    CHECK((Titles(space.tabs) == std::vector<std::string>{"Site 114", "Site 113"}));
+    CHECK(result.folderCount == 2);
+    CHECK(result.tabCount == 4);
+    CHECK((result.notes == Notes{"Skipped 2 repeated or circular sidebar entries."}));
+}
+
+TEST(ArcImport_aCycleThroughASplitImportsEachTabOnce) {
+    // Split 400 holds tab 401 and folder 402, which lists the split again.
+    const auto result = Sidebar({
+        ContainerItem(10, {400}),
+        SplitItem(400, {401, 402}),
+        TabItem(401, 400),
+        FolderItem(402, {400, 403}),
+        TabItem(403, 402),
+        ContainerItem(11, {}),
+    });
+    const Space& space = result.spaces[0];
+    const auto tabs = TabsIn(space.pinnedItems);
+    CHECK((Titles(tabs) == std::vector<std::string>{"Site 401", "Site 403"}));
+    CHECK(space.splits.size() == 1 && tabs.size() == 2 && space.splits[0].tabIDs == (std::vector<std::string>{tabs[0]->id, tabs[1]->id}));
+    CHECK(result.tabCount == 2);
+    CHECK((result.notes == Notes{"Skipped 1 repeated or circular sidebar entry."}));
+}
+
+TEST(ArcImport_aChildListedTwiceImportsOnce) {
+    // Forty folders that each list the next one twice: 2^40 copies of the last tab if repeats
+    // were followed.
+    std::vector<Value> items{
+        ContainerItem(10, {100, 100, 101}),
+        TabItem(100, 10),
+        FolderItem(101, {102, 102, 100}),
+        TabItem(102, 101),
+        ContainerItem(11, {110, 110, 200}),
+        TabItem(110, 11),
+        TabItem(240, 239),
+    };
+    for (int i = 0; i < 40; ++i) items.push_back(FolderItem(200 + i, {201 + i, 201 + i}));
+    const auto result = Sidebar(items);
+    const Space& space = result.spaces[0];
+    CHECK(space.pinnedItems.size() == 2);
+    CHECK((Titles(TabsIn(space.pinnedItems)) == std::vector<std::string>{"Site 100", "Site 102"}));
+    CHECK((Titles(space.tabs) == std::vector<std::string>{"Site 110", "Site 240"}));
+    std::set<std::string> ids;
+    for (const Tab* tab : space.AllTabs()) ids.insert(tab->id);
+    CHECK(ids.size() == space.AllTabs().size());
+    CHECK(result.tabCount == 4);
+    // Tab 100 under folder 101 isn't counted: it went to its home, losing nothing.
+    CHECK((result.notes == Notes{"Skipped 43 repeated or circular sidebar entries."}));
+}
+
+TEST(ArcImport_aChildListedUnderTwoParentsGoesToItsParentID) {
+    // Tab 100 was moved from space 1's folder to space 2's, and the old listing stayed.
+    const auto result = Sidebar({
+        ContainerItem(10, {101}),
+        FolderItem(101, {100}),
+        ContainerItem(11, {}),
+        ContainerItem(20, {201}),
+        FolderItem(201, {100}),
+        TabItem(100, 201),
+        ContainerItem(21, {}),
+    }, {1, 2});
+    CHECK(result.spaces.size() == 2);
+    if (result.spaces.size() != 2) return;
+    const Folder* old = FirstFolder(result.spaces[0].pinnedItems);
+    const Folder* current = FirstFolder(result.spaces[1].pinnedItems);
+    CHECK(old && current);
+    if (!old || !current) return;
+    CHECK(old->items.empty());
+    CHECK((Titles(TabsIn(current->items)) == std::vector<std::string>{"Site 100"}));
+    CHECK(result.tabCount == 1);
+    CHECK(result.notes.empty());
+}
+
+TEST(ArcImport_anOrphanedParentIDParentDoesNotDropTheChild) {
+    // Tab 100 names folder 201 as its parent, but no space reaches 201.
+    const auto result = Sidebar({
+        ContainerItem(10, {101}),
+        FolderItem(101, {100}),
+        FolderItem(201, {100}),
+        TabItem(100, 201),
+        ContainerItem(11, {}),
+    });
+    const Folder* folder = FirstFolder(result.spaces[0].pinnedItems);
+    CHECK(folder && Titles(TabsIn(folder->items)) == std::vector<std::string>{"Site 100"});
+    CHECK(result.tabCount == 1);
+    CHECK(result.notes.empty());
+}
+
+TEST(ArcImport_aParentIDParentBelowTheChildDoesNotDropIt) {
+    // Folder 101 names 103 as its parent, but 103 is inside it (101 > 102 > 103 > 101).
+    const auto result = Sidebar({
+        ContainerItem(10, {101}),
+        FolderItem(101, {102}, 103),
+        FolderItem(102, {103}),
+        FolderItem(103, {101, 104}),
+        TabItem(104, 103),
+        ContainerItem(11, {}),
+    });
+    CHECK((Titles(TabsIn(result.spaces[0].pinnedItems)) == std::vector<std::string>{"Site 104"}));
+    CHECK(result.folderCount == 3);
+    CHECK((result.notes == Notes{"Skipped 1 repeated or circular sidebar entry."}));
+}
+
+TEST(ArcImport_aChildOfAnItemThatDoesntNestImportsUnderTheFolder) {
+    // Easel 500 lists tabs 502 and 503 ahead of folder 501, and 502 names it as its parent, but
+    // the import never goes into an easel.
+    Value unparented = TabItem(503, 0);
+    unparented.AsObject()->erase("parentID");
+    const auto result = Sidebar({
+        ContainerItem(10, {}),
+        ContainerItem(11, {500, 501}),
+        Node(500, Object{{"easel", Object{}}}, {502, 503}),
+        FolderItem(501, {502, 503}),
+        TabItem(502, 500),
+        unparented,
+    });
+    CHECK((Titles(result.spaces[0].tabs) == std::vector<std::string>{"Site 502", "Site 503"}));
+    CHECK((result.notes == Notes{"Skipped unsupported sidebar items: easel."}));
+}
+
+TEST(ArcImport_aFavoriteAlsoInASpaceIsInBoth) {
+    // Tab 300 names the favorites grid as its parent; the space still keeps it.
+    Object fallback;
+    fallback.emplace("default", Value(true));
+    Array favorites;
+    favorites.push_back(Value(std::move(fallback)));
+    favorites.push_back(Value(Id(30)));
+    const auto result = Sidebar({
+        ContainerItem(10, {300}),
+        ContainerItem(11, {}),
+        ContainerItem(30, {300}),
+        TabItem(300, 30),
+    }, {1}, {}, favorites);
+    CHECK((Titles(TabsIn(result.spaces[0].pinnedItems)) == std::vector<std::string>{"Site 300"}));
+    CHECK((result.favoritesByProfile.contains("Default") && Titles(result.favoritesByProfile.at("Default")) == std::vector<std::string>{"Site 300"}));
+    CHECK(result.notes.empty());
+}
+
+TEST(ArcImport_profilesSharingAFavoritesGridBothGetIt) {
+    Object fallback;
+    fallback.emplace("default", Value(true));
+    Object inner;
+    inner.emplace("directoryBasename", "Profile 3");
+    Object zero;
+    zero.emplace("_0", Value(std::move(inner)));
+    Object custom;
+    custom.emplace("custom", Value(std::move(zero)));
+    Array favorites;
+    favorites.push_back(Value(std::move(fallback)));
+    favorites.push_back(Value(Id(30)));
+    favorites.push_back(Value(std::move(custom)));
+    favorites.push_back(Value(Id(30)));
+    const auto result = Sidebar({
+        ContainerItem(10, {}),
+        ContainerItem(11, {}),
+        ContainerItem(20, {}),
+        ContainerItem(21, {}),
+        ContainerItem(30, {300}),
+        TabItem(300, 30),
+    }, {1, 2}, {{2, "Profile 3"}}, favorites);
+    CHECK((result.profiles == std::vector<std::string>{"Default", "Profile 3"}));
+    CHECK((result.favoritesByProfile.contains("Default") && Titles(result.favoritesByProfile.at("Default")) == std::vector<std::string>{"Site 300"}));
+    CHECK((result.favoritesByProfile.contains("Profile 3") && Titles(result.favoritesByProfile.at("Profile 3")) == std::vector<std::string>{"Site 300"}));
+    CHECK(result.notes.empty());
+}
+
+TEST(ArcImport_aVeryDeepChainStopsAtTheCap) {
+    // Ten thousand folders, each inside the last, with a tab at the bottom.
+    const int depth = 10'000;
+    std::vector<Value> items{
+        ContainerItem(10, {1000}),
+        TabItem(1000 + depth, 999 + depth),
+        ContainerItem(11, {1000 + depth + 1}),
+        TabItem(1000 + depth + 1, 11),
+    };
+    for (int i = 0; i < depth; ++i) items.push_back(FolderItem(1000 + i, {1001 + i}));
+    const auto result = Sidebar(items);
+    int levels = 0;
+    const std::vector<PinnedItem>* level = &result.spaces[0].pinnedItems;
+    while (const Folder* folder = FirstFolder(*level)) {
+        ++levels;
+        level = &folder->items;
+    }
+    CHECK(levels == arc_import::kMaxDepth);
+    CHECK(level->empty());
+    CHECK(result.folderCount == arc_import::kMaxDepth);
+    CHECK((Titles(result.spaces[0].tabs) == std::vector<std::string>{"Site " + std::to_string(1000 + depth + 1)}));
+    // Every folder below the cap, and the tab at the bottom.
+    const int cut = depth - arc_import::kMaxDepth + 1;
+    CHECK((result.notes == Notes{std::to_string(cut) + " items nested more than 64 levels deep were left out."}));
+}
+
+TEST(ArcImport_aSplitInAFolderAtTheCap) {
+    // Folders down to level 61. The last holds split 2000 (level 62, its tabs at 63: kept) and
+    // folder 1062 (level 62), whose split 3000 puts its tabs at 64, past the cap.
+    CHECK(arc_import::kMaxDepth == 64);
+    std::vector<Value> items{
+        ContainerItem(10, {1000}),
+        FolderItem(1061, {2000, 1062}),
+        SplitItem(2000, {2001, 2002}),
+        TabItem(2001, 2000),
+        TabItem(2002, 2000),
+        FolderItem(1062, {3000}),
+        SplitItem(3000, {3001, 3002}),
+        TabItem(3001, 3000),
+        TabItem(3002, 3000),
+        ContainerItem(11, {}),
+    };
+    for (int i = 0; i < 61; ++i) items.push_back(FolderItem(1000 + i, {1001 + i}));
+    const auto result = Sidebar(items);
+    const Space& space = result.spaces[0];
+    const auto tabs = TabsIn(space.pinnedItems);
+    CHECK((Titles(tabs) == std::vector<std::string>{"Site 2001", "Site 2002"}));
+    CHECK(space.splits.size() == 1 && tabs.size() == 2 && space.splits[0].tabIDs == (std::vector<std::string>{tabs[0]->id, tabs[1]->id}));
+    CHECK(result.splitCount == 1);
+    CHECK(result.folderCount == 63);
+    CHECK((result.notes == Notes{"2 items nested more than 64 levels deep were left out."}));
+}
+
+// Windows' additions.
+
+TEST(ArcImport_reviewersSelfParentingFolderNoLongerOverflows) {
+    // Reviewer B's PoC input (cycle.json), which overflowed the stack before the fix.
+    const auto result = Parsed(R"({"sidebar":{"containers":[{"spaces":[{"id":"00000000-0000-4000-8000-000000000001","title":"S",)"
+                               R"("containerIDs":["pinned","P"]}],"items":[{"id":"P","childrenIds":["F"],"data":{"itemContainer":{}}},)"
+                               R"({"id":"F","title":"Loop","childrenIds":["F"],"data":{"list":{}}}]}]}})");
+    CHECK(result.spaces.size() == 1 && result.spaces[0].pinnedItems.size() == 1 && result.folderCount == 1 && result.repeatedItems == 1);
+    CHECK((result.notes == Notes{"Skipped 1 repeated or circular sidebar entry."}));
+}
+
+TEST(ArcImport_aTabsChildrenAreNeverFollowed) {
+    // Only folders and split views expand: a tab that lists children (a damaged file) is a tab.
+    Value tab = TabItem(100, 10);
+    tab.AsObject()->insert_or_assign("childrenIds", Array{Id(101)});
+    const auto result = Sidebar({ContainerItem(10, {100}), tab, TabItem(101, 100), ContainerItem(11, {})});
+    CHECK((Titles(TabsIn(result.spaces[0].pinnedItems)) == std::vector<std::string>{"Site 100"}));
+    CHECK(result.tabCount == 1 && result.notes.empty());
 }
 
 // MARK: Arc for Windows (and edge cases the Mac doesn't test)
@@ -537,15 +883,15 @@ TEST(ArcImportWindows_readsNewContainerIDsAndArcIcons) {
         CHECK((Titles(space.tabs) == std::vector<std::string>{"Site 110"}));
         CHECK(space.splits.size() == 1 && space.splits[0].widthFactors == (std::vector<double>{0.5, 0.5}));
         CHECK((Titles(result.favoritesByProfile.at("Default")) == std::vector<std::string>{"Site 300"}));
-        CHECK(result.iconsReplaced == 0 && result.notes.empty());
+        CHECK(result.iconsReplaced.empty() && result.notes.empty());
     }
 }
 
 TEST(ArcImportWindows_anIconKiteDoesntHaveGetsTheStandIn) {
     const auto result = Parsed(WindowsFixture(false, "nosuchicon"));
     CHECK(result.spaces.size() == 1 && result.spaces[0].icon == "\xF0\x9F\x8C\x80");  // the first fallback, 🌀
-    CHECK(result.iconsReplaced == 1);
-    CHECK(result.notes.size() == 1 && result.notes[0].find("Arc's own icon set") != std::string::npos);
+    // Recorded by space, so the import counts only the spaces that come over (its note too).
+    CHECK(result.iconsReplaced == std::set<std::string>{Id(1)});
 }
 
 TEST(ArcImportWindows_theFixtureFolderSidebar) {
@@ -564,7 +910,7 @@ TEST(ArcImportWindows_theFixtureFolderSidebar) {
     CHECK(reading.splits.size() == 1);
     CHECK(result.untitledSpaceIDs == std::set<std::string>{Id(2)});
     CHECK(result.spaces[1].name == "Arc Space" && SpaceProfile(result.spaces[1]) == "Profile 1");
-    CHECK(result.iconsReplaced == 1 && result.skippedKinds == (std::map<std::string, int>{{"easel", 1}}));
+    CHECK(result.iconsReplaced == std::set<std::string>{Id(2)} && result.skippedKinds == (std::map<std::string, int>{{"easel", 1}}));
     CHECK((result.profiles == std::vector<std::string>{"Default", "Profile 1"}));
     CHECK(result.tabCount == 9 && result.folderCount == 1 && result.splitCount == 1);
 }
@@ -587,6 +933,13 @@ TEST(ArcImport_edgeCases) {
     CHECK(!arc_import::BackupDate("StorableSidebar.2026-02-31-10-00-00-000.json"));
 }
 
+TEST(ArcImport_aContainerKeyGivenTwiceTakesItsLastValue) {
+    Value space = Object{{"id", Id(1)}, {"title", "S"}, {"containerIDs", Array{"unpinned", Id(11), "unpinned", Id(12)}}};
+    std::vector<Value> items{ContainerItem(11, {110}), TabItem(110, 11), ContainerItem(12, {120}), TabItem(120, 12)};
+    Value root = Object{{"sidebar", Object{{"containers", Array{Object{{"spaces", Array{space}}, {"items", Flat(items)}}}}}}};
+    CHECK((Titles(Parsed(json::Write(root)).spaces[0].tabs) == std::vector<std::string>{"Site 120"}));
+}
+
 TEST(ArcImport_mergeGivesPinnedTabsTheirPinnedURL) {
     // BrowserImport.merge(imported:) runs syncPinnedURLs.
     BrowserState state = Fresh();
@@ -600,6 +953,12 @@ TEST(ArcImport_mergeGivesPinnedTabsTheirPinnedURL) {
     CHECK(all);
     CHECK(!personal->tabs.front().pinnedURL);
     CHECK(state.selectedSpaceID == Id(1));
+    // ...and takes it off unpinned tabs, so pinning one again pins the page it's on then.
+    BrowserState again = Fresh();
+    std::vector<Space> spaces = result.spaces;
+    spaces[0].tabs.front().pinnedURL = "https://old.example/";
+    MergeImported(again, spaces);
+    CHECK(!SpaceWithID(again, Id(1))->tabs.front().pinnedURL);
 }
 
 // Runs against a real Arc file when KITE_ARC_SIDEBAR points at one (importsRealArcFile). Prints

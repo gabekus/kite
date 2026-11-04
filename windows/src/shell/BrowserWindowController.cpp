@@ -104,8 +104,9 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
       shownSpaceID_(state.SelectedSpace().id) {}
 
 BrowserWindowController::~BrowserWindowController() {
-    // Import from Arc's read is short (Arc's files): it ends before the window it posts to.
-    if (arcThread_.joinable()) arcThread_.join();
+    // Import from Arc's read (Arc's files, a moment or two) isn't waited for: the worker owns
+    // only its job and the window's handle, and posting to a window that's gone does nothing.
+    if (arcThread_.joinable()) arcThread_.detach();
     // The views and the compositor go before the window: it stops calling into them first.
     window_.onClose = nullptr;
     window_.onSize = nullptr;
@@ -224,6 +225,7 @@ std::wstring BrowserWindowController::Init() {
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
     // reported runs first (titles, addresses), then the caller saves.
     window_.onClose = [this] {
+        closing_ = true;
         clock_->Stop();
         RunPending();
         if (save_) save_();
