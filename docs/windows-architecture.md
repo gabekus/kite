@@ -44,10 +44,11 @@ their own PR, never as a side effect of a checkpoint.
 - Render at the display's refresh rate with no 60fps caps (docs/windows.md,
   Refresh rate).
 - No work on the UI thread that can block: file I/O over a few KB, network,
-  or anything that waits on Chromium goes elsewhere. Two exceptions, until
-  saving moves to a background writer with the first checkpoint that changes
-  state at runtime: loading the session before the first window exists, and
-  the final save as the window closes or Windows ends the session.
+  or anything that waits on Chromium goes elsewhere. The session is saved on
+  a background writer (`core/SessionWriter`): the UI thread only copies it.
+  Two exceptions: loading the session before the first window exists, and
+  waiting for the writer's last write as the window closes or Windows ends
+  the session.
 - Never save over a session that couldn't be read (`SessionStore::MaySave`).
 - Measure before claiming a speedup, and put the numbers in the PR.
 
