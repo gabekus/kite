@@ -7,8 +7,9 @@
 //   SELECT url, title, visit_count, last_visit_time FROM urls
 //   WHERE hidden = 0 AND last_visit_time > 0 ORDER BY last_visit_time DESC LIMIT 20000
 //
-// keeping each row whose URL Kite records (History::Records), with its title ("" for none), its
-// visit count (at least 1) and its last visit (History::ChromiumDate). The visits table isn't
+// keeping each row whose URL Kite records (History::Records, of the URL as the Mac's
+// URL(string:) reads it: History::Normalized), with its title ("" for none), its visit count (at
+// least 1) and its last visit (History::ChromiumDate). The visits table isn't
 // read: urls already has each page's count and last visit, which is all Kite's history keeps.
 //
 // The Mac runs that query with the system's SQLite on a copy of the file. Kite for Windows reads
@@ -44,6 +45,7 @@ struct HistoryRead {
     uint64_t beyondCap = 0;     // visited before the newest `maxEntries` rows, as the Mac's LIMIT
     uint64_t notWebPages = 0;   // among those, a URL Kite doesn't record (not http or https, or unreadable)
     uint64_t tooLong = 0;       // a row over kMaxHistoryRowBytes, left unread
+    uint64_t sameURL = 0;       // among those, a URL another newer row has once both are Normalized
 };
 
 // Chromium keeps a URL to 2 MB (url::kMaxURLChars) and a title far shorter; a row past this

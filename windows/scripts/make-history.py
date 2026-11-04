@@ -89,6 +89,15 @@ def fixture():
     db.commit()
     db.close()
 
+    # tests/fixtures/history-raw-urls.sqlite: URLs as Chromium keeps them, with characters NSURL
+    # percent-encodes left as typed, and the same page already encoded (an older visit).
+    db = create(os.path.join(HERE, "history-raw-urls.sqlite"), 1024)
+    add(db, "https://pipes.example.test/a|b?q={x}", "Raw", 2, BASE + 20 * 3600 * SECOND)
+    add(db, "https://pipes.example.test/a%7Cb?q=%7Bx%7D", "Encoded", 5, BASE + 10 * 3600 * SECOND)
+    add(db, "https://braces.example.test/{id}#a|b", "Fragment", 1, BASE + 5 * 3600 * SECOND)
+    db.commit()
+    db.close()
+
 
 def synthetic(path, megabytes):
     db = create(path, 4096)

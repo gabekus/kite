@@ -565,6 +565,7 @@ Imported Import(BrowserState& state, const Plan& plan, ImportOptions options) {
         left.beyondCap += read.beyondCap;
         left.notWebPages += read.notWebPages;
         left.tooLong += read.tooLong;
+        left.sameURL += read.sameURL;
         if (!read.entries.empty()) out.histories.push_back({arc, kite->second, read.entries});
     }
     auto skippedHistory = [&](const char* kind, uint64_t count, const std::string& reason) {
@@ -577,6 +578,7 @@ Imported Import(BrowserState& state, const Plan& plan, ImportOptions options) {
                        " in their profile, the most Kite's history keeps");
     skippedHistory("historyNotWebPages", left.notWebPages, "not a web page (http or https), which Kite's history keeps only");
     skippedHistory("historyTooLong", left.tooLong, "a row too long to be one Chromium wrote");
+    skippedHistory("historySameURL", left.sameURL, "the same page as a newer row once the URL is written as Kite keeps it");
     skippedHistory("historyProfilesLeftOut", profilesLeftOut, "from a profile only unnamed spaces use; --include-unnamed brings them");
     out.skipped.push_back(Skipped("signIns", std::nullopt, "Arc's cookies aren't imported on Windows yet"));
     out.skipped.push_back(Skipped("extensions", std::nullopt, "Kite for Windows has no extensions yet"));

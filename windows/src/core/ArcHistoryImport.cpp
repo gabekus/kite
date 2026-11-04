@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <unordered_map>
 
 #include "core/Files.h"
 #include "core/Unicode.h"
@@ -155,14 +156,25 @@ std::optional<HistoryRead> ReadChromiumHistory(sqlite::PageSource& source, const
     // URL Kite doesn't record still took its place among the newest.
     std::sort_heap(heap.begin(), heap.end(), Newer);
     out.entries.reserve(heap.size());
+    // Each URL as the Mac keeps it: URL(string:) percent-encodes what Chromium left as typed
+    // (`|`, `{`...), and records(_:) looks at that (History::Normalized). Two rows that come out
+    // the same are one page, newest first, with the higher count, as Merge would make them.
+    std::unordered_map<std::string, size_t> seen;
     for (Candidate& row : heap) {
-        std::optional<std::string> address = row.url ? std::optional<std::string>(ValidUtf8(std::move(*row.url))) : std::nullopt;
+        std::optional<std::string> address;
+        if (row.url) address = History::Normalized(ValidUtf8(std::move(*row.url)));
         if (!address || !History::Records(*address)) {
             ++out.notWebPages;
             continue;
         }
-        out.entries.push_back(HistoryEntry{std::move(*address), ValidUtf8(std::move(row.title)), History::ChromiumDate(row.lastVisit),
-                                           std::max<int64_t>(1, row.visitCount)});
+        const int64_t visits = std::max<int64_t>(1, row.visitCount);
+        if (auto [it, fresh] = seen.emplace(*address, out.entries.size()); !fresh) {
+            HistoryEntry& page = out.entries[it->second];
+            page.visitCount = std::max(page.visitCount, visits);
+            ++out.sameURL;
+            continue;
+        }
+        out.entries.push_back(HistoryEntry{std::move(*address), ValidUtf8(std::move(row.title)), History::ChromiumDate(row.lastVisit), visits});
     }
     return out;
 }

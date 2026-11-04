@@ -115,6 +115,27 @@ TEST(ArcHistoryImport_readsTheUrlsTableAsTheMacsQueryDoes) {
     CHECK(Find(*read, "https://latin1.example.test/") && Find(*read, "https://latin1.example.test/")->title == "Caf\xEF\xBF\xBD");
 }
 
+TEST(ArcHistoryImport_urlsAreKeptAsTheMacsURLReadsThem) {
+    // Chromium keeps `|` and `{` as typed; the Mac's URL(string:) percent-encodes them
+    // (History::Normalized), so its history has the encoded URL, and the row already encoded is
+    // the same page: one entry, the newer row's visit and title, the higher count.
+    sqlite::FilePages pages(fs::path(KITE_TEST_FIXTURES_DIR) / "history-raw-urls.sqlite");
+    auto read = ReadChromiumHistory(pages);
+    CHECK(read);
+    if (!read) return;
+    CHECK(read->rows == 3 && read->sameURL == 1 && read->notWebPages == 0 && read->entries.size() == 2);
+    if (read->entries.size() != 2) return;
+    const HistoryEntry& pipes = read->entries[0];
+    CHECK(pipes.url == "https://pipes.example.test/a%7Cb?q=%7Bx%7D" && pipes.title == "Raw" && pipes.visitCount == 5 &&
+          pipes.lastVisit == History::ChromiumDate(At(20)));
+    CHECK(read->entries[1].url == History::Normalized("https://braces.example.test/{id}#a|b") &&
+          read->entries[1].url.find_first_of("{}|") == std::string::npos);
+    // What Merge keys them by is what was read: a second import finds them.
+    History history;
+    CHECK(history.Merge(read->entries) == 2 && history.Merge(read->entries) == 0);
+    CHECK(history.Find("https://pipes.example.test/a%7Cb?q=%7Bx%7D"));
+}
+
 TEST(ArcHistoryImport_theCapIsTheNewestRowsBeforeTheWebPageFilter) {
     // The Mac's LIMIT comes before its filter: chrome://settings is among the newest three and
     // takes a place, so two pages come.
