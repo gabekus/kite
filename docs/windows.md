@@ -132,7 +132,7 @@ is mid-draw. Keys that arrive before the bar opens open it
 
 Fallback if the off-screen path is too costly: windowed CEF (child HWND), with
 any overlays in separate layered top-level windows. That's simpler but less
-flexible.
+flexible. The W10 spike measured both, behind `--osr`: docs/windows-osr-spike.md.
 
 **Today (W6): windowed CEF**, so pages load while the off-screen path is
 built (W10). `shell/Chromium` creates one Alloy-style browser per tab (as
