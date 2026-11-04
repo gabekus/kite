@@ -1,0 +1,2 @@
+$ kite ui input '{"click":[86,795],"button":"right"}'
+Clicked right at (86, 795) on 0.3.2.2.0.0.0 SpaceCellView.

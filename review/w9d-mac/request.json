@@ -1,0 +1,49 @@
+{
+  "id": "w9d",
+  "title": "W9d Mac references: the space bar's drag, the space menu, renaming, New Space",
+  "about": "review/w9d-mac-request.md on origin/review/w9d-win, as a request.json. Kite for Mac from origin/main: W9d changes no Mac code.",
+  "base": "origin/main",
+  "window_size": [1280, 820],
+  "session": {"ref": "origin/helix/W9d-space-editing", "path": "windows/helix/states/three-spaces.json"},
+  "tree_match": "SpaceCellView",
+  "expect_frames": [[68, 778, 36, 34], [102, 778, 36, 34], [136, 778, 36, 34]],
+  "states": [
+    {
+      "name": "rest",
+      "holds": "the three spaces at rest"
+    },
+    {
+      "name": "drag",
+      "holds": "Personal's icon picked up as the ghost (with its backing) at x 150, Work and Reading slid into slots 0 and 1",
+      "steps": [{"ui": "input", "args": {"from": [86, 795], "to": [150, 795], "steps": 10, "hold": 10}}],
+      "hold": 10
+    },
+    {
+      "name": "dropped",
+      "holds": "Work, Reading, Personal, Personal selected (the order is in the frames below)",
+      "steps": [{"ui": "input", "args": {"from": [86, 795], "to": [150, 795], "steps": 10}}],
+      "settle": 1
+    },
+    {
+      "name": "menu",
+      "holds": "the space menu over Personal's cell, and its items as AppKit logs them",
+      "env": {"KITE_TEST_CONTEXT_MENU": "1"},
+      "steps": [{"ui": "input", "args": {"click": [86, 795], "button": "right"}}],
+      "capture": false,
+      "unverified": "menu.png is the real NSMenu, which needs a real right-click and screencapture while it's open (it's modal, so kite ui capture can't run under it). This run only logs its items, with KITE_TEST_CONTEXT_MENU=1 and a posted right-click."
+    },
+    {
+      "name": "rename",
+      "holds": "the header's rename field, the name all selected, Done at the right",
+      "env": {"KITE_TEST_CONTEXT_MENU": "Rename Space…"},
+      "steps": [{"ui": "input", "args": {"click": [86, 795], "button": "right"}}],
+      "settle": 1
+    },
+    {
+      "name": "new-space",
+      "holds": "Projects' dot lit between Personal and Work",
+      "session": {"ref": "origin/review/w9d-win", "path": "review/w9d-win/three-spaces-new-space.json"},
+      "expect_frames": []
+    }
+  ]
+}

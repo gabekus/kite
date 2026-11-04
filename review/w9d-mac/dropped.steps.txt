@@ -1,0 +1,2 @@
+$ kite ui input '{"from":[86,795],"to":[150,795],"steps":10}'
+Dragged from (86, 795) to (150, 795) in 10 steps, starting on 0.3.2.2.0.0.0 SpaceCellView.

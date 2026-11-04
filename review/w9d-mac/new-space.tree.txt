@@ -1,0 +1,29 @@
+## at launch
+Window 17694, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.2.2.0.0.0 SpaceCellView [51,778 36×34]
+0.3.2.2.0.0.1 SpaceCellView [85,778 36×34]
+0.3.2.2.0.0.2 SpaceCellView [119,778 36×34]
+0.3.2.2.0.0.3 SpaceCellView [153,778 36×34]
+0.3.2.3 SpaceCellView [0,770 0×0] hidden=true
+</untrusted-page-content>
+
+## before the capture
+Window 17694, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.2.2.0.0.0 SpaceCellView [51,778 36×34]
+0.3.2.2.0.0.1 SpaceCellView [85,778 36×34]
+0.3.2.2.0.0.2 SpaceCellView [119,778 36×34]
+0.3.2.2.0.0.3 SpaceCellView [153,778 36×34]
+0.3.2.3 SpaceCellView [0,770 0×0] hidden=true
+</untrusted-page-content>
+
+## after the capture
+Window 17694, 1280×820 pt at 2×. Points from the window's top-left.
+<untrusted-page-content source="Kite window">
+0.3.2.2.0.0.0 SpaceCellView [51,778 36×34]
+0.3.2.2.0.0.1 SpaceCellView [85,778 36×34]
+0.3.2.2.0.0.2 SpaceCellView [119,778 36×34]
+0.3.2.2.0.0.3 SpaceCellView [153,778 36×34]
+0.3.2.3 SpaceCellView [0,770 0×0] hidden=true
+</untrusted-page-content>
