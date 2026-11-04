@@ -18,6 +18,7 @@
 
 #include "Check.h"
 #include "core/AirTrafficControl.h"
+#include "core/Files.h"
 #include "core/ArcImportController.h"
 #include "core/ArcImportFiles.h"
 #include "core/Plist.h"
@@ -920,6 +921,32 @@ TEST(ArcImportController_filesPastTheCapAreReportedTooLarge) {
     auto picked = ReadPicked(dir.path / "Arc" / "StorableSidebar.json", std::nullopt, {.maxFileBytes = 8192});
     error = std::get_if<LoadError>(&picked);
     CHECK(error && error->tooLarge);
+    // A backup that fits stands in, and the confirmation says the current one is too large.
+    Write(dir.path / "Arc" / "StorableSidebar.2026-10-01-08-00-00-000.json",
+          R"({"sidebar":{"containers":[{"spaces":[{"id":"00000000-0000-4000-8000-000000000001","title":"S","containerIDs":["unpinned","U"]}],)"
+          R"("items":[{"id":"U","childrenIds":["T"],"data":{"itemContainer":{}}},{"id":"T","childrenIds":[],"data":{"tab":{"savedURL":"https://t.example/"}}}]}]}})");
+    auto backup = ReadAuto(dir.path / "Arc", {.maxFileBytes = 8192});
+    CHECK(std::holds_alternative<Plan>(backup));
+    if (auto* plan = std::get_if<Plan>(&backup)) {
+        CHECK(plan->sidebar.isBackup && plan->sidebar.currentTooLarge.starts_with("too large: "));
+        const auto lines = ConfirmLines(*plan, BrowserState::MakeDefault(std::nullopt), false);
+        CHECK(std::any_of(lines.begin(), lines.end(), [](const std::string& l) {
+            return l.starts_with("Arc's current sidebar file is too large for Kite to read (too large: ") && l.find("newest backup") != std::string::npos;
+        }));
+    }
+}
+
+TEST(Files_aMissingFileIsMissingAndNeverThrows) {
+    TempDir dir;
+    auto missing = ReadFileOrProblem(dir.path / "nothing.json");
+    CHECK(std::holds_alternative<ReadProblem>(missing) && std::get<ReadProblem>(missing).kind == ReadProblem::Kind::Missing);
+    auto folder = ReadFileOrProblem(dir.path);
+    CHECK(std::holds_alternative<ReadProblem>(folder));
+    Write(dir.path / "small.json", "abc");
+    auto small = ReadFileOrProblem(dir.path / "small.json", 2);
+    CHECK(std::holds_alternative<ReadProblem>(small) && std::get<ReadProblem>(small).kind == ReadProblem::Kind::TooLarge &&
+          std::get<ReadProblem>(small).size == 3);
+    CHECK(ReadFilePrefix(dir.path / "small.json", 8) == std::optional<std::string>("abc"));
 }
 
 TEST(ArcImportController_aCancelledReadStops) {

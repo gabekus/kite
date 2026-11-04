@@ -129,6 +129,12 @@ void BrowserWindowController::ArcRead() {
     // may have begun closing (logoff), its session already saved. Nothing more then.
     auto stillOpen = [&] { return !closing_ && IsWindow(owner); };
     if (auto* error = std::get_if<arc_import::LoadError>(&*job->result)) {
+        // Too large: no folder picked could change that, so it's said as it is.
+        if (error->tooLarge) {
+            arcReading_ = false;
+            MessageBoxW(owner, Widen(error->message).c_str(), L"Import from Arc", MB_OK | MB_ICONWARNING);
+            return;
+        }
         // Kite couldn't read Arc's data where it keeps it: ask for the folder.
         if (!job->picked && error->failure != arc_import::Failure::NoSpaces) {
             auto folder = PickArcFolder(owner);

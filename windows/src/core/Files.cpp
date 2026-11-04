@@ -16,7 +16,13 @@ std::string PathText(const fs::path& path) {
 std::variant<std::string, ReadProblem> ReadFileOrProblem(const fs::path& file, size_t maxBytes) {
     using Kind = ReadProblem::Kind;
     std::error_code error;
-    if (!fs::is_regular_file(file, error)) return ReadProblem{error && fs::exists(file) ? Kind::Unreadable : Kind::Missing};
+    // Never the throwing overloads: this runs on Import from Arc's worker. Not found is Missing
+    // whether or not the library also reports it as an error (MSVC's does); any other failure to
+    // look (no access) is Unreadable.
+    const fs::file_status status = fs::status(file, error);
+    if (status.type() == fs::file_type::not_found) return ReadProblem{Kind::Missing};
+    if (error) return ReadProblem{Kind::Unreadable};
+    if (!fs::is_regular_file(status)) return ReadProblem{Kind::Missing};
     const auto size = fs::file_size(file, error);
     if (error) return ReadProblem{Kind::Unreadable};
     if (size > maxBytes) return ReadProblem{Kind::TooLarge, static_cast<uint64_t>(size)};
