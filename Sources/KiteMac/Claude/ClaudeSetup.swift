@@ -65,7 +65,7 @@ extension ClaudeTasksController {
 
     /// `claude auth status` prints JSON with `loggedIn`. An older Claude Code without it counts as signed in.
     nonisolated static func isSignedIn(_ claude: String) -> Bool {
-        let (status, output) = ClaudeConnect.run(claude, ["auth", "status"])
+        let (status, output) = ClaudeConnect.run(claude, ["auth", "status"], environment: ClaudeConnect.claudeEnvironment)
         guard status == 0, let start = output.firstIndex(of: "{"),
               let json = try? JSONValue.decode(Data(output[start...].utf8)) else { return status == 0 }
         return json["loggedIn"]?.boolValue ?? true
@@ -74,7 +74,12 @@ extension ClaudeTasksController {
     /// `claude auth login` needs a terminal (it opens the browser and waits).
     private func openSignIn(_ claude: String) {
         let script = FileManager.default.temporaryDirectory.appendingPathComponent("Kite Claude Sign In.command")
-        let body = "#!/bin/zsh -l\n\(AutomationController.shellQuote(claude)) auth login\n"
+        // A test profile signs in to its test Claude home, never the user's own ~/.claude.
+        let environment = ClaudeConnect.claudeEnvironment
+        let exports = ["HOME", "CLAUDE_CONFIG_DIR"].compactMap { key in
+            environment[key].flatMap { $0 == ProcessInfo.processInfo.environment[key] ? nil : "export \(key)=\(AutomationController.shellQuote($0))\n" }
+        }.joined()
+        let body = "#!/bin/zsh -l\n\(exports)\(AutomationController.shellQuote(claude)) auth login\n"
         do {
             try body.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)

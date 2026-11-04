@@ -482,20 +482,21 @@ final class ClaudeTasksController {
         scheduleSave()
     }
 
-    /// GUI apps get a bare PATH. Claude Code may be a Node script, so give it the login shell's. Worked out
-    /// once (a login `zsh -lc`) on the first caller's thread, which is never the main one: every caller
-    /// runs it from a detached task.
-    nonisolated static func environment() -> [String: String] { loginEnvironment }
+    /// The environment for every `claude` Kite starts (`ClaudeProcessEnvironment`). GUI apps get a bare
+    /// PATH and Claude Code may be a Node script, so it has the login shell's. Worked out (a login
+    /// `zsh -lc`) once per test-profile state, on the first caller's thread, which is never the main
+    /// one: every caller runs it from a detached task. On a test profile HOME and CLAUDE_CONFIG_DIR
+    /// are the test Claude home, never the user's own `~/.claude`.
+    nonisolated static func environment() -> [String: String] {
+        let base = ProcessInfo.processInfo.environment
+        let userHome = FileManager.default.homeDirectoryForCurrentUser
+        return environments.environment(for: .init(environment: base, userHome: userHome)) {
+            let (status, output) = ClaudeConnect.run("/bin/zsh", ["-lc", "printf %s \"$PATH\""])
+            return ClaudeProcessEnvironment.make(base, loginPath: status == 0 ? output : nil, userHome: userHome)
+        }
+    }
 
-    nonisolated private static let loginEnvironment: [String: String] = {
-        var environment = ProcessInfo.processInfo.environment
-        let (status, output) = ClaudeConnect.run("/bin/zsh", ["-lc", "printf %s \"$PATH\""])
-        let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        if status == 0, path.contains("/") { environment["PATH"] = path }
-        // Kite's own test switches mustn't leak into Claude Code.
-        environment["KITE_DIAGNOSTICS"] = nil
-        return environment
-    }()
+    nonisolated private static let environments = ClaudeProcessEnvironment.Cache()
 
     // MARK: Awake, notifications, badge
 

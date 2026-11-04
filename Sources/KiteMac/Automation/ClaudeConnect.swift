@@ -6,10 +6,13 @@ import KiteCore
 /// claude_desktop_config.json, after the user says so.
 @MainActor
 enum ClaudeConnect {
-    /// Where the `kite` link goes. `KITE_BIN_DIR` overrides it for tests.
+    /// Where the `kite` link goes. `KITE_BIN_DIR` overrides it for tests; a test profile without it
+    /// links into its test Claude home, never the user's own ~/.local/bin.
     static var linkDirectory: URL {
-        if let override = ProcessInfo.processInfo.environment["KITE_BIN_DIR"] { return URL(fileURLWithPath: override, isDirectory: true) }
-        return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin", isDirectory: true)
+        let environment = ProcessInfo.processInfo.environment
+        if let override = environment["KITE_BIN_DIR"] { return URL(fileURLWithPath: override, isDirectory: true) }
+        return ClaudeCodeSessions.home(environment: environment, userHome: FileManager.default.homeDirectoryForCurrentUser)
+            .appendingPathComponent(".local/bin", isDirectory: true)
     }
 
     static func present(_ automation: AutomationController) {
@@ -94,22 +97,33 @@ enum ClaudeConnect {
         var add = ["mcp", "add", "-s", "user", "kite"]
         if let profile { add += ["-e", "KITE_SUPPORT_PATH=\(profile)"] }
         add += ["--", cli, "mcp"]
-        var (status, output) = run(claude, add)
+        let environment = claudeEnvironment
+        var (status, output) = run(claude, add, environment: environment)
         if status != 0, output.contains("already exists") {
-            _ = run(claude, ["mcp", "remove", "-s", "user", "kite"])
-            (status, output) = run(claude, add)
+            _ = run(claude, ["mcp", "remove", "-s", "user", "kite"], environment: environment)
+            (status, output) = run(claude, add, environment: environment)
         }
         return status == 0
             ? "Added Kite to Claude Code (user scope). Start a new Claude Code session to use it."
             : "claude mcp add failed: \(output.trimmingCharacters(in: .whitespacesAndNewlines))"
     }
 
+    /// Kite's own environment for a quick `claude` call: on a test profile its HOME and
+    /// CLAUDE_CONFIG_DIR are the test Claude home, so it never touches the user's `~/.claude`.
+    nonisolated static var claudeEnvironment: [String: String] {
+        ClaudeProcessEnvironment.isolated(ProcessInfo.processInfo.environment,
+                                          userHome: FileManager.default.homeDirectoryForCurrentUser)
+    }
+
     /// GUI apps don't get the shell's PATH, so look where Claude Code installs, then ask a login shell.
     nonisolated static func findClaude() -> String? {
         let environment = ProcessInfo.processInfo.environment
         if let override = environment["KITE_CLAUDE_BIN"] { return override }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        for candidate in ["\(home)/.local/bin/claude", "\(home)/.claude/local/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
+        let userHome = FileManager.default.homeDirectoryForCurrentUser
+        let home = userHome.path
+        // ~/.claude is the test Claude home on a test profile (`ClaudeCodeSessions.home`).
+        let claudeHome = ClaudeCodeSessions.home(environment: environment, userHome: userHome).path
+        for candidate in ["\(home)/.local/bin/claude", "\(claudeHome)/.claude/local/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
         where FileManager.default.isExecutableFile(atPath: candidate) {
             return candidate
         }
@@ -118,10 +132,13 @@ enum ClaudeConnect {
         return status == 0 && path.hasPrefix("/") ? path : nil
     }
 
-    nonisolated static func run(_ executable: String, _ arguments: [String]) -> (Int32, String) {
+    /// Runs `executable` to the end. `environment` replaces Kite's own (nil inherits it).
+    nonisolated static func run(_ executable: String, _ arguments: [String],
+                                environment: [String: String]? = nil) -> (Int32, String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        if let environment { process.environment = environment }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe

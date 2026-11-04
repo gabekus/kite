@@ -20,7 +20,9 @@ enum ClaudeDesktop {
         if let override = ProcessInfo.processInfo.environment["KITE_CLAUDE_DESKTOP_CONFIG"] {
             return URL(fileURLWithPath: override)
         }
-        return ClaudeDesktopLink.configURL(home: FileManager.default.homeDirectoryForCurrentUser)
+        // A test profile's is in its test Claude home, never the user's own.
+        return ClaudeDesktopLink.configURL(home: ClaudeCodeSessions.home(environment: ProcessInfo.processInfo.environment,
+                                                                         userHome: FileManager.default.homeDirectoryForCurrentUser))
     }
 
     nonisolated static var isLinked: Bool {
