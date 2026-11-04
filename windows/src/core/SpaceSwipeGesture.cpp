@@ -1,3 +1,5 @@
+// See SpaceSwipeGesture.h.
+
 #include "core/SpaceSwipeGesture.h"
 
 #include <cmath>

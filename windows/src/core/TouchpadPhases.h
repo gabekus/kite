@@ -12,7 +12,7 @@
 
 namespace kite {
 
-// DIRECTMANIPULATION_STATUS, by value.
+// DIRECTMANIPULATION_STATUS, by value (shell/TouchpadInput.cpp checks each).
 enum class ViewportStatus : int { Building = 0, Enabled = 1, Disabled = 2, Running = 3, Inertia = 4, Ready = 5, Suspended = 6 };
 
 class TouchpadPhases {

@@ -347,27 +347,52 @@ page where the neighbour's was, so the slide's first frames don't wait for the
 selection's redraw and the page swap. A gesture is the swipe's when its first
 movement is more sideways than vertical; one that starts vertically scrolls the
 list for its whole length, momentum included, and a swipe's own momentum is
-swallowed (`core/SpaceSwipeGesture.h`, `kitecore space swipe DX [SECONDS]`). A
-swipe can catch the pages mid-settle and carries on from where they are. Windows'
+swallowed (`core/SpaceSwipeGesture.h`, `kitecore space swipe DX [SECONDS]`). Until
+the swipe begins, each event asks where the pointer is then, as the Mac's
+`isOverSidebar`: a vertical gesture scrolls the list under it. A swipe can catch the
+pages mid-settle and carries on from where they are. Windows'
 wheel messages carry no gesture phases, so the touchpad's contact is taken on
 `DM_POINTERHITTEST` by a DirectManipulation viewport on manual updates
-(`shell/TouchpadInput.h`, Chromium's way), stepped once a frame by the frame clock
-while the fingers rest on it, the gesture or its momentum runs; each frame draws the
-backdrop only when the swipe moved. Core's `TouchpadPhases` turns the viewport's
+(`shell/TouchpadInput.h`, Chromium's way). The frame clock steps it once a frame
+while the gesture or its momentum runs, at the display's highest rate, and while the
+fingers rest before moving, unboosted and for 10 s at most; each frame draws the
+backdrop only when the swipe moved. A gesture whose pointer is off the sidebar
+before it's the swipe's (over the page, or the command bar opened), and a contact
+that rests past 10 s, are released (`ReleaseContact`), so the rest is the system's
+wheel messages for whatever is under the pointer. Core's `TouchpadPhases` turns the viewport's
 statuses and content reports into the Mac's phases and sends the viewport back over
 its content's middle after a gesture that moved it, the next gesture counting from
 there however late DirectManipulation applies it (its tests replay the sequences:
 momentum, fingers down mid-momentum, the system taking the viewport, the reset's own
 pass). `--capture FILE --swipe DX` holds a swipe DX points in, and the smoke test
-feeds the same handler a vertical gesture, a swipe that lands, one caught mid-settle,
-a short one that stays and a flick back; `--frame-log` also records every status and
-content report, for a run on a real touchpad. Known differences: what moves the
-pages is DirectManipulation's content travel, which follows Windows' scrolling
-direction setting (the Mac's pages follow the fingers whichever way its natural
-scrolling is set), and a mouse's sideways wheel or Shift and the wheel never pages
-spaces (the Mac's doesn't either), it scrolls the bar's strip. Unverified on a real
-touchpad (synthetic touchpad input doesn't exist): DirectManipulation's actual
-status sequences and their timing, the scrolling direction, and the hit test's point.
+feeds the same handler a vertical gesture, one whose pointer has moved over the page,
+a swipe that lands, one caught mid-settle, a short one that stays and a flick back;
+then, with a third space added for it, a keyboard switch overtaking a landing, a
+space selected under the swipe, a release in a hidden window (it lands at once), the
+rubber band before the first space and a crossfade's boost ending while the
+touchpad's frames go on; and with the other spaces set aside, both ways on one
+space. `--frame-log` also records every status, content report, release and poll,
+for a run on a real touchpad. Known differences:
+- What moves the pages is DirectManipulation's content travel, which follows
+  Windows' scrolling direction setting (the Mac's pages follow the fingers whichever
+  way its natural scrolling is set).
+- A mouse's sideways wheel or Shift and the wheel never pages spaces (the Mac's
+  doesn't either), it scrolls the bar's strip.
+- Only a contact that comes down over the sidebar can page: one that comes down over
+  the page is Chromium's (the hit test goes to its window), and its wheel messages
+  have no phases to page with, so a pointer that moves onto the sidebar before the
+  fingers do still scrolls the page. The Mac asks where its first movement is.
+- A space selected under the swipe (from the keyboard) leaves its theme between
+  three: the release goes on to the selected space's from whichever of the two was
+  showing more (`ThemeCrossfade::FinishInteractive`), where the Mac's
+  finishInteractiveTheme has no such branch and settles back on the theme the swipe
+  started from. For the same case the neighbour is looked up guarded (a release with
+  no space left that side stays), where the Mac's show and finish index the spaces
+  unguarded and would trap.
+Unverified on a real touchpad (synthetic touchpad input doesn't exist):
+DirectManipulation's actual status sequences and their timing, the scrolling
+direction, the hit test's point, whether the pointer moves while a contact is held,
+and whether a released contact's rest comes back as wheel messages.
 
 Known differences from the Mac: during the 0.2 s slide only the selected page
 takes clicks and shows hover (the Mac's outgoing page is a live list too), and
@@ -393,9 +418,11 @@ Windows that means:
   `DwmFlush` before it, and posts the window one message a frame, only while
   something has to redraw each frame (the theme's crossfade, a shader mix that
   a compositor property can't do), or a touchpad gesture's DirectManipulation
-  updates need stepping (W9c). While it runs it calls
-  `DCompositionBoostCompositorClock`, so a display with a dynamic refresh rate
-  runs at its highest, as the Mac asks for the screen's maximum rate. The
+  updates need stepping (W9c). While something moves (a crossfade, fingers or
+  their momentum) it calls `DCompositionBoostCompositorClock`, so a display with
+  a dynamic refresh rate runs at its highest, as the Mac asks for the screen's
+  maximum rate; the window decides that each frame (`FrameClock::SetBoost`), so
+  fingers resting after a fade leave the rate alone. The
   compositor's clock is the system's: with several displays it follows the
   fastest, not necessarily the window's. Each frame is drawn for
   DirectComposition's estimate of when it reaches the screen

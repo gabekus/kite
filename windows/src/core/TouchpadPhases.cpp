@@ -1,3 +1,5 @@
+// See TouchpadPhases.h.
+
 #include "core/TouchpadPhases.h"
 
 #include <cmath>

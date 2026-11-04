@@ -1,3 +1,5 @@
+// See FrameClock.h.
+
 #include "shell/FrameClock.h"
 
 #include <dcomp.h>
@@ -61,11 +63,15 @@ void FrameClock::Start(bool boost) {
         wasRunning = running_;
         running_ = true;
     }
-    if (boost && !boosted_) {
-        Boost(true);
-        boosted_ = true;
-    }
+    if (boost) SetBoost(true);
     if (!wasRunning) wake_.notify_one();
+}
+
+void FrameClock::SetBoost(bool boost) {
+    // Only a running clock boosts: Stop has dropped it.
+    if (boost == boosted_ || (boost && !running_)) return;
+    Boost(boost);
+    boosted_ = boost;
 }
 
 void FrameClock::Stop() {
@@ -74,10 +80,7 @@ void FrameClock::Stop() {
         if (!running_) return;
         running_ = false;
     }
-    if (boosted_) {
-        Boost(false);
-        boosted_ = false;
-    }
+    SetBoost(false);
 }
 
 double FrameClock::Now() {

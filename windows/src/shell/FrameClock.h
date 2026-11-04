@@ -8,9 +8,11 @@
 // displays it follows the fastest.
 //
 // Only for what has to draw again each frame (the theme's crossfade, a shader mix), and for
-// stepping DirectManipulation's manual updates while fingers rest on a touchpad over the
-// sidebar (unboosted) or its gesture or momentum runs (shell/TouchpadInput.h): what a
-// compositor property can do (an offset, an opacity) is an IDCompositionAnimation.
+// stepping DirectManipulation's manual updates for a touchpad contact taken over the sidebar
+// (shell/TouchpadInput.h): boosted while its gesture or momentum runs, unboosted while the
+// fingers rest before moving (10 s at most, then the contact goes back to the system), as
+// docs/windows-architecture.md allows. What a compositor property can do (an offset, an
+// opacity) is an IDCompositionAnimation.
 //
 // Time() is when the frame being made will reach the screen (DirectComposition's estimate),
 // as the Mac's targetTimestamp, in seconds on the QueryPerformanceCounter clock.
@@ -33,11 +35,15 @@ public:
     FrameClock(const FrameClock&) = delete;
     FrameClock& operator=(const FrameClock&) = delete;
 
-    // Start and Stop come from the window's thread. Unboosted, it leaves the display's refresh
-    // rate alone (frames only to poll, drawing nothing); a boosted Start while it runs boosts it.
+    // Start, Stop and SetBoost come from the window's thread. Unboosted, it leaves the display's
+    // refresh rate alone (frames only to poll, drawing nothing); a boosted Start while it runs
+    // boosts it. The window says each frame whether it still should (SetBoost): a boost ends
+    // with what needed it, not only when the clock stops.
     void Start(bool boost = true);
     void Stop();
+    void SetBoost(bool boost);
     bool Running() const { return running_; }
+    bool Boosted() const { return boosted_; }
     // The window took the message: the next frame may post another.
     void Delivered() { posted_ = false; }
 
