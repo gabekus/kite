@@ -124,6 +124,12 @@ jobs:
           # A flag without its value is a usage error (exit 1), never a normal launch.
           $code = Run-Kite @('--capture')
           if ($code -ne 1) { throw "--capture without a path: expected exit 1, got $code" }
+          # Kite's command line is never Chromium's: a switch with Windows' "/" prefix is an
+          # unknown option, and an option's value can't be another flag.
+          $code = Run-Kite @('--smoke-test', '/remote-debugging-port=9222')
+          if ($code -ne 1) { throw "/remote-debugging-port: expected exit 1, got $code" }
+          $code = Run-Kite @('--capture', '--smoke-test')
+          if ($code -ne 1) { throw "--capture with a flag as its value: expected exit 1, got $code" }
 
           # A KITE_SUPPORT_PATH that isn't a directory is refused (exit 2), never fallen back from.
           $file = Join-Path $profileDir 'not-a-dir'

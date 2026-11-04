@@ -232,6 +232,7 @@ private:
     // --perf-control's pointer is over the window: the system's WM_MOUSELEAVE (the real pointer
     // is elsewhere) doesn't take its hover away.
     bool perfPointer_ = false;
+    size_t perfMovesPosted_ = 0;  // posted moves not yet received
     std::vector<PerfRequest> perfRequests_;
     size_t frameCount_ = 0;  // frames delivered, logged or not (the smoke test checks them)
 

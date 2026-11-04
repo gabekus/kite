@@ -156,7 +156,9 @@ DirectComposition are untouched; CEF's callbacks reach Kite's thread through
 stay synchronous between the threads, because a child window on another
 thread shares its parent's input (focus and DPI changes, destroying the
 window), until W10 removes the child windows. A second
-launch hands over to the running Kite (Chromium allows one per profile). Profiles sit where the Mac keeps them: `<support>\Chromium`
+launch hands over to the running Kite (Chromium allows one per profile). Kite.exe's command
+line is Kite's alone: CEF never reads it as Chromium switches (`command_line_args_disabled`),
+and an unknown option, `-` or `/`, is an error. Profiles sit where the Mac keeps them: `<support>\Chromium`
 is `root_cache_path`, the default profile is `Chromium\Default`, and a
 space's other profile gets its own request context in `Chromium\<directory>`.
 Popups and `target=_blank` links open as tabs that keep `window.opener`, as
@@ -380,8 +382,10 @@ Windows that means:
 
 ## Measuring performance
 
-Kite.exe has three hooks for measuring it. Like `--frame-log` they need `KITE_SUPPORT_PATH`,
-and they're refused when it names the default profile (`%LOCALAPPDATA%\Kite`). Off, each costs
+Kite.exe has three hooks for measuring it. They need `KITE_SUPPORT_PATH` to be a test profile,
+one holding a `kite-test-profile` file (kiteperf writes it into each profile it makes), and
+they're refused when it names the default profile (`%LOCALAPPDATA%\Kite`, from the environment
+or the known folder) or can't be resolved. Off, each costs
 one predictable bool check (`perf::On()`) and allocates nothing. A run with any of them opens
 behind other windows, without asking for the focus, and never shows a dialog, as
 `--smoke-test` does.
@@ -392,7 +396,8 @@ behind other windows, without asking for the focus, and never shows a dialog, as
   `first-commit`, `cef-init-begin` and `cef-init-end`, `shown`, `browser-created`, `load-begin`
   and `load-end` per tab (from CEF's thread), `command-begin` and `command-end` with the
   command's id, `loop-end`, `exit`, and any the control asks for. Each mark carries the counters
-  so far: presents (the backdrop's and the command bar's), commits (every
+  so far: presents (the backdrop's and the command bar's), the real pointer's moves over the
+  window (not the control's), commits (every
   `IDCompositionDevice::Commit`, which all go through `Compositor::Commit`) and surface draws per
   view. A dispatched message that takes over 8 ms is logged with how long it took. A control
   input (a pointer move or a command) is logged with its first commit within 250 ms, or with
@@ -410,10 +415,12 @@ behind other windows, without asking for the focus, and never shows a dialog, as
   other. While a posted pointer is over the window the system's `WM_MOUSELEAVE` is ignored,
   since the real pointer is somewhere else.
 - `--chromium-switches "--a --b=c"`: switches for Chromium's browser process
-  (`OnBeforeCommandLineProcessing`), from an allow-list (`shell/PerfProtocol.h`): process and
-  GPU model, rasterization, backgrounding and feature switches, to measure Kite with one and
-  without. Nothing that weakens the sandbox or web security, opens a debugging port, or changes
-  a path or a launched process.
+  (`OnBeforeCommandLineProcessing`), from an allow-list (`shell/PerfProtocol.h`): the GPU
+  backend and rasterization (always in the sandboxed GPU process), throttling and backgrounding,
+  the renderer limit, and four features that can be turned off by name, to measure Kite with one
+  and without. Nothing that weakens the sandbox, site isolation or web security, opens a
+  debugging port, or changes a path or a launched process. Chromium reads nothing else of
+  Kite.exe's command line.
 
 `kiteperf` (`windows/tools/perf`, built with the app by MSVC only, never shipped) drives them.
 Each run launches Kite.exe on a fresh `%TEMP%` profile holding

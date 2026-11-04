@@ -158,8 +158,9 @@ std::vector<Waiting> waiting;
 
 // The DirectComposition target (adapter and VidPN source) of the monitor Kite's window is on,
 // from the display configuration, once per monitor.
+std::map<HMONITOR, std::optional<std::pair<LUID, UINT>>> targetCache;
 std::optional<std::pair<LUID, UINT>> WindowTarget() {
-    static std::map<HMONITOR, std::optional<std::pair<LUID, UINT>>> cache;
+    auto& cache = targetCache;
     HMONITOR monitor = window ? MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) : nullptr;
     if (!monitor) return std::nullopt;
     if (auto it = cache.find(monitor); it != cache.end()) return it->second;
@@ -284,7 +285,8 @@ void Mark(std::string_view name, std::string_view detail) {
     if (!On()) return;
     std::string line = "{\"type\":\"mark\",\"name\":" + Quoted(name) + ",\"detail\":" + Quoted(detail) + ",\"qpc\":" +
                        std::to_string(Now()) + ",\"presents\":" + std::to_string(counters.presents.Get()) +
-                       ",\"commits\":" + std::to_string(counters.commits.Get()) + ",\"surfaceDraws\":{";
+                       ",\"commits\":" + std::to_string(counters.commits.Get()) +
+                       ",\"pointerMoves\":" + std::to_string(counters.pointerMoves.Get()) + ",\"surfaceDraws\":{";
     for (int i = 0; i < static_cast<int>(View::Count); ++i) {
         if (i) line += ',';
         line += Quoted(kViewNames[i]) + ":" + std::to_string(counters.surfaceDraws[i].Get());
@@ -293,6 +295,8 @@ void Mark(std::string_view name, std::string_view detail) {
 }
 
 void SetWindow(HWND hwnd) { window = hwnd; }
+
+void DisplayChanged() { targetCache.clear(); }
 
 void Dispatched(UINT message, int64_t began) {
     const double ms = static_cast<double>(Now() - began) * 1000.0 / static_cast<double>(frequency);
