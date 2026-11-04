@@ -703,6 +703,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         } else {
             contentClip.page = nil
         }
+        NotificationCenter.default.post(name: .kitePagesShown, object: window)
     }
 
     /// Another normal window took tab `id`'s page to show it there (Arc's normal windows share one

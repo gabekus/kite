@@ -141,6 +141,8 @@ extension AutomationController {
         let now = Date()
         if state.found { controlMissingSince[stepID] = nil } else if controlMissingSince[stepID] == nil { controlMissingSince[stepID] = now }
         let missing = controlMissingSince[stepID].map { now.timeIntervalSince($0) >= UserHandoff.offPageDelay } ?? false
+        // Missing, but not for long enough yet to tell: make sure a second look comes.
+        if !state.found, !missing { scheduleHandoffFollowUp() }
         update(handoffID(of: stepID)) { h in
             guard let i = h.steps.firstIndex(where: { $0.id == stepID }), h.steps[i].isWaiting else { return }
             if state.found, let current, current == at, Handoff.canReturn(to: current), h.steps[i].url != current.absoluteString {
@@ -359,14 +361,55 @@ extension AutomationController {
     /// events. An idle Kite with steps left waiting doesn't wake for them.
     func watchHandoffEvents() {
         guard handoffObservers.isEmpty else { return }
-        let names = [NSWindow.didBecomeKeyNotification, NSWindow.didChangeOcclusionStateNotification,
-                     NSWindow.didDeminiaturizeNotification, NSApplication.didBecomeActiveNotification]
-        handoffObservers = names.map { name in
-            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.handoffEvent() }
+        let center = NotificationCenter.default
+        // Browser windows only: popovers, tooltips and panels come and go without changing what a page shows.
+        let windowNames = [NSWindow.didBecomeKeyNotification, NSWindow.didChangeOcclusionStateNotification,
+                           NSWindow.didDeminiaturizeNotification, .kitePagesShown]
+        handoffObservers = windowNames.map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard (note.object as? NSWindow)?.windowController is BrowserWindowController else { return }
+                    self?.handoffEvent()
+                }
             }
         }
+        handoffObservers.append(center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) {
+            [weak self] _ in
+            MainActor.assumeIsolated { self?.handoffEvent() }
+        })
+        // A reload (or a slept tab waking) took the ring with the old page, in whichever window: put it back now.
+        handoffObservers.append(center.addObserver(forName: .kitePageFinishedLoading, object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, let tab = note.userInfo?["tab"] as? UUID, self.waitingStep(on: tab) != nil else { return }
+                self.pollHandoffsSoon()
+            }
+        })
         watchHandoffTabs()
+    }
+
+    func stopWatchingHandoffEvents() {
+        handoffObservers.forEach(NotificationCenter.default.removeObserver)
+        handoffObservers = []
+        handoffPoller?.cancel()
+        handoffFollowUp?.cancel()
+    }
+
+    /// A page of a step's tab moved within the document (a single-page app's route): look again.
+    func handoffPageNavigated(_ tab: UUID) {
+        if waitingStep(on: tab) != nil { pollHandoffsSoon() }
+    }
+
+    /// One more look once `UserHandoff.offPageDelay` has passed, after a look found a waiting step's control missing:
+    /// it takes two looks that far apart to call the page left (`setLook`), and an old step, or a page on screen in a
+    /// covered window, gets no twice-a-second looks to make the second.
+    func scheduleHandoffFollowUp() {
+        guard handoffFollowUp == nil else { return }
+        handoffFollowUp = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(UserHandoff.offPageDelay + 0.1))
+            guard let self, !Task.isCancelled else { return }
+            self.handoffFollowUp = nil
+            await self.pollHandoffs()
+        }
     }
 
     /// The tab in front, and which steps' tabs are open: a switch or a close changes what the ring and card show.
@@ -380,10 +423,14 @@ extension AutomationController {
         }
     }
 
-    private var handoffTabsKey: [UUID] {
+    /// The front tab, and each open step tab with its address (a step's page can change without a load finishing).
+    /// Linked windows' own front tabs come through `kitePagesShown`.
+    private var handoffTabsKey: [String] {
         guard !handoffs.allSatisfy(\.isFinished) else { return [] }
-        let live = store.state.allTabIDs
-        return [store.state.selectedTab?.id].compactMap { $0 } + handoffTabs.filter(live.contains).sorted { $0.uuidString < $1.uuidString }
+        let state = store.state
+        let live = state.allTabIDs
+        let tabs = handoffTabs.filter(live.contains).sorted { $0.uuidString < $1.uuidString }
+        return [state.selectedTab?.id.uuidString ?? ""] + tabs.map { "\($0.uuidString) \(state.tab($0)?.url?.absoluteString ?? "")" }
     }
 
     private func handoffEvent() {
@@ -414,12 +461,8 @@ extension AutomationController {
     /// Whether a step under `UserHandoff.watchLimit` old has its page on screen in a visible window.
     var needsHandoffPolling: Bool {
         guard let host else { return false }
-        let now = Date()
-        return handoffs.contains { handoff in
-            handoff.isWatched(now: now) && handoff.waiting.contains { step in
-                step.tab.flatMap { host.livePages[$0] }.map(isShown) == true
-            }
-        }
+        let pages = host.livePages
+        return Handoff.needsPolling(handoffs) { tab in pages[tab].map(isShown) ?? false }
     }
 
     /// On screen in a window the user can see: not covered, minimised or on another space.

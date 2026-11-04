@@ -26,7 +26,9 @@ final class AutomationServer: @unchecked Sendable {
     private var listenSource: DispatchSourceRead?
     /// On `queue`.
     private var connections: [Int: Connection] = [:]
-    private var nextConnectionID = 1
+    /// Connection ids are unique across servers, so a late disconnect from a server that was replaced (the socket
+    /// reopened) can't be taken for a new server's connection with the same number.
+    private static let connectionIDs = ConnectionIDs()
 
     init(socketURL: URL, handler: @escaping Handler, onDisconnect: @escaping @Sendable (Int) -> Void) {
         self.socketURL = socketURL
@@ -167,8 +169,7 @@ final class AutomationServer: @unchecked Sendable {
             _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
             var on: Int32 = 1
             setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
-            let id = nextConnectionID
-            nextConnectionID += 1
+            let id = Self.connectionIDs.next()
             let connection = Connection(id: id, fd: fd, queue: queue)
             connection.onLine = { [weak self] line in self?.received(line, on: connection) }
             connection.onClose = { [weak self] in
@@ -198,10 +199,25 @@ final class AutomationServer: @unchecked Sendable {
     }
 }
 
+private final class ConnectionIDs: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last = 0
+
+    func next() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        last += 1
+        return last
+    }
+}
+
 /// One client connection. Reads and writes happen on the server's queue and never block: a response the client
-/// isn't reading yet waits in `pending`, and a client that reads none of it for `stallTimeout` is dropped.
+/// isn't reading yet waits in `pending`, and a client that reads none of it for `stallTimeout`, or lets more than
+/// `maxPending` pile up, is dropped.
 private final class Connection: @unchecked Sendable {
     static let stallTimeout: TimeInterval = 10
+    /// A few full-page screenshots.
+    static let maxPending = 64 << 20
 
     let id: Int
     private let fd: Int32
@@ -215,6 +231,8 @@ private final class Connection: @unchecked Sendable {
     private var pending = Data()
     /// When a write last went through (or `pending` began waiting).
     private var lastProgress = Date()
+    /// Fires at `lastProgress + stallTimeout` while `pending` waits (one per connection).
+    private var stallTimer: DispatchSourceTimer?
     private var lines = LineBuffer()
     private var closed = false
     var onLine: ((Data) -> Void)?
@@ -263,6 +281,10 @@ private final class Connection: @unchecked Sendable {
             guard !closed else { return }
             if pending.isEmpty { lastProgress = Date() }
             pending.append(data)
+            guard pending.count <= Self.maxPending else {
+                NSLog("Kite: dropped Claude's connection \(id): over \(Self.maxPending >> 20) MB of responses it isn't reading.")
+                return close()
+            }
             flush()
         }
     }
@@ -281,8 +303,8 @@ private final class Connection: @unchecked Sendable {
                 if !writing {
                     writing = true
                     writeSource?.resume()
-                    watchStall()
                 }
+                watchStall()
                 return
             } else {
                 return close()
@@ -290,22 +312,32 @@ private final class Connection: @unchecked Sendable {
         }
         // A fresh buffer, so a big screenshot's storage goes once it's sent.
         pending = Data()
+        stallTimer?.cancel()
+        stallTimer = nil
         if writing {
             writing = false
             writeSource?.suspend()
         }
     }
 
-    /// Drops the connection once the client has read nothing of a waiting response for `stallTimeout`.
+    /// Drops the connection once the client has read nothing of a waiting response for `stallTimeout`: one timer,
+    /// set for `lastProgress + stallTimeout` and moved on when it finds progress.
     private func watchStall() {
-        queue.asyncAfter(deadline: .now() + Self.stallTimeout) { [weak self] in
-            guard let self, !closed, writing else { return }
-            if Date().timeIntervalSince(lastProgress) >= Self.stallTimeout {
-                NSLog("Kite: dropped Claude's connection \(id): it stopped reading a response.")
-                close()
-            } else {
-                watchStall()
+        if stallTimer == nil {
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.setEventHandler { [weak self] in
+                guard let self, !closed, writing else { return }
+                let left = Self.stallTimeout - Date().timeIntervalSince(lastProgress)
+                if left <= 0 {
+                    NSLog("Kite: dropped Claude's connection \(id): it stopped reading a response.")
+                    close()
+                } else {
+                    stallTimer?.schedule(deadline: .now() + left, leeway: .milliseconds(500))
+                }
             }
+            stallTimer = timer
+            timer.schedule(deadline: .now() + Self.stallTimeout - Date().timeIntervalSince(lastProgress), leeway: .milliseconds(500))
+            timer.resume()
         }
     }
 
@@ -320,7 +352,12 @@ private final class Connection: @unchecked Sendable {
         writing = false
         writeSource?.cancel()
         writeSource = nil
+        stallTimer?.cancel()
+        stallTimer = nil
         pending = Data()
         onClose?()
+        // They hold the connection (onLine captures it): let it go.
+        onLine = nil
+        onClose = nil
     }
 }

@@ -91,7 +91,9 @@ final class AutomationController {
     @ObservationIgnored var handoffPolling = false
     /// Window and app notifications that call for a look (`watchHandoffEvents`), and the last tabs it saw.
     @ObservationIgnored var handoffObservers: [NSObjectProtocol] = []
-    @ObservationIgnored var lastHandoffTabsKey: [UUID] = []
+    @ObservationIgnored var lastHandoffTabsKey: [String] = []
+    /// The one look after `UserHandoff.offPageDelay` (`scheduleHandoffFollowUp`).
+    @ObservationIgnored var handoffFollowUp: Task<Void, Never>?
     @ObservationIgnored var handoffPollAgain = false
 
     @ObservationIgnored weak var host: AutomationHost?
@@ -106,6 +108,14 @@ final class AutomationController {
     /// While the setting is on: watches the socket's folder, to reopen the socket if it couldn't open at launch or
     /// its file went away. App activation checks too. No timer: an idle Kite shouldn't wake for it.
     @ObservationIgnored private var socketFolderWatch: DispatchSourceFileSystemObject?
+    /// The folder above it, for that folder (the profile, or /tmp/kite-<uid>) being moved or deleted.
+    @ObservationIgnored private var socketParentWatch: DispatchSourceFileSystemObject?
+    /// Only while the socket couldn't open (another Kite answering, or a socket a crashed one left with no folder
+    /// change to tell): a slow retry.
+    @ObservationIgnored private var socketRetry: Timer?
+    /// When the socket last failed to open. A failed bind unlinks the path, which the folder watch sees; retries it
+    /// prompts within `socketRetryPause` are skipped, so a failure can't loop through the watch.
+    @ObservationIgnored private var lastSocketFailure: Date?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
     /// The last reason the socket didn't open, so each reason is logged once.
     @ObservationIgnored private var lastSocketError: String?
@@ -185,8 +195,9 @@ final class AutomationController {
     /// Opens the socket if the setting is on. Call once the window exists.
     ///
     /// A socket that can't open at launch never turns the setting off: Kite
-    /// tries again when the socket's folder changes or Kite comes to the front, so "Allow Claude to Control the Browser" stays
-    /// on across restarts and updates until the user turns it off.
+    /// tries again when the socket's folder changes, when Kite comes to the front,
+    /// and every 30 s while it has no socket, so "Allow Claude to Control the
+    /// Browser" stays on across restarts and updates until the user turns it off.
     func start() {
         // Steps Claude handed over before Kite quit show again, whether or not Claude is connected now.
         watchHandoffEvents()
@@ -213,38 +224,67 @@ final class AutomationController {
     private func stopWatchdog() {
         socketFolderWatch?.cancel()
         socketFolderWatch = nil
+        socketParentWatch?.cancel()
+        socketParentWatch = nil
+        stopSocketRetry()
         if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
         activationObserver = nil
     }
 
-    /// A change in the socket's folder (the socket deleted or replaced), or the folder itself deleted or renamed.
+    private static let socketRetryPause: TimeInterval = 2
+
+    /// Watches the socket's folder for the socket being deleted or replaced (`.write`) and for the folder itself
+    /// being deleted or renamed, and the folder above for being deleted or renamed. After either moves, the watches
+    /// are on the old folders: they follow the path to the new ones (which checkSocket made).
     private func watchSocketFolder() {
         socketFolderWatch?.cancel()
-        socketFolderWatch = nil
+        socketParentWatch?.cancel()
         let folder = socketURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        socketFolderWatch = watch(folder, [.write, .delete, .rename])
+        socketParentWatch = watch(folder.deletingLastPathComponent(), [.delete, .rename])
+    }
+
+    private func watch(_ folder: URL, _ events: DispatchSource.FileSystemEvent) -> DispatchSourceFileSystemObject? {
         let fd = Darwin.open(folder.path, O_EVTONLY)
-        guard fd >= 0 else { return NSLog("Kite: can't watch Claude's socket folder at \(folder.path).") }
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .delete, .rename], queue: .main)
+        guard fd >= 0 else {
+            NSLog("Kite: can't watch \(folder.path) for Claude's socket.")
+            return nil
+        }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: events, queue: .main)
         source.setEventHandler { [weak self, weak source] in
             MainActor.assumeIsolated {
-                guard let self, let source, source === self.socketFolderWatch else { return }
-                let folderMoved = !source.data.isDisjoint(with: [.delete, .rename])
-                self.checkSocket()
-                // The watch is on the old folder: follow the path to the new one (checkSocket made it).
-                if folderMoved, self.isEnabled { self.watchSocketFolder() }
+                guard let self, let source, source === self.socketFolderWatch || source === self.socketParentWatch else { return }
+                let moved = !source.data.isDisjoint(with: [.delete, .rename])
+                self.checkSocket(fromWatch: true)
+                if moved, self.isEnabled { self.watchSocketFolder() }
             }
         }
         source.setCancelHandler { Darwin.close(fd) }
-        socketFolderWatch = source
         source.resume()
+        return source
+    }
+
+    private func startSocketRetry() {
+        guard socketRetry == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkSocket() }
+        }
+        timer.tolerance = 10
+        socketRetry = timer
+    }
+
+    private func stopSocketRetry() {
+        socketRetry?.invalidate()
+        socketRetry = nil
     }
 
     /// Something else can take the socket away from a running Kite: another Kite
     /// on the same profile quitting, or a crashed launch's cleanup. Reopen it.
     /// Never waits on the server's queue (see `AutomationServer`).
-    private func checkSocket() {
+    private func checkSocket(fromWatch: Bool = false) {
         guard isEnabled else { return stopWatchdog() }
+        if fromWatch, server == nil, let lastSocketFailure, Date().timeIntervalSince(lastSocketFailure) < Self.socketRetryPause { return }
         if let server, server.isListening, server.ownsSocketFile { return }
         if let server {
             NSLog("Kite: Claude's socket file at \(server.socketURL.path) went away; reopening it.")
@@ -302,8 +342,6 @@ final class AutomationController {
 
     /// Ends page loads Chromium answered but never reported finished (see `NetworkLog.finishAnsweredDocuments`).
     func pageFinishedLoading(_ id: UUID) {
-        // A reload (or a slept tab waking) took the ring with the old page: put it back now, not on the next look.
-        if waitingStep(on: id) != nil { pollHandoffsSoon() }
         guard isEnabled else { return }
         let finished = network.finishAnsweredDocuments(tab: id.uuidString)
         if isRecordingNetwork { networkStore.append(finished) }
@@ -352,6 +390,7 @@ final class AutomationController {
 
     func shutdown() {
         stopWatchdog()
+        stopWatchingHandoffEvents()
         server?.stop()
         server = nil
         if settings.recordNetwork { networkStore.flush() }
@@ -400,6 +439,8 @@ final class AutomationController {
                 let reason = "\(error)"
                 if reason != lastSocketError { NSLog("Kite: couldn't open Claude's socket: \(reason)") }
                 lastSocketError = reason
+                lastSocketFailure = Date()
+                startSocketRetry()
                 return false
             }
             let alert = NSAlert()
@@ -410,6 +451,8 @@ final class AutomationController {
         }
         self.server = server
         lastSocketError = nil
+        lastSocketFailure = nil
+        stopSocketRetry()
         watchDownloads()
         return true
     }
@@ -536,6 +579,7 @@ final class AutomationController {
             handoffBindingCalled(params, tab: id)
             return
         }
+        if method == "Page.navigatedWithinDocument" { handoffPageNavigated(id) }
         if method.hasPrefix("Network.") {
             let finished = network.ingest(method: method, params: params, tab: id.uuidString)
             if isRecordingNetwork { networkStore.append(finished) }

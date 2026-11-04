@@ -276,6 +276,14 @@ public struct Handoff: Identifiable, Hashable, Codable, Sendable {
         !isFinished && now.timeIntervalSince(created) < UserHandoff.watchLimit
     }
 
+    /// Whether Kite should look at the pages twice a second: a watched handoff has a waiting step whose tab
+    /// `isShown` (its page on screen in a window the user can see). Otherwise Kite only looks on events.
+    public static func needsPolling(_ handoffs: [Handoff], now: Date = Date(), isShown: (UUID) -> Bool) -> Bool {
+        handoffs.contains { handoff in
+            handoff.isWatched(now: now) && handoff.waiting.contains { step in step.tab.map(isShown) ?? false }
+        }
+    }
+
     /// A waiting step whose control is turned off while no earlier step of the handoff waits: the user is stuck on
     /// it. (While an earlier one waits, that step may be what turns the control on.)
     /// Only a turned-off control is: a page left or a tab closed is a click on the card away.
@@ -789,6 +797,8 @@ extension UserHandoff {
             K.clear = () => {
               K.step = null; K.el = null; K.cand = null; K.cfg = null; K.done = null; K.retry = 0; K.idle = 0;
               if (K.raf) cancelAnimationFrame(K.raf);
+              if (K.checkRaf) cancelAnimationFrame(K.checkRaf);
+              K.checkRaf = 0;
               if (K.timer) clearTimeout(K.timer);
               K.raf = 0; K.timer = 0;
               // Stop watching the pages: nothing is looked for until the next step.
@@ -818,17 +828,24 @@ extension UserHandoff {
               const click = report('click'), change = report('change');
               d.addEventListener('click', click, true);
               d.addEventListener('change', change, true);
-              // The ring follows the control's box only while something may move it (see place).
+              // The ring follows the control's box only while something may move it (see place): a scroll, a resize,
+              // the end of a transition or animation, and any change to the page (classes and styles too), which costs
+              // one frame to see whether the box moved.
               const moved = () => follow();
               const view = d.defaultView;
               d.addEventListener('scroll', moved, { capture: true, passive: true });
+              for (const name of ['transitionend', 'animationend']) d.addEventListener(name, moved, true);
               if (view) view.addEventListener('resize', moved);
+              const mover = new MutationObserver(() => checkMoved());
+              mover.observe(d, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'] });
               // While the control is missing, a page that never stops changing (Gmail) still gets the idle backoff.
               const observer = new MutationObserver(() => soon(K.el ? 1000 : Math.max(150, K.idle || 150)));
               observer.observe(d, { subtree: true, childList: true, characterData: true,
                 attributes: true, attributeFilter: ['disabled', 'aria-disabled', 'inert', 'hidden', 'aria-hidden', 'aria-label'] });
               K.watching.push(() => {
                 observer.disconnect();
+                mover.disconnect();
+                for (const name of ['transitionend', 'animationend']) d.removeEventListener(name, moved, true);
                 d.removeEventListener('click', click, true);
                 d.removeEventListener('change', change, true);
                 d.removeEventListener('scroll', moved, { capture: true });
@@ -909,6 +926,14 @@ extension UserHandoff {
           function placedAt(el) {
             const r = el && el.isConnected && shown(el) ? box(el) : null;
             return r ? r.left + ',' + r.top + ',' + r.width + ',' + r.height : '';
+          }
+          // On the next frame, follow again if the box moved since the ring last held still (once per frame at most).
+          function checkMoved() {
+            if (K.raf || K.checkRaf || !K.cfg || !K.host) return;
+            K.checkRaf = requestAnimationFrame(() => {
+              K.checkRaf = 0;
+              if (K.cfg && placedAt(K.el) !== K.placedAt) follow();
+            });
           }
           // Follow the control's box again, frame by frame, until it holds still (a scroll, a resize, a look).
           function follow() {
