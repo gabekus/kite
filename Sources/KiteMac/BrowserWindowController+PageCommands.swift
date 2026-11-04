@@ -43,6 +43,31 @@ extension BrowserWindowController {
         }
     }
 
+    /// Edit › Find › Jump to Selection: scrolls the page's selection (or the focused field) to the middle of
+    /// the view. Chromium's view takes AppKit's centerSelectionInVisibleArea: but doesn't scroll, so a script does it.
+    @objc func jumpToSelection(_ sender: Any?) {
+        guard let page = shownPage else { return NSSound.beep() }
+        page.evaluateJavaScript(Self.jumpToSelectionScript) { result in
+            if result as? Bool != true { NSSound.beep() }
+        }
+    }
+
+    static let jumpToSelectionScript = """
+        (() => {
+          const field = document.activeElement;
+          let target = null;
+          if (field && field.matches && field.matches("input, textarea, [contenteditable]")) target = field;
+          const selection = getSelection();
+          if (!target && selection && selection.rangeCount && !selection.isCollapsed) {
+            const node = selection.getRangeAt(0).startContainer;
+            target = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+          }
+          if (!target) return false;
+          target.scrollIntoView({ block: "center", inline: "nearest" });
+          return true;
+        })()
+        """
+
     /// Closes the find bar and clears highlights. Called when the shown tab changes too, where
     /// Arc drops the ask card at once; closing it (Esc, close) slides it up.
     func hideFindBar(animated: Bool = false) {

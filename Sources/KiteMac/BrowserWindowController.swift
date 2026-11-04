@@ -1446,6 +1446,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             return store.state.selectedTab?.url != nil
         case #selector(stopLoading(_:)):
             return shownPage?.isLoading ?? false
+        case #selector(jumpToSelection(_:)):
+            return shownPage != nil
         case #selector(showPasswordManager(_:)):
             #if canImport(CEFBridge)
             let manager = PasswordManagerIntegration.current

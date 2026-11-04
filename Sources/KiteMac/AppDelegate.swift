@@ -99,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Registered after the menu bar is set so AppKit adds Help search and the window list.
         NSApp.helpMenu = NSApp.mainMenu?.item(withTitle: "Help")?.submenu
         NSApp.windowsMenu = NSApp.mainMenu?.item(withTitle: "Window")?.submenu
+        NSApp.servicesMenu = NSApp.mainMenu?.items.first?.submenu?.item(withTitle: "Services")?.submenu
         windowController.showWindow(nil)
         windows = BrowserWindows(
             main: store, mainController: windowController, engine: engine, adblocker: adblocker,
@@ -236,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Links from other apps and opened HTML files, each in a new tab.
+    /// Links from other apps and opened HTML and PDF files, each in a new tab.
     func application(_ application: NSApplication, open urls: [URL]) {
         if store == nil {
             pendingURLs += urls
