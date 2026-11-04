@@ -14,6 +14,10 @@
 
 namespace kite {
 
+// Puts `text` on the clipboard as Unicode text, `owner` holding it. False when the clipboard
+// couldn't be had.
+bool CopyText(HWND owner, const std::wstring& text);
+
 class TextEditing {
 public:
     // `window` owns the clipboard while it copies.

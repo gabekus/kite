@@ -168,7 +168,6 @@ void SidebarView::UseCompositor(Compositor* compositor) {
     ReleaseGpu();
     bar_->UseCompositor(compositor, compositor ? compositor->Chrome() : nullptr);
     tip_->UseCompositor(compositor);
-    if (rename_) rename_->UseCompositor(compositor, compositor ? compositor->Chrome() : nullptr);
     compositor_ = compositor;
     deviceLost_ = false;
     dirty_ = true;
@@ -226,10 +225,6 @@ void SidebarView::ReleaseGpu() {
 }
 
 void SidebarView::Update(const BrowserState& state, const std::optional<std::string>& anchor) {
-    // A rename ends with the space it's for no longer the one shown (another space selected,
-    // or this one deleted), keeping what was typed, as leaving the field does. First: renaming
-    // changes the session, and the update that brings comes before this one goes on.
-    if (rename_ && (!state.SpaceIndex(rename_->SpaceID()) || state.SelectedSpace().id != rename_->SpaceID())) EndRenaming(true);
     Model next;
     const size_t selected = state.SelectedSpaceIndex();
     next.dark = !PrefersDarkForeground(state.SelectedSpace().theme);
@@ -418,7 +413,7 @@ void SidebarView::ScheduleDraw() {
 }
 
 bool SidebarView::NeedsDraw() const {
-    return dirty_ || bar_->NeedsDraw() || std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
+    return dirty_ || bar_->NeedsDraw() || (rename_ && rename_->NeedsDraw()) || std::any_of(pages_.begin(), pages_.end(), [](const auto& entry) { return entry.second.dirty; });
 }
 
 void SidebarView::TipHoverChanged(const std::optional<std::string>& spaceID) {
@@ -635,8 +630,19 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     // The space bar under them.
     Pixels bar;
     if (error = bar_->Draw(static_cast<UINT>(client.bottom), readBack ? &bar : nullptr); !error.empty()) return error;
-    // The rename's caret where its field drew.
-    if (rename_) rename_->UpdateCaret();
+    // The rename field over its page's header, in the page's visual (it slides with it).
+    Pixels field;
+    POINT fieldAt{};
+    if (rename_) {
+        const auto page = pages_.find(rename_->SpaceID());
+        IDCompositionVisual* parent = page != pages_.end() ? page->second.visual.Get() : nullptr;
+        if (parent != rename_->Parent()) rename_->UseCompositor(compositor_, parent);
+        rename_->SetPageOrigin(POINT{std::lround(PageOffset() * scale), 0});
+        if (error = rename_->Draw(readBack ? &field : nullptr, &fieldAt); !error.empty()) {
+            deviceLost_ = deviceLost_ || rename_->DeviceLost();
+            return error;
+        }
+    }
 
     if (readBack) {
         // As the screen shows it: the pages over the address field where the strip has them
@@ -652,6 +658,9 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         for (const auto& [index, shot] : pageShots) {
             const float x = (static_cast<float>(index) - static_cast<float>(model_.index)) * static_cast<float>(clipWidth_) + strip;
             if (std::abs(x) < static_cast<float>(width)) ComposeOver(*readBack, shot, POINT{std::lround(x), 0}, 1, &clip);
+            if (rename_ && index == model_.index && !field.bgra.empty()) {
+                ComposeOver(*readBack, field, POINT{std::lround(x) + fieldAt.x, fieldAt.y}, 1, &clip);
+            }
         }
         ComposeOver(*readBack, bar, POINT{0, client.bottom - static_cast<LONG>(bar.height)});
     }
@@ -754,6 +763,27 @@ void SidebarView::DrawFavicon(ID2D1DeviceContext* context, const SidebarRow& row
     DrawGlyph(context, kGlobe, side / kGlyphInk, box, Primary(kLabelAlpha * kGlobeOpacity));
 }
 
+D2D1_RECT_F SidebarView::HeaderNameRect(const SidebarRow& row, float top) {
+    // As DrawRow lays the header out: the name from the icon's slot (or its place, with no
+    // icon), up to the chevron's slot and the gaps, as wide as its text.
+    const float x = row.icon.empty() ? M::kHeaderIconX : M::kHeaderTextX;
+    float end = width_ - M::kPadding;
+    if (row.hasPinned) end -= (M::kIconInset - M::kPadding) + M::kHeaderIconSize + kHeaderGap;
+    end -= kHeaderGap;
+    const std::wstring title = Widen(row.title);
+    ComPtr<IDWriteTextLayout> layout;
+    DWRITE_TEXT_METRICS metrics{};
+    if (FAILED(dwrite_->CreateTextLayout(title.c_str(), static_cast<UINT32>(title.size()), headerFormat_.Get(), 100000, 100,
+                                         layout.GetAddressOf())) ||
+        FAILED(layout->GetMetrics(&metrics))) {
+        return {};
+    }
+    const float rowTop = top + M::kHeaderIconTop;
+    const float line = LineHeight(M::kHeaderFontSize);
+    const float textY = rowTop + std::floor((M::kHeaderIconSize - line) / 2);
+    return Rect(x, textY, x + std::min(metrics.width, std::max(end - x, 0.0f)), textY + line);
+}
+
 void SidebarView::PlaceRenameField(float x, float top) {
     // SpaceHeaderRowCell.layout while renaming: no chevron; from the cell's end, a gap and the
     // icon inset, Done (its label's width), a gap, then the field takes the room from the name's
@@ -767,7 +797,7 @@ void SidebarView::PlaceRenameField(float x, float top) {
     const float line = LineHeight(M::kHeaderFontSize);
     const float lineTop = rowTop + std::floor((M::kHeaderIconSize - line) / 2);
     const float doneBaseline = rowTop + std::floor((M::kHeaderIconSize - LineHeight(M::kDoneFontSize)) / 2) + M::kDoneFontSize * kAscender;
-    rename_->Place(x, std::max(end, x), lineTop, line, lineTop + M::kHeaderFontSize * kAscender, done, doneBaseline, dpi_);
+    rename_->Place(x, std::max(end, x), lineTop, line, lineTop + M::kHeaderFontSize * kAscender, done, doneBaseline, dpi_, model_.dark);
 }
 
 void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, float top, bool hovered) {
@@ -822,9 +852,8 @@ void SidebarView::DrawRow(ID2D1DeviceContext* context, const SidebarRow& row, fl
             x = M::kHeaderTextX;
         }
         if (rename_ && rename_->SpaceID() == row.id) {
-            // Renaming: the field and Done where the name and the chevron were.
+            // Renaming: the field and Done (its own visual) where the name and the chevron were.
             PlaceRenameField(x, top);
-            rename_->Draw(context, brush_.Get(), model_.dark);
             break;
         }
         float end = right;
@@ -1013,7 +1042,9 @@ void SidebarView::DropSpace(D2D1_POINT_2F b) {
     // cellDragEnded: it settles into its slot, and the space moves once it's there.
     barDragging_ = false;
     bar_->DropDrag(b.x, b.y);
-    SetTimer(window_, kDropTimer, static_cast<UINT>(std::ceil(space_bar_metrics::kReorderSlide * 1000)), nullptr);
+    // The compositor starts the landing at the commit's frame, up to a frame after now: a frame at
+    // 60 Hz to spare, as the pages' settle timer.
+    SetTimer(window_, kDropTimer, static_cast<UINT>(std::ceil(space_bar_metrics::kReorderSlide * 1000)) + 17, nullptr);
     if (bar_->NeedsDraw()) ScheduleDraw();
 }
 
@@ -1049,21 +1080,24 @@ void SidebarView::BeginRenaming(const std::string& spaceID, const std::string& n
         OutputDebugStringW((L"Kite: the rename field couldn't open: " + error + L"\n").c_str());
         return;
     }
-    if (compositor_) rename_->UseCompositor(compositor_, compositor_->Chrome());
     HideTip();
     InvalidateSelectedPage();
 }
 
-void SidebarView::EndRenaming(bool commit) {
-    if (!rename_) return;
-    const std::string id = rename_->SpaceID(), text = rename_->Text();
+std::optional<std::pair<std::string, std::string>> SidebarView::TakeRename() {
+    if (!rename_) return std::nullopt;
+    std::pair<std::string, std::string> taken{rename_->SpaceID(), rename_->Text()};
     renamePressed_ = false;
     rename_.reset();
     if (GetCapture() == window_ && !press_ && !barPress_) ReleaseCapture();
-    InvalidateSelectedPage();
-    if (compositor_) compositor_->Commit();  // the caret's visual goes
+    InvalidateSelectedPage();  // its draw's commit takes the field's visuals away too
+    return taken;
+}
+
+void SidebarView::EndRenaming(bool commit) {
+    const auto taken = TakeRename();
     // The Mac's commitRename: a blank name keeps the old one (renameSpace).
-    if (commit && actions_.renameSpace) actions_.renameSpace(id, text);
+    if (taken && commit && actions_.renameSpace) actions_.renameSpace(taken->first, taken->second);
 }
 
 std::optional<std::string> SidebarView::Renaming() const {
@@ -1074,7 +1108,7 @@ std::optional<std::string> SidebarView::Renaming() const {
 void SidebarView::TypeInRename(std::string_view text) {
     if (!rename_) return;
     for (wchar_t c : Widen(std::string(text))) rename_->Character(c);
-    InvalidateSelectedPage();
+    ScheduleDraw();
 }
 
 bool SidebarView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
@@ -1083,7 +1117,7 @@ bool SidebarView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
     const auto apply = [this](Outcome outcome) {
         if (outcome == Outcome::Commit) EndRenaming(true);
         else if (outcome == Outcome::Cancel) EndRenaming(false);
-        else if (outcome == Outcome::Changed) InvalidateSelectedPage();
+        else if (outcome == Outcome::Changed) ScheduleDraw();  // the field alone
     };
     switch (message) {
     case WM_KEYDOWN: {
@@ -1104,7 +1138,7 @@ bool SidebarView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
         return false;  // Windows' composition window draws it; the result comes as WM_CHAR
     case WM_SETFOCUS:
         rename_->SetFocused(true);
-        InvalidateSelectedPage();
+        ScheduleDraw();
         return false;
     case WM_KILLFOCUS:
         // The page taking the keyboard ends it, as the web view becoming first responder ends
@@ -1113,7 +1147,7 @@ bool SidebarView::HandleKey(UINT message, WPARAM wParam, LPARAM lParam) {
             EndRenaming(true);
         } else {
             rename_->SetFocused(false);
-            InvalidateSelectedPage();
+            ScheduleDraw();
         }
         return false;
     case WM_SETCURSOR: {
@@ -1223,7 +1257,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         pointer_ = POINT{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
         if (renamePressed_ && rename_) {
             const D2D1_POINT_2F q = OnPage(PointOf(*pointer_));
-            if (rename_->Move(q.x, q.y) != SpaceRenameField::Outcome::None) InvalidateSelectedPage();
+            if (rename_->Move(q.x, q.y) != SpaceRenameField::Outcome::None) ScheduleDraw();
             return true;
         }
         if (barPress_) {
@@ -1270,7 +1304,7 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
             if (rename_->Press(q.x, q.y, (wParam & MK_SHIFT) != 0)) {
                 renamePressed_ = true;
                 SetCapture(window_);
-                InvalidateSelectedPage();
+                ScheduleDraw();
                 return true;
             }
             EndRenaming(true);
@@ -1328,6 +1362,16 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
         const SidebarTap tap =
             p.x < 0 || p.x >= width_ ? SidebarTap{} : SidebarRelease(press, model_.rows, width_, Height(), scroll_, q.x, q.y);
         RefreshHover();
+        // A click on the current space's name renames it in place (SpaceHeaderRowCell.tapped(at:)).
+        if (tap.action == SidebarTap::Action::None && press.target == SidebarHit::Target::Row && press.kind == SidebarRow::Kind::Header &&
+            press.clicks == 1 && press.id == model_.spaceID && !rename_ && actions_.beginRenaming && !model_.rows.empty()) {
+            const SidebarRow& header = model_.rows.front();
+            if (const D2D1_RECT_F name = HeaderNameRect(header, M::kHeaderAreaHeight + header.top - scroll_);
+                q.x >= name.left && q.x < name.right && q.y >= name.top && q.y < name.bottom) {
+                actions_.beginRenaming(header.id);
+                return true;
+            }
+        }
         Perform(tap);  // a copy: the action rebuilds the rows
         return true;
     }

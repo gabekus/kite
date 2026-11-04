@@ -18,6 +18,16 @@ SpaceSwipeGesture::Step SpaceSwipeGesture::Handle(const SwipeInput& input, bool 
             return Step::Swallow;
         }
     }
+    if (abandoned_) {
+        if (input.phase == Phase::Ended || input.phase == Phase::Cancelled) {
+            abandoned_ = false;
+            swallowingMomentum_ = true;
+            return Step::Swallow;
+        }
+        // A new gesture (the end of the old one never came) is a swipe of its own.
+        if (input.phase != Phase::Began) return Step::Swallow;
+        abandoned_ = false;
+    }
 
     if (!swipe_) {
         if (input.phase == Phase::Began) vertical_ = false;
@@ -46,6 +56,13 @@ SpaceSwipeGesture::Step SpaceSwipeGesture::Handle(const SwipeInput& input, bool 
     }
     // Momentum while the fingers are still down (it doesn't come): the swipe's.
     return Step::Swallow;
+}
+
+void SpaceSwipeGesture::Abandon() {
+    if (!swipe_) return;
+    swipe_.reset();
+    landing_ = 0;
+    abandoned_ = true;
 }
 
 }  // namespace kite

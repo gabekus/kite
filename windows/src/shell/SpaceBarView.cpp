@@ -158,6 +158,11 @@ void SpaceBarView::ReleaseGpu() {
 void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
     if (cells == cells_ && dark == dark_) return;
     const bool reshaped = cells.size() != cells_.size();
+    // The same spaces in another order (a drop, a move) also stops a slide's relighting, whose
+    // indices were the old order's.
+    const bool reordered = reshaped || !std::equal(cells.begin(), cells.end(), cells_.begin(), [](const SpaceCell& a, const SpaceCell& b) {
+        return a.spaceID == b.spaceID;
+    });
     // A cell that shows something else draws again; one whose light alone changed only fades.
     for (size_t i = 0; i < cells.size() && i < cellGpu_.size(); ++i) {
         if (i >= cells_.size() || cells[i].look != cells_[i].look || dark != dark_) cellGpu_[i].dirty = true;
@@ -184,7 +189,7 @@ void SpaceBarView::Update(std::vector<SpaceCell> cells, bool dark) {
     }
     // A slide that's under way keeps its animation unless the spaces changed under it; so does
     // a drag, unless its space is no longer where it was picked up.
-    if (reshaped) {
+    if (reordered) {
         slide_.reset();
         follow_.reset();
     }
@@ -289,6 +294,13 @@ bool SpaceBarView::BeginDrag(const SpaceBarPress& press) {
     backingFor_.reset();
     motions_.assign(cells_.size(), std::nullopt);
     ghostMotion_.reset();
+    // What every move would otherwise make again: the spaces' order and the slide's curve.
+    dragIDs_.clear();
+    for (const SpaceCell& cell : cells_) dragIDs_.push_back(cell.spaceID);
+    if (dragCurve_.empty()) {
+        dragCurve_ =
+            TimingCurveSegments(M::kReorderTiming[0], M::kReorderTiming[1], M::kReorderTiming[2], M::kReorderTiming[3], M::kReorderSlide);
+    }
     placed_ = false;
     opacitiesApplied_ = false;  // the dragged cell's layers leave it at once
     return true;
@@ -296,8 +308,9 @@ bool SpaceBarView::BeginDrag(const SpaceBarPress& press) {
 
 void SpaceBarView::MoveDrag(float x, float y) {
     if (!drag_ || drag_->landing) return;
-    MoveSpaceDrag(*drag_, layout_, cells_.size(), x, y);
-    placed_ = false;  // the ghost follows; the cells slide when the slot moved
+    // The ghost follows; the cells slide only when the open slot moved.
+    if (MoveSpaceDrag(*drag_, layout_, cells_.size(), x, y)) placed_ = false;
+    else ghostMoved_ = true;
 }
 
 size_t SpaceBarView::DropDrag(float x, float y) {
@@ -337,14 +350,10 @@ float SpaceBarView::CellX(size_t index) const {
 }
 
 void SpaceBarView::PlaceDragged(float scale) {
-    std::vector<std::string> ids;
-    ids.reserve(cells_.size());
-    for (const SpaceCell& cell : cells_) ids.push_back(cell.spaceID);
-    const std::vector<BarRect> slots = SpaceDragCells(layout_, ids, *drag_);
+    const std::vector<BarRect> slots = SpaceDragCells(layout_, dragIDs_, *drag_);
     motions_.resize(cells_.size());
     const double now = FrameClock::Now();
-    const std::vector<CubicSegment> curve =
-        TimingCurveSegments(M::kReorderTiming[0], M::kReorderTiming[1], M::kReorderTiming[2], M::kReorderTiming[3], M::kReorderSlide);
+    const std::vector<CubicSegment>& curve = dragCurve_;
     for (size_t i = 0; i < cellGpu_.size() && i < slots.size(); ++i) {
         IDCompositionVisual* visual = cellGpu_[i].visual.Get();
         if (!visual) continue;
@@ -423,8 +432,7 @@ void SpaceBarView::ShowGhost(float scale) {
         // Settling into its slot from where it was let go; placed again meanwhile (a scroll, a
         // new scale), it's there at once.
         ghostMotion_->applied = true;
-        const std::vector<CubicSegment> curve =
-            TimingCurveSegments(M::kReorderTiming[0], M::kReorderTiming[1], M::kReorderTiming[2], M::kReorderTiming[3], M::kReorderSlide);
+        const std::vector<CubicSegment>& curve = dragCurve_;
         const auto animate = [&](float from, float to) -> ComPtr<IDCompositionAnimation> {
             ComPtr<IDCompositionAnimation> a;
             if (FAILED(device->CreateAnimation(a.GetAddressOf()))) return nullptr;
@@ -465,7 +473,8 @@ std::optional<std::string> SpaceBarView::SpaceAt(float x, float y) const {
 }
 
 bool SpaceBarView::NeedsDraw() const {
-    return dirty_ || !placed_ || !opacitiesApplied_ || ((backingFor_ || drag_) && backingDirty_) || cellGpu_.size() != cells_.size() ||
+    return dirty_ || !placed_ || ghostMoved_ || !opacitiesApplied_ || ((backingFor_ || drag_) && backingDirty_) ||
+           cellGpu_.size() != cells_.size() ||
            std::any_of(cellGpu_.begin(), cellGpu_.end(), [](const CellGpu& cell) { return cell.dirty; });
 }
 
@@ -818,6 +827,8 @@ std::wstring SpaceBarView::Draw(UINT clientHeight, Pixels* readBack) {
         if (fresh) opacitiesApplied_ = false;
     }
     if (!placed_) PlaceCells();
+    else if (ghostMoved_) ShowGhost(scale);  // a move within the same slot: the ghost alone
+    ghostMoved_ = false;
     if (!opacitiesApplied_) ApplyOpacities();
 
     if (readBack) {

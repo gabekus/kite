@@ -243,3 +243,33 @@ float ThemeCrossfade::Progress(double time) {
 }
 
 }  // namespace kite
+
+namespace kite {
+
+std::optional<SpaceSwipe::Neighbours> SpaceSwipe::Neighbours::Make(const std::vector<std::string>& spaces, size_t selected) {
+    if (selected >= spaces.size()) return std::nullopt;
+    Neighbours n;
+    if (selected > 0) n.previous = spaces[selected - 1];
+    n.current = spaces[selected];
+    if (selected + 1 < spaces.size()) n.next = spaces[selected + 1];
+    return n;
+}
+
+std::optional<std::string> SpaceSwipe::Neighbours::Towards(int direction) const {
+    if (direction < 0) return previous;
+    if (direction > 0) return next;
+    return current;
+}
+
+std::optional<std::string> SpaceSwipe::Neighbours::Target(int direction, const std::vector<std::string>& spaces, const std::string& selected) const {
+    if (selected != current) return std::nullopt;
+    const auto here = std::find(spaces.begin(), spaces.end(), current);
+    const std::optional<std::string> id = Towards(direction);
+    if (here == spaces.end() || !id) return std::nullopt;
+    const auto at = std::find(spaces.begin(), spaces.end(), *id);
+    const std::ptrdiff_t step = direction < 0 ? -1 : direction > 0 ? 1 : 0;
+    if (at == spaces.end() || at - here != step) return std::nullopt;
+    return id;
+}
+
+}  // namespace kite

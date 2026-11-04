@@ -166,6 +166,12 @@ private:
     SwipeStart BeginSwipe();
     void ShowSwipe();
     void FinishSwipe(int landing);
+    // The spaces changed under a swipe: it's dropped and the pages settle back (the Mac's cancel).
+    void CancelSwipe();
+    // The space index the swipe's neighbours point at towards `direction`, while they still hold
+    // (SpaceSwipe::Neighbours::Target); none once the spaces changed under it.
+    std::optional<size_t> SwipeSpace(int direction) const;
+    std::vector<std::string> SpaceIDs() const;
     int CommitLanding();
     // Whether a shortcut's command would do anything now (the Mac's validateMenuItem): Space n
     // for a space there isn't passes its key on.
@@ -285,6 +291,8 @@ private:
         int pages;
     };
     std::optional<Landing> pendingLanding_;
+    // The spaces the swipe began between, by id.
+    std::optional<SpaceSwipe::Neighbours> swipeNeighbours_;
     bool selectingBySwipe_ = false;
     bool swipeMoved_ = false;  // since the clock's last frame drew
     std::unique_ptr<Compositor> compositor_;

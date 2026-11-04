@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <vector>
 
 #include "Check.h"
@@ -337,4 +338,33 @@ TEST(aSnapEndsASwipesCrossfade) {
     fade.SetInteractive(a, b, 0.5f);
     fade.Snap(b);
     CHECK(!fade.Interactive() && !fade.Fading() && fade.from == b && fade.to == b && fade.Progress(0) == 1);
+}
+
+// SpacesTests' neighbour guard (SpaceSwipe.Neighbours), which the controller checks on every
+// swipe event and its release.
+TEST(neighboursAreCapturedByID) {
+    const std::vector<std::string> ids{"A", "B", "C"};
+    const auto first = SpaceSwipe::Neighbours::Make(ids, 0);
+    CHECK(first && !first->previous && first->current == "A" && first->next == "B");
+    const auto last = SpaceSwipe::Neighbours::Make(ids, 2);
+    CHECK(last && last->Towards(-1) == "B" && !last->Towards(1));
+    CHECK(!SpaceSwipe::Neighbours::Make(ids, 3));
+    CHECK(!SpaceSwipe::Neighbours::Make({}, 0));
+}
+
+TEST(aSwipeWhoseSpacesChangedHasNoTarget) {
+    const std::vector<std::string> ids{"A", "B", "C"};
+    const SpaceSwipe::Neighbours swipe = *SpaceSwipe::Neighbours::Make(ids, 2);
+    CHECK(swipe.Target(-1, ids, "C") == "B");
+    // The neighbour was deleted mid-swipe: the old index would now be out of range.
+    CHECK(!swipe.Target(-1, {"A", "C"}, "C"));
+    // The space it started on was deleted.
+    CHECK(!swipe.Target(0, {"A", "B"}, "B"));
+    // Something else switched space (a shortcut, a click in the bar).
+    CHECK(!swipe.Target(0, ids, "A"));
+    // Moved but still its neighbour on that side: found by id.
+    CHECK(swipe.Target(-1, {"B", "C", "A"}, "C") == "B");
+    // Moved to the other side, or away: the pages on screen are no longer its neighbours.
+    CHECK(!swipe.Target(-1, {"C", "B", "A"}, "C"));
+    CHECK(!swipe.Target(-1, {"B", "A", "C"}, "C"));
 }

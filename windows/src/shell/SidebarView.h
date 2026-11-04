@@ -73,6 +73,8 @@ public:
         std::function<void(const std::string& spaceID, POINT screen)> spaceMenu;
         // The header's name field committed (Return, Done, or leaving it) with `name`.
         std::function<void(const std::string& spaceID, const std::string& name)> renameSpace;
+        // A click on the current space's name: its rename field (the Mac's beginRenaming).
+        std::function<void(const std::string& spaceID)> beginRenaming;
     };
     void SetActions(Actions actions) { actions_ = std::move(actions); }
 
@@ -89,6 +91,9 @@ public:
     // EndRenaming commits what's typed (renameSpace) or, with `commit` false, drops it.
     void BeginRenaming(const std::string& spaceID, const std::string& name);
     void EndRenaming(bool commit);
+    // Closes the field and gives back its space and what was typed, renaming nothing (the
+    // window renames it in the same update that ends it).
+    std::optional<std::pair<std::string, std::string>> TakeRename();
     std::optional<std::string> Renaming() const;
     // The window's keys, characters, IME and focus while renaming (after the command bar's).
     // True when the field took `message`.
@@ -219,6 +224,8 @@ private:
     void FinishDrop();
     // Where the rename field sits over the header drawn at `top` (DrawRow's).
     void PlaceRenameField(float x, float top);
+    // The header's name as DrawRow lays it out at `top` (page points): where a click renames.
+    D2D1_RECT_F HeaderNameRect(const SidebarRow& row, float top);
     void SetScroll(float scroll);
     bool OverList(D2D1_POINT_2F p) const;
     void Perform(const SidebarTap& tap);

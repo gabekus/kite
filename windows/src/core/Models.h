@@ -242,6 +242,8 @@ struct BrowserState {
     // menu's New Folder: BrowserState+Automation.swift's createFolder). Its id; empty for no such
     // space.
     std::string CreateFolder(std::string name, size_t space);
+    // New Folder (createNewFolder): "New Folder" in space `space`, or the selected one.
+    std::string CreateNewFolder(std::optional<size_t> space = std::nullopt) { return CreateFolder("New Folder", space.value_or(SelectedSpaceIndex())); }
 
     // MARK: Closing, archiving and reopening (TabClosing.cpp, BrowserState.swift)
     // The mutators take the id by value: a caller's id is often the tab's own (SelectedTab()->id),

@@ -414,3 +414,24 @@ TEST(aDropOffTheStripGoesBackWhereItCameFrom) {
     CHECK(SpaceDragGhost(s.layout, drag) == s.layout.cells[1]);
     CHECK(SpaceDragCells(s.layout, s.ids, drag) == s.layout.cells);
 }
+
+// FolderTests.newFolderGoesToTheSelectedSpaceUnlessOneIsGiven.
+TEST(newFolderGoesToTheSelectedSpaceUnlessOneIsGiven) {
+    BrowserState state;
+    state.spaces.clear();
+    state.AddSpace("Home", "\xF0\x9F\x8F\xA0", Theme::Presets()[0]);
+    state.AddSpace("Work", "\xF0\x9F\x92\xBC", Theme::Presets()[0]);
+    state.SelectSpaceAt(1);
+    state.CreateNewFolder();
+    state.CreateNewFolder(0);
+    state.CreateNewFolder(0);
+    const auto names = [&](size_t space) {
+        std::vector<std::string> out;
+        for (const PinnedItem& item : state.spaces[space].pinnedItems) {
+            if (const auto* folder = std::get_if<Folder>(&item.value)) out.push_back(folder->name);
+        }
+        return out;
+    };
+    CHECK(names(1) == (std::vector<std::string>{"New Folder"}));
+    CHECK(names(0) == (std::vector<std::string>{"New Folder", "New Folder"}));
+}

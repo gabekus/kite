@@ -17,18 +17,54 @@ namespace {
 // uxtheme's PreferredAppMode (ordinal 135's argument).
 enum class AppMode : int { Default = 0, AllowDark = 1, ForceDark = 2, ForceLight = 3 };
 
-// Win32 menus in the space's appearance, as the Mac's NSMenu takes the window's (see the header).
-void UseMenuAppearance(bool dark) {
+// Windows 10 1903 (build 18362), where ordinal 135 became SetPreferredAppMode (before it, it was
+// AllowDarkModeForApp, with another argument): RtlGetVersion, which no manifest shims.
+bool HasPreferredAppMode() {
+    using RtlGetVersion = LONG(WINAPI*)(OSVERSIONINFOW*);
+    const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    const auto get = ntdll ? reinterpret_cast<RtlGetVersion>(reinterpret_cast<void*>(GetProcAddress(ntdll, "RtlGetVersion"))) : nullptr;
+    OSVERSIONINFOW version{};
+    version.dwOSVersionInfoSize = sizeof(version);
+    return get && get(&version) == 0 && (version.dwMajorVersion > 10 || (version.dwMajorVersion == 10 && version.dwBuildNumber >= 18362));
+}
+
+// Win32 menus in the space's appearance while one is open, as the Mac's NSMenu takes the
+// window's (see the header). The mode is the whole process's, so it's set as a menu opens and put
+// back to the default (light) as it closes: nothing else Kite shows is left forced dark.
+class MenuAppearance {
+public:
+    explicit MenuAppearance(bool dark) {
+        if (!Load()) return;
+        setMode_(dark ? AppMode::ForceDark : AppMode::ForceLight);
+        flush_();
+        set_ = true;
+    }
+    ~MenuAppearance() {
+        if (!set_) return;
+        setMode_(AppMode::Default);
+        flush_();
+    }
+    MenuAppearance(const MenuAppearance&) = delete;
+    MenuAppearance& operator=(const MenuAppearance&) = delete;
+
+private:
     using SetPreferredAppMode = int(WINAPI*)(AppMode);
     using FlushMenuThemes = void(WINAPI*)();
-    static const HMODULE uxtheme = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (!uxtheme) return;
-    static const auto setMode = reinterpret_cast<SetPreferredAppMode>(reinterpret_cast<void*>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(135))));
-    static const auto flush = reinterpret_cast<FlushMenuThemes>(reinterpret_cast<void*>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(136))));
-    if (!setMode || !flush) return;
-    setMode(dark ? AppMode::ForceDark : AppMode::ForceLight);
-    flush();
-}
+    static bool Load() {
+        static const bool loaded = [] {
+            if (!HasPreferredAppMode()) return false;
+            const HMODULE uxtheme = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+            if (!uxtheme) return false;
+            setMode_ = reinterpret_cast<SetPreferredAppMode>(reinterpret_cast<void*>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(135))));
+            flush_ = reinterpret_cast<FlushMenuThemes>(reinterpret_cast<void*>(GetProcAddress(uxtheme, MAKEINTRESOURCEA(136))));
+            return setMode_ && flush_;
+        }();
+        return loaded;
+    }
+    static inline SetPreferredAppMode setMode_ = nullptr;
+    static inline FlushMenuThemes flush_ = nullptr;
+    bool set_ = false;
+};
 
 // The item ids: each command's value plus one (0 is TrackPopupMenuEx's "nothing chosen").
 UINT ItemId(SpaceMenuItem::Command command) { return static_cast<UINT>(command) + 1; }
@@ -157,7 +193,7 @@ Pixels Scaled(const Pixels& in, double factor) {
 std::optional<SpaceMenuItem::Command> ShowSpaceMenu(HWND window, const std::vector<SpaceMenuItem>& items, POINT screen, bool dark) {
     HMENU menu = MakeMenu(items);
     if (!menu) return std::nullopt;
-    UseMenuAppearance(dark);
+    const MenuAppearance appearance(dark);
     // A menu shown for a window in front closes when the pointer clicks elsewhere (KB135788).
     SetForegroundWindow(window);
     const UINT id = static_cast<UINT>(TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_NONOTIFY,
@@ -170,7 +206,7 @@ std::optional<SpaceMenuItem::Command> ShowSpaceMenu(HWND window, const std::vect
 std::wstring RenderSpaceMenu(HWND window, const std::vector<SpaceMenuItem>& items, POINT screen, bool dark, UINT dpi, Pixels& out) {
     HMENU menu = MakeMenu(items);
     if (!menu) return L"CreatePopupMenu failed";
-    UseMenuAppearance(dark);
+    const MenuAppearance appearance(dark);
     Pixels shown;
     MenuGrab state{&shown};
     grab = &state;

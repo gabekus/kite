@@ -3,6 +3,7 @@
 #include "shell/TextEditing.h"
 
 #include <algorithm>
+#include <cstring>
 
 #include "core/Unicode.h"
 
@@ -134,21 +135,26 @@ size_t TextEditing::NextWord(size_t at) const {
     return at;
 }
 
-void TextEditing::Copy() const {
-    if (!HasSelection() || !OpenClipboard(window_)) return;
-    const std::wstring selected = text_.substr(SelectionStart(), SelectionEnd() - SelectionStart());
-    EmptyClipboard();
-    if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, (selected.size() + 1) * sizeof(wchar_t))) {
-        if (auto* out = static_cast<wchar_t*>(GlobalLock(memory))) {
-            std::copy(selected.begin(), selected.end(), out);
-            out[selected.size()] = L'\0';
-            GlobalUnlock(memory);
-            if (!SetClipboardData(CF_UNICODETEXT, memory)) GlobalFree(memory);
-        } else {
-            GlobalFree(memory);
+bool CopyText(HWND owner, const std::wstring& text) {
+    if (!OpenClipboard(owner)) return false;
+    bool copied = false;
+    if (EmptyClipboard()) {
+        const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+        if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+            if (void* data = GlobalLock(memory)) {
+                std::memcpy(data, text.c_str(), bytes);
+                GlobalUnlock(memory);
+                copied = SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
+            }
+            if (!copied) GlobalFree(memory);  // the clipboard owns it only once it's set
         }
     }
     CloseClipboard();
+    return copied;
+}
+
+void TextEditing::Copy() const {
+    if (HasSelection()) CopyText(window_, text_.substr(SelectionStart(), SelectionEnd() - SelectionStart()));
 }
 
 TextEditing::Change TextEditing::Paste() {

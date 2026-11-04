@@ -26,7 +26,7 @@ void BrowserWindowController::RunSpaceMenuItem(const std::string& spaceID, Space
     switch (command) {
     case Command::Rename: BeginRenaming(spaceID); break;
     case Command::NewFolder:
-        state_.CreateFolder("New Folder", *index);
+        state_.CreateNewFolder(*index);
         StateChanged();
         break;
     case Command::Delete: DeleteSpace(spaceID); break;

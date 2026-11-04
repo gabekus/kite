@@ -36,11 +36,11 @@
 // its `line`, as the Mac's KITE_TEST_CONTEXT_MENU logs one; `rename`, `icon` (an emoji,
 // symbol:NAME, image:FILE, or "" for the dot), `folder` (New Folder) and `delete` are its items.
 // `delete` prints whether the window deletes at once or asks first (and what), then deletes; the
-// last space stays (exit 5). `new` is + › New Space, named NAME. `move` puts a space at PLACE
-// (from 1) among the others, as a drop in the bar; `drag` presses its cell in the 240pt bar,
-// drags to X (and Y, default the bar's middle) in bar points and prints the strip there (the
-// open slot, each cell's left, the ghost's), then lets go, prints the slot it lands in and moves
-// it there.
+// last space stays (exit 6; 5 is a space that isn't there). `new` is + › New Space, named
+// NAME. `move` puts a space at PLACE (from 1) among the others, as a drop in the bar; `drag`
+// presses its cell in the 240pt bar, drags to X (and Y, default the bar's middle) in bar points
+// and prints the strip there (the open slot, each cell's left, the ghost's), then lets go,
+// prints the slot it lands in and moves it there.
 
 #include <algorithm>
 #include <charconv>
@@ -78,7 +78,7 @@ using namespace kite;
 
 namespace {
 
-enum ExitCode : int { kOk = 0, kUsage = 1, kBadProfile = 2, kLoadFailed = 3, kSaveFailed = 4, kNotFound = 5 };
+enum ExitCode : int { kOk = 0, kUsage = 1, kBadProfile = 2, kLoadFailed = 3, kSaveFailed = 4, kNotFound = 5, kRefused = 6 };
 
 int Usage() {
     std::fputs(
@@ -613,11 +613,12 @@ int main(int argc, char** argv) {
         } else if (action == "folder" && args.size() == 3) {
             const auto space = state.SpaceIndex(Id(args[2]));
             if (!space) return kNotFound;
-            std::puts(state.CreateFolder("New Folder", *space).c_str());
+            std::puts(state.CreateNewFolder(*space).c_str());
         } else if (action == "delete" && args.size() == 3) {
             const std::string id = Id(args[2]);
+            if (!state.SpaceIndex(id)) return kNotFound;
             const SpaceDeletion deletion = DeletionOf(state, id);
-            if (deletion.kind == SpaceDeletion::Kind::Refused) return kNotFound;
+            if (deletion.kind == SpaceDeletion::Kind::Refused) return kRefused;
             json::Object out{{"kind", std::string(deletion.kind == SpaceDeletion::Kind::Now ? "now" : "ask")}};
             if (deletion.kind == SpaceDeletion::Kind::Ask) {
                 out.emplace("title", deletion.title);

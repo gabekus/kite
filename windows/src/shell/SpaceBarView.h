@@ -141,7 +141,6 @@ private:
     // A drag's cells, sliding from where they are to their slots (animated), and its ghost.
     void PlaceDragged(float scale);
     void ShowGhost(float scale);
-    void DropGhost();
     // Where a cell's visual is now along its slide, in points from the bar's left.
     float CellX(size_t index) const;
     // The opacities each layer shows at rest, along the slide, or held by a swipe.
@@ -212,6 +211,9 @@ private:
         bool applied = false;  // its animations are on the visual
     };
     std::optional<GhostMotion> ghostMotion_;
+    std::vector<std::string> dragIDs_;        // the spaces' order as the drag began
+    std::vector<CubicSegment> dragCurve_;     // kReorderTiming over kReorderSlide, made once
+    bool ghostMoved_ = false;                  // the pointer moved within the open slot
     struct GhostLayer {
         Microsoft::WRL::ComPtr<IDCompositionVisual> visual;
         Microsoft::WRL::ComPtr<IDCompositionEffectGroup> effect;

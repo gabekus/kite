@@ -30,25 +30,6 @@ namespace {
 // A frame log's touchpad records at most (a few MB; a resting finger polls once a frame).
 constexpr size_t kMaxTouchpadLog = 200000;
 
-// Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
-bool CopyText(HWND owner, const std::wstring& text) {
-    if (!OpenClipboard(owner)) return false;
-    bool copied = false;
-    if (EmptyClipboard()) {
-        const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
-        if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
-            if (void* data = GlobalLock(memory)) {
-                std::memcpy(data, text.c_str(), bytes);
-                GlobalUnlock(memory);
-                copied = SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
-            }
-            if (!copied) GlobalFree(memory);  // the clipboard owns it only once it's set
-        }
-    }
-    CloseClipboard();
-    return copied;
-}
-
 }  // namespace
 
 std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
@@ -221,6 +202,7 @@ std::wstring BrowserWindowController::Init() {
     actions.moveSpace = [this](const std::string& spaceID, size_t index) { MoveSpace(spaceID, index); };
     actions.spaceMenu = [this](const std::string& spaceID, POINT screen) { ShowSpaceMenu(spaceID, screen); };
     actions.renameSpace = [this](const std::string& spaceID, const std::string& name) { RenameSpace(spaceID, name); };
+    actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
     sidebar_->SetActions(std::move(actions));
 
     MakeCommands();
@@ -364,29 +346,31 @@ SwipeStart BrowserWindowController::BeginSwipe() {
     }
     sidebar_->SetPageOffset(offset);
     const size_t index = state_.SelectedSpaceIndex();
+    swipeNeighbours_ = SpaceSwipe::Neighbours::Make(SpaceIDs(), index);
     return SwipeStart{static_cast<double>(kSidebarWidth), index > 0, index + 1 < state_.spaces.size(), offset};
 }
 
 void BrowserWindowController::ShowSwipe() {
     const SpaceSwipe& swipe = *swipe_.Swipe();
+    // The spaces it began between, by id: a reorder or a delete under it (the space bar's, the
+    // menu's) leaves the pages on screen the wrong ones, and the swipe is dropped.
+    const std::optional<size_t> current = SwipeSpace(0), neighbour = SwipeSpace(swipe.Direction());
+    if (!current || !neighbour) return CancelSwipe();
     sidebar_->SetPageOffset(static_cast<float>(swipe.Offset()));
     // The theme crossfades towards the neighbour the pages are moving to, drawn on the next
     // frame (the clock's, which runs while the touchpad does).
-    const size_t index = state_.SelectedSpaceIndex();
-    const Theme& current = state_.spaces[index].theme;
-    const size_t neighbour = index + static_cast<size_t>(swipe.Direction());
-    const bool hasNeighbour = swipe.Direction() != 0 && neighbour < state_.spaces.size();
-    theme_.SetInteractive(current, hasNeighbour ? state_.spaces[neighbour].theme : current, static_cast<float>(swipe.Progress()));
+    theme_.SetInteractive(state_.spaces[*current].theme, state_.spaces[*neighbour].theme, static_cast<float>(swipe.Progress()));
     swipeMoved_ = true;
     clock_->Start();
 }
 
 void BrowserWindowController::FinishSwipe(int landing) {
-    const size_t index = state_.SelectedSpaceIndex();
-    // A space selected under the swipe (from the keyboard) may leave no neighbour that side.
-    const size_t target = index + static_cast<size_t>(landing);
-    if (landing != 0 && target >= state_.spaces.size()) landing = 0;
-    const Space& space = state_.spaces[index + static_cast<size_t>(landing)];
+    // Where it lands, among the spaces it began between (finish(cancelled:)'s space(towards:)):
+    // none when they changed under it, which settles back on the selected space.
+    const std::optional<size_t> target = SwipeSpace(landing);
+    swipeNeighbours_.reset();
+    if (!target) landing = 0;
+    const Space& space = state_.spaces[target.value_or(state_.SelectedSpaceIndex())];
     const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
     if (visible) {
         theme_.FinishInteractive(space.theme, FrameClock::Now());
@@ -410,6 +394,27 @@ void BrowserWindowController::FinishSwipe(int landing) {
     sidebar_->Update(state_, pagesAnchor_);
     CommitSlide();
     SetTimer(window_.Handle(), kSettleTimer, static_cast<UINT>(std::ceil(duration * 1000)) + 17, nullptr);
+}
+
+std::vector<std::string> BrowserWindowController::SpaceIDs() const {
+    std::vector<std::string> ids;
+    ids.reserve(state_.spaces.size());
+    for (const Space& space : state_.spaces) ids.push_back(space.id);
+    return ids;
+}
+
+std::optional<size_t> BrowserWindowController::SwipeSpace(int direction) const {
+    if (!swipeNeighbours_) return std::nullopt;
+    const std::optional<std::string> id = swipeNeighbours_->Target(direction, SpaceIDs(), state_.selectedSpaceID);
+    return id ? state_.SpaceIndex(*id) : std::nullopt;
+}
+
+void BrowserWindowController::CancelSwipe() {
+    // SpaceSwipeController.cancel: the swipe goes, the rest of its gesture with it, and the pages
+    // and the theme settle back on the selected space.
+    swipe_.Abandon();
+    swipeNeighbours_.reset();
+    FinishSwipe(0);
 }
 
 int BrowserWindowController::CommitLanding() {
@@ -480,6 +485,12 @@ std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& 
 // MARK: The session and the pages
 
 void BrowserWindowController::StateChanged() {
+    // A rename ends once its space isn't the one shown (another selected, or it was deleted),
+    // keeping what was typed, as leaving the field does: renamed here, in this update, so the
+    // sidebar's Update stays a picture of the session.
+    if (const std::optional<std::string> renaming = sidebar_->Renaming(); renaming && *renaming != state_.selectedSpaceID) {
+        if (const auto taken = sidebar_->TakeRename()) state_.RenameSpace(taken->first, taken->second);
+    }
     SyncSpace();
     sidebar_->Update(state_, pagesAnchor_);
     // A slide begins at once: the new page and the caption buttons' appearance drawn and the

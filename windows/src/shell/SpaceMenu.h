@@ -4,9 +4,11 @@
 // (TrackPopupMenuEx) and a task dialog. What they hold is core's (core/SpaceEditing.h).
 //
 // Win32 menus draw light unless the process asks uxtheme for dark ones, which only its
-// unnamed exports do (SetPreferredAppMode and FlushMenuThemes, ordinals 135 and 136, Windows
-// 10 1903 and later, as Explorer and Notepad use them); without them a dark space's menu is
-// light. The task dialog is always light.
+// unnamed exports do (SetPreferredAppMode and FlushMenuThemes, ordinals 135 and 136, as Explorer
+// and Notepad use them). They're called only on Windows 10 1903 (build 18362) and later, only
+// while a menu is open (the mode is process-wide: it goes back to the default as the menu
+// closes), and without them a dark space's menu is light (docs/windows-architecture.md). The
+// task dialog is always light.
 
 #include <windows.h>
 
