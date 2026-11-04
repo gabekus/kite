@@ -3,12 +3,15 @@
 #include "shell/BrowserWindowController.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <utility>
 
 #include "core/CommandBar.h"
+#include "core/Json.h"
 #include "core/LiveTabPolicy.h"
 #include "core/OKLab.h"
 #include "core/Sidebar.h"
@@ -32,11 +35,15 @@ constexpr UINT_PTR kArchiveTimer = 2;
 constexpr UINT kArchiveIntervalMs = 15 * 60 * 1000;
 // When the pages' slide on the compositor has ended (its duration and a frame, rounded up).
 constexpr UINT_PTR kSettleTimer = 3;
+// The session's save, armed by a change (SaveSchedule) and gone once it fires: never idle.
+constexpr UINT_PTR kSaveTimer = 4;
 // Posted by the favicon worker when icons arrive (Favicons.h).
 constexpr UINT kFaviconsMessage = WM_APP + 4;
 // Posted by the frame clock once a composition frame while something animates.
 constexpr UINT kFrameMessage = WM_APP + 5;
 constexpr UINT kSpaceIconsMessage = WM_APP + 6;
+// Posted by the memory watch (MemoryPressure.h), wParam the MemoryPressure level.
+constexpr UINT kMemoryPressureMessage = WM_APP + 7;
 
 // Puts text on the clipboard as Unicode text. False when the clipboard couldn't be had.
 bool CopyText(HWND owner, const std::wstring& text) {
@@ -68,7 +75,7 @@ bool Inked(const Pixels& pixels, UINT fromRow = 0) {
 }  // namespace
 
 std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts,
-                                                                          Options options, std::function<void()> save,
+                                                                          Options options, SessionWriter* writer,
                                                                           std::wstring& error) {
     // The GPU first: everything is set up before the window shows, so it never appears empty
     // or with the wrong title bar.
@@ -82,7 +89,7 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
         return nullptr;
     }
     std::unique_ptr<BrowserWindowController> controller(
-        new BrowserWindowController(instance, state, std::move(shortcuts), options, std::move(save), std::move(renderer)));
+        new BrowserWindowController(instance, state, std::move(shortcuts), options, writer, std::move(renderer)));
     if (!controller->window_.IsValid()) {
         error = L"CreateWindowExW failed";
         return nullptr;
@@ -92,16 +99,18 @@ std::unique_ptr<BrowserWindowController> BrowserWindowController::Create(HINSTAN
 }
 
 BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserState& state, ShortcutMap shortcuts, Options options,
-                                                 std::function<void()> save, std::unique_ptr<Renderer> renderer)
+                                                 SessionWriter* writer, std::unique_ptr<Renderer> renderer)
     : instance_(instance),
       state_(state),
       shortcuts_(std::move(shortcuts)),
       options_(options),
-      save_(std::move(save)),
+      writer_(writer),
       renderer_(std::move(renderer)),
       window_(instance),
       theme_(state.SelectedSpace().theme),
-      shownSpaceID_(state.SelectedSpace().id) {}
+      shownSpaceID_(state.SelectedSpace().id) {
+    createdAt_ = FrameClock::Now();
+}
 
 BrowserWindowController::~BrowserWindowController() {
     // The views and the compositor go before the window: it stops calling into them first.
@@ -125,6 +134,11 @@ std::wstring BrowserWindowController::Init() {
     systemBackdrop_ = !options_.capture && window_.UseSystemBackdrop();
     ApplyAppearance(theme_.to);
     clock_ = std::make_unique<FrameClock>(window_.Handle(), kFrameMessage);
+    // Not in a capture, whose pages Chromium doesn't make.
+    if (!options_.capture) {
+        memoryWatch_ = std::make_unique<MemoryPressureWatch>(window_.Handle(), kMemoryPressureMessage);
+        watchingMemory_ = memoryWatch_->IsWatching();
+    }
     compositor_ = Compositor::Create(window_.Handle(), *renderer_, error);
     if (!compositor_) return L"Kite couldn't start DirectComposition: " + error;
 
@@ -214,11 +228,16 @@ std::wstring BrowserWindowController::Init() {
         return Filter(message, wParam, lParam, result);
     };
     // Closing the window, and logoff or shutdown (which skip WM_CLOSE): what the pages
-    // reported runs first (titles, addresses), then the caller saves.
+    // reported runs first (titles, addresses), then the session is saved at once, and Kite
+    // waits for the write (the one wait on the disk the UI thread may make), so a quit or a
+    // shutdown never loses it.
     window_.onClose = [this] {
         clock_->Stop();
+        memoryWatch_.reset();
         RunPending();
-        if (save_) save_();
+        closing_ = true;
+        SaveNow();
+        if (writer_) writer_->Flush();
     };
     return {};
 }
@@ -323,9 +342,71 @@ std::wstring BrowserWindowController::SaveFrameLog(const std::filesystem::path& 
     return out ? std::wstring{} : L"couldn't write " + file.wstring();
 }
 
+std::wstring BrowserWindowController::SaveSaveLog(const std::filesystem::path& file) const {
+    json::Array saves;
+    for (const LoggedSave& save : saves_) {
+        saves.push_back(json::Object{{"t", std::round(save.at * 1000) / 1000}, {"uiMicros", std::round(save.micros * 10) / 10},
+                                     {"closing", save.closing}});
+    }
+    const double mean = saveCost_.saves ? saveCost_.totalMicros / static_cast<double>(saveCost_.saves) : 0.0;
+    json::Array reports;
+    for (const auto& [at, level] : pressureReports_) {
+        const char* name = level == MemoryPressure::Critical ? "critical" : level == MemoryPressure::Warning ? "warning" : "normal";
+        reports.push_back(json::Object{{"t", std::round(at * 1000) / 1000}, {"level", name}});
+    }
+    json::Object log{{"saves", json::Value(std::move(saves))},
+                     {"frames", frameCount_},
+                     {"uiMicros", json::Object{{"max", saveCost_.maxMicros}, {"mean", mean}}},
+                     {"memoryPressure", json::Object{{"watching", watchingMemory_}, {"reports", json::Value(std::move(reports))}}}};
+    if (writer_) {
+        const SessionWriter::Statistics stats = writer_->Stats();
+        log.emplace("writer", json::Object{{"handedOver", stats.handedOver},
+                                           {"written", stats.written},
+                                           {"unchanged", stats.unchanged},
+                                           {"superseded", stats.superseded},
+                                           {"backups", stats.backups},
+                                           {"lastBytes", stats.lastBytes},
+                                           {"lastEncodeMicros", stats.lastEncodeMicros},
+                                           {"lastWriteMicros", stats.lastWriteMicros},
+                                           {"lastError", stats.lastError}});
+    }
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    if (!out) return L"couldn't open " + file.wstring();
+    out << json::Write(json::Value(std::move(log))) << '\n';
+    out.flush();
+    return out ? std::wstring{} : L"couldn't write " + file.wstring();
+}
+
 // MARK: The session and the pages
 
-void BrowserWindowController::StateChanged() {
+void BrowserWindowController::SessionChanged(SessionSaveDelay delay) {
+    // A second after the last sidebar change; a page's title or favicon never pushes a waiting
+    // save back (SaveSchedule). SetTimer with the same id replaces the waiting one.
+    if (!writer_) return;
+    if (auto seconds = saveSchedule_.Changed(delay, FrameClock::Now())) {
+        SetTimer(window_.Handle(), kSaveTimer, static_cast<UINT>(std::ceil(*seconds * 1000)), nullptr);
+        ++saveArms_;
+    }
+}
+
+void BrowserWindowController::SaveNow() {
+    KillTimer(window_.Handle(), kSaveTimer);
+    saveSchedule_.Saved();
+    if (!writer_) return;
+    // A copy for the writer's thread (the session is the UI thread's to change): the only cost
+    // here. Encoding and the disk are the writer's.
+    const auto start = std::chrono::steady_clock::now();
+    writer_->Save(state_);
+    const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+    ++saveCost_.saves;
+    saveCost_.lastMicros = micros;
+    saveCost_.maxMicros = std::max(saveCost_.maxMicros, micros);
+    saveCost_.totalMicros += micros;
+    if (options_.saveLog) saves_.push_back(LoggedSave{FrameClock::Now() - createdAt_, micros, closing_});
+}
+
+void BrowserWindowController::StateChanged(std::optional<SessionSaveDelay> save) {
+    if (save) SessionChanged(*save);
     SyncSpace();
     sidebar_->Update(state_, pagesAnchor_);
     // A slide begins at once: the new page and the caption buttons' appearance drawn and the
@@ -688,6 +769,19 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
         clock_->Delivered();
         return true;
     }
+    if (message == WM_TIMER && wParam == kSaveTimer) {
+        SaveNow();
+        return true;
+    }
+    if (message == kMemoryPressureMessage) {
+        const auto level = static_cast<MemoryPressure>(wParam);
+        if (options_.saveLog) pressureReports_.push_back({FrameClock::Now() - createdAt_, level});
+        // The Mac's watchMemoryPressure: the pages that aren't on screen close.
+#ifdef KITE_HAS_CEF
+        if (chromium_ && DiscardsPages(level)) chromium_->DiscardHiddenPages();
+#endif
+        return true;
+    }
     // The pages' slide has ended on the compositor.
     if (message == WM_TIMER && wParam == kSettleTimer) {
         FinishSettling();
@@ -788,7 +882,10 @@ std::wstring BrowserWindowController::SmokeTest() {
     // Switching spaces: the pages slide on the compositor and the theme crossfades on the
     // clock's frames, and both come to rest on the next space, then back on this one.
     if (state_.spaces.size() > 1) {
+        const uint64_t armed = saveArms_;
         if (std::wstring problem = SmokeTestSpaces(); !problem.empty()) return problem;
+        // A change arms the session's save (it may have fired already: the settling ran timers).
+        if (writer_ && writer_->MaySave() && saveArms_ == armed) return L"switching spaces didn't schedule a save";
     }
     // The lost-GPU path, once: the renderer, swap chain and composition target are rebuilt and
     // draw again (a real device removal can't be caused from a test).
@@ -930,21 +1027,27 @@ Tab* BrowserWindowController::TabNamed(const std::string& id) {
 
 Chromium::StartResult BrowserWindowController::StartChromium(const std::filesystem::path& root, std::wstring& error) {
     PageEvents events;
+    // The Mac's mutatePage: a navigation saves as soon as a sidebar change, a title or favicon
+    // later (SessionSaveDelay::PageEvent); a report that changes nothing saves nothing.
     events.addressChanged = [this](const std::string& id, const std::string& url) {
-        if (Tab* tab = TabNamed(id); tab && !url.empty()) tab->url = url;
-        StateChanged();
+        Tab* tab = TabNamed(id);
+        const bool changed = tab && !url.empty() && tab->url != url;
+        if (changed) tab->url = url;
+        StateChanged(changed ? std::optional(SessionSaveDelay::Soon) : std::nullopt);
     };
     events.titleChanged = [this](const std::string& id, const std::string& title) {
         // An empty title keeps the last one, as the Mac's BrowserStore does.
-        if (Tab* tab = TabNamed(id); tab && !title.empty()) tab->title = title;
-        StateChanged();
+        Tab* tab = TabNamed(id);
+        const bool changed = tab && !title.empty() && tab->title != title;
+        if (changed) tab->title = title;
+        StateChanged(changed ? std::optional(SessionSaveDelay::PageEvent) : std::nullopt);
     };
     events.faviconChanged = [this](const std::string& id, const std::string& url) {
         Tab* tab = TabNamed(id);
         const std::optional<std::string> icon = url.empty() ? std::nullopt : std::optional<std::string>(url);
         if (!tab || tab->faviconURL == icon) return;
         tab->faviconURL = icon;
-        StateChanged();
+        StateChanged(SessionSaveDelay::PageEvent);
     };
     events.loadingChanged = [this](const std::string&, bool loading) {
         // A smoke test closes once the first page has loaded (or shown its error page).

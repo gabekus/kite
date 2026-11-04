@@ -169,7 +169,10 @@ As on the Mac, at most six pages stay alive (W5b): past that, showing a tab
 closes the least recently shown page, unless it's tied to a popup, using the
 camera or microphone, or playing sound (asked of the page with the Mac's
 script through DevTools' `Runtime.evaluate`). Its tab stays and loads again
-when it's next shown. Ctrl-click and middle-click open a link in a background tab,
+when it's next shown. When memory runs low (W11, the Mac's `watchMemoryPressure`)
+every page but the shown one goes the same way: Windows' low-memory resource
+notification, waited on by the thread pool with no thread or timer of Kite's,
+reports it once per spell of low memory (`shell/MemoryPressure.h`). Ctrl-click and middle-click open a link in a background tab,
 Ctrl+Shift-click in a foreground one (a `target=_blank` link opens as a popup
 tab either way, as on the Mac). The first page is made once the window is on
 screen and not minimized. `--smoke-test` loads
@@ -343,6 +346,25 @@ from a page (Chromium's key thread doesn't know the spaces). Not yet: the space
 bar (W9b), a touchpad's swipe (W9c), reordering spaces and the space menu
 (W9d). `Kite.exe --frame-log FILE` writes each frame the clock delivered in a
 test run.
+
+## Saving the session
+
+As on the Mac (`BrowserStore.scheduleSave`, `SessionSaveDelay`), the session is
+saved as it changes (W11): a second after the last sidebar change or
+navigation, ten seconds after a page's title or favicon (which never push a
+waiting save back), and at once when the window closes or Windows ends the
+session. Each change arms one one-shot timer; when it fires, Kite's UI thread
+copies the session (about 60 μs for 200 tabs) and hands the copy to
+`core/SessionWriter`, whose thread encodes it, skips it if the bytes are what
+it last wrote, and writes it atomically (`core/StoreFile`: a sibling `.tmp`
+flushed to the disk, then renamed over the file). Closing waits for that
+write. The writer also keeps the Mac's rolling backups in `Backups\`
+(`core/SessionBackups`, the same names and budgets): the session as found at
+each launch, and at most one an hour while Kite runs. An unreadable
+`session.json` is moved aside and the newest backup that reads takes its place.
+`kitecore backups` lists them; `kitecore save-schedule` replays changes through
+the timer's rules; `kitecore save-bench` measures a save. `Kite.exe --save-log`
+is the live check: a quiet window that logs each save and its UI-thread cost.
 
 ## Refresh rate
 

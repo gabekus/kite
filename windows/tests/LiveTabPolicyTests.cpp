@@ -47,3 +47,32 @@ TEST(aPopupAndItsOpenerAreLinkedWhileBothTabsExist) {
     state.Close(popup);
     CHECK(!IsLinkedToPopup(openers, state, opener));
 }
+
+// LiveTabPolicyTests.hibernationIsDroppedWhenTheTabChangedDuringItsBusyCheck
+TEST(hibernationIsDroppedWhenTheTabChangedDuringItsBusyCheck) {
+    const Timestamp picked = 10;
+    CHECK(LiveTabPolicy::StillHibernates(picked, picked, true, false));
+    // Shown again (and maybe hidden again) while the check ran.
+    CHECK(!LiveTabPolicy::StillHibernates(picked, Timestamp{11}, true, false));
+    CHECK(!LiveTabPolicy::StillHibernates(picked, picked, true, true));
+    // Another page under the tab id (made again).
+    CHECK(!LiveTabPolicy::StillHibernates(picked, picked, false, false));
+    // Already gone.
+    CHECK(!LiveTabPolicy::StillHibernates(picked, std::nullopt, true, false));
+    CHECK(!LiveTabPolicy::StillHibernates(std::nullopt, std::nullopt, true, false));
+}
+
+// PagePool.watchMemoryPressure: warning and critical both hibernate every page not on screen.
+TEST(memoryPressureDiscardsEveryPageNotOnScreen) {
+    CHECK(!DiscardsPages(MemoryPressure::Normal));
+    CHECK(DiscardsPages(MemoryPressure::Warning));
+    CHECK(DiscardsPages(MemoryPressure::Critical));
+    std::map<std::string, Timestamp> live{{"c", 3}, {"a", 1}, {"b", 2}, {"shown", 0}};
+    // Under the live-tab limit, still all but the shown one, oldest first.
+    CHECK(TabsToDiscardUnderPressure(live, {"shown"}) == (std::vector<std::string>{"a", "b", "c"}));
+    CHECK(LiveTabPolicy{6}.TabsToEvict(live, {"shown"}).empty());
+    // Ties by id, so the order doesn't depend on the map's.
+    CHECK(TabsToDiscardUnderPressure({{"y", 1}, {"x", 1}}, {}) == (std::vector<std::string>{"x", "y"}));
+    CHECK(TabsToDiscardUnderPressure({{"only", 1}}, {"only"}).empty());
+    CHECK(TabsToDiscardUnderPressure({}, {}).empty());
+}

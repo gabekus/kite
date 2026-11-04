@@ -24,6 +24,10 @@
 //                            a normal window on a test profile that writes each animation
 //                            frame (a space switch's slide and crossfade) to FILE as it
 //                            closes: one JSON object a line, `t`, `offset` and `theme`.
+//   Kite.exe --save-log FILE  a quiet window (behind other windows, no dialogs) on a test profile
+//                            that stays open until it's closed, then writes each session save
+//                            it made (when, and its cost on the UI thread) and the writer's
+//                            statistics to FILE as JSON: the live check of saving as it changes.
 //   Kite.exe --backdrop-test draws the theme backdrop on the GPU and checks every pixel against
 //                            core's CPU reference of the Mac's shader (shell/BackdropTest.h).
 //                            Prints a report; exits 0 when it matches, 5 when it differs, 3
@@ -48,6 +52,7 @@
 
 #include "core/KeyBindings.h"
 #include "core/SessionStore.h"
+#include "core/SessionWriter.h"
 #include "core/SupportDirectory.h"
 #include "shell/BackdropTest.h"
 #include "shell/BrowserWindowController.h"
@@ -165,7 +170,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         const std::wstring& a = args[i];
         if (a == L"--smoke-test" || a == L"--backdrop-test") continue;
         if (a == L"--capture" || a == L"--window-size" || a == L"--capture-scale" || a == L"--command-bar" || a == L"--frame-log" ||
-            a == L"--space-tip") {
+            a == L"--space-tip" || a == L"--save-log") {
             ++i;
             continue;
         }
@@ -188,7 +193,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const OptionValue captureOption = Option(args, L"--capture");
     const OptionValue sizeOption = Option(args, L"--window-size");
     const std::optional<std::wstring>& capture = captureOption.value;
-    const bool quiet = smokeTest || captureOption.present;
+    const OptionValue saveLogOption = Option(args, L"--save-log");
+    const bool quiet = smokeTest || captureOption.present || saveLogOption.present;
+    if (saveLogOption.present && !saveLogOption.value) return Fail(quiet, L"--save-log takes a file", kUsage);
     if (captureOption.present && !capture) return Fail(quiet, L"--capture takes a PNG path", kUsage);
     const OptionValue scaleOption = Option(args, L"--capture-scale");
     int captureScale = 0;
@@ -224,9 +231,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
     // Test flags only run on a test profile, like the Mac's KITE_WINDOW_SIZE: a smoke test or
     // capture loads and re-saves the session, which must never be the user's own.
-    if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present || frameLogOption.present) && !supportOverride) {
+    if ((smokeTest || captureOption.present || sizeOption.present || scaleOption.present || frameLogOption.present ||
+         saveLogOption.present) &&
+        !supportOverride) {
         return Fail(quiet,
-                    L"--smoke-test, --capture, --window-size, --capture-scale and --frame-log need KITE_SUPPORT_PATH set to a test profile",
+                    L"--smoke-test, --capture, --window-size, --capture-scale, --frame-log and --save-log need KITE_SUPPORT_PATH set to "
+                    L"a test profile",
                     kUsage);
     }
     auto resolved = kite::ResolveSupportDirectory(supportOverride, kite::EnvironmentPath("LOCALAPPDATA"));
@@ -238,11 +248,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     std::filesystem::create_directories(supportDirectory, ignored);
 
     // The session: the Mac's session.json format (core/SessionStore.h). Loaded before the
-    // window exists and saved as it closes, the two places the UI thread may touch it
-    // (docs/windows-architecture.md).
+    // window exists (the one read the UI thread may make, docs/windows-architecture.md); an
+    // unreadable one is moved aside and the newest backup that reads stands in for it.
     kite::SessionStore session(supportDirectory / L"session.json");
     kite::BrowserState state;
-    auto loaded = session.Load();
+    std::optional<kite::SessionBackups::Backup> recoveredFrom;
+    auto loaded = session.Load(kite::SessionStore::Unreadable::MoveAside, &recoveredFrom);
+    if (recoveredFrom) {
+        auto name = recoveredFrom->file.filename().wstring();
+        OutputDebugStringW((L"Kite: session.json was unreadable and was moved aside; restored the session from backup " + name + L"\n").c_str());
+    }
     // Kite's shortcuts (core/KeyBindings.h): each command's default, after the user's
     // keybindings.json, read with the session before the window exists. Read once, as nothing
     // changes them yet (Settings → Shortcuts comes later).
@@ -259,18 +274,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
         state = kite::BrowserState::MakeDefault();
     }
+    // The session is written as it changes, on the writer's thread (core/SessionWriter.h); it
+    // outlives the window, whose close saves once more and waits for the write. Never when the
+    // file is still there unread. As the Mac does once per launch, the session as found is kept
+    // as a launch backup (before the auto-archive, as the Mac's is before its first pass).
+    kite::SessionWriter writer(session, maySave);
+    if (!std::holds_alternative<kite::SessionStore::Error>(loaded)) writer.BackUpLaunch(state);
     // A test run must show the session it was given, never a default in its place.
     if (quiet && std::holds_alternative<kite::SessionStore::Error>(loaded)) {
         return Fail(quiet, L"couldn't read the session: " + Widen(std::get<kite::SessionStore::Error>(loaded).message), kSaveFailed);
     }
-    std::string saveError;
     std::wstring loadError;
     if (auto* error = std::get_if<kite::SessionStore::Error>(&loaded); error && !maySave) loadError = Widen(error->message);
     // Unpinned tabs left unused past Archive Tabs After go to the archive as Kite starts, as
     // the Mac's applicationDidFinishLaunching does (and every 15 minutes, below). A capture
     // shows its session as given.
+    bool archivedAtLaunch = false;
     if (!capture) {
-        if (auto interval = state.ArchiveAfterSeconds()) state.ArchiveStaleTabs(*interval);
+        if (auto interval = state.ArchiveAfterSeconds()) archivedAtLaunch = !state.ArchiveStaleTabs(*interval).empty();
     }
 
     // The window and everything in it (shell/BrowserWindowController.h).
@@ -279,14 +300,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     options.capture = capture.has_value();
     options.smokeTest = smokeTest;
     options.frameLog = frameLogOption.present;
+    options.saveLog = saveLogOption.present;
     options.spaceIcons = supportDirectory / L"SpaceIcons";
-    // Closing the window, and logoff or shutdown (which skip WM_CLOSE), both save.
-    auto save = [&] {
-        if (maySave) saveError = session.Save(state);
-    };
-    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, save, problem);
+    auto controller = kite::BrowserWindowController::Create(instance, state, shortcuts, options, &writer, problem);
     if (!controller) return Fail(quiet, problem, kWindowFailed);
     if (commandBarOption.present && !controller->CommandBar()) return Fail(quiet, L"Kite couldn't make the command bar: " + controller->CommandBarError(), kWindowFailed);
+    if (archivedAtLaunch) controller->SessionChanged();
     kite::MainWindow& window = controller->Window();
 
     // Sized after the swap chain exists, so a capture also goes through a resize, as a real
@@ -367,10 +386,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
 #ifdef KITE_HAS_CEF
     if (problem = controller->ShutDownChromium(); !problem.empty()) return Fail(quiet, problem, kWindowFailed);
 #endif
+    if (saveLogOption.value) {
+        writer.Flush();
+        if (problem = controller->SaveSaveLog(*saveLogOption.value); !problem.empty()) {
+            return Fail(quiet, L"Couldn't write the save log: " + problem, kSaveFailed);
+        }
+    }
     if (!maySave) {
         return Fail(quiet, L"Kite couldn't read your session (" + loadError + L"), so it left the file as it was and didn't save this run's tabs.",
                     kSaveFailed);
     }
-    if (!saveError.empty()) return Fail(quiet, L"Couldn't save the session: " + Widen(saveError), kSaveFailed);
+    if (const std::string saveError = writer.Flush(); !saveError.empty()) {
+        return Fail(quiet, L"Couldn't save the session: " + Widen(saveError), kSaveFailed);
+    }
     return kOk;
 }

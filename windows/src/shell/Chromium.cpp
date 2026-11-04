@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string_view>
 #include <utility>
@@ -216,6 +217,7 @@ struct Chromium::Shared {
         CefRefPtr<CefBrowser> browser = it->second.browser;
         const HWND hwnd = it->second.hwnd;
         if (shown == it->first) shown.clear();
+        pressurePicks.erase(it->first);
         pages.erase(it);
         retiring.push_back(browser);
         RunOnCefUIThread([browser, hwnd] {
@@ -231,6 +233,12 @@ struct Chromium::Shared {
     // pages close, unless one is tied to a popup, using the camera or microphone, or playing
     // sound (asked of the page first, on CEF's thread; Discard gets the answer).
     void Evict();
+    // The Mac's watchMemoryPressure: every page not on screen is asked whether it's busy, and
+    // closes unless it is, or has been shown since (LiveTabPolicy::StillHibernates).
+    void DiscardUnderPressure();
+    // Tabs picked under memory pressure, with when each was last shown then, until their busy
+    // check answers (Kite's UI thread only).
+    std::map<std::string, Timestamp> pressurePicks;
     // The pages that count, with when each was last shown: not one whose tab already closed
     // (closeWhenMade), which goes on its own once made.
     std::map<std::string, Timestamp> LivePages() const {
@@ -247,14 +255,21 @@ struct Chromium::Shared {
     }
     void Discard(const std::string& tabID, const CefRefPtr<CefBrowser>& browser, bool busy) {
         auto it = pages.find(tabID);
+        std::optional<Timestamp> pickedUnderPressure;
+        if (auto pick = pressurePicks.extract(tabID)) pickedUnderPressure = pick.mapped();
         if (busy || closing || tabID == shown || it == pages.end() || !it->second.browser || !it->second.browser->IsSame(browser) ||
             it->second.mediaInUse || (events.keepAlive && events.keepAlive(tabID))) {
             return;
         }
-        // Still over the limit, and still among the least recently shown: a tab closed, or
-        // this one was shown again, while the page was being asked.
-        const std::vector<std::string> over = OverTheLimit();
-        if (std::find(over.begin(), over.end(), tabID) == over.end()) return;
+        if (pickedUnderPressure) {
+            // Under memory pressure any hidden page goes, unless it was shown while it was asked.
+            if (!LiveTabPolicy::StillHibernates(pickedUnderPressure, it->second.lastShown, true, tabID == shown)) return;
+        } else {
+            // Still over the limit, and still among the least recently shown: a tab closed, or
+            // this one was shown again, while the page was being asked.
+            const std::vector<std::string> over = OverTheLimit();
+            if (std::find(over.begin(), over.end(), tabID) == over.end()) return;
+        }
         ClosePage(it);
         if (events.pageDiscarded) events.pageDiscarded(tabID);
     }
@@ -687,6 +702,25 @@ void Chromium::Shared::Evict() {
         });
     }
 }
+
+void Chromium::Shared::DiscardUnderPressure() {
+    if (closing) return;
+    std::set<std::string> keep;
+    if (!shown.empty()) keep.insert(shown);
+    for (const std::string& id : TabsToDiscardUnderPressure(LivePages(), keep)) {
+        const Page& page = pages.at(id);
+        if (!page.browser || page.mediaInUse || (events.keepAlive && events.keepAlive(id))) continue;
+        pressurePicks[id] = page.lastShown;
+        RunOnCefUIThread([browser = page.browser] {
+            CefRefPtr<CefClient> client = browser->GetHost()->GetClient();
+            if (client) static_cast<PageClient*>(client.get())->CheckBusy(browser);
+        });
+    }
+}
+
+size_t Chromium::LivePageCount() const { return shared_->pages.size(); }
+
+void Chromium::DiscardHiddenPages() { shared_->DiscardUnderPressure(); }
 
 int RunChromiumSubprocess(HINSTANCE instance) {
     CefMainArgs args(instance);
