@@ -44,6 +44,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -243,30 +244,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     const OptionValue frameLogOption = Option(args, L"--frame-log");
     if (frameLogOption.present && !frameLogOption.value) return Fail(quiet, L"--frame-log takes a file", kUsage);
     if (perfLogOption.present && !perfLogOption.value) return Fail(quiet, L"--perf-log takes a file", kUsage);
-    // "--name" or "--name=value", split on spaces.
+    // "--name" or "--name=value", split on spaces, from an allow-list (shell/PerfProtocol.h):
+    // nothing that weakens the sandbox, site isolation or web security, opens a debugging port,
+    // or changes a path or a launched process.
     std::vector<std::string> chromiumSwitches;
     if (switchesOption.present) {
         if (!switchesOption.value) return Fail(quiet, L"--chromium-switches takes Chromium's switches", kUsage);
-        const std::wstring& text = *switchesOption.value;
-        for (size_t start = 0; start < text.size();) {
-            if (text[start] == L' ') {
-                ++start;
-                continue;
-            }
-            const size_t end = std::min(text.find(L' ', start), text.size());
-            const std::wstring_view token(text.data() + start, end - start);
-            const std::string entry = token.starts_with(L"--") ? Narrow(std::wstring(token.substr(2))) : std::string();
-            const size_t equals = entry.find('=');
-            const std::string_view name = std::string_view(entry).substr(0, equals);
-            const std::string_view value = equals == std::string::npos ? std::string_view() : std::string_view(entry).substr(equals + 1);
-            // An allow-list (shell/PerfProtocol.h): nothing that weakens the sandbox or web
-            // security, opens a debugging port, or changes a path or a launched process.
-            if (name.empty() || !kite::perf::AllowedChromiumSwitch(name, value)) {
-                return Fail(quiet, L"--chromium-switches doesn't allow " + std::wstring(token), kUsage);
-            }
-            chromiumSwitches.push_back(entry);
-            start = end;
-        }
+        std::wstring refused;
+        auto parsed = kite::perf::ParseChromiumSwitches(*switchesOption.value, refused);
+        if (!parsed) return Fail(quiet, L"--chromium-switches doesn't allow " + refused, kUsage);
+        chromiumSwitches = std::move(*parsed);
     }
 
     const auto supportOverride = kite::EnvironmentPath("KITE_SUPPORT_PATH");
@@ -284,32 +271,46 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (auto* error = std::get_if<kite::SupportDirectoryError>(&resolved)) {
         return Fail(quiet, Widen(error->message), kBadSupportDirectory);
     }
-    const std::filesystem::path supportDirectory = std::get<std::filesystem::path>(resolved);
+    std::filesystem::path supportDirectory = std::get<std::filesystem::path>(resolved);
     const bool perfHooks = perfLogOption.present || perfControl || switchesOption.present;
-    if (perfHooks) {
-        // Only a profile that says it's a test profile (kiteperf and CI make the marker), and
-        // never the real one, however KITE_SUPPORT_PATH spells it.
-        std::error_code markerError;
-        if (!std::filesystem::is_regular_file(supportDirectory / kite::perf::kTestProfileMarker, markerError)) {
-            return Fail(quiet,
-                        L"--perf-log, --perf-control and --chromium-switches need a test profile: KITE_SUPPORT_PATH has no " +
-                            std::wstring(kite::perf::kTestProfileMarker) + L" file",
-                        kUsage);
+    // Held open for the whole run, without FILE_SHARE_DELETE, so the profile the hooks were
+    // allowed on can't be renamed away and another put in its place.
+    struct Handle {
+        HANDLE h = INVALID_HANDLE_VALUE;
+        ~Handle() {
+            if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
         }
-        const auto normal = [](const std::filesystem::path& p) -> std::optional<std::wstring> {
-            std::error_code ec;
-            const std::filesystem::path absolute = std::filesystem::absolute(p, ec);
-            if (ec) return std::nullopt;
-            std::wstring text = std::filesystem::weakly_canonical(absolute, ec).wstring();
-            if (ec || text.empty()) return std::nullopt;
-            while (text.size() > 3 && (text.back() == L'\\' || text.back() == L'/')) text.pop_back();
-            CharLowerBuffW(text.data(), static_cast<DWORD>(text.size()));
-            return text;
+    } profileHandle;
+    if (perfHooks) {
+        const auto openDirectory = [](const std::filesystem::path& p, DWORD share) {
+            return CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, share, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
         };
-        const auto test = normal(supportDirectory);
-        if (!test) return Fail(quiet, L"--perf-log, --perf-control and --chromium-switches: KITE_SUPPORT_PATH couldn't be resolved", kUsage);
-        // The default profile, from the environment and from the known folder (LOCALAPPDATA can be
-        // set to anything).
+        // A directory's identity: its volume and file id, the same however it's spelled (a
+        // different case, a junction, a UNC path or a share alias).
+        const auto identity = [](HANDLE h) -> std::optional<FILE_ID_INFO> {
+            FILE_ID_INFO id{};
+            if (h == INVALID_HANDLE_VALUE || !GetFileInformationByHandleEx(h, FileIdInfo, &id, sizeof id)) return std::nullopt;
+            return id;
+        };
+        const auto same = [](const FILE_ID_INFO& a, const FILE_ID_INFO& b) {
+            return a.VolumeSerialNumber == b.VolumeSerialNumber && std::memcmp(&a.FileId, &b.FileId, sizeof a.FileId) == 0;
+        };
+        profileHandle.h = openDirectory(supportDirectory, FILE_SHARE_READ | FILE_SHARE_WRITE);
+        const auto test = identity(profileHandle.h);
+        wchar_t finalPath[MAX_PATH * 4];
+        const DWORD length = profileHandle.h == INVALID_HANDLE_VALUE
+                                 ? 0
+                                 : GetFinalPathNameByHandleW(profileHandle.h, finalPath, static_cast<DWORD>(std::size(finalPath)), FILE_NAME_NORMALIZED);
+        if (!test || length == 0 || length >= std::size(finalPath)) {
+            return Fail(quiet, L"--perf-log, --perf-control and --chromium-switches: KITE_SUPPORT_PATH couldn't be resolved", kUsage);
+        }
+        // The rest of the run uses the directory that was checked, by its resolved path.
+        std::wstring resolvedPath(finalPath, length);
+        if (resolvedPath.starts_with(L"\\\\?\\UNC\\")) resolvedPath = L"\\\\" + resolvedPath.substr(8);
+        else if (resolvedPath.starts_with(L"\\\\?\\")) resolvedPath = resolvedPath.substr(4);
+        supportDirectory = resolvedPath;
+        // Never the default profile: from the environment and from the known folder (LOCALAPPDATA
+        // can be set to anything).
         std::vector<std::filesystem::path> defaults;
         if (auto fromEnvironment = kite::ResolveSupportDirectory(std::nullopt, kite::EnvironmentPath("LOCALAPPDATA"));
             auto* path = std::get_if<std::filesystem::path>(&fromEnvironment)) {
@@ -324,9 +325,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         }
         CoTaskMemFree(known);
         for (const auto& real : defaults) {
-            if (normal(real) == test) {
+            HANDLE h = openDirectory(real, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+            const auto id = identity(h);
+            if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+            if (id && same(*id, *test)) {
                 return Fail(quiet, L"--perf-log, --perf-control and --chromium-switches never run on the default profile", kUsage);
             }
+        }
+        // And only a profile that says it's a test profile (kiteperf and CI make the marker).
+        std::error_code markerError;
+        if (!std::filesystem::is_regular_file(supportDirectory / kite::perf::kTestProfileMarker, markerError)) {
+            return Fail(quiet,
+                        L"--perf-log, --perf-control and --chromium-switches need a test profile: KITE_SUPPORT_PATH has no " +
+                            std::wstring(kite::perf::kTestProfileMarker) + L" file",
+                        kUsage);
         }
     }
     // The perf log is open for the rest of the run, whichever way it ends (its last line, "exit").

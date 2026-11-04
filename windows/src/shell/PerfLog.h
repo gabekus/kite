@@ -69,8 +69,10 @@ private:
 struct Counters {
     Counter presents;  // the backdrop's and the command bar's Present
     Counter commits;   // every IDCompositionDevice::Commit (Compositor::Commit)
-    // Pointer moves over the window from the real pointer (WM_MOUSEMOVE and WM_NCMOUSEMOVE),
-    // not --perf-control's: what tells "Kite drew by itself" from "someone hovered it".
+    // The real pointer's moves over the window and its leaving it (WM_MOUSEMOVE, WM_NCMOUSEMOVE,
+    // WM_MOUSELEAVE, WM_NCMOUSELEAVE), not --perf-control's: what tells "Kite drew by itself"
+    // from "someone hovered it". The chrome only: a page is CEF's own window and its moves don't
+    // come here.
     Counter pointerMoves;
     Counter surfaceDraws[static_cast<int>(View::Count)];
 };
