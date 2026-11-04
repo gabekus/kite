@@ -530,10 +530,14 @@ std::wstring BrowserWindowController::SmokeTestTopRow() {
     };
     const std::wstring failure = [&]() -> std::wstring {
         // Back turning on is an opacity: nothing draws.
+        // Back turning on is an opacity: the sidebar's next pass commits it, drawing nothing.
+        size_t draws = sidebar_->TopRowSurfaceDraws();
+        const size_t commits = sidebar_->Commits();
         HoldPageStatus(PageStatus{false, true, false});
         if (!item(TopRowButton::Back).enabled || item(TopRowButton::Forward).enabled) return L"the page's history didn't reach the top row";
-        size_t draws = sidebar_->TopRowSurfaceDraws();
-        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the top row couldn't draw: " + problem;
+        if (!sidebar_->CommitPending()) return L"a button turning on wasn't to be committed";
+        sidebar_->HandleMessage(SidebarView::kRedrawMessage, 0);
+        if (sidebar_->Commits() != commits + 1 || sidebar_->CommitPending()) return L"a button turning on wasn't committed";
         if (sidebar_->TopRowSurfaceDraws() != draws) return L"a button turning on drew its surface";
         // Loading: reload is the X, which draws that one button.
         HoldPageStatus(PageStatus{true, true, false});
@@ -545,6 +549,8 @@ std::wstring BrowserWindowController::SmokeTestTopRow() {
         if (std::wstring problem = HoldTopRowHover(TopRowButton::Back); !problem.empty()) return problem;
         if (std::wstring problem = sidebar_->Draw(); !problem.empty()) return L"the sidebar couldn't draw: " + problem;
         if (sidebar_->TopRowSurfaceDraws() != draws) return L"hovering a top-row button drew";
+        // The first hover over a button makes the tooltips (comctl32 loads then, not at launch).
+        if (!sidebar_->TopRowHasTooltips()) return L"hovering a top-row button made no tooltip";
         // The buttons take their presses (not the window's drag); the row between them drags.
         const auto areaAt = [&](POINT at) {
             RECT client{};
@@ -578,14 +584,25 @@ std::wstring BrowserWindowController::SmokeTestTopRow() {
             return L"the hidden sidebar still takes the pointer";
         }
         if (sidebar_->HandleMouse(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(toggle.x, toggle.y))) return L"the hidden sidebar took a press";
-        // Ctrl+S's command shows it again, and one caught mid-slide turns back.
+        // The system menu's item says Show Sidebar now, and shows it.
+        const auto menuTitle = [&] {
+            wchar_t title[64] = {};
+            if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) GetMenuStringW(menu, kToggleSidebarMenuID, title, 64, MF_BYCOMMAND);
+            return std::wstring(title);
+        };
+        if (menuTitle() != L"Show Sidebar") return L"the system menu doesn't offer Show Sidebar";
+        SendMessageW(window_.Handle(), WM_SYSCOMMAND, kToggleSidebarMenuID, 0);
+        if (!sidebarShown_ || !toggling_) return L"the system menu's Show Sidebar didn't show the sidebar";
+        if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
+        if (menuTitle() != L"Hide Sidebar") return L"the system menu doesn't offer Hide Sidebar";
+        // Ctrl+S's command hides it, and one caught 30 ms into the slide turns back from where it is.
         RunCommand("toggleSidebar");
-        if (!sidebarShown_ || !toggling_) return L"Toggle Sidebar didn't show the sidebar";
-        RunCommand("toggleSidebar");
+        if (sidebarShown_ || !toggling_) return L"Toggle Sidebar didn't hide the sidebar";
+        RunUntil([] { return false; }, 0.03);
         const float turned = sidebar_->Left();
         RunCommand("toggleSidebar");
         if (!RunUntil([this] { return !toggling_; }, 2)) return L"the sidebar's slide never ended";
-        if (!sidebarShown_ || sidebar_->Left() != 0 || turned > 0 || turned < -static_cast<float>(kSidebarWidth)) {
+        if (!sidebarShown_ || sidebar_->Left() != 0 || !(turned < 0 && turned > -static_cast<float>(kSidebarWidth))) {
             return L"a toggle caught mid-slide didn't turn back";
         }
         if (areaAt(toggle) != TitleBarArea::Client) return L"the shown sidebar's toggle isn't a button";

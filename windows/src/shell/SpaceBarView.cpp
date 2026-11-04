@@ -569,27 +569,7 @@ ComPtr<ID2D1CommandList> SpaceBarView::RecordIcon(const SpaceCell& cell, HRESULT
 
 std::wstring SpaceBarView::DrawLayer(Layer& layer, UINT width, UINT height, const Compositor::Content& content, bool readBack,
                                      HRESULT& hr, bool& fresh) {
-    if (!layer.visual) {
-        fresh = true;
-        if (FAILED(hr = compositor_->Device()->CreateVisual(layer.visual.GetAddressOf())) ||
-            FAILED(hr = compositor_->Device()->CreateEffectGroup(layer.effect.GetAddressOf())) ||
-            FAILED(hr = layer.visual->SetEffect(layer.effect.Get()))) {
-            layer = Layer{};
-            return HResultMessage(L"creating a space cell's visual", hr);
-        }
-    }
-    if (!layer.surface) {
-        if (FAILED(hr = compositor_->Device()->CreateVirtualSurface(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
-                                                                     layer.surface.GetAddressOf())) ||
-            FAILED(hr = layer.visual->SetContent(layer.surface.Get()))) {
-            layer.surface.Reset();
-            return HResultMessage(L"creating a space cell's surface", hr);
-        }
-    } else if (FAILED(hr = layer.surface->Resize(width, height))) {
-        return HResultMessage(L"resizing a space cell's surface", hr);
-    }
-    layer.pixels = Pixels{};
-    return compositor_->DrawSurface(layer.surface.Get(), width, height, dpi_, content, readBack ? &layer.pixels : nullptr, hr);
+    return DrawFadedLayer(*compositor_, layer, width, height, dpi_, content, readBack, hr, fresh);
 }
 
 std::wstring SpaceBarView::DrawCell(size_t index, CellGpu& gpu, bool readBack, bool& fresh) {

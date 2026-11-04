@@ -28,8 +28,12 @@ WaitForCompositorClock CompositorClock() {
     return wait;
 }
 
+// The boost, counted on the UI thread: on while any clock or compositor animation wants it, and
+// off when the last lets go, whether or not Windows counts the calls itself.
+int boosts = 0;
 void Boost(bool enable) {
     static const auto boost = reinterpret_cast<BoostCompositorClock>(DcompFunction("DCompositionBoostCompositorClock"));
+    if (enable ? boosts++ != 0 : (boosts == 0 || --boosts != 0)) return;
     if (boost) boost(enable ? TRUE : FALSE);
 }
 
@@ -72,6 +76,13 @@ void FrameClock::SetBoost(bool boost) {
     if (boost == boosted_ || (boost && !running_)) return;
     Boost(boost);
     boosted_ = boost;
+}
+
+void FrameClock::BoostWithoutFrames(bool boost) {
+    static bool boosted = false;
+    if (boost == boosted) return;
+    boosted = boost;
+    Boost(boost);
 }
 
 void FrameClock::Stop() {

@@ -228,6 +228,8 @@ double SidebarView::SetShown(bool shown, bool animate) {
     topRow_->SetTooltipsActive(shown);
     if (animate && root_ && compositor_ && from != to) {
         const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
+        // From now: the compositor starts it at the commit's frame, up to a frame later, so Left()
+        // reads up to a frame ahead of the screen (as the pages' slide's PageOffset).
         Toggle toggle{from, to, FrameClock::Now(), nullptr};
         HRESULT hr = compositor_->Device()->CreateAnimation(toggle.animation.GetAddressOf());
         for (const CubicSegment& segment : SidebarSlideSegments(from, to)) {
@@ -253,8 +255,9 @@ void SidebarView::SettleToggle() {
 void SidebarView::SetPageStatus(const PageStatus& page) {
     if (page == page_) return;
     page_ = page;
-    topRow_->Update(TopRowModel{model_.hasTab, model_.hasTab ? page_ : PageStatus{}}, model_.dark);
-    if (topRow_->NeedsDraw()) ScheduleDraw();
+    // A button turning on or off is its opacity alone: committed on the next pass, drawing nothing.
+    if (topRow_->Update(TopRowModelOf(model_.hasTab, page_), model_.dark)) commitPending_ = true;
+    if (topRow_->NeedsDraw() || commitPending_) ScheduleDraw();
 }
 
 std::optional<POINT> SidebarView::TopRowCentre(TopRowButton button) const {
@@ -325,8 +328,8 @@ void SidebarView::Update(const BrowserState& state, const std::optional<std::str
     next.dark = !PrefersDarkForeground(state.SelectedSpace().theme);
     // The top row: reload needs a tab, and a space with none shows no page's status.
     next.hasTab = state.SelectedTab() != nullptr;
-    topRow_->Update(TopRowModelOf(state, page_), next.dark);
-    if (topRow_->NeedsDraw()) ScheduleDraw();
+    if (topRow_->Update(TopRowModelOf(next.hasTab, page_), next.dark)) commitPending_ = true;
+    if (topRow_->NeedsDraw() || commitPending_) ScheduleDraw();
     // The space bar's cells, and their light along a slide that has just begun.
     std::vector<SpaceCell> cells = SpaceCells(state);
     // The pictures any space shows, in the bar or its header: the painter keeps only these.
@@ -581,11 +584,14 @@ bool SidebarView::HandleMessage(UINT message, WPARAM wParam) {
     if (message == WM_TIMER && rename_ && rename_->HandleTimer(wParam)) return true;
     if (message != kRedrawMessage) return false;
     redrawPosted_ = false;
-    if (NeedsDraw() && compositor_) {
+    // Hidden at rest: nothing on screen to show it (the show draws what's waiting).
+    if (!shown_ && !toggle_) return true;
+    if ((NeedsDraw() || commitPending_) && compositor_) {
         if (std::wstring problem = Draw(); !problem.empty()) {
             OutputDebugStringW((L"Kite: the sidebar couldn't draw: " + problem + L"\n").c_str());
         } else {
             compositor_->Commit();
+            ++commits_;
         }
     }
     return true;
@@ -673,6 +679,8 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
     GetClientRect(window_, &client);
     // Minimized: nothing to draw into until it's restored (onSize lays it out again).
     if (client.bottom <= 0 || client.right <= 0) return {};
+    // Hidden at rest: nothing to show; what changed stays to draw as it's shown again.
+    if (!shown_ && !toggle_ && !readBack) return {};
     std::wstring error;
     if (!visual_ && !CreateGpu(error)) return error;
     const float scale = static_cast<float>(dpi_) / USER_DEFAULT_SCREEN_DPI;
@@ -769,6 +777,7 @@ std::wstring SidebarView::Draw(Pixels* readBack) {
         }
         ComposeOver(*readBack, bar, POINT{0, client.bottom - static_cast<LONG>(bar.height)});
     }
+    commitPending_ = false;  // the caller's commit carries it
     return {};
 }
 
@@ -1370,6 +1379,11 @@ bool SidebarView::HandleMouse(UINT message, WPARAM wParam, LPARAM lParam) {
     if (!shown_) {
         if (message == WM_MOUSELEAVE) trackingLeave_ = false;
         return false;
+    }
+    // The top row's tooltips see the pointer (comctl32's, by relayed messages).
+    if (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_LBUTTONDOWN || message == WM_LBUTTONUP ||
+        message == WM_RBUTTONDOWN || message == WM_RBUTTONUP) {
+        topRow_->RelayMouse(message, wParam, lParam);
     }
     switch (message) {
     case WM_MOUSEACTIVATE: {

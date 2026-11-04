@@ -1,6 +1,7 @@
 // The sidebar's top row and hiding the sidebar (core/SidebarTopRow.h). The Mac has no Swift tests
-// for these (SidebarHeaderView, HeaderLayout and updateSidebar are AppKit views): each case is
-// named for the Mac code it checks, with the numbers from ArcMetrics.Sidebar and ArcMetrics.Motion.
+// for these (SidebarHeaderView and updateSidebar are AppKit views): each case is named for the Mac
+// code it checks, with the numbers from ArcMetrics.Sidebar and ArcMetrics.Motion. The compact
+// layout (HeaderLayout) comes with resizing the sidebar.
 
 #include <algorithm>
 #include <cmath>
@@ -34,16 +35,6 @@ BrowserState WithTab() {
 
 }  // namespace
 
-TEST(headerLayoutCompactBelow212) {
-    // HeaderLayout(sidebarWidth:): compact under 212, with 28pt buttons and no gap; 32pt, 2 apart from 212.
-    const HeaderLayout compact = HeaderLayout::For(211.9f);
-    CHECK(compact.compact && compact.buttonSize == 28 && compact.spacing == 0);
-    const HeaderLayout medium = HeaderLayout::For(212);
-    CHECK(!medium.compact && medium.buttonSize == 32 && medium.spacing == 2);
-    CHECK(HeaderLayout::For(240) == medium);
-    CHECK(HeaderLayout::For(164).compact);
-}
-
 TEST(sidebarHeaderLayoutPlacesTheToggleAndNavigationAtTheFarEnd) {
     // SidebarHeaderView.layout on Kite's 240pt sidebar: the toggle at kToggleX (Windows' 6, for
     // the Mac's 71 beside the traffic lights), then back, forward and reload, 32pt, 2 apart,
@@ -61,21 +52,11 @@ TEST(sidebarHeaderLayoutPlacesTheToggleAndNavigationAtTheFarEnd) {
     CHECK(items[1].symbol == "arrow.left" && items[1].tooltip == "Back");
     CHECK(items[2].symbol == "arrow.right" && items[2].tooltip == "Forward");
     CHECK(items[3].symbol == "arrow.clockwise" && items[3].tooltip == "Reload");
+    // Each frame is TopRowFrame's (the hit test's).
+    for (const TopRowItem& item : items) CHECK(item.frame == TopRowFrame(240, item.button));
     // A wider sidebar keeps the toggle and moves navigation with the edge.
     const std::vector<TopRowItem> wide = LayOutTopRow(300, TopRowModel{true, {}});
     CHECK(wide[0].frame.left == 6 && wide[3].frame.right == 294 && wide[1].frame.left == 194);
-}
-
-TEST(sidebarHeaderLayoutCompactDropsTheToggleIntoMore) {
-    // Arc's compact header: no toggle; back, forward and More, 28pt and touching, centred in the
-    // 32pt row (y 9.5); reload goes into More's menu.
-    const std::vector<TopRowItem> items = LayOutTopRow(200, TopRowModel{true, {}});
-    CHECK(items.size() == 3);
-    CHECK(!Find(items, TopRowButton::ToggleSidebar) && !Find(items, TopRowButton::Reload));
-    CHECK(items[0].button == TopRowButton::Back && items[0].frame == (BarRect{110, 9.5f, 138, 37.5f}));
-    CHECK(items[1].button == TopRowButton::Forward && items[1].frame == (BarRect{138, 9.5f, 166, 37.5f}));
-    CHECK(items[2].button == TopRowButton::More && items[2].frame == (BarRect{166, 9.5f, 194, 37.5f}));
-    CHECK(items[2].symbol == "ellipsis" && items[2].tooltip == "More" && items[2].enabled);
 }
 
 TEST(sidebarHeaderApplyEnablesFromThePage) {
@@ -109,6 +90,8 @@ TEST(sidebarHeaderReadModelUsesTheSelectedTabsPage) {
     CHECK(!empty.SelectedTab());
     CHECK((TopRowModelOf(empty, loading) == TopRowModel{}));
     CHECK(TopRowModelOf(WithTab(), loading) == (TopRowModel{true, loading}));
+    CHECK((TopRowModelOf(false, loading) == TopRowModel{}));
+    CHECK(TopRowModelOf(true, loading) == (TopRowModel{true, loading}));
 }
 
 TEST(symbolButtonTakesPressesEnabledOrNot) {
@@ -123,21 +106,35 @@ TEST(symbolButtonTakesPressesEnabledOrNot) {
     CHECK(!TopRowItemAt(items, 150, 7));    // above the row
     CHECK(!TopRowItemAt(items, 150, 39.5f));  // under it
     CHECK(!TopRowItemAt(items, 234, 23));   // past reload
+    // The window's hit test asks the same without laying the row out.
+    for (const float x : {3.0f, 22.0f, 100.0f, 150.0f, 167.0f, 184.0f, 218.0f, 233.9f, 234.0f}) {
+        for (const float y : {7.0f, 7.5f, 23.0f, 39.4f, 39.5f}) {
+            const std::optional<size_t> at = TopRowItemAt(items, x, y);
+            const std::optional<TopRowButton> button = TopRowButtonAt(240, x, y);
+            CHECK(at.has_value() == button.has_value());
+            if (at && button) CHECK(items[*at].button == *button);
+        }
+    }
 }
 
 TEST(sidebarActionsRunTheMenusCommands) {
     // toggleSidebar, goBack, goForward, and the reload button's reload (which stops a loading page).
-    CHECK(TopRowCommand(TopRowButton::ToggleSidebar) == std::optional<std::string>("toggleSidebar"));
-    CHECK(TopRowCommand(TopRowButton::Back) == std::optional<std::string>("goBack"));
-    CHECK(TopRowCommand(TopRowButton::Forward) == std::optional<std::string>("goForward"));
-    CHECK(TopRowCommand(TopRowButton::Reload) == std::optional<std::string>("reloadPage"));
-    CHECK(!TopRowCommand(TopRowButton::More));
+    CHECK(TopRowCommand(TopRowButton::ToggleSidebar) == "toggleSidebar");
+    CHECK(TopRowCommand(TopRowButton::Back) == "goBack");
+    CHECK(TopRowCommand(TopRowButton::Forward) == "goForward");
+    CHECK(TopRowCommand(TopRowButton::Reload) == "reloadPage");
     // Each is a shortcut command the window has.
     for (const char* id : {"toggleSidebar", "goBack", "goForward", "reloadPage"}) {
         bool found = false;
         for (const ShortcutCommand& command : ShortcutCommands()) found = found || command.id == id;
         CHECK(found);
     }
+}
+
+TEST(validateMenuItemTitlesTheToggleForWhatItWillDo) {
+    // Arc's Show/Hide Sidebar item, titled for what it will do.
+    CHECK(std::string(ToggleSidebarTitle(true)) == "Hide Sidebar");
+    CHECK(std::string(ToggleSidebarTitle(false)) == "Show Sidebar");
 }
 
 TEST(hideSidebarIsCtrlS) {

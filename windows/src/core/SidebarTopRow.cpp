@@ -8,47 +8,39 @@ namespace kite {
 
 namespace T = top_row_metrics;
 
-HeaderLayout HeaderLayout::For(float sidebarWidth) {
-    HeaderLayout layout;
-    layout.compact = sidebarWidth < T::kCompactBelow;
-    layout.buttonSize = layout.compact ? T::kCompactButtonSize : T::kButtonSize;
-    layout.spacing = layout.compact ? T::kCompactButtonSpacing : T::kButtonSpacing;
-    return layout;
+TopRowModel TopRowModelOf(bool hasTab, const PageStatus& selectedPage) {
+    // A space with no selected tab shows no page: nothing to go back to (readModel's PageStatus()).
+    return TopRowModel{hasTab, hasTab ? selectedPage : PageStatus{}};
 }
 
 TopRowModel TopRowModelOf(const BrowserState& state, const PageStatus& selectedPage) {
-    TopRowModel model;
-    model.hasTab = state.SelectedTab() != nullptr;
-    // A space with no selected tab shows no page: nothing to go back to (readModel's PageStatus()).
-    if (model.hasTab) model.page = selectedPage;
-    return model;
+    return TopRowModelOf(state.SelectedTab() != nullptr, selectedPage);
+}
+
+BarRect TopRowFrame(float width, TopRowButton button) {
+    constexpr float top = T::kTopRowY + (T::kTopRowHeight - T::kButtonSize) / 2, bottom = top + T::kButtonSize;
+    if (button == TopRowButton::ToggleSidebar) return BarRect{T::kToggleX, top, T::kToggleX + T::kButtonSize, bottom};
+    // Navigation at the far end, placed from the end inwards: reload, forward, back.
+    const int fromEnd = button == TopRowButton::Reload ? 0 : button == TopRowButton::Forward ? 1 : 2;
+    const float right = width - T::kNavTrailing - static_cast<float>(fromEnd) * (T::kButtonSize + T::kButtonSpacing);
+    return BarRect{right - T::kButtonSize, top, right, bottom};
 }
 
 std::vector<TopRowItem> LayOutTopRow(float width, const TopRowModel& model) {
-    const HeaderLayout layout = HeaderLayout::For(width);
-    std::vector<TopRowItem> items;
-    // Arc's compact header drops the toggle into the More menu.
-    if (!layout.compact) {
-        items.push_back(TopRowItem{TopRowButton::ToggleSidebar,
-                                   BarRect{T::kToggleX, T::kTopRowY, T::kToggleX + T::kButtonSize, T::kTopRowY + T::kButtonSize},
-                                   "sidebar.left", "Toggle Sidebar", true});
-    }
-    // Navigation at the far end, placed from the end inwards.
-    float end = width - T::kNavTrailing;
-    const float size = layout.buttonSize;
-    const float y = T::kTopRowY + (T::kTopRowHeight - size) / 2;
-    std::vector<TopRowItem> trailing;
-    const auto place = [&](TopRowButton button, std::string symbol, std::string tooltip, bool enabled) {
-        end -= size;
-        trailing.push_back(TopRowItem{button, BarRect{end, y, end + size, y + size}, std::move(symbol), std::move(tooltip), enabled});
-        end -= layout.spacing;
+    return {
+        TopRowItem{TopRowButton::ToggleSidebar, TopRowFrame(width, TopRowButton::ToggleSidebar), "sidebar.left", "Toggle Sidebar", true},
+        TopRowItem{TopRowButton::Back, TopRowFrame(width, TopRowButton::Back), "arrow.left", "Back", model.page.canGoBack},
+        TopRowItem{TopRowButton::Forward, TopRowFrame(width, TopRowButton::Forward), "arrow.right", "Forward", model.page.canGoForward},
+        TopRowItem{TopRowButton::Reload, TopRowFrame(width, TopRowButton::Reload), model.page.isLoading ? "xmark" : "arrow.clockwise",
+                   "Reload", model.hasTab},
     };
-    if (layout.compact) place(TopRowButton::More, "ellipsis", "More", true);
-    else place(TopRowButton::Reload, model.page.isLoading ? "xmark" : "arrow.clockwise", "Reload", model.hasTab);
-    place(TopRowButton::Forward, "arrow.right", "Forward", model.page.canGoForward);
-    place(TopRowButton::Back, "arrow.left", "Back", model.page.canGoBack);
-    items.insert(items.end(), trailing.rbegin(), trailing.rend());
-    return items;
+}
+
+std::optional<TopRowButton> TopRowButtonAt(float width, float x, float y) {
+    for (const TopRowButton button : kTopRowButtons) {
+        if (TopRowFrame(width, button).Contains(x, y)) return button;
+    }
+    return std::nullopt;
 }
 
 std::optional<size_t> TopRowItemAt(const std::vector<TopRowItem>& items, float x, float y) {
@@ -58,16 +50,15 @@ std::optional<size_t> TopRowItemAt(const std::vector<TopRowItem>& items, float x
     return std::nullopt;
 }
 
-std::optional<std::string> TopRowCommand(TopRowButton button) {
+std::string TopRowCommand(TopRowButton button) {
     switch (button) {
     case TopRowButton::ToggleSidebar: return "toggleSidebar";
     case TopRowButton::Back: return "goBack";
     case TopRowButton::Forward: return "goForward";
     // reloadFromButton: a page still loading stops (Chromium::Act's Reload), else it reloads.
     case TopRowButton::Reload: return "reloadPage";
-    case TopRowButton::More: return std::nullopt;
     }
-    return std::nullopt;
+    return {};
 }
 
 const char* TopRowButtonName(TopRowButton button) {
@@ -76,10 +67,11 @@ const char* TopRowButtonName(TopRowButton button) {
     case TopRowButton::Back: return "back";
     case TopRowButton::Forward: return "forward";
     case TopRowButton::Reload: return "reload";
-    case TopRowButton::More: return "more";
     }
     return "";
 }
+
+const char* ToggleSidebarTitle(bool sidebarShown) { return sidebarShown ? "Hide Sidebar" : "Show Sidebar"; }
 
 std::vector<CubicSegment> SidebarSlideSegments(float from, float to) {
     const auto& c = sidebar_toggle::kCurve;

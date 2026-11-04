@@ -33,6 +33,7 @@
 #include "core/SpaceBar.h"
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
+#include "shell/FadedLayer.h"
 #include "shell/SpaceIconPainter.h"
 
 namespace kite {
@@ -108,14 +109,9 @@ public:
 private:
     SpaceBarView() = default;
 
-    // One layer of a cell (the greyed icon, the coloured one, or the dot): its visual, surface
-    // and opacity.
-    struct Layer {
-        Microsoft::WRL::ComPtr<IDCompositionVisual> visual;
-        Microsoft::WRL::ComPtr<IDCompositionVirtualSurface> surface;
-        Microsoft::WRL::ComPtr<IDCompositionEffectGroup> effect;
-        Pixels pixels;  // its last draw, read back, for a capture
-    };
+    // One layer of a cell (the greyed icon, the coloured one, or the dot), or the backing: its
+    // visual, surface and opacity.
+    using Layer = FadedLayer;
     struct CellGpu {
         Microsoft::WRL::ComPtr<IDCompositionVisual> visual;  // at the cell's place in the strip
         Layer grey, lit;  // a dot is `lit` alone

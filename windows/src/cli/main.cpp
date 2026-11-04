@@ -442,7 +442,7 @@ int main(int argc, char** argv) {
                                 {"top", static_cast<double>(item.frame.top)},
                                 {"width", static_cast<double>(item.frame.Width())},
                                 {"height", static_cast<double>(item.frame.Height())}};
-            if (const auto run = TopRowCommand(item.button)) button.emplace("command", *run);
+            button.emplace("command", TopRowCommand(item.button));
             topRow.emplace_back(std::move(button));
         }
         json::Object out{{"address", AddressFieldText(state)},
@@ -471,8 +471,7 @@ int main(int argc, char** argv) {
             // Sidebar and the page's commands are the window's, so nothing here changes.
             const TopRowItem& item = topRow[*button];
             json::Object out{{"target", std::string("topRow")}, {"button", std::string(TopRowButtonName(item.button))}, {"enabled", item.enabled}};
-            const auto run = TopRowCommand(item.button);
-            out.emplace("action", item.enabled && run ? *run : std::string("none"));
+            out.emplace("action", item.enabled ? TopRowCommand(item.button) : std::string("none"));
             std::puts(json::Write(json::Value(std::move(out))).c_str());
         } else if (values[1] >= SpaceBarTop(values[2]) && values[1] < values[2]) {
             const std::vector<SpaceCell> cells = SpaceCells(state);

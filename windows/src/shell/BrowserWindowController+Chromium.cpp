@@ -21,10 +21,12 @@ RECT BrowserWindowController::ContentBounds() const {
     GetClientRect(window_.Handle(), &client);
     const int dpi = static_cast<int>(window_.Dpi());
     auto px = [dpi](int points) { return MulDiv(points, dpi, USER_DEFAULT_SCREEN_DPI); };
-    // Its top under the caption buttons; its leading edge the sidebar's, or the inset while the
-    // sidebar is hidden.
-    const int left = static_cast<int>(CardLeft(sidebarShown_, static_cast<float>(kSidebarWidth)));
-    RECT card{px(left), px(static_cast<int>(title_bar::kContentTop)), client.right - px(kContentInset), client.bottom - px(kContentInset)};
+    // Its top under the caption buttons; its leading edge the sidebar's, or the inset once the
+    // sidebar is hidden (not while it's still sliding off: a tab switch or a resize then would put
+    // the page over it).
+    const int left = static_cast<int>(CardLeft(sidebarShown_ || toggling_, static_cast<float>(kSidebarWidth)));
+    const int inset = static_cast<int>(sidebar_toggle::kContentInset);
+    RECT card{px(left), px(static_cast<int>(title_bar::kContentTop)), client.right - px(inset), client.bottom - px(inset)};
     card.right = std::max(card.right, card.left + 1);
     card.bottom = std::max(card.bottom, card.top + 1);
     return card;

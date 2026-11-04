@@ -28,11 +28,11 @@ TitleBarArea TitleBarAreaAt(float width, float sidebarWidth, float x, float y, f
         return TitleBarArea::Close;
     }
     // The sidebar's top row, over its address field, but for its buttons, which take their
-    // presses (the Mac's SymbolButton: mouseDownCanMoveWindow false). Which buttons show depends
-    // only on the width, so the page's state doesn't matter here.
+    // presses (the Mac's SymbolButton: mouseDownCanMoveWindow false). Where the buttons sit depends
+    // only on the width (TopRowButtonAt allocates nothing: this runs on every WM_NCHITTEST).
     if (x < sidebarWidth) {
         if (y >= sidebar_metrics::kUrlFieldTop) return TitleBarArea::Client;
-        return TopRowItemAt(LayOutTopRow(sidebarWidth, TopRowModel{}), x, y) ? TitleBarArea::Client : TitleBarArea::Drag;
+        return TopRowButtonAt(sidebarWidth, x, y) ? TitleBarArea::Client : TitleBarArea::Drag;
     }
     return y < T::kContentTop ? TitleBarArea::Drag : TitleBarArea::Client;
 }

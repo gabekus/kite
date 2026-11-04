@@ -70,6 +70,8 @@ BrowserWindowController::BrowserWindowController(HINSTANCE instance, BrowserStat
       shownSpaceID_(state.SelectedSpace().id) {}
 
 BrowserWindowController::~BrowserWindowController() {
+    // A slide still running lets go of the compositor clock's boost.
+    if (toggling_) FrameClock::BoostWithoutFrames(false);
     // The views and the compositor go before the window: it stops calling into them first.
     window_.onClose = nullptr;
     window_.onSize = nullptr;
@@ -205,14 +207,19 @@ std::wstring BrowserWindowController::Init() {
     actions.renameSpace = [this](const std::string& spaceID, const std::string& name) { RenameSpace(spaceID, name); };
     actions.beginRenaming = [this](const std::string& spaceID) { BeginRenaming(spaceID); };
     // The top row's buttons run the commands of the same names (the Mac's SidebarActions).
-    actions.topRow = [this](TopRowButton button) {
-        if (const std::optional<std::string> command = TopRowCommand(button)) RunCommand(*command);
-    };
+    actions.topRow = [this](TopRowButton button) { RunCommand(TopRowCommand(button)); };
     sidebar_->SetActions(std::move(actions));
     if (options_.smokeTest || options_.capture) askToDelete_ = [](const SpaceDeletion&) { return false; };
     else askToDelete_ = [this](const SpaceDeletion& deletion) { return AskToDeleteSpace(window_.Handle(), deletion); };
 
     MakeCommands();
+    // View › Hide Sidebar: in the window's system menu until Windows has a menu of Kite's own, so a
+    // pointer can bring a hidden sidebar back (its toggle leaves with it, and there's no hover reveal
+    // yet).
+    if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, kToggleSidebarMenuID, Widen(ToggleSidebarTitle(sidebarShown_)).c_str());
+    }
     // Every command the table can name does something: a test run fails on one that doesn't.
     if (options_.smokeTest || options_.capture) {
         for (const ShortcutCommand& command : ShortcutCommands()) {
@@ -644,10 +651,24 @@ void BrowserWindowController::SetSidebarShown(bool shown) {
     // Like Arc: the final frames set once, the compositor drawing the frames between (no slide
     // on a window that isn't on screen).
     const bool visible = IsWindowVisible(window_.Handle()) && !IsIconic(window_.Handle());
+    const bool wasToggling = toggling_;
     const double duration = sidebar_->SetShown(shown, visible);
     toggling_ = duration > 0;
-    // The page clear of the sidebar the whole way: a show moves it first, a hide at the end.
+    // The display at its highest rate while it slides (docs/windows.md, Refresh rate).
+    if (toggling_ != wasToggling) FrameClock::BoostWithoutFrames(toggling_);
+    // The system menu's item says what it will do next (validateMenuItem's retitling).
+    if (HMENU menu = GetSystemMenu(window_.Handle(), FALSE)) {
+        ModifyMenuW(menu, kToggleSidebarMenuID, MF_BYCOMMAND | MF_STRING, kToggleSidebarMenuID, Widen(ToggleSidebarTitle(shown)).c_str());
+    }
+    // The page clear of the sidebar: a show moves it first, a hide at the end.
     if (shown || !toggling_) MovePage();
+    // Shown again, what changed while it was hidden draws before the slide's first frame.
+    if (shown) {
+        if (std::wstring problem = sidebar_->Draw(); !problem.empty()) {
+            OutputDebugStringW((L"Kite: the sidebar couldn't draw: " + problem + L"\n").c_str());
+        }
+        if (sidebar_->DeviceLost()) Draw();
+    }
     if (compositor_) compositor_->Commit();
     // The compositor starts it at the commit's frame, up to a frame after now: a frame at 60 Hz to
     // spare, as the pages' settle.
@@ -658,6 +679,7 @@ void BrowserWindowController::FinishToggle() {
     KillTimer(window_.Handle(), kToggleTimer);
     if (!toggling_) return;
     toggling_ = false;
+    FrameClock::BoostWithoutFrames(false);
     sidebar_->SettleToggle();
     if (!sidebarShown_) MovePage();
     if (compositor_) compositor_->Commit();
@@ -936,6 +958,11 @@ bool BrowserWindowController::Filter(UINT message, WPARAM wParam, LPARAM lParam,
     }
     if (message == WM_TIMER && wParam == kToggleTimer) {
         FinishToggle();
+        return true;
+    }
+    if (message == WM_SYSCOMMAND && (wParam & 0xFFF0) == kToggleSidebarMenuID) {
+        RunCommand("toggleSidebar");
+        result = 0;
         return true;
     }
     if (message == kSpaceIconsMessage) {

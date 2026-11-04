@@ -188,28 +188,34 @@ on the row at y 7.5 (ArcMetrics.Sidebar). As SymbolButtons they're SF Symbols at
 (back and forward from the page's history, reload with a tab); reload is the X
 while the page loads, keeping its "Reload" tooltip. Like the Mac's they show no
 hover or press of their own, take the click that brings the window forward, and
-are cut out of the window's drag. Their tooltips are Windows' own (a comctl32
-tooltip, the system's delay and light look). What a page reports comes from
-CEF's `OnLoadingStateChange` (the Mac's navigation state) and goes with the page.
+are cut out of the window's drag. Their tooltips are Windows' own: a comctl32
+tooltip made on the first hover over a button (so comctl32 doesn't load at
+launch), the window's mouse messages relayed to it (`TTM_RELAYEVENT`, no
+subclass of the window), with the system's delay and light look. What a page
+reports comes from CEF's `OnLoadingStateChange` (the Mac's navigation state)
+and goes with the page.
 
 - **Where the row starts.** The Mac's toggle sits at x 71, just right of the
   traffic lights (their cluster runs from 12 to 72, centred on y 24 against the
   row's 23.5). Windows has nothing on the left (its caption buttons stay top-right,
-  W3b), so the toggle starts 6pt in, the same inset the navigation buttons keep
-  from the sidebar's other edge: its ink starts at x 13.5, about where the Mac's
-  first traffic light does. The row's height and everything right of the toggle
-  are the Mac's. `top_row_metrics::kToggleX` is the one number to change for
-  another choice (the Mac's 71 is `kMacToggleX`).
+  W3b, 138pt wide at the window's right edge, well clear of the sidebar's 234),
+  so the toggle starts 6pt in, the same inset the navigation buttons keep from the
+  sidebar's other edge: its ink starts at x 13.5, about where the Mac's first
+  traffic light does. The row's height and everything right of the toggle are the
+  Mac's. `top_row_metrics::kToggleX` is the one number to change for another
+  choice (the Mac's 71 is `kMacToggleX`).
 - **Symbols.** sidebar.left is Kite's own geometry (core's `SidebarToggleShape`),
   measured from the Mac's 15pt render; back, forward, reload and the X are Segoe
   Fluent Icons' (Segoe MDL2 Assets' on Windows 10) Back, Forward, Refresh and
-  Cancel, scaled to cover the Mac's measured ink and centred on it. The X and the
-  compact layout's More aren't measured yet (the Mac's references add them).
-- **Each button is its own visual** with an effect group's opacity: turning one
-  on or off draws nothing, the X draws only reload's surface, and a hover draws
-  nothing (the smoke test counts the surfaces drawn).
-- **Not yet:** the compact layout under 212pt (no toggle, a More menu) is laid out
-  in core but never shown, since the sidebar is 240 until it can be resized;
+  Cancel, scaled to cover the Mac's measured ink and centred on it. The X isn't
+  measured yet (the Mac's references add it).
+- **Each button is a `FadedLayer`** (shell/FadedLayer.h, shared with the space
+  bar's icons): turning one on or off is an effect group's opacity, committed on
+  the sidebar's next pass with nothing drawn; the X draws only reload's surface,
+  and a hover draws nothing (the smoke test counts the surfaces drawn and the
+  commit).
+- **Not yet:** the compact layout under 212pt (no toggle, a More menu,
+  HeaderLayout), which comes with resizing the sidebar (it's 240 until then);
   View › Show Toolbar and Developer Mode's reload options; and the hover reveal
   of a hidden sidebar (SidebarPeek), a checkpoint of its own.
 
@@ -217,18 +223,31 @@ CEF's `OnLoadingStateChange` (the Mac's navigation state) and goes with the page
 toggle; the `toggleSidebar` command) is the Mac's `updateSidebar`: the sidebar
 slides off the window's left edge, and back, over 0.08 s on (0.25, 0.46, 0.45,
 0.94), a DirectComposition animation of its root visual's offset (a toggle caught
-mid-slide turns back from where it is). The card's leading edge goes from the
-sidebar's 240 to the 10pt inset. As on the Mac the state isn't saved (a launch
-shows the sidebar), a hidden sidebar takes no pointer or touchpad swipe, a space
-switch doesn't slide its pages, and Rename Space shows it first. The page is a
-child window, which no compositor property moves, so until W10's off-screen pages
-it moves once, while the sidebar isn't under it: as a show begins and as a hide
-ends (the Mac's page slides with the card, kept at the wider width meanwhile).
-A rename open in the header ends as the sidebar hides, keeping what was typed.
+mid-slide turns back from where it is), with the compositor clock boosted while
+it runs (`FrameClock::BoostWithoutFrames`; no frames of Kite's). The card's
+leading edge goes from the sidebar's 240 to the 10pt inset. As on the Mac the
+state isn't saved (a launch shows the sidebar), a hidden sidebar takes no pointer
+or touchpad swipe and draws nothing at rest (what changes meanwhile draws as it
+shows again), a space switch doesn't slide its pages, and Rename Space shows it
+first. The page is a child window, which no compositor property moves, so until
+W10's off-screen pages it moves once: as a show begins and as a hide ends (the
+card keeps the sidebar's edge while it slides off, so a tab switch or a resize
+meanwhile doesn't put the page over it). Chromium moves it on CEF's thread, a
+little after that. The Mac's page slides with the card, kept at the wider width
+meanwhile. A rename open in the header ends as the sidebar hides, keeping what
+was typed.
+
+- **A pointer's way back.** Windows has no menu bar yet and no hover reveal, and
+  the toggle leaves with the sidebar, so Show Sidebar / Hide Sidebar is also in
+  the window's system menu (Alt+Space, or a right-click on the band above the
+  card), retitled for what it will do, as Import from Arc is there (W15). Until
+  SidebarPeek lands that, and Ctrl+S, are the only ways to bring a hidden sidebar
+  back.
+
 `kitecore sidebar [--page back,forward,loading] [--hidden]` prints the row and the
 card's edge; `kitecore click X Y --page …` says what a click on a button runs.
-Captures: `--page-status`, `--toggle-sidebar N` and `--hover-top-row BUTTON`
-(main.cpp).
+Captures: `--page-status` and `--toggle-sidebar N` (main.cpp); a hover draws
+nothing, which the smoke test checks.
 
 ## Shortcuts
 

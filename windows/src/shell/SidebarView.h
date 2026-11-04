@@ -44,9 +44,9 @@
 #include "shell/Capture.h"
 #include "shell/Compositor.h"
 #include "shell/Favicons.h"
+#include "shell/SidebarTopRowView.h"
 #include "shell/SpaceBarView.h"
 #include "shell/SpaceIconPainter.h"
-#include "shell/SidebarTopRowView.h"
 #include "shell/SpaceRenameField.h"
 #include "shell/SpaceTipView.h"
 
@@ -132,7 +132,8 @@ public:
     // edge, or back, on ArcMetrics.Motion's curve on the compositor from the next commit, from
     // wherever it is (a toggle caught mid-slide turns back). How long that takes, in seconds; 0
     // when it's there at once (`animate` false, or no GPU yet). Hidden, it takes no pointer, its
-    // tooltips and tip go, and any press or hover with them.
+    // tooltips and tip go, and any press or hover with them; at rest hidden it draws nothing (what
+    // changes meanwhile stays to draw, which the caller does as it shows it again).
     double SetShown(bool shown, bool animate);
     // The slide has ended (the caller's timer): at rest.
     void SettleToggle();
@@ -146,6 +147,11 @@ public:
     const std::vector<TopRowItem>& TopRowItems() const { return topRow_->Items(); }
     std::optional<POINT> TopRowCentre(TopRowButton button) const;
     size_t TopRowSurfaceDraws() const { return topRow_->SurfaceDraws(); }
+    bool TopRowHasTooltips() const { return topRow_->HasTooltips(); }
+    // A compositor property changed (a top-row button turned on or off) that the next pass
+    // commits, and how many commits its own passes have made (for the smoke test).
+    bool CommitPending() const { return commitPending_; }
+    size_t Commits() const { return commits_; }
 
     // What it shows: the address, and the selected space's page with its neighbours' (or,
     // while the pages settle after a switch, those of `anchor`, the space it left:
@@ -316,6 +322,8 @@ private:
     std::optional<Slide> slide_;
     bool barSlidePending_ = false;  // the bar relights with the slide once it has the new cells
     bool redrawPosted_ = false;
+    bool commitPending_ = false;  // a property changed that no draw carries
+    size_t commits_ = 0;
     std::unique_ptr<SpaceBarView> bar_;
     std::unique_ptr<SidebarTopRowView> topRow_;
     PageStatus page_;
