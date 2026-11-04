@@ -13,7 +13,7 @@ their own PR, never as a side effect of a checkpoint.
   D3D11, input, and the CEF host. Its entry point is `main.cpp`'s `RunWinMain`,
   exported from `Kite.dll`: with Chromium, Kite.exe is CEF's bootstrap, which
   calls it in every process (the browser, and each helper already in Chromium's
-  sandbox). Without Chromium (MinGW) it's `wWinMain` in Kite.exe. Helpers load
+  sandbox). Without CEF (MinGW, or none fetched) it's `wWinMain` in Kite.exe. Helpers load
   Kite.dll under win32k lockdown, where user32 can't load, so Kite.dll
   delay-loads everything but kernel32 and libcef.dll. It may use `core`; `core`
   never uses it.
@@ -26,7 +26,8 @@ their own PR, never as a side effect of a checkpoint.
   build machine and are MSVC only. They never ship themselves, and nothing links
   them into Kite. They use Win32 and the standard library only, and nothing from
   `core` or `shell`. They build into their own output folder, apart from the
-  shipped files. (Measurement tools under `windows/tools` are a separate layer.)
+  shipped files. Other programs under `windows/tools` (test or measurement tools,
+  say) aren't in this layer.
 - `windows/resources`: the process manifest both executables embed.
 - No third-party code except CEF. No WinUI or Windows App SDK, no .NET, no
   Swift runtime, no Boost, no JSON or test libraries. First-party Windows APIs
