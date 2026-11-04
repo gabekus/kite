@@ -76,6 +76,8 @@ final class AutomationController {
     @ObservationIgnored var handoffOcclusionObserver: NSObjectProtocol?
     /// The selected tab when the poller last looked, so switching to a step's tab brings a look at once.
     @ObservationIgnored var handoffSeenTab: UUID?
+    /// Bumped each time the poller starts, so only the newest selection watch carries on.
+    @ObservationIgnored var handoffSelectionWatch = 0
     /// Which step's ring each tab's page shows, so Kite takes it off when the step ends.
     @ObservationIgnored var ringShown: [UUID: String] = [:]
     @ObservationIgnored var handoffCount = 0

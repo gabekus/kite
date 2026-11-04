@@ -301,7 +301,8 @@ extension AutomationController {
                 MainActor.assumeIsolated { if self?.handoffPoller != nil { self?.pollHandoffsSoon() } }
             }
         }
-        watchSelectedTabForHandoffs()
+        handoffSelectionWatch += 1
+        watchSelectedTabForHandoffs(handoffSelectionWatch)
         handoffPoller = Task { [weak self] in
             while let self, !Task.isCancelled {
                 await self.pollHandoffs()
@@ -314,12 +315,12 @@ extension AutomationController {
     }
 
     /// While the poller runs, a switch to another tab looks at once rather than on the next (slow) tick.
-    private func watchSelectedTabForHandoffs() {
+    private func watchSelectedTabForHandoffs(_ generation: Int) {
         handoffSeenTab = withObservationTracking { store.state.selectedTab?.id } onChange: { [weak self] in
             DispatchQueue.main.async {
-                guard let self, self.handoffPoller != nil else { return }
+                guard let self, self.handoffPoller != nil, self.handoffSelectionWatch == generation else { return }
                 let before = self.handoffSeenTab
-                self.watchSelectedTabForHandoffs()
+                self.watchSelectedTabForHandoffs(generation)
                 if self.handoffSeenTab != before { self.pollHandoffsSoon() }
             }
         }
